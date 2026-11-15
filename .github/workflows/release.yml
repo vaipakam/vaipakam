@@ -57,6 +57,8 @@ jobs:
           # Need full history so we can resolve the tag's commit + write
           # the provenance line into the release body.
           fetch-depth: 0
+          # Nothing here pushes; the release step takes its token as an input.
+          persist-credentials: false
           # On workflow_dispatch, check out the named tag rather than
           # whatever ref the run was triggered against.
           ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
@@ -75,6 +77,12 @@ jobs:
             TAG="$INPUT_TAG"
           else
             TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          # #3541: the tag is checked once here, before anything uses it.
+          # Later steps receive it through env, never pasted into a script.
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::not a release tag (vMAJOR.MINOR.PATCH[-pre]): $TAG"
+            exit 1
           fi
           SHA=$(git rev-list -n 1 "$TAG")
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
@@ -154,7 +162,9 @@ jobs:
 
       - name: Summarize (no artifacts case)
         if: steps.bundle.outputs.count == '0'
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          echo "::warning::No deployment / ABI artifacts found at tag ${{ steps.tag.outputs.tag }}."
+          echo "::warning::No deployment / ABI artifacts found at tag ${TAG}."
           echo "This is expected for pre-deploy tags. The GitHub Release was NOT created."
           echo "Push deployments to contracts/deployments/<chain>/ + run exportFrontendAbis.sh / exportFrontendDeployments.sh, then re-run this workflow via workflow_dispatch."

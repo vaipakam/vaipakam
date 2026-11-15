@@ -31,6 +31,7 @@ import {
   type AcceptPreview,
   type OfferState,
   type WalletFunds,
+  statedAcceptError,
 } from '../offers/reads';
 import { SWITCH_EFFECTS } from '../eligibility/switchClasses';
 import { tokenAmount, type TokenMetaMap } from '../reads/tokens';
@@ -166,7 +167,7 @@ const GATE_KEYS: Readonly<Record<number, CopyKey>> = { 1: 'risk.blockTier', 2: '
 
 /** The protocol's first refusal of this rental, as a renter reads it. */
 export function rentErrorText(code: AcceptPreview['error'], copy: Pick<CopyAccess, 'text' | 'format'>): string {
-  const error: AcceptPreview['error'] = code === 'RetiredVaultUpgradeRequired' ? 'Unrecognised' : code;
+  const error = statedAcceptError(code);
   if (error === 'None') return '';
   if (error === 'ProtocolPaused') return copy.format('rent.err.ProtocolPaused', { staysOpen: SWITCH_EFFECTS['2'].staysOpen });
   return copy.text(RENT_ERRORS[error] ?? (`accept.err.${error}` as CopyKey));

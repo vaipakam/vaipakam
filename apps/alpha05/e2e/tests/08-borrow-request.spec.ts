@@ -32,6 +32,7 @@ async function openForm(page: Page, collateral: Hex): Promise<void> {
 
 interface StoredOffer {
   creator: Hex;
+  fillMode: number;
   offerType: number;
   amount: bigint;
   amountMax: bigint;
@@ -121,6 +122,8 @@ test('a borrower posts their own request: exact figures, an exact approval, and 
   expect(offer.creator.toLowerCase()).toBe(borrower.toLowerCase());
   expect(offer.offerType).toBe(1);
   expect([offer.amount, offer.amountMax]).toEqual([parseEther('0.25'), parseEther('0.25')]);
+  // One size posts all-or-none (#3520): it only ever fills whole.
+  expect(offer.fillMode).toBe(1);
   expect(offer.interestRateBps).toBe(725n);
   expect(offer.collateralAmount).toBe(parseEther('2000'));
   expect(offer.durationDays).toBe(14n);

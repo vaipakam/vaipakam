@@ -33,6 +33,10 @@ import {
     MockVpfiTokenPool
 } from "./mocks/MockVpfiTokenPool.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
+import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {RewardClosureFacet} from "../src/facets/RewardClosureFacet.sol";
+import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 
 /// @dev Stand-in for the CCIP adapter on the SEND side: quotes a settable
 ///      fee and, like the real `CcipMessenger._pullTokens`, PULLS each
@@ -1837,6 +1841,14 @@ contract RepatriationTransportTest is SetupTest {
     /// `amount` from `BASE_DEPLOYMENT` for day 1, its transport batch parked
     /// and (when `ack`) acknowledged, so its remainder is released.
     function _releasedRemainder(uint256 amount, bool ack) internal returns (bytes32 h) {
+        h = _deliveredForDayOne(amount);
+        _mut().parkTransportBatchRaw(h);
+        if (ack) _mut().acknowledgeTransportBatchRaw(h);
+    }
+
+    /// Mirror fixture: custody activated and one whole-fresh budget delivery
+    /// of `amount` for day 1, its batch neither parked nor acknowledged.
+    function _deliveredForDayOne(uint256 amount) internal returns (bytes32 h) {
         _armMirror();
         _ensureRewardClockLaunched();
         vm.warp(block.timestamp + 5 days);
@@ -1846,8 +1858,6 @@ contract RepatriationTransportTest is SetupTest {
         h = LibD8Delivery.deliverFresh(
             address(diamond), address(vpfi), amount, 1, CHAIN_BASE, 7, BASE_DEPLOYMENT, keccak256("u-1")
         );
-        _mut().parkTransportBatchRaw(h);
-        if (ack) _mut().acknowledgeTransportBatchRaw(h);
     }
 
     function _remainderOf(bytes32 h) internal view returns (uint256 amount, uint256 debited) {
@@ -2019,5 +2029,135 @@ contract RepatriationTransportTest is SetupTest {
             CHAIN_ARB, address(diamond), mirrorPacket, address(vpfi), 1 ether, 1 ether
         );
         assertEq(_repat().getChainUntypedRemainderReturned(CHAIN_ARB), 0, "nothing credited");
+    }
+
+    // ── #3360 part B — the keeper's return of a closed day's leftover ───────
+
+    address internal constant KEEPER = address(0x6EE9);
+
+    function _grantKeeper() internal {
+        AccessControlFacet(address(diamond)).grantRole(LibAccessControl.KEEPER_ROLE, KEEPER);
+        vm.deal(KEEPER, 10 ether);
+    }
+
+    /// Day 1 elapses, the mirror closes it, and the closure proof completes.
+    function _closeDayOne() internal {
+        _rep().closeDay(1);
+        (, , bool closed) = RewardClosureFacet(address(diamond)).startDayClosure(1);
+        assertTrue(closed, "fixture: no obligation covers day 1, so it closes at start");
+    }
+
+    /// The keeper sends a closed day's whole leftover home in one call: it
+    /// parks the batch itself, needs no acknowledgment, and the value leaves
+    /// for the packet's issuer exactly as the operator's route sends it.
+    function test_KeeperReturn_ParksAndSendsAClosedDaysLeftover() public {
+        bytes32 h = _deliveredForDayOne(10 ether);
+        _grantKeeper();
+        _closeDayOne();
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit RepatriationFacet.ClosedDayRemainderReturnedByKeeper(h, 1, 10 ether, KEEPER);
+        vm.prank(KEEPER);
+        _repat().returnClosedDayRemainder(h, 10 ether, payable(KEEPER));
+
+        (uint256 left, uint256 debited) = _remainderOf(h);
+        assertEq(left, 0, "the whole remainder left");
+        assertEq(debited, 10 ether);
+        (, , , bool acked, ) = RewardEpochFacet(address(diamond)).getTransportRemainder(h);
+        assertFalse(acked, "no acknowledgment was needed");
+        (, , , , bool released) = RewardEpochFacet(address(diamond)).getTransportBatch(h);
+        assertFalse(released, "and none was recorded");
+        assertEq(_custodyRow(LibVaipakam.RewardCustodyRow.Unclassified), 0, "the untyped row emptied");
+        assertEq(vpfi.balanceOf(address(ccip)), 10 ether, "pulled by CCIP");
+        assertEq(ccip.lastDst(), uint256(CHAIN_BASE), "to the chain that sent it");
+        assertEq(
+            ccip.lastPayload(),
+            abi.encode(ReturnWire.RETURN_WIRE_TAG_UNTYPED_REMAINDER_U1, BASE_DEPLOYMENT, h, uint256(10 ether)),
+            "naming the Base Diamond that sent the packet"
+        );
+        assertEq(_repat().getUntypedRemainderReturnedCumulative(), 10 ether);
+    }
+
+    /// The keeper can size a part to the lane, and a later call takes the
+    /// rest from the batch it already parked.
+    function test_KeeperReturn_InParts() public {
+        bytes32 h = _deliveredForDayOne(5 ether);
+        _grantKeeper();
+        _closeDayOne();
+        vm.startPrank(KEEPER);
+        _repat().returnClosedDayRemainder(h, 2 ether, payable(KEEPER));
+        _repat().returnClosedDayRemainder(h, 3 ether, payable(KEEPER));
+        vm.stopPrank();
+        (uint256 left, uint256 debited) = _remainderOf(h);
+        assertEq(left, 0);
+        assertEq(debited, 5 ether);
+    }
+
+    /// Refusals, each leaving the batch intact: a day not yet closed, a
+    /// caller without the keeper role, the keeper pause, a zero amount and an
+    /// amount past the remainder.
+    function test_KeeperReturn_Refusals() public {
+        bytes32 h = _deliveredForDayOne(5 ether);
+        _grantKeeper();
+
+        vm.prank(KEEPER);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.TransportDayNotClosed.selector, h, 1));
+        _repat().returnClosedDayRemainder(h, 1 ether, payable(KEEPER));
+
+        _closeDayOne();
+        vm.prank(STRANGER);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibAccessControl.AccessControlUnauthorizedAccount.selector, STRANGER, LibAccessControl.KEEPER_ROLE
+            )
+        );
+        _repat().returnClosedDayRemainder(h, 1 ether, payable(STRANGER));
+
+        AdminFacet(address(diamond)).setKeepersPaused(true);
+        vm.prank(KEEPER);
+        vm.expectRevert(IVaipakamErrors.KeepersPaused.selector);
+        _repat().returnClosedDayRemainder(h, 1 ether, payable(KEEPER));
+        AdminFacet(address(diamond)).setKeepersPaused(false);
+
+        vm.prank(KEEPER);
+        vm.expectRevert(RepatriationFacet.UntypedReturnBadAmount.selector);
+        _repat().returnClosedDayRemainder(h, 0, payable(KEEPER));
+
+        vm.prank(KEEPER);
+        vm.expectRevert(
+            abi.encodeWithSelector(IVaipakamErrors.TransportRemainderExceeded.selector, h, 6 ether, 5 ether)
+        );
+        _repat().returnClosedDayRemainder(h, 6 ether, payable(KEEPER));
+
+        (, , , , bool released) = RewardEpochFacet(address(diamond)).getTransportBatch(h);
+        assertFalse(released);
+        assertEq(_custodyRow(LibVaipakam.RewardCustodyRow.Unclassified), 5 ether, "nothing moved");
+    }
+
+    /// A packet with no batch is refused by the shared body, and the route is
+    /// mirror-only.
+    function test_KeeperReturn_UnknownPacketAndMirrorOnly() public {
+        bytes32 h = _deliveredForDayOne(5 ether);
+        _grantKeeper();
+        _closeDayOne();
+        bytes32 unknown = keccak256("nobody");
+        vm.prank(KEEPER);
+        vm.expectRevert(abi.encodeWithSelector(RepatriationFacet.UntypedReturnNoRemainder.selector, unknown));
+        _repat().returnClosedDayRemainder(unknown, 1 ether, payable(KEEPER));
+
+        _rep().setIsCanonicalRewardChain(true);
+        vm.prank(KEEPER);
+        vm.expectRevert(RepatriationFacet.RepatriationWrongChainRole.selector);
+        _repat().returnClosedDayRemainder(h, 1 ether, payable(KEEPER));
+    }
+
+    /// The operator's route keeps its gate: without the acknowledgment the
+    /// ADMIN send is still refused on a closed, parked day, even though the
+    /// keeper's route would accept it.
+    function test_KeeperReturn_AdminRouteStillNeedsTheAcknowledgment() public {
+        bytes32 h = _deliveredForDayOne(5 ether);
+        _closeDayOne();
+        RewardEpochFacet(address(diamond)).parkTransportBatchRemainder(h);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.TransportBatchNotReleased.selector, h, h));
+        _repat().sendUntypedRemainderReturn(h, 1 ether, payable(address(this)));
     }
 }

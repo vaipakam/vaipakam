@@ -84,6 +84,9 @@ export interface OfferTerms {
   /** tLIQ asked as collateral, decimal string. */
   collateralTliq: string;
   rateBps: number;
+  /** The top of the rate range, in bps; left out, the range is the one
+   *  rate `rateBps`. A match needs the two sides' ranges to meet. */
+  rateMaxBps?: number;
   days: number;
   /** `LibVaipakam.PeriodicInterestCadence` (0 None, 1 Monthly, …). Omitted,
    *  None. A finer cadence needs periodic interest switched on and a
@@ -125,7 +128,7 @@ export async function postLenderOffer(sc: ScenarioChain, t: OfferTerms): Promise
       collateralQuantity: 0n,
       allowsPartialRepay: t.allowsPartialRepay ?? true,
       amountMax: principal,
-      interestRateBpsMax: BigInt(t.rateBps),
+      interestRateBpsMax: BigInt(t.rateMaxBps ?? t.rateBps),
       collateralAmountMax: collateral,
       periodicInterestCadence: t.cadence ?? 0,
       expiresAt: 0n,
@@ -151,6 +154,9 @@ export interface RequestTerms {
   /** tLIQ locked as collateral, decimal string (minted to the borrower). */
   collateralTliq: string;
   rateBps: number;
+  /** The top of the rate range, in bps; left out, the range is the one
+   *  rate `rateBps`. A match needs the two sides' ranges to meet. */
+  rateMaxBps?: number;
   days: number;
 }
 
@@ -184,7 +190,7 @@ export async function postBorrowRequest(sc: ScenarioChain, t: RequestTerms): Pro
       collateralQuantity: 0n,
       allowsPartialRepay: true,
       amountMax: principal,
-      interestRateBpsMax: BigInt(t.rateBps),
+      interestRateBpsMax: BigInt(t.rateMaxBps ?? t.rateBps),
       collateralAmountMax: collateral,
       periodicInterestCadence: 0,
       expiresAt: 0n,

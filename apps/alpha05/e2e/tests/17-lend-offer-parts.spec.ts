@@ -59,9 +59,15 @@ test('a lender posts an offer in parts: the whole amount locked, the smallest pa
   // protocol's own smallest amount, before any review or signature.
   await page.getByTestId('lend-offer-part').fill('0.000001');
   await expect(page.getByText(/The smallest offer the protocol accepts in this token is [0-9.]+ WETH\./)).toBeVisible({ timeout: 30_000 });
+  // A part equal to the whole amount is one size (#3520): it fills whole, so
+  // all or none is the mode shown and the modes that fill in parts are off.
+  const fill = page.getByTestId('request-fill');
+  await page.getByTestId('lend-offer-part').fill('0.2');
+  await expect(fill.getByRole('radio', { name: /All or none: one borrower/ })).toBeChecked();
+  await expect(fill.getByRole('radio', { name: /Partial/ })).toBeDisabled();
+  await expect(page.getByTestId('request-fill-shape')).toHaveText('Both ends are the same size, so it fills whole, in one match.');
   await page.getByTestId('lend-offer-part').fill('0.05');
   // All or none takes no parts; immediate or cancel needs an expiry.
-  const fill = page.getByTestId('request-fill');
   await expect(fill.getByRole('radio', { name: /All or none: one borrower/ })).toBeDisabled();
   await page.getByTestId('request-expiry').selectOption('7d');
   await fill.getByRole('radio', { name: /Immediate or cancel/ }).check();

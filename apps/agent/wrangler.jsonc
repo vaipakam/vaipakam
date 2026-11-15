@@ -58,10 +58,16 @@
   // it. A D1 binding is database-scoped, not table-scoped, so the
   // per-Worker table lists below are a source convention, not an
   // enforced boundary (#1722). Tables this Worker touches:
-  //   - `telegram_links`    (issue + consume during the Telegram
-  //                          handshake — POST /link/telegram,
-  //                          POST /unlink/telegram, POST /tg/webhook)
-  //   - `user_thresholds`   (PUT /thresholds upserts)
+  //   - `user_thresholds`   (PUT /thresholds upserts; the Telegram
+  //                          handshake makes sure the row exists. The
+  //                          `tg_chat_id` column is no longer read or
+  //                          written here, #1722: the linked chat, the
+  //                          handshake codes, pending removals and LOCK
+  //                          requests live in the TG_STATE Durable Object
+  //                          below. `telegram_links`, `alert_channel_changes`
+  //                          and the `protected_lock_*` tables are no longer
+  //                          touched by this Worker; a later migration drops
+  //                          them.)
   //   - `diag_errors`       (POST /diag/record + cron retention)
   //   - `diag_legal_holds`,
   //     `diag_legal_hold_audit` (T-075 hold place/lift + audit trail)
@@ -369,6 +375,18 @@
   // keeper; staging plan §2 least-privilege contract). The
   // `/diag/legal-hold` endpoint also has no secret — it checks the
   // caller's on-chain ADMIN_ROLE instead.
+  // #1722 — the agent's Telegram state: which chat receives a wallet's
+  // alerts, the handshake codes, the protected-mode waits on removing a chat
+  // (#3246) and the Telegram LOCK requests (#3088). A SQLite Durable Object
+  // bound to this Worker only. Cloudflare has no API that reads or writes a
+  // Durable Object's storage from outside its Worker, so no D1 binding or
+  // account token can redirect alerts or forge a LOCK (owner decision
+  // 2026-11-11). It is not in the nightly backup: a lost link is relinked.
+  "durable_objects": {
+    "bindings": [{ "name": "TG_STATE", "class_name": "TelegramState" }],
+  },
+  "migrations": [{ "tag": "v1-telegram-state", "new_sqlite_classes": ["TelegramState"] }],
+
   "secrets_store_secrets": [
     {
       "binding": "RPC_BASE",
@@ -466,6 +484,14 @@
       "binding": "DIAG_WALLET_HMAC_KEY",
       "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
       "secret_name": "DIAG_WALLET_HMAC_KEY",
+    },
+    // #1722 — the bearer the keeper machine presents on the agent's
+    // keeper-only routes (LOCK requests and outcomes, alert delivery). The
+    // keeper holds the same value. Unset: those routes refuse every call.
+    {
+      "binding": "KEEPER_AGENT_TOKEN",
+      "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e",
+      "secret_name": "KEEPER_AGENT_TOKEN",
     },
     // ET-001 — no transaction-scan secret. The pre-sign transaction
     // preview is a frontend-only viem `eth_call` simulation (no API

@@ -47,6 +47,8 @@ The Storage struct lives at slot `keccak256(abi.encode(uint256(keccak256("vaipak
 | Deleted selector still referenced by external integrators | Announce selector removals 2 weeks in advance on the status page. |
 | New facet exposes a state-mutating function missing `whenNotPaused` | Lint: every `nonReentrant`/mutating external function in a new facet is reviewed for pause gating. `PauseGatingTest` must be updated. |
 | New facet exposes a state-mutating function missing `onlyRole(...)` where required | Manual review + a targeted test asserting unauthorized callers revert. |
+| A curated refresh leaves out the facet that hosts a rule the refreshed facets self-call | The refresh-together families in `CLAUDE.md` list every such set. `RedeployFacets` refuses a Diamond that does not already route each host it depends on (for example `PredatesMatchRiskBoundsHost` since #3326: the match facets read the start-of-loan risk bounds from `OfferPreviewFacet.initRiskBounds`, which that script does not carry). Never work around a refusal by cutting a subset by hand; use the all-facets refresh or a fresh deploy. |
+| A refresh changes a figure stamped on a loan when it opens | Open loans carry no stamp from the new code. Since #3562 the lender's yield-fee discount is the lower of the tier at entry and at settlement, and a loan open before the refresh has no entry record, so its lender loses the hold-tier part of the discount from then on. A lender who paid the Full tariff at opening keeps that paid bump, which does not depend on the record. Say so to lenders before such a refresh, or wait for the next fresh deploy. |
 
 ### Procedure (per cut)
 1. Draft the cut in a new script: `script/UpgradeFacets_<name>.s.sol`.
@@ -86,7 +88,7 @@ A vault runs its owner's **pinned** version while that version is not revoked, o
 |---|---|
 | Storage layout change | Every registered version keeps the vault layout append-only; the storage-layout guard's `beacon:VaipakamVaultImplementation` root checks it, and `registerVersion` refuses a contract that does not report `vaultLayoutId()`. |
 | A registered implementation whose initializer can still be called | Deploy the implementation with its constructor disabling initializers (`DeployDiamond` checks the Initializable slot read-only before it registers version 1); check the same for every later version before registering it. |
-| A bad version reaches every vault at once | The change is two steps on the beacon, a proposal and an execution no sooner than `MIN_CODE_DELAY` (3 days, a constant) later; the Pauser Safe can cancel a pending proposal; owners can pin during the wait; the guardian can revoke while paused. |
+| A bad version reaches every vault at once | The change is two steps on the beacon, a proposal and an execution no sooner than `MIN_CODE_DELAY` (7 days, a constant, longer than any protected payout delay) later; the Pauser Safe can cancel a pending proposal; owners can pin during the wait; the guardian can revoke while paused. |
 
 ### Procedure (per version)
 1. Draft the new `VaipakamVaultImplementation` — only **append** state.

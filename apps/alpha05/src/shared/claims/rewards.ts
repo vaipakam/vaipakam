@@ -17,6 +17,7 @@ import { InteractionRewardsLensFacetABI, RewardClaimFacetABI, VPFIDiscountFacetA
 import { extractRevertData } from '@vaipakam/lib/decodeContractError';
 import { refusalFromError } from '../eligibility/refusal';
 import { isContractAnswer } from '../reads/answer';
+import type { CopyKey } from '../copy/useCopy';
 import type { AtBlock } from '../tx/anchored';
 
 type Hex = `0x${string}`;
@@ -36,6 +37,47 @@ const VAULT_FACTORY = VaultFactoryFacetABI as Abi;
  *  would make the receipt's destination depend on something the receipt
  *  does not show. The preview, the re-check and the claim all pass this. */
 export const VENUE_VAULT = 2;
+/** The protocol's Wallet venue: a plain transfer to the claimant. */
+export const VENUE_WALLET = 1;
+
+/** RW-26 — where a reward claim delivers. Always passed explicitly, so the
+ *  receipt names the destination the call carries. */
+export type RewardVenue = 'vault' | 'wallet';
+
+/** The protocol's venue argument for a choice. */
+export const venueArg = (v: RewardVenue): number => (v === 'vault' ? VENUE_VAULT : VENUE_WALLET);
+
+/** `LibAccountShape.isEoaStyle` read from an account's code: no code, or
+ *  exactly an EIP-7702 delegation designator (`0xef0100` and a 20-byte
+ *  address), is a person's own account; any other code is a contract. */
+export function isEoaStyle(code: string | undefined): boolean {
+  if (code === undefined || code === '0x' || code === '') return true;
+  return code.length === 2 + 23 * 2 && code.toLowerCase().startsWith('0xef0100');
+}
+
+/** RW-26 — the venue a claim starts on, by the protocol's own default
+ *  rule: a person's own account (EIP-7702 included) gets its vault, a
+ *  contract account its wallet. An account whose shape is not read yet
+ *  starts on the vault, which takes a claim for every kind of account and
+ *  falls back to the wallet when it cannot; the receipt names it either way. */
+export function defaultVenue(eoaStyle: boolean | null): RewardVenue {
+  return eoaStyle === false ? 'wallet' : 'vault';
+}
+
+/** RW-26 — the venue a claim names. Protected mode sends every reward
+ *  claim to the vault whatever venue is passed
+ *  (`RewardClaimFacet._toVault`), so the wallet is offered and named only
+ *  while the mode reads as off; on, or unread, the claim names the vault. */
+export function claimVenue(picked: RewardVenue | null, eoaStyle: boolean | null, protectedOn: boolean | null): RewardVenue {
+  if (protectedOn !== false) return 'vault';
+  return picked ?? defaultVenue(eoaStyle);
+}
+
+/** The receipt's destination line for a venue under the account's mode. */
+export function venueLine(venue: RewardVenue, protectedOn: boolean | null): CopyKey {
+  if (venue === 'wallet') return 'claim.toWallet';
+  return protectedOn === true ? 'claim.toProtected' : 'claim.to';
+}
 
 /** The days the protocol counts from when it ends the final notice. */
 export const FINAL_NOTICE_DAYS = 90;
@@ -61,8 +103,17 @@ export type PendingRewards =
   /** Nothing to claim on this chain, every entry read. */
   | { kind: 'none' }
   /** A day the claim needs is not ready yet: its global figures have not
-   *  landed (`global`) or its funding has not been delivered (`delivery`). */
-  | { kind: 'waiting'; day: bigint; why: 'global' | 'delivery' }
+   *  landed (`global`) or its funding has not been delivered (`delivery`).
+   *  `atBlock` is the preview's block, so why the day waits is read at the
+   *  same state (RW-28). */
+  | { kind: 'waiting'; day: bigint; why: 'global' | 'delivery'; atBlock: bigint }
+  /** RW-28 — what pays the claim is not available now: the programme's pool
+   *  is paid out in full (`pool-exhausted`, the one that does not lift), or
+   *  what is left of it or of the recycled VPFI is reserved for pending
+   *  settlements (`pool-reserved`, `recycled-reserved`), or the VPFI held
+   *  here does not cover the claim's fresh part (`backing`, with the claim's
+   *  need and what is available, as the protocol measured them). */
+  | { kind: 'short'; why: 'pool-exhausted' | 'pool-reserved' | 'recycled-reserved' | 'backing'; needed: bigint | null; available: bigint | null }
   /** The programme has not started on this chain. */
   | { kind: 'not-started' }
   /** The global pause stops every claim. */
@@ -140,9 +191,18 @@ export function pendingFromRevert(r: Reverted, atBlock: bigint): PendingRewards 
     case 'NoInteractionRewardsToClaim':
       return { kind: 'none' };
     case 'InteractionDayGlobalNotFinalized':
-      return { kind: 'waiting', day: a!, why: 'global' };
+      return { kind: 'waiting', day: a!, why: 'global', atBlock };
     case 'InteractionDayAwaitingDelivery':
-      return { kind: 'waiting', day: a!, why: 'delivery' };
+      return { kind: 'waiting', day: a!, why: 'delivery', atBlock };
+    case 'InteractionPoolExhausted':
+      return { kind: 'short', why: 'pool-exhausted', needed: null, available: null };
+    case 'InteractionPoolReservedShortfall':
+      return { kind: 'short', why: 'pool-reserved', needed: a!, available: b! };
+    case 'RecycleBucketReservedShortfall':
+      return { kind: 'short', why: 'recycled-reserved', needed: a!, available: b! };
+    case 'InteractionRewardBackingShort':
+    case 'DeliveredFreshShortfall':
+      return { kind: 'short', why: 'backing', needed: a!, available: b! };
     case 'InteractionEmissionsNotStarted':
     case 'VPFITokenNotSet':
       return { kind: 'not-started' };

@@ -9,13 +9,19 @@
  *   3. The caller's per-IP slot is taken (429, or 503 when the limiter is
  *      missing or failing: the shared rule in `@vaipakam/lib/rateLimit`).
  *   4. The body is read up to the cap (413) and parsed (400).
- *   5. Each call is checked against `@vaipakam/lib/rpcProxyPolicy`. A
- *      refused call gets its own JSON-RPC error; the rest still go.
- *   6. The chain's upstream URL is read from its dedicated secret (503 when
+ *   5. Each call is checked against `@vaipakam/lib/rpcProxyPolicy`: its
+ *      method and the shape of its params. A refused call gets its own
+ *      JSON-RPC error; the rest still go.
+ *   6. The calls that will go upstream are charged against the per-call
+ *      budget by weight (429 / 503 as in step 3). A batch of fifty log
+ *      scans costs far more than one block-number poll, so it is charged
+ *      that way (#1283).
+ *   7. The chain's upstream URL is read from its dedicated secret (503 when
  *      absent), and its chain id is confirmed once per isolate (502 when it
  *      answers for another chain, or cannot be asked).
- *   7. The allowed calls go upstream as one batch under fresh ids, and each
- *      answer is matched back to the caller's own id.
+ *   8. The allowed calls go upstream as one batch under fresh ids, and each
+ *      answer is matched back to the caller's own id. The answer is read
+ *      only up to a byte cap (502 `upstream-answer-too-large` past it).
  *
  * Every refusal at the HTTP level (4xx/5xx) is one the app's transport
  * treats as "this endpoint failed", so it moves on to its public fallback;
@@ -29,14 +35,17 @@
  */
 import { redactedError, redactSecrets } from '@vaipakam/lib/errorDescription';
 import { isListedOrigin } from '@vaipakam/lib/originAllowList';
-import { slotRefusalStatus, takeCallerSlot } from '@vaipakam/lib/rateLimit';
+import { slotRefusalStatus, takeCallerSlot, takeCallerSlots } from '@vaipakam/lib/rateLimit';
 import { readJsonBody } from '@vaipakam/lib/requestBody';
 import { verifyRpcChainIdentity } from '@vaipakam/lib/rpcIdentity';
 import {
   RPC_PROXY_CHAINS,
   RPC_PROXY_MAX_BATCH,
   RPC_PROXY_MAX_BODY_BYTES,
+  RPC_PROXY_MAX_UPSTREAM_BYTES,
+  RPC_PROXY_UNITS_PER_SLOT,
   checkRpcCall,
+  rpcCallWeight,
 } from '@vaipakam/lib/rpcProxyPolicy';
 import type { Env } from './env';
 
@@ -167,14 +176,20 @@ function passOn(id: RpcId, upstream: unknown, fragments: readonly string[]): Rpc
   return reply(id, { code: -32603, message: 'upstream answer had neither result nor error' });
 }
 
-/** POST a JSON-RPC body upstream; the parsed answer, or `null` on any
- *  failure (network, timeout, non-2xx, not JSON). */
+/** Why an upstream request produced no answer to pass on. */
+type UpstreamFailure = 'unavailable' | 'too-large';
+
+/** POST a JSON-RPC body upstream; the parsed answer, or why there is none:
+ *  `too-large` when the answer is over the byte cap (read no further than
+ *  the cap), `unavailable` on any other failure (network, timeout,
+ *  non-2xx, not JSON). */
 async function postUpstream(
   url: string,
   body: unknown,
   chainId: number,
   upstreamFetch: typeof fetch,
-): Promise<unknown | null> {
+): Promise<{ ok: true; value: unknown } | { ok: false; failure: UpstreamFailure }> {
+  const unavailable = { ok: false as const, failure: 'unavailable' as const };
   let res: Response;
   try {
     res = await upstreamFetch(url, {
@@ -185,18 +200,30 @@ async function postUpstream(
     });
   } catch (err) {
     console.error(`[rpc-proxy] chain ${chainId}: upstream request failed`, redactedError(err));
-    return null;
+    return unavailable;
   }
   if (!res.ok) {
     console.error(`[rpc-proxy] chain ${chainId}: upstream answered HTTP ${res.status}`);
-    return null;
+    await res.body?.cancel().catch(() => {});
+    return unavailable;
   }
+  let read: Awaited<ReturnType<typeof readJsonBody>>;
   try {
-    return (await res.json()) as unknown;
-  } catch {
-    console.error(`[rpc-proxy] chain ${chainId}: upstream answer was not JSON`);
-    return null;
+    read = await readJsonBody(res, RPC_PROXY_MAX_UPSTREAM_BYTES);
+  } catch (err) {
+    // A stream that breaks mid-read (the timeout above fires on the body too).
+    console.error(`[rpc-proxy] chain ${chainId}: upstream answer could not be read`, redactedError(err));
+    return unavailable;
   }
+  if (!read.ok) {
+    if (read.status === 413) {
+      console.error(`[rpc-proxy] chain ${chainId}: upstream answer is over ${RPC_PROXY_MAX_UPSTREAM_BYTES} bytes`);
+      return { ok: false, failure: 'too-large' };
+    }
+    console.error(`[rpc-proxy] chain ${chainId}: upstream answer was not JSON`);
+    return unavailable;
+  }
+  return { ok: true, value: read.value };
 }
 
 /** Handle one request. `upstreamFetch` is the test seam. */
@@ -265,20 +292,29 @@ export async function handle(req: Request, env: Env, upstreamFetch: typeof fetch
   });
 
   if (forward.length > 0) {
+    // The per-call budget, charged by weight before anything is spent
+    // upstream. Calls answered here (refusals, the chain id) cost nothing.
+    const units = forward.reduce((sum, { call }) => sum + rpcCallWeight(call.method, call.params), 0);
+    const overBudget = slotRefusalStatus(
+      await takeCallerSlots(req, env.RPC_CALL_RATELIMIT, Math.ceil(units / RPC_PROXY_UNITS_PER_SLOT)),
+    );
+    if (overBudget) return json({ error: overBudget.error }, overBudget.status, cors);
+
     const url = await upstreamUrl(env, secretName);
     if (url === null) return json({ error: 'chain-not-configured' }, 503, cors);
 
     const identity = await verifyRpcChainIdentity(
       {
         getChainId: async () => {
-          const answer = (await postUpstream(
+          const answer = await postUpstream(
             url,
             { jsonrpc: '2.0', id: 1, method: 'eth_chainId', params: [] },
             chainId,
             upstreamFetch,
-          )) as { result?: unknown } | null;
-          if (typeof answer?.result !== 'string') throw new Error('no chain id');
-          return Number(BigInt(answer.result));
+          );
+          const result = answer.ok ? (answer.value as { result?: unknown } | null)?.result : undefined;
+          if (typeof result !== 'string') throw new Error('no chain id');
+          return Number(BigInt(result));
         },
       },
       chainId,
@@ -302,10 +338,13 @@ export async function handle(req: Request, env: Env, upstreamFetch: typeof fetch
       chainId,
       upstreamFetch,
     );
-    if (!Array.isArray(answer)) return json({ error: 'upstream-unavailable' }, 502, cors);
+    if (!answer.ok) {
+      return json({ error: answer.failure === 'too-large' ? 'upstream-answer-too-large' : 'upstream-unavailable' }, 502, cors);
+    }
+    if (!Array.isArray(answer.value)) return json({ error: 'upstream-unavailable' }, 502, cors);
 
     const byId = new Map<number, unknown>();
-    for (const a of answer) {
+    for (const a of answer.value) {
       const id = (a as { id?: unknown } | null)?.id;
       if (typeof id === 'number' && Number.isInteger(id) && id >= 0 && id < forward.length) byId.set(id, a);
     }

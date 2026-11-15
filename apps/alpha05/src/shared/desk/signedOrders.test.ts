@@ -58,7 +58,7 @@ function row(o: SignedOrderWire, hash: string = orderHashOf(o)) {
   return { orderHash: hash, signer: o.signer, order: JSON.parse(canonicalOrderJson(o)), signature: '0x', status: 'active', filledAmount: '0' };
 }
 
-const mine = (o: SignedOrderWire): MySignedOrder => ({ orderHash: orderHashOf(o), order: o });
+const mine = (o: SignedOrderWire, replayPending = false): MySignedOrder => ({ orderHash: orderHashOf(o), order: o, replayPending });
 
 const copy = {
   text: (k: string) => k,
@@ -122,6 +122,11 @@ describe('your signed orders, from the offer book', () => {
     expect(asked[0]).toContain('/signed-offers?chainId=84532&lendingAsset=0x');
     expect(asked[0]).toContain(`signer=${ME}`);
     expect(got).toEqual({ orders: [mine(order())], unread: 2, truncated: true });
+  });
+
+  it('carries the book’s re-check flag to the row, and only a true one', () => {
+    expect(mySignedOrderFrom({ ...row(order()), replayPending: true }, ME as Hex, market)).toEqual(mine(order(), true));
+    expect(mySignedOrderFrom({ ...row(order()), replayPending: 'yes' }, ME as Hex, market)).toEqual(mine(order()));
   });
 
   it('refuses an answer without an order list', async () => {

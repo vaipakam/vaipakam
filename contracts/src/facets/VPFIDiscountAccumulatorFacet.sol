@@ -175,6 +175,120 @@ contract VPFIDiscountAccumulatorFacet {
         return (e.effTier, e.effBps);
     }
 
+    // ─── #3562 lender entry standing ─────────────────────────────────────
+
+    /// @notice A lender position's holder changed and their standing at
+    ///         entry was recorded: their effective tier and its discount
+    ///         (after the uniform ceiling) at that moment.
+    event LenderEntryStamped(uint256 indexed loanId, address indexed holder, uint8 tier, uint16 bps);
+
+    /**
+     * @notice #3562 — record `holder`'s fee-discount standing as they take
+     *         the lender position of `loanId`. The ONE writer of
+     *         `Storage.lenderEntryDiscount`.
+     * @dev    Gated to internal cross-facet calls. `VaipakamNFTFacet` calls
+     *         it whenever a loan's live lender token gets a holder.
+     *
+     *         `carryLower` false — a new holding with its own interest slice:
+     *         the token minted for a loan (origination, a sale's migration, a
+     *         refinance's new loan) or an offer's token becoming a loan's.
+     *         The record is the holder's standing now. A past holder's sale
+     *         claim pays the loan's own fee (`LibInterestLedger.takeForSellers`),
+     *         so the new holder's discount reaches only interest they hold.
+     *
+     *         `carryLower` true — a plain transfer of the token. It splits no
+     *         interest, so the receiver is paid on interest accrued before
+     *         they held the position; the record becomes the LOWER of the
+     *         recorded figure and the receiver's standing now. A transfer can
+     *         therefore keep or lower the figure, never raise it, and a self
+     *         transfer or a round trip cannot re-anchor a stake taken late.
+     *         A loan with no record carries 0.
+     */
+    function stampLenderEntry(uint256 loanId, address holder, bool carryLower) external onlyInternal {
+        (uint8 tier, uint16 bps) = _standing(holder);
+        LibVaipakam.LenderEntryDiscount storage rec = LibVaipakam.storageSlot().lenderEntryDiscount[loanId];
+        if (carryLower && rec.bps < bps) (tier, bps) = (rec.tier, rec.bps);
+        rec.holder = holder;
+        rec.tier = tier;
+        rec.bps = bps;
+        rec.at = uint40(block.timestamp);
+        emit LenderEntryStamped(loanId, holder, tier, bps);
+    }
+
+    /**
+     * @notice #3562 — the yield-fee hold discount `lender` gets on `loanId`:
+     *         the lower of their discount when they took the lender position
+     *         and their discount now, each after the uniform ceiling. 0 when
+     *         no entry is recorded for `lender` on this loan.
+     * @dev    Gated to internal cross-facet calls; the fee path reaches it
+     *         through `LibVPFIDiscount.lenderHoldTierDiscountBps`, which also
+     *         applies the consent gate's caller-side rules. The entry figure
+     *         is the discount the holder qualified for then, so a later raise
+     *         of the tier table does not lift it, while a later cut lowers
+     *         the figure for now, which the lower of the two then takes.
+     */
+    function lenderHoldDiscountBps(uint256 loanId, address lender)
+        external
+        view
+        onlyInternal
+        returns (uint16 bps)
+    {
+        LibVaipakam.LenderEntryDiscount memory entry =
+            LibVaipakam.storageSlot().lenderEntryDiscount[loanId];
+        if (entry.holder != lender || entry.bps == 0) return 0;
+        (, uint16 nowBps) = _standing(lender);
+        return entry.bps < nowBps ? entry.bps : nowBps;
+    }
+
+    /// @notice #3562 — what an app needs to show a lender their expected
+    ///         hold discount on `loanId` and why it is what it is.
+    /// @dev    `entryHolder` is the holder the entry was recorded for (0 =
+    ///         none yet). `nowTier` / `nowBps` are `lender`'s standing now.
+    ///         `holdBps` is the lower of the entry and now when the entry
+    ///         names `lender`, else 0. It is the hold slice only: the fee path
+    ///         also requires the lender's discount consent and adds the Full
+    ///         tariff's bonus, both under the uniform ceiling. Public read.
+    struct LenderHoldView {
+        address entryHolder;
+        uint8 entryTier;
+        uint16 entryBps;
+        uint40 enteredAt;
+        uint8 nowTier;
+        uint16 nowBps;
+        uint16 holdBps;
+    }
+
+    /// @notice #3562 — `lender`'s hold discount on `loanId`, with the entry
+    ///         and current figures it is taken from. See {LenderHoldView}.
+    function lenderHoldDiscountView(uint256 loanId, address lender)
+        external
+        view
+        returns (LenderHoldView memory v)
+    {
+        LibVaipakam.LenderEntryDiscount memory entry =
+            LibVaipakam.storageSlot().lenderEntryDiscount[loanId];
+        v.entryHolder = entry.holder;
+        v.entryTier = entry.tier;
+        v.entryBps = entry.bps;
+        v.enteredAt = entry.at;
+        (v.nowTier, v.nowBps) = _standing(lender);
+        if (entry.holder == lender) v.holdBps = entry.bps < v.nowBps ? entry.bps : v.nowBps;
+    }
+
+    /// @dev `user`'s effective tier and discount now, after the uniform
+    ///      ceiling: the canonical chain resolves the three gates here, a
+    ///      mirror reads the tier the canonical chain last pushed.
+    function _standing(address user) private view returns (uint8 tier, uint16 bps) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.isCanonicalVpfiChain) {
+            TierExplanation memory e = _resolve(s, user, false);
+            (tier, bps) = (e.effTier, e.effBps);
+        } else {
+            (tier, bps) = LibVPFIDiscount.effectiveTierAndBps(user);
+        }
+        if (bps > LibVaipakam.MAX_FEE_DISCOUNT_BPS) bps = uint16(LibVaipakam.MAX_FEE_DISCOUNT_BPS);
+    }
+
     /// @notice #3459 — which holding rule keeps a tier below the tier the
     ///         counted balance alone would reach.
     /// @dev    None: nothing does. NoHolding: there is no current holding.

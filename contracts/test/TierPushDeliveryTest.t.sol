@@ -9,10 +9,10 @@ import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {CcipMessenger} from "../src/crosschain/CcipMessenger.sol";
 import {VaipakamRewardMessenger} from "../src/crosschain/VaipakamRewardMessenger.sol";
-import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {MockCcipRouter} from "./mocks/MockCcipRouter.sol";
 
 /// @dev A messenger stand-in whose quote burns every unit of gas it is
@@ -173,12 +173,30 @@ contract TierPushDeliveryTest is SetupTest {
     }
 
     /// @dev Age the stake past the min-history gate and roll up: tier 1 is
-    ///      committed and delivered to both lanes.
+    ///      committed, and (#1277) left owed on both lanes, since a first
+    ///      discount is a raise the protocol budget never pays. The user then
+    ///      pays to deliver it on both lanes.
     function _reachTierOne() internal {
         vm.warp(block.timestamp + 3 days + 1);
+        uint256 budgetBefore = pb.getProtocolBroadcastBudget();
         vm.prank(user);
         VPFIDiscountFacet(address(diamond)).depositVPFIToVault(1);
+        assertEq(router.pendingCount(), 0, "a first discount is not budget-paid");
+        assertTrue(_lane(MIRROR_A).owed, "raise owed");
+        assertFalse(_lane(MIRROR_A).budgetPays, "and only a paying caller delivers it");
+        _payRaise();
         assertEq(router.pendingCount(), 2, "tier 1 went out on both lanes");
+        assertEq(pb.getProtocolBroadcastBudget(), budgetBefore, "caller-paid: the budget was not touched");
+    }
+
+    /// @dev The user pays for both lanes of an owed raise.
+    function _payRaise() internal {
+        vm.deal(user, 2 * FEE);
+        vm.prank(user);
+        pb.deliverTierPush{value: 2 * FEE}(user);
+        assertEq(user.balance, 0, "exactly the two fees spent");
+        assertFalse(_lane(MIRROR_A).owed);
+        assertFalse(_lane(MIRROR_B).owed);
     }
 
     function _lane(uint256 chainId) internal view returns (ProtocolBroadcastFacet.TierLaneStatus memory l) {
@@ -257,9 +275,12 @@ contract TierPushDeliveryTest is SetupTest {
         assertEq(pb.getProtocolBroadcastBudget(), 0, "the budget was not touched");
     }
 
-    // ─── Spacing ────────────────────────────────────────────────────────
+    // ─── Lowers only (#1277) ────────────────────────────────────────────
 
-    function test_ConsentToggle_RaiseIsSpaced_DowngradeIsNot() public {
+    /// @dev The consent toggle of #1277: dropping the tier is budget-paid at
+    ///      once; raising it back is never budget-paid, however long it
+    ///      waits, and goes out only when a caller pays.
+    function test_ConsentToggle_DropIsBudgetPaid_RaiseIsNot() public {
         _reachTierOne();
         uint256 budgetBefore = pb.getProtocolBroadcastBudget();
 
@@ -267,43 +288,66 @@ contract TierPushDeliveryTest is SetupTest {
         vm.startPrank(user);
         VPFIDiscountFacet(address(diamond)).setVPFIDiscountConsent(false);
         VPFIDiscountFacet(address(diamond)).pokeMyTier();
-        assertEq(router.pendingCount(), 4, "downgrade not spaced");
+        assertEq(router.pendingCount(), 4, "downgrade sent at once");
+        assertEq(pb.getProtocolBroadcastBudget(), budgetBefore - 2 * FEE, "from the budget");
 
-        // Consent on then poke: a raise inside the window stays owed.
+        // Consent on then poke: the raise stays owed.
         VPFIDiscountFacet(address(diamond)).setVPFIDiscountConsent(true);
         vm.expectEmit(true, true, true, true, address(diamond));
-        emit ProtocolBroadcastFacet.TierPushDeferred(user, MIRROR_A, 3, ProtocolBroadcastFacet.TierPushDeferral.Spacing);
+        emit ProtocolBroadcastFacet.TierPushDeferred(user, MIRROR_A, 3, ProtocolBroadcastFacet.TierPushDeferral.RaiseUnpaid);
         VPFIDiscountFacet(address(diamond)).pokeMyTier();
         vm.stopPrank();
-        assertEq(router.pendingCount(), 4, "raise spaced");
-        assertEq(pb.getProtocolBroadcastBudget(), budgetBefore - 2 * FEE, "the loop cost two fees, not more");
-
+        assertEq(router.pendingCount(), 4, "raise not sent");
         ProtocolBroadcastFacet.TierLaneStatus memory a = _lane(MIRROR_A);
         assertTrue(a.owed);
-        assertEq(a.budgetEligibleAt, a.delivered.sentAt + 1 days, "eligible one window after the last send");
+        assertFalse(a.budgetPays, "a raise is never budget-paid");
 
-        // Toggling again inside the window: the downgrade target matches
-        // what the lanes hold, so they settle without a message.
+        // No window opens it: a month later an unpaid delivery still sends nothing.
+        vm.warp(block.timestamp + 30 days);
+        vm.prank(stranger);
+        pb.deliverTierPush(user);
+        assertEq(router.pendingCount(), 4, "still not sent");
+        assertEq(pb.getProtocolBroadcastBudget(), budgetBefore - 2 * FEE, "the budget paid only the drop");
+
+        // Toggling off again: the lanes already hold tier 0, so they settle
+        // without a message.
         vm.startPrank(user);
         VPFIDiscountFacet(address(diamond)).setVPFIDiscountConsent(false);
         VPFIDiscountFacet(address(diamond)).pokeMyTier();
         vm.stopPrank();
         assertEq(router.pendingCount(), 4, "no message for a lane that already holds tier 0");
         assertFalse(_lane(MIRROR_A).owed);
-
-        // After the window the raise goes out, budget-paid, on anyone's call.
-        vm.prank(user);
-        VPFIDiscountFacet(address(diamond)).setVPFIDiscountConsent(true);
-        vm.prank(user);
-        VPFIDiscountFacet(address(diamond)).pokeMyTier();
-        vm.warp(block.timestamp + 1 days);
-        vm.prank(stranger);
-        pb.deliverTierPush(user);
-        assertEq(router.pendingCount(), 6, "raise delivered after the window");
-        assertFalse(_lane(MIRROR_B).owed);
     }
 
-    function test_CallerFundedRaise_SkipsSpacing() public {
+    /// @dev The drain bound: however often the tier is toggled, the budget
+    ///      pays one drop per lane for each raise a caller paid for, so the
+    ///      churner spends at least what the budget spends.
+    function test_ConsentChurn_BudgetNeverOutspendsTheChurner() public {
+        _reachTierOne();
+        uint256 budgetBefore = pb.getProtocolBroadcastBudget();
+        uint256 callerSpent = 2 * FEE; // the first raise, in _reachTierOne
+        for (uint256 i; i < 5; ++i) {
+            vm.startPrank(user);
+            VPFIDiscountFacet(address(diamond)).setVPFIDiscountConsent(false);
+            VPFIDiscountFacet(address(diamond)).pokeMyTier();
+            VPFIDiscountFacet(address(diamond)).setVPFIDiscountConsent(true);
+            VPFIDiscountFacet(address(diamond)).pokeMyTier();
+            // Unpaid toggles in between cost the budget nothing more.
+            VPFIDiscountFacet(address(diamond)).setVPFIDiscountConsent(false);
+            VPFIDiscountFacet(address(diamond)).pokeMyTier();
+            VPFIDiscountFacet(address(diamond)).setVPFIDiscountConsent(true);
+            VPFIDiscountFacet(address(diamond)).pokeMyTier();
+            vm.stopPrank();
+            _payRaise();
+            callerSpent += 2 * FEE;
+        }
+        uint256 budgetSpent = budgetBefore - pb.getProtocolBroadcastBudget();
+        assertEq(budgetSpent, 5 * 2 * FEE, "one drop per lane per paid raise");
+        assertLe(budgetSpent, callerSpent, "the budget never outspends the churner");
+    }
+
+    /// @dev A raise goes out the moment a caller pays for it.
+    function test_CallerFundedRaise_Delivers() public {
         _reachTierOne();
         vm.startPrank(user);
         VPFIDiscountFacet(address(diamond)).setVPFIDiscountConsent(false);
@@ -312,13 +356,27 @@ contract TierPushDeliveryTest is SetupTest {
         VPFIDiscountFacet(address(diamond)).pokeMyTier();
         vm.stopPrank();
         assertTrue(_lane(MIRROR_A).owed);
+        uint256 budgetBefore = pb.getProtocolBroadcastBudget();
+        _payRaise();
+        assertEq(router.pendingCount(), 6, "raise delivered on both lanes");
+        assertEq(pb.getProtocolBroadcastBudget(), budgetBefore, "caller-paid");
+    }
 
-        vm.deal(user, 1 ether);
+    /// @dev A push under a new tier-table version reinstates a discount on a
+    ///      mirror (which reads a cached tier from another version as none),
+    ///      so it is not budget-paid even when its bps is lower.
+    function test_NewTableVersion_LowerBps_IsNotBudgetPaid() public {
+        _reachTierOne();
+        uint16 bpsBefore = _lane(MIRROR_A).delivered.bps;
+        ConfigFacet(address(diamond)).setVpfiTierDiscountBps(bpsBefore - 1, 0, 0, 0);
+        uint256 budgetBefore = pb.getProtocolBroadcastBudget();
         vm.prank(user);
-        pb.deliverTierPush{value: 2 * FEE}(user);
-        assertFalse(_lane(MIRROR_A).owed);
-        assertFalse(_lane(MIRROR_B).owed);
-        assertEq(user.balance, 1 ether - 2 * FEE);
+        VPFIDiscountFacet(address(diamond)).pokeMyTier();
+        ProtocolBroadcastFacet.TierLaneStatus memory a = _lane(MIRROR_A);
+        assertTrue(a.owed, "the new version is owed");
+        assertFalse(a.budgetPays, "a new version is never budget-paid");
+        assertEq(router.pendingCount(), 2, "nothing sent");
+        assertEq(pb.getProtocolBroadcastBudget(), budgetBefore);
     }
 
     // ─── Gas ────────────────────────────────────────────────────────────
@@ -392,25 +450,7 @@ contract TierPushDeliveryTest is SetupTest {
         assertGt(guarded, 0, "the gas guard refuses the tight limits");
     }
 
-    // ─── Admin ──────────────────────────────────────────────────────────
-
-    function test_Spacing_BoundsAndRole() public {
-        assertEq(pb.getTierPushSpacingSec(), 1 days);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                ProtocolBroadcastFacet.TierPushSpacingOutOfRange.selector,
-                uint32(59 minutes),
-                LibVaipakam.MIN_TIER_PUSH_SPACING_SEC,
-                LibVaipakam.MAX_TIER_PUSH_SPACING_SEC
-            )
-        );
-        pb.setTierPushSpacingSec(59 minutes);
-        pb.setTierPushSpacingSec(2 hours);
-        assertEq(pb.getTierPushSpacingSec(), 2 hours);
-        vm.prank(stranger);
-        vm.expectRevert();
-        pb.setTierPushSpacingSec(3 hours);
-    }
+    // ─── Surface ────────────────────────────────────────────────────────
 
     function test_DeliverOnMirror_Refused() public {
         VPFITokenFacet(address(diamond)).setCanonicalVPFIChain(false);

@@ -2,8 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {console} from "forge-std/console.sol";
-import {PositiveFlowsBase} from "./PositiveFlowsBase.sol";
-import {LibTestTiming} from "../../test/helpers/LibTestTiming.sol";
+import {PositiveFlowsStaged} from "./PositiveFlowsStaged.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibMetricsTypes} from "../../src/libraries/LibMetricsTypes.sol";
 import {LibOfferMatch} from "../../src/libraries/LibOfferMatch.sol";
@@ -32,10 +31,20 @@ import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
  *         The fill path needs two admin switches, `partialFillEnabled` and
  *         `lenderIntentEnabled`. A scenario skips, saying so, when partial
  *         fills are off; it turns the intent switch on for its own run and
- *         puts it back as it found it. Fixture, runner and ids:
- *         {PositiveFlowsBase}.
+ *         puts it back as it found it. Fixture and ids: {PositiveFlowsBase}.
+ *
+ *         Each scenario takes two steps (#3502): the first registers and
+ *         funds the intent and posts the borrower request; the second, once
+ *         both have stood the minimum terms age, has the solver fill it and
+ *         carries the scenario to its end. `run()` is the simulation and
+ *         `stage()` the broadcastable run ({PositiveFlowsStaged},
+ *         `script/positive-flows/run-staged.sh`).
  */
-contract PositiveFlowsLenderIntent is PositiveFlowsBase {
+contract PositiveFlowsLenderIntent is PositiveFlowsStaged {
+    /// @dev What a scenario's first step leaves for its second.
+    string private constant REQUEST = "request";
+    string private constant SWITCH_WAS_ON = "intentSwitchWasOn";
+
     /// @dev The intent's bounds. The 50% LTV ceiling sizes a 1,000 USDC fill
     ///      at about 1 WETH (the fixture prices WETH at $2,000), above the
     ///      protocol's own HF-1.5 floor of about 0.88 WETH: a ceiling looser
@@ -58,24 +67,37 @@ contract PositiveFlowsLenderIntent is PositiveFlowsBase {
             "PF-074, PF-073");
     }
 
-    function _runScenario(uint256 index) internal override {
-        bool partialFill = ConfigFacet(diamond).getPartialFillEnabled();
-        if (!partialFill) {
-            return _skip("partial fills are off (partialFillEnabled=false), so no intent can be filled");
+    /// @dev Register, fund and post; then fill and carry on.
+    function _stepCount(uint256) internal pure override returns (uint256) {
+        return 2;
+    }
+
+    /// @dev The first step turns the intent switch on for the scenario when
+    ///      it is off, and the last puts it back: the scenario's whole run,
+    ///      across stages, is under it, and no other scenario runs in between
+    ///      ({PositiveFlowsStaged}).
+    function _runStep(uint256 index, uint256 step) internal override {
+        if (index > 1) revert("PositiveFlowsLenderIntent: no scenario at index");
+        if (step == 0) {
+            bool partialFill = ConfigFacet(diamond).getPartialFillEnabled();
+            if (!partialFill) {
+                return _skip("partial fills are off (partialFillEnabled=false), so no intent can be filled");
+            }
+            bool intentWasEnabled = LenderIntentFacet(diamond).isLenderIntentEnabled();
+            _keep(SWITCH_WAS_ON, intentWasEnabled ? 1 : 0);
+            if (!intentWasEnabled) _setIntentSwitch(true);
+            if (index == 0) _openLifecycle();
+            else _openRoll();
+            return;
         }
-        bool intentWasEnabled = LenderIntentFacet(diamond).isLenderIntentEnabled();
-        if (!intentWasEnabled) _setIntentSwitch(true);
-
         if (index == 0) _intentLifecycle();
-        else if (index == 1) _intentRoll();
-        else revert("PositiveFlowsLenderIntent: no scenario at index");
-
-        if (!intentWasEnabled) _setIntentSwitch(false);
+        else _intentRoll();
+        if (_kept(SWITCH_WAS_ON) == 0) _setIntentSwitch(false);
     }
 
     // ─── PF-070 / PF-073 / PF-071 / PF-072 ────────────────────────────────
 
-    function _intentLifecycle() internal {
+    function _openLifecycle() internal {
         // PF-070: a bare registration is listed for its owner but not offered
         // to keepers, since it commits no capital.
         _setIntent();
@@ -86,9 +108,12 @@ contract PositiveFlowsLenderIntent is PositiveFlowsBase {
         _requireOwnerRow(true, MAX_EXPOSURE, 0, "PF-070: the funded capital should show in the owner view");
         require(_inKeeperFeed(), "PF-070: a funded intent should be in the keeper feed");
         console.log("Intent registered and funded:", MAX_EXPOSURE);
+        _keep(REQUEST, _postIntentRequest());
+    }
 
+    function _intentLifecycle() internal {
         // PF-073: a solver fills a borrower offer against the intent.
-        uint256 loanId = _fillFromIntent(LOAN_AMOUNT);
+        uint256 loanId = _fillFromIntent(_kept(REQUEST), LOAN_AMOUNT);
         _requireOwnerRow(true, MAX_EXPOSURE - LOAN_AMOUNT, LOAN_AMOUNT,
             "PF-073: the fill should move its principal from capital to live principal");
 
@@ -143,10 +168,14 @@ contract PositiveFlowsLenderIntent is PositiveFlowsBase {
     ///      the lender's interest, net of the treasury's share) become intent
     ///      capital again instead of a wallet payout, and the lender claim is
     ///      consumed. The owner then winds the intent down.
-    function _intentRoll() internal {
+    function _openRoll() internal {
         _setIntent();
         _fundIntent(LOAN_AMOUNT);
-        uint256 loanId = _fillFromIntent(LOAN_AMOUNT);
+        _keep(REQUEST, _postIntentRequest());
+    }
+
+    function _intentRoll() internal {
+        uint256 loanId = _fillFromIntent(_kept(REQUEST), LOAN_AMOUNT);
         require(_intentCapital() == 0, "PF-074: the fill should draw the whole funded capital");
 
         _repayInFull(borrowerKey, loanId);
@@ -216,11 +245,9 @@ contract PositiveFlowsLenderIntent is PositiveFlowsBase {
         require(_intentCapital() == capitalBefore + amount, "PF-070: funding should add to the intent's capital");
     }
 
-    /// @dev `borrower` posts a full-term, full-repay-only borrower offer (the
-    ///      two terms an intent fill requires) and `newLender`, as solver,
-    ///      fills `amount` of it against the intent. The loan must carry what
-    ///      `previewIntent` said it would, inside the intent's bounds.
-    function _fillFromIntent(uint256 amount) internal returns (uint256 loanId) {
+    /// @dev `borrower` posts a full-term, full-repay-only borrower offer: the
+    ///      two terms an intent fill requires.
+    function _postIntentRequest() internal returns (uint256 requestId) {
         LibVaipakam.CreateOfferParams memory request = _borrowerOfferStandard();
         request.interestRateBpsMax = INTEREST_BPS + 100;
         request.useFullTermInterest = true;
@@ -228,13 +255,18 @@ contract PositiveFlowsLenderIntent is PositiveFlowsBase {
         request.collateralAmountMax = REQUEST_COLLATERAL;
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, REQUEST_COLLATERAL);
-        uint256 requestId = OfferCreateFacet(diamond).createOffer(request, type(uint64).max);
+        requestId = OfferCreateFacet(diamond).createOffer(request, type(uint64).max);
         vm.stopBroadcast();
-        // The offer-age rule (#3412): a fill waits until the terms have stood
-        // the minimum age. Steps a simulation only; see {LibTestTiming}.
-        LibTestTiming.waitOutTermsAge(diamond, requestId);
-        LibTestTiming.waitOutIntentAge(diamond, lender, address(usdc), address(weth));
+        console.log("Borrower request posted:", requestId);
+    }
 
+    /// @dev `newLender`, as solver, fills `amount` of request `requestId`
+    ///      against the intent. The loan must carry what `previewIntent` said
+    ///      it would, inside the intent's bounds.
+    function _fillFromIntent(uint256 requestId, uint256 amount) internal returns (uint256 loanId) {
+        // The offer-age rule (#3412): the request and the intent were set in
+        // an earlier step, and the wait between steps ({PositiveFlowsStaged})
+        // has let both stand the minimum age.
         uint256 capitalBefore = _intentCapital();
         uint256 liveBefore = _livePrincipal();
         LibOfferMatch.IntentPreviewResult memory preview = RiskPreviewFacet(diamond).previewIntent(

@@ -1846,15 +1846,17 @@ tier を計算するのは Base です。他のすべてのチェーンは、Bas
 することはありません**。Base 上の tier はすぐに最新になり、他の各
 チェーンには届くまで更新が未配送として残ります。
 
-これらの配送費用はプロトコルが負担しますが、上限が 1 つあります。
+配送費用を誰が負担するかは、tier がどちらに動いたかで決まります。
 
-- **下がった tier** は、予算で支払える限りすぐに送られます。届く
-  までは、そのチェーンは以前のより高い tier を適用し続けます。
-- **上がった tier** や tier 表の変更は、チェーンごとに 1 日 1 回まで
-  しか費用が負担されません（governance 設定で 1 時間〜7 日）。それ
-  までは、そのチェーンは以前の tier を保持します。
-- この待機で保留された更新や、予算で支払えなかった更新は、**待機が終わっても自動では再送されません**。Base 上のティア記録が次に更新されたとき、または誰かがあなたのために配送の呼び出しを行ったときに送られます。
-- この呼び出しは誰でも行えます。待機が終わり予算で支払える場合はプロトコルが支払い、それより前に早く届けたい場合は呼び出した人がクロスチェーン手数料を支払います。コントラクトはこの呼び出しに対応していますが、アプリはまだ提供していません。
+- **下がった tier** は、予算で支払える限りすぐに送られ、費用はプロト
+  コルが負担します。届くまでは、そのチェーンは以前のより高い tier を
+  適用し続けます。
+- **上がった tier** は、チェーンでの最初の割引も含め、プロトコルが
+  費用を負担することはありません。誰かが配送の呼び出しでクロスチェーン
+  手数料を支払ったときに送られます。それまでは、そのチェーンは以前の
+  tier を保持します。tier 表の変更も上がった tier として扱われます。
+- 予算で支払えなかった更新は、**自動では再送されません**。Base 上のティア記録が次に更新されたとき、または誰かがあなたのために配送の呼び出しを行ったときに送られます。上がった tier は配送の呼び出しを待ちます。
+- この呼び出しは誰でも行えます。下がった tier はプロトコルが支払い、上がった tier は呼び出した人がクロスチェーン手数料を支払います。コントラクトはこの呼び出しに対応していますが、アプリはまだ提供していないため、現時点では上がった tier はコントラクトを直接呼び出した場合にのみ他のチェーンに届きます。
 
 次の場合、コピーは数えられなくなり、そのチェーンでは割引がなくなり
 ます。
@@ -1888,8 +1890,6 @@ tier を計算するのは Base です。他のすべてのチェーンは、Bas
   はユーザーごとに各チェーンの状態を示します。予算が不足すると他の
   チェーンが古い tier を長く適用するため、延期を監視して補充して
   ください。
-- 有料の引き上げの間隔ウィンドウ: `setTierPushSpacingSec`（default
-  1 日、1 時間〜7 日）。
 
 **他の各チェーン上:**
 
@@ -1908,9 +1908,7 @@ tier を計算するのは Base です。他のすべてのチェーンは、Bas
   バージョンを進めます。他のチェーンは、どのユーザーのものであれ、
   新しいバージョンを持つ最初の tier 更新でそれを知ります。それ以降、
   古い表で作られたコピーは、そのユーザー自身の更新が届くまで割引
-  なしとして扱われます。これらの更新は引き上げなので、間隔ウィンドウ
-  ごとに 1 回までしか支払われません。表を変更する前に予算を補充して
-  ください。
+  なしとして扱われます。これらの更新はそれぞれ上がった tier なので、費用を支払う呼び出し手だけが届けられます。
 - `setTwaMinStakedDays` はバージョンを進めずに最低保有期間を変更
   します。次の読み取りから有効です。
 
@@ -2035,13 +2033,17 @@ factor を示し、価格のないものは件数を示します。
 
 ### Home: 手数料割引
 
-`setVPFIDiscountConsent` は、このチェーンの Diamond にウォレットごとのフラグを一つ設定します。オフなら保有ティア割引は 0 です。オンなら、借り手のローン開始手数料が受諾時に貸出資産で減額され（VPFI の価格経路が借り手側に関わることはありません）、貸し手のイールド手数料は決済のたびにその時点の実効ティアで割り引かれます。支払い方法は `getVPFIDiscountConfig` に従います。VPFI レートと参照資産の両方が設定されていれば、割引後の手数料は貸し手のボールトから VPFI で引き落とされ、貸し手は利息を全額受け取ります。そうでなければトレジャリー手数料そのものが減額され、VPFI は動きません。決済時にこの引き落としができない場合（有効な価格がない、ボールト内の追跡済みの自由な VPFI が足りない、またはその VPFI が担保としてロックされている）、その決済の手数料には保有ティア割引が適用されません。この呼び出しは `whenNotPaused` なので、グローバル一時停止中はどちらの方向にも閉じられます。オンにするには規約が必要でオフには不要、どちらもミラーへティアを送信しません。借り手の割引は受諾時に貸出資産が流動的な場合にのみ適用され（流動性のないローンは LIF を満額支払います）、どの割引も手数料の 50% が上限です。
+`setVPFIDiscountConsent` は、このチェーンの Diamond にウォレットごとのフラグを一つ設定します。オフなら保有ティア割引は 0 です。オンなら、借り手のローン開始手数料が受諾時に貸出資産で減額され（VPFI の価格経路が借り手側に関わることはありません）、貸し手のイールド手数料は決済のたびにその時点の実効ティアで割り引かれます。支払い方法は `getVPFIDiscountConfig` に従います。VPFI レートと参照資産の両方が設定されていれば、割引後の手数料は貸し手のボールトから VPFI で引き落とされ、貸し手は利息を全額受け取ります。そうでなければトレジャリー手数料そのものが減額され、VPFI は動きません。決済時にこの引き落としができない場合（有効な価格がない、ボールト内の追跡済みの自由な VPFI が足りない、またはその VPFI が担保としてロックされている）、その決済の手数料には保有ティア割引が適用されません。この呼び出しは `whenNotPaused` なので、グローバル一時停止中はどちらの方向にも閉じられます。オンにするには規約が必要でオフには不要、どちらもミラーへティアを送信しません。借り手の割引は受諾時に貸出資産が流動的な場合にのみ適用され（流動性のないローンは LIF を満額支払います）、どの割引も手数料の 50% が上限です。#3562 以降、あるローンでの貸し手の保有ティア割引は、保有者が貸し手ポジションを引き受けたときに記録された割引を超えることはありません（`lenderEntryDiscount`。貸し手トークンに保有者が付くたびに書き込まれ、通常の移転では記録済みの値と受取人の値のうち低いほうが残ります）。
 
 <a id="home-rewards"></a>
 
 ### Home: リワード
 
-見出しの数値は `RewardClaimFacet.simulateClaimInteractionRewards(user, 2)` で、Vault 送付先でクレームを実行し、必ず revert します。`InteractionRewardsSimulation(paid, fromDay, toDay)` が正確な数値を運び、それ以外の revert はクレーム自身の拒否 (`NoInteractionRewardsToClaim`, `InteractionDayGlobalNotFinalized(day)`, `InteractionDayAwaitingDelivery(day)`, `InteractionEmissionsNotStarted`, `EnforcedPause`, `SanctionedAddress`) で、名前で表示されます。どのソースもプレビューを実行できない場合に限り、Home は下限である `previewInteractionRewards` を読み、クレームを保留します。正確な数値がゼロでもクレームは提示されます。プロトコルが何も支払わないクレームを認めるのは、何も支払わなかった報酬日を先へ進む場合だけで、Home はそのことを伝えます。Home は `claimInteractionRewardsTo(2)` でクレームし、1 回の呼び出しで最大 `MAX_INTERACTION_CLAIM_DAYS`（30）日分を支払います。完了したクレームのブロック以降に読み取ったプレビューがまだ金額を返す場合、Home は残りを提示します。報酬エントリーだけから支払うクレームは日付の範囲を示さないため（0 から 0）、Home は日付の代わりにそのことを伝えます。Vault 送付先はコントラクトウォレットを含むすべてのアカウントに渡されます。Default 送付先はコントラクトの呼び出し元にはウォレットへ支払うためです。ボールトに入金され、入金が完了できない場合（まだボールトがない）はウォレットに戻ります。結果はレシートから読み取ります。`InteractionRewardsClaimed` が支払額を示し、同じトランザクションのウォレットと `getUserVaultAddress(user)` への VPFI `Transfer` ログが届いた先を示します。それらの合計が支払額にならない場合、送付先は不明と表示されます。累計クレーム額は表示されません。そのためのユーザー別インデックスルートがまだないためです。
+見出しの数値は `RewardClaimFacet.simulateClaimInteractionRewards(user, 2)` で、Vault 送付先でクレームを実行し、必ず revert します。`InteractionRewardsSimulation(paid, fromDay, toDay)` が正確な数値を運び、それ以外の revert はクレーム自身の拒否 (`NoInteractionRewardsToClaim`, `InteractionDayGlobalNotFinalized(day)`, `InteractionDayAwaitingDelivery(day)`, `InteractionEmissionsNotStarted`, `EnforcedPause`, `SanctionedAddress`) で、名前で表示されます。どのソースもプレビューを実行できない場合に限り、Home は下限である `previewInteractionRewards` を読み、クレームを保留します。正確な数値がゼロでもクレームは提示されます。プロトコルが何も支払わないクレームを認めるのは、何も支払わなかった報酬日を先へ進む場合だけで、Home はそのことを伝えます。Home は `claimInteractionRewardsTo(venue)` でクレームし、1 回の呼び出しで最大 `MAX_INTERACTION_CLAIM_DAYS`（30）日分を支払います。完了したクレームのブロック以降に読み取ったプレビューがまだ金額を返す場合、Home は残りを提示します。報酬エントリーだけから支払うクレームは日付の範囲を示さないため（0 から 0）、Home は日付の代わりにそのことを伝えます。送付先は常に明示的に渡し、`Default`（0）は使いません。`LibAccountShape.isEoaStyle` が本人のアカウント（コードなし、またはちょうど EIP-7702 の委任指定子。`getCode` で読み取り）と判断するアカウントには Vault（2）、コントラクトアカウントには Wallet（1）を渡します。これはプロトコル自身のデフォルトの規則です。詳細モードでは確認の前に変更でき、レシートがそれを示して確定します。Vault はボールトに入金し、入金が完了できない場合（まだボールトがない）はウォレットに戻ります。Wallet はウォレットに送金します。送付先は支払いの届く場所だけを変えるため、どちらを選んでもプレビューは Vault で実行します。保護モードがオンのとき（`ProtectedAccountFacet.getProtectedAccount(user).enabled`）、`RewardClaimFacet` は渡された送付先にかかわらずボールトに届けるため、アプリはボールトを示し、選択肢を出しません。モードが読み取れない場合もボールトを示します。再チェックではモードを読み直し、送付先が変わっていれば確認を表示し直します。結果はレシートから読み取ります。`InteractionRewardsClaimed` が支払額を示し、同じトランザクションのウォレットと `getUserVaultAddress(user)` への VPFI `Transfer` ログが届いた先を示します。それらの合計が支払額にならない場合、送付先は不明と表示されます。累計クレーム額は表示されません。そのためのユーザー別インデックスルートがまだないためです。
+
+待機中の日がなぜ待っているかは、プレビューのブロックで読み取られます。ホームネットワークでは、`RewardAggregatorFacet.isDayReadyToFinalize(day)` が確定をまだ実行できない理由（リストにある報告がない、報告がまだ猶予時間内、予想される送信元リストが使えない）または今実行できることを示します。ミラーでは、`RewardReporterFacet.getBroadcastV2Applied(day)` がホームネットワークの数値が届いたかを示し、配送待ちでは `RewardRemittanceLensFacet.getDayDeliveryState(day)` と `getDayDeliveryParts(day)`（有効化日は `getGovernorCommitState()` で読みます。このネットワークの報告を待つのは、その日以降の日だけです） が、その日がここで価格付けされたか、このネットワークの報告が送られたか、宣言された全体に対して届いた部分を示します。部分ごとに異なる全体を宣言した日は、支払われずにスキップされうる日として開示されます。請求の資金面の拒否はプロトコルの数値とともに名前で示されます：`InteractionPoolExhausted`（新規VPFIのプールが支払い済みで、請求にリサイクル分がなく、解除されない）、`InteractionPoolReservedShortfall` と `RecycleBucketReservedShortfall`（保留中の精算のために予約）、`InteractionRewardBackingShort`（必要量と利用可能量）。`EnforcedPause` は引き続き可能なものとともに示されます。リワード上の役割が設定されていないネットワークでは `finalizeDay` を実行できない（正規フラグが必要）ため、カードは役割が設定されるまでどの日も確定できないことを伝え、手順は示しません。届いた新規VPFIと再利用VPFIは、それぞれ自身の宣言された全体と対比して示されます。その日は両方がそろって初めて開かれるためです。
+
+累計請求の行はインデクサーの `GET /rewards/claimed?chainId=&wallet=` を読みます。これは取り込みのユーザー別・請求日別の台帳から、ウォレットの `InteractionRewardsClaimed` の額（保留分の解放を含む）と `RewardDeliveredToVault` の額を、ブロックの UTC 日で集計します。追いついたパスが時点を記録していない間（`pending: unrecorded`）や、チェーンの一度きりの台帳再生の実行中（`pending: replaying`）は合計を返さず、それ以外は `recordedBefore` を示し、それより前のすべての請求が数えられています。ウォレットにフォールバックしたボールトへの入金は `RewardDeliveredToVault` を発行しないため、ボールト分には含まれません。
 
 <a id="home-rewards-expiry"></a>
 
@@ -2105,7 +2107,7 @@ Borrow は、ERC-20 担保に対する ERC-20 の貸し手オファー（`offerT
 
 ### Borrow: リクエストの条件
 
-Basic は単一値のリクエストを出します。`amount` = `amountMax`、`interestRateBps` = `interestRateBpsMax`、`collateralAmount` = `collateralAmountMax`、`fillMode` 0、`periodicInterestCadence` 0、`allowsPrepayListing` と `allowsParallelSale` は false、`refinanceTargetLoanId` 0、`creatorRiskAndTermsConsent` true です。金額は基本単位へ正確に変換され、金利は最大 10,000 bps です。`durationDays` は `getProtocolConfigBundle` から読む設定上の最大値で上限が決まります。`expiresAt` は 0（キャンセルまで有効）か、確認画面を開いた時点の最新ブロックから決めた時刻で、最大 `MAX_OFFER_EXPIRY_HORIZON`（365日）先までです。`useFullTermInterest` の既定は true、`allowsPartialRepay` は false です。
+Basic は単一値のリクエストを出します。`amount` = `amountMax`、`interestRateBps` = `interestRateBpsMax`、`collateralAmount` = `collateralAmountMax`、`fillMode` 1 (AON)、`periodicInterestCadence` 0、`allowsPrepayListing` と `allowsParallelSale` は false、`refinanceTargetLoanId` 0、`creatorRiskAndTermsConsent` true です。金額は基本単位へ正確に変換され、金利は最大 10,000 bps です。`durationDays` は `getProtocolConfigBundle` から読む設定上の最大値で上限が決まります。`expiresAt` は 0（キャンセルまで有効）か、確認画面を開いた時点の最新ブロックから決めた時刻で、最大 `MAX_OFFER_EXPIRY_HORIZON`（365日）先までです。`useFullTermInterest` の既定は true、`allowsPartialRepay` は false です。
 
 <a id="borrow-request-review"></a>
 
@@ -2123,13 +2125,13 @@ Basic は単一値のリクエストを出します。`amount` = `amountMax`、`
 
 ### Borrow: 範囲付きリクエスト
 
-範囲は `amount`（最小）を `amountMax`（最大）より小さく、`interestRateBps` = `interestRateBpsMax`（一つの金利）、`collateralAmount`（最小のローンの下限）を `collateralAmountMax`（投稿時に保管庫へ移される）以下で送ります。下限が空なら両者を同じ値で送ります。範囲は ERC-20 担保の場合だけ提供します。直接の `acceptOffer` は `collateralAmount` を担保に `amount` を `interestRateBpsMax` で貸し、`collateralAmountMax − collateralAmount` をウォレットに戻します。`getPartialFillEnabled` が true の間、`matchOffers` は両端の間で約定します。`createOffer` のドライランは最大の端でオファー上限を適用し、`MaxLendingAboveCeiling(provided, ceiling)` で拒否します。その上限はレビューに表示します。直接の端は (`amount`, `collateralAmount`) での単一値リクエストの二回目のドライランで確認し、上限より前で止まった応答は不明と表示します。各端の LTV は `calculateLTV(lending, amount, collateral, collateralAmount)` で、`ZeroCollateral` は価値のない担保として扱います。表示するローン開始時のヘルスファクターは、`getDepthTieredLtvEnabled` が false の間は `getMinHealthFactor`、true の間は 1.0 です。マッチはレンダーの按分要求額をロックします。担保がレンジのときは `collateralAmount` まで引き上げ、そうでないときは要求額のままです。そのため最大のマッチは `collateralAmountMax` と `collateralAmount` の両方で表示されます（担保レンジがない場合は、より少なくロックしうるものとして表示）。これを制限するのはローン開始時のチェックだけで、そのチェックの読み取りに失敗した場合はその旨を表示し、省略しません。段階制の体制では、チェックはティアのLTV上限も適用します。`getPartialFillEnabled` が true の間、マッチがロックしない担保は後のマッチのために保管庫に残り、リクエストが閉じたとき（残りの容量が `amount` を下回ったとき）または `cancelOffer` の実行時にのみ返金されます。
+範囲は `amount`（最小）を `amountMax`（最大）より小さく、`interestRateBps` = `interestRateBpsMax`（一つの金利）、`collateralAmount`（最小のローンの下限）を `collateralAmountMax`（投稿時に保管庫へ移される）以下で送ります。下限が空なら両者を同じ値で送ります。範囲は ERC-20 担保の場合だけ提供します。直接の `acceptOffer` は `collateralAmount` を担保に `amount` を `interestRateBpsMax` で貸し、`collateralAmountMax − collateralAmount` をウォレットに戻します。`getPartialFillEnabled` が true の間、`matchOffers` は両端の間で約定します。`createOffer` のドライランは最大の端でオファー上限を適用し、`MaxLendingAboveCeiling(provided, ceiling)` で拒否します。その上限はレビューに表示します。直接の端は (`amount`, `collateralAmount`) での単一値リクエストの二回目のドライランで確認し、上限より前で止まった応答は不明と表示します。各端の LTV は `calculateLTV(lending, amount, collateral, collateralAmount)` で、`ZeroCollateral` は価値のない担保として扱います。表示するローン開始時のヘルスファクターは、`getDepthTieredLtvEnabled` が false の間は `getMinHealthFactor`、true の間は 1.0 です。マッチはレンダーの按分要求額をロックします。担保がレンジのときは `collateralAmount` まで引き上げ、そうでないときは要求額のままです。さらに、リクエストがその額を預けていれば、ローン開始時のチェックの下限まで引き上げます。そのため最大のマッチは `collateralAmountMax` と `collateralAmount` の両方で表示されます（担保レンジがない場合は、より少なくロックしうるものとして表示）。これを制限するのはローン開始時のチェックだけで、そのチェックの読み取りに失敗した場合はその旨を表示し、省略しません。段階制の体制では、チェックはティアのLTV上限も適用します。`getPartialFillEnabled` が true の間、マッチがロックしない担保は後のマッチのために保管庫に残り、リクエストが閉じたとき（残りの容量が `amount` を下回ったとき）または `cancelOffer` の実行時にのみ返金されます。
 
 <a id="borrow-request-fill"></a>
 
 ### Borrow: リクエストの約定方法
 
-`fillMode` は 0（Partial）、1（AON）、2（IOC）のいずれかで、投稿後は変更できません。AON は `amount` = `amountMax` を必要とし（`AonRequiresSingleValueAmount`）、IOC は `expiresAt` ≠ 0 を必要とします（`IocRequiresExpiry`）。フォームは拒否される組み合わせを提示しません。金額、金利、担保は、開いているリクエストで `setOfferAmount`、`setOfferRate`、`setOfferCollateral`、`modifyOffer` により変更できますが、`amountFilled` や `collateralAmountFilled` を下回ることはできません。このアプリはまだこれらを呼び出しません。
+`fillMode` は 0（Partial）、1（AON）、2（IOC）のいずれかで、投稿後は変更できません。AON は `amount` = `amountMax` を必要とし（`AonRequiresSingleValueAmount`）、IOC は `expiresAt` ≠ 0 を必要とします（`IocRequiresExpiry`）。サイズが 1 つの投稿は AON を送ります（#3520）。`LibOfferMatch` は各マッチを `amount` と `amountMax` の残りの間に収めるため、1 つのサイズは常に全量で約定し、Partial と IOC は範囲があるときだけ選べます。フォームは拒否される組み合わせを提示しません。金額、金利、担保は、開いているリクエストで `setOfferAmount`、`setOfferRate`、`setOfferCollateral`、`modifyOffer` により変更できますが、`amountFilled` や `collateralAmountFilled` を下回ることはできません。このアプリはまだこれらを呼び出しません。
 
 <a id="borrow-request-cadence"></a>
 
@@ -2183,7 +2185,7 @@ Lend は、ERC-20 担保に対する ERC-20 の借入リクエスト（`offerTyp
 
 ### Lend: オファーの条件
 
-パートがない貸出オファーは単一値です。`amount` = `amountMax`、`interestRateBps` = `interestRateBpsMax`、`collateralAmount` = `collateralAmountMax`（借り手がロックすべき唯一の担保額）、`fillMode` 0（Advanced で別の方式を指定しない場合。次の節を参照）、`periodicInterestCadence` 0（Advanced でスケジュールを指定しない場合）、`allowsPrepayListing` と `allowsParallelSale` は false、`refinanceTargetLoanId` 0、`creatorRiskAndTermsConsent` は true で、Advanced で選ばない限り Full タリフは設定しません。金額は基本単位に正確に解析され、金利は最大 10,000 bps です。`durationDays` は `getProtocolConfigBundle` から読む設定上の最大値で上限が決まります。`expiresAt` は 0（キャンセルまで有効）か、確認画面を開いた時点の最新ブロックから決めた時刻で、最長 `MAX_OFFER_EXPIRY_HORIZON`（365日）先までです。`useFullTermInterest` の既定は true、`allowsPartialRepay` の既定は false です。
+パートがない貸出オファーは単一値です。`amount` = `amountMax`、`interestRateBps` = `interestRateBpsMax`、`collateralAmount` = `collateralAmountMax`（借り手がロックすべき唯一の担保額）、`fillMode` 1 (AON)（Advanced で別の方式を指定しない場合。次の節を参照）、`periodicInterestCadence` 0（Advanced でスケジュールを指定しない場合）、`allowsPrepayListing` と `allowsParallelSale` は false、`refinanceTargetLoanId` 0、`creatorRiskAndTermsConsent` は true で、Advanced で選ばない限り Full タリフは設定しません。金額は基本単位に正確に解析され、金利は最大 10,000 bps です。`durationDays` は `getProtocolConfigBundle` から読む設定上の最大値で上限が決まります。`expiresAt` は 0（キャンセルまで有効）か、確認画面を開いた時点の最新ブロックから決めた時刻で、最長 `MAX_OFFER_EXPIRY_HORIZON`（365日）先までです。`useFullTermInterest` の既定は true、`allowsPartialRepay` の既定は false です。
 
 <a id="rate-check"></a>
 
@@ -2201,7 +2203,7 @@ Ethereum、BNB Chain、Polygon（および BNB Testnet と Polygon Amoy）では
 
 ### Lend: パートに分けて貸すオファー
 
-パートでは `amount`（1回のマッチで貸せる最小パート）を `amountMax`（全額。`createOffer` がボールトに引き込む）より小さく送ります。`collateralAmount` = `collateralAmountMax` は `amountMax` に対する唯一の要件のままで（そうでなければ `LenderCollateralRangeNotAllowed`）、`interestRateBps` = `interestRateBpsMax` です。貸出オファーへの直接の `acceptOffer` は `collateralAmount` に対して `amountMax` を貸し、それができるのは `amountFilled` が 0 の間だけです（マッチ後は `OfferPartiallyFilled`）。`getPartialFillEnabled` が true の間、`matchOffers` は金額の重なりの中点（最低 `amount`）を、金利の重なりの中点で、少なくとも `collateralAmount × matchAmount ÷ amountMax`（切り捨て。借り手の担保レンジで増えることがあります）に対して貸します。`amountMax − amountFilled` が `amount` を下回ると、残額は貸し手のウォレットに引き出され、オファーは閉じます（`OfferClosed`、理由 `Dust` または `FullyFilled`）。一部約定したオファーへの `cancelOffer` はクールダウンを省き、`amountMax − amountFilled` を返します。`fillMode` はリクエストと同じく 0、1、2 で、AON は `amount` = `amountMax`、IOC は期限を要し、掲載後は変わりません。両方のレッグが流動的なとき、`createOffer` は `amountMax` での下限を下回る `collateralAmount` を `MinCollateralBelowFloor(provided, floor)` で拒否し、確認画面はその下限を示します。表示される LTV は (`amountMax`, `collateralAmount`) での `calculateLTV` ひとつで、パートも端数を除けば同じ比率です。
+パートでは `amount`（1回のマッチで貸せる最小パート）を `amountMax`（全額。`createOffer` がボールトに引き込む）より小さく送ります。`collateralAmount` = `collateralAmountMax` は `amountMax` に対する唯一の要件のままで（そうでなければ `LenderCollateralRangeNotAllowed`）、`interestRateBps` = `interestRateBpsMax` です。貸出オファーへの直接の `acceptOffer` は `collateralAmount` に対して `amountMax` を貸し、それができるのは `amountFilled` が 0 の間だけです（マッチ後は `OfferPartiallyFilled`）。`getPartialFillEnabled` が true の間、`matchOffers` は両オファーが受け入れる最大の金額（2 つの残額の小さい方。借り手の担保でまかなえる額と、ローン開始時のチェックでその担保が裏付けられる最大額が上限。最低 `amount`）を、金利の重なりの中点で、少なくとも `collateralAmount × matchAmount ÷ amountMax`（切り捨て。借り手の担保レンジやローン開始時のチェックの下限で増えることがあります）に対して貸します。`amountMax − amountFilled` が `amount` を下回ると、残額は貸し手のウォレットに引き出され、オファーは閉じます（`OfferClosed`、理由 `Dust` または `FullyFilled`）。一部約定したオファーへの `cancelOffer` はクールダウンを省き、`amountMax − amountFilled` を返します。`fillMode` はリクエストと同じく 0、1、2 で、AON は `amount` = `amountMax`、IOC は期限を要し、掲載後は変わりません。両方のレッグが流動的なとき、`createOffer` は `amountMax` での下限を下回る `collateralAmount` を `MinCollateralBelowFloor(provided, floor)` で拒否し、確認画面はその下限を示します。表示される LTV は (`amountMax`, `collateralAmount`) での `calculateLTV` ひとつで、パートも端数を除けば同じ比率です。
 
 <a id="lend-offer-schedule"></a>
 
@@ -2246,6 +2248,8 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 価格のあるローンでは `getInternalMatchConfigBundle` も読みます。内部マッチングが有効な間、LTVがしきい値からしきい値＋`externalLiquidationPriorityWindowBps` までにあるローンは内部マッチング用に確保され、外部の清算ルートはすべて拒否します（`InternalMatchOnlyBand`）。ページはその範囲を示します。`loanInitiationFeeBpsAtInit` が 0（料率が記録される前に開始したローン）の場合は未記録と表示し、`treasuryFeeBpsAtInit` が 0 の場合は決済が適用する従来の1%として表示します。現物引き渡しの警告はERC-20ローンのみが対象です。NFTレンタルには担保がなく、デフォルトすると借り手の利用が終わり、前払いの賃料はトレジャリーの取り分を差し引いて貸し手へ支払われ、バッファはトレジャリーへ送られます。ページは代わりにそれを示します。
 
 料率はローンのスナップショットです: `treasuryFeeBpsAtInit`、`loanInitiationFeeBpsAtInit`（売却用ローンではなし）、`liquidationLtvBpsAtInit`。片側が Illiquid（`principalLiquidity` または `collateralLiquidity`）のローンには価格に基づく値がありません: プロトコルはそのローンの `calculateHealthFactor` と `calculateLTV` を拒否し、ページは不明ではなくその旨を表示します。`principal` は残りの元本です（一部返済で減ります）。`interestRateBps` と `collateralAmount` も変わり得るため、条件は現在の値で表示します。記録上の元本がない終了済みローンは、内部マッチングでカバーされたかどうかを示し、そうでなければ記録がないことだけを示します。NFT レンタルは 1 日あたりの賃料(`principal`、`prepayAsset` 建て)と、早期返却でも残り日数分すべてが請求されるか(`useFullTermInterest`)を表示します。`getPeriodicInterestEnabled` が false の場合、チェックポイントで担保は売却されないと表示します。進行中のローンで `collateralLiquidity` が Illiquid の場合は現物決済の警告を加えます: デフォルト時は売却せずに担保を貸し手へ移転します。最初のトランザクションは全額返済です（下記）。
+
+進行中の ERC-20 ローンの貸し手側の保有者について、ページは `lenderHoldDiscountView(loanId, wallet)` を読みます: 記録されたエントリー（保有者、ティア、割引、時刻）、ウォレットの現在のティアと割引、そしてエントリーがそのウォレットを指す場合は両者の低いほう、それ以外は 0 となる `holdBps` です。この view を持たない Diamond は `FunctionDoesNotExist` で revert し、ページはそれをゼロではなく未報告として表示します。同じブロックで `getVPFIDiscountConsent`（オンのときだけ保有分が適用されます）、`getVPFIDiscountConfig`（割引の与え方）、`getFeeEntitlement(loanId).lenderMode`（Full は 50% の上限内で 10 ポイントを加えます）を読みます。
 
 <a id="repay"></a>
 
@@ -2493,6 +2497,14 @@ NFTはレンタルの間ずっとあなたのボールトに留まり、レン�
 
 終了すると、合意した日が残っていても、NFTを使う権利はすぐに終わり、取り消せません。レンタル料は終了がチェーンに記録された時点で数えるため、それより前に始まった日は1日分として支払います。全期間の料金ルールでは、どれだけ早く終えても、まだ精算されていない合意済みのすべての日を支払います。期間が終わったあとはバッファから延滞料が引かれます。レンタル料全体の1%に、遅れた日ごとに0.5%を加え、上限は5%で、バッファを超えることはありません。猶予期間を過ぎるとプロトコルは終了を拒み、そのあとレンタルは、残りの日が1日ずつ精算されて終わるか（誰でも行えます）、デフォルトで終わるか、先に起きたほうで終わります。確認画面が示す後の時点は期限でも上限でもありません。後で記録された終了はその時点で数えるため、より多くのレンタル料や高い延滞料が引かれ、戻る分が減ることがあります。戻る分は受け取るまで、請求としてあなた自身のボールトに残ります。
 
+<a id="rewards-programme"></a>
+
+### リワード：このネットワークでプログラムは動いていますか
+
+リワードページの最上部にある一文が、あなたのネットワークでリワードプログラムが動いているかを示します：動いていてリワードを支払うためのVPFIを保有している、動いているが今は支払うものを何も保有していない、開始日がない、示された時刻に開始する、またはネットワークがリワードネットワークを離れたため、そこでは新たに請求できるものが生じない、のいずれかです。請求は、そのネットワークでリワード用にすでに保有されているVPFIからのみ支払われます。VPFIのホームネットワークから資金を受けるネットワークでは、特定の日のために送られたVPFIもその日のリワードを支払えます。この一文はそれを数えないため、そこでは支払えるものが何もないとは決して言いません。この一文の根拠となる事実を読み取れない場合、ページはそう伝え、プログラムを動いているとは決して表示しません。プロトコルが一時停止しているときは、ページはそれも伝えます：リワードの請求と引き出しは止まり、全額返済と部分返済、担保の追加は引き続き利用できます。リワードはあなた自身のプロトコル利用に対するリベートであり、VPFIを保有することへの利回りではありません。
+
+アドバンストモードは、その一文が何に基づくかを一覧にします：このネットワークのリワード上の役割（リワードを集計し資金を出すVPFIのホームネットワーク、ホームネットワークに報告しそこから資金を受けるネットワーク、役割が設定されておらず、設定されるまでリワード日を確定できないネットワーク、または切り離されたネットワーク）、恒久的に退役したネットワークであれば残りのリワードVPFIの行き先とこれまでに送られた量、プログラムの開始時刻、今の請求が引き出せる、リワード用に届けられたVPFIと手数料から再利用されたVPFI（それぞれ保留中の精算が予約した分を差し引いたもの）、リワードVPFIが別のカストディ契約にあるかプロトコル自身の残高にあるか、そして未請求のリワードが削除されうるか、どれだけ後か、です。このネットワークの契約が提供しない事実は、そのように明記されます。ある日のリワードを請求可能にする日次締めが実行されているかどうかは、ページは読み取りません。誰でも実行でき、あなたの請求額が今の請求で支払われる額を示します。リワード用に届けられた分、またはプログラムの残りのプールを超えて保有されているVPFIは、支払い可能額の横に表示され、支払い可能とは数えられません。請求はこの両方の範囲内でしか支払わないためです。
+
 <a id="rewards-vpfi"></a>
 
 ### リワード：ボールトの VPFI
@@ -2511,6 +2523,12 @@ NFTはレンタルの間ずっとあなたのボールトに留まり、レン�
 
 カードは 1 つのブロックで `getVPFIDiscountConsent`、`isCanonicalVpfiChain`、`getEffectiveDiscount` を読みます。`getEffectiveDiscount` は手数料の計算が適用するティアと割引を返します：同意がオフならゼロ、上限は 50%、ほかのネットワークではホームネットワークから送られたコピーです。同じブロックで `explainTier` と `getTwaConfig` も読みます。`explainTier` は同意の有無にかかわらず、計上済み VPFI だけで得られるティア、各保有ルールの数値、有効ティアをそれより低く抑えているルールを返します。カードがそのルールを示すのは、説明が手数料の計算と同じティアになるときだけで、同意がオフのときは、オンにすればどのティアが適用されるかを示します。Advanced では各ルールの数値と `getTwaConfig` が返す設定を表示し、平均の期間と振り返り期間は別々の長さとして示します。表は 1 つのブロックで `getVpfiTierThresholds`、`getVpfiTierDiscountBps`、`getFeesConfig` を読みます。ティア 1〜3 はそのしきい値から、ティア 4 は自身のしきい値を超えたところから始まります。各手数料は基本手数料に（1 − 上限適用後の割引）を掛けたもので、正確に計算されます。表はティアが決まるホームネットワークでのみ表示されます。
 
+<a id="rewards-tier-elsewhere"></a>
+
+### リワード：他のネットワークでのティア
+
+このセクションは1つのブロックで `getTierPushStatus(wallet)`（#1277）を読みます。送信用に最後にコミットされたプッシュ（nonce、ティア、bps、失効、テーブルバージョン）と、各ブロードキャスト先について最後に受け取ったタプル、コミット済みプッシュが未着かどうか、そしてプロトコル予算が支払うかどうかです。予算が支払うのは、そのプッシュがそのレーンの付与を下げる場合だけです。同じブロックで `getEffectiveDiscount`、`getRewardReporterConfig` からのメッセンジャー、そして未着の各レーンについて、コミット済みタプルとブロック時刻でのメッセンジャーの `quoteSendTierUpdateTo` を読みます。見積りがリバートすると、その手数料は不明のままとなり、送信は提示されません。コミット済みのティア、または50%上限適用後のbpsが実効値と異なるとき、記録は遅れています。テーブルバージョンには読み取り手段がないため、更新はどの場合も提示されます。「記録を更新」は `pokeMyTier()` を送り、ティアを再計算してコミットし、予算が支払うレーンに届けます。「他のネットワークに送信」は、未着の各レーンの見積り合計に20%を加えて `deliverTierPush(wallet)` を送ります。呼び出し元の値は、予算が支払うものも含め、未着レーンを宛先順に先に支払うためです。記録が現在のティアと一致し、未着のすべてのレーンに見積りがある間だけ提示され、レビューは両方を読み直し、その値で呼び出しをドライランします。完了カードはレシートのブロックで各レーンの届いたnonceを読み、`callerFunded` 付きの `ProtocolTierBroadcastSent` イベントを合計して支払額を示します。残りは同じ呼び出しで返金されています。まだ `getTierPushSpacingSec()` をルーティングしているDiamondはこのルールより古く、そのレーンは読みません。VPFIのホームでないネットワークやメッセンジャーのないネットワークではレーン一覧が空になり、操作は提示されません。コピーが他のネットワークに届いて適用されたかどうかは、ここではなくそのネットワークで確認します。また他の各ネットワークは、コピーがそのネットワーク自身の最大有効期間（別に設定していなければ60日）を超えると数えなくなるため、メッセージが運ぶ終了時刻より前に終わることがあります。
+
 <a id="rewards-vpfi-sign"></a>
 
 ### リワード：承認の代わりに署名
@@ -2521,7 +2539,19 @@ NFTはレンタルの間ずっとあなたのボールトに留まり、レン�
 
 ### Rate desk：マーケットと金利ラダー
 
-マーケット一覧はインデックスのマーケット集計です。公開中で期限切れでない ERC-20 対 ERC-20 のオファーのうち、売却用と相殺用のビークルを除き、貸出資産・担保資産・期間の組み合わせごとにまとめ、厚みの大きい順に上限件数まで並べ、各側の件数と最良金利（貸し手の最も低い `interestRateBps`、借り手の最も高い `interestRateBpsMax`）を示します。この件数には有効な署名済みオーダーが含まれます。Rate desk はまだ署名済みオーダーを表示しないため、マーケットの件数とラダーに表示される件数が異なる場合、ラダーは両方を示します。ラダーは `excludeExpired`、`excludeSaleVehicles`、`excludeOffsetVehicles` を付けてインデックスからそのマーケットの公開オファーを 50 件ずつ最大 4 ページ読み取り、それ以上あった場合はそう示します。貸し手のオファーは下限金利に、借り手のリクエストは上限（金利と最大金利のうち高い方）に置かれます。各段の未約定額は、各オファーの上限額から約定済みの分を引いたものの合計です。アプリはさらに、自身の時計で期限切れのオファー、インデックスがまだ返したビークル、開設後に移動したローンポジションに結び付いたオファー（#3205）、未約定分のないオファー、条件の異なる行を除外し、理由ごとに件数を示します。中間金利は最良の売り気配と買い気配の平均で、0.1 ベーシスポイント単位で正確に保持されます。最良の買い気配が最良の売り気配以上の場合、ラダーは両側が重なっていると示すだけで、何も行いません。各オファーは自身のページにリンクし、そのページは状態と条件をチェーンから読み取ります。
+マーケット一覧はインデックスのマーケット集計です。公開中で期限切れでない ERC-20 対 ERC-20 のオファーのうち、売却用と相殺用のビークルを除き、貸出資産・担保資産・期間の組み合わせごとにまとめ、厚みの大きい順に上限件数まで並べ、各側の件数と最良金利（貸し手の最も低い `interestRateBps`、借り手の最も高い `interestRateBpsMax`）を示します。この件数には有効な署名済みオーダーが含まれます。Rate desk は署名済みオーダーをラダーとは別に表示します（次の節）。マーケットの件数とラダーに表示される件数が異なる場合、ラダーは両方を示します。ラダーは `excludeExpired`、`excludeSaleVehicles`、`excludeOffsetVehicles` を付けてインデックスからそのマーケットの公開オファーを 50 件ずつ最大 4 ページ読み取り、それ以上あった場合はそう示します。貸し手のオファーは下限金利に、借り手のリクエストは上限（金利と最大金利のうち高い方）に置かれます。各段の未約定額は、各オファーの上限額から約定済みの分を引いたものの合計です。アプリはさらに、自身の時計で期限切れのオファー、インデックスがまだ返したビークル、開設後に移動したローンポジションに結び付いたオファー（#3205）、未約定分のないオファー、条件の異なる行を除外し、理由ごとに件数を示します。中間金利は最良の売り気配と買い気配の平均で、0.1 ベーシスポイント単位で正確に保持されます。最良の買い気配が最良の売り気配以上の場合、ラダーは両側が重なっていると示し、その下のマッチ欄が突き合わせるペアを示します（下の該当節を参照）。各オファーは自身のページにリンクし、そのページは状態と条件をチェーンから読み取ります。
+
+<a id="desk-signed-book"></a>
+
+### Rate desk：マーケットの署名済みオーダー
+
+一覧はマーケットについてインデックスの `/signed-offers` を `signer` なしで読むため、すべてのメーカーのオーダーを含みます。各側で価格の良い 100 行までで、`truncated` を明示します。各行は正規のワイヤ形式に再シリアライズでき、`orderHash` がオーダーから再計算した EIP-712 構造体ハッシュと一致し、マーケットのトークンと期間を示し、署名が 65 バイトの ECDSA 署名である必要があります。それ以外の行は読めない行として数えます。asks は `interestRateBps` の昇順、bids は `interestRateBps` と `interestRateBpsMax` の大きい方の降順に並べ、同じ金利の間ではブックの順序を保ちます。各オーダーの状態は、下で説明するあなた自身の署名済みオーダーと同じ規則で、1 つのブロックで読みます。同じブロックで、アプリはメーカーと拠出資産の組ごとに 1 回 `freeHolding(signer, ERC20, stakeAsset, 0)` を読み、まだ約定できる各オーダーについて残りの約定で引き出される額と比べます。貸し手は上限から約定済みを引いた額、借り手はその残りに対するオーダー自身の比率での担保（切り上げ）です。読み取りに失敗した場合は不明と示し、ゼロとは示しません。各オーダーは空き残高全体と単独で比べるため、同じメーカーの 2 つのオーダーがどちらも足りていると表示されても、ボールトには 1 つ分しかないことがあります。他の人が署名した公開中のオーダーは全量を約定できます。確認画面は `previewSignedOfferAccept(order, signature, acceptor)` を読みます。これは約定が書き込むオファーの受諾プレビューに加え、オーダーのハッシュ、拠出資産、約定がメーカーのボールトから引き出す拠出額、そのボールトの空き残高を返します。拒否（`SignedOfferMakerShort`、`SignedOfferConsumed`、`SignedOfferNonceUsed` など）は名前で示され、同意を止めます。規約の署名はオーダーのハッシュを `offerKey` として結び付けられ、送信は `acceptSignedOffer(order, signature, terms, termsSignature)` です。これはオーダー全体を消費し、メーカーのボールトからオファーを書き込み、1 回のトランザクションでローンを開きます。確認画面は `previewSignedOfferRiskBlocks(order, acceptor)`（#3577）も読みます。これは `previewOfferAcceptBlock` と同じコードで、メーカーのブロック、受け手のブロック、両者が照合されるペアを返します。メーカーのブロックは示されたうえで同意を止め、手順は提示されません。受け手のブロックは、何かに署名する前に、返されたペアに対するリスク手順を開きます。この読み取りが失敗した場合（これを持たない Diamond は `FunctionDoesNotExist` で戻します）、確認画面は `acceptSignedOffer` のドライランが確認を行うと伝え、そこでの拒否（`RiskTierTooLow`、`IlliquidPairNotConsented`、`MidTierPairNotAcknowledged`）は、エラーが受け手を名指ししているときに限り、オーダーのペアに対するリスク手順を開きます。完了カードはオーダーのハッシュに対する Diamond の `SignedOfferFilled` を見つけ、そこからローンを読みます。一部マッチ済みのオーダーは `SignedOfferConsumed` を返し、提示されません。あなた自身のオーダーも提示されません。 応答の `awaitingReplay` は、再編成後の再構築がチェーンから約定と取り消しを読み直す間、インデックスが保留するオーダーの数です（#3411）。0 より大きい数は一覧とともに示し、0 以上の整数でない値は不明と示します。
+
+<a id="desk-match"></a>
+
+### Rate desk：重なりのマッチ
+
+マッチ欄はラダーの重なった段を組み合わせます。最良の買い気配以下の貸し手のオファーと、最良の売り気配以上の借り手のリクエストを組み、同じウォレットのペアと、金利の幅が交わらないペアは除きます。プロトコルがマッチするのは、2 つの下限の高い方が 2 つの上限の低い方以下の場合だけです。両側が重なっていても幅が交わらない場合、マッチ欄は何もマッチできないと示します。1 つのブロックで `getPartialFillEnabled`、`getLoanInitiationFeeBps`、`getLifMatcherFeeBps`、`getCapacityCurve(0)` を読み、スイッチがオンのときだけ、あなたのウォレットを matcher と initiator の両方として `previewMatch(lenderOfferId, borrowerOfferId, matcher, initiator)` を最大 12 ペア、価格の良い順に読みます。プレビューがエラーなしの最初のペアが、プレビューの金額、金利（双方が受け入れる幅の中間）、必要担保とともに示されます。該当がなければ、価格の最も良いペアの拒否が理由とともに示されます。取り分は上限として示され、金額 × 組成手数料率 × マッチャー率です。手数料は借り手の割引後に課され、その割引はプレビューに含まれないためです。カーブの無料枠がゼロを超える場合は容量制限が有効で、マッチは送信者に対して 1 回の約定として数えられます。確認画面は設定、プレビュー、あなたのボールトをブロックごとに読み直し、ウォレットを開く前に `matchOffers` をドライランします。数値が変わった場合は確認し直す必要があります。その後アプリは、あなたのウォレットを matcher とするそのペアの `OfferMatched` を探し、貸し手のボールトの `VaultOutflow` 記録のうち、インセンティブ区分で貸出資産をあなたのウォレットまたはボールトに支払ったものから取り分を測ります。オファーの返金やローン額は別の区分のため、数えられることはありません。先に成立した競合マッチがオファーの残りを減らすと、成立するローンと取り分は確認時より小さくなることがあり、完了カードは成立した内容を示します。ラダーはインデックスを読むため、マッチ済みのペアはチェーンが処理した後も数分間表示されることがあります。接続中のウォレットのオファーを含むペアも除外され、バンドはその旨を示します。それをマッチすると、そのウォレットが貸し手または借り手となり、自身の資金がローンに入るためです。
 
 <a id="offer-terms-wait"></a>
 
@@ -2557,4 +2587,4 @@ NFTはレンタルの間ずっとあなたのボールトに留まり、レン�
 
 ### レートデスク：署名済み注文とチェーン上の取り消し
 
-一覧は、`signer` をあなたのウォレットにしてそのマーケットのインデックスの `/signed-offers` を読みます（片側最大 500 行、`truncated` は明示）。他のメーカーの厚みであなたの注文が押し出されることはありません。各行は 31 フィールドの正準ワイヤ形式に再シリアライズできる必要があり、その `orderHash` は注文から再計算した EIP-712 の構造体ハッシュと一致し、あなたのウォレットとマーケットのトークンと期間を示している必要があります。それ以外の行は読み取れない行として数えます。ブックは有効で期限内とみなす注文しか返さず、チェーンより前後どちらにも遅れることがあるため、各注文の状態は1つのブロックで読みます。`signedOfferFilledAmount(orderHash)` が注文の上限（`amountMax`、ゼロなら `amount`）に達していれば使用済み（直接の約定と `cancelSignedOffer` はどちらも上限を書き込みます）、そうでなく `isSignedOfferNonceUsed(signer, nonce)` なら nonce 取り消し済み、そうでなくブロック時刻がゼロでない `expiresAt` と `deadline` の早いほうを過ぎていれば期限切れ、その値がゼロより大きければ一部約定（マッチングが一部を取り、残りは引き続き約定も取り消しもできます）、それ以外は有効です。1件の取り消しは `cancelSignedOffer(order)` を送信し（署名者のみ）、nonce による取り消しは `invalidateSignedOfferNonce(nonce)` を送信します。後者は掲載中の有効な注文が2件以上それを共有するときに提示され、そのウォレットがその nonce で署名したすべての注文を全マーケットで止めます。プロトコルが一時停止中はどちらも拒否されます。レビューは状態と一時停止を読み、続いてあなたのウォレットからプロトコル自身のドライランを実行します。約定が引き出すはずだった額は、貸し手なら `amountMax`（ゼロなら `amount`）、借り手なら `collateralAmountMax`（または `collateralAmount`）です。一部約定の注文では、レビューは約定済みの割合と、残りがまだ引き出しうる額だけを示します。上限までの残りの元本、借り手なら注文自身の比率でのその担保（切り上げ）です。結果は Diamond から出たトランザクション自身の `SignedOfferCancelled` または `SignedOfferNonceBurned` ログから読み、注文ハッシュまたは nonce とあなたのウォレットで照合します。
+一覧は、`signer` をあなたのウォレットにしてそのマーケットのインデックスの `/signed-offers` を読みます（片側最大 500 行、`truncated` は明示）。他のメーカーの厚みであなたの注文が押し出されることはありません。各行は 31 フィールドの正準ワイヤ形式に再シリアライズできる必要があり、その `orderHash` は注文から再計算した EIP-712 の構造体ハッシュと一致し、あなたのウォレットとマーケットのトークンと期間を示している必要があります。それ以外の行は読み取れない行として数えます。ブックは有効で期限内とみなす注文しか返さず、チェーンより前後どちらにも遅れることがあるため、各注文の状態は1つのブロックで読みます。`signedOfferFilledAmount(orderHash)` が注文の上限（`amountMax`、ゼロなら `amount`）に達していれば使用済み（直接の約定と `cancelSignedOffer` はどちらも上限を書き込みます）、そうでなく `isSignedOfferNonceUsed(signer, nonce)` なら nonce 取り消し済み、そうでなくブロック時刻がゼロでない `expiresAt` と `deadline` の早いほうを過ぎていれば期限切れ、その値がゼロより大きければ一部約定（マッチングが一部を取り、残りは引き続き約定も取り消しもできます）、それ以外は有効です。1件の取り消しは `cancelSignedOffer(order)` を送信し（署名者のみ）、nonce による取り消しは `invalidateSignedOfferNonce(nonce)` を送信します。後者は掲載中の有効な注文が2件以上それを共有するときに提示され、そのウォレットがその nonce で署名したすべての注文を全マーケットで止めます。プロトコルが一時停止中はどちらも拒否されます。レビューは状態と一時停止を読み、続いてあなたのウォレットからプロトコル自身のドライランを実行します。約定が引き出すはずだった額は、貸し手なら `amountMax`（ゼロなら `amount`）、借り手なら `collateralAmountMax`（または `collateralAmount`）です。一部約定の注文では、レビューは約定済みの割合と、残りがまだ引き出しうる額だけを示します。上限までの残りの元本、借り手なら注文自身の比率でのその担保（切り上げ）です。結果は Diamond から出たトランザクション自身の `SignedOfferCancelled` または `SignedOfferNonceBurned` ログから読み、注文ハッシュまたは nonce とあなたのウォレットで照合します。 署名者に限ったこの読み取りでは、インデックスは保留中のオーダーを `replayPending: true` 付きで返します。その行は、再確認が終わるまでオーダーが共有ブックから外れていることを示し、状態は引き続き上記のチェーン読み取りから得ます。まだ約定できる最新の状態のときだけ、署名がまだ約定できることを添え、取り消しを提示したままにします。

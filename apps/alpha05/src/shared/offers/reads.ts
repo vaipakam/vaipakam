@@ -71,11 +71,58 @@ export const ACCEPT_ERRORS = [
   // #3443 — the offer's terms were set less than the minimum age ago;
   // clears by itself within seconds.
   'TermsTooFresh',
+  // #3552 — reported only by `previewSignedOfferAccept`, the preview of a
+  // signed offer that is not yet stored; `previewAccept` never returns them.
+  'SignedOfferMalformed',
+  'SignedOfferDeadlinePassed',
+  'SignedOfferNonceUsed',
+  'SignedOfferConsumed',
+  'SignedOfferBadSignature',
+  'SignedOfferUnsupportedShape',
+  'SignedOfferMakerShort',
+  'SignedOfferBelowMinimumValue',
 ] as const;
 export type AcceptErrorName = (typeof ACCEPT_ERRORS)[number] | 'Unrecognised';
 
 export function acceptErrorName(code: number): AcceptErrorName {
   return ACCEPT_ERRORS[code] ?? 'Unrecognised';
+}
+
+/** The signed-order codes (#3552): reported only by
+ *  `previewSignedOfferAccept`, the preview of a signed order's fill. */
+const SIGNED_ONLY: ReadonlySet<AcceptErrorName> = new Set<AcceptErrorName>([
+  'SignedOfferMalformed',
+  'SignedOfferDeadlinePassed',
+  'SignedOfferNonceUsed',
+  'SignedOfferConsumed',
+  'SignedOfferBadSignature',
+  'SignedOfferUnsupportedShape',
+  'SignedOfferMakerShort',
+  'SignedOfferBelowMinimumValue',
+]);
+
+/** Codes this build reads with `previewAccept` and that call never reports:
+ *  the retired vault-version code (#3204) and the signed-offer codes (#3552).
+ *  Should one arrive from that call it reads as a refusal this build cannot
+ *  name; the signed codes are stated only for a signed order's preview. */
+const NOT_FROM_PREVIEW_ACCEPT: ReadonlySet<AcceptErrorName> = new Set<AcceptErrorName>([
+  'RetiredVaultUpgradeRequired',
+  'SignedOfferMalformed',
+  'SignedOfferDeadlinePassed',
+  'SignedOfferNonceUsed',
+  'SignedOfferConsumed',
+  'SignedOfferBadSignature',
+  'SignedOfferUnsupportedShape',
+  'SignedOfferMakerShort',
+  'SignedOfferBelowMinimumValue',
+]);
+
+/** The refusal as the page states it: a code the preview that was read
+ *  never reports reads as `Unrecognised`, every other code as itself.
+ *  `signed` is true when the code came from a signed order's preview. */
+export function statedAcceptError(code: AcceptErrorName, signed = false): AcceptErrorName {
+  if (signed && SIGNED_ONLY.has(code)) return code;
+  return NOT_FROM_PREVIEW_ACCEPT.has(code) ? 'Unrecognised' : code;
 }
 
 export interface AcceptPreview {

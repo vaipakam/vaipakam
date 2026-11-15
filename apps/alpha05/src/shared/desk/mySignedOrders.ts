@@ -14,6 +14,13 @@
  * Each row is read as the book's own wire form, and kept only when its hash
  * is the order's own and it names this viewer and this market; anything
  * else is counted as unreadable and said, never dropped silently.
+ *
+ * After the chain replaces recent blocks, the book re-reads the fills and
+ * cancels of the orders it holds (#3411). While it does, it leaves those
+ * orders out of the shared book and counts them (`awaitingReplay`); a
+ * signer-scoped read still lists them, flagged `replayPending`, so the maker
+ * keeps the way to cancel. The flag is carried to the row so the page can
+ * say the order is held back; its standing still comes from the chain.
  */
 import type { Abi, PublicClient } from 'viem';
 import { SignedOfferFacetABI } from '@vaipakam/contracts/abis';
@@ -37,6 +44,10 @@ export interface SignedMarket {
 export interface MySignedOrder {
   orderHash: Hex;
   order: SignedOrderWire;
+  /** The book is re-checking this order against the chain after a
+   *  replacement of recent blocks, and leaves it out of the shared book
+   *  until it has (a signer-scoped read only). */
+  replayPending: boolean;
 }
 
 export interface MySignedOrders {
@@ -48,8 +59,25 @@ export interface MySignedOrders {
   truncated: boolean;
 }
 
+/**
+ * The book's count of a market's orders held back for a re-check against
+ * the chain: 0 when the book does not send it, null when it sends a value
+ * this app cannot read, so a malformed answer is said rather than read as
+ * none held back.
+ */
+export function replayCountFrom(v: unknown): number | null {
+  if (v === undefined) return 0;
+  return typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null;
+}
+
 /** One book row as an order of `signer`'s on `market`, or null. */
 export function mySignedOrderFrom(row: unknown, signer: Hex, market: SignedMarket): MySignedOrder | null {
+  return signedOrderRowFrom(row, market, signer);
+}
+
+/** One book row as an order on `market`, or null: of `signer`'s only, or
+ *  of any maker's when `signer` is null. */
+export function signedOrderRowFrom(row: unknown, market: SignedMarket, signer: Hex | null): MySignedOrder | null {
   if (row === null || typeof row !== 'object') return null;
   const r = row as Record<string, unknown>;
   if (typeof r.orderHash !== 'string' || !HASH.test(r.orderHash)) return null;
@@ -59,10 +87,10 @@ export function mySignedOrderFrom(row: unknown, signer: Hex, market: SignedMarke
   if ('error' in parsed) return null;
   const order = parsed.order;
   if (orderHashOf(order) !== r.orderHash) return null;
-  if (order.signer !== signer.toLowerCase()) return null;
+  if (signer !== null && order.signer !== signer.toLowerCase()) return null;
   if (order.lendingAsset !== market.lending.toLowerCase() || order.collateralAsset !== market.collateral.toLowerCase()) return null;
   if (order.durationDays !== String(market.durationDays)) return null;
-  return { orderHash: r.orderHash as Hex, order };
+  return { orderHash: r.orderHash as Hex, order, replayPending: r.replayPending === true };
 }
 
 /** The viewer's signed orders the book lists on one market. */
@@ -126,10 +154,12 @@ export async function readSignedStandings(
   c: PublicClient,
   diamond: Hex,
   orders: readonly MySignedOrder[],
+  /** The block to read at; the latest when not given. */
+  block?: { number: bigint; timestamp: bigint },
 ): Promise<{ chainNow: number; standings: Map<Hex, SignedStanding>; filled: Map<Hex, bigint> }> {
-  const block = await c.getBlock({ blockTag: 'latest' });
-  const at = { blockNumber: block.number };
-  const chainNow = Number(block.timestamp);
+  const read = block ?? (await c.getBlock({ blockTag: 'latest' }));
+  const at = { blockNumber: read.number };
+  const chainNow = Number(read.timestamp);
   const ask = <T>(p: Promise<unknown>) => answerOrNull(p as Promise<T>);
   const rows = await Promise.all(
     orders.map(async (o) => {

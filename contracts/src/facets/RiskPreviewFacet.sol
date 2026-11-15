@@ -7,6 +7,7 @@ import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibPriorityRouting} from "../libraries/LibPriorityRouting.sol";
 import {LibSaleListing} from "../libraries/LibSaleListing.sol";
+import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
@@ -109,6 +110,51 @@ contract RiskPreviewFacet {
         return LibRiskAccess.previewActorBlock(
             s, s.offers[offerId].creator, _acceptGatePair(s, offerId)
         );
+    }
+
+    /// @notice #3577 — the risk-access gate a FILL of the signed order `o` by
+    ///         `acceptor` faces, before the order is stored. The stored-offer
+    ///         previews ({previewOfferAcceptBlock}, {previewCreatorBlock},
+    ///         {acceptMidTierAckPair}) are keyed on an offer id, which a signed
+    ///         order has only once its fill creates the offer, in the same
+    ///         transaction that is gated.
+    /// @return creatorBlock  The signer's block code (the fill re-gates the
+    ///         order's creator first).
+    /// @return acceptorBlock The taker's block code. Reported separately from
+    ///         the signer's because the taker can clear only their own.
+    /// @return pair  The pair both are gated against, so the app can record a
+    ///         strict-mode mid-tier acknowledgement for the right pair.
+    /// @dev    Same codes as {previewOfferAcceptBlock}: 0 = OK or gate off,
+    ///         1 = tier too low, 2 = illiquid pair needs an armed standing
+    ///         consent, 3 = strict-mode mid-tier pair needs a fresh ack. Every
+    ///         party is read against standing consent only (#3231).
+    ///
+    ///         A signed order is never a lender-sale vehicle (only
+    ///         `EarlyWithdrawalFacet` links a sale offer, and only to an offer
+    ///         it stores itself), so the fill gates both parties against the
+    ///         order's OWN legs, as a normal stored offer is gated
+    ///         ({_ownLegsPair}). Neither the signature, the order's shape nor
+    ///         its funding is checked here: `OfferPreviewFacet.
+    ///         previewSignedOfferAccept` answers those, and an order it refuses
+    ///         never reaches the gate.
+    function previewSignedOfferRiskBlocks(LibSignedOffer.SignedOffer calldata o, address acceptor)
+        external
+        view
+        returns (uint8 creatorBlock, uint8 acceptorBlock, LibRiskAccess.PairId memory pair)
+    {
+        pair = _ownLegsPair(
+            o.lendingAsset,
+            LibVaipakam.AssetType(o.assetType),
+            o.tokenId,
+            o.collateralAsset,
+            LibVaipakam.AssetType(o.collateralAssetType),
+            o.collateralTokenId,
+            o.prepayAsset
+        );
+        if (!LibVaipakam.cfgRiskAccessGateEnabled()) return (0, 0, pair);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        creatorBlock = LibRiskAccess.previewActorBlock(s, o.signer, pair);
+        acceptorBlock = LibRiskAccess.previewActorBlock(s, acceptor, pair);
     }
 
     /// @notice #735 item 3 — the exact risk-access `PairId` that an ACCEPT of
@@ -466,14 +512,34 @@ contract RiskPreviewFacet {
             });
         }
         LibVaipakam.Offer storage o = s.offers[offerId];
+        return _ownLegsPair(
+            o.lendingAsset, o.assetType, o.tokenId, o.collateralAsset, o.collateralAssetType, o.collateralTokenId,
+            o.prepayAsset
+        );
+    }
+
+    /// @dev The pair an offer that is not a lender-sale vehicle is gated
+    ///      against: its own legs. One builder for a stored offer
+    ///      ({_acceptGatePair}) and a signed order not yet stored
+    ///      ({previewSignedOfferRiskBlocks}), so the two cannot classify the
+    ///      same terms differently.
+    function _ownLegsPair(
+        address lendAsset,
+        LibVaipakam.AssetType lendType,
+        uint256 lendTokenId,
+        address collAsset,
+        LibVaipakam.AssetType collType,
+        uint256 collTokenId,
+        address prepayAsset
+    ) private pure returns (LibRiskAccess.PairId memory) {
         return LibRiskAccess.PairId({
-            lendAsset: o.lendingAsset,
-            lendType: o.assetType,
-            lendTokenId: o.tokenId,
-            collAsset: o.collateralAsset,
-            collType: o.collateralAssetType,
-            collTokenId: o.collateralTokenId,
-            prepayAsset: o.prepayAsset
+            lendAsset: lendAsset,
+            lendType: lendType,
+            lendTokenId: lendTokenId,
+            collAsset: collAsset,
+            collType: collType,
+            collTokenId: collTokenId,
+            prepayAsset: prepayAsset
         });
     }
 

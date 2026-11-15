@@ -78,7 +78,12 @@
 //    its cancel or its nonce's burn, as the indexer's lifecycle handlers
 //    retire it, unless a spec holds the book behind the chain
 //    (`POST /__stub/signed-offers { lag: true }`) to show what a lagging
-//    book looks like. Both refused while the posture is `down`;
+//    book looks like. A spec may also mark orders as held for a re-check
+//    after a reorganisation (`{ replay: [orderHash…] }`), as the indexer's
+//    rebuild does (#3411): a shared read leaves them out and counts them in
+//    `awaitingReplay`; a signer-scoped read lists them with
+//    `replayPending: true` and counts them too. Both refused while the
+//    posture is `down`;
 //  - the alert service (the agent Worker, which alpha05 is pointed at here
 //    too): `GET /push/status`, `POST /link/telegram`, `POST /telegram/test`,
 //    `POST /unlink/telegram` and `PUT /thresholds`, answering as the agent
@@ -88,6 +93,10 @@
 //    shared message builders, which is the stronger claim. A spec drives
 //    the bot handshake, the push posture and one forced answer through
 //    `POST /__stub/agent`.
+//
+//  - the indexer's `GET /rewards/claimed?chainId&wallet` (RW-31): the
+//    wallet's lifetime claimed rewards, summed from the chain's own claim and
+//    vault-delivery logs on the claim-day basis. Refused while `down`;
 //
 // Everything a world read would need beyond these lands with the route
 // that reads it, hydrated from the chain the same way.
@@ -131,6 +140,8 @@ const ACTIVITY_TOPICS = new Map(
 const LOAN_INITIATED = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'LoanInitiated'));
 const LOAN_REPAID = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'LoanRepaid'));
 const OFFER_CREATED = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'OfferCreated'));
+const REWARDS_CLAIMED = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'InteractionRewardsClaimed'));
+const REWARD_TO_VAULT = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'RewardDeliveredToVault'));
 const chain = createPublicClient({ transport: viemHttp(ANVIL_URL) });
 
 /** One offer in the indexer's `/offers/active` row shape (amounts as text). */
@@ -490,6 +501,8 @@ let rankingsDown = false;
 let signedBook = new Map();
 /** While true, the book keeps serving a row the chain has retired. */
 let signedBookLags = false;
+/** Order hashes held for a re-check after a reorganisation. */
+let signedReplay = new Set();
 
 const SIGNED_TYPES = { SignedOffer: SIGNED_OFFER_FIELDS };
 const SIGNED_CANCELLED = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'SignedOfferCancelled'));
@@ -587,12 +600,17 @@ async function signedOffers(url) {
   const { cancelled, burned } = signedBookLags ? { cancelled: new Set(), burned: new Set() } : await signedRetirements();
   const now = Math.floor(Date.now() / 1000);
   const rows = [];
+  let awaitingReplay = 0;
   for (const [hash, row] of signedBook) {
     const o = JSON.parse(row.json);
     if (o.lendingAsset !== lending || o.collateralAsset !== collateral || o.durationDays !== String(days)) continue;
     if (signer !== null && o.signer !== signer) continue;
     if ((o.expiresAt !== '0' && Number(o.expiresAt) <= now) || (o.deadline !== '0' && Number(o.deadline) <= now)) continue;
     if (cancelled.has(hash) || burned.has(`${o.signer}:${o.nonce}`)) continue;
+    if (signedReplay.has(hash)) {
+      awaitingReplay += 1;
+      if (signer === null) continue;
+    }
     rows.push({ hash, row, o });
   }
   const side = (t, rate) => rows.filter((r) => r.o.offerType === t).sort((a, b) => rate(a.o, b.o) || a.row.seq - b.row.seq);
@@ -608,8 +626,9 @@ async function signedOffers(url) {
     filledAmount: row.filled.toString(),
     expiresAt: Number(o.expiresAt),
     deadline: Number(o.deadline),
+    ...(signedReplay.has(hash) ? { replayPending: true } : {}),
   }));
-  return { status: 200, body: { chainId: CHAIN_ID, offers, truncated: false } };
+  return { status: 200, body: { chainId: CHAIN_ID, offers, truncated: false, awaitingReplay } };
 }
 
 async function anvil(method, params = []) {
@@ -671,6 +690,55 @@ async function actorActivity(url) {
     }))
     .sort((a, b) => b.blockNumber - a.blockNumber || b.logIndex - a.logIndex);
   return { status: 200, body: { chainId: CHAIN_ID, events, nextBefore: null } };
+}
+
+/** `/rewards/claimed?chainId&wallet` (RW-31): the wallet's lifetime
+ *  claimed rewards, summed from the chain's own `InteractionRewardsClaimed`
+ *  and `RewardDeliveredToVault` logs as the indexer's ledger sums them, on
+ *  the claim-day basis (the UTC day of the block). Recorded through now. */
+async function rewardsClaimed(url) {
+  const wallet = (url.searchParams.get('wallet') ?? '').toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(wallet)) return { status: 400, body: { error: 'wallet must be a 0x-prefixed 20-byte address' } };
+  const logs = await anvil('eth_getLogs', [
+    { address: DEPLOYMENT.diamond, fromBlock: '0x0', toBlock: 'latest', topics: [[REWARDS_CLAIMED, REWARD_TO_VAULT], `0x${wallet.slice(2).padStart(64, '0')}`] },
+  ]);
+  let claimed = 0n;
+  let vaultDelivered = 0n;
+  const days = new Set();
+  const blockDay = new Map();
+  for (const l of logs) {
+    // Both events carry the amount as their first data word.
+    const amount = BigInt(`0x${l.data.slice(2 + (l.topics[0] === REWARDS_CLAIMED ? 128 : 0), 2 + (l.topics[0] === REWARDS_CLAIMED ? 192 : 64))}`);
+    if (l.topics[0] === REWARD_TO_VAULT) {
+      vaultDelivered += amount;
+      continue;
+    }
+    claimed += amount;
+    if (amount === 0n) continue;
+    if (!blockDay.has(l.blockNumber)) {
+      const block = await anvil('eth_getBlockByNumber', [l.blockNumber, false]);
+      blockDay.set(l.blockNumber, Math.floor(Number(block.timestamp) / 86_400));
+    }
+    days.add(blockDay.get(l.blockNumber));
+  }
+  const sorted = [...days].sort((a, b) => a - b);
+  const date = (d) => (d === undefined ? null : new Date(d * 86_400_000).toISOString().slice(0, 10));
+  return {
+    status: 200,
+    body: {
+      chainId: CHAIN_ID,
+      wallet,
+      recordedBefore: new Date().toISOString(),
+      pending: null,
+      totals: {
+        claimed: claimed.toString(),
+        vaultDelivered: vaultDelivered.toString(),
+        claimDays: sorted.length,
+        firstClaimDay: date(sorted[0]),
+        lastClaimDay: date(sorted[sorted.length - 1]),
+      },
+    },
+  };
 }
 
 function readBody(req) {
@@ -766,6 +834,7 @@ const server = http.createServer(async (req, res) => {
       rankingsDown = false;
       signedBook = new Map();
       signedBookLags = false;
+      signedReplay = new Set();
       json(res, 200, { reset: true });
       return;
     }
@@ -977,14 +1046,17 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/__stub/signed-offers' && req.method === 'POST') {
       // { lag: true } keeps serving rows the chain has retired; { lag: false }
-      // follows the chain again.
+      // follows the chain again. { replay: [hash…] } holds those orders for
+      // a re-check after a reorganisation; [] releases them.
       const next = JSON.parse(await readBody(req));
-      if (typeof next.lag !== 'boolean') {
-        json(res, 400, { error: 'signed-offers needs { lag }' });
+      const replayOk = next.replay === undefined || (Array.isArray(next.replay) && next.replay.every((h) => typeof h === 'string' && /^0x[0-9a-f]{64}$/.test(h)));
+      if ((next.lag === undefined && next.replay === undefined) || (next.lag !== undefined && typeof next.lag !== 'boolean') || !replayOk) {
+        json(res, 400, { error: 'signed-offers needs { lag } or { replay: [orderHash] }' });
         return;
       }
-      signedBookLags = next.lag;
-      json(res, 200, { lag: signedBookLags, stored: signedBook.size });
+      if (next.lag !== undefined) signedBookLags = next.lag;
+      if (next.replay !== undefined) signedReplay = new Set(next.replay);
+      json(res, 200, { lag: signedBookLags, replay: signedReplay.size, stored: signedBook.size });
       return;
     }
     if (url.pathname === '/signed-offers' && (req.method === 'GET' || req.method === 'POST')) {
@@ -1043,6 +1115,15 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const r = await rateCandles(url);
+      json(res, r.status, r.body);
+      return;
+    }
+    if (url.pathname === '/rewards/claimed' && req.method === 'GET') {
+      if (posture === 'down') {
+        json(res, 503, { error: 'e2e stand-in: index posture is down' });
+        return;
+      }
+      const r = await rewardsClaimed(url);
       json(res, r.status, r.body);
       return;
     }

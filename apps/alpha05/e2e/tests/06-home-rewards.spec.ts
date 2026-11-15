@@ -7,7 +7,10 @@
  * closed and finalized through the protocol's permissionless entry points.
  * Then, as the lender, on the page:
  *
- *   1. before the days finalize, the claim waits and names the waiting day;
+ *   1. before the days finalize, the claim waits and names the waiting day,
+ *      with what the day waits on (the finalisation's own readiness answer,
+ *      RW-28) and that later days wait behind it; under the global pause the
+ *      claim's refusal names the pause and what stays open;
  *   2. with the claim window off, no removal date is shown;
  *   3. with a window armed and the entry's clock started, the soonest
  *      removal estimate is shown as a date;
@@ -31,6 +34,7 @@ import { compileScript, runForgeScript } from '@vaipakam/anvil-harness/fixture';
 import { finalizeThrough, openLoan, repayInFull } from '@vaipakam/anvil-harness';
 import { ANVIL_URL, anvilRpc, increaseTime } from '../lib/anvil';
 import { scenario } from '../lib/chain';
+import { setIndexPosture } from '../lib/stub';
 import { accountFor } from '../lib/wallets';
 import { connectWallet, expect, test } from '../lib/wallet';
 import type { Page } from '@playwright/test';
@@ -43,6 +47,14 @@ const REWARD_POOL_FUND = 1_000_000n * 10n ** 18n;
 const CLAIM_DAYS = 30;
 const ZERO = '0x0000000000000000000000000000000000000000';
 const ERC20 = parseAbi(['function balanceOf(address) view returns (uint256)']);
+const READINESS = parseAbi(['function isDayReadyToFinalize(uint256 dayId) view returns (bool ready, uint8 reason)']);
+/** The sentence each readiness reason gives (`LibRewardDayReport`). */
+const READINESS_TEXT: Record<number, string> = {
+  0: 'can be finalised now; anyone may run that step.',
+  2: 'No network has reported reward day',
+  3: 'the others have a set time to report first.',
+  4: 'The list of networks expected to report does not let reward day',
+};
 const PREVIEW = parseAbi([
   'function simulateClaimInteractionRewards(address user, uint8 venue)',
   'error InteractionRewardsSimulation(uint256 paid, uint256 fromDay, uint256 toDay)',
@@ -83,7 +95,9 @@ async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }
 
-test('the rewards widget: a waiting day, the removal estimate, an exact claim measured in the vault, then nothing left', async ({ launchWallet }) => {
+test('the rewards widget: a waiting day, the removal estimate, an exact claim measured in the vault, then nothing left, and a claim sent to the wallet from Advanced, with the lifetime claimed totals', async ({
+  launchWallet,
+}) => {
   // A cold compile of the reward script, ~70 day closes and two claims.
   test.setTimeout(900_000);
   const sc = scenario();
@@ -116,13 +130,36 @@ test('the rewards widget: a waiting day, the removal estimate, an exact claim me
   await expect(pending).toHaveAttribute('data-figure', 'waiting', { timeout: 60_000 });
   await expect(pending).toContainText(/Your next rewards wait on reward day \d+/);
   await expect(widget.getByTestId('claim-interaction')).toHaveCount(0);
+  // RW-28: what the day waits on, from the finalisation's own readiness
+  // answer for the day the claim names.
+  const waitingDay = BigInt((await pending.textContent())!.match(/reward day (\d+)/)![1]!);
+  const [, reason] = await sc.pub.readContract({ address: sc.diamond, abi: READINESS, functionName: 'isDayReadyToFinalize', args: [waitingDay] });
+  const wait = widget.getByTestId('rewards-wait');
+  await expect(wait).toHaveAttribute('data-wait', 'finalize');
+  await expect(wait).toContainText(READINESS_TEXT[reason]!);
+  await expect(wait).toContainText('Later days wait behind it. No step of yours clears it; anyone may run the step that does.');
   // 2. The claim window is off on this chain: no date.
   await expect(widget.getByTestId('rewards-expiry')).toHaveAttribute('data-expiry', 'dark');
   await expect(widget).toContainText('Unclaimed rewards are not removed on this network');
   // The tier line reads through the public getter (consent-gated: 0 here).
   await expect(widget).toContainText('Fee-discount tier applied to your fees now: 0');
+  // RW-31: nothing claimed yet, stated against the index's recorded moment.
+  const lifetime = widget.getByTestId('rewards-lifetime');
+  await expect(lifetime).toHaveAttribute('data-lifetime', 'recorded', { timeout: 60_000 });
+  await expect(lifetime).toHaveAttribute('data-claimed', '0');
+  await expect(lifetime).toHaveText('You have not claimed rewards on Base Sepolia yet.');
+  await expect(widget.getByTestId('rewards-lifetime-asof')).toContainText('Counts every claim the index recorded up to');
   await expect(widget).not.toContainText('could not be read');
   await fitsWidth(page);
+
+  // The global pause: the claim's own check is refused by it, named with
+  // what stays open.
+  await sc.diamondWrite('admin', 'pause');
+  await page.reload();
+  await expect(pending).toHaveAttribute('data-figure', 'paused', { timeout: 60_000 });
+  await expect(pending).toContainText('The protocol on Base Sepolia is paused, and the claim’s own check was refused by the pause');
+  await expect(pending).toContainText('Full and partial repayment and adding collateral stay open');
+  await sc.diamondWrite('admin', 'unpause');
 
   await finalizeThrough(sc, (await sc.rewardDay()) - 1);
 
@@ -147,6 +184,8 @@ test('the rewards widget: a waiting day, the removal estimate, an exact claim me
   const walletVpfi = () => sc.pub.readContract({ address: vpfi, abi: ERC20, functionName: 'balanceOf', args: [lender] });
   const [vaultBefore, walletBefore] = await Promise.all([vaultVpfi(), walletVpfi()]);
   const sent = flags.sentTransactions;
+  // RW-26: Basic offers no venue choice; the receipt names the vault.
+  await expect(widget.getByTestId('claim-interaction-venue')).toHaveCount(0);
   await widget.getByTestId('claim-interaction').click();
   const receipt = widget.locator('.receipt');
   await expect(receipt).toContainText('Claim rewards');
@@ -161,6 +200,12 @@ test('the rewards widget: a waiting day, the removal estimate, an exact claim me
   expect(flags.sentTransactions).toBe(sent + 1);
   expect((await vaultVpfi()) - vaultBefore).toBe(exact.amount);
   expect(await walletVpfi()).toBe(walletBefore);
+  // RW-31: the confirmed claim re-reads the lifetime totals at once; all of
+  // it was delivered to the vault.
+  await expect(lifetime).toHaveAttribute('data-claimed', exact.amount.toString(), { timeout: 30_000 });
+  await expect(lifetime).toHaveAttribute('data-vault', exact.amount.toString());
+  await expect(lifetime).toContainText('Claimed on Base Sepolia so far:');
+  await expect(widget).toContainText('Last claim paid on');
 
   // 5. On this deployment the days before the reward arm date are paid
   //    per entry in one claim, so the preview now answers that nothing is
@@ -171,4 +216,54 @@ test('the rewards widget: a waiting day, the removal estimate, an exact claim me
   await expect(pending).toHaveAttribute('data-figure', 'none', { timeout: 60_000 });
   await expect(pending).toContainText('No rewards available to claim on this chain.');
   await expect(widget.getByTestId('claim-interaction')).toHaveCount(0);
+
+  // 6. RW-26: the borrower's own claim, sent to its wallet from Advanced.
+  //    A person's own account starts on its vault; the choice is bound by
+  //    the receipt, re-checked by simulating that venue, and the delivery
+  //    is measured in the wallet with the vault untouched.
+  const borrower = accountFor('borrower').address;
+  const owed = await exactPreview(sc, borrower);
+  expect(owed.amount, 'the borrower earned rewards on the same loan').toBeGreaterThan(0n);
+  const b = await launchWallet('borrower');
+  await b.page.goto('/');
+  await b.page.evaluate(() => localStorage.setItem('app.mode', 'advanced'));
+  await b.page.reload();
+  await connectWallet(b.page);
+  const bWidget = b.page.getByTestId('rewards-widget');
+  await expect(bWidget.getByTestId('rewards-pending')).toHaveAttribute('data-figure', 'exact', { timeout: 60_000 });
+  const venue = bWidget.getByTestId('claim-interaction-venue');
+  await expect(venue).toContainText('Deliver this claim to');
+  await expect(venue.getByTestId('claim-interaction-venue-vault')).toBeChecked();
+  await expect(venue).toContainText('Your vault: not locked; you can withdraw it any time.');
+  // The fixture is VPFI's home network, so vault VPFI sets the tier here.
+  await expect(venue.getByTestId('claim-interaction-venue-tier')).toHaveText(
+    'On this network VPFI in your vault counts toward your fee-discount tier; VPFI in your wallet does not.',
+  );
+  await venue.getByTestId('claim-interaction-venue-wallet').check();
+  const bVault = async () => (await sc.read<readonly [number, bigint, bigint]>('getVPFIDiscountTier', [borrower]))[1];
+  const bWallet = () => sc.pub.readContract({ address: vpfi, abi: ERC20, functionName: 'balanceOf', args: [borrower] });
+  const [bVaultBefore, bWalletBefore] = await Promise.all([bVault(), bWallet()]);
+  await bWidget.getByTestId('claim-interaction').click();
+  await expect(bWidget.getByTestId('claim-interaction-venue')).toHaveCount(0);
+  const bReceipt = bWidget.locator('.receipt');
+  await expect(bReceipt).toContainText('Your wallet, paid straight to it.');
+  await fitsWidth(b.page);
+  await bWidget.getByRole('button', { name: 'Confirm in wallet' }).click();
+  const bFinish = bWidget.locator('[data-phase="measured"]');
+  await expect(bFinish).toHaveAttribute('data-verdict', 'done', { timeout: 60_000 });
+  await expect(bFinish).toContainText('delivered to your wallet');
+  expect((await bWallet()) - bWalletBefore).toBe(owed.amount);
+  expect(await bVault()).toBe(bVaultBefore);
+  // RW-31: the wallet claim counts in the lifetime total, none of it as
+  // delivered to the vault.
+  const bLifetime = bWidget.getByTestId('rewards-lifetime');
+  await expect(bLifetime).toHaveAttribute('data-claimed', owed.amount.toString(), { timeout: 30_000 });
+  await expect(bLifetime).toHaveAttribute('data-vault', '0');
+
+  // RW-31: an index that cannot answer is stated, never read as nothing claimed.
+  await setIndexPosture('down');
+  await b.page.reload();
+  await expect(bLifetime).toHaveAttribute('data-lifetime', 'failed', { timeout: 60_000 });
+  await expect(bLifetime).toContainText('That is not the same as nothing claimed.');
+  await fitsWidth(b.page);
 });

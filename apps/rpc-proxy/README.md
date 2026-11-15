@@ -30,6 +30,13 @@ which the app also reads to size its batches:
   and either one block hash or a numeric range of at most 2,000 blocks.
   Tags such as `latest` are refused, since a tagged range's width cannot be
   known without another call.
+- **Every method has a stated shape** (#1283). A contract call or gas
+  estimate takes a transaction and an optional block, never a third
+  "state override" parameter (that turns a read into a simulation service);
+  account reads take an address and a block; block reads a block and a
+  boolean; `eth_feeHistory` at most 100 blocks and 10 percentiles; the
+  plain reads take no params. Anything else is refused with `-32602` and
+  never forwarded.
 - `eth_chainId` is answered from the route, without asking upstream.
 
 A refused call gets its own JSON-RPC error and the rest of the batch still
@@ -53,9 +60,18 @@ than stopping them.
   `502 upstream-chain-mismatch` and nothing is forwarded.
 - **The Origin check is not authentication.** It stops another site's page
   from using the proxy through a visitor's browser. A script can send any
-  `Origin`, so what bounds a script is the per-IP rate limit
-  (`RPC_CALLER_RATELIMIT`, 300 requests a minute, each carrying at most 50
-  calls).
+  `Origin`, so what bounds a script is two per-IP budgets: one on requests
+  (`RPC_CALLER_RATELIMIT`, 300 a minute, each carrying at most 50 calls)
+  and one on the calls themselves (`RPC_CALL_RATELIMIT`, #1283), charged by
+  weight: a plain read is 1 unit, a contract call 2, a gas estimate 3, a
+  block with its transactions 5, a log scan 10, and a request takes one slot
+  per 25 units it forwards (at least one). So fifty log scans cost twenty
+  times a block poll instead of the same, and 200 slots a minute bound what
+  one address can make the provider do.
+- **Upstream answers are capped.** The proxy reads an upstream answer only
+  up to 8 MiB and answers `502 upstream-answer-too-large` past it, so a
+  heavy answer cannot hold a Worker's memory; the app falls back to the
+  public endpoint for that request.
 - **The rate limit is per Cloudflare location.** Callers spread across many
   addresses can each spend that much. The outer bound is the provider plan
   behind each key: give each `RPC_PROXY_*` key its own plan or spending cap,

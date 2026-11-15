@@ -59,7 +59,7 @@ contract VaipakamNFTFacetTest is Test {
         profileFacet = ProfileFacet(ArtifactDeploy.deploy(type(ProfileFacet).name));
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](5);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](6);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(nftFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -87,6 +87,13 @@ contract VaipakamNFTFacetTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(VaipakamNFTMetadataFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVaipakamNFTMetadataFacetSelectors()
+        });
+        // #3562 — every lender token's holder is recorded by the accumulator
+        // facet, so a Diamond that mints position NFTs must route it.
+        cuts[5] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(VPFIDiscountAccumulatorFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
@@ -494,6 +501,7 @@ import {IERC721Metadata} from "@openzeppelin/contracts/token/ERC721/extensions/I
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 
 /// @dev Simple ERC721 receiver for safe transfer tests
 contract ERC721Receiver is IERC721Receiver {

@@ -137,3 +137,11 @@ See the [audit record](../procedures/FunctionalSpecsCodeVsDocsAudit.md#the-defau
 ## A lender sale no longer forfeits the seller's accrued interest: a spec change made on a recorded owner decision (#1209, #1808, 2026-10-28)
 
 See the [audit record](../procedures/FunctionalSpecsCodeVsDocsAudit.md#a-lender-sale-no-longer-forfeits-the-sellers-accrued-interest-a-spec-change-made-on-a-recorded-owner-decision-1209-1808-2026-10-28).
+
+## The lender's discount takes the lower of entry and settlement: a spec change made on a recorded owner decision (#3562, 2026-11-11)
+
+See the [audit record](../procedures/FunctionalSpecsCodeVsDocsAudit.md#the-lenders-discount-takes-the-lower-of-entry-and-settlement-a-spec-change-made-on-a-recorded-owner-decision-3562-2026-11-11).
+
+## Tier LTV: a default and a ceiling per tier, with no floor: a spec change made on a recorded owner decision (#3547, 2026-11-11)
+
+See the [audit record](../procedures/FunctionalSpecsCodeVsDocsAudit.md#tier-ltv-a-default-and-a-ceiling-per-tier-with-no-floor-a-spec-change-made-on-a-recorded-owner-decision-3547-2026-11-11).

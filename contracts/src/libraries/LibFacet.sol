@@ -161,6 +161,32 @@ library LibFacet {
         LibRevert.bubbleOnFailureTyped(success, ret, fallbackSelector);
     }
 
+    /// @dev #3539 — pulls an offer's or a loan's NFT leg from `owner` into
+    ///      `owner`'s vault through the vault's own deposit routes,
+    ///      {VaultFactoryFacet.vaultDepositERC721} / {vaultDepositERC1155}.
+    ///      Those measure the arrival (the vault owns the ERC-721; the vault's
+    ///      ERC-1155 balance rose by exactly `quantity`) before recording it,
+    ///      so a caller never books an NFT its vault does not hold. One route
+    ///      for every NFT deposit, as {VaultFactoryFacet.vaultDepositERC20} is
+    ///      for ERC-20s. `kind` must be ERC721 or ERC1155; the callers branch
+    ///      on that before calling.
+    function depositNftToVault(
+        LibVaipakam.AssetType kind,
+        address asset,
+        address owner,
+        uint256 tokenId,
+        uint256 quantity
+    ) internal {
+        crossFacetCall(
+            kind == LibVaipakam.AssetType.ERC721
+                ? abi.encodeWithSelector(VaultFactoryFacet.vaultDepositERC721.selector, owner, owner, asset, tokenId)
+                : abi.encodeWithSelector(
+                    VaultFactoryFacet.vaultDepositERC1155.selector, owner, owner, asset, tokenId, quantity
+                ),
+            IVaipakamErrors.VaultDepositFailed.selector
+        );
+    }
+
     /// @dev Mutating variant of {crossFacetCall} that returns the raw
     ///      return-data buffer for the caller to ABI-decode.
     function crossFacetCallReturn(

@@ -1423,6 +1423,17 @@
   },
   {
     "type": "error",
+    "name": "CannotCancelOwnRemoval",
+    "inputs": [
+      {
+        "name": "signer",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "Expired",
     "inputs": [
       {

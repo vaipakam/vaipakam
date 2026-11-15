@@ -1,14 +1,15 @@
 name: Claude Code
 
+# Issue and PR-conversation comments and new issues only (#3541). The two
+# review-comment events are left out on purpose: they run the PULL REQUEST's
+# own copy of this file, so a branch could rewrite it to read the token, and a
+# main-only environment would refuse them. A mention in the PR conversation
+# still reaches the action.
 on:
   issue_comment:
     types: [created]
-  pull_request_review_comment:
-    types: [created]
   issues:
     types: [opened]
-  pull_request_review:
-    types: [submitted]
 
 jobs:
   claude:
@@ -19,12 +20,12 @@ jobs:
     if: |
       (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') &&
         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') &&
-        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') &&
-        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)) ||
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) &&
         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))
+    # #3541: the token is a secret of the `main-only` environment, whose
+    # deployment-branch rule admits only main. Both events above run main's
+    # copy of this file.
+    environment: main-only
     runs-on: ubuntu-latest
     permissions:
       contents: read

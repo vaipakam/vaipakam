@@ -16,6 +16,8 @@ export interface CallRequest {
   abi: Abi;
   functionName: string;
   args: readonly unknown[];
+  /** Native value the call carries (a payable call); none when absent. */
+  value?: bigint;
 }
 
 export function isRevert(e: unknown): boolean {

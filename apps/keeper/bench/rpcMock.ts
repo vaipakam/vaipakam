@@ -972,8 +972,8 @@ export function installRpcMock(): () => void {
     const url = String(
       typeof input === 'string' ? input : (input as { url?: string })?.url ?? '',
     );
-    // Anything that is not our fake RPC endpoint (aggregator quotes, Telegram,
-    // Push) gets a bland 200 rather than a network attempt.
+    // Anything that is not our fake RPC endpoint (aggregator quotes, the
+    // agent's keeper routes, Push) gets a bland 200 rather than a network attempt.
     if (!url.includes('mock-rpc')) {
       return new Response('{}', {
         status: 200,

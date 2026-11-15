@@ -39,7 +39,8 @@ export interface UserThresholds {
   warn_hf: number;
   alert_hf: number;
   critical_hf: number;
-  tg_chat_id: string | null;
+  // No Telegram chat here (#1722): the agent alone holds the wallet-to-chat
+  // links, and the keeper's Telegram alerts go through it.
   push_channel: string | null;
   /** 2-letter ISO 639-1 locale code (`en`, `es`, ...) for the
    *  language to send Telegram / Push notifications in. Defaults to
@@ -71,7 +72,7 @@ export async function listThresholdsForChain(
   try {
     const res = await db
       .prepare(
-        `SELECT wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale, notify_maturity_approaching
+        `SELECT wallet, chain_id, warn_hf, alert_hf, critical_hf, push_channel, locale, notify_maturity_approaching
          FROM user_thresholds
          WHERE chain_id = ?`,
       )
@@ -88,7 +89,7 @@ export async function listThresholdsForChain(
     // preNotifyDays chain read.
     const res = await db
       .prepare(
-        `SELECT wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale
+        `SELECT wallet, chain_id, warn_hf, alert_hf, critical_hf, push_channel, locale
          FROM user_thresholds
          WHERE chain_id = ?`,
       )
@@ -99,52 +100,6 @@ export async function listThresholdsForChain(
       notify_maturity_approaching: 1,
     }));
   }
-}
-
-/** Upsert a user's thresholds. Called from the frontend settings page
- *  via the HTTP handler. */
-export async function upsertThresholds(
-  db: D1Database,
-  // notify_maturity_approaching is read-side only here — writes rely
-  // on the column default (opted in); the agent owns the opt-out
-  // write path.
-  t: Omit<
-    UserThresholds,
-    'tg_chat_id' | 'push_channel' | 'locale' | 'notify_maturity_approaching'
-  > & {
-    tg_chat_id?: string | null;
-    push_channel?: string | null;
-    locale?: string | null;
-  },
-): Promise<void> {
-  const now = Math.floor(Date.now() / 1000);
-  await db
-    .prepare(
-      `INSERT INTO user_thresholds
-         (wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(wallet, chain_id) DO UPDATE SET
-         warn_hf = excluded.warn_hf,
-         alert_hf = excluded.alert_hf,
-         critical_hf = excluded.critical_hf,
-         tg_chat_id = COALESCE(excluded.tg_chat_id, user_thresholds.tg_chat_id),
-         push_channel = COALESCE(excluded.push_channel, user_thresholds.push_channel),
-         locale = COALESCE(excluded.locale, user_thresholds.locale),
-         updated_at = excluded.updated_at`,
-    )
-    .bind(
-      t.wallet.toLowerCase(),
-      t.chain_id,
-      t.warn_hf,
-      t.alert_hf,
-      t.critical_hf,
-      t.tg_chat_id ?? null,
-      t.push_channel ?? null,
-      t.locale ?? 'en',
-      now,
-      now,
-    )
-    .run();
 }
 
 /** Read the notify-state row for a loan. Returns defaults when the
@@ -247,94 +202,6 @@ export async function putPreGraceNotifyState(
     .bind(wallet, chainId, loanId, lastSentTs, ...guard.binds)
     .run();
   assertGuardedWriteLanded(result, `pre_grace_notify_state for chain ${chainId} loan ${loanId}`);
-}
-
-/** 6-digit numeric Telegram handshake code with a 10-minute expiry.
- *  Collisions are exceedingly rare (1-in-10^6 per window) but we
- *  regenerate on ON CONFLICT just in case. */
-export async function issueTelegramLinkCode(
-  db: D1Database,
-  wallet: string,
-  chainId: number,
-): Promise<string> {
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
-  const expiresAt = Math.floor(Date.now() / 1000) + 600;
-  try {
-    await db
-      .prepare(
-        `INSERT INTO telegram_links (code, wallet, chain_id, expires_at)
-         VALUES (?, ?, ?, ?)`,
-      )
-      .bind(code, wallet.toLowerCase(), chainId, expiresAt)
-      .run();
-    return code;
-  } catch {
-    // Retry once on code-collision.
-    return issueTelegramLinkCode(db, wallet, chainId);
-  }
-}
-
-/** Consume a handshake code — called by the Telegram bot webhook when
- *  a user DMs the code. Returns the linked wallet/chain plus the
- *  user's stored locale (so the handshake confirmation message can
- *  be sent in the right language), or null if expired / unknown. */
-export async function consumeTelegramLinkCode(
-  db: D1Database,
-  code: string,
-): Promise<{ wallet: string; chainId: number; locale: string } | null> {
-  const now = Math.floor(Date.now() / 1000);
-  const row = await db
-    .prepare(
-      `SELECT wallet, chain_id, expires_at
-       FROM telegram_links
-       WHERE code = ?`,
-    )
-    .bind(code)
-    .first<{ wallet: string; chain_id: number; expires_at: number }>();
-  if (!row || row.expires_at < now) return null;
-  await db
-    .prepare(`DELETE FROM telegram_links WHERE code = ?`)
-    .bind(code)
-    .run();
-  // Look up the user's stored locale on user_thresholds. Falls back
-  // to 'en' if the row doesn't exist yet (the link flow can run before
-  // the first upsertThresholds call in some race orderings).
-  const locRow = await db
-    .prepare(
-      `SELECT locale FROM user_thresholds WHERE wallet = ? AND chain_id = ?`,
-    )
-    .bind(row.wallet, row.chain_id)
-    .first<{ locale: string }>();
-  return {
-    wallet: row.wallet,
-    chainId: row.chain_id,
-    locale: locRow?.locale ?? 'en',
-  };
-}
-
-/** Store the Telegram chat id on the user's thresholds row. Called
- *  after a successful handshake. */
-export async function linkTelegram(
-  db: D1Database,
-  wallet: string,
-  chainId: number,
-  chatId: string,
-): Promise<void> {
-  await db
-    .prepare(
-      `UPDATE user_thresholds
-       SET tg_chat_id = ?, updated_at = ?
-       WHERE wallet = ? AND chain_id = ?`,
-    )
-    .bind(chatId, Math.floor(Date.now() / 1000), wallet.toLowerCase(), chainId)
-    .run();
-}
-
-/** Sweep expired handshake codes — run at the start of each cron tick
- *  to keep the table bounded. */
-export async function sweepExpiredLinks(db: D1Database): Promise<void> {
-  const now = Math.floor(Date.now() / 1000);
-  await db.prepare(`DELETE FROM telegram_links WHERE expires_at < ?`).bind(now).run();
 }
 
 // ─── #2667 — this keeper's Push rail readiness, for the agent to read ──

@@ -54,7 +54,7 @@ test('the desk lists the markets from the index, ladders a market by rate with i
 
   await expect(page.getByRole('button', { name: 'Connect wallet' })).toBeVisible();
   await connectWallet(page);
-  await expect(page.getByTestId('desk-completeness')).toContainText('this page does not list them yet');
+  await expect(page.getByTestId('desk-completeness')).toContainText('signed orders are listed below it');
   // Advanced mode: no orientation card.
   await expect(page.getByTestId('orientation-card')).toHaveCount(0);
 

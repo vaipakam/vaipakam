@@ -64,9 +64,13 @@ library LibTiming {
     /// @notice Refuses a passed deadline; 0 means the caller set none. For
     ///         rescue actions, where a late landing does no harm.
     function checkDeadline(uint256 validUntil) internal view {
-        if (validUntil != 0 && block.timestamp > validUntil) {
-            revert DeadlinePassed(validUntil);
-        }
+        if (deadlinePassed(validUntil)) revert DeadlinePassed(validUntil);
+    }
+
+    /// @notice {checkDeadline}'s rule as an answer, for a preview that
+    ///         reports the refusal instead of raising it (#3552).
+    function deadlinePassed(uint256 validUntil) internal view returns (bool) {
+        return validUntil != 0 && block.timestamp > validUntil;
     }
 
     /// @notice The minimum age of terms at fill, in seconds: the admin's

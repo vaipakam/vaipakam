@@ -23,6 +23,7 @@ import {
     RewardBroadcastV3
 } from "../src/interfaces/IRewardMessenger.sol";
 
+import {ConfigureCcip} from "../script/ConfigureCcip.s.sol";
 import {MockCcipRouter} from "./mocks/MockCcipRouter.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
@@ -120,6 +121,9 @@ contract CcipDeploymentRehearsalTest is Test {
 
     MockCcipRouter internal router;
     ERC20Mock internal vpfi; // canonical vpfi (LockRelease pool)
+    /// @dev The script itself, for its pure lane builders (#3539), so the
+    ///      rehearsal adds lanes with the argument the script broadcasts.
+    ConfigureCcip internal configureScript = new ConfigureCcip();
 
     // ── Canonical (Base) stack ──
     CcipMessenger internal messengerBase;
@@ -237,8 +241,10 @@ contract CcipDeploymentRehearsalTest is Test {
     }
 
     /// @dev One pool lane: register the governor as `rateLimitAdmin`, add
-    ///      the remote chain, then set the lane's rate limits through the
-    ///      bounds-checked governor — the exact `ConfigureCcip` sequence.
+    ///      the remote chain with both buckets already enabled (built by the
+    ///      script's own {ConfigureCcip.laneAdd}, #3539), then re-assert the
+    ///      lane's rate limits through the bounds-checked governor — the
+    ///      exact `ConfigureCcip` sequence.
     function _wirePoolLane(
         TokenPool pool,
         VpfiPoolRateGovernor governor,
@@ -248,19 +254,13 @@ contract CcipDeploymentRehearsalTest is Test {
     ) internal {
         pool.setRateLimitAdmin(address(governor));
 
-        RateLimiter.Config memory off =
-            RateLimiter.Config({isEnabled: false, capacity: 0, rate: 0});
-        TokenPool.ChainUpdate[] memory adds = new TokenPool.ChainUpdate[](1);
-        bytes[] memory remotePools = new bytes[](1);
-        remotePools[0] = abi.encode(remotePool);
-        adds[0] = TokenPool.ChainUpdate({
-            remoteChainSelector: remoteSelector,
-            remotePoolAddresses: remotePools,
-            remoteTokenAddress: abi.encode(remoteToken),
-            outboundRateLimiterConfig: off,
-            inboundRateLimiterConfig: off
-        });
-        pool.applyChainUpdates(new uint64[](0), adds);
+        pool.applyChainUpdates(
+            new uint64[](0),
+            configureScript.laneAdd(remoteSelector, remotePool, remoteToken, RL_CAPACITY, RL_REFILL)
+        );
+        // #3539: the lane is limited from the transaction that creates it,
+        // before the governor touches it.
+        _assertLaneLimited(pool, remoteSelector);
 
         RateLimiter.Config memory on = RateLimiter.Config({
             isEnabled: true,
@@ -268,6 +268,17 @@ contract CcipDeploymentRehearsalTest is Test {
             rate: RL_REFILL
         });
         governor.setLaneRateLimits(remoteSelector, on, on);
+    }
+
+    function _assertLaneLimited(TokenPool pool, uint64 remoteSelector) internal view {
+        RateLimiter.TokenBucket memory outb = pool.getCurrentOutboundRateLimiterState(remoteSelector);
+        RateLimiter.TokenBucket memory inb = pool.getCurrentInboundRateLimiterState(remoteSelector);
+        assertTrue(outb.isEnabled, "outbound limit on at creation");
+        assertTrue(inb.isEnabled, "inbound limit on at creation");
+        assertEq(outb.capacity, RL_CAPACITY, "outbound capacity");
+        assertEq(inb.capacity, RL_CAPACITY, "inbound capacity");
+        assertEq(outb.rate, RL_REFILL, "outbound rate");
+        assertEq(inb.rate, RL_REFILL, "inbound rate");
     }
 
     // ── Deploy helpers ──────────────────────────────────────────────────────

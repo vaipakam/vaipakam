@@ -11,6 +11,7 @@ import type { Receipt } from '../receipt/types';
 import { exactTokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatBps, formatSpan } from '../ui/format';
 import { cadenceText, needsApproval, promptCount, valueRows, ZERO, ZERO_HASH, type AcceptReview } from './acceptReview';
+import { sourceLabel } from './acceptSource';
 
 type Hex = `0x${string}`;
 
@@ -211,7 +212,7 @@ export function borrowerReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy
   ];
 
   return {
-    title: format('accept.title', { id: r.offerId.toString() }),
+    title: format('accept.title', { id: sourceLabel(r.source) }),
     rows,
     consequences,
     prompts: promptCount(r),

@@ -60,6 +60,11 @@ fs_permissions = [
   # facet manifest to hold it equal to the Diamond's facet set. Read-only,
   # and this one file only.
   { access = "read", path = "../packages/contracts/scripts/diamond-facets.json" },
+  # #3502 — the staged positive-flow runner (script/positive-flows/
+  # PositiveFlowsStaged.sol) reads forge's log of its last broadcast
+  # (`broadcast/<module>.s.sol/<chain>/stage-latest.json`) to confirm every
+  # transaction of a stage succeeded before the next stage runs. Read-only.
+  { access = "read", path = "./broadcast/" },
 ]
 
 [profile.coverage]

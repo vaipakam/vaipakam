@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { effectiveAfter, erc20Pair, needFromAcceptCode, needFromRefusal, planCall, riskPlan, type RiskStatus } from './riskAccess';
+import { encodeErrorResult, parseAbi } from 'viem';
+import { effectiveAfter, erc20Pair, needFromAcceptCode, needFromRefusal, planCall, riskPlan, riskRefusalActor, type RiskStatus } from './riskAccess';
 import { isAction, needSentences, planMoved, riskReceipt } from './riskReceipt';
 
 type Hex = `0x${string}`;
@@ -43,6 +44,26 @@ describe('which step the protocol asks for', () => {
     expect(needFromRefusal('IlliquidPairNotConsented')).toBe('pair-consent');
     expect(needFromRefusal('MidTierPairNotAcknowledged')).toBe('mid-tier-ack');
     expect(needFromRefusal('OfferAmountZero')).toBeNull();
+  });
+});
+
+describe('whose risk access a refusal names', () => {
+  const ERRS = parseAbi([
+    'error RiskTierTooLow(address actor, uint8 requiredTier, uint8 actorTier)',
+    'error IlliquidPairNotConsented(address actor, bytes32 pairKey)',
+    'error Other(address who)',
+  ]);
+  const MAKER = '0x1111111111111111111111111111111111111111';
+  const wrap = (data: string) => ({ shortMessage: 'reverted', cause: { name: 'ContractFunctionRevertedError', raw: data, data: undefined } });
+  it('reads the actor from the revert’s own bytes', () => {
+    const data = encodeErrorResult({ abi: ERRS, errorName: 'RiskTierTooLow', args: [MAKER, 1, 0] });
+    expect(riskRefusalActor(wrap(data))?.toLowerCase()).toBe(MAKER);
+    const pair = encodeErrorResult({ abi: ERRS, errorName: 'IlliquidPairNotConsented', args: [MAKER, `0x${'ab'.repeat(32)}`] });
+    expect(riskRefusalActor(wrap(pair))?.toLowerCase()).toBe(MAKER);
+  });
+  it('names no one for another error or unreadable bytes', () => {
+    expect(riskRefusalActor(wrap(encodeErrorResult({ abi: ERRS, errorName: 'Other', args: [MAKER] })))).toBeNull();
+    expect(riskRefusalActor(new Error('execution reverted'))).toBeNull();
   });
 });
 

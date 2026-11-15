@@ -45,6 +45,7 @@ import {
   type AbiEvent,
   type Address,
   type PublicClient,
+  type Hex,
 } from 'viem';
 import type { Env, ChainConfig } from './env';
 import { getChainConfigs } from './env';
@@ -77,6 +78,7 @@ import {
 } from '@vaipakam/lib/rpcIdentity';
 import { chunkD1InList } from '@vaipakam/lib/d1Binds';
 import { activityValue, collectBatch, type ActivityValueContext } from './activityValue';
+import { PENDING_MAX_BLOCKS, PENDING_MAX_ROWS, writePendingLane, type PendingEventRow } from './pendingLane';
 import {
   blockToNumber,
   resolveSettledHead,
@@ -559,6 +561,12 @@ export interface ChainIndexerResult {
    *  instead of the 180 s poll. Optional so error/early-return paths
    *  stay untouched (absent reads as 0). */
   calendarNotifications?: number;
+  /** #3411 part 2 — the pending lane's events changed this pass (an event
+   *  appeared above the safe block, became final, or was replaced). Maps to
+   *  the `activity.appended` push key so an open Activity page shows a fresh
+   *  action at once rather than at its next poll. Optional: absent reads as
+   *  false. */
+  pendingChanged?: boolean;
   /** RPC read-diet PR D (design §4.2.2) — bounded affected-id hints +
    *  causative linkage for this scan's row mutations, truncation-honest
    *  (see pushHints.ts). Optional so error/early-return paths stay
@@ -2582,6 +2590,10 @@ async function runChainPass(
     // #2476 r11 — the ledger heal reads the chain AT the cursor, so it needs
     // that block to be settled, not merely some settled head below it (the
     // reconciliation pass refuses the same `lastBlock > settledHead.block`).
+    // #3411 part 2 — every block up to the cursor is final and recorded, so the
+    // blocks above it are what is pending. Before the heal lanes, which spend
+    // what is left of the budget by design.
+    const quietPendingChanged = await refreshPendingLane(env, client, chainId, diamond, lastBlock, budget);
     const quietHeal = await runHealLanes(
       client,
       diamond,
@@ -2594,6 +2606,7 @@ async function runChainPass(
     );
     // (Both one-time backfills already ran above, before this branch.)
     return {
+      pendingChanged: quietPendingChanged,
       scannedFrom: scanFrom,
       scannedTo: scanFrom - 1n,
       newOffers: 0,
@@ -2673,23 +2686,7 @@ async function runChainPass(
         fromBlock: cursor,
         toBlock: chunkEnd,
       });
-      for (const raw of rawLogs) {
-        let decoded: { eventName: string; args: Record<string, unknown> };
-        try {
-          decoded = decodeEventLog({
-            abi: EVENT_ABI,
-            topics: raw.topics,
-            data: raw.data,
-          }) as { eventName: string; args: Record<string, unknown> };
-        } catch {
-          continue; // event not in EVENT_ABI — not ours, skip
-        }
-        allLogs.push({
-          ...raw,
-          eventName: decoded.eventName,
-          args: decoded.args,
-        } as unknown as DecodedLog);
-      }
+      allLogs.push(...decodeScannedLogs(rawLogs));
     } catch (err) {
       console.error(
         `[chainIndexer] getLogs ${cursor}-${chunkEnd} failed`,
@@ -3126,6 +3123,13 @@ async function runChainPass(
   // lanes, at the one place that knows the pass stopped early. Their rows are
   // selected again by the next pass that finishes its window, which is what
   // they are built for.
+  // #3411 part 2 — the pending lane, only once this pass reached the settled
+  // head with every block processed (see `refreshPendingLane`). Before the heal
+  // lanes, which spend what is left of the budget by design.
+  const pendingChanged =
+    stoppedAt === null && scanTo === head
+      ? await refreshPendingLane(env, client, chainId, diamond, scanTo, budget)
+      : false;
   const { detailRefreshes, loanDetailRefreshes, ledgerSettledLoanIds } =
     stoppedAt === null
       ? await runHealLanes(
@@ -3177,6 +3181,7 @@ async function runChainPass(
   // issued. The ordinary figure is reported by the
   // wrapper, on every exit including a throw.
   return {
+    pendingChanged,
     scannedFrom: scanFrom,
     scannedTo: scanTo,
     headBlock: head,
@@ -3245,6 +3250,9 @@ interface DecodedLog {
   eventName: string;
   args: Record<string, unknown>;
   blockNumber: bigint;
+  /** The block's hash, as the provider returned it with the log. Read by the
+   *  pending lane (#3411); the scan keys rows on (block, position). */
+  blockHash?: string | null;
   transactionHash: string;
   logIndex: number;
 }
@@ -7275,6 +7283,57 @@ export async function recordActivityEvents(
   // OfferConsumedBySale in the same indexer batch) leave creator
   // null and the borrower hidden — matches the pre-fix behaviour,
   // not a new degradation.
+  const creatorByOfferId = await loadSaleCreators(env, chainId, logs);
+
+  // #2383 — the asset/amount each row moved or offered, fixed here where the
+  // sibling events and the loan/offer records are at hand (see
+  // activityValue.ts for why not in the client).
+  const valueCtx = await loadActivityValueContext(env, chainId, logs);
+
+  let inserted = 0;
+  for (const log of logs) {
+    const args = withSaleCreator(log, creatorByOfferId);
+    const { actor, loanId, offerId } = pluckActivityRefs(log.eventName, args);
+    const v = activityValue(log.eventName, args as Record<string, unknown>, valueCtx);
+    const argsJson = serializeArgs(args);
+    const blockAt = chainTimeOf(blockTimestamps, log.blockNumber);
+    const result = await env.DB.prepare(
+      `INSERT OR IGNORE INTO activity_events
+        (chain_id, block_number, log_index, tx_hash, kind,
+         loan_id, offer_id, actor, args_json, block_at,
+         asset, asset_type, amount, amount_max, token_id, quantity)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(
+        chainId,
+        Number(log.blockNumber),
+        log.logIndex,
+        log.transactionHash.toLowerCase(),
+        log.eventName,
+        loanId,
+        offerId,
+        actor,
+        argsJson,
+        blockAt,
+        v.asset,
+        v.assetType,
+        v.amount,
+        v.amountMax,
+        v.tokenId,
+        v.quantity,
+      )
+      .run();
+    if ((result.meta?.changes ?? 0) > 0) inserted++;
+  }
+  return inserted;
+}
+
+/**
+ * The creator of every offer an `OfferConsumedBySale` in `logs` consumed, read
+ * from `offers` in one chunked batch. Shared by the final feed and the pending
+ * lane (#3411, Codex #3557 r2), so both file a sale row under the same wallet.
+ */
+async function loadSaleCreators(env: Env, chainId: number, logs: DecodedLog[]): Promise<Map<number, string>> {
   const consumedOfferIds = new Set<number>();
   for (const log of logs) {
     if (log.eventName === 'OfferConsumedBySale') {
@@ -7313,57 +7372,19 @@ export async function recordActivityEvents(
     }
   }
 
-  // #2383 — the asset/amount each row moved or offered, fixed here where the
-  // sibling events and the loan/offer records are at hand (see
-  // activityValue.ts for why not in the client).
-  const valueCtx = await loadActivityValueContext(env, chainId, logs);
+  return creatorByOfferId;
+}
 
-  let inserted = 0;
-  for (const log of logs) {
-    let args = log.args;
-    if (log.eventName === 'OfferConsumedBySale') {
-      const id = Number((args as Record<string, unknown>).offerId as bigint);
-      const creator = creatorByOfferId.get(id);
-      if (creator) {
-        // Add `creator` so the actor rule files the row under the
-        // borrower, who is then its participant on the Activity page
-        // (`@vaipakam/lib/activityParticipants`, #2703).
-        args = { ...args, creator };
-      }
-    }
-    const { actor, loanId, offerId } = pluckActivityRefs(log.eventName, args);
-    const v = activityValue(log.eventName, args as Record<string, unknown>, valueCtx);
-    const argsJson = serializeArgs(args);
-    const blockAt = chainTimeOf(blockTimestamps, log.blockNumber);
-    const result = await env.DB.prepare(
-      `INSERT OR IGNORE INTO activity_events
-        (chain_id, block_number, log_index, tx_hash, kind,
-         loan_id, offer_id, actor, args_json, block_at,
-         asset, asset_type, amount, amount_max, token_id, quantity)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-      .bind(
-        chainId,
-        Number(log.blockNumber),
-        log.logIndex,
-        log.transactionHash.toLowerCase(),
-        log.eventName,
-        loanId,
-        offerId,
-        actor,
-        argsJson,
-        blockAt,
-        v.asset,
-        v.assetType,
-        v.amount,
-        v.amountMax,
-        v.tokenId,
-        v.quantity,
-      )
-      .run();
-    if ((result.meta?.changes ?? 0) > 0) inserted++;
-  }
-  return inserted;
+/** A log's args, with `creator` added to an `OfferConsumedBySale` whose offer
+ *  creator is known (see `loadSaleCreators`). */
+function withSaleCreator(log: DecodedLog, creatorByOfferId: ReadonlyMap<number, string>): Record<string, unknown> {
+  const args = log.args as Record<string, unknown>;
+  if (log.eventName !== 'OfferConsumedBySale') return args;
+  const creator = creatorByOfferId.get(Number(args.offerId as bigint));
+  // Add `creator` so the actor rule files the row under the borrower, who is
+  // then its participant on the Activity page
+  // (`@vaipakam/lib/activityParticipants`, #2703).
+  return creator ? { ...args, creator } : args;
 }
 
 /**
@@ -7936,9 +7957,142 @@ export function refinanceTargetFromDetail(v: bigint | undefined): number | null 
   return Number.isSafeInteger(n) && n >= 0 ? n : null;
 }
 
+/**
+ * Decode an address-filtered `eth_getLogs` answer against EVENT_ABI. A log
+ * whose topic0 is not in EVENT_ABI (config-facet events, ERC-721 Approval,
+ * and so on) throws on decode and is skipped: it is not one of ours. Shared by
+ * the scan and the pending lane (#3411), so the two can never decode the same
+ * log differently.
+ */
+function decodeScannedLogs(
+  rawLogs: readonly { topics: readonly Hex[]; data: Hex }[],
+): DecodedLog[] {
+  const out: DecodedLog[] = [];
+  for (const raw of rawLogs) {
+    let decoded: { eventName: string; args: Record<string, unknown> };
+    try {
+      decoded = decodeEventLog({
+        abi: EVENT_ABI,
+        topics: raw.topics as [Hex, ...Hex[]],
+        data: raw.data,
+      }) as { eventName: string; args: Record<string, unknown> };
+    } catch {
+      continue; // event not in EVENT_ABI — not ours, skip
+    }
+    out.push({ ...raw, eventName: decoded.eventName, args: decoded.args } as unknown as DecodedLog);
+  }
+  return out;
+}
+
 /** The last block a pass starting at `scanFrom` reads logs for, given a settled `head` at or above it. */
 function scanWindowEnd(scanFrom: bigint, head: bigint): bigint {
   return scanFrom + SCAN_PASS_MAX_BLOCKS > head ? head : scanFrom + SCAN_PASS_MAX_BLOCKS;
+}
+
+/** #3411 — what one pending-lane refresh costs: the latest block number and
+ *  one `eth_getLogs` (external), and the value and sale-creator reads plus the
+ *  replacing batch (D1: up to two statements each for the reads, four for the
+ *  write). */
+const PENDING_LANE_COST: Cost = { external: 2, d1Queries: 8 };
+
+/**
+ * #3411 part 2 — refresh the pending lane (`pendingLane.ts`): read the blocks
+ * above `finalThrough` up to the chain's latest block and replace this chain's
+ * pending rows with the events found there.
+ *
+ * Called only by a pass that has CAUGHT UP — every block up to `finalThrough`
+ * is in the final feed — and passed the reorg check. A pass that is behind
+ * leaves the lane alone, and the lane ages out of service on its own
+ * (`PENDING_STALE_SEC`); listing pending events across a backlog would show
+ * old events as new.
+ *
+ * Best effort by design: the final feed does not depend on it. A refresh the
+ * budget cannot afford, or one whose read fails, is logged and skipped, and
+ * the previous lane keeps its own read time, so the API stops serving it once
+ * it is stale rather than serving it as current. Returns whether the lane's
+ * events changed, so the pass can announce it.
+ */
+async function refreshPendingLane(
+  env: Env,
+  client: PublicClient,
+  chainId: number,
+  diamond: Address,
+  finalThrough: bigint,
+  budget: TickBudget,
+): Promise<boolean> {
+  if (!affords(budget, PENDING_LANE_COST)) {
+    console.warn(`[pendingLane] chain ${chainId}: budget spent; the pending lane is not refreshed this pass`);
+    return false;
+  }
+  try {
+    const latest = await client.getBlockNumber();
+    const from = finalThrough + 1n;
+    let through = latest;
+    let logs: DecodedLog[] = [];
+    if (latest >= from) {
+      if (through - from + 1n > PENDING_MAX_BLOCKS) through = from + PENDING_MAX_BLOCKS - 1n;
+      const raw = await client.getLogs({ address: scannedAddresses(diamond), fromBlock: from, toBlock: through });
+      logs = decodeScannedLogs(raw).sort(
+        (a, b) => Number(a.blockNumber - b.blockNumber) || a.logIndex - b.logIndex,
+      );
+    } else if (latest === finalThrough) {
+      // The latest block IS the recorded one: nothing is pending.
+      through = finalThrough;
+    } else {
+      // A latest block BELOW the cursor is a provider behind the one the scan
+      // read (Codex #3557 r2). Its answer cannot say what is pending, so the
+      // lane is left as it was and ages out of service on its own.
+      console.warn(
+        `[pendingLane] chain ${chainId}: latest block ${latest} is below the recorded ${finalThrough}; the pending lane is not refreshed this pass`,
+      );
+      return false;
+    }
+    const kept = logs.slice(0, PENDING_MAX_ROWS);
+    const valueCtx = kept.length > 0 ? await loadActivityValueContext(env, chainId, kept) : null;
+    const creators = kept.some((l) => l.eventName === 'OfferConsumedBySale')
+      ? await loadSaleCreators(env, chainId, kept)
+      : new Map<number, string>();
+    const rows: PendingEventRow[] = [];
+    for (const log of kept) {
+      if (!log.blockHash) continue; // a log without its block's hash cannot be told apart from a replacement
+      const args = withSaleCreator(log, creators);
+      const { actor, loanId, offerId } = pluckActivityRefs(log.eventName, args);
+      const v = activityValue(log.eventName, args, valueCtx!);
+      rows.push({
+        blockNumber: blockToNumber(log.blockNumber),
+        logIndex: log.logIndex,
+        blockHash: log.blockHash.toLowerCase(),
+        txHash: log.transactionHash.toLowerCase(),
+        kind: log.eventName,
+        loanId,
+        offerId,
+        actor,
+        argsJson: serializeArgs(args),
+        asset: v.asset,
+        assetType: v.assetType,
+        amount: v.amount,
+        amountMax: v.amountMax,
+        tokenId: v.tokenId,
+        quantity: v.quantity,
+      });
+    }
+    const { changed } = await writePendingLane(
+      env.DB,
+      chainId,
+      rows,
+      {
+        finalThrough: blockToNumber(finalThrough),
+        throughBlock: blockToNumber(through),
+        latestBlock: blockToNumber(latest),
+        truncated: through < latest || logs.length > kept.length || rows.length < kept.length,
+      },
+      Math.floor(Date.now() / 1000),
+    );
+    return changed;
+  } catch (err) {
+    console.warn(`[pendingLane] chain ${chainId}: refresh failed; the lane keeps its previous read time`, redactedError(err));
+    return false;
+  }
 }
 
 /**

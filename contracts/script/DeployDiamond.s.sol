@@ -2056,13 +2056,17 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      #3025 adds the origination check loan creation and the accept and
     ///      match previews call.
     function _getOfferPreviewSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](7);
         s[0] = OfferPreviewFacet.previewAccept.selector;
         s[1] = OfferPreviewFacet.requireCadenceAdmitted.selector;
         s[2] = OfferPreviewFacet.previewCadenceAdmission.selector;
         s[3] = OfferPreviewFacet.requireOriginationCadenceAdmitted.selector;
         // #3358 — the match preview's origination checks (cadence, then guards).
         s[4] = OfferPreviewFacet.previewOriginationRefusal.selector;
+        // #3552 — the signed-order accept preview.
+        s[5] = OfferPreviewFacet.previewSignedOfferAccept.selector;
+        // #3326 — the initiation risk bounds the match core reads by self-call.
+        s[6] = OfferPreviewFacet.initRiskBounds.selector;
     }
 
     /// @dev OfferMatchFacet — Range Orders Phase 1 bot-driven offer
@@ -2380,7 +2384,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      asserts, split off `RiskAccessFacet` into its own `RiskPreviewFacet`
     ///      so both facets keep EIP-170 header room. All are `view`.
     function _getRiskPreviewFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](10);
+        s = new bytes4[](11);
         s[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         s[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         s[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -2398,6 +2402,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[8] = RiskPreviewFacet.quoteSellerBounds.selector;
         // #2672 — the figures a standing listing recorded.
         s[9] = RiskPreviewFacet.getSaleListingBounds.selector;
+        // #3577 — the risk gate a fill of a not-yet-stored signed order faces.
+        s[10] = RiskPreviewFacet.previewSignedOfferRiskBlocks.selector;
     }
 
     /// @dev #1212 (E-10 Claim-All) — the single generic batching entry point.
@@ -3218,7 +3224,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](24);
+        s = new bytes4[](25);
         s[0] = RepatriationFacet.authorizeRepatriation.selector;
         s[1] = RepatriationFacet.onRepatriationReturnReceived.selector;
         s[2] = RepatriationFacet.onRepatriationCancelAck.selector;
@@ -3251,6 +3257,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[21] = RepatriationFacet.onUntypedRemainderReturnReceived.selector;
         s[22] = RepatriationFacet.getChainUntypedRemainderReturned.selector;
         s[23] = RepatriationFacet.getUntypedRemainderReturnedCumulative.selector;
+        // #3360 part B — the keeper's return of a closed day's leftover.
+        s[24] = RepatriationFacet.returnClosedDayRemainder.selector;
     }
 
     /// T-087 Sub 1.B — single-home accumulator facet (ring-buffer
@@ -3264,7 +3272,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](4);
+        s = new bytes4[](7);
         s[0] = VPFIDiscountAccumulatorFacet.syncTierRecord.selector;
         s[1] = VPFIDiscountAccumulatorFacet.effectiveTierAndBps.selector;
         // T-087 Sub 2.A — projected tier-expiry view (off-chain
@@ -3272,6 +3280,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[2] = VPFIDiscountAccumulatorFacet.getTierExpirySec.selector;
         // #3459 — the rule-by-rule tier explanation (public read).
         s[3] = VPFIDiscountAccumulatorFacet.explainTier.selector;
+        // #3562 — the lender entry standing: its one writer (internal), the
+        // fee path's read (internal) and the app's view (public).
+        s[4] = VPFIDiscountAccumulatorFacet.stampLenderEntry.selector;
+        s[5] = VPFIDiscountAccumulatorFacet.lenderHoldDiscountBps.selector;
+        s[6] = VPFIDiscountAccumulatorFacet.lenderHoldDiscountView.selector;
     }
 
     /// T-087 Sub 2.C — mirror-side tier-push receiver facet. Both
@@ -3300,7 +3313,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](10);
+        s = new bytes4[](8);
         s[0] = ProtocolBroadcastFacet.protocolBroadcastTierUpdate.selector;
         s[1] = ProtocolBroadcastFacet.topUpBroadcastBudget.selector;
         s[2] = ProtocolBroadcastFacet.withdrawBudget.selector;
@@ -3308,9 +3321,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[4] = ProtocolBroadcastFacet.getUserTierPushNonce.selector;
         s[5] = ProtocolBroadcastFacet.deliverTierPush.selector;
         s[6] = ProtocolBroadcastFacet.getTierPushStatus.selector;
-        s[7] = ProtocolBroadcastFacet.getTierPushSpacingSec.selector;
-        s[8] = ProtocolBroadcastFacet.setTierPushSpacingSec.selector;
-        s[9] = ProtocolBroadcastFacet.flushTierPushes.selector;
+        // #1277: getTierPushSpacingSec / setTierPushSpacingSec removed with
+        // the spacing window (the budget pays only lowers, never a raise).
+        s[7] = ProtocolBroadcastFacet.flushTierPushes.selector;
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {

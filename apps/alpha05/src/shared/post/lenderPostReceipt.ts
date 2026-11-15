@@ -58,9 +58,9 @@ export function lenderPostReceipt(r: PostReview, meta: TokenMetaMap | null, copy
     ...(ranged
       ? [{ label: text('lendOffer.rowPartMin'), value: amount(pair.lending, parsed.amount), binding: true }, textRow('request.rowWhole', text('lendOffer.rangeFill'), true)]
       : [textRow('request.rowWhole', text('lendOffer.whole'), true)]),
-    // With one amount the default mode is one borrower for all of it, which
-    // the row above already says; only a mode that changes that is stated.
-    ...(ranged || parsed.fillMode !== 'partial' ? [textRow('request.rowFill', text(FILL_MODE_KEYS[parsed.fillMode]), true)] : []),
+    // One size posts all-or-none (#3520): one borrower for all of it, which
+    // the row above already says; only a range carries a chosen mode.
+    ...(ranged ? [textRow('request.rowFill', text(FILL_MODE_KEYS[parsed.fillMode]), true)] : []),
     textRow('lendOffer.rowMatching', text(r.risk.partialFill === null ? 'request.matchingUnread' : r.risk.partialFill ? 'lendOffer.matchingOn' : 'lendOffer.matchingOff'), false),
     { label: text(ranged ? 'lendOffer.rowCollateralWhole' : 'lendOffer.rowCollateral'), value: amount(pair.collateral, parsed.collateral), binding: true },
     ...(ranged
@@ -169,7 +169,6 @@ export function matchConsequences(r: PostReview, meta: TokenMetaMap | null, copy
   if (!isRanged(parsed)) {
     return [
       text(sw === null ? 'lendOffer.loseMatchUnread' : sw ? 'lendOffer.loseMatch' : 'lendOffer.loseMatchOff'),
-      ...(parsed.fillMode !== 'partial' ? [text('lendOffer.loseFillFixed')] : []),
     ];
   }
   return [

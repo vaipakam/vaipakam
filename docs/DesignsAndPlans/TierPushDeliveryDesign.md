@@ -73,18 +73,24 @@ another.
 1. **A caller who pays.** `deliverTierPush(user)` is payable and open to
    anyone. The caller's `msg.value` pays for owed lanes first, in list
    order, with no rate limit. Whatever is unspent goes back to the caller.
-2. **The protocol budget.** A lane the caller's value did not cover is paid
-   from `protocolBroadcastBudget` when either of these holds:
-   - the target **lowers** the lane's tier or bps, or the lane has never
-     received a push. A lowered tier is the protocol's own interest, so it
-     goes out at once.
-   - the lane's last send was at least `tierPushSpacingSec` ago. Any other
-     change, such as a raised tier or a new table version, waits for the
-     spacing window.
+2. **The protocol budget, for a lower only (#1277).** A lane the caller's
+   value did not cover is paid from `protocolBroadcastBudget` only when the
+   target takes a discount away on that lane's mirror:
+   - the target is tier 0 and bps 0, whatever its expiry or version (a lane
+     already at tier 0 was settled without a message), or
+   - the target carries the lane's table version and lowers its tier or
+     its bps while raising neither.
+
+   A lowered tier is the protocol's own interest, so it goes out at once.
+   Nothing else is ever budget-paid: not a lane's first discount, not a
+   raised tier, not a later expiry on its own, and not a push under a new
+   table version (a mirror reads a cached tier from another version as no
+   discount, so such a push reinstates one).
 3. **Otherwise the lane stays owed.** Base emits
    `TierPushDeferred(user, destChainId, nonce, reason)`. The reason is one
    of:
-   - `Spacing`: the window has not elapsed;
+   - `RaiseUnpaid`: the push does not lower what the lane grants, and no
+     caller paid for it;
    - `Budget`: the budget cannot cover the fee;
    - `Quote`: the lane's quote reverted;
    - `Send`: the send reverted;
@@ -96,20 +102,38 @@ does any `deliverTierPush(user)` call. Delivery never re-resolves the tier:
 it sends the committed target. A user whose tier has aged into a new value
 without a balance change calls `pokeMyTier`, which resolves and commits.
 
-### 2.3 Why the spacing window bounds the drain
+### 2.3 Why the budget cannot be drained
 
-The protocol budget pays at once only for a lowered tier, or for a lane's
-first push. Lowering a lane twice needs a raise in between, and a raise is
-paid only once per window per lane. So any one user costs the budget at most
-about two sends per lane per window. A Sybil needs a separate stake for each
-identity, held past the minimum-history gate before its tier is above zero.
-The consent-toggle loop in #1277 is bounded by the same rule.
+Until #1277 the budget also paid a raise, once per lane per spacing window
+(1 day by default). Toggling consent off and on, then poking, still made
+about two budget-paid sends per lane per account per day, and each account
+cost the attacker only gas. Sybil accounts multiplied it.
 
-- **Default window:** 1 day.
-- **Admin setter bounds:** 1 hour to 7 days.
+Now every budget-paid send lowers the lane's tier or bps, and only a
+caller-paid send can raise either. Tier and bps have few steps, so the
+budget-paid sends on a lane are bounded by the steps that caller-paid sends
+put there. A consent toggle costs the toggler one paid raise for each
+budget-paid drop: churn can never spend the budget faster than the churner
+spends their own value. The spacing window, its setter
+(`setTierPushSpacingSec`) and its getter are removed; the storage slot is
+kept and marked retired.
 
-A user who wants a raise on a mirror sooner pays for it with
-`deliverTierPush`.
+Two things are deliberately not budget-paid, and their cost is stated:
+
+- **An earlier expiry on its own.** The projected expiry moves with every
+  balance change. If a shorter expiry were a budget-paid lower, a run of
+  small unstakes could spend many budget sends for one paid raise. The
+  mirror's cached tier lapses at the old expiry instead, and never later
+  than its 60-day maximum age. A later expiry riding on a lowered tier or
+  bps is sent with it.
+- **A push under a new table version.** After governance changes the tier
+  table, a mirror reads every older cached tier as no discount once it
+  learns the new version. Each user's discount there returns only when a
+  paid push carries the new version.
+
+Considered and rejected: a per-account budget cap per epoch (still drainable
+with Sybil accounts), and spacing lowers as well (delays a safety-relevant
+downgrade).
 
 ### 2.4 Gas starvation cannot buy a skipped push
 
@@ -178,14 +202,15 @@ are gas an action must carry while a lane is owed, not gas it spends.
 - Base's own discount is always current.
 - A mirror's cached tier can lag Base. A **lowered** tier reaches a mirror
   as soon as the lane works and the budget can pay. Until then, anyone can
-  pay to send it. A **raised** tier can wait up to one spacing window, or
-  until the user pays.
+  pay to send it. A **raised** tier, including a first discount, reaches a
+  mirror only when someone pays for it (`deliverTierPush` with value); until
+  then the mirror keeps what it last received.
 - A lane that never recovers is bounded by the mirror's 60-day maximum age,
   after which its cached tier reads as tier 0.
 - Whether a user has owed lanes, and why each was deferred, is public:
   `getTierPushStatus(user)` returns the target and every lane's state, and
-  each deferral emits an event. A keeper can deliver owed lowered tiers and
-  alert on a low budget. That pass belongs to the keeper work and is not
+  each deferral emits an event. A keeper delivers owed lowered tiers; an
+  owed raise is never its work. That pass belongs to the keeper work and is not
   part of this change.
 
 ## 4. Messenger surface

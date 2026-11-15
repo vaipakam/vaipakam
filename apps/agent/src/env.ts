@@ -2,6 +2,7 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
 import { resolveD1Binding } from '@vaipakam/lib/d1Maintenance';
 import type { RateLimitBinding } from './rateLimit';
 import { readSecrets, type SecretBinding } from '@vaipakam/lib/secretsStore';
+import type { TelegramState } from './telegramState/object';
 
 /**
  * This Worker's deployed name, used as the label on a D1 refusal so an
@@ -153,6 +154,10 @@ export type { SecretBinding };
  * separately on each for a reason — see `WorkerEnv.DB` (#2239).
  */
 interface BaseEnv {
+  // #1722 — the agent's Telegram state (links, handshake codes, pending
+  // removals, LOCK requests): a SQLite Durable Object bound to this Worker
+  // only. No Cloudflare API reaches its storage from outside the Worker.
+  TG_STATE: DurableObjectNamespace<TelegramState>;
   // Telegram (public bot handle — used to build the `t.me` deep
   // link; the bot TOKEN is the separate Secrets Store binding).
   TG_BOT_USERNAME?: string;
@@ -320,6 +325,9 @@ export interface WorkerEnv extends BaseEnv {
   OPENSEA_API_KEY?: SecretBinding;
   // T-075 — server secret keying the per-wallet deletion hash.
   DIAG_WALLET_HMAC_KEY?: SecretBinding;
+  // #1722 — the bearer the keeper presents on the agent's keeper-only
+  // routes (`keeperRoutes.ts`). Unset: those routes refuse every call.
+  KEEPER_AGENT_TOKEN?: SecretBinding;
 }
 
 /**
@@ -363,6 +371,8 @@ export interface Env extends BaseEnv {
   ONEINCH_API_KEY?: string;
   // T-086 step 14 — resolved OpenSea Listings API key.
   OPENSEA_API_KEY?: string;
+  // #1722 — resolved keeper bearer for the keeper-only routes.
+  KEEPER_AGENT_TOKEN?: string;
 
   // T-086 Round-5 Block A (#313) — per-chain allow-list of tokens
   // whose `transfer` can revert based on recipient (USDC OFAC
@@ -420,6 +430,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     ONEINCH_API_KEY: raw.ONEINCH_API_KEY,
     OPENSEA_API_KEY: raw.OPENSEA_API_KEY,
     DIAG_WALLET_HMAC_KEY: raw.DIAG_WALLET_HMAC_KEY,
+    KEEPER_AGENT_TOKEN: raw.KEEPER_AGENT_TOKEN,
   });
   return {
     // Non-secret bindings / config — passed straight through, ALL of them,

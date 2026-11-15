@@ -2,6 +2,13 @@
  * The one seam through which a pass reaches a subscriber (#2569 r4): a
  * Telegram message, a Push notification, or both, for one alert.
  *
+ * TELEGRAM GOES THROUGH THE AGENT (#1722). The keeper holds neither the bot
+ * token nor any chat id. An alert's Telegram half is DATA (a
+ * `TelegramAlert`), posted to the agent's keeper route, which sends it to the
+ * chat the owner linked, in the protocol's own wording, or answers `off` when
+ * no chat is linked. Push still goes out from here, with the text the pass
+ * rendered from the same shared catalogue.
+ *
  * Both watchers used to call the two senders themselves. Routing every alert
  * through here is what lets the epoch fence (`epochFence.ts`) hold for
  * alerts the way it holds for transactions and database writes: the fence
@@ -22,20 +29,30 @@ import { publishedRailRow, pushRailStatus, sendPush, type PushRailConfig } from 
 import { publishPushRailStatus } from './db';
 import type { Env } from './env';
 import { assertEpochsHold } from './epochFence';
-import { sendMessage as sendTelegramMessage } from './telegram';
 import { redactedError } from '@vaipakam/lib/errorDescription';
+import type { AddressedAlert } from '@vaipakam/lib/telegramAlerts/message';
+import { agentClientOf, AgentDiamondMismatch, AgentRequestFailed, agentUnconfiguredReason, type AgentClient } from './agentClient';
+
+/** An alert's Telegram half: the message as data, and the Diamond the keeper
+ *  serves on its chain (the agent refuses any other). */
+export interface TelegramPart {
+  readonly diamond: string;
+  readonly message: AddressedAlert;
+}
 
 export interface Alert {
-  /** The subscriber's Telegram chat, when they linked one. */
-  readonly tgChatId?: string | null;
+  /** The alert for the owner's Telegram chat, sent by the agent to the chat
+   *  linked to `message.to ?? message.wallet`, if any. */
+  readonly telegram?: TelegramPart | null;
   /** The subscriber's wallet, for Push, when they subscribed to the channel. */
   readonly pushSubscriber?: string | null;
+  /** The Push body (the same wording the agent renders for Telegram). */
   readonly text: string;
   readonly pushTitle: string;
   readonly deepLinkUrl: string;
 }
 
-type AlertEnv = Pick<Env, 'TG_BOT_TOKEN' | 'PUSH_CHANNEL_PK' | 'PUSH_CHANNEL_ADDRESS'>;
+type AlertEnv = Pick<Env, 'AGENT_ORIGIN' | 'KEEPER_AGENT_TOKEN' | 'PUSH_CHANNEL_PK' | 'PUSH_CHANNEL_ADDRESS'>;
 
 
 /** This keeper's Push rail configuration, read from its env in ONE place. */
@@ -62,9 +79,9 @@ export async function publishRailStatus(
 
 /**
  * What one channel did with an alert: `sent` (accepted), `retry` (refused for
- * now, or a Push send that may not have gone), `refused` (refused for good, or
- * a Push rail that cannot send at all), or `off` (the subscriber has no such
- * channel, or this keeper no bot token).
+ * now, or a send that may not have gone), `refused` (refused for good, or a
+ * channel that cannot send at all), or `off` (the subscriber has no such
+ * channel: no chat linked, not subscribed to Push, or no agent configured).
  */
 export type ChannelResult = 'sent' | 'retry' | 'refused' | 'off';
 
@@ -87,11 +104,19 @@ export function worthRetrying(o: DeliveryOutcome): boolean {
 /** One pass's alerts: deliver each, then `disclose` once. */
 export class AlertDelivery {
   private readonly push: PushRailConfig;
+  private readonly agent: AgentClient | null;
   private notRequested = 0;
   private failed = 0;
+  /** Telegram halves not sent because no agent is configured. */
+  private agentUnset = 0;
+  /** Telegram halves the agent did not answer usably. */
+  private agentFailed = 0;
+  private agentFailure = '';
 
-  constructor(private readonly env: AlertEnv) {
+  /** `agent` overrides the one configured from `env` (tests). */
+  constructor(private readonly env: AlertEnv, agent?: AgentClient | null) {
     this.push = pushRailConfigOf(env);
+    this.agent = agent === undefined ? agentClientOf(env) : agent;
   }
 
   /** Deliver `alert` on every channel the subscriber has; the fence first.
@@ -100,9 +125,7 @@ export class AlertDelivery {
   async deliver(alert: Alert): Promise<DeliveryOutcome> {
     await assertEpochsHold();
     const outcome: DeliveryOutcome = { telegram: 'off', push: 'off' };
-    if (alert.tgChatId && this.env.TG_BOT_TOKEN) {
-      outcome.telegram = await sendTelegramMessage(this.env.TG_BOT_TOKEN, alert.tgChatId, alert.text);
-    }
+    if (alert.telegram) outcome.telegram = await this.sendTelegram(alert.telegram);
     if (alert.pushSubscriber) {
       const attempt = await sendPush(this.push, {
         subscriber: alert.pushSubscriber,
@@ -115,6 +138,25 @@ export class AlertDelivery {
       outcome.push = attempt === 'accepted' ? 'sent' : attempt === 'failed' ? 'retry' : 'refused';
     }
     return outcome;
+  }
+
+  /** The Telegram half, through the agent. A Diamond mismatch throws, like
+   *  the epoch fence's refusal: the keeper's build and the agent's disagree on
+   *  the chain's Diamond, and no alert may go out about either. */
+  private async sendTelegram(t: TelegramPart): Promise<ChannelResult> {
+    if (this.agent === null) {
+      this.agentUnset += 1;
+      return 'off';
+    }
+    try {
+      const [result] = await this.agent.sendAlerts(t.message.chainId, t.diamond, [t.message]);
+      return result ?? 'retry';
+    } catch (err) {
+      if (err instanceof AgentDiamondMismatch) throw err;
+      this.agentFailed += 1;
+      this.agentFailure = redactedError(err, { stack: false }).slice(0, 160);
+      return err instanceof AgentRequestFailed && err.permanent ? 'refused' : 'retry';
+    }
   }
 
   /**
@@ -136,6 +178,14 @@ export class AlertDelivery {
     }
     if (this.failed > 0) {
       console.warn(`[${pass}] ${this.failed} Push send(s) failed this pass; not counted as delivered`);
+    }
+    if (this.agentUnset > 0) {
+      console.warn(
+        `[${pass}] Telegram unavailable (${agentUnconfiguredReason(this.env) ?? 'no agent'}): ${this.agentUnset} alert(s) not sent by Telegram this pass`,
+      );
+    }
+    if (this.agentFailed > 0) {
+      console.warn(`[${pass}] ${this.agentFailed} Telegram alert(s) not taken by the agent this pass (last: ${this.agentFailure})`);
     }
   }
 }

@@ -435,7 +435,10 @@ export function invalidationKeysFromResult(
   if ((result.calendarNotifications ?? 0) > 0) keys.push('notification.created');
   // #2195 — a repair also adds an entry to the Activity feed (the ending it
   // observed, `repairObservations.ts`), which no scanned log announces.
-  if (result.activityEvents > 0 || (result.reconciledLoans ?? 0) > 0) keys.push('activity.appended');
+  // #3411 part 2 — a change in the pending lane is new activity too.
+  if (result.activityEvents > 0 || (result.reconciledLoans ?? 0) > 0 || result.pendingChanged === true) {
+    keys.push('activity.appended');
+  }
   return keys;
 }
 

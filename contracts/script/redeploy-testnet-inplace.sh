@@ -24,7 +24,7 @@
 #                                           verifies routing, reverts on mismatch)
 #   5. (retired, #3204) vault code no longer changes in a refresh: every
 #      vault resolves its code through the VaultBeacon, and a new version
-#      is registered and proposed there (a 3-day delay the beacon enforces)
+#      is registered and proposed there (a 7-day delay the beacon enforces)
 #   ── once, at the end (optional --export) ──
 #   6. exportFrontendDeployments.sh + exportFrontendAbis.sh
 #

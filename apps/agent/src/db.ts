@@ -5,8 +5,6 @@
  */
 
 import type { PublishedRailRow } from '@vaipakam/push';
-import { lockRequestIsStale } from '@vaipakam/lib/protectedLock';
-import { newLinkCode } from './telegram';
 
 export type Band = 'healthy' | 'warn' | 'alert' | 'critical';
 
@@ -16,7 +14,6 @@ export interface UserThresholds {
   warn_hf: number;
   alert_hf: number;
   critical_hf: number;
-  tg_chat_id: string | null;
   push_channel: string | null;
   /** 2-letter ISO 639-1 locale code (`en`, `es`, ...) for the
    *  language to send Telegram / Push notifications in. Defaults to
@@ -44,7 +41,7 @@ export async function listThresholdsForChain(
 ): Promise<UserThresholds[]> {
   const res = await db
     .prepare(
-      `SELECT wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale
+      `SELECT wallet, chain_id, warn_hf, alert_hf, critical_hf, push_channel, locale
        FROM user_thresholds
        WHERE chain_id = ?`,
     )
@@ -71,7 +68,6 @@ type ThresholdsUpsert = Omit<
   | 'warn_hf'
   | 'alert_hf'
   | 'critical_hf'
-  | 'tg_chat_id'
   | 'push_channel'
   | 'locale'
   | 'notify_maturity_approaching'
@@ -86,7 +82,6 @@ type ThresholdsUpsert = Omit<
   warn_hf?: number;
   alert_hf?: number;
   critical_hf?: number;
-  tg_chat_id?: string | null;
   push_channel?: string | null;
   locale?: string | null;
   /** #1033 — optional; absent keeps the historical opted-in state. */
@@ -138,11 +133,10 @@ function thresholdsUpsertSql(withFlag: boolean, withBands: boolean): string {
          `
     : '';
   return `INSERT INTO user_thresholds
-         (wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale${flagCol}, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?${flagPlaceholder}, ?, ?)
+         (wallet, chain_id, warn_hf, alert_hf, critical_hf, push_channel, locale${flagCol}, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?${flagPlaceholder}, ?, ?)
        ON CONFLICT(wallet, chain_id) DO UPDATE SET
-         ${bandArm}tg_chat_id = COALESCE(excluded.tg_chat_id, user_thresholds.tg_chat_id),
-         push_channel = COALESCE(excluded.push_channel, user_thresholds.push_channel),
+         ${bandArm}push_channel = COALESCE(excluded.push_channel, user_thresholds.push_channel),
          locale = COALESCE(excluded.locale, user_thresholds.locale),
          ${flagArm}updated_at = excluded.updated_at`;
 }
@@ -163,7 +157,6 @@ async function upsertThresholdsLegacy(
       t.warn_hf ?? DEFAULT_BANDS.warn_hf,
       t.alert_hf ?? DEFAULT_BANDS.alert_hf,
       t.critical_hf ?? DEFAULT_BANDS.critical_hf,
-      t.tg_chat_id ?? null,
       t.push_channel ?? null,
       t.locale ?? 'en',
       now,
@@ -198,7 +191,6 @@ export async function upsertThresholds(
         t.warn_hf ?? DEFAULT_BANDS.warn_hf,
         t.alert_hf ?? DEFAULT_BANDS.alert_hf,
         t.critical_hf ?? DEFAULT_BANDS.critical_hf,
-        t.tg_chat_id ?? null,
         t.push_channel ?? null,
         t.locale ?? 'en',
         t.notify_maturity_approaching ? 1 : 0,
@@ -282,81 +274,6 @@ export async function putNotifyState(
     .run();
 }
 
-/** Telegram handshake code with a 10-minute expiry. The code is the
- *  120-bit `newLinkCode()` (#2753), so a collision is not a practical
- *  event; the one retry below stays only because the insert would
- *  otherwise surface a primary-key clash as a failed link. */
-export async function issueTelegramLinkCode(
-  db: D1Database,
-  wallet: string,
-  chainId: number,
-  retried = false,
-): Promise<string> {
-  const code = newLinkCode();
-  const expiresAt = Math.floor(Date.now() / 1000) + 600;
-  try {
-    await db
-      .prepare(
-        `INSERT INTO telegram_links (code, wallet, chain_id, expires_at)
-         VALUES (?, ?, ?, ?)`,
-      )
-      .bind(code, wallet.toLowerCase(), chainId, expiresAt)
-      .run();
-    return code;
-  } catch (err) {
-    // Retry once on code-collision. Only once: the retry used to recurse
-    // on every failure, so a database error looped until the isolate
-    // gave up instead of reaching the caller.
-    if (retried) throw err;
-    return issueTelegramLinkCode(db, wallet, chainId, true);
-  }
-}
-
-/** Consume a handshake code — called by the Telegram bot webhook when
- *  a user DMs the code. Returns the linked wallet/chain plus the
- *  user's stored locale (so the handshake confirmation message can
- *  be sent in the right language), or null if expired / unknown. */
-export async function consumeTelegramLinkCode(
-  db: D1Database,
-  code: string,
-): Promise<{ wallet: string; chainId: number; locale: string } | null> {
-  const now = Math.floor(Date.now() / 1000);
-  // DELETE … RETURNING, in ONE statement. This was a SELECT followed by a
-  // separate DELETE, which is not the one-time consumption the handshake
-  // documents: two webhook deliveries presenting the same live code could both
-  // pass the SELECT before either DELETE ran, both link, and the later chat ID
-  // win. The code is the only thing standing between a caller and redirecting
-  // a wallet's alerts, so "consumed on first use" has to be enforced, not
-  // described. The row is claimed by whichever statement deletes it; the loser
-  // gets no row back and is rejected.
-  const row = await db
-    .prepare(
-      `DELETE FROM telegram_links
-       WHERE code = ?
-       RETURNING wallet, chain_id, expires_at`,
-    )
-    .bind(code)
-    .first<{ wallet: string; chain_id: number; expires_at: number }>();
-  // Expiry is checked AFTER the claim: an expired code is consumed and
-  // rejected, which is the correct outcome either way and keeps the table
-  // bounded without a second round trip.
-  if (!row || row.expires_at < now) return null;
-  // Look up the user's stored locale on user_thresholds. Falls back
-  // to 'en' if the row doesn't exist yet (the link flow can run before
-  // the first upsertThresholds call in some race orderings).
-  const locRow = await db
-    .prepare(
-      `SELECT locale FROM user_thresholds WHERE wallet = ? AND chain_id = ?`,
-    )
-    .bind(row.wallet, row.chain_id)
-    .first<{ locale: string }>();
-  return {
-    wallet: row.wallet,
-    chainId: row.chain_id,
-    locale: locRow?.locale ?? 'en',
-  };
-}
-
 /** True iff the D1 error is the missing-`last_test_alert_at`-column
  *  condition (migration 0034 not applied yet). SQLite phrases it
  *  differently for a SELECT expression vs an INSERT/UPDATE column list,
@@ -392,30 +309,6 @@ export async function hasStoredPushOptIn(
     .bind(wallet.toLowerCase(), chainId)
     .first<{ push_channel: string | null }>();
   return Boolean(row?.push_channel);
-}
-
-/** UX-012 — read the stored Telegram chat id + locale for a
- *  wallet/chain, so the test-alert endpoint can push a real message to
- *  the linked chat. Returns null when the wallet has no row or the row
- *  has no chat id (handshake never completed) — the caller turns that
- *  into an honest "we couldn't find your chat yet" instead of a silent
- *  success, which is the whole point of the round-trip. The cooldown
- *  gate lives in `reserveTestAlert` (an atomic CAS), not here. */
-export async function getTelegramChatId(
-  db: D1Database,
-  wallet: string,
-  chainId: number,
-): Promise<{ chatId: string; locale: string } | null> {
-  const row = await db
-    .prepare(
-      `SELECT tg_chat_id, locale
-       FROM user_thresholds
-       WHERE wallet = ? AND chain_id = ?`,
-    )
-    .bind(wallet.toLowerCase(), chainId)
-    .first<{ tg_chat_id: string | null; locale: string | null }>();
-  if (!row || !row.tg_chat_id) return null;
-  return { chatId: row.tg_chat_id, locale: row.locale ?? 'en' };
 }
 
 /** UX-012 / Codex #1175 — atomically reserve this wallet's test-alert
@@ -459,59 +352,25 @@ export async function reserveTestAlert(
   }
 }
 
-/** Store the Telegram chat id on the user's thresholds row. Called
- *  after a successful handshake.
- *
- *  UPSERT, not UPDATE (#1033 round-2): a first-time user can complete
- *  the handshake before ever saving settings — a bare UPDATE would
- *  match zero rows, the bot would still reply "linked", and alerts
- *  would silently never deliver. The insert seeds the default bands;
- *  the conflict arm touches ONLY the chat id so an existing row's
- *  settings are never clobbered by a re-link.
- *
- *  The insert is safe against third parties because a link CODE can
- *  only be issued to a caller who proved ownership of the wallet with
- *  an EIP-191 signature (`linkAuth.ts`) — by the time this runs, the
- *  wallet holder authorised the link. */
-/** #3246 — the link write, as a statement for the caller's batch. There is
- *  deliberately no unguarded link helper: every link goes through
- *  `requestRelink`, which passes `expectedChatId`. With it given (null
- *  = no chat linked), it writes only while the row's chat is still that one
- *  (or already `chatId`), so a link decided on an observed state can never
- *  overwrite a chat another request linked meanwhile; the caller reads
- *  `meta.changes` (0 = the state moved, decide again). */
-export function linkTelegramStatement(
-  db: D1Database,
-  wallet: string,
-  chainId: number,
-  chatId: string,
-  expectedChatId?: string | null,
-): D1PreparedStatement {
+/** #1722 — make sure (`wallet`, `chainId`) has a `user_thresholds` row, with
+ *  the default bands when it is new. Run at a completed Telegram handshake: a
+ *  first-time owner can link before ever saving settings, and the keeper's
+ *  watchers iterate these rows to know whose positions to watch. The chat
+ *  itself is NOT stored here (it lives in the agent's Telegram state object);
+ *  an existing row is left exactly as it is. The insert is safe against third
+ *  parties because a link code is issued only to a caller who proved
+ *  ownership of the wallet (`linkAuth.ts`). */
+export async function ensureThresholdsRow(db: D1Database, wallet: string, chainId: number): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
-  const guard =
-    expectedChatId === undefined
-      ? ''
-      : `WHERE COALESCE(user_thresholds.tg_chat_id, '') IN (COALESCE(?6, ''), excluded.tg_chat_id)`;
-  const stmt = db.prepare(
-    `INSERT INTO user_thresholds
-       (wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale, created_at, updated_at)
-     VALUES (?1, ?2, 1.5, 1.2, 1.05, ?3, NULL, 'en', ?4, ?5)
-     ON CONFLICT(wallet, chain_id) DO UPDATE SET
-       tg_chat_id = excluded.tg_chat_id,
-       updated_at = excluded.updated_at
-     ${guard}`,
-  );
-  const args: (string | number | null)[] = [wallet.toLowerCase(), chainId, chatId, now, now];
-  return expectedChatId === undefined ? stmt.bind(...args) : stmt.bind(...args, expectedChatId);
-}
-
-
-
-/** Sweep expired handshake codes — run at the start of each cron tick
- *  to keep the table bounded. */
-export async function sweepExpiredLinks(db: D1Database): Promise<void> {
-  const now = Math.floor(Date.now() / 1000);
-  await db.prepare(`DELETE FROM telegram_links WHERE expires_at < ?`).bind(now).run();
+  await db
+    .prepare(
+      `INSERT INTO user_thresholds
+         (wallet, chain_id, warn_hf, alert_hf, critical_hf, push_channel, locale, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, NULL, 'en', ?, ?)
+       ON CONFLICT(wallet, chain_id) DO NOTHING`,
+    )
+    .bind(wallet.toLowerCase(), chainId, DEFAULT_BANDS.warn_hf, DEFAULT_BANDS.alert_hf, DEFAULT_BANDS.critical_hf, now, now)
+    .run();
 }
 
 /** #1040 phase 1 — persist a support ticket captured by the connected app
@@ -547,69 +406,4 @@ export async function insertSupportTicket(
       ticket.chainId,
     )
     .run();
-}
-
-/** A keeper heartbeat older than this means no keeper is working LOCK
- *  requests on that chain now: the request is not recorded, and the owner is
- *  told to lock from the app instead. The keeper refreshes it every run. */
-export const LOCK_READINESS_FRESH_SEC = 5 * 60;
-
-/**
- * #3088 — record a Telegram LOCK from `chatId` for every wallet and chain the
- * chat is linked to on which a keeper is working LOCK requests now (its
- * heartbeat in `protected_lock_readiness` is fresh), and return every link
- * with whether it was recorded. The keeper reads the unhandled rows and makes
- * the lock call; the agent signs nothing. A link on a chain with no fresh
- * heartbeat records nothing, so the owner is never told a lock is coming
- * when nothing will act on it. A redelivered update records nothing new: a
- * row is unique on (update, chain, wallet). One batch, so the links returned
- * are the ones the rows were written for.
- *
- * The row carries the time the owner SENT the LOCK (`sentAt`, the Telegram
- * message's own date), never the time it reached the webhook, so the keeper's
- * age limit measures the request the owner made. A LOCK already past that
- * limit (`lockRequestIsStale`), or with no send time, records nothing: the
- * links are returned unrecorded and the caller says why.
- */
-export async function recordLockRequests(
-  db: D1Database,
-  chatId: string,
-  updateId: number,
-  sentAt: number | null,
-  nowSec: number = Math.floor(Date.now() / 1000),
-): Promise<{ wallet: string; chainId: number; locale: string; recorded: boolean }[]> {
-  const freshFrom = nowSec - LOCK_READINESS_FRESH_SEC;
-  const listLinks = db
-    .prepare(
-      `SELECT t.wallet, t.chain_id, t.locale, (r.seen_at >= ?) AS running FROM user_thresholds t
-         LEFT JOIN protected_lock_readiness r ON r.chain_id = t.chain_id
-        WHERE t.tg_chat_id = ? ORDER BY t.chain_id, t.wallet`,
-    )
-    .bind(freshFrom, chatId);
-  type LinkRow = { wallet: string; chain_id: number; locale: string | null; running: number | null };
-  const shape = (rows: LinkRow[], recordable: boolean) =>
-    rows.map((r) => ({
-      wallet: r.wallet,
-      chainId: Number(r.chain_id),
-      locale: r.locale ?? 'en',
-      recorded: recordable && Number(r.running ?? 0) === 1,
-    }));
-  if (lockRequestIsStale(sentAt, nowSec)) {
-    return shape((await listLinks.all<LinkRow>()).results ?? [], false);
-  }
-  // A send time a little ahead of this clock is recorded as now: the age
-  // limit is never extended by clock skew.
-  const requestedAt = Math.min(sentAt as number, nowSec);
-  const [, links] = await db.batch<LinkRow>([
-    db
-      .prepare(
-        `INSERT OR IGNORE INTO protected_lock_requests (chain_id, wallet, update_id, requested_at)
-         SELECT t.chain_id, t.wallet, ?, ? FROM user_thresholds t
-           JOIN protected_lock_readiness r ON r.chain_id = t.chain_id AND r.seen_at >= ?
-          WHERE t.tg_chat_id = ?`,
-      )
-      .bind(updateId, requestedAt, freshFrom, chatId),
-    listLinks,
-  ]);
-  return shape(links?.results ?? [], true);
 }

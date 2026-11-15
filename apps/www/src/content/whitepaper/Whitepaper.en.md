@@ -285,7 +285,7 @@ Every probe size is governance-configurable within bounded ranges (no probe belo
 
 **What tiers gate:**
 
-- **Depth-tiered initiation LTV** (master switch, off by default). When enabled, new ERC-20 loans are capped at the smaller of the existing asset ceiling and the effective tier's current max-init-LTV. Governance-configured per-tier caps default to `50%`, `60%`, and `65%` for tiers 1–3; a permissionless refresh (`OracleFacet.refreshTierLtvCache()`) can derive data-driven values from peer lending-protocol configurations, valid for 14 days and bounded by per-tier constitutional safety boxes (Tier 1 `[37%, 55%]`, Tier 2 `[55%, 69%]`, Tier 3 `[69%, 82%]`; Tier 3 carries a default 5-percentage-point haircut). Out-of-box candidates are rejected, never clipped. Tier `0` collateral cannot support a new borrow. In this regime the loan-initiation Health Factor floor relaxes to `1.0`, because the tier ceiling becomes the binding buffer above liquidation; while the switch is disabled, admission follows the standard conservative behavior exactly (section 5.5).
+- **Depth-tiered initiation LTV** (master switch, off by default). When enabled, new ERC-20 loans are capped at the smaller of the existing asset ceiling and the effective tier's current max-init-LTV. Each tier has a governance-configured default (`50%`, `60%`, and `65%` for tiers 1–3) and a governance ceiling (`55%`, `69%`, and `82%`). A permissionless refresh (`OracleFacet.refreshTierLtvCache()`) can derive a data-driven value from peer lending-protocol configurations, valid for 14 days, which replaces the default whether lower or higher (Tier 3 carries a default 5-percentage-point haircut); whichever applies is never above the tier's ceiling. Tier `0` collateral cannot support a new borrow. In this regime the loan-initiation Health Factor floor relaxes to `1.0`, because the tier ceiling becomes the binding buffer above liquidation; while the switch is disabled, admission follows the standard conservative behavior exactly (section 5.5).
 - **Per-tier liquidation thresholds.** Liquidation thresholds are tier-specific rather than per-asset, with deeper tiers receiving higher thresholds (defaults `80%`, `85%`, `90%` for tiers 1–3 — the thinnest Tier 1 is liquidated earliest to leave the widest cushion for slippage, handling, and the liquidator bonus, while the deepest Tier 3 can safely tolerate the highest pre-liquidation LTV), governance tuning bounded, and cross-tier ordering preserved (`Tier 1 ≤ Tier 2 ≤ Tier 3`). A liquid asset too thin to clear even the Tier-1 depth probe is untierable and receives the most conservative Tier-1 threshold, never a deeper tier's. The threshold applied to a loan is snapshotted from the collateral's effective tier at initiation, so later tier degradation never retroactively changes an open loan's liquidation gate.
 - **Per-tier liquidation discounts.** The optional liquidator-buys-at-discount path prices collateral at a tier-specific discount (defaults `7.7%` / `6.0%` / `5.0%` for tiers 1–3, each bounded by a safety box, monotonic across tiers).
 - **Risk-premium pricing input.** When the optional rate model is registered, its collateral-risk premium is keyed on the collateral's liquidity tier — thinner liquidity prices higher.
@@ -559,23 +559,24 @@ When enabled, new ERC-20 loans are instead capped at the smaller of the existing
 
 - A reference asset is accepted only when **at least two peers agree within 30 percentage points** (structural peer-configuration spreads of 20–30 points are normal on mid-cap assets, so a tighter band would wrongly reject valid references).
 - A tier is accepted only when **at least two reference assets contribute**.
-- The tier candidate is the resulting **median minus the tier haircut**.
-- Per-tier **safety boxes** are the constitutional bounds on autonomous values: Tier 1 [37%, 55%], Tier 2 [55%, 69%], Tier 3 [69%, 82%]; haircuts default to 0, 0, and 5 percentage points respectively. A candidate outside its box is **rejected and emitted as a refresh-rejection reason, never clipped into range**.
+- Each reference asset contributes the **lowest** of its agreeing peer readings, so one peer loosening its own configuration can never raise the platform's value.
+- The tier candidate is the resulting **median minus the tier haircut** (haircuts default to 0, 0, and 5 percentage points for tiers 1–3).
+- Each tier has a **governance ceiling** — Tier 1 55%, Tier 2 69%, Tier 3 82% — and no value a loan uses is ever above it. A candidate above the ceiling is stored and **clipped to the ceiling when a loan reads it**, so a lowered ceiling binds the next loan without a refresh. There is **no lower bound**: when peers lower what they lend against, so does the platform.
 
 Peer coverage at launch is Aave V3 and Compound V3; Morpho Blue is a planned follow-up (its market enumeration is per market rather than per asset).
 
-**Cache lifecycle.** The cache is fresh for **14 days**. A stale-warning event fires once values are older than **7 days** but still usable. After 14 days, loan initiation falls back to the **governance-configured per-tier caps** (defaults 50%, 60%, and 65% for tiers 1, 2, and 3) — not to fixed library constants — so a cap governance has deliberately tightened remains in force even while the peer refresh is paused or stale.
+**Cache lifecycle.** The cache is fresh for **14 days**. A stale-warning event fires once values are older than **7 days** but still usable. After 14 days, or while peer reads are paused, loan initiation falls back to the **governance-configured per-tier defaults** (50%, 60%, and 65% for tiers 1, 2, and 3) — not to fixed library constants — so a default governance has deliberately tightened remains in force even while the peer refresh is paused or stale. The tier ceiling bounds the default too.
 
-`ConfigFacet.setTierLtvParams` updates all three (floor, ceiling, haircut) triples atomically, with validation enforcing:
+`ConfigFacet.setTierLtvParams` updates every tier's ceiling and haircut atomically, with validation enforcing:
 
-- floor < ceiling and ceiling ≤ 100% per tier;
+- 0 < ceiling ≤ 82% per tier (82% is the hard ceiling on every tier-LTV setting, the defaults included);
 - haircut ≤ 10 percentage points per tier;
-- no overlapping boxes (`tier1.ceiling ≤ tier2.floor`, `tier2.ceiling ≤ tier3.floor`);
-- all-or-nothing application (a single invalid triple rejects the whole update).
+- ceilings that do not decrease from Tier 1 to Tier 3;
+- all-or-nothing application (a single invalid tier rejects the whole update).
 
-Post-handover this setter is timelock-controlled. More broadly, every governance knob of the regime — baseline floor size, slippage budget, tier test sizes, safety boxes, haircuts, price-history window and agreement band, quote-asset list, keeper confidence tier, peer-protocol addresses, reference-asset lists, cache TTL, and the master switch — is bounded and auditable through the shared typed range-error pattern.
+Post-handover this setter is timelock-controlled. More broadly, every governance knob of the regime — baseline floor size, slippage budget, tier test sizes, tier ceilings, haircuts, price-history window and agreement band, quote-asset list, keeper confidence tier, peer-protocol addresses, reference-asset lists, cache TTL, and the master switch — is bounded and auditable through the shared typed range-error pattern.
 
-**Emergency levers** are remove-only or global: `pauseAsset`, `setDepthTieredLtvEnabled(false)`, and `autoPause`. The peer-protocol reads themselves are independently pausable; while paused, the platform falls back to its own governance-set per-tier caps. None of these levers can be used to *raise* an asset's tier or loosen a cap — the escalation direction is structurally unavailable to administrators.
+**Emergency levers** are remove-only or global: `pauseAsset`, `setDepthTieredLtvEnabled(false)`, and `autoPause`. The peer-protocol reads themselves are independently pausable; while paused, the platform falls back to its own governance-set per-tier defaults. None of these levers can be used to *raise* an asset's tier or loosen a cap — the escalation direction is structurally unavailable to administrators.
 
 ### 7.3 Add Collateral
 

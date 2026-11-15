@@ -16,6 +16,7 @@ import {IOwner} from "@chainlink/contracts-ccip/contracts/interfaces/IOwner.sol"
 import {CcipMessenger} from "../src/crosschain/CcipMessenger.sol";
 import {VPFIMirrorToken} from "../src/crosschain/VPFIMirrorToken.sol";
 import {VpfiPoolRateGovernor} from "../src/crosschain/VpfiPoolRateGovernor.sol";
+import {VpfiPoolRateBounds} from "../src/crosschain/VpfiPoolRateBounds.sol";
 import {VaipakamRewardMessenger} from "../src/crosschain/VaipakamRewardMessenger.sol";
 import {GuardianPausable} from "../src/crosschain/GuardianPausable.sol";
 import {Deployments} from "./lib/Deployments.sol";
@@ -71,8 +72,9 @@ interface IRepatriationConfig {
  *           - The VPFI CCIP `TokenPool` — accepts the pending ownership
  *             handover from the deployer, registers the governor as
  *             `rateLimitAdmin`, adds a lane per remote chain
- *             (`applyChainUpdates`), then sets each lane's rate limits
- *             through `VpfiPoolRateGovernor` (the bounds-checked path).
+ *             (`applyChainUpdates`) with its rate limits already on
+ *             (#3539), then re-asserts them through `VpfiPoolRateGovernor`
+ *             (the bounds-checked path every later retune uses).
  *           - Registers the VPFI token + its pool in the CCIP
  *             `TokenAdminRegistry` (CCT enablement).
  *         Canonical only:
@@ -204,6 +206,45 @@ contract ConfigureCcip is Script {
         );
     }
 
+    /// @notice #3539 — the rate limit every pool lane carries from the
+    ///         moment it exists: enabled, at `capacity` / `rate`, which must
+    ///         lie within the governor's bounds so its later calls only
+    ///         retune it. {run} checks it before any broadcast.
+    function laneRateLimit(uint128 capacity, uint128 rate) public pure returns (RateLimiter.Config memory) {
+        require(
+            capacity >= VpfiPoolRateBounds.MIN_CAPACITY && capacity <= VpfiPoolRateBounds.MAX_CAPACITY,
+            "ConfigureCcip: CCIP_RATE_CAPACITY is outside the rate governor's bounds (VpfiPoolRateBounds) - a lane is created with this limit on, so it must be one the governor accepts (#3539)"
+        );
+        require(
+            rate >= VpfiPoolRateBounds.MIN_RATE && rate <= VpfiPoolRateBounds.MAX_RATE,
+            "ConfigureCcip: CCIP_RATE_REFILL is outside the rate governor's bounds (VpfiPoolRateBounds) - a lane is created with this limit on, so it must be one the governor accepts (#3539)"
+        );
+        return RateLimiter.Config({isEnabled: true, capacity: capacity, rate: rate});
+    }
+
+    /// @notice #3539 — the one-lane `applyChainUpdates` argument that adds
+    ///         the lane to `selector` with both buckets already enabled at
+    ///         {laneRateLimit}. A lane is never observable without a limit:
+    ///         before, it was added with both buckets off and limited by the
+    ///         governor in a later transaction.
+    function laneAdd(
+        uint64 selector,
+        address remotePool,
+        address remoteToken,
+        uint128 capacity,
+        uint128 rate
+    ) public pure returns (TokenPool.ChainUpdate[] memory adds) {
+        RateLimiter.Config memory on = laneRateLimit(capacity, rate);
+        adds = new TokenPool.ChainUpdate[](1);
+        adds[0] = TokenPool.ChainUpdate({
+            remoteChainSelector: selector,
+            remotePoolAddresses: _wrap(abi.encode(remotePool)),
+            remoteTokenAddress: abi.encode(remoteToken),
+            outboundRateLimiterConfig: on,
+            inboundRateLimiterConfig: on
+        });
+    }
+
     function run() external {
         uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
 
@@ -240,6 +281,9 @@ contract ConfigureCcip is Script {
         // readiness reports the same figure as advisory, since by then the
         // lane exists and parts keep it correct.
         requireLaneFitsFreshDaySlice(c.rateCapacity);
+        // #3539 — lanes are created with this limit on, so it is checked
+        // against the governor's bounds here, before any broadcast.
+        laneRateLimit(c.rateCapacity, c.rateRefill);
 
         // Local deployed addresses — written by `DeployCrosschain.s.sol`.
         c.messenger =
@@ -575,8 +619,8 @@ contract ConfigureCcip is Script {
     }
 
     /// @dev Wire the TokenPool lanes: register the governor as
-    ///      `rateLimitAdmin`, add a lane per remote chain, then set each
-    ///      lane's rate limits through the bounds-checked governor.
+    ///      `rateLimitAdmin`, add a lane per remote chain with its limits on,
+    ///      then re-assert them through the bounds-checked governor.
     function _wirePoolLanes(Ctx memory c) internal {
         TokenPool pool = TokenPool(c.pool);
 
@@ -585,33 +629,22 @@ contract ConfigureCcip is Script {
             console.log("Pool rateLimitAdmin set:", c.rateGovernor);
         }
 
-        // `applyChainUpdates` requires a *valid* rate-limit config; pass a
-        // disabled (zero) one and let the governor set the real, enabled
-        // limits immediately after — the governor is Vaipakam's
-        // ET-008-bounded rate-limit path and the single source of truth.
-        RateLimiter.Config memory off =
-            RateLimiter.Config({isEnabled: false, capacity: 0, rate: 0});
-        RateLimiter.Config memory on = RateLimiter.Config({
-            isEnabled: true,
-            capacity: c.rateCapacity,
-            rate: c.rateRefill
-        });
+        // #3539 — each lane is added with both buckets ON at the configured
+        // limit (inside the governor's bounds), so it carries a limit from
+        // the transaction that creates it. The governor call below re-asserts
+        // the same figures through its bounds-checked path, and is how the
+        // limit is retuned later.
+        RateLimiter.Config memory on = laneRateLimit(c.rateCapacity, c.rateRefill);
 
         for (uint256 i; i < c.laneChainIds.length; ++i) {
             uint256 cid = c.laneChainIds[i];
             uint64 selector = Deployments.ccipSelectorForChainId(cid);
 
             if (!pool.isSupportedChain(selector)) {
-                TokenPool.ChainUpdate[] memory adds =
-                    new TokenPool.ChainUpdate[](1);
-                adds[0] = TokenPool.ChainUpdate({
-                    remoteChainSelector: selector,
-                    remotePoolAddresses: _wrap(abi.encode(_remotePool(cid))),
-                    remoteTokenAddress: abi.encode(_remoteToken(cid)),
-                    outboundRateLimiterConfig: off,
-                    inboundRateLimiterConfig: off
-                });
-                pool.applyChainUpdates(new uint64[](0), adds);
+                pool.applyChainUpdates(
+                    new uint64[](0),
+                    laneAdd(selector, _remotePool(cid), _remoteToken(cid), c.rateCapacity, c.rateRefill)
+                );
                 console.log("  pool lane added -> chain", cid);
             }
 

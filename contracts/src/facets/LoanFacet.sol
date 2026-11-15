@@ -890,13 +890,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             // the autonomous tier-LTV cache (peer-protocol-derived,
             // refreshable permissionlessly via
             // `OracleFacet.refreshTierLtvCache`) while that entry is fresh
-            // (≤ 14d) and inside the tier's CURRENT safety box
-            // (`ConfigFacet.setTierLtvParams`, re-checked at read, #2736).
-            // Otherwise — stale, never refreshed, outside a box governance
-            // has since moved, or peer reads paused (#633) — it is the
-            // governance tier cap `cfgTierMaxInitLtvBps`. So the
-            // `cfgTier1/2/3MaxInitLtvBps` setters are live: they decide the
-            // cap whenever the cache is not trusted.
+            // (≤ 14d) and peer reads are not paused (#633); otherwise the
+            // tier default `cfgTierMaxInitLtvBps`. Either way it is never
+            // above the tier's governance ceiling
+            // (`ConfigFacet.setTierLtvParams`, applied at read, #3547).
             uint256 tierCap = uint256(
                 LibVaipakam.effectiveTierMaxInitLtvBps(effTier)
             );

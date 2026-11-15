@@ -77,6 +77,30 @@ export function takeCallerSlot(
 }
 
 /**
+ * Take `count` caller slots for `req` at once: the weighted form of
+ * {@link takeCallerSlot}, for a budget whose cost per request varies (the
+ * RPC proxy's per-call budget, #1283). The binding only ever takes one
+ * slot per call, so this asks it `count` times. The answer is the worst of
+ * them: any `unconfigured` or `unavailable` refuses as that, and any
+ * `refused` refuses as over budget. Slots a refused request did take stay
+ * spent, which is the right direction for a budget. `count` below 1 takes
+ * one slot: no request is free.
+ */
+export async function takeCallerSlots(
+  req: Request,
+  binding: RateLimitBinding | undefined,
+  count: number,
+): Promise<SlotOutcome> {
+  const n = Math.max(1, Math.ceil(count));
+  const key = callerKey(req);
+  const outcomes = await Promise.all(Array.from({ length: n }, () => takeSlot(binding, key)));
+  for (const worst of ['unconfigured', 'unavailable', 'refused'] as const) {
+    if (outcomes.includes(worst)) return worst;
+  }
+  return 'taken';
+}
+
+/**
  * The status and error name for a slot that was not taken, or `null` when
  * it was: the one mapping every refusal uses, so a caller that reports a
  * refusal inside a larger answer (the agent's OpenSea offers walk) names it

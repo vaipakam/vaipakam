@@ -319,11 +319,12 @@ describe('a ranged request (OFF-10 / OFF-16)', () => {
     expect(rangeConsequences(r, null, copy)).toEqual(['request.loseDirectUnknown', 'request.loseMatchingUnread', 'request.loseFillFixed']);
     expect(rangeConsequences(rangedReview({}, { directWithinLimit: 'over', directCeiling: null }), null, copy)).toContain('request.loseDirectOverPlain');
   });
-  it('adds nothing for a single-value partial request, and fixes a chosen fill mode', () => {
+  it('adds nothing for a single-value request: one size posts all-or-none, with no mode to fix (#3520)', () => {
     expect(rangeConsequences(review(), null, copy)).toEqual([]);
     const aon = review();
     const parsed = { ...aon.draft.parsed, fillMode: 'aon' as const };
-    expect(rangeConsequences({ ...aon, draft: { ...aon.draft, parsed } }, null, copy)).toEqual(['request.loseFillFixed']);
+    expect(rangeConsequences({ ...aon, draft: { ...aon.draft, parsed } }, null, copy)).toEqual([]);
+    expect(postReceipt({ ...aon, draft: { ...aon.draft, parsed } }, null, copy).rows.some((x) => x.label === 'request.rowFill')).toBe(false);
   });
   it("names a refused collateral value as 'nothing', never 0%", () => {
     const r = rangedReview({}, { direct: { kind: 'worthless' } });
@@ -653,11 +654,12 @@ describe('a lending offer with parts (OFF-10 / OFF-11)', () => {
     expect(unread.consequences).toContain('lendOffer.loseRangeMatchUnread');
   });
 
-  it('fixes a chosen fill mode on a single amount too, and states it', () => {
+  it('states no fill mode on a single amount: one size posts all-or-none, which the whole-amount row says (#3520)', () => {
     const r = postReceipt(lenderReview({ draft: { ...lenderReview().draft, parsed: { ...lenderReview().draft.parsed, fillMode: 'aon' } } }), null, copy);
-    expect(r.rows.find((x) => x.label === 'request.rowFill')!.value).toMatchObject({ text: 'request.fillModeAon' });
-    expect(r.consequences).toEqual(expect.arrayContaining(['lendOffer.loseMatch', 'lendOffer.loseFillFixed']));
-    expect(postReceipt(lenderReview(), null, copy).consequences).not.toContain('lendOffer.loseFillFixed');
+    expect(r.rows.some((x) => x.label === 'request.rowFill')).toBe(false);
+    expect(r.rows.find((x) => x.label === 'request.rowWhole')!.value).toMatchObject({ text: 'lendOffer.whole' });
+    expect(r.consequences).toContain('lendOffer.loseMatch');
+    expect(r.consequences).not.toContain('lendOffer.loseFillFixed');
   });
 
   it("turns the protocol's collateral floor into the lender's blocker, with the least collateral it asks", () => {

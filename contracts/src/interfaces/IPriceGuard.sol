@@ -53,7 +53,9 @@ interface IPriceGuard {
     function tryGetAssetPrice(address asset) external view returns (bool ok, uint256 price, uint8 decimals);
 
     /// @notice The live secondary sources for `asset`, split by whether each
-    ///         agrees with the primary. Reverts only when the primary read does.
+    ///         agrees with the primary, as the quorum counts them: a muted
+    ///         source's agreement is not counted, its disagreement is.
+    ///         Reverts only when the primary read does.
     function countLiveSecondaryOracleFeeds(address asset)
         external
         view

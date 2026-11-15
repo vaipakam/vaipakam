@@ -28,9 +28,8 @@ import {
   getNotifyState,
   listThresholdsForChain,
   putNotifyState,
-  sweepExpiredLinks,
 } from './db';
-import { AlertDelivery, publishRailStatus } from './alertDelivery';
+import { AlertDelivery, publishRailStatus, worthRetrying, type DeliveryOutcome } from './alertDelivery';
 import { formatAlert, pushTitle } from './i18n';
 import { redactedError } from '@vaipakam/lib/errorDescription';
 
@@ -58,8 +57,6 @@ const BAND_RANK: Record<Band, number> = {
 };
 
 export async function runWatcher(env: Env): Promise<void> {
-  // Sweep expired handshake codes first so the table stays bounded.
-  await sweepExpiredLinks(env.DB);
   // #2667 — say what this keeper's Push rail can do, for the agent's status
   // answer. Here because this pass is the risky-loan sender and runs every
   // tick: a row that stops being refreshed means the sender stopped too.
@@ -186,7 +183,11 @@ async function watchChain(env: Env, chain: ChainConfig, alerts: AlertDelivery): 
           // built-in: recovering to healthy updates last_band but does
           // NOT alert, so toggling around a threshold doesn't storm.
           if (BAND_RANK[band] > BAND_RANK[prev.last_band]) {
-            await dispatchAlert(env, alerts, user, chain, loanId, hf, band);
+            const outcome = await dispatchAlert(env, alerts, user, chain, loanId, hf, band);
+            // No channel took the warning and one may on the next run (the
+            // agent or the Push rail was unreachable): keep the old band, so
+            // the next run sees the same transition and sends it again.
+            if (outcome && worthRetrying(outcome)) continue;
           }
 
           // (Autonomous liquidation moved to `runLiquidator` — its
@@ -220,8 +221,8 @@ async function dispatchAlert(
   loanId: number,
   hf: number,
   band: Band,
-): Promise<void> {
-  if (band === 'healthy') return;
+): Promise<DeliveryOutcome | null> {
+  if (band === 'healthy') return null;
 
   // Stage 4 PR3 flattened the connected-app routes to root, so
   // notification deep links use `/loans/{id}` (no `/app/` prefix).
@@ -237,8 +238,13 @@ async function dispatchAlert(
     frontendOrigin,
   });
 
-  await alerts.deliver({
-    tgChatId: user.tg_chat_id,
+  return alerts.deliver({
+    // #1722 — the same band, as data: the agent renders it from the same
+    // catalogue for the chat the owner linked, if any.
+    telegram: {
+      diamond: chain.diamond,
+      message: { chainId: chain.id, wallet: user.wallet, alert: { kind: 'hf', band, loanId, hf } },
+    },
     pushSubscriber: user.push_channel ? user.wallet : null,
     text,
     pushTitle: pushTitle(band, user.locale),

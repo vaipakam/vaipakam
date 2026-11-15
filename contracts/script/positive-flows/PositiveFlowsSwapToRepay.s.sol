@@ -73,6 +73,12 @@ contract PositiveFlowsSwapToRepay is PositiveFlowsBase {
         uint256 adapterWethBefore = weth.balanceOf(address(adapter));
         uint256 borrowerBefore = usdc.balanceOf(borrower);
         uint256 treasuryBefore = _treasuryUsdc();
+        // The lender's share lands in the lender's vault and the unsold
+        // collateral never leaves the borrower's (#3205 part 2); the claims
+        // then settle the two positions against them. The borrower's surplus
+        // is paid to its wallet.
+        uint256 lenderVaultBefore = _vaultBalance(usdc, lender);
+        uint256 collateralVaultBefore = _vaultBalance(weth, borrower);
         vm.startBroadcast(borrowerKey);
         SwapToRepayFacet(diamond).swapToRepayFull(loanId, route, COLLATERAL_AMOUNT, type(uint64).max);
         vm.stopBroadcast();
@@ -87,17 +93,21 @@ contract PositiveFlowsSwapToRepay is PositiveFlowsBase {
         require(lenderAsset == address(usdc), "PF-118: the lender is repaid in the lending asset");
         require(treasuryShare > 0, "PF-118: a full-term payoff should carry a treasury share");
         require(lenderShare + treasuryShare == required, "PF-118: the lender's and treasury's shares should be the debt");
+        require(_vaultBalance(usdc, lender) - lenderVaultBefore == lenderShare,
+            "PF-118: the lender's share should land in the lender's vault");
         require(surplus == proceeds - required, "PF-118: the proceeds above the debt should reach the borrower");
         (address collAsset, uint256 residual,,,,,,) = ClaimFacet(diamond).getClaimable(loanId, false);
         require(collAsset == address(weth) && residual == COLLATERAL_AMOUNT - toSell,
             "PF-118: the unsold collateral should be the borrower's claim");
+        require(collateralVaultBefore - _vaultBalance(weth, borrower) == toSell,
+            "PF-118: only the sold collateral should leave the borrower's vault");
         console.log("Lender / treasury / borrower surplus:", lenderShare, treasuryShare, surplus);
 
-        uint256 lenderBefore = usdc.balanceOf(lender);
-        uint256 wethBefore = weth.balanceOf(borrower);
         _claimBoth(lenderKey, borrowerKey, loanId);
-        require(usdc.balanceOf(lender) - lenderBefore == lenderShare, "PF-118: the lender claims its share");
-        require(weth.balanceOf(borrower) - wethBefore == residual, "PF-118: the borrower claims the unsold collateral");
+        (,, bool lenderClaimed,,,,,) = ClaimFacet(diamond).getClaimable(loanId, true);
+        (,, bool borrowerClaimed,,,,,) = ClaimFacet(diamond).getClaimable(loanId, false);
+        require(lenderClaimed, "PF-118: the lender claims its share");
+        require(borrowerClaimed, "PF-118: the borrower claims the unsold collateral");
     }
 
     // ─── PF-119 ───────────────────────────────────────────────────────────
@@ -117,6 +127,8 @@ contract PositiveFlowsSwapToRepay is PositiveFlowsBase {
 
         uint256 sell = COLLATERAL_AMOUNT / 4;
         uint256 proceeds = adapter.quote(address(weth), address(usdc), sell);
+        // Unlike the full route, the partial route pays the lender's part to
+        // the lender's wallet.
         uint256 lenderBefore = usdc.balanceOf(lender);
         uint256 borrowerBefore = usdc.balanceOf(borrower);
         uint256 treasuryBefore = _treasuryUsdc();

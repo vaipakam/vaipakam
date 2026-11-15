@@ -1847,18 +1847,64 @@ contract LaunchTest is Test {
         );
     }
 
-    /// @dev #3360 — off the canonical reward chain the armed-cap requirement
-    ///      does not apply (D* reaches a mirror in Base's broadcast), and the
-    ///      detail names the role found.
-    function test_RewardCapArmed_DoesNotApplyOffCanonical() public {
+    /// @dev #3360 part B — a Diamond that runs no reward days (Unconfigured,
+    ///      Detached) is outside the check, and the detail names the role.
+    function test_RewardCapArmed_DoesNotApplyWithoutRewardDays() public {
         _configure();
         LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
         assertEq(c[11].label, "the fee-linked reward cap is armed before any loan");
         assertTrue(c[11].checkable && c[11].met);
+        assertEq(c[11].detail, "does not apply: the reward role is Unconfigured, which runs no reward days");
+    }
+
+    /// @dev #3360 part B — a mirror's loans carry the cap too, so a mirror
+    ///      that has not yet adopted D* from Base's broadcast is NOT MET, with
+    ///      a mirror-specific instruction, and a testnet launch refuses.
+    function test_RewardCapArmed_NotMetOnAMirrorBeforeBaseArmsIt() public {
+        vm.chainId(421614);
+        _configure();
+        vm.prank(admin);
+        RewardReporterFacet(diamond).setBaseChainId(84532);
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
+        assertTrue(c[11].checkable);
+        assertFalse(c[11].met);
         assertEq(
             c[11].detail,
-            "does not apply: the reward role is Unconfigured, and the reward cap is armed on the canonical reward chain"
+            "this mirror has not received the reward cap's first armed day: arm it on Base (setGovernorCommitArmedFromDay) and launch after Base's next broadcast lands here"
         );
+        LibLaunchReadiness.Declared memory d = _d(address(0));
+        d.rewardRole = LibLaunchReadiness.RewardRoleIntent.Mirror;
+        vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
+        launcher.launch(diamond, d, address(0), admin, ADMIN_KEY);
+    }
+
+    /// @dev #3360 part B — a mirror holding D* (as adopted from Base's
+    ///      broadcast) follows the same day rule as Base: NOT MET before D*,
+    ///      met on it. D* is written here the only way a test can reach it
+    ///      without a broadcast: armed while canonical, then the role moved
+    ///      to mirror, which keeps the stored day.
+    function test_RewardCapArmed_MirrorWaitsForTheFirstArmedDay() public {
+        _configure();
+        vm.startPrank(admin);
+        RewardReporterFacet(diamond).setIsCanonicalRewardChain(true);
+        InteractionRewardsFacet(diamond).setInteractionLaunchTimestamp(block.timestamp);
+        RewardAggregatorFacet(diamond).setGovernorCommitArmedFromDay(2);
+        RewardReporterFacet(diamond).setIsCanonicalRewardChain(false);
+        RewardReporterFacet(diamond).setBaseChainId(84532);
+        vm.stopPrank();
+        assertEq(RewardReporterFacet(diamond).getRewardRole(), 1, "the Diamond is a mirror");
+
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
+        assertTrue(c[11].checkable);
+        assertFalse(c[11].met);
+        assertEq(
+            c[11].detail,
+            "today is reward day 0, before the cap's first armed day 2: a loan opened now would earn under the legacy per-ETH cap; launch on that day or later"
+        );
+
+        vm.warp(block.timestamp + 2 days);
+        c = _gate().checks(diamond, _d(address(0)));
+        assertTrue(c[11].checkable && c[11].met);
     }
 
     /// @dev #3360 — a canonical chain launched with D* unset would run every

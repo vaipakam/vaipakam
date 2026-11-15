@@ -7,7 +7,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { generatePrivateKey } from 'viem/accounts';
 import { readPublishedRail, type PublishedRailRow } from '@vaipakam/push';
-import { AlertDelivery, publishRailStatus, pushRailConfigOf } from '../src/alertDelivery';
+import { AlertDelivery, publishRailStatus, pushRailConfigOf, worthRetrying, type Alert } from '../src/alertDelivery';
+import { AgentDiamondMismatch, AgentRequestFailed, type AgentClient } from '../src/agentClient';
+import type { AddressedAlert } from '@vaipakam/lib/telegramAlerts/message';
 import type { ChainConfig, Env } from '../src/env';
 import { disarmEpochFence } from '../src/epochFence';
 import { armHeldFence } from './helpers/epochFence';
@@ -16,7 +18,6 @@ import { createSqliteD1 } from './helpers/sqliteD1';
 
 const CHAIN = { id: 84532, diamond: '0x' + 'd'.repeat(40) } as unknown as ChainConfig;
 const alert = (subscriber: string | null) => ({
-  tgChatId: null,
   pushSubscriber: subscriber,
   text: 'hi',
   pushTitle: 't',
@@ -68,6 +69,79 @@ describe('AlertDelivery — Push through the shared rail', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     new AlertDelivery({} as unknown as Env).disclose('watcher');
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+describe('AlertDelivery — Telegram through the agent (#1722)', () => {
+  const WALLET = '0x' + 'a'.repeat(40);
+  const message: AddressedAlert = { chainId: 84532, wallet: WALLET, alert: { kind: 'hf', band: 'alert', loanId: 7, hf: 1.2 } };
+  const tgAlert: Alert = { telegram: { diamond: CHAIN.diamond as string, message }, text: 'push body', pushTitle: 't', deepLinkUrl: '' };
+  const agentWith = (send: AgentClient['sendAlerts']): AgentClient & { sent: unknown[][] } => {
+    const sent: unknown[][] = [];
+    return {
+      sent,
+      lockPoll: async () => [],
+      lockPending: async () => [],
+      lockHandled: async () => ({ recorded: true, telegram: 'off' }),
+      sendAlerts: async (...args) => {
+        sent.push(args);
+        return send(...args);
+      },
+    };
+  };
+
+  it('posts the alert as data, with the chain and the Diamond, and returns what the agent did', async () => {
+    armHeldFence([CHAIN]);
+    const agent = agentWith(async () => ['sent']);
+    const out = await new AlertDelivery({} as unknown as Env, agent).deliver(tgAlert);
+    expect(out).toEqual({ telegram: 'sent', push: 'off' });
+    expect(agent.sent).toEqual([[84532, CHAIN.diamond, [message]]]);
+  });
+
+  it('reads an unlinked wallet (the agent answers off) as no channel', async () => {
+    armHeldFence([CHAIN]);
+    const out = await new AlertDelivery({} as unknown as Env, agentWith(async () => ['off'])).deliver(tgAlert);
+    expect(out.telegram).toBe('off');
+  });
+
+  it('with no agent configured sends nothing on Telegram and says so once, with the reason', async () => {
+    armHeldFence([CHAIN]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const alerts = new AlertDelivery({ KEEPER_AGENT_TOKEN: 'tok' } as unknown as Env);
+    expect((await alerts.deliver(tgAlert)).telegram).toBe('off');
+    expect((await alerts.deliver(tgAlert)).telegram).toBe('off');
+    alerts.disclose('watcher');
+    expect(warn.mock.calls.map((c) => c[0])).toEqual(['[watcher] Telegram unavailable (AGENT_ORIGIN is unset): 2 alert(s) not sent by Telegram this pass']);
+  });
+
+  it('reads a refusal that will repeat as refused, and anything else as worth another try', async () => {
+    armHeldFence([CHAIN]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const permanent = new AlertDelivery({} as unknown as Env, agentWith(async () => { throw new AgentRequestFailed('/keeper/alerts', 401, 'unauthorized'); }));
+    expect((await permanent.deliver(tgAlert)).telegram).toBe('refused');
+    const passing = new AlertDelivery({} as unknown as Env, agentWith(async () => { throw new AgentRequestFailed('/keeper/alerts', 0, 'TimeoutError'); }));
+    expect((await passing.deliver(tgAlert)).telegram).toBe('retry');
+    const limited = new AlertDelivery({} as unknown as Env, agentWith(async () => { throw new AgentRequestFailed('/keeper/alerts', 429, 'slow down'); }));
+    expect((await limited.deliver(tgAlert)).telegram).toBe('retry');
+    permanent.disclose('watcher');
+    expect(String(warn.mock.calls[0][0])).toMatch(/^\[watcher\] 1 Telegram alert\(s\) not taken by the agent this pass \(last: .*answered 401/);
+  });
+
+  it('reads an alert no channel took, and one may on another try, as worth retrying', () => {
+    // The HF watcher keeps the old band and the pre-grace watcher leaves its
+    // throttle unstamped on exactly this answer, so an agent outage does not
+    // use up the warning (Codex #3576 r2).
+    expect(worthRetrying({ telegram: 'retry', push: 'off' })).toBe(true);
+    expect(worthRetrying({ telegram: 'off', push: 'retry' })).toBe(true);
+    expect(worthRetrying({ telegram: 'retry', push: 'sent' })).toBe(false);
+    expect(worthRetrying({ telegram: 'refused', push: 'off' })).toBe(false);
+    expect(worthRetrying({ telegram: 'off', push: 'off' })).toBe(false);
+  });
+
+  it('throws when the agent serves another Diamond, like the epoch fence', async () => {
+    armHeldFence([CHAIN]);
+    const alerts = new AlertDelivery({} as unknown as Env, agentWith(async () => { throw new AgentDiamondMismatch(84532, '0x' + 'e'.repeat(40)); }));
+    await expect(alerts.deliver(tgAlert)).rejects.toBeInstanceOf(AgentDiamondMismatch);
   });
 });
 

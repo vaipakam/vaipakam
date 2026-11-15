@@ -65,11 +65,15 @@
  *                                             (EIP-191 wallet signature
  *                                             required — see linkAuth.ts)
  *   POST /unlink/telegram                   — frontend → clear the stored
- *                                             wallet ↔ tg_chat_id link (#1033;
- *                                             EIP-191 signature required too)
+ *                                             wallet ↔ chat link (#1033;
+ *                                             EIP-191 signature required too;
+ *                                             waits under protected mode, #3246)
  *   POST /telegram/test                     — frontend → send ONE test alert
  *                                             to the linked chat (UX-012;
  *                                             EIP-191 signature required too)
+ *   POST /keeper/lock/poll|pending|handled  — keeper → LOCK requests (#1722;
+ *                                             KEEPER_AGENT_TOKEN, keeperRoutes.ts)
+ *   POST /keeper/alerts                     — keeper → owner alerts as data
  *   POST /support/ticket                    — frontend → capture a support
  *                                             ticket into D1 + ops-Telegram
  *                                             notify (#1040 phase 1)
@@ -100,7 +104,7 @@
  * chain.
  */
 
-import { getChainConfigs, resolveEnv, WORKER_NAME, type Env, type WorkerEnv } from './env';
+import { getChainConfigs, getRpcChains, resolveEnv, WORKER_NAME, type Env, type WorkerEnv } from './env';
 import {
   hasD1Binding,
   maintenanceRefusal,
@@ -132,17 +136,30 @@ import {
   handleActiveLoansFrameImage,
 } from './frames';
 import {
-  consumeTelegramLinkCode,
-  getTelegramChatId,
-  recordLockRequests,
-  issueTelegramLinkCode,
-  linkTelegramStatement,
+  ensureThresholdsRow,
   OptOutStorageUnavailableError,
   reserveTestAlert,
-  sweepExpiredLinks,
   hasStoredPushOptIn,
   upsertThresholds,
 } from './db';
+import {
+  consumeTelegramLinkCode,
+  getTelegramChatId,
+  issueTelegramLinkCode,
+  recordLockRequests,
+  warnUnansweredLocks,
+} from './telegramLinks';
+import { stateStub } from './telegramState/object';
+import { handleKeeperRoute, isKeeperPath, type KeeperRouteDeps } from './keeperRoutes';
+import { DEPLOYMENTS, getDeployment } from '@vaipakam/contracts/deployments';
+
+/** #1722 — the agent's own deployments, chain id to Diamond (lower-case).
+ *  Telegram LOCK requests are recorded against these Diamonds only, the same
+ *  ones the keeper routes fence to, so a keeper still working a retired
+ *  Diamond on a chain is never treated as working the current one. */
+const CURRENT_DIAMONDS: Record<number, string> = Object.fromEntries(
+  Object.entries(DEPLOYMENTS).map(([chainId, d]) => [Number(chainId), d.diamond.toLowerCase()]),
+);
 import { extractCancelCommand, extractLinkCode, extractLockCommand, isTelegramDelivery, sendMessage, type TelegramUpdate } from './telegram';
 import { channelCopy, handshakeExpired, handshakeLinked, lockNotLinked, lockNotRecorded, lockNotRunning, lockPrivateOnly, lockRecorded, lockStale, testAlert } from './i18n';
 import {
@@ -154,7 +171,7 @@ import type { AlertSettingsChange } from '@vaipakam/lib/alertsMessage';
 import { isTickDue } from '@vaipakam/lib/cronCadence';
 import { AGENT_TICK_CADENCE_MINUTES } from './tickCadence';
 import { readJsonBody } from '@vaipakam/lib/requestBody';
-import { chainProtectionReader, chatLocale } from './alertChannelChange';
+import { chainProtectionReader, d1LocaleReader } from './alertChannelChange';
 import {
   applyDueChannelChanges,
   cancelFromChat,
@@ -183,6 +200,9 @@ const MAX_TELEGRAM_UPDATE_BYTES = 256 * 1024;
  * schema themselves (the shared module states why).
  */
 const schemaGate = createSchemaGate();
+
+/** #1722 — the agent's Telegram state object; wrangler binds it as TG_STATE. */
+export { TelegramState } from './telegramState/object';
 
 export default {
   async scheduled(
@@ -304,17 +324,33 @@ export default {
     // "Dashboard-managed vars survive a deploy — declared, not remembered".
     // #3246 — apply the Telegram chat removals whose protected-mode wait has
     // passed, and tell the chats.
+    // Each Telegram-state pass builds its stub INSIDE its own promise, so a
+    // missing or failing state binding fails that pass alone and never the
+    // tick (the isolation the passes above rely on).
     ctx.waitUntil(
-      applyDueChannelChanges(channelDeps(resolved)).catch((err) => {
+      (async () => applyDueChannelChanges(channelDeps(resolved)))().catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[agent] applyDueChannelChanges pass failed:', redactedError(err));
       }),
     );
+    // #1722 — one warning to each chat whose recorded LOCK no keeper has
+    // answered within an hour, so an owner never waits on a lock that is
+    // not coming.
     ctx.waitUntil(
-      sweepExpiredLinks(resolved.DB).catch((err) => {
+      (async () => {
+        const deps = channelDeps(resolved);
+        await warnUnansweredLocks(stateStub(resolved), deps.locales, deps.send, deps.now);
+      })().catch((err) => {
         // eslint-disable-next-line no-console
-        console.error('[agent] sweepExpiredLinks pass failed:', redactedError(err));
+        console.error('[agent] warnUnansweredLocks pass failed:', redactedError(err));
       }),
+    );
+    ctx.waitUntil(
+      (async () => stateStub(resolved).sweepExpiredCodes(Math.floor(Date.now() / 1000)))()
+        .catch((err) => {
+          // eslint-disable-next-line no-console
+          console.error('[agent] sweepExpiredCodes pass failed:', redactedError(err));
+        }),
     );
 
   },
@@ -371,6 +407,12 @@ export default {
     // retry.
     if (url.pathname === '/tg/webhook' && req.method === 'POST') {
       return handleTelegramWebhook(req, resolved);
+    }
+
+    // #1722 — the keeper's routes to the Telegram state (keeperRoutes.ts).
+    // No CORS: a server caller, gated by its bearer token and its Diamond.
+    if (isKeeperPath(url.pathname)) {
+      return (await handleKeeperRoute(req, url.pathname, keeperRouteDeps(resolved)))!;
     }
 
     // Farcaster Frames — public read-only, embeddable from any
@@ -771,11 +813,23 @@ async function handleIssueTelegramLink(
   const verified = await authoriseAlertRequest(req, env, parsed.req, 'link');
   if (!verified.ok) return refusal(verified, corsOrigin);
 
-  const code = await issueTelegramLinkCode(
-    env.DB,
-    parsed.req.wallet,
-    parsed.req.chain_id,
-  );
+  // The wallet's `user_thresholds` row is made before any code exists (see
+  // `issueTelegramLinkCode`); if it or the code cannot be made, the request
+  // is refused and the app says linking failed, rather than a handshake that
+  // later reports alerts working while nothing would be sent.
+  let code: string;
+  try {
+    code = await issueTelegramLinkCode(
+      stateStub(env),
+      (wallet, chainId) => ensureThresholdsRow(env.DB, wallet, chainId),
+      parsed.req.wallet,
+      parsed.req.chain_id,
+      Math.floor(Date.now() / 1000),
+    );
+  } catch (err) {
+    console.error('[agent] no link code issued:', redactedError(err));
+    return json({ error: 'link-unavailable' }, 503, corsOrigin);
+  }
   // Build the Telegram deep link from the operator-configured bot
   // username. Both `TG_BOT_TOKEN` AND `TG_BOT_USERNAME` must be set:
   // the token authenticates message sends, the username is the
@@ -790,15 +844,35 @@ async function handleIssueTelegramLink(
   return json({ ok: true, code, bot_url: botUrl }, 200, corsOrigin);
 }
 
-/** #3246 — what the alert-channel flows need: the database, a Telegram send
- *  (none without a bot token), the chain protection reader and the clock. */
+/** #3246 — what the alert-channel flows need: the Telegram state object
+ *  (#1722), the owner's locale, a Telegram send (none without a bot token),
+ *  the chain protection reader and the clock. */
 function channelDeps(env: Env): ChannelDeps {
   const token = env.TG_BOT_TOKEN;
   return {
-    db: env.DB,
+    state: stateStub(env),
+    locales: d1LocaleReader(env.DB),
     send: token ? (chatId, text) => sendMessage(token, chatId, text) : null,
     read: chainProtectionReader(env),
     now: Math.floor(Date.now() / 1000),
+  };
+}
+
+/** #1722 — what the keeper routes need: the token, the state object, the
+ *  owner's locale, a Telegram send, this bundle's Diamonds and the app's
+ *  origin. */
+function keeperRouteDeps(env: Env): KeeperRouteDeps {
+  const token = env.TG_BOT_TOKEN;
+  const names = new Map(getRpcChains(env).map((c) => [c.id, c.name]));
+  return {
+    token: env.KEEPER_AGENT_TOKEN,
+    state: stateStub(env),
+    locales: d1LocaleReader(env.DB),
+    send: token ? (chatId, text) => sendMessage(token, chatId, text) : undefined,
+    diamondOf: (chainId) => getDeployment(chainId)?.diamond ?? null,
+    chainName: (chainId) => names.get(chainId) ?? String(chainId),
+    appOrigin: env.FRONTEND_ORIGIN.split(',')[0]!.trim(),
+    now: () => Math.floor(Date.now() / 1000),
   };
 }
 
@@ -910,7 +984,8 @@ async function handleTestTelegram(req: Request, env: Env): Promise<Response> {
   const verified = await authoriseAlertRequest(req, env, parsed.req, 'test-alert', now);
   if (!verified.ok) return refusal(verified, corsOrigin);
   const linked = await getTelegramChatId(
-    env.DB,
+    stateStub(env),
+    d1LocaleReader(env.DB),
     parsed.req.wallet,
     parsed.req.chain_id,
   );
@@ -982,14 +1057,20 @@ async function handleTelegramWebhook(
       await sendMessage(env.TG_BOT_TOKEN, lock.chatId, lockPrivateOnly('en'));
       return new Response('ok', { status: 200 });
     }
-    // Every HTTP handler must tolerate the previous schema (the shared D1
-    // migrations land before this code, but a handler cannot assume so): a
-    // request that could not be recorded is said to be so, and acked, so
+    // A request that could not be recorded is said to be so, and acked, so
     // Telegram does not redeliver it as a lock long after it was asked.
     const nowSec = Math.floor(Date.now() / 1000);
     let links: Awaited<ReturnType<typeof recordLockRequests>>;
     try {
-      links = await recordLockRequests(env.DB, lock.chatId, lock.updateId, lock.sentAt, nowSec);
+      links = await recordLockRequests(
+        stateStub(env),
+        d1LocaleReader(env.DB),
+        lock.chatId,
+        lock.updateId,
+        lock.sentAt,
+        nowSec,
+        CURRENT_DIAMONDS,
+      );
     } catch (err) {
       console.error('[agent] LOCK not recorded:', redactedError(err));
       await sendMessage(env.TG_BOT_TOKEN, lock.chatId, lockNotRecorded('en'));
@@ -1021,17 +1102,15 @@ async function handleTelegramWebhook(
   // a change would silence may cancel it, and only from a private chat.
   const cancel = extractCancelCommand(update);
   if (cancel) {
-    let locale: string | null = null;
     try {
-      locale = await chatLocale(env.DB, cancel.chatId);
-      await cancelFromChat(channelDeps(env), cancel.chatId, cancel.isPrivate, locale);
+      await cancelFromChat(channelDeps(env), cancel.chatId, cancel.isPrivate);
     } catch (err) {
-      // Nothing was cancelled (a D1 failure, or the table not there yet).
+      // Nothing was cancelled (the state object could not be reached).
       // Say so, like LOCK does, so the owner sends it again instead of
       // believing the change was stopped.
       console.error('[agent] CANCEL not handled:', redactedError(err));
       if (env.TG_BOT_TOKEN) {
-        await sendMessage(env.TG_BOT_TOKEN, cancel.chatId, channelCopy.cancelNotRecorded(locale)).catch(() => undefined);
+        await sendMessage(env.TG_BOT_TOKEN, cancel.chatId, channelCopy.cancelNotRecorded(null)).catch(() => undefined);
       }
     }
     return new Response('ok', { status: 200 });
@@ -1044,7 +1123,7 @@ async function handleTelegramWebhook(
     return new Response('ok', { status: 200 });
   }
   const { chatId, code } = extracted;
-  const match = await consumeTelegramLinkCode(env.DB, code);
+  const match = await consumeTelegramLinkCode(stateStub(env), d1LocaleReader(env.DB), code, Math.floor(Date.now() / 1000));
   if (!match) {
     // No locale to look up (the row didn't resolve); fall back to en.
     await sendMessage(env.TG_BOT_TOKEN, chatId, handshakeExpired('en'));
@@ -1054,14 +1133,10 @@ async function handleTelegramWebhook(
   // #3246 — a different chat taking over from the one linked now waits
   // the account's delay while it is protected; `requestRelink` tells both
   // chats. Linking where none is linked, or the same chat again, is at once.
-  const relink = await requestRelink(
-    channelDeps(env),
-    match.wallet,
-    match.chainId,
-    chatId,
-    match.locale,
-    (expected) => linkTelegramStatement(env.DB, match.wallet, match.chainId, chatId, expected),
-  );
+  // The wallet's `user_thresholds` row was made when this code was issued
+  // (`handleIssueTelegramLink`), so the alerts the reply promises have a row
+  // to be found through.
+  const relink = await requestRelink(channelDeps(env), match.wallet, match.chainId, chatId, match.locale);
   if (relink !== 'linked') return new Response('ok', { status: 200 });
   const walletShort = `${match.wallet.slice(0, 8)}…${match.wallet.slice(-6)}`;
   await sendMessage(

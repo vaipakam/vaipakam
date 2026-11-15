@@ -7,6 +7,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {LibTestTiming} from "./helpers/LibTestTiming.sol";
@@ -208,6 +209,7 @@ contract AcceptRangedOfferTest is SetupTest {
     function test_lenderRangedOffer_borrowerAccepts_principalAndRateRoleAware() public {
         uint256 lenderVaultBalBefore = ERC20(mockERC20).balanceOf(lender);
         uint256 borrowerWalletBefore  = ERC20(mockERC20).balanceOf(borrower);
+        uint256 borrowerVaultBefore   = ERC20(mockERC20).balanceOf(_borrowerVault());
 
         uint256 offerId = _postLenderOffer({
             creator: lender,
@@ -260,16 +262,18 @@ contract AcceptRangedOfferTest is SetupTest {
             "direct-accept does NOT update amountFilled (terminal via accepted=true)"
         );
 
-        // Borrower wallet credit - net of the 0.2% LIF (rev-8 freeze,
+        // Borrower vault credit - net of the 0.2% LIF (rev-8 freeze,
         // #1352) that the HoldOnly path charges in full when the borrower
         // hasn't staked VPFI (default SetupTest harness). 10_000 * 20 /
         // 10000 = 20 LIF (99% treasury / 1% matcher kickback per the
-        // Phase 1 split). Borrower nets 9_980 of the 10k principal.
+        // Phase 1 split). Borrower nets 9_980 of the 10k principal, in
+        // their vault (#3480); the wallet does not move.
         assertEq(
-            ERC20(mockERC20).balanceOf(borrower),
-            borrowerWalletBefore + 9_980,
-            "borrower nets 9980 = effectivePrincipal (10k) - LIF (20)"
+            ERC20(mockERC20).balanceOf(_borrowerVault()),
+            borrowerVaultBefore + 9_980,
+            "borrower vault nets 9980 = effectivePrincipal (10k) - LIF (20)"
         );
+        assertEq(ERC20(mockERC20).balanceOf(borrower), borrowerWalletBefore, "borrower wallet unchanged");
     }
 
     // ═════════════════════════════════════════════════════════════════
@@ -293,12 +297,13 @@ contract AcceptRangedOfferTest is SetupTest {
     ///         + lender's vault deposits the 1k principal (debited
     ///           from lender's wallet via the borrower-side acceptOffer
     ///           pull described in `_acceptOffer` lines 577-617).
-    ///         + borrower's wallet receives the 1k principal.
+    ///         + borrower's vault receives the 1k principal net of LIF (#3480).
     ///         + offer.accepted = true; offer.amountFilled = amount (the
     ///           floor, since lender-acceptor reads `amount`).
     function test_borrowerRangedOffer_lenderAccepts_principalAndRateRoleAware() public {
         uint256 lenderWalletBefore = ERC20(mockERC20).balanceOf(lender);
         uint256 borrowerWalletBefore = ERC20(mockERC20).balanceOf(borrower);
+        uint256 borrowerVaultBefore = ERC20(mockERC20).balanceOf(_borrowerVault());
 
         uint256 offerId = _postBorrowerOffer({
             creator: borrower,
@@ -337,14 +342,15 @@ contract AcceptRangedOfferTest is SetupTest {
             lenderWalletBefore - 1_000,
             "lender wallet down by the 1k principal"
         );
-        // Borrower's wallet - credited by the 1k principal net of LIF
-        // (20 BPS = 2, rev-8 freeze #1352). See scenario 1's note for the
-        // LIF semantic.
+        // Borrower's vault - credited by the 1k principal net of LIF
+        // (20 BPS = 2, rev-8 freeze #1352); the wallet does not move
+        // (#3480). See scenario 1's note for the LIF semantic.
         assertEq(
-            ERC20(mockERC20).balanceOf(borrower),
-            borrowerWalletBefore + 998,
-            "borrower nets 998 = effectivePrincipal (1k) - LIF (2)"
+            ERC20(mockERC20).balanceOf(_borrowerVault()),
+            borrowerVaultBefore + 998,
+            "borrower vault nets 998 = effectivePrincipal (1k) - LIF (2)"
         );
+        assertEq(ERC20(mockERC20).balanceOf(borrower), borrowerWalletBefore, "borrower wallet unchanged");
 
         // Offer state - direct-accept marks accepted=true, leaves
         // amountFilled at 0 (see scenario 1's note).
@@ -494,6 +500,7 @@ contract AcceptRangedOfferTest is SetupTest {
     function test_singleValueLenderOffer_borrowerAccepts_unchanged() public {
         uint256 lenderWalletBefore   = ERC20(mockERC20).balanceOf(lender);
         uint256 borrowerWalletBefore = ERC20(mockERC20).balanceOf(borrower);
+        uint256 borrowerVaultBefore = ERC20(mockERC20).balanceOf(_borrowerVault());
 
         uint256 offerId = _postLenderOffer({
             creator: lender,
@@ -519,9 +526,16 @@ contract AcceptRangedOfferTest is SetupTest {
             "lender wallet down by 5k (single-value path)"
         );
         assertEq(
-            ERC20(mockERC20).balanceOf(borrower),
-            borrowerWalletBefore + 4_990,
-            "borrower nets 4_990 = principal 5k - LIF (10, 20 BPS rev-8 #1352) - single-value path unchanged from #183"
+            ERC20(mockERC20).balanceOf(_borrowerVault()),
+            borrowerVaultBefore + 4_990,
+            "borrower vault nets 4_990 = principal 5k - LIF (10, 20 BPS rev-8 #1352) - single-value path unchanged from #183"
         );
+        assertEq(ERC20(mockERC20).balanceOf(borrower), borrowerWalletBefore, "borrower wallet unchanged");
+    }
+
+    /// @dev The borrower's vault, where accept delivers the net principal
+    ///      (#3480). Created here if absent; creation is idempotent.
+    function _borrowerVault() internal returns (address) {
+        return VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
     }
 }

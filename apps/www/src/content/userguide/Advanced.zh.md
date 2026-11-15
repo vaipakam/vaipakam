@@ -1604,14 +1604,15 @@ tier 由 Base 计算。所有其他链都使用 Base 通过 Chainlink CCIP 发�
 绝不会导致您自己的操作失败**：您在 Base 上的 tier 立即更新，其他每条
 链在送达之前都处于"待送达"状态。
 
-这些送达由协议付费，但有一个限制：
+送达由谁付费，取决于您的 tier 朝哪个方向变化：
 
-- **较低的 tier** 只要预算付得起，就会立即发送。送达之前，该链继续
-  使用您之前较高的 tier。
-- **较高的 tier** 或 tier 表的变更，每条链每天最多付费一次（governance
-  设置，1 小时到 7 天之间）。在此之前，该链保留您之前的 tier。
-- 因这段等待而被搁置的更新，或预算无法支付的更新，**等待结束后不会自动重发**。它会随着您在 Base 上等级记录的下一次更新发出，或在有人为您发起送达调用时发出。
-- 任何人都可以发起该调用。等待结束且预算足以支付时，由协议支付；在此之前，调用者支付跨链费用以提前送达。合约提供这一调用；应用目前尚未提供。
+- **较低的 tier** 只要预算付得起，就会立即发送，由协议付费。送达之前，
+  该链继续使用您之前较高的 tier。
+- **较高的 tier**，包括您在某条链上的第一次折扣，协议从不付费。有人通过
+  送达调用支付其跨链费用时才会发送。在此之前，该链保留您之前的 tier。
+  tier 表的变更也算作较高的 tier。
+- 预算无法支付的更新**不会自动重发**。它会随着您在 Base 上等级记录的下一次更新发出，或在有人为您发起送达调用时发出。较高的 tier 等待送达调用。
+- 任何人都可以发起该调用。较低的 tier 由协议支付；较高的 tier 由调用者支付跨链费用。合约提供这一调用；应用目前尚未提供，因此目前较高的 tier 只能通过直接调用合约到达其他链。
 
 在以下情况下，副本不再计入，该链也就不提供折扣：
 
@@ -1640,8 +1641,6 @@ tier 由 Base 计算。所有其他链都使用 Base 通过 Chainlink CCIP 发�
   待送达，并带原因发出 `TierPushDeferred`；`getTierPushStatus(user)`
   显示某个用户在每条链上的状态。预算不足意味着其他链会更长时间地使用
   旧 tier，因此请关注延迟并及时补充。
-- 付费上调的间隔窗口：`setTierPushSpacingSec`（默认 1 天，1 小时到
-  7 天）。
 
 **在其他每条链上：**
 
@@ -1657,8 +1656,7 @@ tier 由 Base 计算。所有其他链都使用 Base 通过 Chainlink CCIP 发�
 - Base 上的 `setVpfiTierThresholds` 和 `setVpfiTierDiscountBps` 会推进
   表的版本。其他链会从第一条携带新版本的 tier 更新（无论来自哪个用户）
   得知新版本。从那时起，基于旧表生成的每份副本都按无折扣处理，直到该
-  用户自己的更新送达；而这些更新属于上调，每个间隔窗口最多付费一次。
-  修改表之前请先补充预算。
+  用户自己的更新送达；而这些更新都属于较高的 tier，只有付费的调用者才能送达。
 - `setTwaMinStakedDays` 修改最短持有期，但不推进版本。在下一次读取时
   生效。
 
@@ -1768,13 +1766,17 @@ health factor 是仪表盘视图中按 1e18 缩放的读数；读数为 0 表示
 
 ### Home：手续费折扣
 
-`setVPFIDiscountConsent` 会在本链的 Diamond 上为每个钱包设置一个标志。关闭时，持有等级折扣为 0。开启时，借款人的贷款发起费在接受时以出借资产减少（VPFI 定价路径从不进入借款人路径），出借人的收益手续费在每次结算时按当时生效的实际等级打折。交付方式取决于 `getVPFIDiscountConfig`：若 VPFI 汇率及其参考资产都已设置，打折后的手续费以 VPFI 从出借人的金库扣除，出借人保留全部利息；否则直接减少国库手续费本身，不移动 VPFI。若某次结算时无法执行该扣除（没有有效报价、金库中已记录的可用 VPFI 不足，或该 VPFI 作为抵押被锁定），该次结算的手续费不享受持有等级折扣。该调用为 `whenNotPaused`，因此全局暂停会在两个方向上都将其关闭。开启受服务条款约束，关闭则不受约束，且两者都不会向镜像链广播等级。借款人折扣仅在接受时出借资产具备流动性时适用（非流动贷款支付全额 LIF），且任何折扣都以手续费的 50% 为上限。
+`setVPFIDiscountConsent` 会在本链的 Diamond 上为每个钱包设置一个标志。关闭时，持有等级折扣为 0。开启时，借款人的贷款发起费在接受时以出借资产减少（VPFI 定价路径从不进入借款人路径），出借人的收益手续费在每次结算时按当时生效的实际等级打折。交付方式取决于 `getVPFIDiscountConfig`：若 VPFI 汇率及其参考资产都已设置，打折后的手续费以 VPFI 从出借人的金库扣除，出借人保留全部利息；否则直接减少国库手续费本身，不移动 VPFI。若某次结算时无法执行该扣除（没有有效报价、金库中已记录的可用 VPFI 不足，或该 VPFI 作为抵押被锁定），该次结算的手续费不享受持有等级折扣。该调用为 `whenNotPaused`，因此全局暂停会在两个方向上都将其关闭。开启受服务条款约束，关闭则不受约束，且两者都不会向镜像链广播等级。借款人折扣仅在接受时出借资产具备流动性时适用（非流动贷款支付全额 LIF），且任何折扣都以手续费的 50% 为上限。自 #3562 起，出借人在一笔贷款上的持有等级折扣永远不会超过持有人接手出借人仓位时为其记录的折扣（`lenderEntryDiscount`，每当出借人代币有了持有人就会写入；普通转让保留已记录数值与接收方数值中较低的一个）。
 
 <a id="home-rewards"></a>
 
 ### Home: 奖励
 
-标题数字是 `RewardClaimFacet.simulateClaimInteractionRewards(user, 2)`，它以 Vault 交付目标执行领取并始终 revert：`InteractionRewardsSimulation(paid, fromDay, toDay)` 携带确切数字，其他任何 revert 都是领取本身的拒绝 (`NoInteractionRewardsToClaim`, `InteractionDayGlobalNotFinalized(day)`, `InteractionDayAwaitingDelivery(day)`, `InteractionEmissionsNotStarted`, `EnforcedPause`, `SanctionedAddress`)，按名称显示。只有在任何来源都无法运行预览时，Home 才读取下限 `previewInteractionRewards`，并暂不提供领取。确切数字为零时仍会提供领取：协议只在领取越过未支付任何金额的奖励日时才允许一次不支付任何金额的领取，Home 会说明这一点。Home 通过 `claimInteractionRewardsTo(2)` 领取，每次调用最多支付 `MAX_INTERACTION_CLAIM_DAYS`（30）天；在已完成领取的区块或之后读取的预览若仍给出金额，Home 就提供剩余部分。仅从奖励条目支付的领取不标明日期范围（0 到 0），Home 会说明这一点而不显示日期。Vault 交付目标会传给每个账户，包括合约钱包，因为 Default 目标会把合约调用者的款项付到其钱包：款项记入金库，记入无法完成时（尚无金库）退回钱包。结果从回执读取：`InteractionRewardsClaimed` 给出支付金额，同一交易中发往钱包和 `getUserVaultAddress(user)` 的 VPFI `Transfer` 日志给出款项到达何处；两者合计与支付金额不符时，目的地标为未知。累计领取额不显示：目前还没有对应的按用户索引路由。
+标题数字是 `RewardClaimFacet.simulateClaimInteractionRewards(user, 2)`，它以 Vault 交付目标执行领取并始终 revert：`InteractionRewardsSimulation(paid, fromDay, toDay)` 携带确切数字，其他任何 revert 都是领取本身的拒绝 (`NoInteractionRewardsToClaim`, `InteractionDayGlobalNotFinalized(day)`, `InteractionDayAwaitingDelivery(day)`, `InteractionEmissionsNotStarted`, `EnforcedPause`, `SanctionedAddress`)，按名称显示。只有在任何来源都无法运行预览时，Home 才读取下限 `previewInteractionRewards`，并暂不提供领取。确切数字为零时仍会提供领取：协议只在领取越过未支付任何金额的奖励日时才允许一次不支付任何金额的领取，Home 会说明这一点。Home 通过 `claimInteractionRewardsTo(venue)` 领取，每次调用最多支付 `MAX_INTERACTION_CLAIM_DAYS`（30）天；在已完成领取的区块或之后读取的预览若仍给出金额，Home 就提供剩余部分。仅从奖励条目支付的领取不标明日期范围（0 到 0），Home 会说明这一点而不显示日期。交付目标总是显式传入，从不使用 `Default`（0）：对 `LibAccountShape.isEoaStyle` 判定为个人自有账户的账户（无代码，或恰好是 EIP-7702 委托标识，用 `getCode` 读取）传 Vault（2），对合约账户传 Wallet（1），这正是协议自身的默认规则。高级模式可在审阅前更改，回执会写明并绑定它。Vault 记入金库，记入无法完成时（尚无金库）退回钱包；Wallet 直接转入钱包。无论选择哪一个，预览都用 Vault 运行，因为交付目标只改变款项到达的位置。开启保护模式时（`ProtectedAccountFacet.getProtectedAccount(user).enabled`），无论传入哪个交付目标，`RewardClaimFacet` 都送入金库，因此应用写明金库且不提供选择；无法读取模式时同样写明金库，复核会重新读取模式，若交付目标变了就重新显示审阅。结果从回执读取：`InteractionRewardsClaimed` 给出支付金额，同一交易中发往钱包和 `getUserVaultAddress(user)` 的 VPFI `Transfer` 日志给出款项到达何处；两者合计与支付金额不符时，目的地标为未知。累计领取额不显示：目前还没有对应的按用户索引路由。
+
+等待中的日期为何等待，是在预览所用的区块上读取的。在主网络上，`RewardAggregatorFacet.isDayReadyToFinalize(day)` 给出最终确定尚不能运行的原因（没有已列出的报告、报告仍在宽限时间内、预期来源列表不可用），或说明现在可以运行。在镜像网络上，`RewardReporterFacet.getBroadcastV2Applied(day)` 说明主网络的数据是否已到达；对于交付等待，`RewardRemittanceLensFacet.getDayDeliveryState(day)` 和 `getDayDeliveryParts(day)`（启用日由 `getGovernorCommitState()` 给出：只有从该日起的日期才等待本网络的报告） 给出该日是否已在此定价、本网络的报告是否已发送，以及相对于声明总额已到达的部分；各部分声明总额不同的日期会被披露为可能不予支付而跳过。领取的资金类拒绝会附上协议的数字说明：`InteractionPoolExhausted`（新 VPFI 奖励池已付完且该领取没有回收部分，不会解除）、`InteractionPoolReservedShortfall` 和 `RecycleBucketReservedShortfall`（已为待处理结算预留），以及 `InteractionRewardBackingShort`（所需与可用）。`EnforcedPause` 会附上仍然可用的操作。在未设置奖励角色的网络上，`finalizeDay` 无法运行（它需要规范标志），因此卡片会说明在设置角色之前任何日期都无法最终确定，并且不提供任何步骤。已到达的新 VPFI 和回收 VPFI 会分别对照各自声明的总额显示，因为只有两者都完整时该日才会开放。
+
+累计领取一行读取索引器的 `GET /rewards/claimed?chainId=&wallet=`，它从摄取的按用户、按领取日记账中，按区块的 UTC 日汇总钱包的 `InteractionRewardsClaimed` 金额（含暂扣余额的释放）及其 `RewardDeliveredToVault` 金额。在尚无追上的扫描记录某一时刻时（`pending: unrecorded`），或链的一次性账本重放仍在运行时（`pending: replaying`），它不返回总额；否则给出 `recordedBefore`，在此之前的每笔领取都已计入。回退到钱包的金库入账不会发出 `RewardDeliveredToVault`，因此不计入金库部分。
 
 <a id="home-rewards-expiry"></a>
 
@@ -1838,7 +1840,7 @@ Borrow 通过 `acceptOffer(offerId, terms, signature)` 直接接受以 ERC-20 �
 
 ### Borrow：请求的条款
 
-Basic 发布单一数值的请求：`amount` = `amountMax`，`interestRateBps` = `interestRateBpsMax`，`collateralAmount` = `collateralAmountMax`，`fillMode` 0，`periodicInterestCadence` 0，`allowsPrepayListing` 和 `allowsParallelSale` 为 false，`refinanceTargetLoanId` 0，`creatorRiskAndTermsConsent` 为 true。金额精确换算为基本单位，利率最多 10,000 bps。`durationDays` 以 `getProtocolConfigBundle` 中读取的配置上限为界。`expiresAt` 为 0（取消前一直有效），或在打开审核时依最新区块确定的时间，最多为 `MAX_OFFER_EXPIRY_HORIZON`（365 天）之后。`useFullTermInterest` 默认为 true，`allowsPartialRepay` 默认为 false。
+Basic 发布单一数值的请求：`amount` = `amountMax`，`interestRateBps` = `interestRateBpsMax`，`collateralAmount` = `collateralAmountMax`，`fillMode` 1 (AON)，`periodicInterestCadence` 0，`allowsPrepayListing` 和 `allowsParallelSale` 为 false，`refinanceTargetLoanId` 0，`creatorRiskAndTermsConsent` 为 true。金额精确换算为基本单位，利率最多 10,000 bps。`durationDays` 以 `getProtocolConfigBundle` 中读取的配置上限为界。`expiresAt` 为 0（取消前一直有效），或在打开审核时依最新区块确定的时间，最多为 `MAX_OFFER_EXPIRY_HORIZON`（365 天）之后。`useFullTermInterest` 默认为 true，`allowsPartialRepay` 默认为 false。
 
 <a id="borrow-request-review"></a>
 
@@ -1856,13 +1858,13 @@ Basic 发布单一数值的请求：`amount` = `amountMax`，`interestRateBps` =
 
 ### Borrow: 带范围的请求
 
-范围发送的 `amount`（最小）低于 `amountMax`（最大），`interestRateBps` = `interestRateBpsMax`（同一利率），`collateralAmount`（最小贷款的下限）不高于 `collateralAmountMax`（发布时转入金库）；下限留空则两者相同。范围仅对 ERC-20 抵押品提供。直接 `acceptOffer` 以 `collateralAmount` 为抵押、按 `interestRateBpsMax` 出借 `amount`，并把 `collateralAmountMax − collateralAmount` 退回钱包；`getPartialFillEnabled` 为 true 期间，`matchOffers` 在两端之间成交。`createOffer` 的模拟在最大端应用报价上限，并以 `MaxLendingAboveCeiling(provided, ceiling)` 拒绝，审核会显示其上限。直接端通过在 (`amount`, `collateralAmount`) 处对单值请求的第二次模拟来检查；在上限之前停止的回答标为未知。每一端的贷款价值比为 `calculateLTV(lending, amount, collateral, collateralAmount)`，`ZeroCollateral` 视为毫无价值的抵押品。显示的贷款起始健康因子在 `getDepthTieredLtvEnabled` 为 false 时为 `getMinHealthFactor`，为 true 时为 1.0。撮合锁定出借人按比例计算的要求额：抵押品为区间时提高到 `collateralAmount`，否则保持要求额；因此最大撮合会同时按 `collateralAmountMax` 和 `collateralAmount` 显示（若无抵押品区间，则显示为可能锁定更少）。只有贷款开始时的检查约束它；读取该检查失败时会明确说明，绝不省略。在分层体制下，该检查还会应用该层级的贷款价值比上限。`getPartialFillEnabled` 为 true 期间，撮合未锁定的抵押品会留在金库中供后续撮合使用，只有在请求关闭（剩余容量低于 `amount`）或执行 `cancelOffer` 时才会退还。
+范围发送的 `amount`（最小）低于 `amountMax`（最大），`interestRateBps` = `interestRateBpsMax`（同一利率），`collateralAmount`（最小贷款的下限）不高于 `collateralAmountMax`（发布时转入金库）；下限留空则两者相同。范围仅对 ERC-20 抵押品提供。直接 `acceptOffer` 以 `collateralAmount` 为抵押、按 `interestRateBpsMax` 出借 `amount`，并把 `collateralAmountMax − collateralAmount` 退回钱包；`getPartialFillEnabled` 为 true 期间，`matchOffers` 在两端之间成交。`createOffer` 的模拟在最大端应用报价上限，并以 `MaxLendingAboveCeiling(provided, ceiling)` 拒绝，审核会显示其上限。直接端通过在 (`amount`, `collateralAmount`) 处对单值请求的第二次模拟来检查；在上限之前停止的回答标为未知。每一端的贷款价值比为 `calculateLTV(lending, amount, collateral, collateralAmount)`，`ZeroCollateral` 视为毫无价值的抵押品。显示的贷款起始健康因子在 `getDepthTieredLtvEnabled` 为 false 时为 `getMinHealthFactor`，为 true 时为 1.0。撮合锁定出借人按比例计算的要求额：抵押品为区间时提高到 `collateralAmount`，否则保持要求额；若请求存入的抵押品足够，还会再提高到贷款开始时检查的下限；因此最大撮合会同时按 `collateralAmountMax` 和 `collateralAmount` 显示（若无抵押品区间，则显示为可能锁定更少）。只有贷款开始时的检查约束它；读取该检查失败时会明确说明，绝不省略。在分层体制下，该检查还会应用该层级的贷款价值比上限。`getPartialFillEnabled` 为 true 期间，撮合未锁定的抵押品会留在金库中供后续撮合使用，只有在请求关闭（剩余容量低于 `amount`）或执行 `cancelOffer` 时才会退还。
 
 <a id="borrow-request-fill"></a>
 
 ### Borrow: 请求的成交方式
 
-`fillMode` 为 0（Partial）、1（AON）或 2（IOC），发布后不可更改。AON 要求 `amount` = `amountMax`（`AonRequiresSingleValueAmount`），IOC 要求 `expiresAt` ≠ 0（`IocRequiresExpiry`）；表单不会提供被拒绝的组合。金额、利率和抵押品可在请求开放期间通过 `setOfferAmount`、`setOfferRate`、`setOfferCollateral` 和 `modifyOffer` 更改，但不能低于 `amountFilled` 或 `collateralAmountFilled`；本应用尚未调用它们。
+`fillMode` 为 0（Partial）、1（AON）或 2（IOC），发布后不可更改。AON 要求 `amount` = `amountMax`（`AonRequiresSingleValueAmount`），IOC 要求 `expiresAt` ≠ 0（`IocRequiresExpiry`）；表单不会提供被拒绝的组合。单一金额的发布发送 AON（#3520）：`LibOfferMatch` 让每次撮合介于 `amount` 与 `amountMax` 剩余部分之间，因此单一金额只会整笔成交，Partial 和 IOC 仅在设置区间时提供。金额、利率和抵押品可在请求开放期间通过 `setOfferAmount`、`setOfferRate`、`setOfferCollateral` 和 `modifyOffer` 更改，但不能低于 `amountFilled` 或 `collateralAmountFilled`；本应用尚未调用它们。
 
 <a id="borrow-request-cadence"></a>
 
@@ -1916,7 +1918,7 @@ Lend 通过出借人发送的 `acceptOffer(offerId, terms, signature)`，直接�
 
 ### Lend：报价的条款
 
-未设部分时，出借报价为单一数值：`amount` = `amountMax`，`interestRateBps` = `interestRateBpsMax`，`collateralAmount` = `collateralAmountMax`（借款人必须锁定的唯一抵押品数量），`fillMode` 0（除非 Advanced 设置了其他方式，见下一节），`periodicInterestCadence` 0（除非 Advanced 设置了付息计划），`allowsPrepayListing` 和 `allowsParallelSale` 为 false，`refinanceTargetLoanId` 0，`creatorRiskAndTermsConsent` 为 true，且不设 Full 方案（除非 Advanced 选择了它）。金额被精确解析为基础单位，利率最多 10,000 bps。`durationDays` 受从 `getProtocolConfigBundle` 读取的配置最大值限制。`expiresAt` 为 0（取消前一直开放），或在审核打开时从最新区块确定的时间，最多提前 `MAX_OFFER_EXPIRY_HORIZON`（365 天）。`useFullTermInterest` 默认为 true，`allowsPartialRepay` 默认为 false。
+未设部分时，出借报价为单一数值：`amount` = `amountMax`，`interestRateBps` = `interestRateBpsMax`，`collateralAmount` = `collateralAmountMax`（借款人必须锁定的唯一抵押品数量），`fillMode` 1 (AON)（除非 Advanced 设置了其他方式，见下一节），`periodicInterestCadence` 0（除非 Advanced 设置了付息计划），`allowsPrepayListing` 和 `allowsParallelSale` 为 false，`refinanceTargetLoanId` 0，`creatorRiskAndTermsConsent` 为 true，且不设 Full 方案（除非 Advanced 选择了它）。金额被精确解析为基础单位，利率最多 10,000 bps。`durationDays` 受从 `getProtocolConfigBundle` 读取的配置最大值限制。`expiresAt` 为 0（取消前一直开放），或在审核打开时从最新区块确定的时间，最多提前 `MAX_OFFER_EXPIRY_HORIZON`（365 天）。`useFullTermInterest` 默认为 true，`allowsPartialRepay` 默认为 false。
 
 <a id="rate-check"></a>
 
@@ -1934,7 +1936,7 @@ Lend 通过出借人发送的 `acceptOffer(offerId, terms, signature)`，直接�
 
 ### Lend：分部分出借的报价
 
-分部分时发送的 `amount`（一次撮合可出借的最小部分）小于 `amountMax`（全部金额，由 `createOffer` 拉入金库）；`collateralAmount` = `collateralAmountMax` 仍是唯一要求，按 `amountMax` 计（否则为 `LenderCollateralRangeNotAllowed`），且 `interestRateBps` = `interestRateBpsMax`。直接对出借报价调用 `acceptOffer` 时，以 `collateralAmount` 出借 `amountMax`，且仅在 `amountFilled` 为 0 时可行（撮合后为 `OfferPartiallyFilled`）。当 `getPartialFillEnabled` 为 true 时，`matchOffers` 出借金额重叠区间的中点（至少为 `amount`），利率取利率重叠区间的中点，抵押品至少为 `collateralAmount × matchAmount ÷ amountMax`（向下取整；借款人的抵押品区间可能提高它）。当 `amountMax − amountFilled` 低于 `amount` 时，剩余部分被提取到出借人的钱包，报价关闭（`OfferClosed`，原因为 `Dust` 或 `FullyFilled`）。对部分成交的报价调用 `cancelOffer` 不受冷却期限制，并退回 `amountMax − amountFilled`。`fillMode` 与请求相同，为 0、1 或 2：AON 要求 `amount` = `amountMax`，IOC 要求设置到期时间，发布后不可更改。两边都为流动资产时，若 `collateralAmount` 低于 `amountMax` 对应的下限，`createOffer` 以 `MinCollateralBelowFloor(provided, floor)` 拒绝，审核会显示该下限。审核只显示一个贷款价值比，即 (`amountMax`, `collateralAmount`) 处的 `calculateLTV`：任一部分的比率相同，仅有取整差异。
+分部分时发送的 `amount`（一次撮合可出借的最小部分）小于 `amountMax`（全部金额，由 `createOffer` 拉入金库）；`collateralAmount` = `collateralAmountMax` 仍是唯一要求，按 `amountMax` 计（否则为 `LenderCollateralRangeNotAllowed`），且 `interestRateBps` = `interestRateBpsMax`。直接对出借报价调用 `acceptOffer` 时，以 `collateralAmount` 出借 `amountMax`，且仅在 `amountFilled` 为 0 时可行（撮合后为 `OfferPartiallyFilled`）。当 `getPartialFillEnabled` 为 true 时，`matchOffers` 出借双方报价都接受的最大金额（两个剩余金额中较小者，以借款人抵押品可覆盖的金额及该抵押品在贷款开始时检查下最多可支撑的金额为上限；至少为 `amount`），利率取利率重叠区间的中点，抵押品至少为 `collateralAmount × matchAmount ÷ amountMax`（向下取整；借款人的抵押品区间或贷款开始时检查的下限可能提高它）。当 `amountMax − amountFilled` 低于 `amount` 时，剩余部分被提取到出借人的钱包，报价关闭（`OfferClosed`，原因为 `Dust` 或 `FullyFilled`）。对部分成交的报价调用 `cancelOffer` 不受冷却期限制，并退回 `amountMax − amountFilled`。`fillMode` 与请求相同，为 0、1 或 2：AON 要求 `amount` = `amountMax`，IOC 要求设置到期时间，发布后不可更改。两边都为流动资产时，若 `collateralAmount` 低于 `amountMax` 对应的下限，`createOffer` 以 `MinCollateralBelowFloor(provided, floor)` 拒绝，审核会显示该下限。审核只显示一个贷款价值比，即 (`amountMax`, `collateralAmount`) 处的 `calculateLTV`：任一部分的比率相同，仅有取整差异。
 
 <a id="lend-offer-schedule"></a>
 
@@ -1979,6 +1981,8 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 对有价格的贷款，它还读取 `getInternalMatchConfigBundle`。内部撮合开启时，贷款价值比处于其阈值到阈值加 `externalLiquidationPriorityWindowBps` 之间的贷款会保留给内部撮合，所有外部清算途径都会拒绝（`InternalMatchOnlyBand`），页面会说明这个区间。`loanInitiationFeeBpsAtInit` 为 0（费率被记录之前开立的贷款）显示为未记录，`treasuryFeeBpsAtInit` 为 0 显示为结算采用的 1% 旧费率。实物交付警告仅适用于 ERC-20 贷款：NFT 租赁没有抵押品，违约时租用方的使用权终止，预付租金扣除金库份额后付给出借人，缓冲金转入金库，页面会改为说明这一点。
 
 费率均为贷款快照：`treasuryFeeBpsAtInit`、`loanInitiationFeeBpsAtInit`（出售载体贷款为无）和 `liquidationLtvBpsAtInit`。任一方为 Illiquid（`principalLiquidity` 或 `collateralLiquidity`）的贷款没有基于价格的读数：协议会拒绝该贷款的 `calculateHealthFactor` 和 `calculateLTV`，页面会说明这一点而不是显示未知。`principal` 是尚欠的本金（部分还款会减少它），`interestRateBps` 和 `collateralAmount` 也可能变化，因此条款按当前状态显示；记录中没有本金的已结束贷款会说明是否由内部撮合覆盖，否则只说明没有记录；NFT 租赁会显示每日租金（`principal`，以 `prepayAsset` 计）以及提前归还是否仍按每个剩余天数收费（`useFullTermInterest`）。`getPeriodicInterestEnabled` 为 false 时，页面会说明在检查点不会出售抵押品。进行中贷款的 `collateralLiquidity` 为 Illiquid 时，会加上实物交割警告：违约时抵押品不经出售直接转给出借人。它的第一笔交易是全额还款，见下文。
+
+对于进行中 ERC-20 贷款出借人一方的持有人，页面读取 `lenderHoldDiscountView(loanId, wallet)`：已记录的条目（持有人、等级、折扣、时间）、钱包当前的等级和折扣，以及 `holdBps`：条目指向该钱包时取两者中较低者，否则为 0。没有该 view 的 Diamond 会以 `FunctionDoesNotExist` revert，页面将其显示为尚未报告，绝不显示为零。在同一区块，它还读取 `getVPFIDiscountConsent`（只有开启时持有部分才计入）、`getVPFIDiscountConfig`（折扣如何给予）和 `getFeeEntitlement(loanId).lenderMode`（Full 在 50% 上限内增加 10 个点）。
 
 <a id="repay"></a>
 
@@ -2226,6 +2230,14 @@ Keeper 部分在同一个区块读取 `getKeeperAccess`、`getApprovedKeepers`�
 
 结束会立即终止你使用该 NFT 的权利，即使还有约定天数，而且无法撤销。租金按结束上链的时刻计算，所以在此之前开始的一天按整天支付；按全期计租时，无论多早结束，所有尚未结算的约定天数都要支付。租期结束后会从你的缓冲金中扣除逾期费：全部租金的 1%，每逾期一天再加 0.5%，最多 5%，且绝不超过缓冲金。超过宽限期后，协议会拒绝结束；此后租用要么在剩余天数逐日结算完时结束（任何人都可以结算），要么以违约告终，以先发生者为准。审核显示的稍后时刻既不是截止时间也不是上限：较晚上链的结束按那时计算，因此可能扣除更多租金或更高的逾期费，退还给你的会更少。退还的金额作为待领款项留在你自己的金库中，直到你领取。
 
+<a id="rewards-programme"></a>
+
+### 奖励：本网络上的奖励计划是否在运行？
+
+奖励页面顶部的一句话说明奖励计划是否在你的网络上运行：正在运行且持有用于支付奖励的 VPFI；正在运行但目前没有可用于支付的资金；没有开始日期；将在指定时间开始；或者该网络已退出奖励网络，因此那里不会再有新的可领取奖励。领取只从该网络上已为奖励持有的 VPFI 中支付。在由 VPFI 主网络提供资金的网络上，为某一天发送的 VPFI 也可以支付当天的奖励；这句话不计入这部分，因此在那里它绝不会说没有任何资金可以支付。如果这句话所依据的某项信息无法读取，页面会说明，并且绝不会把计划显示为正在运行。当协议暂停时，页面也会说明：奖励领取和提取停止，而全额和部分还款以及追加抵押品仍然可用。奖励是对你自己使用协议的返利，绝不是持有 VPFI 的收益。
+
+高级模式列出这句话所依据的信息：本网络的奖励角色（VPFI 的主网络，负责计算并资助奖励；向主网络报告并由那里资助的网络；未设置角色，因此在设置之前任何奖励日都无法最终确定；或已脱离），以及对于已永久退役的网络，其剩余奖励 VPFI 的去向和已发送的数量；计划的开始时间；领取现在可以动用的、为奖励交付的 VPFI 和从费用中回收的 VPFI，各自扣除待处理结算已预留的部分；奖励 VPFI 是存放在单独的托管合约中还是协议自身的余额中；以及未领取的奖励是否可能被移除、在多长时间之后。本网络合约不提供的信息会如实注明。页面不读取使某一天的奖励可领取的每日结算是否正在运行；任何人都可以运行它，而你的领取金额显示现在领取会支付多少。超出为奖励交付的数量、或超出计划剩余奖励池而持有的 VPFI，会显示在可支付金额旁边，不计为可支付，因为领取只在这两个限额之内支付。
+
 <a id="rewards-vpfi"></a>
 
 ### 奖励：金库中的 VPFI
@@ -2244,6 +2256,12 @@ Keeper 部分在同一个区块读取 `getKeeperAccess`、`getApprovedKeepers`�
 
 卡片在同一区块读取 `getVPFIDiscountConsent`、`isCanonicalVpfiChain` 和 `getEffectiveDiscount`；后者返回手续费路径适用的等级和折扣：同意关闭时为零，上限 50%，在其他网络上为主网络发送来的副本。它还在同一区块读取 `explainTier` 和 `getTwaConfig`。无论是否同意，`explainTier` 都返回仅凭已计入 VPFI 得到的等级、每条持有规则的数值，以及把有效等级压在其下的规则；只有当该解释得出与手续费路径相同的等级时，卡片才会指出这条规则；同意关闭时，卡片会说明开启后将适用哪个等级。Advanced 列出每条规则的数值和 `getTwaConfig` 返回的设置，平均值的时间窗口与回看期作为两个不同的长度分别显示。该表在同一区块读取 `getVpfiTierThresholds`、`getVpfiTierDiscountBps` 和 `getFeesConfig`。等级 1 至 3 从其门槛开始，等级 4 从高于其门槛处开始。每项费用等于标价费用乘以（1 − 封顶后的折扣），精确计算。该表只在确定等级的主网络上显示。
 
+<a id="rewards-tier-elsewhere"></a>
+
+### 奖励：你在其他网络上的等级
+
+该部分在同一个区块读取 `getTierPushStatus(wallet)`（#1277）：最后提交待发送的推送（nonce、等级、bps、到期、表版本），以及每个广播目的地最后收到的元组、是否仍欠它已提交的推送、协议预算是否为其付费；只有当推送降低该通道授予的折扣时预算才付费。在同一区块，它读取 `getEffectiveDiscount`、来自 `getRewardReporterConfig` 的信使，以及对每个欠付通道，用已提交元组和区块时间调用信使的 `quoteSendTierUpdateTo`；报价回退时该费用保持未知，且不提供发送。当已提交等级或其按 50% 上限处理后的 bps 与实际生效值不同，记录即为落后；表版本没有读取接口，因此无论如何都提供更新。“更新你的记录”发送 `pokeMyTier()`，它重新计算并提交等级，并投递预算付费的通道。“发送到其他网络”发送 `deliverTierPush(wallet)`，附带每个欠付通道报价之和再加 20%，因为调用者的金额会按目的地顺序先支付欠付通道，包括预算付费的通道；只有在记录与当前等级一致且每个欠付通道都有报价时才提供，审核会重新读取二者并用该金额试运行调用。完成卡在收据所在区块读取每个通道已投递的 nonce，并累加带 `callerFunded` 的 `ProtocolTierBroadcastSent` 事件以说明实际支付；其余部分已在同一调用中退回。仍路由 `getTierPushSpacingSec()` 的 Diamond 早于该规则，其通道不会被读取。在不是 VPFI 主网络或没有信使的网络上，通道列表为空，此时不提供任何步骤。副本是否已到达并在其他网络上生效，要在那个网络上读取，而不是在这里。此外，每个其他网络在副本超过其自身最长有效期（除非该网络另行设置，否则为 60 天）后便不再计入，因此副本可能早于消息所带的截止时间结束。
+
 <a id="rewards-vpfi-sign"></a>
 
 ### 奖励：以签名代替授权
@@ -2254,7 +2272,19 @@ Keeper 部分在同一个区块读取 `getKeeperAccess`、`getApprovedKeepers`�
 
 ### Rate desk：市场与利率阶梯
 
-市场列表来自索引的市场汇总：在未过期的公开 ERC-20 对 ERC-20 报价中，排除出售和冲抵载体后，按借出资产、抵押资产和期限的每种组合分组，按深度从大到小排列并设上限，同时给出每一方的数量和最优利率（出借方最低的 `interestRateBps`，借款方最高的 `interestRateBpsMax`）。这些数量包含有效的签名订单；Rate desk 尚未列出签名订单，因此当某个市场的数量与其阶梯列出的数量不同时，阶梯会同时写明两者。阶梯带着 `excludeExpired`、`excludeSaleVehicles` 和 `excludeOffsetVehicles` 从索引读取该市场的公开报价，每页 50 笔，最多四页，若市场中还有更多会说明。出借方报价位于其最低利率，借款方请求位于其上限，即其利率与最高利率中较高者。每一档的未成交金额是各报价的上限金额减去已成交部分之和。应用还会排除并按原因计数：按应用自身时钟已过期的报价、索引仍返回的载体、与开立后已移动的贷款仓位绑定的报价（#3205）、没有未成交部分的报价，以及条款不同的行。中间利率是最优卖价与最优买价的平均值，精确到十分之一个基点；当最优买价等于或高于最优卖价时，阶梯只说明两侧重叠，不做任何操作。每笔报价都链接到它自己的页面，该页面从链上读取其状态和条款。
+市场列表来自索引的市场汇总：在未过期的公开 ERC-20 对 ERC-20 报价中，排除出售和冲抵载体后，按借出资产、抵押资产和期限的每种组合分组，按深度从大到小排列并设上限，同时给出每一方的数量和最优利率（出借方最低的 `interestRateBps`，借款方最高的 `interestRateBpsMax`）。这些数量包含有效的签名订单，Rate desk 将其与阶梯分开列出（下一节）；当某个市场的数量与其阶梯列出的数量不同时，阶梯会同时写明两者。阶梯带着 `excludeExpired`、`excludeSaleVehicles` 和 `excludeOffsetVehicles` 从索引读取该市场的公开报价，每页 50 笔，最多四页，若市场中还有更多会说明。出借方报价位于其最低利率，借款方请求位于其上限，即其利率与最高利率中较高者。每一档的未成交金额是各报价的上限金额减去已成交部分之和。应用还会排除并按原因计数：按应用自身时钟已过期的报价、索引仍返回的载体、与开立后已移动的贷款仓位绑定的报价（#3205）、没有未成交部分的报价，以及条款不同的行。中间利率是最优卖价与最优买价的平均值，精确到十分之一个基点；当最优买价等于或高于最优卖价时，阶梯会说明两侧重叠，其下方的撮合栏会给出一对可撮合的报价（见下文相应一节）。每笔报价都链接到它自己的页面，该页面从链上读取其状态和条款。
+
+<a id="desk-signed-book"></a>
+
+### Rate desk：市场的签名订单
+
+列表读取索引中该市场的 `/signed-offers`，不带 `signer`，因此包含所有挂单方的订单：每侧价格最好的 100 行，并注明 `truncated`。每一行必须能重新序列化为标准格式，其 `orderHash` 必须等于根据订单重新计算的 EIP-712 结构哈希，必须写明该市场的代币和期限，其签名必须是 65 字节的 ECDSA 签名；其他任何行都计为无法读取。asks 按 `interestRateBps` 升序排列，bids 按 `interestRateBps` 与 `interestRateBpsMax` 中较大者降序排列，利率相同时保留报价簿的顺序。每个订单的状态在同一区块按与你自己的签名订单相同的规则读取，规则见下文。在同一区块，应用对每个挂单方和抵押资产读取一次 `freeHolding(signer, ERC20, stakeAsset, 0)`，并对每个仍可成交的订单，将其与成交剩余部分会提取的金额比较：出借人为上限减去已成交量，借款人为该剩余部分按订单自身比例所需的抵押品，向上取整。读取失败时注明未知，绝不显示为零。每个订单都单独与全部空闲余额比较，因此同一挂单方的两个订单可能都显示足额，而金库只够其中一个。他人签署的开放订单可以整单成交。审阅读取 `previewSignedOfferAccept(order, signature, acceptor)`，它返回这次成交将写入的报价的接受预览，以及订单哈希、出资资产、成交将从挂单方金库提取的出资额和该金库的空闲余额；它的拒绝（其中包括 `SignedOfferMakerShort`、`SignedOfferConsumed` 和 `SignedOfferNonceUsed`）会按名称说明，并阻止同意。条款签名以订单哈希作为其 `offerKey` 绑定，发送的是 `acceptSignedOffer(order, signature, terms, termsSignature)`，它在一笔交易中消耗整个订单、从挂单方金库写入报价并开立贷款。审阅还读取 `previewSignedOfferRiskBlocks(order, acceptor)`（#3577），它以 `previewOfferAcceptBlock` 的代码返回挂单方的限制、接受方的限制以及双方据以检查的交易对。挂单方的限制会被说明，并在不提供任何步骤的情况下阻止同意；接受方的限制会在签署任何内容之前，为返回的交易对打开风险步骤。若该读取失败（没有该功能的 Diamond 以 `FunctionDoesNotExist` 回退），审阅说明由 `acceptSignedOffer` 的试运行进行检查，那里的拒绝（`RiskTierTooLow`、`IlliquidPairNotConsented`、`MidTierPairNotAcknowledged`）仅在错误指向接受方时才为订单的交易对打开风险步骤。完成卡片查找 Diamond 针对该订单哈希的 `SignedOfferFilled`，并从中读取贷款。部分撮合的订单报告 `SignedOfferConsumed`，不会提供；你自己的订单也不会。 响应中的 `awaitingReplay` 统计重组后的重建从链上重新读取成交与取消期间索引暂扣的订单数（#3411）；大于零的数会随列表说明，不是非负整数的值会说明为未知。
+
+<a id="desk-match"></a>
+
+### Rate desk：撮合重叠的报价
+
+撮合栏将阶梯上重叠的档位配对：最优买价及以下的出借报价，与最优卖价及以上的借款请求配对，并排除来自同一钱包的配对，以及利率区间不相交的配对：协议只在两个下限中较高者不高于两个上限中较低者时才撮合。若两侧重叠但没有区间相交，撮合栏会说明无法撮合。它在同一区块读取 `getPartialFillEnabled`、`getLoanInitiationFeeBps`、`getLifMatcherFeeBps` 和 `getCapacityCurve(0)`，仅当开关为开启时，才以你的钱包同时作为 matcher 和 initiator，按价格从优到次读取最多 12 对的 `previewMatch(lenderOfferId, borrowerOfferId, matcher, initiator)`。第一对预览无错误的报价会连同预览给出的金额、利率（双方都接受的区间的中点）和所需抵押品一起提供；否则会说明价格最优一对的拒绝原因。分成以上限表示，即金额 × 发起费率 × 撮合者费率，因为费用在借款人折扣之后收取，而预览不报告该折扣。若曲线的免费档位大于零，表示容量限制生效，一次撮合会计为发送者的一次成交。审核每个区块重新读取设置、预览和你的金库，并在打开钱包前对 `matchOffers` 进行试运行；任何数字变化都需要重新确认。之后，应用会查找以你的钱包为 matcher 的该对报价的 `OfferMatched`，并根据出借人金库中激励类别、以借出资产支付给你的钱包或金库的 `VaultOutflow` 记录来计量分成；报价退款或贷款金额属于其他类别，绝不会被计入。先成交的竞争撮合可能让某个报价剩余更少，因此实际开立的贷款和分成可能小于审核时的数字；完成卡片会说明实际结果。阶梯读取的是索引，因此链上已撮合的一对报价可能仍会在阶梯上停留几分钟。包含已连接钱包所发布报价的配对也会被排除，横栏会说明这一点：撮合这样的配对会让该钱包成为出借人或借款人，并把它自己的资金投入贷款。
 
 <a id="offer-terms-wait"></a>
 
@@ -2290,4 +2320,4 @@ Keeper 部分在同一个区块读取 `getKeeperAccess`、`getApprovedKeepers`�
 
 ### 利率台：签名订单与链上取消
 
-列表读取该市场索引的 `/signed-offers`，并把 `signer` 设为你的钱包（每侧最多 500 行，并说明 `truncated`），因此其他挂单者的深度无法把你的订单挤出列表。每一行都必须能重新序列化为 31 个字段的规范传输格式，其 `orderHash` 必须等于根据订单重新计算的 EIP-712 结构哈希，并且必须指向你的钱包以及该市场的代币和期限；其他行都计为无法读取。报价簿只提供它认为有效且未过期的订单，并可能在两个方向上落后于链，因此每个订单的状态都在同一个区块读取：`signedOfferFilledAmount(orderHash)` 达到订单上限（`amountMax`，为零时为 `amount`）即为已使用（直接成交与 `cancelSignedOffer` 都写入上限），否则 `isSignedOfferNonceUsed(signer, nonce)` 为 nonce 已取消，否则当区块时间超过非零的 `expiresAt` 与 `deadline` 中较早者时为已过期，该数值大于零时为部分成交（撮合取走了一部分，其余仍可成交、可取消），其余为有效。取消单个订单发送 `cancelSignedOffer(order)`（仅签名者可调用）；按 nonce 取消发送 `invalidateSignedOfferNonce(nonce)`，在列出的有效订单中有两个或以上共用该 nonce 时提供，并在所有市场停止该钱包用该 nonce 签署的每个订单。协议暂停期间两者都会被拒绝。审核读取各订单状态和暂停状态，然后从你的钱包运行协议自身的试运行。成交本会扣取的金额：出借方为 `amountMax`（为零时为 `amount`），借款方为 `collateralAmountMax`（或 `collateralAmount`）。对部分成交的订单，审核会说明已成交的部分，以及其余部分仍可能扣取的金额：上限以下剩余的本金，或对借款方而言按订单自身比例对应的抵押品，向上取整。结果从交易自身由 Diamond 发出的 `SignedOfferCancelled` 或 `SignedOfferNonceBurned` 日志中读取，并按订单哈希或 nonce 以及你的钱包匹配。
+列表读取该市场索引的 `/signed-offers`，并把 `signer` 设为你的钱包（每侧最多 500 行，并说明 `truncated`），因此其他挂单者的深度无法把你的订单挤出列表。每一行都必须能重新序列化为 31 个字段的规范传输格式，其 `orderHash` 必须等于根据订单重新计算的 EIP-712 结构哈希，并且必须指向你的钱包以及该市场的代币和期限；其他行都计为无法读取。报价簿只提供它认为有效且未过期的订单，并可能在两个方向上落后于链，因此每个订单的状态都在同一个区块读取：`signedOfferFilledAmount(orderHash)` 达到订单上限（`amountMax`，为零时为 `amount`）即为已使用（直接成交与 `cancelSignedOffer` 都写入上限），否则 `isSignedOfferNonceUsed(signer, nonce)` 为 nonce 已取消，否则当区块时间超过非零的 `expiresAt` 与 `deadline` 中较早者时为已过期，该数值大于零时为部分成交（撮合取走了一部分，其余仍可成交、可取消），其余为有效。取消单个订单发送 `cancelSignedOffer(order)`（仅签名者可调用）；按 nonce 取消发送 `invalidateSignedOfferNonce(nonce)`，在列出的有效订单中有两个或以上共用该 nonce 时提供，并在所有市场停止该钱包用该 nonce 签署的每个订单。协议暂停期间两者都会被拒绝。审核读取各订单状态和暂停状态，然后从你的钱包运行协议自身的试运行。成交本会扣取的金额：出借方为 `amountMax`（为零时为 `amount`），借款方为 `collateralAmountMax`（或 `collateralAmount`）。对部分成交的订单，审核会说明已成交的部分，以及其余部分仍可能扣取的金额：上限以下剩余的本金，或对借款方而言按订单自身比例对应的抵押品，向上取整。结果从交易自身由 Diamond 发出的 `SignedOfferCancelled` 或 `SignedOfferNonceBurned` 日志中读取，并按订单哈希或 nonce 以及你的钱包匹配。 在这个限于签名人的读取中，索引会以 `replayPending: true` 列出这些暂扣订单；该行说明在重新核对结束前订单不在共享簿中，而其状态仍来自上述链上读取；只有在最新状态仍可成交时，才补充说明签名仍可成交并继续提供取消。

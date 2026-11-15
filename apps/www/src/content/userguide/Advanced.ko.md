@@ -1738,20 +1738,22 @@ vault로 전달된 rewards), 당신이 대출자나 차입자인 대출이 시�
 Base의 tier는 즉시 최신이 되고, 다른 각 체인에는 도착할 때까지 업데이트가
 미배송 상태로 남습니다.
 
-이 배송 비용은 프로토콜이 부담하지만, 한도가 하나 있습니다.
+배송 비용을 누가 내는지는 tier가 어느 쪽으로 움직였는지에 따라 다릅니다.
 
-- **낮아진 tier**는 예산으로 지불할 수 있는 한 즉시 보내집니다. 도착할
-  때까지 그 체인은 이전의 더 높은 tier를 계속 적용합니다.
-- **높아진 tier**나 tier 표 변경은 체인당 하루에 한 번까지만 비용이
-  지불됩니다(governance 설정으로 1시간~7일). 그때까지 그 체인은 이전
-  tier를 유지합니다.
-- 이 대기로 보류된 업데이트나 예산으로 지불하지 못한 업데이트는
-  **대기가 끝나도 저절로 다시 보내지지 않습니다**. Base에서 티어 기록이
-  다음으로 업데이트될 때, 또는 누군가 대신 배송 호출을 할 때 전송됩니다.
-- 이 호출은 누구나 할 수 있습니다. 대기가 끝나고 예산으로 지불할 수
-  있으면 프로토콜이 지불하고, 그 전에는 호출자가 크로스체인 수수료를
-  내고 더 빨리 보낼 수 있습니다. 컨트랙트는 이 호출을 지원하지만 앱은
-  아직 제공하지 않습니다.
+- **낮아진 tier**는 예산으로 지불할 수 있는 한 즉시 보내지며, 비용은
+  프로토콜이 냅니다. 도착할 때까지 그 체인은 이전의 더 높은 tier를 계속
+  적용합니다.
+- **높아진 tier**는 체인에서의 첫 할인을 포함해 프로토콜이 비용을 내지
+  않습니다. 누군가 배송 호출로 크로스체인 수수료를 낼 때 보내집니다.
+  그때까지 그 체인은 이전 tier를 유지합니다. tier 표 변경도 높아진
+  tier로 취급됩니다.
+- 예산으로 지불하지 못한 업데이트는 **저절로 다시 보내지지 않습니다**.
+  Base에서 티어 기록이 다음으로 업데이트될 때, 또는 누군가 대신 배송
+  호출을 할 때 전송됩니다. 높아진 tier는 배송 호출을 기다립니다.
+- 이 호출은 누구나 할 수 있습니다. 낮아진 tier는 프로토콜이 지불하고,
+  높아진 tier는 호출자가 크로스체인 수수료를 냅니다. 컨트랙트는 이 호출을
+  지원하지만 앱은 아직 제공하지 않으므로, 지금은 높아진 tier가 컨트랙트를
+  직접 호출해야만 다른 체인에 도착합니다.
 
 다음의 경우 사본은 인정되지 않으며, 그 체인에서는 할인이 없습니다.
 
@@ -1787,7 +1789,6 @@ Base의 tier는 즉시 최신이 되고, 다른 각 체인에는 도착할 때�
   `getTierPushStatus(user)`는 사용자별로 각 체인의 상태를 보여 줍니다.
   예산이 부족하면 다른 체인이 오래된 tier를 더 오래 적용하므로, 연기를
   지켜보고 충전하세요.
-- 유료 인상의 간격 창: `setTierPushSpacingSec`(기본 1일, 1시간~7일).
 
 **다른 각 체인에서:**
 
@@ -1803,9 +1804,7 @@ Base의 tier는 즉시 최신이 되고, 다른 각 체인에는 도착할 때�
 - Base의 `setVpfiTierThresholds`와 `setVpfiTierDiscountBps`는 표의
   버전을 올립니다. 다른 체인은 어느 사용자의 것이든 새 버전을 담은 첫
   tier 업데이트로 이를 알게 됩니다. 그때부터 예전 표로 만든 사본은 그
-  사용자 자신의 업데이트가 도착할 때까지 할인 없음으로 처리되며, 이
-  업데이트는 인상이므로 간격 창마다 한 번까지만 지불됩니다. 표를 바꾸기
-  전에 예산을 충전하세요.
+  사용자 자신의 업데이트가 도착할 때까지 할인 없음으로 처리되며, 이 업데이트는 각각 높아진 tier이므로 비용을 내는 호출자만 보낼 수 있습니다.
 - `setTwaMinStakedDays`는 버전을 올리지 않고 최소 보유 기간을 바꿉니다.
   다음 읽기부터 적용됩니다.
 
@@ -1926,13 +1925,17 @@ health factor를 보여 주고, 가격이 없는 것은 개수를 셉니다.
 
 ### Home: 수수료 할인
 
-`setVPFIDiscountConsent`는 이 체인의 Diamond에 지갑별 플래그 하나를 설정합니다. 꺼져 있으면 보유 등급 할인은 0입니다. 켜져 있으면 차입자의 대출 개시 수수료가 수락 시 대출 자산으로 줄어들고(VPFI 가격 경로는 차입자 쪽에 절대 관여하지 않음), 대출자의 수익 수수료는 정산할 때마다 그 시점의 실효 등급으로 할인됩니다. 지급 방식은 `getVPFIDiscountConfig`를 따릅니다. VPFI 환율과 기준 자산이 모두 설정되어 있으면 할인된 수수료가 대출자의 볼트에서 VPFI로 차감되고 대출자는 이자를 모두 받습니다. 그렇지 않으면 재무 수수료 자체가 줄고 VPFI는 움직이지 않습니다. 정산 시 이 차감이 실행될 수 없으면(유효한 시세가 없거나, 볼트에 추적되는 자유 VPFI가 부족하거나, 그 VPFI가 담보로 잠겨 있는 경우) 그 정산의 수수료에는 보유 등급 할인이 적용되지 않습니다. 호출은 `whenNotPaused`이므로 전역 일시 중지는 양방향 모두를 막습니다. 켜기에는 약관이 필요하고 끄기에는 필요 없으며, 둘 다 미러에 등급을 전송하지 않습니다. 차입자 할인은 수락 시 대출 자산이 유동적일 때만 적용되며(비유동 대출은 LIF 전액을 냄), 모든 할인은 수수료의 50%로 제한됩니다.
+`setVPFIDiscountConsent`는 이 체인의 Diamond에 지갑별 플래그 하나를 설정합니다. 꺼져 있으면 보유 등급 할인은 0입니다. 켜져 있으면 차입자의 대출 개시 수수료가 수락 시 대출 자산으로 줄어들고(VPFI 가격 경로는 차입자 쪽에 절대 관여하지 않음), 대출자의 수익 수수료는 정산할 때마다 그 시점의 실효 등급으로 할인됩니다. 지급 방식은 `getVPFIDiscountConfig`를 따릅니다. VPFI 환율과 기준 자산이 모두 설정되어 있으면 할인된 수수료가 대출자의 볼트에서 VPFI로 차감되고 대출자는 이자를 모두 받습니다. 그렇지 않으면 재무 수수료 자체가 줄고 VPFI는 움직이지 않습니다. 정산 시 이 차감이 실행될 수 없으면(유효한 시세가 없거나, 볼트에 추적되는 자유 VPFI가 부족하거나, 그 VPFI가 담보로 잠겨 있는 경우) 그 정산의 수수료에는 보유 등급 할인이 적용되지 않습니다. 호출은 `whenNotPaused`이므로 전역 일시 중지는 양방향 모두를 막습니다. 켜기에는 약관이 필요하고 끄기에는 필요 없으며, 둘 다 미러에 등급을 전송하지 않습니다. 차입자 할인은 수락 시 대출 자산이 유동적일 때만 적용되며(비유동 대출은 LIF 전액을 냄), 모든 할인은 수수료의 50%로 제한됩니다. #3562부터 한 대출에 대한 대출자의 hold-tier 할인은, 보유자가 대출자 포지션을 받았을 때 기록된 할인을 절대 넘지 않습니다 (`lenderEntryDiscount`, 대출자 토큰에 보유자가 생길 때마다 기록되며, 단순 전송은 기록된 값과 받는 쪽의 값 중 낮은 쪽을 유지합니다).
 
 <a id="home-rewards"></a>
 
 ### Home: 리워드
 
-헤드라인 수치는 `RewardClaimFacet.simulateClaimInteractionRewards(user, 2)`로, Vault 수령처로 클레임을 실행하고 항상 revert합니다. `InteractionRewardsSimulation(paid, fromDay, toDay)`가 정확한 수치를 담고, 그 밖의 revert는 클레임 자체의 거절 (`NoInteractionRewardsToClaim`, `InteractionDayGlobalNotFinalized(day)`, `InteractionDayAwaitingDelivery(day)`, `InteractionEmissionsNotStarted`, `EnforcedPause`, `SanctionedAddress`)이며 이름으로 표시됩니다. 어떤 소스도 미리보기를 실행할 수 없을 때에만 Home은 하한인 `previewInteractionRewards`를 읽고 클레임을 보류합니다. 정확한 수치가 0이어도 클레임은 제공됩니다. 프로토콜은 아무것도 지급하지 않는 클레임을 아무것도 지급하지 않은 보상일을 넘어설 때에만 허용하며, Home은 그렇다고 알려 줍니다. Home은 `claimInteractionRewardsTo(2)`로 클레임하며, 호출당 최대 `MAX_INTERACTION_CLAIM_DAYS`(30)일을 지급합니다. 완료된 클레임의 블록 또는 그 이후에 읽은 미리보기가 여전히 금액을 답하면 Home은 나머지를 제공합니다. 보상 항목만으로 지급하는 클레임은 날짜 범위를 밝히지 않으며(0에서 0), Home은 날짜 대신 그렇다고 알려 줍니다. Vault 수령처는 컨트랙트 지갑을 포함한 모든 계정에 전달됩니다. Default 수령처는 컨트랙트 호출자에게는 지갑으로 지급하기 때문입니다. 볼트에 입금되며, 입금을 완료할 수 없을 때(아직 볼트 없음)는 지갑으로 돌아갑니다. 결과는 영수증에서 읽습니다. `InteractionRewardsClaimed`가 지급액을 알려 주고, 같은 트랜잭션에서 지갑과 `getUserVaultAddress(user)`로 간 VPFI `Transfer` 로그가 도착한 곳을 알려 줍니다. 그 합이 지급액과 맞지 않으면 수령처는 알 수 없음으로 표시됩니다. 누적 클레임 금액은 표시되지 않습니다. 이를 위한 사용자별 인덱스 경로가 아직 없기 때문입니다.
+헤드라인 수치는 `RewardClaimFacet.simulateClaimInteractionRewards(user, 2)`로, Vault 수령처로 클레임을 실행하고 항상 revert합니다. `InteractionRewardsSimulation(paid, fromDay, toDay)`가 정확한 수치를 담고, 그 밖의 revert는 클레임 자체의 거절 (`NoInteractionRewardsToClaim`, `InteractionDayGlobalNotFinalized(day)`, `InteractionDayAwaitingDelivery(day)`, `InteractionEmissionsNotStarted`, `EnforcedPause`, `SanctionedAddress`)이며 이름으로 표시됩니다. 어떤 소스도 미리보기를 실행할 수 없을 때에만 Home은 하한인 `previewInteractionRewards`를 읽고 클레임을 보류합니다. 정확한 수치가 0이어도 클레임은 제공됩니다. 프로토콜은 아무것도 지급하지 않는 클레임을 아무것도 지급하지 않은 보상일을 넘어설 때에만 허용하며, Home은 그렇다고 알려 줍니다. Home은 `claimInteractionRewardsTo(venue)`로 클레임하며, 호출당 최대 `MAX_INTERACTION_CLAIM_DAYS`(30)일을 지급합니다. 완료된 클레임의 블록 또는 그 이후에 읽은 미리보기가 여전히 금액을 답하면 Home은 나머지를 제공합니다. 보상 항목만으로 지급하는 클레임은 날짜 범위를 밝히지 않으며(0에서 0), Home은 날짜 대신 그렇다고 알려 줍니다. 수령처는 항상 명시적으로 전달하며 `Default`(0)는 쓰지 않습니다. `LibAccountShape.isEoaStyle`가 본인 계정(코드 없음, 또는 정확히 EIP-7702 위임 지정자, `getCode`로 읽음)으로 읽는 계정에는 Vault(2), 컨트랙트 계정에는 Wallet(1)을 전달하며, 이는 프로토콜 자체의 기본 규칙입니다. 고급 모드에서는 검토 전에 바꿀 수 있고, 영수증이 이를 밝히고 확정합니다. Vault는 볼트에 입금하며, 입금을 완료할 수 없을 때(아직 볼트 없음)는 지갑으로 돌아갑니다. Wallet은 지갑으로 송금합니다. 수령처는 지급이 도착하는 곳만 바꾸므로, 미리보기는 무엇을 고르든 Vault로 실행합니다. 보호 모드가 켜져 있으면(`ProtectedAccountFacet.getProtectedAccount(user).enabled`) `RewardClaimFacet`은 전달된 수령처와 관계없이 볼트로 전달하므로, 앱은 볼트를 밝히고 선택지를 제공하지 않습니다. 모드를 읽지 못한 경우에도 볼트를 밝히며, 재확인에서 모드를 다시 읽고 수령처가 바뀌었으면 검토를 다시 보여 줍니다. 결과는 영수증에서 읽습니다. `InteractionRewardsClaimed`가 지급액을 알려 주고, 같은 트랜잭션에서 지갑과 `getUserVaultAddress(user)`로 간 VPFI `Transfer` 로그가 도착한 곳을 알려 줍니다. 그 합이 지급액과 맞지 않으면 수령처는 알 수 없음으로 표시됩니다. 누적 클레임 금액은 표시되지 않습니다. 이를 위한 사용자별 인덱스 경로가 아직 없기 때문입니다.
+
+대기 중인 날짜가 왜 기다리는지는 미리보기의 블록에서 읽습니다. 홈 네트워크에서는 `RewardAggregatorFacet.isDayReadyToFinalize(day)`가 확정을 아직 실행할 수 없는 이유(목록에 있는 보고 없음, 보고가 아직 유예 시간 안에 있음, 사용할 수 없는 예상 출처 목록)나 지금 실행할 수 있다는 것을 알려 줍니다. 미러에서는 `RewardReporterFacet.getBroadcastV2Applied(day)`가 홈 네트워크의 수치가 도착했는지 알려 주며, 전달 대기에서는 `RewardRemittanceLensFacet.getDayDeliveryState(day)`와 `getDayDeliveryParts(day)` (활성화일은 `getGovernorCommitState()`로 읽으며, 그날 이후의 날만 이 네트워크의 보고를 기다립니다)가 그날이 여기서 가격이 정해졌는지, 이 네트워크의 보고가 전송되었는지, 선언된 전체 대비 도착한 부분을 알려 줍니다. 부분들이 서로 다른 전체를 선언한 날은 지급 없이 건너뛸 수 있는 날로 공개됩니다. 청구의 자금 거절은 프로토콜의 수치와 함께 이름으로 표시됩니다: `InteractionPoolExhausted`(새 VPFI 풀이 모두 지급되었고 청구에 재활용 부분이 없음, 해제되지 않음), `InteractionPoolReservedShortfall` 및 `RecycleBucketReservedShortfall`(대기 중인 정산을 위해 예약됨), `InteractionRewardBackingShort`(필요량 대비 가용량). `EnforcedPause`는 계속 가능한 것과 함께 표시됩니다. 리워드 역할이 설정되지 않은 네트워크에서는 `finalizeDay`를 실행할 수 없으므로(정규 플래그가 필요함), 카드는 역할이 설정될 때까지 어떤 날도 확정할 수 없다고 알리며 단계를 제시하지 않습니다. 도착한 새 VPFI와 재활용 VPFI는 각각 자신의 선언된 전체와 대비해 표시됩니다. 두 가지가 모두 채워져야 그날이 열리기 때문입니다.
+
+누적 청구 줄은 인덱서의 `GET /rewards/claimed?chainId=&wallet=`를 읽습니다. 이는 수집 과정의 사용자별·청구일별 원장에서 지갑의 `InteractionRewardsClaimed` 금액(보류분 해제 포함)과 `RewardDeliveredToVault` 금액을 블록의 UTC 날짜 기준으로 합산합니다. 최신 상태의 패스가 시점을 기록하지 않았거나(`pending: unrecorded`) 체인의 일회성 원장 재생이 진행 중이면(`pending: replaying`) 합계를 반환하지 않으며, 그렇지 않으면 `recordedBefore`를 알려 주고 그 이전의 모든 청구가 집계됩니다. 지갑으로 대체 전달된 볼트 입금은 `RewardDeliveredToVault`를 내보내지 않으므로 볼트 몫에 포함되지 않습니다.
 
 <a id="home-rewards-expiry"></a>
 
@@ -1996,7 +1999,7 @@ Borrow는 ERC-20 담보에 대한 ERC-20 대출자 오퍼(`offerType` 0)를 `acc
 
 ### Borrow: 요청의 조건
 
-Basic은 단일 값 요청을 올립니다: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`, `fillMode` 0, `periodicInterestCadence` 0, `allowsPrepayListing`과 `allowsParallelSale`은 false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true. 금액은 기본 단위로 정확히 변환되고 이자율은 최대 10,000 bps입니다. `durationDays`는 `getProtocolConfigBundle`에서 읽은 설정 최대값으로 제한됩니다. `expiresAt`은 0(취소할 때까지 유효)이거나, 검토를 열 때 최신 블록에서 정한 시각으로 최대 `MAX_OFFER_EXPIRY_HORIZON`(365일) 뒤까지입니다. `useFullTermInterest` 기본값은 true, `allowsPartialRepay`는 false입니다.
+Basic은 단일 값 요청을 올립니다: `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`, `fillMode` 1 (AON), `periodicInterestCadence` 0, `allowsPrepayListing`과 `allowsParallelSale`은 false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent` true. 금액은 기본 단위로 정확히 변환되고 이자율은 최대 10,000 bps입니다. `durationDays`는 `getProtocolConfigBundle`에서 읽은 설정 최대값으로 제한됩니다. `expiresAt`은 0(취소할 때까지 유효)이거나, 검토를 열 때 최신 블록에서 정한 시각으로 최대 `MAX_OFFER_EXPIRY_HORIZON`(365일) 뒤까지입니다. `useFullTermInterest` 기본값은 true, `allowsPartialRepay`는 false입니다.
 
 <a id="borrow-request-review"></a>
 
@@ -2014,13 +2017,13 @@ Basic은 단일 값 요청을 올립니다: `amount` = `amountMax`, `interestRat
 
 ### Borrow: 범위가 있는 요청
 
-범위는 `amount`(최소)를 `amountMax`(최대)보다 작게, `interestRateBps` = `interestRateBpsMax`(하나의 이자율)로, `collateralAmount`(가장 작은 대출의 하한)를 `collateralAmountMax`(게시할 때 금고로 옮겨짐) 이하로 보냅니다. 하한이 비어 있으면 둘을 같게 보냅니다. 범위는 ERC-20 담보에서만 제공됩니다. 직접 `acceptOffer`는 `collateralAmount`를 담보로 `amount`를 `interestRateBpsMax`로 빌려주고 `collateralAmountMax − collateralAmount`를 지갑으로 돌려줍니다. `getPartialFillEnabled`가 true인 동안 `matchOffers`는 양 끝 사이에서 체결합니다. `createOffer` 모의 실행은 가장 큰 끝에서 오퍼 한도를 적용하고 `MaxLendingAboveCeiling(provided, ceiling)`으로 거부하며, 검토 화면이 그 상한을 보여 줍니다. 직접 수락 끝은 (`amount`, `collateralAmount`)에서 단일 값 요청의 두 번째 모의 실행으로 확인하고, 한도 이전에 멈춘 응답은 알 수 없음으로 표시합니다. 각 끝의 LTV는 `calculateLTV(lending, amount, collateral, collateralAmount)`이며, `ZeroCollateral`은 가치 없는 담보로 읽습니다. 표시되는 대출 시작 건전성 지수는 `getDepthTieredLtvEnabled`가 false인 동안 `getMinHealthFactor`, true인 동안 1.0입니다. 매칭은 대출자의 비례 요구량을 잠그며, 담보가 범위이면 `collateralAmount` 까지 올리고 그렇지 않으면 요구량 그대로입니다. 그래서 가장 큰 매칭은 `collateralAmountMax` 와 `collateralAmount` 두 경우 모두로 표시됩니다(담보 범위가 없으면 더 적게 잠글 수 있다고 표시). 이를 제한하는 것은 대출 시작 시점의 검사뿐이며, 그 검사를 읽지 못하면 그 사실을 표시하고 빼지 않습니다. 계층형 체계에서는 검사가 등급의 LTV 상한도 적용합니다. `getPartialFillEnabled`가 true인 동안 매칭이 잠그지 않은 담보는 이후 매칭을 위해 금고에 남으며, 요청이 닫힐 때(남은 용량이 `amount` 아래로 떨어질 때)나 `cancelOffer`가 실행될 때에만 환불됩니다.
+범위는 `amount`(최소)를 `amountMax`(최대)보다 작게, `interestRateBps` = `interestRateBpsMax`(하나의 이자율)로, `collateralAmount`(가장 작은 대출의 하한)를 `collateralAmountMax`(게시할 때 금고로 옮겨짐) 이하로 보냅니다. 하한이 비어 있으면 둘을 같게 보냅니다. 범위는 ERC-20 담보에서만 제공됩니다. 직접 `acceptOffer`는 `collateralAmount`를 담보로 `amount`를 `interestRateBpsMax`로 빌려주고 `collateralAmountMax − collateralAmount`를 지갑으로 돌려줍니다. `getPartialFillEnabled`가 true인 동안 `matchOffers`는 양 끝 사이에서 체결합니다. `createOffer` 모의 실행은 가장 큰 끝에서 오퍼 한도를 적용하고 `MaxLendingAboveCeiling(provided, ceiling)`으로 거부하며, 검토 화면이 그 상한을 보여 줍니다. 직접 수락 끝은 (`amount`, `collateralAmount`)에서 단일 값 요청의 두 번째 모의 실행으로 확인하고, 한도 이전에 멈춘 응답은 알 수 없음으로 표시합니다. 각 끝의 LTV는 `calculateLTV(lending, amount, collateral, collateralAmount)`이며, `ZeroCollateral`은 가치 없는 담보로 읽습니다. 표시되는 대출 시작 건전성 지수는 `getDepthTieredLtvEnabled`가 false인 동안 `getMinHealthFactor`, true인 동안 1.0입니다. 매칭은 대출자의 비례 요구량을 잠그며, 담보가 범위이면 `collateralAmount` 까지 올리고 그렇지 않으면 요구량 그대로이며, 요청이 그만큼 예치했다면 대출 시작 시점 검사의 하한까지 다시 올립니다. 그래서 가장 큰 매칭은 `collateralAmountMax` 와 `collateralAmount` 두 경우 모두로 표시됩니다(담보 범위가 없으면 더 적게 잠글 수 있다고 표시). 이를 제한하는 것은 대출 시작 시점의 검사뿐이며, 그 검사를 읽지 못하면 그 사실을 표시하고 빼지 않습니다. 계층형 체계에서는 검사가 등급의 LTV 상한도 적용합니다. `getPartialFillEnabled`가 true인 동안 매칭이 잠그지 않은 담보는 이후 매칭을 위해 금고에 남으며, 요청이 닫힐 때(남은 용량이 `amount` 아래로 떨어질 때)나 `cancelOffer`가 실행될 때에만 환불됩니다.
 
 <a id="borrow-request-fill"></a>
 
 ### Borrow: 요청의 체결 방식
 
-`fillMode`는 0(Partial), 1(AON), 2(IOC) 중 하나이며 게시 후 바꿀 수 없습니다. AON은 `amount` = `amountMax`를 요구하고(`AonRequiresSingleValueAmount`), IOC는 `expiresAt` ≠ 0을 요구합니다(`IocRequiresExpiry`). 양식은 거부되는 조합을 제공하지 않습니다. 금액, 이자율, 담보는 열린 요청에서 `setOfferAmount`, `setOfferRate`, `setOfferCollateral`, `modifyOffer`로 바꿀 수 있지만 `amountFilled`나 `collateralAmountFilled` 아래로는 바꿀 수 없습니다. 이 앱은 아직 이를 호출하지 않습니다.
+`fillMode`는 0(Partial), 1(AON), 2(IOC) 중 하나이며 게시 후 바꿀 수 없습니다. AON은 `amount` = `amountMax`를 요구하고(`AonRequiresSingleValueAmount`), IOC는 `expiresAt` ≠ 0을 요구합니다(`IocRequiresExpiry`). 크기가 하나인 게시는 AON을 보냅니다(#3520). `LibOfferMatch`는 각 매칭을 `amount`와 `amountMax`의 남은 양 사이로 유지하므로 크기 하나는 언제나 전량으로만 체결되며, Partial과 IOC는 범위가 있을 때만 제공됩니다. 양식은 거부되는 조합을 제공하지 않습니다. 금액, 이자율, 담보는 열린 요청에서 `setOfferAmount`, `setOfferRate`, `setOfferCollateral`, `modifyOffer`로 바꿀 수 있지만 `amountFilled`나 `collateralAmountFilled` 아래로는 바꿀 수 없습니다. 이 앱은 아직 이를 호출하지 않습니다.
 
 <a id="borrow-request-cadence"></a>
 
@@ -2074,7 +2077,7 @@ Lend는 ERC-20 담보에 대한 ERC-20 차입 요청(`offerType` 1)을 대출자
 
 ### Lend: 오퍼의 조건
 
-부분이 없는 대출 오퍼는 단일 값입니다. `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`(차입자가 잠가야 할 유일한 담보량), `fillMode` 0(Advanced가 다른 방식을 정하지 않은 경우, 다음 절 참고), `periodicInterestCadence` 0(고급에서 일정을 정하지 않는 한), `allowsPrepayListing`과 `allowsParallelSale`은 false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent`는 true이며, 고급에서 선택하지 않는 한 Full 요금제는 설정하지 않습니다. 금액은 기본 단위로 정확히 파싱되고 이자율은 최대 10,000 bps입니다. `durationDays`는 `getProtocolConfigBundle`에서 읽은 설정 최댓값으로 제한됩니다. `expiresAt`은 0(취소할 때까지 열림)이거나 검토 화면이 열릴 때 최신 블록 기준으로 정한 시각이며, 최대 `MAX_OFFER_EXPIRY_HORIZON`(365일) 뒤까지입니다. `useFullTermInterest`의 기본값은 true, `allowsPartialRepay`의 기본값은 false입니다.
+부분이 없는 대출 오퍼는 단일 값입니다. `amount` = `amountMax`, `interestRateBps` = `interestRateBpsMax`, `collateralAmount` = `collateralAmountMax`(차입자가 잠가야 할 유일한 담보량), `fillMode` 1 (AON)(Advanced가 다른 방식을 정하지 않은 경우, 다음 절 참고), `periodicInterestCadence` 0(고급에서 일정을 정하지 않는 한), `allowsPrepayListing`과 `allowsParallelSale`은 false, `refinanceTargetLoanId` 0, `creatorRiskAndTermsConsent`는 true이며, 고급에서 선택하지 않는 한 Full 요금제는 설정하지 않습니다. 금액은 기본 단위로 정확히 파싱되고 이자율은 최대 10,000 bps입니다. `durationDays`는 `getProtocolConfigBundle`에서 읽은 설정 최댓값으로 제한됩니다. `expiresAt`은 0(취소할 때까지 열림)이거나 검토 화면이 열릴 때 최신 블록 기준으로 정한 시각이며, 최대 `MAX_OFFER_EXPIRY_HORIZON`(365일) 뒤까지입니다. `useFullTermInterest`의 기본값은 true, `allowsPartialRepay`의 기본값은 false입니다.
 
 <a id="rate-check"></a>
 
@@ -2092,7 +2095,7 @@ Ethereum, BNB Chain, Polygon(및 BNB Testnet과 Polygon Amoy)에서는 보낸 �
 
 ### Lend: 부분으로 빌려주는 오퍼
 
-부분은 `amount`(한 번의 매칭이 빌려줄 수 있는 가장 작은 부분)를 `amountMax`(전체 금액, `createOffer`가 볼트로 가져감)보다 작게 보냅니다. `collateralAmount` = `collateralAmountMax`는 `amountMax` 기준의 유일한 요구 사항으로 남고(그렇지 않으면 `LenderCollateralRangeNotAllowed`), `interestRateBps` = `interestRateBpsMax`입니다. 대출 오퍼에 대한 직접 `acceptOffer`는 `collateralAmount`에 대해 `amountMax`를 빌려주며, `amountFilled`가 0인 동안에만 가능합니다(매칭 후에는 `OfferPartiallyFilled`). `getPartialFillEnabled`가 true인 동안 `matchOffers`는 금액 겹침 구간의 중간값(최소 `amount`)을 이자율 겹침 구간의 중간값으로, 적어도 `collateralAmount × matchAmount ÷ amountMax`(내림, 차입자의 담보 범위가 높일 수 있음)에 대해 빌려줍니다. `amountMax − amountFilled`가 `amount` 아래로 떨어지면 나머지는 대출자의 지갑으로 인출되고 오퍼는 닫힙니다(`OfferClosed`, 사유 `Dust` 또는 `FullyFilled`). 일부 체결된 오퍼에 대한 `cancelOffer`는 대기 시간을 건너뛰고 `amountMax − amountFilled`를 돌려줍니다. `fillMode`는 요청과 같이 0, 1, 2이며, AON은 `amount` = `amountMax`, IOC는 만료가 필요하고, 게시 후에는 바뀌지 않습니다. 두 레그가 모두 유동적이면 `createOffer`는 `amountMax`에서의 하한보다 낮은 `collateralAmount`를 `MinCollateralBelowFloor(provided, floor)`로 거부하며, 검토 화면이 그 하한을 보여 줍니다. LTV는 (`amountMax`, `collateralAmount`)에서의 `calculateLTV` 하나만 표시되며, 부분도 반올림을 빼면 같은 비율입니다.
+부분은 `amount`(한 번의 매칭이 빌려줄 수 있는 가장 작은 부분)를 `amountMax`(전체 금액, `createOffer`가 볼트로 가져감)보다 작게 보냅니다. `collateralAmount` = `collateralAmountMax`는 `amountMax` 기준의 유일한 요구 사항으로 남고(그렇지 않으면 `LenderCollateralRangeNotAllowed`), `interestRateBps` = `interestRateBpsMax`입니다. 대출 오퍼에 대한 직접 `acceptOffer`는 `collateralAmount`에 대해 `amountMax`를 빌려주며, `amountFilled`가 0인 동안에만 가능합니다(매칭 후에는 `OfferPartiallyFilled`). `getPartialFillEnabled`가 true인 동안 `matchOffers`는 두 오퍼가 모두 받아들이는 가장 큰 금액(두 잔여 금액 중 작은 쪽, 차입자의 담보가 감당하는 만큼과 대출 시작 시점 검사에서 그 담보가 뒷받침할 수 있는 최대치가 상한, 최소 `amount`)을 이자율 겹침 구간의 중간값으로, 적어도 `collateralAmount × matchAmount ÷ amountMax`(내림, 차입자의 담보 범위나 대출 시작 시점 검사의 하한이 높일 수 있음)에 대해 빌려줍니다. `amountMax − amountFilled`가 `amount` 아래로 떨어지면 나머지는 대출자의 지갑으로 인출되고 오퍼는 닫힙니다(`OfferClosed`, 사유 `Dust` 또는 `FullyFilled`). 일부 체결된 오퍼에 대한 `cancelOffer`는 대기 시간을 건너뛰고 `amountMax − amountFilled`를 돌려줍니다. `fillMode`는 요청과 같이 0, 1, 2이며, AON은 `amount` = `amountMax`, IOC는 만료가 필요하고, 게시 후에는 바뀌지 않습니다. 두 레그가 모두 유동적이면 `createOffer`는 `amountMax`에서의 하한보다 낮은 `collateralAmount`를 `MinCollateralBelowFloor(provided, floor)`로 거부하며, 검토 화면이 그 하한을 보여 줍니다. LTV는 (`amountMax`, `collateralAmount`)에서의 `calculateLTV` 하나만 표시되며, 부분도 반올림을 빼면 같은 비율입니다.
 
 <a id="lend-offer-schedule"></a>
 
@@ -2137,6 +2140,8 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 가격이 있는 대출에는 `getInternalMatchConfigBundle`도 읽습니다. 내부 매칭이 켜져 있으면 LTV가 임계값부터 임계값 + `externalLiquidationPriorityWindowBps`까지인 대출은 내부 매칭용으로 보류되고 모든 외부 청산 경로가 거부합니다(`InternalMatchOnlyBand`). 페이지는 그 구간을 알립니다. `loanInitiationFeeBpsAtInit`가 0이면(요율이 기록되기 전에 개설된 대출) 기록 없음으로, `treasuryFeeBpsAtInit`가 0이면 정산이 적용하는 기존 1% 요율로 표시합니다. 현물 인도 경고는 ERC-20 대출에만 해당합니다. NFT 대여에는 담보가 없으며, 채무 불이행 시 임차인의 사용이 끝나고 선지급 대여료는 트레저리 몫을 뺀 뒤 대출자에게 지급되며 버퍼는 트레저리로 갑니다. 페이지는 대신 이를 알립니다.
 
 요율은 대출의 스냅샷입니다: `treasuryFeeBpsAtInit`, `loanInitiationFeeBpsAtInit`(판매용 대출에는 없음), `liquidationLtvBpsAtInit`. 한쪽이 Illiquid(`principalLiquidity` 또는 `collateralLiquidity`)인 대출에는 가격 기반 수치가 없습니다: 프로토콜이 그 대출의 `calculateHealthFactor`와 `calculateLTV`를 거부하며, 페이지는 알 수 없음 대신 그렇게 알립니다. `principal`은 아직 남은 원금이며(부분 상환이 이를 줄임), `interestRateBps`와 `collateralAmount`도 바뀔 수 있으므로 조건은 현재 값으로 표시됩니다. 기록상 원금이 없는 종료된 대출은 내부 매칭이 이를 충당했는지 표시하고, 아니면 기록된 원금이 없다는 것만 표시합니다. NFT 대여는 일일 대여료(`principal`, `prepayAsset` 기준)와 조기 반환 시에도 남은 모든 날이 청구되는지(`useFullTermInterest`)를 표시합니다. `getPeriodicInterestEnabled`가 false이면 페이지는 체크포인트에서 담보가 매각되지 않는다고 알립니다. 진행 중인 대출에서 `collateralLiquidity`가 Illiquid이면 현물 경고가 추가됩니다: 채무 불이행 시 판매 없이 담보가 대출자에게 이전됩니다. 첫 번째 트랜잭션은 전액 상환입니다(아래 참조).
+
+진행 중인 ERC-20 대출의 대출자 측 보유자에 대해, 페이지는 `lenderHoldDiscountView(loanId, wallet)`을 읽습니다: 기록된 항목(보유자, 등급, 할인, 시각), 지갑의 현재 등급과 할인, 그리고 항목이 그 지갑을 가리키면 둘 중 낮은 값, 아니면 0인 `holdBps`입니다. 이 view가 없는 Diamond는 `FunctionDoesNotExist`로 revert하며, 페이지는 이를 0이 아니라 아직 보고되지 않음으로 표시합니다. 같은 블록에서 `getVPFIDiscountConsent`(켜져 있을 때만 hold 몫이 적용됨), `getVPFIDiscountConfig`(할인 지급 방식), `getFeeEntitlement(loanId).lenderMode`(Full은 50% 상한 안에서 10포인트를 더함)를 읽습니다.
 
 <a id="repay"></a>
 
@@ -2384,6 +2389,14 @@ NFT는 대여 기간 내내 내 볼트에 머물며, 대여가 열려 있는 동
 
 종료하면 약정일이 남아 있어도 NFT를 쓸 권리가 즉시 끝나며 되돌릴 수 없습니다. 대여료는 종료가 체인에 기록되는 시점에 세므로 그 전에 시작된 날은 하루로 냅니다. 전체 기간 요금이면 아무리 일찍 종료해도 아직 정산되지 않은 약정일을 모두 냅니다. 기간이 끝난 뒤에는 버퍼에서 연체료를 뗍니다. 전체 대여료의 1%에 늦은 날마다 0.5%를 더하며, 최대 5%이고 버퍼를 넘지 않습니다. 유예 기간이 지나면 프로토콜이 종료를 거절하며, 이후 대여는 남은 날이 하루씩 정산되어 끝나거나(누구나 할 수 있습니다) 디폴트로 끝나며, 먼저 일어나는 쪽으로 끝납니다. 검토 화면이 보여 주는 이후 시점은 기한도 한도도 아닙니다. 더 늦게 기록된 종료는 그 시점에 계산되므로 대여료나 연체료가 더 나가고 돌아오는 금액이 줄 수 있습니다. 돌아오는 금액은 받을 때까지 청구로 내 볼트에 남습니다.
 
+<a id="rewards-programme"></a>
+
+### 리워드: 이 네트워크에서 프로그램이 운영되나요?
+
+리워드 페이지 맨 위의 한 문장은 내 네트워크에서 리워드 프로그램이 운영되는지 알려 줍니다: 운영 중이며 리워드를 지급할 VPFI를 보유함, 운영 중이지만 지금은 지급할 것이 없음, 시작일이 없음, 명시된 시각에 시작함, 또는 네트워크가 리워드 네트워크를 떠나 그곳에서는 새로 청구할 수 있는 것이 생기지 않음. 청구는 그 네트워크에 리워드용으로 이미 보유된 VPFI에서만 지급됩니다. VPFI의 홈 네트워크에서 자금을 받는 네트워크에서는 특정 날짜용으로 보낸 VPFI도 그날의 리워드를 지급할 수 있습니다. 문장은 이를 세지 않으므로, 그곳에서는 지급할 수 있는 것이 없다고 말하지 않습니다. 문장의 근거가 되는 사실을 읽을 수 없으면 페이지는 그렇다고 말하며 프로그램을 운영 중으로 표시하지 않습니다. 프로토콜이 일시 중지되면 페이지는 그것도 알려 줍니다: 리워드 청구와 출금은 멈추고, 전액 및 부분 상환과 담보 추가는 계속 가능합니다. 리워드는 내가 프로토콜을 직접 이용한 데 대한 리베이트이며, VPFI 보유에 대한 수익이 아닙니다.
+
+고급 모드는 그 문장이 무엇에 근거하는지 나열합니다: 이 네트워크의 리워드 역할(리워드를 집계하고 자금을 대는 VPFI의 홈 네트워크, 홈 네트워크에 보고하고 그곳에서 자금을 받는 네트워크, 역할이 설정되지 않아 설정될 때까지 리워드 날을 확정할 수 없는 네트워크, 또는 분리된 네트워크), 그리고 영구히 은퇴한 네트워크라면 남은 리워드 VPFI가 어디로 가며 지금까지 얼마가 보내졌는지; 프로그램 시작 시각; 지금 청구가 끌어 쓸 수 있는, 리워드용으로 전달된 VPFI와 수수료에서 재활용된 VPFI(각각 대기 중인 정산이 예약한 몫을 뺀 값); 리워드 VPFI가 별도의 보관 컨트랙트에 있는지 프로토콜 자체 잔액에 있는지; 그리고 청구하지 않은 리워드가 제거될 수 있는지, 얼마 후인지. 이 네트워크의 컨트랙트가 제공하지 않는 사실은 그렇다고 표시됩니다. 하루의 리워드를 청구 가능하게 만드는 일일 마감이 실행되고 있는지는 페이지가 읽지 않습니다. 누구나 실행할 수 있으며, 내 청구 금액이 지금 청구로 받을 금액을 보여 줍니다. 리워드용으로 전달된 양이나 프로그램의 남은 풀을 넘어 보유된 VPFI는 지급 가능 금액 옆에 표시되며 지급 가능한 것으로 계산되지 않습니다. 청구는 이 두 한도 안에서만 지급하기 때문입니다.
+
 <a id="rewards-vpfi"></a>
 
 ### 리워드: 볼트의 VPFI
@@ -2402,6 +2415,12 @@ NFT는 대여 기간 내내 내 볼트에 머물며, 대여가 열려 있는 동
 
 카드는 한 블록에서 `getVPFIDiscountConsent`, `isCanonicalVpfiChain`, `getEffectiveDiscount`를 읽습니다. `getEffectiveDiscount`는 수수료 경로가 적용하는 등급과 할인을 돌려줍니다: 동의가 꺼져 있으면 0, 최대 50%, 다른 네트워크에서는 홈 네트워크에서 보낸 사본입니다. 같은 블록에서 `explainTier`와 `getTwaConfig`도 읽습니다. `explainTier`는 동의 여부와 관계없이 집계된 VPFI만으로 얻는 등급, 각 보유 규칙의 수치, 유효 등급을 그보다 낮게 두는 규칙을 돌려줍니다. 카드는 설명이 수수료 경로가 적용하는 것과 같은 등급일 때만 그 규칙을 알려 주며, 동의가 꺼져 있으면 켰을 때 어떤 등급이 적용될지 알려 줍니다. Advanced에서는 각 규칙의 수치와 `getTwaConfig`가 돌려주는 설정을 보여 주며, 평균 기간과 되돌아보는 기간을 서로 다른 두 길이로 표시합니다. 표는 한 블록에서 `getVpfiTierThresholds`, `getVpfiTierDiscountBps`, `getFeesConfig`를 읽습니다. 등급 1~3은 해당 기준값에서, 등급 4는 자신의 기준값을 넘어서부터 시작합니다. 각 수수료는 기본 수수료 × (1 − 상한 적용 할인)이며 정확하게 계산됩니다. 표는 등급이 정해지는 홈 네트워크에서만 표시됩니다.
 
+<a id="rewards-tier-elsewhere"></a>
+
+### 리워드: 다른 네트워크의 등급
+
+이 섹션은 한 블록에서 `getTierPushStatus(wallet)`(#1277)를 읽습니다. 전송용으로 마지막에 커밋된 푸시(nonce, 등급, bps, 만료, 표 버전)와, 각 브로드캐스트 대상에 대해 마지막으로 받은 튜플, 커밋된 푸시가 아직 남아 있는지, 그리고 프로토콜 예산이 이를 지불하는지입니다. 예산은 푸시가 해당 레인이 부여하는 것을 낮출 때만 지불합니다. 같은 블록에서 `getEffectiveDiscount`, `getRewardReporterConfig`의 메신저, 그리고 남아 있는 각 레인에 대해 커밋된 튜플과 블록 시각으로 메신저의 `quoteSendTierUpdateTo`를 읽습니다. 견적이 되돌려지면 그 수수료는 알 수 없는 상태로 남고 전송은 제공되지 않습니다. 커밋된 등급이나 50% 상한 적용 후 bps가 실효 값과 다르면 기록이 뒤처진 것입니다. 표 버전은 읽을 방법이 없으므로 업데이트는 어느 경우에나 제공됩니다. '기록 업데이트'는 `pokeMyTier()`를 보내 등급을 다시 계산해 커밋하고, 예산이 지불하는 레인에 전달합니다. '다른 네트워크로 보내기'는 남아 있는 각 레인의 견적에 20%를 더해 `deliverTierPush(wallet)`를 보냅니다. 호출자의 값은 예산이 지불하는 레인을 포함해 남아 있는 레인을 대상 순서대로 먼저 지불하기 때문입니다. 기록이 현재 등급과 일치하고 남아 있는 모든 레인에 견적이 있는 동안에만 제공되며, 검토 단계는 둘 다 다시 읽고 그 값으로 호출을 시험 실행합니다. 완료 카드는 영수증 블록에서 각 레인의 전달된 nonce를 읽고, `callerFunded`가 있는 `ProtocolTierBroadcastSent` 이벤트를 합산해 지불액을 알려 줍니다. 나머지는 같은 호출에서 반환되었습니다. 아직 `getTierPushSpacingSec()`를 라우팅하는 Diamond는 이 규칙보다 오래된 것이며 그 레인은 읽지 않습니다. VPFI의 홈이 아니거나 메신저가 없는 네트워크에서는 레인 목록이 비어 있고, 그때는 어떤 단계도 제공되지 않습니다. 사본이 다른 네트워크에 도착해 적용되었는지는 여기가 아니라 그 네트워크에서 확인합니다. 또한 다른 각 네트워크는 사본이 그 네트워크의 최대 유효 기간(따로 정하지 않았다면 60일)보다 오래되면 더 이상 반영하지 않으므로, 메시지에 담긴 종료 시점보다 먼저 끝날 수 있습니다.
+
 <a id="rewards-vpfi-sign"></a>
 
 ### 리워드: 승인 대신 서명
@@ -2412,7 +2431,19 @@ NFT는 대여 기간 내내 내 볼트에 머물며, 대여가 열려 있는 동
 
 ### Rate desk: 마켓과 금리 래더
 
-마켓 목록은 인덱스의 마켓 요약입니다. 만료되지 않은 열린 ERC-20 대 ERC-20 오퍼 가운데 매각 및 상계 비히클을 빼고, 대출 자산·담보 자산·기간의 조합마다 묶어 깊이가 큰 순서로 상한까지 나열하며, 각 쪽의 수와 최고 금리(대출자의 가장 낮은 `interestRateBps`, 차입자의 가장 높은 `interestRateBpsMax`)를 보여 줍니다. 이 수에는 활성 서명 주문이 포함됩니다. Rate desk는 아직 서명 주문을 나열하지 않으므로, 마켓의 수가 래더에 나열된 수와 다르면 래더가 둘 다 밝힙니다. 래더는 `excludeExpired`, `excludeSaleVehicles`, `excludeOffsetVehicles`를 붙여 인덱스에서 그 마켓의 열린 오퍼를 50개씩 최대 4페이지 읽고, 마켓에 더 있었으면 그렇다고 말합니다. 대출자 오퍼는 하한 금리에, 차입자 요청은 상한, 즉 금리와 최대 금리 중 높은 쪽에 놓입니다. 한 단의 열린 금액은 각 오퍼의 상한 금액에서 이미 채워진 만큼을 뺀 값의 합입니다. 앱은 또한 자체 시계로 만료된 오퍼, 인덱스가 여전히 돌려준 비히클, 개설 이후 이동한 대출 포지션에 묶인 오퍼(#3205), 열린 부분이 없는 오퍼, 다른 조건의 행을 빼고 이유별로 셉니다. 중간 금리는 최고 매도 호가와 최고 매수 호가의 평균으로, 0.1 베이시스포인트까지 정확히 유지됩니다. 최고 매수 호가가 최고 매도 호가 이상이면 래더는 양쪽이 겹친다고 말할 뿐 아무것도 하지 않습니다. 모든 오퍼는 자체 페이지로 연결되며, 그 페이지는 상태와 조건을 체인에서 읽습니다.
+마켓 목록은 인덱스의 마켓 요약입니다. 만료되지 않은 열린 ERC-20 대 ERC-20 오퍼 가운데 매각 및 상계 비히클을 빼고, 대출 자산·담보 자산·기간의 조합마다 묶어 깊이가 큰 순서로 상한까지 나열하며, 각 쪽의 수와 최고 금리(대출자의 가장 낮은 `interestRateBps`, 차입자의 가장 높은 `interestRateBpsMax`)를 보여 줍니다. 이 수에는 활성 서명 주문이 포함됩니다. Rate desk는 서명 주문을 래더와 따로 나열합니다(다음 절). 마켓의 수가 래더에 나열된 수와 다르면 래더가 둘 다 밝힙니다. 래더는 `excludeExpired`, `excludeSaleVehicles`, `excludeOffsetVehicles`를 붙여 인덱스에서 그 마켓의 열린 오퍼를 50개씩 최대 4페이지 읽고, 마켓에 더 있었으면 그렇다고 말합니다. 대출자 오퍼는 하한 금리에, 차입자 요청은 상한, 즉 금리와 최대 금리 중 높은 쪽에 놓입니다. 한 단의 열린 금액은 각 오퍼의 상한 금액에서 이미 채워진 만큼을 뺀 값의 합입니다. 앱은 또한 자체 시계로 만료된 오퍼, 인덱스가 여전히 돌려준 비히클, 개설 이후 이동한 대출 포지션에 묶인 오퍼(#3205), 열린 부분이 없는 오퍼, 다른 조건의 행을 빼고 이유별로 셉니다. 중간 금리는 최고 매도 호가와 최고 매수 호가의 평균으로, 0.1 베이시스포인트까지 정확히 유지됩니다. 최고 매수 호가가 최고 매도 호가 이상이면 래더는 양쪽이 겹친다고 말하고, 그 아래의 매칭 밴드가 매칭할 쌍을 제시합니다(아래 해당 절 참고). 모든 오퍼는 자체 페이지로 연결되며, 그 페이지는 상태와 조건을 체인에서 읽습니다.
+
+<a id="desk-signed-book"></a>
+
+### Rate desk: 마켓의 서명 주문
+
+목록은 마켓에 대해 인덱스의 `/signed-offers`를 `signer` 없이 읽으므로 모든 메이커의 주문을 담습니다. 각 쪽에서 가격이 가장 좋은 100행까지이며 `truncated`를 밝힙니다. 각 행은 표준 와이어 형식으로 다시 직렬화되어야 하고, `orderHash`가 주문에서 다시 계산한 EIP-712 구조체 해시와 같아야 하며, 마켓의 토큰과 기간을 담아야 하고, 서명은 65바이트 ECDSA 서명이어야 합니다. 그 밖의 행은 읽을 수 없는 행으로 셉니다. asks는 `interestRateBps` 오름차순, bids는 `interestRateBps`와 `interestRateBpsMax` 중 큰 값의 내림차순으로 정렬하며, 같은 금리 사이에서는 북의 순서를 유지합니다. 각 주문의 상태는 아래에서 설명하는 여러분 자신의 서명 주문과 같은 규칙으로 한 블록에서 읽습니다. 같은 블록에서 앱은 메이커와 약정 자산마다 한 번 `freeHolding(signer, ERC20, stakeAsset, 0)`을 읽고, 아직 체결될 수 있는 주문마다 나머지를 체결할 때 빠져나갈 금액과 비교합니다. 대출자는 상한에서 체결된 양을 뺀 금액, 차입자는 그 나머지에 대한 주문 자체 비율의 담보(올림)입니다. 실패한 읽기는 알 수 없음으로 밝히며 0으로 보이지 않습니다. 각 주문은 전체 자유 잔액과 따로 비교되므로, 한 메이커의 두 주문이 모두 충분해 보여도 볼트에는 하나분만 있을 수 있습니다. 다른 사람이 서명한 열린 주문은 전량 체결할 수 있습니다. 검토 화면은 `previewSignedOfferAccept(order, signature, acceptor)`를 읽으며, 이는 체결이 기록할 오퍼의 수락 미리보기와 함께 주문의 해시, 약정 자산, 체결이 메이커의 볼트에서 가져갈 약정액, 그 볼트의 자유 잔액을 돌려줍니다. 그 거절(`SignedOfferMakerShort`, `SignedOfferConsumed`, `SignedOfferNonceUsed` 등)은 이름으로 밝혀지며 동의를 막습니다. 약관 서명은 주문의 해시를 `offerKey`로 묶고, 전송은 `acceptSignedOffer(order, signature, terms, termsSignature)`이며, 이는 주문 전체를 소비하고 메이커의 볼트에서 오퍼를 기록한 뒤 한 번의 트랜잭션으로 대출을 엽니다. 검토 화면은 `previewSignedOfferRiskBlocks(order, acceptor)`(#3577)도 읽으며, 이는 `previewOfferAcceptBlock`과 같은 코드로 메이커의 차단, 수락자의 차단, 둘이 함께 검사되는 쌍을 돌려줍니다. 메이커의 차단은 밝혀지고 아무 단계도 제시하지 않은 채 동의를 막습니다. 수락자의 차단은 무엇에든 서명하기 전에 돌려받은 쌍에 대한 위험 단계를 엽니다. 이 읽기가 실패하면(이를 갖지 않은 Diamond는 `FunctionDoesNotExist`로 되돌립니다) 검토 화면은 `acceptSignedOffer`의 드라이 런이 확인한다고 알리며, 거기서의 거절(`RiskTierTooLow`, `IlliquidPairNotConsented`, `MidTierPairNotAcknowledged`)은 오류가 수락자를 지목할 때만 주문 쌍에 대한 위험 단계를 엽니다. 완료 카드는 주문 해시에 대한 Diamond의 `SignedOfferFilled`를 찾아 그로부터 대출을 읽습니다. 일부 매칭된 주문은 `SignedOfferConsumed`를 보고하여 제공되지 않으며, 여러분 자신의 주문도 제공되지 않습니다. 응답의 `awaitingReplay`는 재구성 후 재구축이 체인에서 체결과 취소를 다시 읽는 동안 인덱스가 보류하는 주문 수입니다(#3411). 0보다 큰 수는 목록과 함께 알리고, 음이 아닌 정수가 아닌 값은 알 수 없음으로 알립니다.
+
+<a id="desk-match"></a>
+
+### Rate desk: 겹침 매칭
+
+밴드는 래더의 겹치는 단을 짝짓습니다. 최고 매수 호가 이하의 대출자 오퍼를 최고 매도 호가 이상의 차입자 요청과 짝지으며, 같은 지갑의 쌍과 금리 범위가 만나지 않는 쌍은 뺍니다. 프로토콜은 두 하한 중 높은 쪽이 두 상한 중 낮은 쪽 이하일 때만 매칭합니다. 양쪽이 겹치지만 만나는 범위가 없으면 밴드는 매칭할 것이 없다고 알립니다. 한 블록에서 `getPartialFillEnabled`, `getLoanInitiationFeeBps`, `getLifMatcherFeeBps`, `getCapacityCurve(0)`를 읽고, 스위치가 켜져 있을 때만 여러분의 지갑을 matcher와 initiator로 하여 `previewMatch(lenderOfferId, borrowerOfferId, matcher, initiator)`를 가격이 좋은 순으로 최대 12쌍 읽습니다. 미리보기에서 오류가 없는 첫 쌍이 미리보기의 금액, 금리(양쪽이 받아들이는 범위의 중간), 필요 담보와 함께 제시되고, 없으면 가격이 가장 좋은 쌍의 거절 사유가 표시됩니다. 몫은 상한으로 표시되며, 금액 × 개설 수수료율 × 매처 비율입니다. 수수료는 미리보기가 알려 주지 않는 차입자 할인 뒤에 부과되기 때문입니다. 커브의 무료 구간이 0보다 크면 용량 한도가 적용 중이라는 뜻이고, 매칭은 보낸 사람에게 체결 한 번으로 계산됩니다. 검토 화면은 블록마다 설정, 미리보기, 여러분의 볼트를 다시 읽고 지갑을 열기 전에 `matchOffers`를 모의 실행합니다. 수치가 바뀌면 다시 확인해야 합니다. 이후 앱은 여러분의 지갑이 matcher인 해당 쌍의 `OfferMatched`를 찾고, 대출자 볼트의 `VaultOutflow` 기록 중 인센티브 구분으로 대출 자산을 여러분의 지갑이나 볼트에 지급한 것으로 몫을 측정합니다. 오퍼 환불이나 대출 금액은 다른 구분이라 절대 세지 않습니다. 먼저 성사된 경쟁 매칭이 오퍼를 덜 남기면 성사되는 대출과 몫은 검토 때보다 작을 수 있으며, 완료 카드가 실제 결과를 알려 줍니다. 래더는 인덱스를 읽으므로, 매칭된 쌍은 체인이 처리한 뒤에도 몇 분간 남아 있을 수 있습니다. 연결된 지갑의 오퍼가 포함된 쌍도 제외되며, 밴드가 이를 알려 줍니다. 그런 쌍을 매칭하면 그 지갑이 자신의 자금으로 대출의 대출자 또는 차입자가 되기 때문입니다.
 
 <a id="offer-terms-wait"></a>
 
@@ -2448,4 +2479,4 @@ NFT는 대여 기간 내내 내 볼트에 머물며, 대여가 열려 있는 동
 
 ### 레이트 데스크: 서명 주문과 체인 상 취소
 
-목록은 `signer`를 여러분의 지갑으로 정해 그 마켓에 대한 인덱스의 `/signed-offers`를 읽습니다(쪽마다 최대 500행, `truncated`는 명시). 그래서 다른 메이커의 물량이 여러분의 주문을 밀어낼 수 없습니다. 각 행은 31개 필드의 정규 전송 형식으로 다시 직렬화되어야 하고, `orderHash`는 주문에서 다시 계산한 EIP-712 구조체 해시와 같아야 하며, 여러분의 지갑과 마켓의 토큰 및 기간을 담고 있어야 합니다. 그 밖의 행은 읽을 수 없는 행으로 셉니다. 북은 활성이고 만료되지 않은 주문만 제공하며 체인보다 양쪽 방향으로 늦을 수 있으므로, 각 주문의 상태는 한 블록에서 읽습니다. `signedOfferFilledAmount(orderHash)`가 주문의 상한(`amountMax`, 0이면 `amount`)에 이르면 사용됨(직접 체결과 `cancelSignedOffer`는 모두 상한을 씁니다), 아니면 `isSignedOfferNonceUsed(signer, nonce)`일 때 nonce 취소됨, 아니면 블록 시각이 0이 아닌 `expiresAt`과 `deadline` 중 이른 쪽을 지났을 때 만료됨, 그 값이 0보다 크면 일부 체결(매칭이 일부를 가져갔고 나머지는 여전히 체결·취소할 수 있음), 그 외에는 열림입니다. 주문 하나를 취소하면 `cancelSignedOffer(order)`를 보내고(서명자만), nonce로 취소하면 `invalidateSignedOfferNonce(nonce)`를 보냅니다. 후자는 게시된 열린 주문 둘 이상이 그 nonce를 공유할 때 제시되며, 지갑이 그 nonce로 서명한 모든 주문을 모든 마켓에서 멈춥니다. 프로토콜이 일시 정지된 동안에는 둘 다 거부됩니다. 검토는 상태와 일시 정지를 읽은 뒤 여러분의 지갑에서 프로토콜 자체의 모의 실행을 돌립니다. 체결이 가져갔을 금액은 대출자의 `amountMax`(0이면 `amount`) 또는 차입자의 `collateralAmountMax`(또는 `collateralAmount`)입니다. 일부 체결된 주문은 이미 체결된 몫과 나머지가 아직 가져갈 수 있는 금액만 검토에 표시합니다. 상한 아래 남은 원금, 차입자라면 주문 자체 비율에 따른 그 담보(올림)입니다. 결과는 Diamond가 낸 트랜잭션 자체의 `SignedOfferCancelled` 또는 `SignedOfferNonceBurned` 로그에서 읽고, 주문 해시나 nonce와 여러분의 지갑으로 맞춰 봅니다.
+목록은 `signer`를 여러분의 지갑으로 정해 그 마켓에 대한 인덱스의 `/signed-offers`를 읽습니다(쪽마다 최대 500행, `truncated`는 명시). 그래서 다른 메이커의 물량이 여러분의 주문을 밀어낼 수 없습니다. 각 행은 31개 필드의 정규 전송 형식으로 다시 직렬화되어야 하고, `orderHash`는 주문에서 다시 계산한 EIP-712 구조체 해시와 같아야 하며, 여러분의 지갑과 마켓의 토큰 및 기간을 담고 있어야 합니다. 그 밖의 행은 읽을 수 없는 행으로 셉니다. 북은 활성이고 만료되지 않은 주문만 제공하며 체인보다 양쪽 방향으로 늦을 수 있으므로, 각 주문의 상태는 한 블록에서 읽습니다. `signedOfferFilledAmount(orderHash)`가 주문의 상한(`amountMax`, 0이면 `amount`)에 이르면 사용됨(직접 체결과 `cancelSignedOffer`는 모두 상한을 씁니다), 아니면 `isSignedOfferNonceUsed(signer, nonce)`일 때 nonce 취소됨, 아니면 블록 시각이 0이 아닌 `expiresAt`과 `deadline` 중 이른 쪽을 지났을 때 만료됨, 그 값이 0보다 크면 일부 체결(매칭이 일부를 가져갔고 나머지는 여전히 체결·취소할 수 있음), 그 외에는 열림입니다. 주문 하나를 취소하면 `cancelSignedOffer(order)`를 보내고(서명자만), nonce로 취소하면 `invalidateSignedOfferNonce(nonce)`를 보냅니다. 후자는 게시된 열린 주문 둘 이상이 그 nonce를 공유할 때 제시되며, 지갑이 그 nonce로 서명한 모든 주문을 모든 마켓에서 멈춥니다. 프로토콜이 일시 정지된 동안에는 둘 다 거부됩니다. 검토는 상태와 일시 정지를 읽은 뒤 여러분의 지갑에서 프로토콜 자체의 모의 실행을 돌립니다. 체결이 가져갔을 금액은 대출자의 `amountMax`(0이면 `amount`) 또는 차입자의 `collateralAmountMax`(또는 `collateralAmount`)입니다. 일부 체결된 주문은 이미 체결된 몫과 나머지가 아직 가져갈 수 있는 금액만 검토에 표시합니다. 상한 아래 남은 원금, 차입자라면 주문 자체 비율에 따른 그 담보(올림)입니다. 결과는 Diamond가 낸 트랜잭션 자체의 `SignedOfferCancelled` 또는 `SignedOfferNonceBurned` 로그에서 읽고, 주문 해시나 nonce와 여러분의 지갑으로 맞춰 봅니다. 서명자로 한정한 이 조회에서 인덱스는 보류된 주문을 `replayPending: true`와 함께 나열합니다. 그 행은 재확인이 끝날 때까지 주문이 공유 북에서 빠져 있다고 알리며, 상태는 계속 위의 체인 조회에서 얻습니다. 아직 체결할 수 있는 최신 상태일 때만 서명이 여전히 체결될 수 있다고 덧붙이고 취소를 계속 제공합니다.

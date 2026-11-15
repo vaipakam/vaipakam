@@ -274,6 +274,8 @@ type LockCatalogue = {
   /** No keeper has shown, recently, that it works LOCK requests on the
    *  chains in `list`, so none was recorded for them. */
   lockNotRunning: (list: string) => string;
+  /** #1722 — no keeper answer came for a recorded LOCK within an hour. */
+  lockUnanswered: (entry: string) => string;
 };
 
 const LOCK_CAT: Record<Locale, LockCatalogue> = {
@@ -287,6 +289,7 @@ const LOCK_CAT: Record<Locale, LockCatalogue> = {
     lockNotRecorded: 'Your LOCK could not be recorded just now, so nothing will be locked from this message. Send LOCK again, or lock the vault from the Vaipakam app.',
     lockStale: 'This LOCK was sent more than an hour ago and reached the bot only now, so it was not recorded and nothing will be locked from it. Send LOCK again, or lock the vault from the Vaipakam app.',
     lockNotRunning: (list) => `Locking from Telegram is not running right now for ${list}, so nothing was recorded for it and nothing will be locked from this message. Lock the vault from the Vaipakam app.`,
+    lockUnanswered: (e) => `The keeper has not answered your LOCK for ${e} within an hour, so the vault may not be locked. Lock it from the Vaipakam app now.`,
   },
   es: {
     lockEntry: (w, c) => `la billetera ${w} en la cadena ${c}`,
@@ -298,6 +301,7 @@ const LOCK_CAT: Record<Locale, LockCatalogue> = {
     lockNotRecorded: 'No se pudo registrar tu LOCK en este momento, así que este mensaje no bloqueará nada. Envía LOCK de nuevo o bloquea la bóveda desde la app de Vaipakam.',
     lockStale: 'Este LOCK se envió hace más de una hora y ha llegado al bot ahora, así que no se registró y no bloqueará nada. Envía LOCK de nuevo o bloquea la bóveda desde la app de Vaipakam.',
     lockNotRunning: (list) => `El bloqueo desde Telegram no está funcionando ahora para ${list}, así que no se registró nada y este mensaje no bloqueará nada. Bloquea la bóveda desde la app de Vaipakam.`,
+    lockUnanswered: (e) => `El keeper no ha respondido a tu LOCK para ${e} en una hora, así que es posible que la bóveda no esté bloqueada. Bloquéala ahora desde la app de Vaipakam.`,
   },
   fr: {
     lockEntry: (w, c) => `le portefeuille ${w} sur la chaîne ${c}`,
@@ -309,6 +313,7 @@ const LOCK_CAT: Record<Locale, LockCatalogue> = {
     lockNotRecorded: "Votre LOCK n'a pas pu être enregistré pour l'instant, ce message ne verrouillera donc rien. Envoyez LOCK à nouveau ou verrouillez le coffre depuis l'application Vaipakam.",
     lockStale: 'Ce LOCK a été envoyé il y a plus d\'une heure et n\'a atteint le bot que maintenant : il n\'a pas été enregistré et ne verrouillera rien. Envoyez LOCK à nouveau, ou verrouillez le coffre depuis l\'application Vaipakam.',
     lockNotRunning: (list) => `Le verrouillage depuis Telegram ne fonctionne pas pour l'instant pour ${list} : rien n'a été enregistré et ce message ne verrouillera rien. Verrouillez le coffre depuis l'application Vaipakam.`,
+    lockUnanswered: (e) => `Le keeper n'a pas répondu à votre LOCK pour ${e} en une heure : le coffre n'est peut-être pas verrouillé. Verrouillez-le maintenant depuis l'application Vaipakam.`,
   },
   de: {
     lockEntry: (w, c) => `Wallet ${w} auf Chain ${c}`,
@@ -320,6 +325,7 @@ const LOCK_CAT: Record<Locale, LockCatalogue> = {
     lockNotRecorded: 'Ihr LOCK konnte gerade nicht erfasst werden, daher wird durch diese Nachricht nichts gesperrt. Senden Sie LOCK erneut oder sperren Sie den Tresor in der Vaipakam-App.',
     lockStale: 'Dieses LOCK wurde vor mehr als einer Stunde gesendet und hat den Bot erst jetzt erreicht. Es wurde daher nicht erfasst, und es wird dadurch nichts gesperrt. Sende LOCK erneut oder sperre den Tresor in der Vaipakam-App.',
     lockNotRunning: (list) => `Das Sperren über Telegram läuft gerade nicht für ${list}, daher wurde nichts erfasst und durch diese Nachricht wird nichts gesperrt. Sperren Sie den Tresor in der Vaipakam-App.`,
+    lockUnanswered: (e) => `Der Keeper hat auf Ihr LOCK für ${e} seit einer Stunde nicht geantwortet, daher ist der Tresor möglicherweise nicht gesperrt. Sperren Sie ihn jetzt in der Vaipakam-App.`,
   },
   ja: {
     lockEntry: (w, c) => `チェーン ${c} のウォレット ${w}`,
@@ -331,6 +337,7 @@ const LOCK_CAT: Record<Locale, LockCatalogue> = {
     lockNotRecorded: '今は LOCK を記録できなかったため、このメッセージでは何もロックされません。もう一度 LOCK を送るか、Vaipakam アプリからボールトをロックしてください。',
     lockStale: 'この LOCK は 1 時間以上前に送信され、今になってボットに届いたため、記録されず、何もロックされません。もう一度 LOCK を送信するか、Vaipakam アプリからボールトをロックしてください。',
     lockNotRunning: (list) => `${list} では現在 Telegram からのロックが動作していないため、何も記録されず、このメッセージでは何もロックされません。Vaipakam アプリからボールトをロックしてください。`,
+    lockUnanswered: (e) => `${e} の LOCK に 1 時間以内にキーパーから応答がないため、ボールトはロックされていない可能性があります。今すぐ Vaipakam アプリからロックしてください。`,
   },
   zh: {
     lockEntry: (w, c) => `链 ${c} 上的钱包 ${w}`,
@@ -341,6 +348,7 @@ const LOCK_CAT: Record<Locale, LockCatalogue> = {
     lockNotRecorded: '暂时无法记录你的 LOCK 请求，因此这条消息不会锁定任何内容。请再次发送 LOCK，或在 Vaipakam 应用中锁定金库。',
     lockStale: '此 LOCK 发送于一小时以前，现在才送达机器人，因此未被记录，也不会锁定任何内容。请重新发送 LOCK，或在 Vaipakam 应用中锁定金库。',
     lockNotRunning: (list) => `${list} 目前无法通过 Telegram 锁定，因此没有记录任何内容，这条消息也不会锁定任何内容。请在 Vaipakam 应用中锁定金库。`,
+    lockUnanswered: (e) => `keeper 在一小时内没有回应您针对 ${e} 的 LOCK，因此金库可能尚未锁定。请立即在 Vaipakam 应用中锁定。`,
   },
   ko: {
     lockEntry: (w, c) => `체인 ${c}의 지갑 ${w}`,
@@ -352,6 +360,7 @@ const LOCK_CAT: Record<Locale, LockCatalogue> = {
     lockNotRecorded: '지금은 LOCK을 기록할 수 없어 이 메시지로는 아무것도 잠기지 않습니다. LOCK을 다시 보내거나 Vaipakam 앱에서 볼트를 잠그세요.',
     lockStale: '이 LOCK은 1시간 이상 전에 전송되어 이제야 봇에 도착했으므로 기록되지 않았고 아무것도 잠기지 않습니다. LOCK을 다시 보내거나 Vaipakam 앱에서 볼트를 잠그세요.',
     lockNotRunning: (list) => `${list}에 대해 지금은 Telegram 잠금이 작동하지 않아 아무것도 기록되지 않았고 이 메시지로는 아무것도 잠기지 않습니다. Vaipakam 앱에서 볼트를 잠그세요.`,
+    lockUnanswered: (e) => `${e}에 대한 LOCK에 키퍼가 1시간 안에 응답하지 않아 볼트가 잠기지 않았을 수 있습니다. 지금 Vaipakam 앱에서 잠그세요.`,
   },
   hi: {
     lockEntry: (w, c) => `चेन ${c} पर वॉलेट ${w}`,
@@ -363,6 +372,7 @@ const LOCK_CAT: Record<Locale, LockCatalogue> = {
     lockNotRecorded: 'आपका LOCK अभी दर्ज नहीं हो सका, इसलिए इस संदेश से कुछ भी लॉक नहीं होगा। फिर से LOCK भेजें, या Vaipakam ऐप से वॉल्ट लॉक करें।',
     lockStale: 'यह LOCK एक घंटे से भी पहले भेजा गया था और बॉट तक अभी पहुँचा है, इसलिए इसे दर्ज नहीं किया गया और इससे कुछ भी लॉक नहीं होगा। LOCK फिर से भेजें, या Vaipakam ऐप से वॉल्ट लॉक करें।',
     lockNotRunning: (list) => `${list} के लिए Telegram से लॉक करना अभी चालू नहीं है, इसलिए कुछ दर्ज नहीं हुआ और इस संदेश से कुछ भी लॉक नहीं होगा। Vaipakam ऐप से वॉल्ट लॉक करें।`,
+    lockUnanswered: (e) => `${e} के लिए आपके LOCK का कीपर ने एक घंटे में जवाब नहीं दिया, इसलिए हो सकता है कि वॉल्ट लॉक न हुआ हो। अभी Vaipakam ऐप से इसे लॉक करें।`,
   },
   ta: {
     lockEntry: (w, c) => `சங்கிலி ${c} இல் உள்ள வாலெட் ${w}`,
@@ -374,6 +384,7 @@ const LOCK_CAT: Record<Locale, LockCatalogue> = {
     lockNotRecorded: 'உங்கள் LOCK ஐ இப்போது பதிவு செய்ய முடியவில்லை, எனவே இந்தச் செய்தியால் எதுவும் பூட்டப்படாது. மீண்டும் LOCK அனுப்புங்கள், அல்லது Vaipakam செயலியில் பெட்டகத்தைப் பூட்டுங்கள்.',
     lockStale: 'இந்த LOCK ஒரு மணி நேரத்துக்கு முன்பே அனுப்பப்பட்டு இப்போதுதான் பாட்டை அடைந்தது, எனவே இது பதிவு செய்யப்படவில்லை, இதனால் எதுவும் பூட்டப்படாது. LOCK-ஐ மீண்டும் அனுப்புங்கள், அல்லது Vaipakam செயலியில் வால்ட்டைப் பூட்டுங்கள்.',
     lockNotRunning: (list) => `${list} க்கு Telegram மூலம் பூட்டுவது இப்போது இயங்கவில்லை, எனவே எதுவும் பதிவு செய்யப்படவில்லை, இந்தச் செய்தியால் எதுவும் பூட்டப்படாது. Vaipakam செயலியிலிருந்து பெட்டகத்தைப் பூட்டுங்கள்.`,
+    lockUnanswered: (e) => `${e} க்கான உங்கள் LOCK-க்கு ஒரு மணி நேரத்துக்குள் கீப்பர் பதில் அளிக்கவில்லை, எனவே வால்ட் பூட்டப்படாமல் இருக்கலாம். இப்போதே Vaipakam செயலியில் அதைப் பூட்டுங்கள்.`,
   },
   ar: {
     lockEntry: (w, c) => `المحفظة ${w} على السلسلة ${c}`,
@@ -384,6 +395,7 @@ const LOCK_CAT: Record<Locale, LockCatalogue> = {
     lockNotRecorded: 'تعذّر تسجيل طلب LOCK الآن، لذا لن يُقفل أي شيء بهذه الرسالة. أرسل LOCK مرة أخرى، أو أقفل الخزنة من تطبيق Vaipakam.',
     lockStale: 'أُرسل أمر LOCK هذا قبل أكثر من ساعة ولم يصل إلى البوت إلا الآن، لذا لم يُسجَّل ولن يُقفل شيئًا. أرسل LOCK مرة أخرى، أو اقفل الخزنة من تطبيق Vaipakam.',
     lockNotRunning: (list) => `القفل عبر Telegram لا يعمل الآن لـ ${list}، لذا لم يُسجَّل شيء ولن يُقفل أي شيء بهذه الرسالة. أقفل الخزنة من تطبيق Vaipakam.`,
+    lockUnanswered: (e) => `لم يردّ الـ keeper على أمر LOCK الخاص بك لـ ${e} خلال ساعة، لذا قد لا تكون الخزنة مقفلة. أقفلها الآن من تطبيق Vaipakam.`,
   },
 };
 
@@ -419,6 +431,12 @@ export function lockNotRunning(
 /** #3088 — the reply to a LOCK the agent could not store. */
 export function lockNotRecorded(locale: string | null | undefined): string {
   return LOCK_CAT[resolveLocale(locale)].lockNotRecorded;
+}
+
+/** #1722 — a recorded LOCK no keeper answered within an hour. */
+export function lockUnanswered(locale: string | null | undefined, walletShort: string, chainId: number): string {
+  const c = LOCK_CAT[resolveLocale(locale)];
+  return c.lockUnanswered(c.lockEntry(walletShort, chainId));
 }
 
 /** A LOCK sent longer ago than the age limit, not recorded (#3088). */

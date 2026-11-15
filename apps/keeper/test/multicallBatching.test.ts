@@ -277,7 +277,6 @@ function watcherDb(): unknown {
     warn_hf: 2.0,
     alert_hf: 1.5,
     critical_hf: 1.1,
-    tg_chat_id: null,
     push_channel: null,
     locale: 'en',
     notify_maturity_approaching: 0,
@@ -446,7 +445,6 @@ describe('watcher batching (#1896)', () => {
       await runWatcher({
         DB: watcherDb(),
         RPC_BASE_SEPOLIA: 'https://mock-rpc.invalid/base-sepolia',
-        TG_BOT_TOKEN: 'test:token',
       } as never);
     } finally {
       restore();
@@ -495,7 +493,6 @@ describe('watcher batching (#1896)', () => {
       await runWatcher({
         DB: watcherDb(),
         RPC_BASE_SEPOLIA: 'https://mock-rpc.invalid/base-sepolia',
-        TG_BOT_TOKEN: 'test:token',
       } as never);
     } finally {
       restore();
@@ -736,7 +733,6 @@ describe('preGraceWatcher batching (#1896)', () => {
       await runPreGraceWatcher({
         DB: emptyDb(),
         RPC_BASE_SEPOLIA: 'https://mock-rpc.invalid/base-sepolia',
-        TG_BOT_TOKEN: 'test:token',
       } as never);
     } finally {
       restore();
@@ -796,7 +792,6 @@ describe('preGraceWatcher on the loan clock (#2808)', () => {
       await runPreGraceWatcher({
         DB: emptyDb(),
         RPC_BASE_SEPOLIA: 'https://mock-rpc.invalid/base-sepolia',
-        TG_BOT_TOKEN: 'test:token',
       } as never);
       const said = [...warn.mock.calls, ...log.mock.calls].map((c) => String(c[0]));
       const inner = seen.flatMap((s) => s.innerSelectors);

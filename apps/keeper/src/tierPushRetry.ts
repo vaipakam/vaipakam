@@ -7,8 +7,8 @@
 // Base commits a user's new effective tier and delivers it to each broadcast
 // lane inside the user's own action. A lane it cannot pay or reach there
 // stays OWED and the facet says so with `TierPushDeferred`: the protocol
-// budget was short, the lane's spacing window had not elapsed, or its quote
-// or send reverted. Nothing delivers an owed push afterwards unless something
+// budget was short, the push is a raise (which the budget never pays, #1277),
+// or its quote or send reverted. Nothing delivers an owed push afterwards unless something
 // calls `deliverTierPush`, so without a caller the mirror keeps the tier it
 // last received until the user's tier changes again.
 //
@@ -20,9 +20,11 @@
 //      lane (`ledgerRotation.ts`; the floor moves only on what the finalized
 //      block shows).
 //   2. READ — each nominated user's push and lanes (`getTierPushStatus`): the
-//      contract's own word on which lanes are owed and when the protocol
-//      budget may next pay each one.
-//   3. PRICE — each owed lane the budget may pay now, quoted by the reward
+//      contract's own word on which lanes are owed and whether the protocol
+//      budget pays each one. Since #1277 it pays only a push that lowers
+//      what the lane grants; an owed raise goes out only when a caller pays
+//      for it, so it is never this step's work and never holds the floor.
+//   3. PRICE — each owed lane the budget pays, quoted by the reward
 //      messenger, against what the budget holds. The keeper attaches no value
 //      (it spends no capital of its own), so only a lane the budget can pay
 //      can be delivered; a user with none is not sent, since the call would
@@ -64,7 +66,7 @@ const DEFERRAL_EVENT = 'TierPushDeferred';
 const READ_CHUNK = 50;
 
 /** `ProtocolBroadcastFacet.TierPushDeferral`, by ordinal. */
-export const DEFERRAL_REASONS = ['spacing', 'budget', 'quote', 'send', 'destinations', 'no-destinations'] as const;
+export const DEFERRAL_REASONS = ['raise-unpaid', 'budget', 'quote', 'send', 'destinations', 'no-destinations'] as const;
 
 const ZERO_ADDRESS = /^0x0{40}$/i;
 
@@ -137,7 +139,8 @@ interface Deferral {
 interface Lane {
   dst: bigint;
   owed: boolean;
-  eligibleAt: bigint;
+  /** The protocol budget pays this lane's owed push (a lower). */
+  budgetPays: boolean;
 }
 
 interface PushStatus {
@@ -159,11 +162,10 @@ export function readStatus(raw: unknown): PushStatus | null {
       bps: Number(raw[2]),
       expiry: Number(raw[3]),
       version: Number(raw[4]),
-      lanes: (raw[5] as { destChainId: bigint; owed: boolean; budgetEligibleAt: bigint | number }[]).map((l) => ({
-        dst: BigInt(l.destChainId),
-        owed: l.owed === true,
-        eligibleAt: BigInt(l.budgetEligibleAt),
-      })),
+      lanes: (raw[5] as { destChainId: bigint; owed: boolean; budgetPays: boolean }[]).map((l) => {
+        if (typeof l.budgetPays !== 'boolean') throw new Error('lane without budgetPays');
+        return { dst: BigInt(l.destChainId), owed: l.owed === true, budgetPays: l.budgetPays };
+      }),
     };
   } catch {
     return null;
@@ -173,8 +175,9 @@ export function readStatus(raw: unknown): PushStatus | null {
 /**
  * Whether a deferral row is finished on `st`: its push was superseded by a
  * later one (whose own deferrals, if any, are rows above it), or the lane it
- * names is no longer owed. A row that names no lane is finished when no lane
- * is owed. An empty lane list finishes nothing but a superseded push: the
+ * names is no longer the keeper's to deliver: not owed, or owed a raise the
+ * budget never pays (#1277; only a new push or a paying caller changes it).
+ * A row that names no lane is finished when no lane is the keeper's. An empty lane list finishes nothing but a superseded push: the
  * status reads it empty both where no lane is configured and where the
  * messenger's list could not be read, and the second is not "delivered".
  */
@@ -182,9 +185,14 @@ export function deferralDone(k: Deferral, st: PushStatus | undefined): boolean {
   if (st === undefined) return false;
   if (st.nonce > k.nonce) return true;
   if (st.lanes.length === 0) return false;
-  if (k.dst === 0n) return st.lanes.every((l) => !l.owed);
+  if (k.dst === 0n) return st.lanes.every((l) => !keeperOwed(l));
   const lane = st.lanes.find((l) => l.dst === k.dst);
-  return lane === undefined || !lane.owed;
+  return lane === undefined || !keeperOwed(lane);
+}
+
+/** An owed lane the protocol budget pays: the only kind this step delivers. */
+function keeperOwed(l: Lane): boolean {
+  return l.owed && l.budgetPays;
 }
 
 const userKey = (a: string) => a.toLowerCase();
@@ -306,16 +314,15 @@ export async function retryTierPushes(chainId: number, diamond: Address, sender:
   out.lanesUnknown = users.filter((u) => head.get(userKey(u))?.lanes.length === 0);
   if (out.lanesUnknown.length > 0) sender.noteUnread('tier-push', `the broadcast lanes of ${out.lanesUnknown.length} user(s) (their status listed none)`);
 
-  // 3. Price: each owed lane the budget may pay now.
+  // 3. Price: each owed lane the budget pays.
   const owed = users.filter((u) => head.get(userKey(u))?.lanes.some((l) => l.owed) === true);
   out.owed = owed.map((u) => u);
   const due: { user: Address; lanes: Lane[] }[] = [];
   for (const u of owed) {
     const st = head.get(userKey(u))!;
-    const open = st.lanes.filter((l) => l.owed && l.eligibleAt <= now);
+    const open = st.lanes.filter(keeperOwed);
     if (open.length === 0) {
-      const next = st.lanes.filter((l) => l.owed).map((l) => l.eligibleAt).reduce((a, b) => (b < a ? b : a));
-      out.waiting.push(`${u}: every owed lane is spaced until ${next}`);
+      out.waiting.push(`${u}: every owed lane is a raise, which the protocol budget never pays; only a paying caller delivers it`);
       continue;
     }
     due.push({ user: u, lanes: open });

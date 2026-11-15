@@ -22,6 +22,8 @@ import {
 import { readLoanClockSnapshot, type LoanClockSnapshotRead } from '@vaipakam/lib/loanClockSnapshot';
 import { redactedError } from '@vaipakam/lib/errorDescription';
 import { chainNotServed, parseChainId, requestedChainId } from './servedChain';
+import { CURSOR_KIND } from './chainIndexer';
+import { PENDING_MAX_ROWS, readPendingLane, type PendingLaneJson } from './pendingLane';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import {
   liquidatorWindowBinds,
@@ -653,7 +655,10 @@ export async function handleLoansByCurrentHolder(
 /** Most event kinds one `/activity` request may filter on at once. */
 const MAX_ACTIVITY_KINDS = 8;
 
-/** GET /activity?chainId=8453&actor=0x...&loanId=N&offerId=N&kind=K[,K...]&limit=50&before=<block:logIndex>&repairObservations=1
+/** GET /activity?chainId=8453&actor=0x...&loanId=N&offerId=N&kind=K[,K...]&limit=50&before=<block:logIndex>&repairObservations=1&pending=1
+ *
+ *  `pending=1` (#3411 part 2) adds `pending`: events above the chain's safe
+ *  block, not final yet, on the first page only (see `pendingLane.ts`).
  *
  *  Cursor format: composite "block:logIndex" (e.g. `12345:6`) so a
  *  cron-deferred block on the boundary doesn't drop rows. When omitted,
@@ -700,6 +705,10 @@ export async function handleActivity(req: Request, env: Env): Promise<Response> 
     where.push(`kind IN (${kinds.map(() => '?').join(', ')})`);
     binds.push(...kinds);
   }
+  // #3411 part 2 — the pending lane takes the same filters, minus the chain
+  // (the lane read binds it itself) and minus the page cursor, captured here
+  // before `before` joins the list.
+  const pendingFilter = { where: where.slice(1), binds: binds.slice(1) };
   let before: { block: number; logIndex: number } | undefined;
   if (beforeRaw) {
     const m = beforeRaw.match(/^(\d+):(\d+)$/);
@@ -760,9 +769,36 @@ export async function handleActivity(req: Request, env: Env): Promise<Response> 
         : merged.flatMap((m) => ('observation' in m ? [repairObservationToJson(m.observation)] : []));
     const last = merged.length === limit ? merged[merged.length - 1] : null;
     const nextBefore = last ? `${last.at.block}:${last.at.logIndex}` : null;
-    return jsonResponse(
-      wantObservations ? { chainId, events, repairObservations, nextBefore } : { chainId, events, nextBefore },
-    );
+    // #3411 part 2 — events above the chain's safe block, NOT FINAL YET, kept
+    // apart from `events` so nothing a reader pages through or acts on is
+    // pending (see `pendingLane.ts`). OPT-IN (`pending=1`) and on the FIRST
+    // page only: the lane sits above the newest final event, so it belongs at
+    // the top of the feed and nowhere else. `pending: null` means NOT KNOWN
+    // (no recent read, a database before migration 0090, or a failed read),
+    // never "nothing pending".
+    let pending: PendingLaneJson | null | undefined;
+    if (url.searchParams.get('pending') === '1' && !before) {
+      try {
+        pending = await readPendingLane(
+          env.DB,
+          chainId,
+          CURSOR_KIND,
+          pendingFilter,
+          Math.min(limit, PENDING_MAX_ROWS),
+          Math.floor(Date.now() / 1000),
+        );
+      } catch (err) {
+        console.warn('[loanRoutes] activity: pending lane not read; served as unknown', redactedError(err));
+        pending = null;
+      }
+    }
+    return jsonResponse({
+      chainId,
+      events,
+      ...(wantObservations ? { repairObservations } : {}),
+      ...(pending !== undefined ? { pending } : {}),
+      nextBefore,
+    });
   } catch (err) {
     console.error('[loanRoutes] activity failed', redactedError(err));
     return jsonResponse({ error: 'activity-failed' }, 500);

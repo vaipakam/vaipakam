@@ -137,27 +137,34 @@ contract CrossChainTierPropagationIntegrationTest is SetupTest {
 
         // Trigger another rollup via a 1-wei top-up. NOW the user's
         // effective tier resolves to 1 — the de-dup gate sees the
-        // tuple differ from the (0, 0, *, *) prior, and the broadcast
-        // fires through the full chain (rollup → ProtocolBroadcastFacet
-        // → VaipakamRewardMessenger → CcipMessenger → mock router).
+        // tuple differ from the (0, 0, *, *) prior and commits a push.
+        // A first discount is a raise, which the protocol budget never
+        // pays (#1277), so the lane stays owed and nothing goes out yet.
         vpfiToken.transfer(user, 1);
         vm.startPrank(user);
         IERC20(address(vpfiToken)).approve(address(diamond), 1);
         VPFIDiscountFacet(address(diamond)).depositVPFIToVault(1);
         vm.stopPrank();
 
-        assertEq(
-            router.pendingCount(),
-            1,
-            "post-gate rollup fans out exactly one CCIP message"
-        );
-
+        assertEq(router.pendingCount(), 0, "a first discount is not budget-paid");
         // The user's first-push counter on the diamond rose to 1.
         assertEq(
             ProtocolBroadcastFacet(payable(address(diamond)))
                 .getUserTierPushNonce(user),
             1,
             "diamond-side push nonce should bump"
+        );
+
+        // A caller who pays delivers it through the full chain
+        // (ProtocolBroadcastFacet → VaipakamRewardMessenger →
+        // CcipMessenger → mock router); the surplus comes back.
+        vm.deal(user, 1 ether);
+        vm.prank(user);
+        ProtocolBroadcastFacet(payable(address(diamond))).deliverTierPush{value: 1 ether}(user);
+        assertEq(
+            router.pendingCount(),
+            1,
+            "the paid delivery fans out exactly one CCIP message"
         );
     }
 

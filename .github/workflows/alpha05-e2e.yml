@@ -123,8 +123,19 @@ jobs:
       - name: Install workspace deps
         run: pnpm install --frozen-lockfile
 
+      # `--with-deps` adds the browser's system packages through apt. When
+      # the runner cannot reach the Ubuntu mirrors (on 2026-11-11 their names
+      # failed to resolve for hours, on every attempt), the browser is
+      # installed alone: the runner image already carries Chrome's shared
+      # libraries, so what is missing is optional fonts, and a browser that
+      # cannot start still fails the run on its first test. The warning keeps
+      # the fallback visible on the run's summary.
       - name: Install Playwright Chromium
-        run: pnpm --filter @vaipakam/alpha05 exec playwright install --with-deps chromium
+        run: |
+          pnpm --filter @vaipakam/alpha05 exec playwright install --with-deps chromium || {
+            echo "::warning::apt could not install Playwright's system packages; installing the browser alone"
+            pnpm --filter @vaipakam/alpha05 exec playwright install chromium
+          }
 
       - name: Typecheck the e2e surface
         run: pnpm --filter @vaipakam/alpha05 run e2e:typecheck

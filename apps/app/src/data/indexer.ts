@@ -646,7 +646,14 @@ export interface IndexedActivityEvent {
   offerId: number | null;
   actor: string | null;
   args: Record<string, unknown> | string;
-  blockAt: number;
+  /** The block's chain time. `null` only on a PENDING event (#3411): its
+   *  block may still be replaced, so the indexer states no time for it. */
+  blockAt: number | null;
+  /** #3411 — `false` on an event above the chain's safe block, served in
+   *  {@link ActivityPage.pending}; absent on every final event. */
+  final?: false;
+  /** #3411 — the hash of the block a pending event was read in. */
+  blockHash?: string;
   /** #2383 — what the row moved or offered, normalized by the indexer.
    *  `amount` / `amountMax` are base units of an ERC-20 `asset` (a range
    *  when `amountMax` is set); `tokenId` names an NFT and `quantity` an
@@ -669,7 +676,46 @@ export interface ActivityPage {
    *  `readRepairObservations` (`lib/repairObservation.ts`), which treats
    *  null, absent and malformed alike as NOT KNOWN. */
   repairObservations?: unknown;
+  /** #3411 — events above the chain's safe block, NOT FINAL YET, when asked
+   *  for with `pending` (first page only). Raw: read it only through
+   *  {@link readPendingActivity}, which treats null, absent and malformed
+   *  alike as NOT KNOWN. */
+  pending?: unknown;
   nextBefore: string | null;
+}
+
+/** #3411 — the pending lane as the app uses it. */
+export interface PendingActivity {
+  /** Newest first; every one has `final: false` and `blockAt: null`. */
+  events: IndexedActivityEvent[];
+  /** False when the indexer's read did not reach the chain's latest block or
+   *  kept only the first events it found: more may be pending than listed. */
+  complete: boolean;
+}
+
+/** #3411 — validate the pending lane. `null` = NOT KNOWN (an indexer that
+ *  predates the lane, no recent read, or a malformed answer), never "nothing
+ *  pending". */
+export function readPendingActivity(raw: unknown, chainId: number): PendingActivity | null {
+  if (raw === null || typeof raw !== 'object') return null;
+  const lane = raw as { events?: unknown; complete?: unknown };
+  if (!Array.isArray(lane.events) || typeof lane.complete !== 'boolean') return null;
+  const events: IndexedActivityEvent[] = [];
+  for (const e of lane.events as Record<string, unknown>[]) {
+    if (
+      e === null ||
+      typeof e !== 'object' ||
+      e.chainId !== chainId ||
+      e.final !== false ||
+      typeof e.blockNumber !== 'number' ||
+      typeof e.logIndex !== 'number' ||
+      typeof e.kind !== 'string'
+    ) {
+      return null;
+    }
+    events.push({ ...(e as unknown as IndexedActivityEvent), blockAt: null, final: false });
+  }
+  return { events, complete: lane.complete };
 }
 
 /** NOTE: do NOT filter by `actor=` for a user's history — the worker's
@@ -687,6 +733,9 @@ export function fetchActivity(
     limit?: number;
     before?: string;
     repairObservations?: boolean;
+    /** #3411 — also ask for the events above the chain's safe block. The
+     *  indexer serves them on the first page only. */
+    pending?: boolean;
   } = {},
 ): Promise<ActivityPage | null> {
   const params = new URLSearchParams({ chainId: String(chainId) });
@@ -698,6 +747,7 @@ export function fetchActivity(
   // that renders them asks. The indexer serves them only on an unfiltered
   // feed (no actor, offer or kind), which is how Activity reads it.
   if (opts.repairObservations) params.set('repairObservations', '1');
+  if (opts.pending) params.set('pending', '1');
   return getJson<ActivityPage>(`/activity?${params}`);
 }
 

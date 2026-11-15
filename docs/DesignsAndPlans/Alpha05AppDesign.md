@@ -581,7 +581,14 @@ above. Each resolves here, so a route reviewer needs no private file:
   1a) is stated beside every range, with what the range does while it is
   off. A fill mode (OFF-11) the protocol would refuse (all or none with a
   range, immediate or cancel without an expiry) is not offered, and the
-  fill mode is said to be fixed once posted. The amounts, the rate and the
+  fill mode is said to be fixed once posted. A mode that promises parts
+  (partial, immediate or cancel) needs a range (#3520): a match fills only
+  between an offer's smallest and largest amount, so one size only ever
+  fills whole. Without a range the form shows all or none as the mode,
+  greys the other two with the reason, and posts all or none, the mode
+  that says what one size does; a range carries the mode chosen for it.
+  One rule in the posting model decides this for both guided forms, and
+  the desk ticket applies the same rule through its smallest single fill. The amounts, the rate and the
   collateral are not fixed: the protocol lets the creator edit an open
   request, never below what matches have already used. Until the app offers
   that edit, the review says the protocol allows it and that the app does
@@ -966,6 +973,24 @@ above. Each resolves here, so a route reviewer needs no private file:
   settleable belongs to a loan that is not running, stated as such and never
   as a sale. The card is read-only; paying a period and settling one come
   with their own actions.
+- **RB-POSITION-DISCOUNT** — the wallet holding the lender side of a
+  running ERC-20 loan (LN-18) sees its fee discount on that loan from the
+  protocol's own per-loan view (#3562) alone, never worked out in the app:
+  the holding discount that applies to the protocol's share of its
+  interest, which is the lower of the discount recorded when it took the
+  position and its discount now. Where the recorded figure is the lower,
+  the page says it caps the discount and that VPFI added since does not
+  raise it on this loan; where it is not, the page says a fall in the tier
+  lowers it at the next settlement. Where the protocol recorded nothing for
+  this wallet, the page says no holding discount applies, never a figure;
+  where the network's contracts do not report the view yet, it says so,
+  never a zero. The fee-discount setting gates the holding discount, so
+  the page states when it is off (with the way to it) or could not be read.
+  Advanced adds the two figures with their tiers and the time the first was
+  recorded, how the deployment delivers the discount, and whether a Full
+  fee tariff on the loan adds to it; each side figure that cannot be read
+  is stated as unknown. Every figure is read at one block. The card is
+  read-only and shown to no one else: the borrower and a viewer see none.
 - **RB-POSITION-PARTIAL** — paying part of a loan (LN-22, LN-64) is
   offered to the borrower position's holder alone, since the protocol takes
   a partial repayment from that holder only. Its one rule (RB-ELIG) reads
@@ -2020,6 +2045,110 @@ above. Each resolves here, so a route reviewer needs no private file:
   vault totals, which expired and same-block rentals move) and the
   renter's claim (inside the range the review stated).
 
+- **RB-REWARDS-PROGRAMME** — The Rewards page opens with whether the
+  reward programme runs on the wallet's network (RW-43) and the network's
+  reward role (RW-44), read from the Diamond at one block: the launch time,
+  the resolved role (`getRewardRole`, never inferred from the reporter's
+  two raw fields) with the retirement record, the reporter's home network,
+  custody activation, the claim horizon and the VPFI a claim may draw now
+  (`getRewardReservations`: delivered and recycled, each net of what
+  staging records reserved; the delivered figure is the lowest of every
+  programme-wide limit a claim checks before it pays fresh VPFI: the fresh
+  VPFI held, the delivered allowance it charges (`getDeliveredFreshBound`)
+  and the pool's available headroom (`poolAvailable`), so VPFI held beyond
+  any of them is never counted as payable, and the card says how much is
+  held beside it). These are standing funds only: a mirror's claim can also
+  draw on VPFI its home network sent with a particular day's rewards
+  (transport epochs), which is held per day and has no programme-wide
+  figure, so on a mirror the card says so beside the figure and an empty
+  standing figure never reads as nothing to pay; the wallet's own claim
+  figure (the claim run in a reverting frame) is what shows what a claim
+  pays now. A mirror whose home network cannot be read keeps its
+  role and states the missing reading. Every amount is formatted in the VPFI
+  token read in the same snapshot. Basic shows one sentence: running only when the
+  launch has passed by the read block's own clock, the role pays here and
+  something is held to pay; a network with no reward role set says that no
+  reward day there can be finalised or claimed yet, whatever else reads
+  (`finalizeDay` needs the canonical flag); otherwise running with
+  nothing held (a home network), running on a
+  mirror with no standing VPFI while VPFI sent for a day can still pay, no start date, a stated start, or left the reward network
+  (detached: nothing new becomes claimable). A deciding fact that is unread
+  makes the sentence unknown, never running, never zero. A global pause is
+  stated by name with what stays open (RB-SWITCH class 2), and an unread
+  pause is stated too. Advanced lists every fact; a fact the contracts do
+  not route says so rather than "could not be read". Whether the daily
+  close runs is not read (the keeper posture, RW-78, is blocked) and the
+  card says so instead of implying it. Rewards are rebates on the wallet's
+  own use, never yield (RL-6).
+
+- **RB-REWARDS-WAIT** — A reward claim that cannot run now says why, by
+  name (RW-28). The reason is the claim's own preview refusal; what a
+  waiting day waits on is read at the preview's own block, so both describe
+  one chain state. A day waiting for its global figures (the known-global
+  flag the claim checks, never a zero total) states, on a home network,
+  the finalisation's own readiness answer
+  (`isDayReadyToFinalize`: no listed report, reports within their grace
+  time, an unusable expected-source list, or ready to run), on a mirror
+  whether the home network's figures arrived (`getBroadcastV2Applied`), and
+  on a detached network that nothing new becomes claimable there, and on a
+  network with no reward role set that no day can be finalised there until
+  one is set (in both, no step anyone may run clears it, so none is
+  offered). A
+  day waiting for funding states whether the home network priced it here,
+  whether this network's report was sent, and the parts landed, the new and
+  the recycled VPFI each against its own declared whole, since the day opens
+  only once both are whole and an excess in one never covers the other
+  (`getDayDeliveryState`, `getDayDeliveryParts`). The report
+  is named only for an armed day (from `getGovernorCommitState`'s arming
+  day on): an unarmed day is funded without it and its report cannot be
+  sent, and an unread arming day is stated as unread; a day whose
+  parts declared different wholes is disclosed as one that cannot be
+  repaired and can be closed unpaid after a waiting period. Every waiting reason ends with: later days
+  wait behind it, no step of the wallet's own clears it, and anyone may run
+  the step that does. A funding refusal is named with the protocol's own
+  figures: the pool of new VPFI paid out with no recycled part in the claim
+  (it does not lift; recycled VPFI still pays later rewards), pool or
+  recycled VPFI reserved for pending settlements (needed against free), or
+  the fresh backing short (needed against available). The global pause is named with what stays
+  open (RB-SWITCH class 2), as the claim's own refusal measured it. Any
+  fact that does not answer is stated as unread, never guessed.
+- **RB-REWARDS-VENUE** — A reward claim names where it delivers, and the
+  receipt binds it (RW-26). The venue is always passed explicitly, never
+  the protocol's `Default`, so the destination never depends on something
+  the receipt does not show. It starts on the protocol's own default rule:
+  the vault for a person's own account (no code, or exactly an EIP-7702
+  delegation designator, as `LibAccountShape.isEoaStyle` reads it), the
+  wallet for a contract account. An account whose shape is not read yet
+  starts on the vault, which takes a claim from every kind of account and
+  falls back to the wallet when it cannot. Advanced offers the choice
+  before the review; the vault option says it is not a lockup. A separate
+  tier note follows the network's VPFI role, read through `readVpfiHome`:
+  on VPFI's home network vault VPFI counts toward the fee-discount tier and
+  wallet VPFI does not; on a mirror network the tier comes from the home
+  network, so neither choice changes it there; unread, it says so. The
+  re-check simulates the chosen venue;
+  the preview runs with the vault whichever is chosen, since the venue
+  changes only where a payment lands, never its amount. The outcome is
+  measured where the VPFI actually arrived. Protected mode sends every
+  reward claim to the vault whatever venue is passed, so while the mode is
+  on, or cannot be read, the claim names the vault, its line says
+  withdrawals wait the account's delay (when on), and Advanced offers no
+  choice but says why; the re-check reads the mode again and re-shows the
+  review when the destination changed. Claim everything keeps the vault for
+  its reward legs and says so on its own receipt.
+- **RB-REWARDS-LIFETIME** — What a wallet has claimed over its lifetime
+  on a network, and the part delivered to its vault (RW-31), comes from the
+  index (`GET /rewards/claimed`), never from a client-side event scan. It
+  counts every claim paid to the wallet, held releases included, whichever
+  venue each chose; the vault part is what `RewardDeliveredToVault`
+  recorded, so a vault credit that fell back to the wallet is not in it.
+  Each claim counts on the UTC day it was paid (the claim day), never the
+  reward day. The figures are stated with the moment the index has recorded
+  every claim up to; while it has none, or is still replaying the chain's
+  history, the line says the total is not known yet, and an index that
+  cannot answer is stated as such, never as zero. A confirmed action of the
+  wallet's own re-reads it at once; a figure kept after a failed refresh is
+  said to be from an earlier read.
 - **RB-REWARDS-VPFI** — The Rewards page (RW-01, RW-02, RW-04, RW-05,
   RW-06, RW-07) shows the wallet's rewards through the shared claim widget,
   its VPFI in its own vault and the fee-discount consent. On a network with
@@ -2076,6 +2205,58 @@ above. Each resolves here, so a route reviewer needs no private file:
   the loan initiation fee and the fee on interest with that discount,
   computed exactly from the live settings read at one block. Copy follows
   RL-6.
+- **RB-REWARDS-ELSEWHERE** — The wallet's tier on the protocol's other
+  networks (RW-11, RW-13, RW-14), from the protocol's own status
+  (`getTierPushStatus`, #1277) read at one block with the tier applied now
+  and the messenger's fee quote for each owed network. Since #1277 the
+  protocol pays for a message only when it lowers what another network
+  grants; a raise, a first discount or a new tier table goes out only with
+  a paid send. So this section is shown in Basic as well, a departure from
+  the matrix's Advanced mode (the matrix rows predate #1277): a user whose
+  tier rose must act, or their other networks keep the older copy. On VPFI's
+  home network it states the tier recorded for sending, says when it differs
+  from the tier applied now (the recorded figure capped at 50% before
+  comparing), and offers the update (`pokeMyTier`, gas only) only where
+  this Diamond routes it; the tier table's version has no reader, so the
+  update stays offered when the two match and the copy says a version
+  change cannot be seen here. The update and the send are gated on their
+  own routes: where the update is not routed and the record differs, the
+  section says only a VPFI deposit or withdrawal records the tier now and
+  that a send waits until the record matches. It lists
+  each network the protocol sends to with what this network last sent it
+  (whether it arrived and applies there is read on that network, and the
+  section says so; a copy there lapses at the end carried in the message
+  or earlier at that network's own maximum age, 60 days unless it set
+  another) and whether it is current, owed a lower tier the
+  protocol sends at its own cost, or owed one that goes only with a paid
+  send. A lane counts as sent only from its send time: one settled without
+  a message (its record grants no discount, so its record number moves and
+  nothing goes) is shown as nothing sent and nothing owed, never as a sent
+  tier 0. Every discount shown is capped at 50%, as the fee path applies it.
+  A review whose record moved, or that has nothing left to send, is closed
+  to signing rather than refreshed in place. The paid send
+  (`deliverTierPush`) is offered only once the record matches the tier now
+  and every owed network's fee is quoted; its value is the sum of every owed
+  network's quote plus 20%, because the protocol spends the value on owed
+  networks in its own order, and the receipt states that each fee pays one
+  message, is not refunded once sent, and that the unspent value comes back
+  in the same transaction. Because the networks share one value, a fee
+  that rises after review is met from the margin first by earlier
+  networks, so a later one can stay owed; the copy says so rather than
+  promising every network goes. The send is re-read and dry-run first; the
+  outcome is measured per network from the status at the receipt's block,
+  and the fees paid from the `ProtocolTierBroadcastSent` events the wallet's
+  value funded; a network counts as sent only from such an event, and one
+  whose record number moved without one is reported as settled with
+  nothing sent. The status lists no network alike when no messenger is
+  set, when the messenger's list refuses and when it is empty, so the
+  section reads the messenger and its list directly and says which; a list
+  that could not be read is stated as unknown, never as no network. With
+  no network listed, nothing is recorded or sent, so no action is offered. A
+  home network whose Diamond does not route the status says the section
+  cannot read or send the tier there, rather than hiding it, since the
+  vault card points to it. Away from the home network the
+  section says a higher tier is sent from there. Copy follows RL-6.
 - **RB-REWARDS-SIGN** — Signing instead of approving a VPFI deposit (RW-03).
   The deposit review offers "Sign instead of approve" only when the asset
   is this network's VPFI, Permit2 has code at its canonical address, and the
@@ -2225,7 +2406,94 @@ above. Each resolves here, so a route reviewer needs no private file:
   before the wallet opens, a pause or an unread standing blocks the send,
   and the outcome is measured from the transaction's own cancel event,
   never assumed from its inclusion. One cancel is open at a time, and its
-  finish card stays on screen when the book drops the order.
+  finish card stays on screen when the book drops the order. An order the
+  book holds out of the shared book while it re-checks it after the chain
+  replaced recent blocks is marked so on its row. Its standing still comes
+  from the chain, and only a fresh standing that can still be filled adds
+  that anyone holding the signature can fill it and that its cancel stays
+  offered.
+- **RB-DESK-BOOK-SIGNED** — On a market's desk (OFF-60) every maker's
+  gasless signed orders are listed from the offer book's market read, apart
+  from the ladder of posted offers, which says where they are. Lenders'
+  orders run from the lowest rate, borrowers' from the highest (the higher
+  of a borrower's two rates), the book's own order kept between equal
+  rates. A row is kept only when its hash is the order's own, it names
+  this market and it carries a readable signature; anything else is counted
+  and said, and a list the book cut to its best-priced rows is said. Each
+  row names its maker (the viewer's own as theirs), states both ends of
+  every range and when it lapses, and shows where the chain stands on it,
+  read at one block by the same rule as the viewer's own orders
+  (RB-DESK-SIGNED); a partly filled order says what is left. Because a
+  signed order sets nothing aside, each order that can still be filled
+  states what its maker's vault holds free of the stake, read from the
+  protocol at that block, against what a fill of the rest would draw:
+  enough, short (a fill now would fail), or unread. The section says that
+  one maker's orders share one vault and are each weighed alone. While the
+  book holds orders out for a re-check after the chain replaced recent
+  blocks, the section says how many, so a shorter list is never read as
+  the whole book; a count the app cannot read is said as unknown.
+- **RB-DESK-FILL** — An open signed order someone else signed is filled
+  whole from its row on the desk (OFF-60). The fill opens the same
+  acceptance review as a stored offer (RB-ACCEPT), but its figures come
+  from the protocol's preview of the signed fill, never from the order as
+  the book lists it: the review names the maker and the order's hash, what
+  the fill takes from the maker's vault against what that vault holds free,
+  and that a fill takes the whole order in one transaction, so a fill that
+  loses a race opens no loan and puts back any approval it made. Any
+  refusal the preview reports, the maker's vault short among them, is
+  stated by name and blocks consent and the send. The Terms the taker
+  signs are keyed to the order's hash. The risk-access check is read with
+  the review from the protocol's own preview of the signed fill (#3577),
+  which reports the maker's block and the taker's apart: the maker's is
+  stated and blocks consent with no step offered, since nothing the taker
+  does clears it; the taker's offers the step that clears it, for the pair
+  the preview names, before anything is signed, as a stored offer's review
+  does. Where that preview cannot be read (a deployment without it, or a
+  failed read), the review says the dry run after signing makes the check
+  instead; a refusal there sends
+  nothing, puts back any approval, and offers the step that clears it for
+  the order's pair where the flow stopped, which returns to a fresh review
+  of the same order. The step is offered only when the refusal, decoded
+  from its own bytes, names the taker's wallet; one naming the maker says
+  no step of the taker's can clear it, and an unreadable one offers none. The finish card reads the
+  loan from the fill's own log; a transaction with no such log says no loan
+  opened. A partly matched order is not offered (a fill takes the whole
+  order), nor the viewer's own, and Terms not yet accepted are accepted
+  first (OFF-35).
+- **RB-DESK-MATCH** — Under a market's ladder (OFF-63) the desk shows a
+  match band. While the two sides overlap (the highest borrower rate at or
+  above the lowest lender rate), the best-priced pairs whose rate ranges
+  meet by the protocol's own rule (the higher floor at or below the lower
+  ceiling), at most twelve, never a pair from one wallet and never a pair
+  holding an offer the viewer posted, are asked of
+  the protocol's own match preview as the viewer would send the match, at
+  one block; where the sides overlap but no ranges meet, the band says
+  nothing can be matched. Matching one's own offer would make the viewer
+  the lender or the borrower with its own funds in the loan, which the
+  gas-only receipt below does not describe, so such a pair is never offered:
+  the band says when it left one out, and a review left open for a pair the
+  connected wallet now holds an offer in is closed with that reason. The band offers only a pair the preview
+  confirms, the first in price order, and names it, the loan amount, the
+  middle of the rates both accept, the collateral the borrower
+  locks and the term. When the best-priced pair is not the one offered, its
+  refusal is stated; when no pair checked can be matched, the best-priced
+  pair's refusal is the band. The matching switch is read on its own: with
+  it off (or unread) the band says so instead of disappearing. The
+  sender's share is stated as an upper bound, the matcher's part of the
+  full initiation fee, because the borrower's fee discount is settled only
+  at the match; the band also says whose matching capacity a match counts
+  against (the sender's own) or that no limit is in force. The review says
+  the loan belongs to the two who posted the offers, the sender pays only
+  the gas and takes no side, the share is paid only if the match lands,
+  and someone else may match or take either offer first: if that uses an
+  offer up the match fails and moves nothing, and if part is left the
+  match can open a smaller loan and pay a smaller share. It is re-read
+  each block and dry-run before the wallet opens. The outcome is measured
+  from the transaction's logs: the match of this pair by this sender, and
+  the share as the vault's own outflow record of the incentive kind, from
+  the lender's vault in the lending token, to the sender's wallet or its
+  vault under protected mode. Refunds and the loan amount are other kinds
+  of outflow, so they are never counted as the share.
 - **RB-DESK-SIGN** — The ticket (OFF-59) may sign a new order instead of
   posting it: no gas, nothing set aside, listed on the offer book, and the
   stake drawn from the signer's own vault when someone fills it. The app

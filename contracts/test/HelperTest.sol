@@ -677,12 +677,14 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](7);
         selectors[0] = OfferPreviewFacet.previewAccept.selector;
         selectors[1] = OfferPreviewFacet.requireCadenceAdmitted.selector;
         selectors[2] = OfferPreviewFacet.previewCadenceAdmission.selector;
         selectors[3] = OfferPreviewFacet.requireOriginationCadenceAdmitted.selector;
         selectors[4] = OfferPreviewFacet.previewOriginationRefusal.selector;
+        selectors[5] = OfferPreviewFacet.previewSignedOfferAccept.selector;
+        selectors[6] = OfferPreviewFacet.initRiskBounds.selector;
         return selectors;
     }
 
@@ -1251,7 +1253,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](10);
+        selectors = new bytes4[](11);
         selectors[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         selectors[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         selectors[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -1266,6 +1268,8 @@ contract HelperTest {
         selectors[8] = RiskPreviewFacet.quoteSellerBounds.selector;
         // #2672 — the figures a standing listing recorded.
         selectors[9] = RiskPreviewFacet.getSaleListingBounds.selector;
+        // #3577 — the risk gate a fill of a not-yet-stored signed order faces.
+        selectors[10] = RiskPreviewFacet.previewSignedOfferRiskBlocks.selector;
     }
 
     /// @dev #1212 (E-10 Claim-All) — the single generic batching entry point.
@@ -1939,13 +1943,17 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](7);
         selectors[0] = VPFIDiscountAccumulatorFacet.syncTierRecord.selector;
         selectors[1] = VPFIDiscountAccumulatorFacet.effectiveTierAndBps.selector;
         // T-087 Sub 2.A — projected tier-expiry view.
         selectors[2] = VPFIDiscountAccumulatorFacet.getTierExpirySec.selector;
         // #3459 — the rule-by-rule tier explanation (public read).
         selectors[3] = VPFIDiscountAccumulatorFacet.explainTier.selector;
+        // #3562 — the lender entry standing.
+        selectors[4] = VPFIDiscountAccumulatorFacet.stampLenderEntry.selector;
+        selectors[5] = VPFIDiscountAccumulatorFacet.lenderHoldDiscountBps.selector;
+        selectors[6] = VPFIDiscountAccumulatorFacet.lenderHoldDiscountView.selector;
         return selectors;
     }
 
@@ -1969,7 +1977,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](10);
+        selectors = new bytes4[](8);
         selectors[0] = ProtocolBroadcastFacet.protocolBroadcastTierUpdate.selector;
         selectors[1] = ProtocolBroadcastFacet.topUpBroadcastBudget.selector;
         selectors[2] = ProtocolBroadcastFacet.withdrawBudget.selector;
@@ -1977,9 +1985,9 @@ contract HelperTest {
         selectors[4] = ProtocolBroadcastFacet.getUserTierPushNonce.selector;
         selectors[5] = ProtocolBroadcastFacet.deliverTierPush.selector;
         selectors[6] = ProtocolBroadcastFacet.getTierPushStatus.selector;
-        selectors[7] = ProtocolBroadcastFacet.getTierPushSpacingSec.selector;
-        selectors[8] = ProtocolBroadcastFacet.setTierPushSpacingSec.selector;
-        selectors[9] = ProtocolBroadcastFacet.flushTierPushes.selector;
+        // #1277: getTierPushSpacingSec / setTierPushSpacingSec removed with
+        // the spacing window (the budget pays only lowers, never a raise).
+        selectors[7] = ProtocolBroadcastFacet.flushTierPushes.selector;
         return selectors;
     }
 
@@ -3071,7 +3079,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](24);
+        selectors = new bytes4[](25);
         selectors[0] = RepatriationFacet.authorizeRepatriation.selector;
         selectors[1] = RepatriationFacet.onRepatriationReturnReceived.selector;
         selectors[2] = RepatriationFacet.onRepatriationCancelAck.selector;
@@ -3106,6 +3114,8 @@ contract HelperTest {
         selectors[21] = RepatriationFacet.onUntypedRemainderReturnReceived.selector;
         selectors[22] = RepatriationFacet.getChainUntypedRemainderReturned.selector;
         selectors[23] = RepatriationFacet.getUntypedRemainderReturnedCumulative.selector;
+        // #3360 part B — the keeper's return of a closed day's leftover.
+        selectors[24] = RepatriationFacet.returnClosedDayRemainder.selector;
     }
 
     function getVaultFactoryFacetSelectorsExtended()

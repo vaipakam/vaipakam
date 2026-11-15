@@ -125,7 +125,7 @@ A "residual" below is a stated limit, not a bug report.
 | Private transaction submission for forced sales where the mempool is public | #3240 |
 | Bounds on the sanctions list's adder key | #3239 |
 | Mainnet operations baseline (keeper host, credential scope) | #3243 |
-| The same fee-linked reward cap on mirror chains, with the VPFI a capped mirror claim does not pay sent back to Base | #3360 |
+| The same fee-linked reward cap on mirror chains, with the VPFI a capped mirror claim does not pay sent back to Base (contract side done in #3360 part B; the keeper pass that sends it back ships disarmed and must be armed) | #3360 |
 
 Mainnet also waits on an external audit after code freeze. No bug bounty
 programme is offered (owner, 2026-11-09).
@@ -162,9 +162,8 @@ lands.
   discount) in the lending asset, plus gas. So such a loop pays whenever
   that much VPFI is worth more than what it costs. A party that pays the
   Full tariff puts in more VPFI than its side can earn back, so only loops
-  on the default fee mode can gain. Until the mirror cap above lands, a
-  mirror chain's loans are bounded only by the per-wallet daily share,
-  which more wallets get around.
+  on the default fee mode can gain. The same bound holds on mirror chains,
+  whose loans carry the same cap (#3360 part B).
 - **Misleading reads.** A lying indexer or proxy can show a misleading list.
   It cannot change what a signed accept does.
 - **Cross-chain message-only effects** (reward accounting, acknowledgements)

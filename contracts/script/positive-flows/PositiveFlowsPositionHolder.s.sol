@@ -2,7 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {console} from "forge-std/console.sol";
-import {PositiveFlowsBase} from "./PositiveFlowsBase.sol";
+import {PositiveFlowsStaged} from "./PositiveFlowsStaged.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../../src/interfaces/IVaipakamErrors.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
@@ -22,9 +22,22 @@ import {VaipakamNFTFacet} from "../../src/facets/VaipakamNFTFacet.sol";
  *
  *         The refusals are probed in the simulation only (`RevertProbe`), so a
  *         deliberate revert neither aborts the broadcast nor spends a nonce the
- *         chain never sees. Fixture, runner and ids: {PositiveFlowsBase}.
+ *         chain never sees. Fixture and ids: {PositiveFlowsBase}.
+ *
+ *         Every scenario takes three steps (#3502): the first posts the
+ *         offer; the second, once its terms have stood the minimum age, opens
+ *         the loan; the third, once the position transfer cooldown has passed
+ *         since the loan opened (#3413), moves the NFT and carries the loan to
+ *         its close and the claims. `run()` is the simulation and `stage()`
+ *         the broadcastable run ({PositiveFlowsStaged},
+ *         `script/positive-flows/run-staged.sh`).
  */
-contract PositiveFlowsPositionHolder is PositiveFlowsBase {
+contract PositiveFlowsPositionHolder is PositiveFlowsStaged {
+    /// @dev The offer the first step posts and the second fills.
+    string private constant OFFER = "offer";
+    /// @dev The loan the second step opens and the third hands on.
+    string private constant LOAN = "loan";
+
     function moduleName() public pure override returns (string memory) {
         return "PositiveFlowsPositionHolder";
     }
@@ -37,22 +50,30 @@ contract PositiveFlowsPositionHolder is PositiveFlowsBase {
             "PF-234, PF-163, PF-164, PF-110");
     }
 
-    function _runScenario(uint256 index) internal override {
-        if (index == 0) _borrowerPositionTransfer();
-        else if (index == 1) _lenderPositionTransfer();
+    /// @dev Post; open the loan; move the position, close and claim.
+    function _stepCount(uint256) internal pure override returns (uint256) {
+        return 3;
+    }
+
+    function _runStep(uint256 index, uint256 step) internal override {
+        if (step == 0) return _keep(OFFER, _createLenderOffer(lenderKey));
+        if (step == 1) {
+            uint256 opened = _acceptAs(borrowerKey, _kept(OFFER), address(weth), COLLATERAL_AMOUNT);
+            console.log("Loan initiated, loanId:", opened);
+            return _keep(LOAN, opened);
+        }
+        if (index == 0) _borrowerPositionTransfer(_kept(LOAN));
+        else if (index == 1) _lenderPositionTransfer(_kept(LOAN));
         else revert("PositiveFlowsPositionHolder: no scenario at index");
     }
 
     // ─── PF-163 ───────────────────────────────────────────────────────────
 
-    /// @dev `borrower` opens the loan and hands its borrower NFT to
-    ///      `newBorrower`. The preclose (a borrower-role action) and the
+    /// @dev `borrower` opened the loan (step 2) and now hands its borrower
+    ///      NFT to `newBorrower`. The preclose (a borrower-role action) and the
     ///      collateral claim then belong to `newBorrower`.
-    function _borrowerPositionTransfer() internal {
-        uint256 offerId = _createLenderOffer(lenderKey);
-        uint256 loanId = _acceptAs(borrowerKey, offerId, address(weth), COLLATERAL_AMOUNT);
+    function _borrowerPositionTransfer(uint256 loanId) internal {
         LibVaipakam.Loan memory loan = LoanFacet(diamond).getLoanDetails(loanId);
-        console.log("Loan initiated, loanId:", loanId);
 
         vm.startBroadcast(borrowerKey);
         IERC721(VaipakamNFTFacet(diamond).positionNFT()).transferFrom(borrower, newBorrower, loan.borrowerTokenId);
@@ -73,6 +94,9 @@ contract PositiveFlowsPositionHolder is PositiveFlowsBase {
             "PF-163: the opener should no longer be able to preclose (KeeperAccessRequired)"
         );
 
+        // The close-out returns the collateral to the current holder's vault
+        // (#3205 part 2); the claim then settles the position against it.
+        uint256 vaultBefore = _vaultBalance(weth, newBorrower);
         vm.startBroadcast(newBorrowerKey);
         uint256 fullTermInterest = (LOAN_AMOUNT * INTEREST_BPS * DURATION_DAYS) / (365 * 10000);
         // Generous: covers principal plus full-term interest under either
@@ -100,27 +124,25 @@ contract PositiveFlowsPositionHolder is PositiveFlowsBase {
         );
         (address asset, uint256 amount,,,,,,) = ClaimFacet(diamond).getClaimable(loanId, false);
         require(asset == address(weth) && amount == COLLATERAL_AMOUNT, "PF-163: the borrower claim should be the WETH collateral");
-        uint256 before = weth.balanceOf(newBorrower);
+        require(
+            _vaultBalance(weth, newBorrower) - vaultBefore == amount,
+            "PF-163: the current holder's vault should receive the collateral"
+        );
         vm.startBroadcast(newBorrowerKey);
         ClaimFacet(diamond).claimAsBorrower(loanId);
         vm.stopBroadcast();
-        require(
-            weth.balanceOf(newBorrower) - before == amount,
-            "PF-163: the current holder should receive the collateral"
-        );
+        (,, bool claimed,,,,,) = ClaimFacet(diamond).getClaimable(loanId, false);
+        require(claimed, "PF-163: the current holder's claim should settle the collateral");
         console.log("Current borrower-position holder claimed the collateral:", amount);
     }
 
     // ─── PF-234 ───────────────────────────────────────────────────────────
 
-    /// @dev `lender` funds the loan and hands its lender NFT to `newLender`,
-    ///      as a secondary-market sale would. The borrower repays, and the
-    ///      principal and interest belong to `newLender`.
-    function _lenderPositionTransfer() internal {
-        uint256 offerId = _createLenderOffer(lenderKey);
-        uint256 loanId = _acceptAs(borrowerKey, offerId, address(weth), COLLATERAL_AMOUNT);
+    /// @dev `lender` funded the loan (step 2) and now hands its lender NFT to
+    ///      `newLender`, as a secondary-market sale would. The borrower
+    ///      repays, and the principal and interest belong to `newLender`.
+    function _lenderPositionTransfer(uint256 loanId) internal {
         LibVaipakam.Loan memory loan = LoanFacet(diamond).getLoanDetails(loanId);
-        console.log("Loan initiated, loanId:", loanId);
 
         vm.startBroadcast(lenderKey);
         IERC721(VaipakamNFTFacet(diamond).positionNFT()).transferFrom(lender, newLender, loan.lenderTokenId);
@@ -131,6 +153,9 @@ contract PositiveFlowsPositionHolder is PositiveFlowsBase {
         );
         console.log("Lender NFT transferred to newLender");
 
+        // The repayment lands in the current holder's vault (#3205 part 2);
+        // the claim then settles the position against it.
+        uint256 vaultBefore = _vaultBalance(usdc, newLender);
         _repayInFull(borrowerKey, loanId);
 
         // PF-164: the close-out re-anchors the lender side to its holder.
@@ -148,14 +173,15 @@ contract PositiveFlowsPositionHolder is PositiveFlowsBase {
         (address asset, uint256 amount,,,,,,) = ClaimFacet(diamond).getClaimable(loanId, true);
         require(asset == address(usdc), "PF-234: the lender claim should be in the lending asset");
         require(amount >= LOAN_AMOUNT, "PF-234: the lender claim should cover at least the principal");
-        uint256 before = usdc.balanceOf(newLender);
+        require(
+            _vaultBalance(usdc, newLender) - vaultBefore == amount,
+            "PF-234: the current holder's vault should receive the repayment"
+        );
         vm.startBroadcast(newLenderKey);
         ClaimFacet(diamond).claimAsLender(loanId);
         vm.stopBroadcast();
-        require(
-            usdc.balanceOf(newLender) - before == amount,
-            "PF-234: the current holder should receive the repayment"
-        );
+        (,, bool claimed,,,,,) = ClaimFacet(diamond).getClaimable(loanId, true);
+        require(claimed, "PF-234: the current holder's claim should settle the repayment");
         console.log("Current lender-position holder claimed the repayment:", amount);
 
         vm.startBroadcast(borrowerKey);

@@ -42,7 +42,7 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
             "PF-323");
         list[2] = Scenario("PF-322", "Global pause and unpause",
             "PF-322");
-        list[3] = Scenario("PF-329", "Treasury receives the initiation fee; a Diamond-held balance is withdrawn",
+        list[3] = Scenario("PF-329", "Treasury receives the initiation fee; a Diamond-held balance is withdrawn where the Diamond is the treasury",
             "PF-329");
         list[4] = Scenario("PF-324", "Admin fee knob: above the cap refused; inside it, the getter and the next loan follow",
             "PF-324");
@@ -239,10 +239,14 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
     ///          recorded in `getTreasuryBalance`, and the admin withdraws it
     ///          with `claimTreasuryFees`.
     ///
-    ///      On an external-treasury deployment the scenario walks the first
-    ///      shape, then points the treasury at the Diamond for one more loan
-    ///      so the withdrawal half of the row runs too, and restores the
-    ///      original treasury in the same broadcast as the withdrawal.
+    ///      The scenario walks the shape the deployment has. It no longer
+    ///      switches an external-treasury deployment to the Diamond for the
+    ///      withdrawal half: since #3431 a vault pays treasury fees only to
+    ///      the treasury fixed in its code, so after `setTreasury(diamond)`
+    ///      the next accept's fee is refused by the vault
+    ///      (`OutflowDestinationRefused`). Moving the treasury is a vault code
+    ///      change; #3569 tracks making `setTreasury` say so. The withdrawal
+    ///      half therefore runs only on a Diamond-as-treasury deployment.
     ///
     ///      The fee checked is the initiation fee, read from what the
     ///      borrower received (principal less the fee). Interest-side fees
@@ -271,11 +275,9 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
                 "PF-329: an external treasury leaves nothing held at the Diamond"
             );
             console.log("External treasury received the initiation fee; nothing held at the Diamond");
-
-            vm.startBroadcast(adminKey);
-            AdminFacet(diamond).setTreasury(diamond);
-            vm.stopBroadcast();
-            console.log("Treasury pointed at the Diamond for the withdrawal half");
+            console.log("Withdrawal half not run: it needs a Diamond-as-treasury deployment (#3569)");
+            _logVpfiTreasurySurface();
+            return;
         }
 
         uint256 heldStart = TreasuryFacet(diamond).getTreasuryBalance(address(usdc));
@@ -287,7 +289,6 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
         uint256 adminBefore = usdc.balanceOf(admin);
         vm.startBroadcast(adminKey);
         TreasuryFacet(diamond).claimTreasuryFees(address(usdc), admin);
-        if (!diamondIsTreasury) AdminFacet(diamond).setTreasury(treasury);
         vm.stopBroadcast();
         require(
             TreasuryFacet(diamond).getTreasuryBalance(address(usdc)) == 0,
@@ -297,20 +298,23 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
             usdc.balanceOf(admin) - adminBefore == held,
             "PF-329: the admin should receive exactly the held balance"
         );
-        require(AdminFacet(diamond).getTreasury() == treasury, "PF-329: the original treasury should be restored");
         console.log("Admin withdrew the held treasury USDC:", held);
 
-        // VPFI treasury surface: CALL-SURFACE ONLY, and labelled as such
-        // (#1555 r3). No current positive flow in this drive produces VPFI
-        // treasury revenue: the HoldOnly LIF (#1352) takes no VPFI custody,
-        // and the Full tariff credits the recycle bucket, not treasury. So
-        // this reads the balance of whatever VPFI token the Diamond names and
-        // asserts nothing about its size; inventing a source to make the
-        // assertion look strong would claim a flow that did not run. Real
-        // VPFI treasury accrual is covered by TreasuryFacetTest. The token is
-        // read from the Diamond because this module deploys no VPFI of its
-        // own (#848 Phase 1; the old suite read the mock its VPFI scenario
-        // had left wired).
+        _logVpfiTreasurySurface();
+    }
+
+    /// @dev VPFI treasury surface: CALL-SURFACE ONLY, and labelled as such
+    ///      (#1555 r3). No current positive flow in this drive produces VPFI
+    ///      treasury revenue: the HoldOnly LIF (#1352) takes no VPFI custody,
+    ///      and the Full tariff credits the recycle bucket, not treasury. So
+    ///      this reads the balance of whatever VPFI token the Diamond names and
+    ///      asserts nothing about its size; inventing a source to make the
+    ///      assertion look strong would claim a flow that did not run. Real
+    ///      VPFI treasury accrual is covered by TreasuryFacetTest. The token is
+    ///      read from the Diamond because this module deploys no VPFI of its
+    ///      own (#848 Phase 1; the old suite read the mock its VPFI scenario
+    ///      had left wired).
+    function _logVpfiTreasurySurface() internal view {
         address vpfiToken = VPFITokenFacet(diamond).getVPFIToken();
         if (vpfiToken == address(0)) {
             console.log("No VPFI token configured on the Diamond: no VPFI treasury surface to read");
@@ -324,23 +328,29 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
 
     /// @dev One standard loan, opened by `newBorrower` against `newLender`'s
     ///      offer, repaid in full and claimed by both. Returns the loan
-    ///      initiation fee, read from what the borrower received.
+    ///      initiation fee net of the matcher's share, read from what the
+    ///      borrower received in its vault and wallet together.
     function _loanRoundTrip() internal returns (uint256 initiationFee) {
         vm.startBroadcast(newLenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
         uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard(), type(uint64).max);
         vm.stopBroadcast();
 
-        uint256 borrowerBefore = usdc.balanceOf(newBorrower);
+        // The net principal lands in the borrower's vault (#3205 part 2); the
+        // matcher's share of the fee, which on a direct accept is the
+        // borrower's, still goes to its wallet. Both count as received.
+        uint256 vaultBefore = _vaultBalance(usdc, newBorrower);
+        uint256 walletBefore = usdc.balanceOf(newBorrower);
         uint256 loanId = _acceptAs(newBorrowerKey, offerId, address(weth), COLLATERAL_AMOUNT);
-        uint256 received = usdc.balanceOf(newBorrower) - borrowerBefore;
+        uint256 received =
+            (_vaultBalance(usdc, newBorrower) - vaultBefore) + (usdc.balanceOf(newBorrower) - walletBefore);
         require(received < LOAN_AMOUNT, "the borrower paid no initiation fee");
         initiationFee = LOAN_AMOUNT - received;
         console.log("Loan / initiation fee:", loanId, initiationFee);
 
         vm.startBroadcast(newBorrowerKey);
         uint256 repayAmt = RepayFacet(diamond).calculateRepaymentAmount(loanId);
-        usdc.approve(diamond, repayAmt);
+        usdc.approve(diamond, _repayAllowance(loanId, repayAmt));
         RepayFacet(diamond).repayLoan(loanId);
         vm.stopBroadcast();
         _claimBoth(newLenderKey, newBorrowerKey, loanId);

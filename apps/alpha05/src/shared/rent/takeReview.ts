@@ -34,6 +34,7 @@ import {
   readVault,
   type AcceptPreview,
   type OfferState,
+  statedAcceptError,
 } from '../offers/reads';
 import type { TokenMetaMap } from '../reads/tokens';
 import { shortAddress } from '../ui/format';
@@ -199,7 +200,7 @@ const GATE_KEYS: Readonly<Record<number, CopyKey>> = { 1: 'risk.blockTier', 2: '
 
 /** The protocol's first refusal of taking this request, as an owner reads it. */
 export function takeErrorText(code: AcceptPreview['error'], copy: Pick<CopyAccess, 'text' | 'format'>): string {
-  const error: AcceptPreview['error'] = code === 'RetiredVaultUpgradeRequired' ? 'Unrecognised' : code;
+  const error = statedAcceptError(code);
   if (error === 'None') return '';
   if (error === 'ProtocolPaused') return copy.format('rent.err.ProtocolPaused', { staysOpen: SWITCH_EFFECTS['2'].staysOpen });
   return copy.text(TAKE_ERRORS[error] ?? (`accept.err.${error}` as CopyKey));

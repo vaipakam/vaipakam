@@ -170,7 +170,10 @@ library LibVaipakam {
     uint256 constant TIER1_MAX_INIT_LTV_BPS_DEFAULT = 5000; // 50%
     uint256 constant TIER2_MAX_INIT_LTV_BPS_DEFAULT = 6000; // 60%
     uint256 constant TIER3_MAX_INIT_LTV_BPS_DEFAULT = 6500; // 65%
-    uint256 constant MAX_TIER_INIT_LTV_BPS_CEIL = 8000; // 80% — hard ceiling on any tier-LTV setter
+    // #3547 — the hard ceiling on every tier-LTV setter: no tier default
+    // (`setTierMaxInitLtvBps`) and no tier governance ceiling
+    // (`setTierLtvParams`) may exceed 82%, the library Tier-3 ceiling.
+    uint256 constant MAX_TIER_INIT_LTV_BPS_CEIL = 8200; // 82%
 
     // ── Per-tier LIQUIDATION threshold (PR2 of internal-match work) ────
     // The LTV at which a loan becomes liquidatable, indexed by the
@@ -268,30 +271,22 @@ library LibVaipakam {
     uint256 constant LIQUIDATION_HANDLING_FEE_BPS = 200; // 2% of proceeds to treasury on successful DEX liquidation (README §3)
     // ── Phase 4 of AutonomousLtvAndOracleFallback.md — tier-LTV cache constants ──
     //
-    // Per-tier safety bounds for the autonomous tier-LTV cache. A
-    // peer-consensus reading that lands outside its tier's box is
-    // REJECTED (not silently clipped) — out-of-band data is signal
-    // something's wrong with peer state, not a value to use. Bounds
-    // are constitution-level: changing them requires an emergency
-    // multisig + source-code change + audit, not a refresh call.
-    uint16 constant TIER1_LTV_FLOOR_BPS = 3700;    // 37%
+    // #3547 (owner decision 2026-11-11) — each tier's init LTV is its
+    // DEFAULT (`TIER{1,2,3}_MAX_INIT_LTV_BPS_DEFAULT`, 50 / 60 / 65%, or
+    // the value governance sets) until a fresh peer reading replaces it;
+    // a peer reading may move it down or up, but never above the tier's
+    // GOVERNANCE CEILING below (55 / 69 / 82% until `setTierLtvParams`
+    // sets others). A reading above the ceiling is clipped to it at the
+    // read; a reading below the old box floor is honoured — there is no
+    // floor. See {effectiveTierMaxInitLtvBps}.
     uint16 constant TIER1_LTV_CEIL_BPS  = 5500;    // 55%
-    uint16 constant TIER2_LTV_FLOOR_BPS = 5500;    // 55%
     uint16 constant TIER2_LTV_CEIL_BPS  = 6900;    // 69%
-    uint16 constant TIER3_LTV_FLOOR_BPS = 6900;    // 69%
     uint16 constant TIER3_LTV_CEIL_BPS  = 8200;    // 82%
 
-    // Library defaults — used when the cache is hard-stale (>14 days
-    // since last refresh) or never-refreshed. Sit at the midpoint of
-    // each tier's box so the cache-stale fallback is neutral.
-    uint16 constant TIER1_LTV_DEFAULT_BPS = 5000;  // 50%
-    uint16 constant TIER2_LTV_DEFAULT_BPS = 6200;  // 62%
-    uint16 constant TIER3_LTV_DEFAULT_BPS = 7300;  // 73%
-
-    // Per-tier haircut applied to the peer-consensus median before
-    // bound-check. Tier-3 (deepest, highest absolute-dollar exposure)
-    // takes a 5pp conservative haircut; Tier-1 / Tier-2 match peer
-    // median (the bound check still applies).
+    // Per-tier haircut applied to the peer-consensus reading before it
+    // is cached. Tier-3 (deepest, highest absolute-dollar exposure)
+    // takes a 5pp conservative haircut; Tier-1 / Tier-2 take the peer
+    // reading as it is (the ceiling still applies at the read).
     uint16 constant TIER1_LTV_HAIRCUT_BPS = 0;
     uint16 constant TIER2_LTV_HAIRCUT_BPS = 0;
     uint16 constant TIER3_LTV_HAIRCUT_BPS = 500;   // 5pp
@@ -1341,6 +1336,9 @@ library LibVaipakam {
         // effectiveTier])` while `depthTieredLtvEnabled`. 0 ⇒
         // TIER{1,2,3}_MAX_INIT_LTV_BPS_DEFAULT (5000 / 6000 / 6500).
         // Setter enforces `tier1 ≤ tier2 ≤ tier3 ≤ MAX_TIER_INIT_LTV_BPS_CEIL`.
+        // #3547 — these are each tier's DEFAULT: a usable peer reading
+        // replaces it, and the tier's governance ceiling bounds either
+        // (`effectiveTierMaxInitLtvBps`).
         uint16 tier1MaxInitLtvBps; // 0 ⇒ 5000
         uint16 tier2MaxInitLtvBps; // 0 ⇒ 6000
         uint16 tier3MaxInitLtvBps; // 0 ⇒ 6500
@@ -2821,6 +2819,19 @@ library LibVaipakam {
         uint40 sentAt;
     }
 
+    /// @notice #3562 — a lender-position holder's fee-discount standing at
+    ///         the moment they took the position. See
+    ///         `Storage.lenderEntryDiscount`.
+    /// @dev    `holder` is the holder it was taken for; `tier` / `bps` are
+    ///         their effective tier and its discount (after the uniform
+    ///         ceiling) at that moment; `at` is when. One slot.
+    struct LenderEntryDiscount {
+        address holder;
+        uint8 tier;
+        uint16 bps;
+        uint40 at;
+    }
+
     struct CachedTier {
         uint8 effectiveTier;
         uint40 lastUpdateSec;
@@ -3938,12 +3949,13 @@ library LibVaipakam {
         // Refreshed permissionlessly via `OracleFacet.refreshTierLtvCache()`
         // by anyone; the on-chain aggregation reads Aave V3 + Compound
         // V3 via `LibPeerLTV`, computes per-tier median across a
-        // reference asset list, applies the per-tier haircut + bound
-        // check, and writes here. Loan init reads this when computing
-        // the per-asset init-LTV cap.
+        // reference asset list, applies the per-tier haircut and writes
+        // here, unclipped: the tier's governance ceiling applies at the
+        // read (`effectiveTierMaxInitLtvBps`, #3547). Loan init reads it
+        // when computing the per-asset init-LTV cap.
         //
         // Cache TTLs: 7d soft (informational stale event), 14d hard
-        // (fall back to library defaults). Anyone may refresh at any
+        // (fall back to the tier default). Anyone may refresh at any
         // time — no permission, no rate-limit (per-refresh gas cost
         // is the natural rate-limit).
         mapping(uint8 => TierLtvCacheEntry) tierLtvCache;
@@ -3960,11 +3972,11 @@ library LibVaipakam {
         // and leave the cache value untouched.
         mapping(uint8 => address[]) tierReferenceAssets;
         // Phase 7 of AutonomousLtvAndOracleFallback.md — per-tier
-        // safety-box parameters (floor / ceiling / haircut), governance-
+        // governance ceiling and haircut (#3547 retired the floor),
         // configurable via `ConfigFacet.setTierLtvParams` (ADMIN_ROLE,
-        // atomic for all three tiers, monotonic-boundary enforced).
+        // atomic for all three tiers, ceilings non-decreasing by tier).
         // Zero entries fall through to the library constants
-        // (`TIER1/2/3_LTV_FLOOR_BPS` / `_CEIL_BPS` / `_HAIRCUT_BPS`).
+        // (`TIER1/2/3_LTV_CEIL_BPS` / `_HAIRCUT_BPS`).
         // A fresh deploy never touches this mapping ⇒ library defaults
         // apply everywhere until governance overrides.
         mapping(uint8 => TierLtvParams) tierLtvParams;
@@ -7884,14 +7896,13 @@ library LibVaipakam {
         ///      succeeds (or when the lane already holds the same effect, so
         ///      no message is needed). Appended — append-only.
         mapping(address => mapping(uint256 => TierLanePush)) tierLanePush;
-        /// @dev #898 / #1277 — the protocol budget pays a push that does not
-        ///      lower a lane's tier at most once per this many seconds per
-        ///      lane. Zero reads as {DEFAULT_TIER_PUSH_SPACING_SEC}; read
-        ///      through {cfgTierPushSpacingSecEffective}; written only by
-        ///      `ProtocolBroadcastFacet.setTierPushSpacingSec` within
-        ///      [{MIN_TIER_PUSH_SPACING_SEC}, {MAX_TIER_PUSH_SPACING_SEC}].
-        ///      Appended — append-only.
-        uint32 cfgTierPushSpacingSec;
+        /// @dev RETIRED (#1277). Was the per-lane spacing window under which
+        ///      the protocol budget paid a tier push that did not lower the
+        ///      lane. Since #1277 the budget pays only a push that lowers what
+        ///      a lane grants, and never a raise, so no window exists. The
+        ///      slot keeps its place and is no longer read or written. Do not
+        ///      reuse it. Appended — append-only.
+        uint32 retiredTierPushSpacingSec;
         /// @dev #2748 — the SHARE of the rate-model band: the most a model may
         ///      move a quote, as basis points of the reference rate itself
         ///      (5_000 = ± 50% of the market rate). The band's half-width is
@@ -8332,6 +8343,17 @@ library LibVaipakam {
         ///      `SwapToRepayIntentFacet.commitSwapToRepayIntent`; replaces
         ///      the retired global `intentNonceUsed`. Appended — append-only.
         mapping(address => mapping(uint40 => bool)) intentNonceUsedByMaker;
+        /// @dev #3562 — per loan, the lender-position holder's fee-discount
+        ///      standing when they took the position (origination or a sale's
+        ///      migration; a plain transfer of the lender token records the
+        ///      lower of the existing figure and the receiver's standing). The
+        ///      yield-fee hold discount is the lower of this and the holder's
+        ///      standing at settlement; a holder this does not name gets no
+        ///      hold discount. Written only by
+        ///      `VPFIDiscountAccumulatorFacet.stampLenderEntry`, read only by
+        ///      its `lenderHoldDiscountBps` / `lenderHoldDiscountView`.
+        ///      Appended — append-only.
+        mapping(uint256 => LenderEntryDiscount) lenderEntryDiscount;
         /// @dev Codex #3489 r5 — per manager, every replaced account it now
         ///      manages (a manager may hold several). Written only by
         ///      `ProtectedAccountFacet` when it applies a replacement; replaces
@@ -9892,19 +9914,25 @@ library LibVaipakam {
     }
 
     /// @dev Phase 7 of AutonomousLtvAndOracleFallback.md — per-tier
-    ///      safety-box parameters, governance-configurable so the
+    ///      ceiling and haircut, governance-configurable so the
     ///      protocol can adjust risk tolerance over time (Aave-style)
     ///      without redeploying. Three uint16 fields = 48 bits per
     ///      tier × 3 tiers = 144 bits → all three entries pack into
     ///      a single storage slot via the mapping value layout.
     ///
-    ///      Zero-valued entries are the indicator "never configured"
-    ///      and the read accessors fall through to the library
-    ///      constants (`TIER1/2/3_LTV_FLOOR_BPS` / `_CEIL_BPS` /
-    ///      `_HAIRCUT_BPS`). Governance can override all three at once
-    ///      via `ConfigFacet.setTierLtvParams` (atomic, ADMIN_ROLE).
+    ///      A zero `ceilBps` is the indicator "never configured" and
+    ///      the read accessors fall through to the library constants
+    ///      (`TIER1/2/3_LTV_CEIL_BPS` / `_HAIRCUT_BPS`). Governance
+    ///      overrides every tier's ceiling and haircut at once via
+    ///      `ConfigFacet.setTierLtvParams` (atomic, ADMIN_ROLE).
+    ///
+    ///      #3547 — `retiredFloorBps` was the lower edge of the tier's
+    ///      safety box, below which a peer reading was rejected. The
+    ///      owner decision of 2026-11-11 honours such a reading, so the
+    ///      floor governs nothing: it is no longer written or read, and
+    ///      the slot keeps its place. Do not reuse it.
     struct TierLtvParams {
-        uint16 floorBps;
+        uint16 retiredFloorBps;
         uint16 ceilBps;
         uint16 haircutBps;
     }
@@ -11490,43 +11518,34 @@ library LibVaipakam {
     /// @custom:event-category informational/config
     event TierReferenceAssetsSet(uint8 indexed tier, address[] assets);
 
-    /// @dev Per-tier safety-box bounds. Tier indices 1, 2, 3 (Tier 0
-    ///      is "untierable" — no LTV cap applies because the asset
-    ///      isn't accepted at all).
+    /// @dev #3547 — the tier's GOVERNANCE CEILING: no tier init-LTV, peer
+    ///      derived or default, is ever above it. Tier indices 1, 2, 3
+    ///      (Tier 0 is "untierable" and returns 0: the asset is not
+    ///      accepted at all).
     ///
-    ///      Phase 7 of AutonomousLtvAndOracleFallback.md — reads
-    ///      governance overrides from `s.tierLtvParams[tier]` if set
-    ///      (non-zero ceil = "configured" indicator); otherwise falls
-    ///      through to the library constants. The constants stay
-    ///      authoritative on a fresh deploy and after a hypothetical
-    ///      governance "clear" (no clear API exists; governance
-    ///      effectively-clears by setting back to the constants).
-    function tierLtvBoundsBps(uint8 tier)
-        internal
-        view
-        returns (uint16 floorBps, uint16 ceilBps)
-    {
-        if (tier == 0 || tier > MAX_LIQUIDITY_TIER) return (0, 0);
-        TierLtvParams storage p = storageSlot().tierLtvParams[tier];
-        if (p.ceilBps != 0) {
-            return (p.floorBps, p.ceilBps);
-        }
-        if (tier == 1) return (TIER1_LTV_FLOOR_BPS, TIER1_LTV_CEIL_BPS);
-        if (tier == 2) return (TIER2_LTV_FLOOR_BPS, TIER2_LTV_CEIL_BPS);
-        return (TIER3_LTV_FLOOR_BPS, TIER3_LTV_CEIL_BPS);
+    ///      Reads the governance override from `s.tierLtvParams[tier]`
+    ///      when set (non-zero ceil = "configured" indicator); otherwise
+    ///      the library constants (55 / 69 / 82%). Bounded by
+    ///      `MAX_TIER_INIT_LTV_BPS_CEIL` at the setter.
+    function tierLtvCeilBps(uint8 tier) internal view returns (uint16) {
+        if (tier == 0 || tier > MAX_LIQUIDITY_TIER) return 0;
+        uint16 ceil = storageSlot().tierLtvParams[tier].ceilBps;
+        if (ceil != 0) return ceil;
+        if (tier == 1) return TIER1_LTV_CEIL_BPS;
+        if (tier == 2) return TIER2_LTV_CEIL_BPS;
+        return TIER3_LTV_CEIL_BPS;
     }
 
     /// @dev Per-tier haircut (BPS) applied to the peer-consensus
-    ///      median before the bound check. Reads governance override
+    ///      reading before it is cached. Reads governance override
     ///      from `s.tierLtvParams[tier].haircutBps`; zero falls
     ///      through to the library constant (Phase 7).
     ///
     ///      Note: a configured-haircut value of zero can't be
     ///      distinguished from "never configured" at the storage
-    ///      level — the convention is that callers configure the WHOLE
-    ///      `TierLtvParams` triple (floor + ceil + haircut) atomically,
-    ///      and a non-zero ceil acts as the "configured" indicator for
-    ///      the full triple. A governance-set 0pp haircut is therefore
+    ///      level — the convention is that callers configure the ceiling
+    ///      and haircut together (atomically, for every tier), and a
+    ///      non-zero ceil acts as the "configured" indicator for both. A governance-set 0pp haircut is therefore
     ///      indistinguishable from the library 0pp default for Tier 1 /
     ///      Tier 2 (which already default to 0pp), and for Tier 3 the
     ///      library default of 500 (5pp) is what governance would
@@ -11542,56 +11561,46 @@ library LibVaipakam {
         return TIER3_LTV_HAIRCUT_BPS;
     }
 
-    /// @dev Library default LTV per tier — used when the cache is
-    ///      hard-stale (> 14 days) or never-refreshed. Sit at the
-    ///      midpoint of each tier's safety box.
-    function tierLtvLibraryDefaultBps(uint8 tier) internal pure returns (uint16) {
-        if (tier == 1) return TIER1_LTV_DEFAULT_BPS;
-        if (tier == 2) return TIER2_LTV_DEFAULT_BPS;
-        if (tier == 3) return TIER3_LTV_DEFAULT_BPS;
-        return 0;
-    }
-
-    /// @dev Effective tier-LTV the loan-init gate consults. Reads the
-    ///      peer-derived cache only when it is fresh (≤ 14d since last
-    ///      refresh) AND still inside the tier's CURRENT safety box
-    ///      (`tierLtvBoundsBps`); otherwise returns the governance tier cap
-    ///      (`cfgTierMaxInitLtvBps`). Tier 0 always returns 0 (asset not
-    ///      classified — caller must reject before reaching this).
+    /// @dev Effective tier-LTV the loan-init gate consults. Every reader
+    ///      (loan init, offer bounds, the match path, the views) goes
+    ///      through here, so the rule below is the only one.
     ///
-    ///      #2736 — the box is re-checked HERE, at the one read site,
-    ///      rather than only when the refresh writes the entry. The refresh
-    ///      rejects a candidate outside the box it sees, but governance can
-    ///      move the box afterwards (`ConfigFacet.setTierLtvParams`), and
-    ///      before this a still-fresh entry above a tightened ceiling kept
-    ///      admitting new loans at the old value for up to 14 days. An
-    ///      out-of-box entry is treated like a stale one, not clipped into
-    ///      range, matching the refresh's own rule (spec: "rejected rather
-    ///      than clipped"), so the setter needs no cache invalidation for
-    ///      the box to bind immediately.
+    ///      #3547 (owner decision 2026-11-11) — two numbers per tier:
+    ///      - the DEFAULT, `cfgTierMaxInitLtvBps(tier)` (50 / 60 / 65% until
+    ///        `setTierMaxInitLtvBps` sets others), and
+    ///      - the GOVERNANCE CEILING, {tierLtvCeilBps} (55 / 69 / 82% until
+    ///        `setTierLtvParams` sets others).
+    ///      A USABLE peer reading replaces the default, lower or higher; the
+    ///      result is then never above the ceiling:
+    ///
+    ///          value = usable peer reading ? cached : default
+    ///          return min(value, ceiling)
+    ///
+    ///      A peer reading is usable while peer reads are not paused (#633)
+    ///      and its cache entry is at most 14 days old. A reading above the
+    ///      ceiling is clipped to it here, at the read, so a ceiling
+    ///      governance lowers binds the next loan with no refresh (#2736),
+    ///      and one it raises admits a stored reading up to the new ceiling.
+    ///      A reading below the old box floor is honoured: peers lowering
+    ///      what they lend against lowers ours. A paused or stale reading
+    ///      falls back to the default, never to an older peer value.
+    ///      Tier 0 always returns 0 (asset not classified: the caller
+    ///      rejects before reaching this).
     function effectiveTierMaxInitLtvBps(uint8 tier) internal view returns (uint16) {
         if (tier == 0 || tier > MAX_LIQUIDITY_TIER) return 0;
         Storage storage s = storageSlot();
-        // #633 — only trust the cached peer-derived value when peer reads are NOT
-        // paused. While paused (and in the window after an unpause, before a fresh
-        // refresh, when the cache was invalidated) the cache is skipped.
+        uint256 value = cfgTierMaxInitLtvBps(tier);
         if (!s.protocolCfg.peerLtvReadsPaused) {
             TierLtvCacheEntry storage entry = s.tierLtvCache[tier];
             if (
                 entry.lastRefreshedAt > 0 &&
                 block.timestamp - uint256(entry.lastRefreshedAt) <= TIER_LTV_CACHE_HARD_TTL
             ) {
-                (uint16 floorBps, uint16 ceilBps) = tierLtvBoundsBps(tier);
-                uint16 cached = entry.ltvBps;
-                if (cached >= floorBps && cached <= ceilBps) return cached;
+                value = entry.ltvBps;
             }
         }
-        // #633 — the cache-miss / paused fallback is the GOVERNANCE-configured tier
-        // cap (which itself defaults to the library value when unset), NOT the bare
-        // library default — so a governance-tightened Tier-2/3 cap is enforced both
-        // during a pause AND in the post-unpause window before a fresh refresh,
-        // never temporarily reopening at the looser hard-coded default.
-        return uint16(cfgTierMaxInitLtvBps(tier));
+        uint256 ceil = tierLtvCeilBps(tier);
+        return uint16(value < ceil ? value : ceil);
     }
 
     // ─── FlashLoanLiquidationPath.md — per-tier discount accessors ─────
@@ -11951,10 +11960,18 @@ library LibVaipakam {
     /// @param offer Storage pointer to the offer being queried.
     /// @return expired `true` iff `expiresAt != 0 && block.timestamp >= expiresAt`.
     function isOfferExpired(Offer storage offer) internal view returns (bool expired) {
-        uint64 deadline = offer.expiresAt;
-        // GTC sentinel — never expires.
-        if (deadline == 0) return false;
-        return block.timestamp >= uint256(deadline);
+        return offerExpiryPassed(offer.expiresAt);
+    }
+
+    /// @notice The expiry rule of {isOfferExpired}, on the offer's
+    ///         `expiresAt`: 0 is good till cancelled and never expires. The
+    ///         reader for an offer held in memory (a match slice, a stored
+    ///         offer copied for a preview, or one a fill would create, #3552);
+    ///         a memory overload of {isOfferExpired} would be ambiguous for
+    ///         every storage caller.
+    function offerExpiryPassed(uint64 expiresAt) internal view returns (bool) {
+        if (expiresAt == 0) return false;
+        return block.timestamp >= uint256(expiresAt);
     }
 
     /// @notice Mirrors `ProfileFacet.SanctionedAddress` (same name +
@@ -12362,18 +12379,6 @@ library LibVaipakam {
     function cfgMirrorTierMaxAgeSecEffective() internal view returns (uint32) {
         uint32 v = storageSlot().cfgMirrorTierMaxAgeSec;
         return v == 0 ? DEFAULT_MIRROR_TIER_MAX_AGE_SEC : v;
-    }
-
-    /// @dev #898 / #1277 — the protocol budget's per-lane spacing for a tier
-    ///      push that does not lower the lane's tier. A lowered tier and a
-    ///      lane's first push are never spaced (`TierPushDeliveryDesign.md`).
-    uint32 internal constant DEFAULT_TIER_PUSH_SPACING_SEC = 1 days;
-    uint32 internal constant MIN_TIER_PUSH_SPACING_SEC = 1 hours;
-    uint32 internal constant MAX_TIER_PUSH_SPACING_SEC = 7 days;
-
-    function cfgTierPushSpacingSecEffective() internal view returns (uint32) {
-        uint32 v = storageSlot().cfgTierPushSpacingSec;
-        return v == 0 ? DEFAULT_TIER_PUSH_SPACING_SEC : v;
     }
 
     /**

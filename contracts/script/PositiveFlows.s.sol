@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {LibTiming} from "../src/libraries/LibTiming.sol";
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {PositiveFlowsBase} from "./positive-flows/PositiveFlowsBase.sol";
@@ -63,31 +62,43 @@ import {PositiveFlowsTimed} from "./positive-flows/PositiveFlowsTimed.s.sol";
  *         `REHEARSAL_ALLOW_CHAIN_ID` (see {PositiveFlowsBase}: the fixture
  *         re-points the Diamond's oracle and sanctions oracle at its mocks).
  *
- *         How to run it (#848; both flags are REQUIRED, and neither is a
- *         workaround for a contract fault):
+ *         How to run it. This runner is a SIMULATION: it runs every
+ *         scenario against the chain's real state and deployed bytecode, and
+ *         sends nothing.
  *
  *             forge script script/PositiveFlows.s.sol \
- *               --rpc-url <rpc> --broadcast --slow --disable-block-gas-limit
+ *               --rpc-url <rpc> --disable-block-gas-limit --skip-simulation
  *
- *         `--disable-block-gas-limit`: a forge script runs inside ONE
- *         simulated call frame, `run()`, so the frame's gas is the SUM of every
- *         scenario it runs (about 215M for the full set; tens of millions for
- *         one module). Forge caps a simulated call at the chain's block gas
- *         limit (30M on a default Anvil), so without the flag the frame runs
- *         dry part-way and the next heavy call fails out-of-gas inside a
- *         nested read, reported as whatever error that call's caller maps an
- *         out-of-gas to (measured: `LoanInitiationFailed()`). The flag lifts
- *         the cap for the SIMULATION only; each broadcast transaction is still
- *         estimated and sent on its own, far below any block limit. The same
- *         holds for a single module run on its own.
+ *         `--skip-simulation`: without it forge replays the recorded
+ *         transactions against the chain after the run, at the chain's own
+ *         clock, without the clock steps the scenarios took between posting
+ *         and filling, and reports "Simulated execution failed" although
+ *         every scenario passed.
  *
- *         A FRESH block on Anvil: simulation runs at the latest block's
- *         timestamp, while each broadcast transaction is mined at the
- *         wall-clock time. On an Anvil left idle (or restored with
- *         `evm_revert`) the latest block can be hours old, so a signed accept
- *         whose deadline is one hour past the simulated time arrives expired
- *         (`LibTiming.DeadlinePassed`). Run `cast rpc evm_mine` first. A live
- *         chain mines continuously and does not need it.
+ *         It cannot be broadcast. Its scenarios post terms and then fill them,
+ *         and a fill waits until the terms have stood the minimum age (#3412),
+ *         which one `forge script --broadcast` cannot do between its own
+ *         transactions; under `--broadcast` the first such fill stops the run
+ *         with `TermsAgeNeedsStagedRun` before anything is sent. The modules
+ *         that are staged ({PositiveFlowsStaged}: BasicLifecycle,
+ *         AdvancedCredit, LenderIntent, PositionHolder) broadcast one at a
+ *         time through `script/positive-flows/run-staged.sh <module>`.
+ *         {PositiveFlowsTimed} has its own stages (`run-timed.sh`), whose open
+ *         stage also fills a fresh offer and so stops the same way until it
+ *         moves onto the staged runner (#3574); the others run as this
+ *         simulation only until they are staged.
+ *
+ *         `--disable-block-gas-limit` is REQUIRED, and is not a workaround for
+ *         a contract fault: a forge script runs inside ONE simulated call
+ *         frame, `run()`, so the frame's gas is the SUM of every scenario it
+ *         runs (about 215M for the full set; tens of millions for one module).
+ *         Forge caps a simulated call at the chain's block gas limit (30M on a
+ *         default Anvil), so without the flag the frame runs dry part-way and
+ *         the next heavy call fails out-of-gas inside a nested read, reported
+ *         as whatever error that call's caller maps an out-of-gas to
+ *         (measured: `LoanInitiationFailed()`). The flag lifts the cap for the
+ *         SIMULATION only. The same holds for a single module run on its own,
+ *         and `run-staged.sh` passes it to every stage.
  *
  *         Composition: each `new` below is local to the script runner's own
  *         simulation and is not broadcast; Foundry broadcasts only inside the

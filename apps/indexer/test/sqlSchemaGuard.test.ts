@@ -203,7 +203,12 @@ describe('SQL-vs-schema guard (#1149)', () => {
     // `test/reorgGuard.test.ts`), and the signed book's `awaitingReplay`
     // count, which carries the same optional signer clause as the side
     // queries beside it (executed in `test/signedOfferRoutes.test.ts`).
-    expect(skipped.length).toBeLessThanOrEqual(30);
+    // Raised 30 → 31 for #3411 part 2: the pending lane's read carries the
+    // same optional `/activity` filters (actor, loan, offer, kinds) as the
+    // final feed's own query, as fixed clauses with every value bound.
+    // Executed against the REAL migrated schema by `test/pendingLane.test.ts`
+    // (unfiltered and filtered by loan).
+    expect(skipped.length).toBeLessThanOrEqual(31);
   });
 
   it('every static SQL statement prepares against the migrated schema', () => {

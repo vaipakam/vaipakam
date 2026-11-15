@@ -1132,6 +1132,43 @@ CODEOWNERS protection on `.github/workflows/` (`/.github/workflows/
 @Raja4Shekar`) is the orthogonal axis — requires owner review on
 workflow changes, regardless of who opens the PR.
 
+### 7.7 Secrets live in environments, not in the repository (#3541)
+
+A repository-level secret can be read by any workflow that runs, including
+one somebody adds or edits on a pushed branch. CODEOWNERS review (above)
+guards what MERGES, not what a branch RUNS, so it does not cover this. Every
+secret other than `GITHUB_TOKEN` therefore lives in a GitHub Environment
+whose deployment-branch rule admits only `main`, and only the job that needs
+it names that environment. A run of a branch's copy of a workflow, whatever
+the file says, receives none of them.
+
+| Environment | Branch rule | Secrets | Jobs |
+| --- | --- | --- | --- |
+| `main-only` | `main` | `ADD_TO_PROJECT_PAT`, `TG_OPS_BOT_TOKEN`, `TG_OPS_CHAT_ID`, `B2_ARCHIVE_READ_KEY_ID`, `B2_ARCHIVE_READ_KEY`, `B2_LEDGER_KEY_ID`, `B2_LEDGER_KEY`, `CLOUDFLARE_DEPLOY_READ_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` | add-to-project, project-board-reconcile, iteration-kickoff-sync, backup-ledger `watch`, deploy-lag and served-build `probe`, the shared `alert-issue` job, promote-one `candidate`, claude |
+| `site-production` | `main`, plus a required human reviewer | `CLOUDFLARE_PROMOTE_TOKEN`, `CLOUDFLARE_DEPLOY_READ_TOKEN` | promote-one `promote` |
+
+Each such job also checks `github.ref == 'refs/heads/main'`. That check is
+for a reader; the environment's branch rule is what holds, because a branch
+can edit the check away but cannot change the rule.
+
+Consequences worth knowing:
+
+- **A job that needs a secret cannot run on a pull request.** The probes keep
+  their `selftest` jobs for PRs, which need no secret.
+- **`@claude` answers issue and PR-conversation comments only.** The
+  inline review-comment and review events run the PULL REQUEST's own copy of
+  the workflow, so they cannot be admitted to `main-only`, and they were
+  dropped from `claude.yml`.
+- **Adding a secret:** add it to the environment, never to the repository,
+  and give the job that reads it `environment:` plus the ref check. A
+  reusable workflow reads an environment secret only in its own job that
+  names the environment; the caller cannot pass one.
+- **Each environment run records a deployment** on the repository's
+  Deployments page. That is expected noise, not a release.
+
+The keeper-bot repository follows the same rule for its one secret,
+`ADD_TO_PROJECT_PAT`.
+
 ---
 
 ## 8. Issue + label discipline

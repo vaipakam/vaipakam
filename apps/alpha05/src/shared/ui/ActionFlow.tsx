@@ -76,6 +76,11 @@ export interface ActionFlowProps {
    *  #3357, RB-PUBLIC-QUEUE): on a network that holds sent transactions in
    *  a public queue, the review says so before the wallet opens. */
   publicQueue?: boolean;
+  /** A step that clears what stopped the flow, offered on the failed view
+   *  beside Close (a risk-access step a dry run named, when the protocol
+   *  could not preview it): a refusal the reader can act on is never a
+   *  dead end. */
+  recover?: ReactNode;
 }
 
 /**
@@ -86,7 +91,7 @@ export interface ActionFlowProps {
  * retried silently: a receipt that cannot be read keeps its hash on screen
  * and offers "Check again", and nothing new is offered until it is resolved.
  */
-export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, describeAsset, explorer, next, after, onClose, gate, publicQueue }: ActionFlowProps) {
+export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, describeAsset, explorer, next, after, onClose, gate, publicQueue, recover }: ActionFlowProps) {
   const { text, format } = useCopy();
   const nowMs = useNow();
   const [checking, setChecking] = useState(false);
@@ -344,6 +349,7 @@ export function ActionFlow({ tx, identity, reviewedFor, receipt, recheck, descri
           <Notice tone="danger" tier="A">
             {format('flow.notSent', { reason: phase.message })}
           </Notice>
+          {recover}
           <p className="actions">
             <button type="button" className="btn" onClick={close}>
               {text('flow.close')}

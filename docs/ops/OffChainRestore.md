@@ -570,6 +570,7 @@ then deploy.
       | `REWARD_ZEROED_DAY_ENABLED` | zeroed-day pass skips — a mirror day its reward reporter deliberately zeroed is not quoted for compensation, so Base never funds it, and it never lapses, so its users neither recover the day nor see it retired | quoting each deliberately zeroed mirror day to Base for compensation, and lapsing a day whose compensation never came or came short once its window closes (#2984) |
       | `REWARD_DELIVERY_CONFLICT_ENABLED` | delivery-conflict pass skips — a mirror day whose delivered parts disagree on its whole is never skipped, so it never opens and every later day's claims and sweeps on that mirror wait behind it, and what landed for it stays in its epochs, unless someone makes those permissionless calls by hand | skipping each conflicted mirror day once the contract allows it and moving what landed for it to the mirror's recycle bucket (#2961) |
       | `REWARD_RETURN_TRANSPORT_ENABLED` | return-transport pass skips — an issued repatriation is not carried to its mirror or executed there, a cancelled one's ACK is not sent so Base keeps its availability reserved, and quarantined compensation and a retired chain's pending surplus stay on the mirror, unless someone makes those permissionless calls by hand | carrying each repatriation authorization's instruction, execution and cancellation ACK, and returning quarantined compensation and a retired mirror's pending surplus to Base in lane-bounded parts (#2984) |
+      | `REWARD_REMAINDER_RETURN_ENABLED` | the return-transport pass's closed-day remainder step skips — a transport batch's leftover stays on its mirror after its day is proven closed, until an operator acknowledges and classifies or returns it, or the step is armed again | returning each closed day's transport remainder from a mirror to the Base that sent it, in lane-bounded parts, paying the CCIP fee from the keeper key (#3360 part B); needs `REWARD_RETURN_TRANSPORT_ENABLED` too |
       | `REWARD_HORIZON_HEARTBEAT_ENABLED` | horizon heartbeat skips — no reward's claim-horizon clock is observed, so an armed horizon expires nothing and files no final notice (the safe direction: nothing is reaped) | touching every live reward entry about every 12 hours so its executable-time clock advances (#2517) |
       | `REWARD_ENTRY_SETTLE_ENABLED` | the heartbeat's close-out step skips — a closed entry whose remainder prices to nothing stays open with its capped-off commitments still counted, and a forfeited entry's reward stays in custody instead of reaching the recycle bucket, unless someone makes those permissionless calls by hand | retiring zero-priced remainders and sweeping forfeited loans' rewards to the recycle bucket (#2984); needs `REWARD_HORIZON_HEARTBEAT_ENABLED` too |
       | `PROTOCOL_UPKEEP_ENABLED` | upkeep pass skips — an expired buyback intent keeps its unfilled reservation out of the buyback budget, its allowance live and its live-commit slot held, and the tier LTV cache lapses to the governance tier caps 14 days after its last refresh, unless someone makes those permissionless calls by hand | rolling back expired buyback intents and keeping the tier LTV cache refreshed from the peer protocols (#2984) |
@@ -1687,8 +1688,17 @@ DELETE FROM asset_ranking; \
 DELETE FROM asset_ranking_run; \
 DELETE FROM indexer_deployment; \
 DELETE FROM indexer_chain_anchor; \
+DELETE FROM pending_activity_events; \
+DELETE FROM pending_activity_window; \
 DELETE FROM indexer_cursor"
 ```
+
+`pending_activity_events` and `pending_activity_window` (#3411 part 2) are the
+pending lane: the events the last caught-up pass found ABOVE the chain's safe
+block, and what that read covered. Nothing is born there, and every caught-up
+pass replaces both, so a cleared lane comes back on the first pass that
+catches up. Left in place it would list events from before the incident as
+pending until it went stale.
 
 `indexer_chain_anchor` (#3411) is the reorg guard's record of the block the
 scan cursor last advanced to and that block's hash. It goes with the cursor:
@@ -1740,6 +1750,20 @@ which keeps the chat linked now: the safe direction, since the change it
 cancels is the one that could silence a protected account's alerts. Its
 stated cost: an owner whose unlink or chat move was pending must ask again,
 and is not told that the earlier request was dropped.
+
+**Telegram links are no longer in this database (#1722).** Since migration
+`0091` the agent keeps every Telegram link, pending alert-chat change and
+`LOCK` request in its own Durable Object (`TelegramState`), and the shared
+copies above (`telegram_links`, `alert_channel_changes`,
+`protected_lock_requests` and `user_thresholds.tg_chat_id`) are empty until a
+later migration drops them. Nothing in this runbook restores that state: it is
+recovered through the Durable Object storage's own point-in-time restore (30
+days), described in `apps/agent/README.md`. One step follows from it: an
+archive taken BEFORE `0091` still carries the old copies, and importing one
+puts chat ids back where the keeper's old code reads them. After importing
+such an archive, run the four statements of
+`apps/indexer/migrations/0091_telegram_state_moved.sql` again against the
+shared database, so no chat the owner has since removed receives an alert.
 
 `protected_lock_readiness` (#3088) is the keeper's heartbeat for the
 Telegram `LOCK` step: it says, per chain, when a keeper able to sign last
@@ -2041,7 +2065,7 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`,
    `REWARD_SANCTIONS_KEEPER_ENABLED`,
    `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
-   `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_DELIVERY_CONFLICT_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `TIER_EXCLUSION_REFRESH_ENABLED`, `REWARD_INDEX_COMPACT_ENABLED`, `SANCTIONS_FLAG_REFRESH_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `PROTECTED_ACCOUNT_ENABLED`, `PROTECTED_LOCK_ENABLED`, `PROTECTED_ALERTS_ENABLED`, `STANDIN_REFRESH_ENABLED`, `POSITION_UPKEEP_ENABLED`, `BACKSTOP_FILL_ENABLED`, `EXPIRED_TEARDOWN_ENABLED`, `VAULT_BEACON_UPKEEP_ENABLED`, `PRICE_CHECKPOINT_ENABLED`, `ASSET_RANKINGS_ENABLED`, `REWARD_STAGING_UPKEEP_ENABLED`, `REWARD_STAGING_UNWIND_ENABLED`, `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
+   `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_DELIVERY_CONFLICT_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_REMAINDER_RETURN_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `TIER_EXCLUSION_REFRESH_ENABLED`, `REWARD_INDEX_COMPACT_ENABLED`, `SANCTIONS_FLAG_REFRESH_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `PROTECTED_ACCOUNT_ENABLED`, `PROTECTED_LOCK_ENABLED`, `PROTECTED_ALERTS_ENABLED`, `STANDIN_REFRESH_ENABLED`, `POSITION_UPKEEP_ENABLED`, `BACKSTOP_FILL_ENABLED`, `EXPIRED_TEARDOWN_ENABLED`, `VAULT_BEACON_UPKEEP_ENABLED`, `PRICE_CHECKPOINT_ENABLED`, `ASSET_RANKINGS_ENABLED`, `REWARD_STAGING_UPKEEP_ENABLED`, `REWARD_STAGING_UNWIND_ENABLED`, `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
    file (`sudo -e /etc/vaipakam/keeper.env`), never by assuming what it held.
    Never paste a value from that file anywhere.
 

@@ -68,6 +68,16 @@ export const ACCEPT_ERROR_NAMES = [
   'PriceGuardRefused',
   // #3443 — transient: clears once the terms have stood the minimum age.
   'TermsTooFresh',
+  // #3552 — reported only by `previewSignedOfferAccept`, the signed-offer
+  // preview this app does not call; `previewAccept` never returns them.
+  'SignedOfferMalformed',
+  'SignedOfferDeadlinePassed',
+  'SignedOfferNonceUsed',
+  'SignedOfferConsumed',
+  'SignedOfferBadSignature',
+  'SignedOfferUnsupportedShape',
+  'SignedOfferMakerShort',
+  'SignedOfferBelowMinimumValue',
 ] as const;
 
 export type AcceptErrorName = (typeof ACCEPT_ERROR_NAMES)[number];
@@ -120,6 +130,17 @@ const ACCEPT_ERROR_COPY_KEY: Record<AcceptErrorName, AcceptBlockedKey | null> = 
   CadenceNotAdmitted: 'cadenceNotAdmitted',
   PriceGuardRefused: 'priceGuardRefused',
   TermsTooFresh: 'termsTooFresh',
+  // #3552 — never produced by the preview this app reads (see the names
+  // above), so, like `RetiredVaultUpgradeRequired`, no copy; one would
+  // still render the generic refusal, never an all-clear.
+  SignedOfferMalformed: null,
+  SignedOfferDeadlinePassed: null,
+  SignedOfferNonceUsed: null,
+  SignedOfferConsumed: null,
+  SignedOfferBadSignature: null,
+  SignedOfferUnsupportedShape: null,
+  SignedOfferMakerShort: null,
+  SignedOfferBelowMinimumValue: null,
 };
 
 /**

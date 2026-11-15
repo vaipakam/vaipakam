@@ -5,8 +5,8 @@
  * A market is one lending token against one collateral token for one term,
  * both legs fungible, as the index groups the open book (`/offers/markets`).
  * The index caps that list at its deepest markets and says when it did; its
- * counts include gasless signed orders, which this page does not list yet,
- * so the page says that once, above every view.
+ * counts include gasless signed orders, which the desk lists apart from the
+ * ladder (OFF-60), so the page says that once, above every view.
  *
  * A market's ladder is the index's market-scoped page of open offers
  * (`/offers/active`), read a bounded number of pages deep, with expired

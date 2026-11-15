@@ -297,25 +297,28 @@ CENSUS_LABEL=2026-05-14-eth-pre-deploy \
 Output rows (`CENSUS_PRE,` prefix):
 
 ```
-CENSUS_PRE,<label>,<chainId>,<tier>,<refAssetCount>,<cachedLtvBps>,<effectiveLtvBps>,<libraryDefaultBps>
+CENSUS_PRE,<label>,<chainId>,<tier>,<refAssetCount>,<cachedLtvBps>,<effectiveLtvBps>,<defaultBps>,<ceilingBps>
 ```
 
 A separate `CENSUS_PRE_PEERS,` row echoes the per-chain peer addresses
 the script used, for the audit-package per-chain verification step.
 
-What to look for in the output:
+What to look for in the output. Since #3547 each tier has a default
+(50 / 60 / 65%) and a governance ceiling (55 / 69 / 82%); a usable peer
+reading replaces the default, lower or higher, and the ceiling bounds
+either.
 
 - **`cachedLtvBps > 0`** — the refresh accepted the per-tier
-  consensus reading. `effectiveLtvBps` will equal `cachedLtvBps`.
+  consensus reading. `effectiveLtvBps` is `cachedLtvBps`, or
+  `ceilingBps` when the reading is above the ceiling.
 - **`cachedLtvBps = 0` but `effectiveLtvBps > 0`** — the refresh
-  rejected the candidate (out-of-band, insufficient readings, or no
-  reference assets); the loan-init gate would fall back to the
-  library default. Investigate via the `TierLtvCacheRefreshRejected`
-  event the refresh emitted to determine which rejection reason
-  applied.
-- **`effectiveLtvBps == libraryDefaultBps`** for every tier — the
-  cache is either rejected or empty; on a fresh deploy, this is
-  the expected pre-refresh state.
+  rejected the tier (insufficient readings or no reference assets);
+  the loan-init gate falls back to `defaultBps`. Investigate via the
+  `TierLtvCacheRefreshRejected` event the refresh emitted to determine
+  which rejection reason applied.
+- **`effectiveLtvBps == defaultBps`** for every tier — the cache is
+  either rejected or empty; on a fresh deploy, this is the expected
+  pre-refresh state.
 
 Pitfalls (in addition to the post-deploy variant's):
 

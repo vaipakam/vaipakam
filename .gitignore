@@ -91,6 +91,10 @@ contracts/deployments/*/.archive/
 # chain shows nothing it names is still open.
 # It names positions on one rehearsal chain and is meaningless elsewhere.
 contracts/deployments/*/positive-flows-timed.json
+# The staged-run record of a post-then-fill positive-flow module (#3502):
+# written by `PositiveFlowsStaged.stage()` and removed by its read-only
+# `finish()` once the last stage has landed. Same scope as the one above.
+contracts/deployments/*/positive-flows-staged-*.json
 
 .vscode/
 

@@ -45,6 +45,7 @@ import {
 import { describeFailure } from '@vaipakam/lib/errorDescription';
 import { batchCalls, encodeBatchCalls } from '@vaipakam/lib/multicall';
 import { isRpcIdentityVerified, verifyRpcChainIdentity } from '@vaipakam/lib/rpcIdentity';
+import { stateStub } from './telegramState/object';
 import {
   PauseLogTooLongError,
   describePauseCredit,
@@ -146,7 +147,6 @@ export const MAX_SENDS_PER_LOAN = 4;
  */
 export const MAX_D1_PER_LOAN = 5;
 
-/** Everything one loan can spend: its sends and its own bookkeeping. */
 export const MAX_SUBREQUESTS_PER_LOAN = MAX_SENDS_PER_LOAN + MAX_D1_PER_LOAN;
 
 /**
@@ -169,6 +169,19 @@ export const MAX_SUBREQUESTS_PER_LOAN = MAX_SENDS_PER_LOAN + MAX_D1_PER_LOAN;
  * rather than hoped for.
  */
 export const EXAMINED_MARK_RESERVE = 1;
+
+/**
+ * The reads one batch costs before any loan in it is messaged: the batched
+ * chain status read and, with a bot token, one read of the Telegram chats
+ * linked to the batch's wallets (#1722). The chats live in the agent's own
+ * Durable Object, and a call to it is a subrequest like any other, so the
+ * batch reads them once rather than once per subscriber.
+ */
+export const BATCH_READS = 2;
+
+/** The chats linked to one batch's wallets, keyed by lower-cased wallet, or
+ *  `unreadable` when the state object did not answer. */
+type BatchChats = ReadonlyMap<string, string | null> | 'unreadable';
 
 /**
  * How many candidates one batched chain read covers, and how many such reads
@@ -267,7 +280,6 @@ export type PassRecord =
 interface UserPushRow {
   wallet: string;
   push_channel: string | null;
-  tg_chat_id: string | null;
   locale: string;
   /** #1033 — 0 = the user opted out of due-date pre-notifies. */
   notify_maturity_approaching: number;
@@ -291,6 +303,8 @@ interface TickBudget {
  * CALLS: the indexer cursor, the candidate query, and the write that marks
  * what the first batch examined (#2213 r27 `4016129218`; #2230). The D1 half
  * was missing from this number for as long as the budget believed D1 was free.
+ * PLUS ONE call to the agent's Telegram state object for the first batch's
+ * linked chats (#1722), a subrequest like the rest.
  *
  * Which loans this pass has already examined costs nothing here: the marks
  * live on the loan rows and arrive with the candidate query (#2230), where the
@@ -308,7 +322,7 @@ interface TickBudget {
  * this test runs after the verdict, where the probe has already charged
  * itself or not.
  */
-export const CHAIN_OPENING_REQUESTS_AFTER_IDENTITY = 8;
+export const CHAIN_OPENING_REQUESTS_AFTER_IDENTITY = 9;
 
 export async function runPeriodicPreNotify(env: Env): Promise<void> {
   const chains = getChainConfigs(env).filter(
@@ -783,7 +797,7 @@ async function preNotifyChain(
     // Room for this batch's read, a loan's worth of sends AND the write that
     // marks what the batch examined: reading a batch this tick cannot afford
     // to act on spends a request for nothing.
-    budget.remaining >= 1 + MAX_SUBREQUESTS_PER_LOAN + EXAMINED_MARK_RESERVE &&
+    budget.remaining >= BATCH_READS + MAX_SUBREQUESTS_PER_LOAN + EXAMINED_MARK_RESERVE &&
     batches < MAX_EXAMINE_BATCHES
   ) {
     const batch = toExamine.slice(cursor, cursor + EXAMINE_BATCH);
@@ -811,10 +825,11 @@ async function preNotifyChain(
       break;
     }
 
+    const chats = await readBatchChats(env, chain.id, batch, budget);
     const outcome = await messageBatch(env, chain, batch, states, budget, now, {
       pauseLog,
       windowSec,
-    });
+    }, chats);
     reminded += outcome.reminded;
     unreached += outcome.unreached;
     noRoute += outcome.noRoute;
@@ -879,7 +894,7 @@ async function preNotifyChain(
     // "stopping". And it is the OUTBOUND-REQUEST allowance now, not a send
     // allowance — reads come out of the same counter since r13.
     const capped =
-      budget.remaining < 1 + MAX_SUBREQUESTS_PER_LOAN + EXAMINED_MARK_RESERVE
+      budget.remaining < BATCH_READS + MAX_SUBREQUESTS_PER_LOAN + EXAMINED_MARK_RESERVE
         ? `the invocation's outbound-request allowance is down to ${budget.remaining}`
         : null;
     const scanned = batches >= MAX_EXAMINE_BATCHES ? 'the scan reached its read cap' : null;
@@ -1029,6 +1044,8 @@ async function messageBatch(
   /** The pause log read at this tick's head, and the lead-time window — what
    *  the chain's own start needs to re-derive each deadline (#2808). */
   clock: { pauseLog: PauseLog; windowSec: number },
+  /** The chats linked to the batch's wallets (#1722). */
+  chats: BatchChats,
 ): Promise<{
   consumed: number;
   reminded: number;
@@ -1198,10 +1215,10 @@ async function messageBatch(
     // query; subscribers usually overlap with HF-watcher rows so
     // the table is hot in cache.
     const borrowerOutcome = await pushIfSubscribed(
-      env, chain, row, row.borrower, daysUntil, pauseCredit, 'borrower', budget,
+      env, chain, row, row.borrower, daysUntil, pauseCredit, 'borrower', budget, chats,
     );
     const lenderOutcome = await pushIfSubscribed(
-      env, chain, row, row.lender, daysUntil, pauseCredit, 'lender', budget,
+      env, chain, row, row.lender, daysUntil, pauseCredit, 'lender', budget, chats,
     );
     // THREE OUTCOMES, COUNTED SEPARATELY (#2213 r10 `4013087415`).
     // "Reminded" is a claim about a person having been told, so it needs a
@@ -2213,6 +2230,29 @@ interface DeliveryOutcome {
   tgUnconfigured: boolean;
 }
 
+/**
+ * #1722 — the chats linked to every wallet in `batch`, in one call to the
+ * Telegram state object. Read even without a bot token, so a subscriber with
+ * a linked chat this deployment cannot reach is still disclosed. A failed
+ * read answers `unreadable`.
+ */
+async function readBatchChats(
+  env: Env,
+  chainId: number,
+  batch: readonly DueLoan[],
+  budget: TickBudget,
+): Promise<BatchChats> {
+  const wallets = [...new Set(batch.flatMap((c) => [c.row.borrower, c.row.lender]).map((w) => w.toLowerCase()))];
+  budget.remaining -= 1; // the state object call is a subrequest too
+  try {
+    const found = await stateStub(env).chatsOf(wallets.map((wallet) => ({ wallet, chainId })));
+    return new Map(wallets.map((w, i) => [w, found[i] ?? null]));
+  } catch (err) {
+    console.error('[agent] pre-notify chat lookup failed:', err instanceof Error ? err.name : 'error');
+    return 'unreadable';
+  }
+}
+
 async function pushIfSubscribed(
   env: Env,
   chain: { id: number; name: string },
@@ -2222,12 +2262,13 @@ async function pushIfSubscribed(
   pauseCredit: bigint,
   role: 'borrower' | 'lender',
   budget: TickBudget,
+  chats: BatchChats,
 ): Promise<DeliveryOutcome> {
   let sub: UserPushRow | null;
   try {
     budget.remaining -= 1; // the subscriber lookup — D1 is a subrequest
     sub = await env.DB.prepare(
-      `SELECT wallet, push_channel, tg_chat_id, locale, notify_maturity_approaching
+      `SELECT wallet, push_channel, locale, notify_maturity_approaching
        FROM user_thresholds
        WHERE chain_id = ? AND wallet = ?`,
     )
@@ -2240,7 +2281,7 @@ async function pushIfSubscribed(
     // listThresholdsForChain carries.
     budget.remaining -= 1; // the legacy fallback lookup — also a subrequest
     const legacy = await env.DB.prepare(
-      `SELECT wallet, push_channel, tg_chat_id, locale
+      `SELECT wallet, push_channel, locale
        FROM user_thresholds
        WHERE chain_id = ? AND wallet = ?`,
     )
@@ -2310,9 +2351,15 @@ async function pushIfSubscribed(
   // charges for it.
   const pushSigner = sub.push_channel ? env.PUSH_CHANNEL_PK : undefined;
   const pushRail = pushRailConfigOf(env);
+  // #1722 — the linked chat lives in the agent's Telegram state object, not
+  // on the shared row; the batch read it once (`readBatchChats`). A failed
+  // read is a deferred rail (counted below), so the checkpoint stays
+  // unstamped and the next tick tries again; it is never read as "no chat".
+  const tgUnreadable = chats === 'unreadable';
+  const tgChat = tgUnreadable ? null : (chats.get(wallet.toLowerCase()) ?? null);
   const tgRoute =
-    sub.tg_chat_id && env.TG_BOT_TOKEN
-      ? { chat: sub.tg_chat_id, token: env.TG_BOT_TOKEN }
+    tgChat && env.TG_BOT_TOKEN
+      ? { chat: tgChat, token: env.TG_BOT_TOKEN }
       : null;
   let attempted = false;
   let delivered = false;
@@ -2320,7 +2367,7 @@ async function pushIfSubscribed(
   /** Rails the service ANSWERED and refused — a credential or target to fix. */
   let refusedRails = 0;
   /** Rails the service deferred — 429 or 5xx. Clears without anyone acting. */
-  let transientRails = 0;
+  let transientRails = tgUnreadable ? 1 : 0;
   // WHETHER THE PUSH RAIL IS USABLE AT ALL, answered by the sender rather than
   // by inspecting the env (#2213 r23 `4015375741`). See where this is returned.
   let pushSignerUnusable = false;
@@ -2432,7 +2479,7 @@ async function pushIfSubscribed(
     // precisely for that case; sending it to the user bucket is the same
     // misattribution r19 and r22 removed, arriving through the one door left.
     pushUnconfigured: Boolean(sub.push_channel) && (!env.PUSH_CHANNEL_PK || pushSignerUnusable),
-    tgUnconfigured: Boolean(sub.tg_chat_id) && !env.TG_BOT_TOKEN,
+    tgUnconfigured: Boolean(tgChat) && !env.TG_BOT_TOKEN,
   };
 }
 

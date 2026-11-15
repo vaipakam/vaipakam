@@ -17,8 +17,6 @@ import {LibOfferAdmission} from "../libraries/LibOfferAdmission.sol";
 import {OfferBookFacet} from "./OfferBookFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -358,9 +356,8 @@ contract OfferCreateFacet is
         uint64 validUntil
     ) external nonReentrant whenNotPaused returns (uint256 offerId) {
         LibTiming.requireDeadline(validUntil);
-        address vault;
-        (offerId, vault) = _createOfferSetup(msg.sender, params);
-        _pullCreatorAssetsClassic(offerId, msg.sender, params, vault);
+        (offerId, ) = _createOfferSetup(msg.sender, params);
+        _pullCreatorAssetsClassic(offerId, msg.sender, params);
         _createOfferFinish(msg.sender, offerId, params, LibOfferAdmission.Route.UserPosted);
     }
 
@@ -390,9 +387,8 @@ contract OfferCreateFacet is
         if (msg.sender != address(this)) {
             revert UnauthorizedCrossFacetCall();
         }
-        address vault;
-        (offerId, vault) = _createOfferSetup(creator, params);
-        _pullCreatorAssetsClassic(offerId, creator, params, vault);
+        (offerId, ) = _createOfferSetup(creator, params);
+        _pullCreatorAssetsClassic(offerId, creator, params);
         _createOfferFinish(creator, offerId, params, LibOfferAdmission.Route.OnBehalf);
     }
 
@@ -1042,20 +1038,16 @@ contract OfferCreateFacet is
     ///      asset type. Permit2 callers skip this and invoke
     ///      `LibPermit2.pull` with the signed permit instead.
     ///
-    ///      ERC-20 deposits route through
-    ///      `VaultFactoryFacet.vaultDepositERC20` (the protocol-wide
-    ///      chokepoint) so the `protocolTrackedVaultBalance` counter
-    ///      ticks at every legitimate inflow. NFTs (ERC-721 / ERC-1155)
-    ///      bypass the counter — they're tracked per-loan via
-    ///      `loan.collateralAsset / tokenId / quantity` references
-    ///      rather than fungible balance, so the counter doesn't
-    ///      apply to them. The `vault` argument stays in the
-    ///      signature because NFT receivers still target it directly.
+    ///      Every deposit routes through the vault's own deposit entries
+    ///      (`VaultFactoryFacet.vaultDepositERC20` for ERC-20s, and
+    ///      `vaultDepositERC721` / `vaultDepositERC1155` via
+    ///      {LibFacet.depositNftToVault} for NFTs, #3539), which measure the
+    ///      arrival before the tracked ledger records it, so an offer never
+    ///      stands on an asset its vault does not hold.
     function _pullCreatorAssetsClassic(
         uint256 offerId,
         address creator,
-        LibVaipakam.CreateOfferParams calldata params,
-        address vault
+        LibVaipakam.CreateOfferParams calldata params
     ) private {
         if (params.offerType == LibVaipakam.OfferType.Lender) {
             if (params.assetType == LibVaipakam.AssetType.ERC20) {
@@ -1080,8 +1072,8 @@ contract OfferCreateFacet is
                 params.assetType == LibVaipakam.AssetType.ERC721
                     || params.assetType == LibVaipakam.AssetType.ERC1155
             ) {
-                _pullNftIntoVault(
-                    params.assetType, params.lendingAsset, creator, vault, params.tokenId, params.quantity
+                LibFacet.depositNftToVault(
+                    params.assetType, params.lendingAsset, creator, params.tokenId, params.quantity
                 );
             } else {
                 revert InvalidAssetType();
@@ -1135,11 +1127,10 @@ contract OfferCreateFacet is
                     params.collateralAssetType == LibVaipakam.AssetType.ERC721
                         || params.collateralAssetType == LibVaipakam.AssetType.ERC1155
                 ) {
-                    _pullNftIntoVault(
+                    LibFacet.depositNftToVault(
                         params.collateralAssetType,
                         params.collateralAsset,
                         creator,
-                        vault,
                         params.collateralTokenId,
                         params.collateralQuantity
                     );
@@ -1655,26 +1646,5 @@ contract OfferCreateFacet is
      */
     function getUserVault(address user) public returns (address proxy) {
         return LibUserVault.getOrCreate(user);
-    }
-
-
-    /// @dev Pull a rental or collateral NFT from `owner`'s wallet into
-    ///      `owner`'s vault (the Diamond as approved operator) and record it
-    ///      in the tracked ledger, which bounds every vault withdrawal.
-    function _pullNftIntoVault(
-        LibVaipakam.AssetType kind,
-        address asset,
-        address owner,
-        address vault,
-        uint256 tokenId,
-        uint256 quantity
-    ) private {
-        if (kind == LibVaipakam.AssetType.ERC721) {
-            IERC721(asset).safeTransferFrom(owner, vault, tokenId);
-            quantity = 1;
-        } else {
-            IERC1155(asset).safeTransferFrom(owner, vault, tokenId, quantity, "");
-        }
-        LibVaipakam.recordVaultDeposit(owner, asset, tokenId, quantity);
     }
 }

@@ -43,8 +43,11 @@ describe('the mirrored vocabulary', () => {
     expect(acceptBlockReason(ACCEPT_OK)).toBeNull();
     for (let code = 1; code < ACCEPT_ERROR_NAMES.length; code += 1) {
       // #3204 — a retired member is never produced and deliberately reads
-      // as the generic refusal; it is pinned on its own below.
+      // as the generic refusal; it is pinned on its own below. #3552 — so
+      // are the signed-offer members: only the signed-offer preview reports
+      // them, and this app reads `previewAccept`.
       if (ACCEPT_ERROR_NAMES[code].startsWith('Retired')) continue;
+      if (ACCEPT_ERROR_NAMES[code].startsWith('SignedOffer')) continue;
       const reason = acceptBlockReason(code);
       expect(reason, `${ACCEPT_ERROR_NAMES[code]} has no copy`).toBeTruthy();
       // Never fall through to the generic message for a member we know
@@ -56,6 +59,13 @@ describe('the mirrored vocabulary', () => {
     expect(acceptBlockReason(ACCEPT_ERROR_NAMES.indexOf('RetiredVaultUpgradeRequired'))).toBe(
       copy.errors.acceptBlocked.unknown,
     );
+    // #3552 — the signed-offer members, appended after `TermsTooFresh`,
+    // read as the generic refusal here: never as an all-clear.
+    const firstSigned = ACCEPT_ERROR_NAMES.indexOf('SignedOfferMalformed');
+    expect(firstSigned).toBe(ACCEPT_ERROR_NAMES.indexOf('TermsTooFresh') + 1);
+    for (let code = firstSigned; code < ACCEPT_ERROR_NAMES.length; code += 1) {
+      expect(acceptBlockReason(code)).toBe(copy.errors.acceptBlocked.unknown);
+    }
   });
 
   it('treats an unrecognised code as a refusal, never as an all-clear', () => {
