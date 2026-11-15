@@ -143,7 +143,7 @@ On the lender side the two overlap, and the intent is the stronger tool (re-lend
 
 No contract change. Alternatives considered: convert every lender offer into an intent in the contract (rejected: removes direct accept of a visible lender offer and the rate-range midpoint, and does nothing for rentals, sales or the borrower side); keep two separate app flows (rejected: the user has to learn which feature they need before they can lend).
 
-## 4b. Item E — several intents per asset pair (#3626, proposed 2026-11-15, awaiting owner approval)
+## 4b. Item E — several intents per asset pair (#3626, owner approved 2026-11-15)
 
 **Question (owner, 2026-11-15):** can a rate ladder be done on intents, so that the intent is the default for lenders apart from the stated exceptions?
 
@@ -180,7 +180,7 @@ Unpriced or NFT collateral, NFT rentals, loan-purchase offers, a deal a borrower
 ## 5. Order of work
 
 1. #3618 + #3619 (intent end date and pro-rata opt-in) — one contract PR.
-1a. Item E (#3626, once approved) — its own contract PR straight after, since it is mechanical but touches every intent entry point.
+1a. Item E (#3626) — its own contract PR straight after, since it is mechanical but touches every intent entry point.
 2. Item A — contract PR (fresh deploy with the same batch).
 3. Item B1 and Item C — app and indexer (app thread). Item B2 — keeper thread.
 
