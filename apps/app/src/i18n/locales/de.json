@@ -2672,7 +2672,6 @@
         "LoanDefaulted": "Kredit ausgefallen",
         "OwedAtDefaultRecorded": "Betrag beim Ausfall festgehalten",
         "OwedAtInternalMatchRecorded": "Durch internes Matching getilgter Betrag festgehalten",
-        "LoanLiquidated": "Kredit liquidiert",
         "BackstopAbsorbedLoan": "Kredit vom Backstop absorbiert",
         "LoanExtended": "Kredit verlängert",
         "LoanRefinanced": "Kredit refinanziert",

@@ -2672,7 +2672,6 @@
         "LoanDefaulted": "대출 채무 불이행",
         "OwedAtDefaultRecorded": "부도 당시 채무액 기록됨",
         "OwedAtInternalMatchRecorded": "내부 매칭 정산 금액 기록",
-        "LoanLiquidated": "대출 청산됨",
         "BackstopAbsorbedLoan": "backstop이 loan을 흡수함",
         "LoanExtended": "loan 연장됨",
         "LoanRefinanced": "대출 리파이낸싱됨",

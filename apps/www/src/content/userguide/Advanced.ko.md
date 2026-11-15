@@ -2193,6 +2193,8 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 검토 화면은 `getClaimable`(대출자 행은 이전 판매자 몫을 이미 뺀 값이며 `getSellersShareOfLenderClaim`을 함께 표시), `getBorrowerSurplusClaim`, `getLoanCollateralLien`을 읽고, 청구를 시뮬레이션합니다. 시뮬레이션은 제재 검사도 적용합니다. 목록은 포지션 토큰을 따릅니다. `getUserDashboardClaimables`는 기록된 당사자의 청구를 나열하므로, 나열된 행은 지갑이 해당 측을 보유하는 동안에만 남고, 다른 사람에게서 받은 종료된 대출 포지션은 청구를 직접 읽습니다. 완료 카드는 `LenderFundsClaimed` / `BorrowerFundsClaimed`, `BorrowerSurplusClaimed`, `LoanSettled`와 지갑으로의 토큰 전송을 읽습니다. 보호 계정 모드의 호출자에 대해서는 `PayoutQueued`(계정 자신의 금고), `PayoutHeldInVault`(잠긴 계정 또는 가득 찬 대기열), `PaymentCreditedToVault`(다른 당사자의 금고)를 읽습니다. FallbackPending 대출에서는 대출자 청구가 청구 시점 내부 매칭을 실행해 행을 다시 쓸 수 있으므로, 완료 카드는 전송을 프로토콜 자체 기록과 비교합니다.
 
+"Claim and withdraw"는 두 개의 거래입니다. 청구는 보유자 자신의 금고에 입금합니다. 각 이동은 클래스 PositionHolder의 `VaultOutflow`로 기록되며, `to`는 보유자의 금고, `ref`는 대출 ID, `delivered`는 도착한 금액입니다. 청구가 채굴되면 앱은 청구한 대출에 대해 자산별로(NFT는 토큰 ID별로) `delivered`를 합산하고, 그 금액으로 `withdrawFromVault`를 자산마다 하나씩 엽니다. 금고 출금 자체의 읽기와 시험 실행을 그대로 쓰므로 `withdrawableNow`가 계속 한도가 되고 보호 모드는 계속 대기열에 넣습니다. 전부 받기는 대출 호출에 대해서만 같은 일을 합니다. "Ready to claim"은 청구 판정이 지금 열려 있는 각 측의 지급을 합산하며, 기다리거나 읽지 못한 측은 따로 셉니다.
+
 <a id="claim-everything"></a>
 
 ### 모두 받기: 확인하는 항목
@@ -2504,3 +2506,21 @@ NFT는 대여 기간 내내 내 볼트에 머물며, 대여가 열려 있는 동
 ### 복구: 포기가 기록되는 방식
 
 `disownUntracked(kind, asset, tokenId)`에는 볼트와 0보다 큰 미반영 수치만 필요합니다. 일시 중지 확인, 제재 심사, 관리자 확인이 없어 교체된 지갑과 막힌 볼트도 쓸 수 있으며, 서명도 필요 없습니다. `UntrackedDisowned(account, asset, tokenId, observedAmount, blockNumber)`를 내보내고, 완료 카드는 영수증의 이 이벤트에서 기록된 수량을 읽습니다.
+
+<a id="analytics-figures"></a>
+
+### 분석: 수치를 읽는 방법
+
+페이지는 최신 블록을 잡고 그 블록 번호에서 모든 Diamond 뷰를 읽습니다: `getProtocolStats`, `getProtocolTVL`, `getProtocolHealth`, `getGlobalCounts`(게시된 오퍼는 `totalOffersCreated`), 자산별 `getLifetimeLendingTotals`와 함께 `getLifetimeLendingAssets`, 그리고 `getNumeraireSymbol`입니다. 배포의 첫 블록은 배포 기록에서 가져옵니다. 각 그룹은 따로 확정되므로 실패한 뷰는 그 자리에서 밝힙니다. 페이지는 각 자산의 누적 원금과 이자를 같은 블록에서 `getNumeraireValue(asset, amount, false)`로 평가하며, 이는 프로토콜 합계와 같은 반올림이므로 평가된 부분의 합은 `totalVolumeLentNumeraire`와 `totalInterestPaidNumeraire`가 됩니다. 평가가 되돌려지는 자산은 제외된 것으로 이름을 밝힙니다. 페이지는 `defaultRateBps`를 보여 주지 않습니다. 그 카운터인 `terminalBadOrSettledCount`는 대출이 Defaulted 또는 Settled에 들어갈 때 늘어나고, 일반 상환 뒤 청구까지 마치면 역시 Settled에 이르므로 채무 불이행과 정상 종료를 구분하지 못합니다. `getProtocolTVL`의 세 번째 값은 NFT 담보 진행 대출의 개수이지 가치가 아닙니다. 이자는 차입자가 낼 때마다 기록되는 `lifetimeInterestPaid`이며, 대출자의 담보 회수는 포함되지 않습니다.
+
+<a id="analytics-fees"></a>
+
+### 분석: 수수료와 보관을 읽는 방법
+
+수수료율은 `getTreasuryFeeBps`와 `getLoanInitiationFeeBps`입니다. 수수료 수치는 `getTreasuryMetrics`이며, 시작 이후 합계는 `feeLedgerTotal`이고, 하루와 한 주 수치는 수수료 원장을 끝에서부터 최대 `MAX_FEE_EVENTS_ITER`(10,000)개 항목까지 훑으므로 그 이상이면 하한입니다. 각 원장 항목은 최선 노력 규칙에 따른 발생 시점의 기준 통화 가치를 담고, 평가할 수 없었으면 0입니다. 표시되는 트레저리는 `getTreasury`, 현재 볼트 코드가 지정하는 주소입니다. 볼트에서 징수한 수수료는 그 볼트 자체의 코드가 지정한 트레저리로 가고, `recordTreasuryAccrual`은 수수료가 Diamond에 도착할 때마다 `treasuryBalances`에 적립하므로, 이전 코드에 고정된 볼트나 이전 설정 때문에 `getTreasury`가 무엇을 가리키든 그곳에 수수료가 보유될 수 있습니다. 그래서 페이지는 언제나 `getTreasuryMetrics`의 보유 수치를 진행 중인 대출의 자산에 대해서만 합산해 보여 주며, `getTreasuryConvertConfig`의 마지막 전환과 목표도 함께 보여 줍니다. 배포 기록과 다른 트레저리는 표시됩니다.
+
+<a id="analytics-vpfi"></a>
+
+### 분석: VPFI 정보를 읽는 방법
+
+토큰은 Diamond의 `getVPFIToken`, 홈 네트워크는 그 `isCanonicalVpfiChain`이며, 둘 다 페이지의 블록에서 읽습니다. 0 주소 토큰은 설정되지 않은 것으로 봅니다. 페이지는 토큰에서 `name`, `symbol`, `decimals`, `totalSupply`, `owner`, `paused`를 읽고, 홈 네트워크에서는 `cap`, `INITIAL_MINT`, `minter`도 읽습니다. 발행 가능량은 `cap`에서 `totalSupply`를 뺀 값으로, 0 아래로 내려가지 않습니다. `mint`는 `minter`만, `setMinter`는 `owner`만 호출할 수 있으므로, 발행자 변경이 타임락을 기다리는 것은 `owner`가 배포의 `timelock`일 때뿐입니다. 브리지된 토큰은 소각·발행 미러이며, 그 공급량은 홈 풀이 그것을 위해 잠근 양입니다. 주소 목록은 지원 네트워크별 배포 기록의 `vpfiToken`이며, 기록에 `vpfiMirror`가 없는 곳을 홈으로 표시합니다. 기록과 다른 토큰이나 230,000,000 VPFI가 아닌 `cap`은 표시됩니다.

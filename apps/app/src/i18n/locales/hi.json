@@ -2672,7 +2672,6 @@
         "LoanDefaulted": "Loan default हुआ",
         "OwedAtDefaultRecorded": "default के समय बकाया राशि दर्ज",
         "OwedAtInternalMatchRecorded": "इंटरनल मैचिंग से चुकाई गई राशि दर्ज",
-        "LoanLiquidated": "Loan liquidate हुआ",
         "BackstopAbsorbedLoan": "Backstop द्वारा loan absorb हुआ",
         "LoanExtended": "Loan extend हुआ",
         "LoanRefinanced": "Loan refinance हुआ",

@@ -79,7 +79,6 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   // carries no value leg (the figure is stated on the claim), and the same
   // LOW priority keeps it from ever representing the transaction.
   OwedAtInternalMatchRecorded: { label: 'Amount cleared by internal matching recorded', category: 'loan-close', priority: 8 },
-  LoanLiquidated: { label: 'Loan liquidated', category: 'loan-default', priority: 90 },
   BackstopAbsorbedLoan: { label: 'Loan absorbed by backstop', category: 'loan-default', priority: 88 },
   LoanExtended: { label: 'Loan extended', category: 'loan-modify', priority: 75 },
   LoanRefinanced: { label: 'Loan refinanced', category: 'loan-modify', priority: 85 },

@@ -2679,6 +2679,8 @@ The form checks the amount against `calculateMaxWithdrawable`, which is zero for
 
 The review reads `getClaimable` (the lender row already net of past sellers, with `getSellersShareOfLenderClaim` beside it), `getBorrowerSurplusClaim` and `getLoanCollateralLien`, and runs the claim as a dry run, which also applies the sanctions screens. The list follows the position token: `getUserDashboardClaimables` lists the recorded party's claims, so a listed row is kept only while the wallet holds that side, and a held position on an ended loan received from someone else has its claim read directly. The finish card reads `LenderFundsClaimed` / `BorrowerFundsClaimed`, `BorrowerSurplusClaimed` and `LoanSettled`, and the token transfers to the wallet; for a caller in protected account mode it reads `PayoutQueued` (the account's own vault), `PayoutHeldInVault` (a locked account or a full queue) or `PaymentCreditedToVault` (another party's vault). On a FallbackPending loan the lender's claim may run a claim-time internal match that rewrites the row, so the finish card compares the transfers with the protocol's own record.
 
+"Claim and withdraw" is two transactions. The claim credits the holder's own vault: each movement is recorded as `VaultOutflow` with class PositionHolder, `to` the holder's vault, `ref` the loan id and `delivered` what arrived. After the claim mines, the app sums `delivered` per asset (per token id for an NFT) over the claimed loans and opens `withdrawFromVault` for that figure, one asset at a time, with the vault withdrawal's own reads and dry run: `withdrawableNow` still bounds it and protected mode still queues it. Claim everything does the same for its loan calls only. "Ready to claim" sums the payouts of every side whose claim verdict is open now; a side that waits or could not be read is counted apart.
+
 <a id="claim-everything"></a>
 
 ### Claim Everything: What Is Checked
@@ -2999,3 +3001,21 @@ The figure is `untrackedHolding(user, asset, tokenId)` (token 0 for an ERC-20), 
 ### Recover: How a Disowning Is Recorded
 
 `disownUntracked(kind, asset, tokenId)` needs only a vault and an uncounted figure above zero. It has no pause check, no sanctions screen and no manager check, so a replaced wallet and a barred vault can still use it, and it takes no signature. It emits `UntrackedDisowned(account, asset, tokenId, observedAmount, blockNumber)`, and the finish card reads the recorded amount from that event in the receipt.
+
+<a id="analytics-figures"></a>
+
+### Analytics: How the Figures Are Read
+
+The page takes the latest block and reads every Diamond view at that block number: `getProtocolStats`, `getProtocolTVL`, `getProtocolHealth`, `getGlobalCounts` (offers posted is `totalOffersCreated`), `getLifetimeLendingAssets` with `getLifetimeLendingTotals` per asset, and `getNumeraireSymbol`; the deployment's first block comes from the deployment record. Each group settles on its own, so a failed view is stated in its place. The page values each asset's lifetime principal and interest with `getNumeraireValue(asset, amount, false)` at the same block, the rounding the protocol's totals use, so the valued parts add up to `totalVolumeLentNumeraire` and `totalInterestPaidNumeraire`; an asset whose valuation reverts is named as left out. The page does not show `defaultRateBps`: its counter, `terminalBadOrSettledCount`, rises when a loan enters Defaulted or Settled, and an ordinary repayment followed by the claims also reaches Settled, so it does not separate defaults from normal closes. `getProtocolTVL`'s third value is a count of open loans with NFT collateral, not a value. Interest is `lifetimeInterestPaid`, written as borrowers pay; a lender's recovery of collateral is not in it.
+
+<a id="analytics-fees"></a>
+
+### Analytics: How Fees and Custody Are Read
+
+The fee rates are `getTreasuryFeeBps` and `getLoanInitiationFeeBps`. The fee figures are `getTreasuryMetrics`: the total since the start is `feeLedgerTotal`, and the day and week figures tail-scan the fee ledger for at most `MAX_FEE_EVENTS_ITER` (10,000) entries, so past that they are a lower bound. Each ledger entry carries the fee's numeraire value at accrual through the best-effort rule, 0 when it could not be valued. The treasury shown is `getTreasury`, the address the current vault code names. A fee drawn from a vault goes to the treasury that vault's own code names, and `recordTreasuryAccrual` credits `treasuryBalances` whenever a fee arrives at the Diamond, so a vault pinned to older code, or an earlier configuration, can leave fees held there whatever `getTreasury` says. The page therefore always shows `getTreasuryMetrics`' held figure, summed over the assets of open loans only, with `getTreasuryConvertConfig`'s last conversion and targets. A treasury that differs from the deployment record is flagged.
+
+<a id="analytics-vpfi"></a>
+
+### Analytics: How the VPFI Facts Are Read
+
+The token is the Diamond's `getVPFIToken`, and the home network is its `isCanonicalVpfiChain`, both at the page's block; a zero token reads as none set. From the token the page reads `name`, `symbol`, `decimals`, `totalSupply`, `owner` and `paused`, and on the home network also `cap`, `INITIAL_MINT` and `minter`; mintable is `cap` less `totalSupply`, never below zero. `mint` is open only to `minter`, and `setMinter` only to `owner`, so a change of minter waits on the timelock only when `owner` is the deployment's `timelock`. A bridged token is the burn-and-mint mirror, whose supply is what the home pool locked for it. The address list is the deployment record's `vpfiToken` per served network, marked home where the record carries no `vpfiMirror`. A token that differs from the record, or a `cap` other than 230,000,000 VPFI, is flagged.

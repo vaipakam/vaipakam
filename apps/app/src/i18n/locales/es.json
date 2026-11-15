@@ -2672,7 +2672,6 @@
         "LoanDefaulted": "Préstamo en default",
         "OwedAtDefaultRecorded": "Importe adeudado al impago registrado",
         "OwedAtInternalMatchRecorded": "Importe cancelado por conciliación interna registrado",
-        "LoanLiquidated": "Préstamo liquidado",
         "BackstopAbsorbedLoan": "Préstamo absorbido por el backstop",
         "LoanExtended": "Préstamo extendido",
         "LoanRefinanced": "Préstamo refinanciado",
