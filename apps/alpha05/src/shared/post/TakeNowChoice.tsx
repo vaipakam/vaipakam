@@ -5,8 +5,8 @@ import type { TokenMetaMap } from '../reads/tokens';
 import type { PostSide } from './postModel';
 
 const KEYS = {
-  borrower: { title: 'request.takeNowTitle', lead: 'request.takeNowLead', post: 'request.takeNowPost', back: 'request.takeNowBack' },
-  lender: { title: 'lendOffer.takeNowTitle', lead: 'lendOffer.takeNowLead', post: 'lendOffer.takeNowPost', back: 'lendOffer.takeNowBack' },
+  borrower: { title: 'request.takeNowTitle', lead: 'request.takeNowLead', post: 'request.takeNowPost', back: 'request.takeNowBack', stale: 'borrow.matchesStale' },
+  lender: { title: 'lendOffer.takeNowTitle', lead: 'lendOffer.takeNowLead', post: 'lendOffer.takeNowPost', back: 'lendOffer.takeNowBack', stale: 'lend.matchesStale' },
 } as const;
 
 /**
@@ -15,11 +15,14 @@ const KEYS = {
  * offer is shown as the offer list shows it, with its own take button, which
  * opens the ordinary accept review on that offer's terms; "post anyway" opens
  * the post review the reader asked for. The choice is the reader's: nothing
- * is taken or posted from here without a press.
+ * is taken or posted from here without a press. When the latest re-read of
+ * the book failed (`stale`), the offers shown are from the read before, and
+ * the step says so, as the offer list does.
  */
 export function TakeNowChoice({
   side,
   picks,
+  stale,
   matcherBps,
   meta,
   takeDisabled,
@@ -29,6 +32,7 @@ export function TakeNowChoice({
 }: {
   side: PostSide;
   picks: MatchRow[];
+  stale: boolean;
   matcherBps: bigint | null;
   meta: TokenMetaMap | null;
   takeDisabled: boolean;
@@ -42,6 +46,11 @@ export function TakeNowChoice({
     <section className="take-now" aria-labelledby="take-now-title" data-testid="take-now">
       <h2 id="take-now-title">{text(k.title)}</h2>
       <p className="tier-a">{text(k.lead)}</p>
+      {stale && (
+        <p className="tier-b" data-testid="take-now-stale">
+          {text(k.stale)}
+        </p>
+      )}
       {picks.length === 0 ? (
         // The page re-reads the book: an offer that fitted can be taken or
         // cancelled while the reader decides, and is then no longer shown.

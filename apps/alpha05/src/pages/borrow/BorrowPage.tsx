@@ -269,6 +269,7 @@ export function BorrowPage() {
           <TakeNowChoice
             side="borrower"
             picks={takeNowPicks(choice, view.data)}
+            stale={view.error !== null}
             matcherBps={view.data?.matcherBps ?? null}
             meta={meta}
             takeDisabled={takeDisabled}

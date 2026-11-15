@@ -118,12 +118,13 @@ describe('take it now at posting (#3622 B1)', () => {
     expect(fitsDraft(d, row({ ...req, interestRateBpsMax: 550n }))).toBe(false);
     expect(fitsDraft(d, row({ ...req, collateralAmount: 3_999n }))).toBe(false);
   });
-  it('never picks a blocked, ended or unpreviewed offer, nor for a draft with the Full tariff or an NFT leg', () => {
+  it('never picks a blocked, ended or unpreviewed offer, nor for a draft with the Full tariff, a price-move guard or an NFT leg', () => {
     const o = offer();
     expect(fitsDraft(draft(), row(o, { blocked: { kind: 'moved' } }))).toBe(false);
     expect(fitsDraft(draft(), row(o, { state: 'accepted' as MatchRow['state'] }))).toBe(false);
     expect(fitsDraft(draft(), row(o, { preview: null }))).toBe(false);
     expect(fitsDraft(draft('borrower', { tariff: { maxCStar: 1n } as unknown as PostDraft['parsed']['tariff'] }), row(o))).toBe(false);
+    expect(fitsDraft(draft('borrower', { guardBps: 300 }), row(o))).toBe(false);
     expect(fitsDraft({ ...draft(), pair: { lending, collateral, leg: { kind: 'erc721', tokenId: 1n } } }, row(o))).toBe(false);
   });
   it('picks at most a few, in the list’s order, and none without a read', () => {

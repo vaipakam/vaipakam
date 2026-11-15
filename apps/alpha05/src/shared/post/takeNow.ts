@@ -24,7 +24,8 @@
  *   than it asked.
  * A draft that opts into the Full fee tariff is never offered a take: a
  * direct accept here never opts into it, so taking would drop a choice the
- * reader made. Only offers the page could read in full, that are open and
+ * reader made. A draft that arms a price-move guard is never offered a take
+ * either: a direct accept carries no guard, so taking would drop it. Only offers the page could read in full, that are open and
  * that this wallet can take as they stand (no blocker, a preview read) are
  * picked.
  */
@@ -40,7 +41,7 @@ export function fitsDraft(draft: PostDraft, row: MatchRow): boolean {
   const { parsed, pair, side } = draft;
   const o = row.offer;
   if (row.state !== 'open' || row.blocked !== null || row.preview === null) return false;
-  if (pair.leg.kind !== 'erc20' || parsed.tariff !== null) return false;
+  if (pair.leg.kind !== 'erc20' || parsed.tariff !== null || parsed.guardBps !== null) return false;
   if (o.offerType !== (side === 'borrower' ? OFFER_LENDER : OFFER_BORROWER)) return false;
   if (o.lendingAsset.toLowerCase() !== pair.lending.toLowerCase() || o.collateralAsset.toLowerCase() !== pair.collateral.toLowerCase()) return false;
   if (o.durationDays !== BigInt(parsed.durationDays)) return false;

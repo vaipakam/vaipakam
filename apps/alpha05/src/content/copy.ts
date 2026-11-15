@@ -3968,7 +3968,7 @@ export const copy = {
     ),
     takeNowTitle: B('A borrower’s request already fits your offer'),
     takeNowLead: A(
-      'Funding it opens the loan now, on that request’s own terms shown below, each inside what you were about to offer. Posting your offer instead waits for a borrower to take it or, while matching is on, for a match, which lends at the midpoint of your rate and the borrower’s.',
+      'Funding it opens the loan now, on that request’s own terms shown below, each inside what you were about to offer. Posting your offer instead waits for a borrower to take it or, while matching is on, for a match with a request whose rate range includes your rate, which lends at your rate.',
     ),
     takeNowPost: B('Post my offer anyway'),
     takeNowBack: B('Back to the form'),
@@ -4397,7 +4397,7 @@ export const copy = {
     proRataNote: A('With pro-rata interest, a match can also pair your request with a lender’s pro-rata offer for a longer term. Your loan always runs for exactly the term you ask for.'),
     takeNowTitle: B('A lender’s offer already fits your request'),
     takeNowLead: A(
-      'Taking it opens the loan now, on that offer’s own terms shown below, each inside what you were about to ask for. Posting your request instead waits for a lender to take it or, while matching is on, for a match, which lends at the midpoint of your rate and the lender’s.',
+      'Taking it opens the loan now, on that offer’s own terms shown below, each inside what you were about to ask for. Posting your request instead waits for a lender to take it or, while matching is on, for a match with an offer whose rate range includes your rate, which lends at your rate.',
     ),
     takeNowPost: B('Post my request anyway'),
     takeNowBack: B('Back to the form'),

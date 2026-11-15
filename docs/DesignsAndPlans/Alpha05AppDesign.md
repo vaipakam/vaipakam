@@ -2698,12 +2698,16 @@ above. Each resolves here, so a route reviewer needs no private file:
   amount range, a rate no worse than the reader's, and collateral no worse
   than the reader's for that amount. It must also be open and takeable by
   this wallet as it stands. A draft that opts into the Full fee tariff is
-  never offered a take, because a direct accept here never opts into it.
+  never offered a take, because a direct accept here never opts into it,
+  and neither is a draft that arms a price-move guard, because a direct
+  accept carries no guard.
   Each fitting offer (at most three, in the list's own order) is shown as
   the offer list shows it, with its own take button, which opens the
   ordinary accept review on that offer's own terms. Beside it the page says
-  that posting waits for a taker or, while matching is on, a match, which
-  lends at the midpoint of the two rates. "Post anyway" opens the post
+  that posting waits for a taker or, while matching is on, a match with an offer whose rate range includes the reader's rate, which
+  lends at that rate (a match lends at the midpoint of where the two rate
+  ranges overlap, and a draft posts one rate). If the latest re-read of the
+  offers failed, the step says the list is from the read before. "Post anyway" opens the post
   review the reader asked for, and "Back to the form" keeps what was typed.
   Nothing is taken or posted from this step without a press. An offer that
   stops fitting while the reader decides is dropped, and the step says so.
