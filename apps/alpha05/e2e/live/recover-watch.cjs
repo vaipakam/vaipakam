@@ -3,7 +3,7 @@
 // as <address> on $LIVE_CHAIN_ID, opens /recover prefilled with <asset> (and
 // <tokenId> for an NFT), as the Vault page's link does, and prints the
 // protocol's figure for what sits uncounted, what stops adopting, a barred
-// vault's notice, which actions are offered and the pause line. When
+// vault's notice (or a lifted bar's), which actions are offered and the pause line. When
 // disowning is offered it opens the disown review and prints its receipt,
 // then closes it: the watched wallet cannot sign, so nothing is sent. Checks
 // nothing scrolls sideways and saves full-page screenshots per device.
@@ -39,6 +39,7 @@ async function session(b, opts, label) {
     `standard unread: ${await p.getByTestId('recover-standard-failed').count()} need id: ${await p.getByTestId('recover-need-id').count()} failed: ${await or(text(p.getByTestId('recover-failed')), '(no)')}`,
   );
   console.log(`barred: ${await or(text(p.getByTestId('recover-barred')), '(no)')}`);
+  console.log(`ban lifted: ${await or(text(p.getByTestId('recover-ban-lifted')), '(no)')}`);
   console.log(`adopt stop: ${await or(text(p.getByTestId('recover-adopt-stop')), '(none)')}`);
   const adopt = p.getByTestId('recover-adopt-open');
   const disown = p.getByTestId('recover-disown-open');

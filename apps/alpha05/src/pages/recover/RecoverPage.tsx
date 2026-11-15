@@ -11,7 +11,7 @@ import { parsePasted } from '../../shared/offers/assets';
 import { tokenAmount, useTokenMeta } from '../../shared/reads/tokens';
 import { useOwnRead } from '../../shared/reads/useOwnRead';
 import { AdoptAsset, useAdoptHeld } from '../../shared/recover/AdoptAsset';
-import { adoptStops, disownStops, isBarred, readRecoverFacts, type RecoverFacts, type RecoverSubject } from '../../shared/recover/adopt';
+import { adoptStops, banLifted, barredBy, disownStops, readRecoverFacts, type RecoverFacts, type RecoverSubject } from '../../shared/recover/adopt';
 import { DISOWN_KEY, DisownAsset } from '../../shared/recover/DisownAsset';
 import { subjectName } from '../../shared/recover/recoverReceipt';
 import { FrozenNotice, useFrozenState } from '../../shared/sanctions/FrozenNotice';
@@ -192,12 +192,17 @@ function SubjectCard({ chain, own, subject }: { chain: SupportedChain; own: OwnS
         </p>
       )}
       {f !== null && <Figure facts={f} amount={amount} />}
-      {f !== null && isBarred(f) && (
+      {f !== null && barredBy(f) !== null && (
         <div data-testid="recover-barred">
           <Notice tone="danger" tier="A">
-            {format('recover.barredNotice', { source: f.bannedSource as Hex })}
+            {format('recover.barredNotice', { source: barredBy(f) as Hex })}
           </Notice>
         </div>
+      )}
+      {f !== null && banLifted(f) !== null && (
+        <p className="tier-a" data-testid="recover-ban-lifted">
+          {format('recover.banLiftedNotice', { source: banLifted(f) as Hex })}
+        </p>
       )}
       {f !== null && !adoptOpen && !disownOpen && <Actions facts={f} busy={busy} onAdopt={() => adopt.open(subject)} onDisown={() => setDisownFor(subject)} />}
       {f !== null && adoptOpen && <AdoptAsset chain={chain} own={own} facts={f} onClose={() => adopt.open(null)} />}

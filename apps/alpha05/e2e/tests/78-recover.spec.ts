@@ -9,7 +9,9 @@
  * EIP-712 type and sends the adoption; the finish card reads the credit from
  * the transaction's record and the protocol's figure drops to nothing. A
  * source the screen flags is never sent. A vault an earlier adoption barred
- * says so, names the source, offers no adoption, and can still disown.
+ * says so, names the source, offers no adoption, and can still disown; once
+ * the source is de-listed the record stays but the bar lifts, and the page
+ * says so and offers adopting again.
  *
  * Runs on the desktop and the phone project. The screen is a contract placed
  * with `anvil_setCode` at a fixed address and set as the Diamond's oracle by
@@ -111,7 +113,7 @@ test('an asset sent straight to the vault is adopted after the declaration, and 
   await fitsWidth(page);
 });
 
-test('a flagged source is never sent, and a barred vault says so and can still disown', async ({ launchWallet }) => {
+test('a flagged source is never sent, a barred vault says so and can still disown, and a de-listing lifts the bar', async ({ launchWallet }) => {
   test.setTimeout(240_000);
   const sc = scenario({ lender: 'freshLender' });
   const me = sc.address('lender');
@@ -172,5 +174,15 @@ test('a flagged source is never sent, and a barred vault says so and can still d
   await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
   await expect(finish).toContainText('Disowned: WETH, 0.001 WETH recorded');
   expect(flags.sentTransactions).toBe(sent + 1);
+  await fitsWidth(page);
+
+  // The source is de-listed: the protocol keeps the record but lifts the
+  // bar, and the page says so and offers adopting again.
+  await finish.getByRole('button', { name: 'Close' }).click();
+  await anvilRpc('anvil_setCode', [ORACLE, CLEAN]);
+  await expect(card.getByTestId('recover-ban-lifted')).toContainText(getAddress(FLAGGED), { timeout: 60_000 });
+  await expect(card.getByTestId('recover-barred')).toHaveCount(0);
+  await expect(card.getByTestId('recover-adopt-stop')).toHaveCount(0);
+  await expect(card.getByTestId('recover-adopt-open')).toBeVisible();
   await fitsWidth(page);
 });

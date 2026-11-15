@@ -1487,9 +1487,15 @@ above. Each resolves here, so a route reviewer needs no private file:
   shows the declaration word for word, takes a typed CONFIRM, and signs
   the protocol's own EIP-712 type; a source the screen flags or cannot
   answer for is never sent, because sending would bar the vault or revert.
+  The protocol's dry run passes for a flagged source (it bars rather than
+  reverts), so the app asks the screen itself before the signature and
+  again after it, as the last read before sending.
   Disowning asks no declaration, signature or screen and stays open to a
-  replaced wallet, a barred vault and a pause. A barred vault states its
-  declared source. Both finish cards read `UntrackedAdopted`,
+  replaced wallet, a barred vault and a pause. A vault is barred only
+  while the screen still flags the source an earlier adoption declared:
+  the protocol keeps that record after a de-listing, so the page reads the
+  screen for it, states a barred vault's source, says when the bar has
+  lifted, and treats an unanswered screen as unread. Both finish cards read `UntrackedAdopted`,
   `VaultBannedFromAdoption` or `UntrackedDisowned` for this account and
   asset. While the protocol is paused the page states the escape route
   (LN-57) and links the Vault page, which carries it.

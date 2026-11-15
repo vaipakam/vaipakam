@@ -19,6 +19,8 @@ import {
   adoptionMessage,
   adoptRecorded,
   adoptStops,
+  banLifted,
+  barredBy,
   disownRecorded,
   disownStops,
   type AdoptReview,
@@ -45,7 +47,7 @@ const facts = (over: Partial<RecoverFacts> = {}): RecoverFacts => ({
   block: 10n,
   vault: '0x00000000000000000000000000000000000000b1',
   untracked: 500n,
-  bannedSource: null,
+  ban: null,
   frozen: null,
   protection: {
     enabled: false,
@@ -132,7 +134,8 @@ describe('what stops adopting and disowning', () => {
     expect(adoptStops(facts({ vault: null }), copy)[0]).toContain('no vault');
     expect(adoptStops(facts({ protection: { ...facts().protection!, retired: true } }), copy)[0]).toContain('retired');
     expect(adoptStops(facts({ eoaStyle: false }), copy)[0]).toContain('contract account');
-    expect(adoptStops(facts({ bannedSource: FROM }), copy)[0]).toContain('barred');
+    expect(adoptStops(facts({ ban: { source: FROM, screen: 'flagged' } }), copy)[0]).toContain('barred');
+    expect(adoptStops(facts({ ban: 'unread' }), copy)[0]).toContain('could not be read');
     expect(adoptStops(facts({ frozen: 'flagged' }), copy)[0]).toContain('flags this wallet');
     expect(adoptStops(facts({ screenSet: false }), copy)[0]).toContain('no sanctions screen set');
     expect(adoptStops(facts({ paused: true }), copy)[0]).toContain('paused');
@@ -141,8 +144,28 @@ describe('what stops adopting and disowning', () => {
     expect(adoptStops(facts({ untracked: null }), copy)[0]).toContain('could not be read');
   });
 
+  it('bars the vault only while the screen still flags the earlier source', () => {
+    expect(barredBy(facts({ ban: { source: FROM, screen: 'flagged' } }))).toBe(FROM);
+    // The protocol keeps the record after a de-listing; the bar lifts.
+    const lifted = facts({ ban: { source: FROM, screen: 'clean' } });
+    expect(barredBy(lifted)).toBeNull();
+    expect(banLifted(lifted)).toBe(FROM);
+    expect(adoptStops(lifted, copy)).toEqual([]);
+    // A screen that cannot answer for it says so, never that it is lifted.
+    const unread = facts({ ban: { source: FROM, screen: 'unavailable' } });
+    expect(barredBy(unread)).toBeNull();
+    expect(banLifted(unread)).toBeNull();
+    expect(adoptStops(unread, copy)[0]).toContain('cannot say now');
+  });
+
   it('leaves disowning open to a replaced wallet, a contract account, a barred vault and a pause', () => {
-    const f = facts({ protection: { ...facts().protection!, retired: true }, eoaStyle: false, bannedSource: FROM, paused: true, screenSet: false });
+    const f = facts({
+      protection: { ...facts().protection!, retired: true },
+      eoaStyle: false,
+      ban: { source: FROM, screen: 'flagged' },
+      paused: true,
+      screenSet: false,
+    });
     expect(disownStops(f, copy)).toEqual([]);
     expect(disownStops(facts({ untracked: 0n }), copy)).toHaveLength(1);
     expect(disownStops(facts({ vault: null }), copy)[0]).toContain('no vault');

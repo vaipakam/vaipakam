@@ -13,7 +13,9 @@
  * What the adoption stands on, read through the wallet's connection at one
  * block: the wallet's vault, the protocol's figure for what of this asset
  * sits there uncounted (`untrackedHolding`), whether an earlier adoption's
- * declared source barred the vault (`vaultBannedSource`), the wallet's own
+ * declared source barred the vault (`vaultBannedSource`, with the screen's
+ * answer for that source now: the protocol keeps the record after a
+ * de-listing and bars the vault only while the source is flagged), the wallet's own
  * standing with the sanctions screen, whether a replacement retired the
  * wallet (a replaced wallet lost every right over its account, adoption
  * included, while it may still disown), the account's code (the protocol
@@ -28,9 +30,11 @@
  * that cannot answer, refuses the adoption. A source the screen flags makes
  * the adoption credit nothing and bar the vault until the source is
  * de-listed (the protocol records it rather than reverting, so the bar
- * holds). The app states that and does not send such an adoption; if the
- * screen flags the source only after the review, the transaction's record
- * says which happened.
+ * holds). A dry run therefore passes for a flagged source, so the app asks
+ * the screen itself before the signature and again after it, as the last
+ * read before sending, and sends only while it reads clean. A flag that
+ * lands after that is the protocol's to find when it confirms, and the
+ * transaction's record says which happened.
  */
 import { parseAbi, parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
 import { AdminFacetABI, ProfileFacetABI, VaultDepositoryFacetABI, VaultFactoryFacetABI } from '@vaipakam/contracts/abis';
@@ -59,6 +63,13 @@ const ZERO = '0x0000000000000000000000000000000000000000';
  *  screen cannot answer, or its answer; null when unread. */
 export type ScreenRead = 'unset' | 'unavailable' | 'flagged' | 'clean';
 
+/** An earlier adoption's flagged source, and the screen's answer for it at
+ *  the facts' block. */
+export interface BanRecord {
+  source: Hex;
+  screen: ScreenRead;
+}
+
 /** The facts the page and both actions stand on, at one block. */
 export interface RecoverFacts {
   subject: RecoverSubject;
@@ -68,9 +79,12 @@ export interface RecoverFacts {
   /** The protocol's figure for what of this asset sits in the vault
    *  uncounted; null when unread. */
   untracked: bigint | null;
-  /** The source an earlier adoption declared that barred this vault; null
-   *  when none; 'unread' when the view gave no answer. */
-  bannedSource: Hex | null | 'unread';
+  /** The source an earlier adoption declared from a flagged address, with
+   *  the screen's answer for it now; null when no adoption ever did;
+   *  'unread' when the view gave no answer. The protocol keeps the record
+   *  after a de-listing and bars the vault only while the screen still
+   *  flags that source, so the record alone is not the bar. */
+  ban: BanRecord | null | 'unread';
   frozen: FrozenState;
   /** The account's protected mode (whether a replacement retired it, and
    *  whether the mode is on); null when unread. */
@@ -109,12 +123,14 @@ export async function readRecoverFacts(c: PublicClient, diamond: Hex, account: H
     read<Hex>(DEPOSITORY, 'adoptionAckTextHash'),
     read<bigint>(DEPOSITORY, 'adoptionNonce', [account]),
   ]);
+  const ban: RecoverFacts['ban'] =
+    banned === null ? 'unread' : banned.toLowerCase() === ZERO ? null : { source: banned, screen: await readSourceScreen(c, diamond, banned, block) };
   return {
     subject,
     block,
     vault: vault.toLowerCase() === ZERO ? null : vault,
     untracked,
-    bannedSource: banned === null ? 'unread' : banned.toLowerCase() === ZERO ? null : banned,
+    ban,
     frozen: frozenState(posture),
     protection,
     eoaStyle: isEoaStyle(code),
@@ -140,8 +156,23 @@ export async function readSourceScreen(c: PublicClient, diamond: Hex, source: He
   return flagged ? 'flagged' : 'clean';
 }
 
-/** Whether the wallet's vault is barred by an earlier adoption's source. */
-export const isBarred = (f: Pick<RecoverFacts, 'bannedSource'>): boolean => f.bannedSource !== null && f.bannedSource !== 'unread';
+/** The earlier adoption's source while the screen still flags it, which is
+ *  when the protocol bars the vault; null otherwise. */
+export const barredBy = (f: Pick<RecoverFacts, 'ban'>): Hex | null =>
+  f.ban !== null && f.ban !== 'unread' && f.ban.screen === 'flagged' ? f.ban.source : null;
+
+/** The earlier adoption's source once the screen reads it clean: the
+ *  protocol keeps the record but the bar is lifted. Null otherwise. */
+export const banLifted = (f: Pick<RecoverFacts, 'ban'>): Hex | null => (f.ban !== null && f.ban !== 'unread' && f.ban.screen === 'clean' ? f.ban.source : null);
+
+/** What the screen's answer for a declared source means for an adoption,
+ *  in words; null when it reads clean, the one answer that lets it go. */
+export function sourceScreenStop(screen: ScreenRead, copy: Pick<CopyAccess, 'text'>): string | null {
+  if (screen === 'unset') return copy.text('recover.screenUnset');
+  if (screen === 'unavailable') return copy.text('recover.sourceUnavailable');
+  if (screen === 'flagged') return copy.text('recover.sourceFlagged');
+  return null;
+}
 
 /** What stops this wallet adopting this asset, in words, most fundamental
  *  first (empty when nothing the page reads does). The amount and the
@@ -152,8 +183,9 @@ export function adoptStops(f: RecoverFacts, copy: Copy): string[] {
   if (f.protection === null) return [text('recover.modeUnread')];
   if (f.protection.retired) return [text('recover.retired')];
   if (f.eoaStyle === false) return [text('recover.contractAccount')];
-  if (f.bannedSource === 'unread') return [text('recover.banUnread')];
-  if (isBarred(f)) return [text('recover.barred')];
+  if (f.ban === 'unread') return [text('recover.banUnread')];
+  if (barredBy(f) !== null) return [text('recover.barred')];
+  if (f.ban !== null && f.ban.screen === 'unavailable') return [text('recover.banScreenUnread')];
   if (f.frozen === 'flagged') return [text('recover.flagged')];
   if (f.frozen === 'unknown' || f.frozen === 'outage') return [text('recover.selfScreenUnread')];
   if (f.screenSet === false) return [text('recover.screenUnset')];
@@ -201,15 +233,13 @@ export async function readAdoptReview(own: OwnStateClient, diamond: Hex, draft: 
 
 /** What stops the review, in words (empty when nothing does). */
 export function adoptBlockers(r: AdoptReview, copy: Copy, amountText: (v: bigint) => string): string[] {
-  const { text, format } = copy;
+  const { format } = copy;
   const stops = adoptStops(r.facts, copy);
   if (stops.length > 0) return stops;
   const want = adoptAmount(r.draft);
   if (r.facts.untracked !== null && want > r.facts.untracked) return [format('recover.overUntracked', { untracked: amountText(r.facts.untracked) })];
-  if (r.sourceScreen === 'unset') return [text('recover.screenUnset')];
-  if (r.sourceScreen === 'unavailable') return [text('recover.sourceUnavailable')];
-  if (r.sourceScreen === 'flagged') return [text('recover.sourceFlagged')];
-  return [];
+  const screen = sourceScreenStop(r.sourceScreen, copy);
+  return screen === null ? [] : [screen];
 }
 
 /** What a re-read found changed, in words, or null when nothing the review

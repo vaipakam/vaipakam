@@ -1806,6 +1806,9 @@ export const copy = {
     barredNotice: A(
       'An adoption declared {{source}} as its source, and the sanctions screen flags it. Your vault stays barred, as a flagged wallet is, until that address is de-listed. Nothing more can be adopted until then.',
     ),
+    banLiftedNotice: A(
+      'An earlier adoption declared {{source}} as its source, which the sanctions screen flagged then. It no longer flags it, so your vault is no longer barred.',
+    ),
     adoptOpen: B('Adopt'),
     disownOpen: B('Disown'),
     disownNote: B('Disowning records on the chain that you do not claim it. It moves and credits nothing.'),
@@ -1815,6 +1818,9 @@ export const copy = {
     contractAccount: A('This wallet is a contract account, which cannot sign the declaration an adoption needs. It can still disown.'),
     banUnread: A('Whether an earlier adoption barred this vault could not be read, so adopting is not offered yet.'),
     barred: A('An earlier adoption’s source is flagged, so this vault is barred from adopting until it is de-listed.'),
+    banScreenUnread: A(
+      'The sanctions screen cannot say now whether the source an earlier adoption declared is still flagged, so adopting is not offered yet.',
+    ),
     flagged: A('The sanctions screen flags this wallet, so it cannot adopt.'),
     selfScreenUnread: A('The sanctions screen could not be read for this wallet, so adopting is not offered yet.'),
     screenUnset: A('This network has no sanctions screen set, and the protocol refuses an adoption it cannot screen.'),
@@ -1852,7 +1858,9 @@ export const copy = {
     leaves: A('It then leaves your vault only through an ordinary withdrawal.'),
     leavesProtected: A('It then leaves your vault only through an ordinary withdrawal, which waits out your protected account’s delay.'),
     declaration: A('You sign a declaration that the source is yours or authorized by you, and it is recorded with the adoption.'),
-    screenAgain: A('The protocol screens the source again when it confirms. If the screen flags it then, nothing is credited and your vault is barred.'),
+    screenAgain: A(
+      'The app screens the source again after you sign, just before sending. The protocol screens it once more when it confirms; if the screen flags it then, nothing is credited and your vault is barred.',
+    ),
     modeUnreadNote: A('Whether your account runs protected mode could not be read; it decides whether a later withdrawal waits.'),
     disownMovesNothing: A('Disowning moves and credits nothing. The asset stays in your vault, uncounted.'),
     disownPublic: A('It records on the chain, for anyone to see, that you do not claim it.'),
@@ -1860,6 +1868,7 @@ export const copy = {
     confirmLabel: B('Type {{word}} to sign this declaration'),
     dryRunRefused: A('The protocol’s own check refused this: {{reason}}'),
     stepSign: B('sign the declaration.'),
+    rescreenStopped: A('The source was screened again, and nothing was sent: {{reason}}'),
     stepSend: B('send the adoption.'),
     stepDisown: B('send the disowning.'),
     legCounted: B('Counted in your vault: {{what}}'),

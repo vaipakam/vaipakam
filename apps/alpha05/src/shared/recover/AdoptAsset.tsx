@@ -37,6 +37,8 @@ import {
   adoptionMessage,
   adoptRecorded,
   readAdoptReview,
+  readSourceScreen,
+  sourceScreenStop,
   type AdoptDraft,
   type AdoptReview,
   type RecoverFacts,
@@ -229,6 +231,16 @@ function AdoptFlow({ chain, own, draft, onChange, onClose }: AdoptProps & { draf
       const stop = (reason: string): never => {
         throw new StatedRefusal({ code: 'AdoptStopped', reason, reopensAt: null, remedy: null });
       };
+      // The protocol credits nothing and bars the vault when the declared
+      // source is flagged as it confirms, and it does that without
+      // reverting, so a dry run passes for a flagged source. The app
+      // therefore asks the screen itself, here and again after the
+      // signature, and sends only while it reads clean.
+      const screened = async (): Promise<void> => {
+        const screen = await own.read((c) => readSourceScreen(c, diamond, d.source)).then((x) => x.value);
+        const why = sourceScreenStop(screen, copy);
+        if (why !== null) stop(format('recover.rescreenStopped', { reason: why }));
+      };
       // The nonce and the deadline are read right before signing, from the
       // chain, so a review left open never signs a used nonce or a lapsed
       // deadline.
@@ -241,6 +253,7 @@ function AdoptFlow({ chain, own, draft, onChange, onClose }: AdoptProps & { draf
         }))
         .then((x) => x.value);
       if (nonce === null) return stop(text('recover.nonceUnread'));
+      await screened();
       setStep(format('accept.stepOf', { n: '1', total: '2', what: text('recover.stepSign') }));
       const signature = await signTypedData(config, {
         account,
@@ -250,11 +263,14 @@ function AdoptFlow({ chain, own, draft, onChange, onClose }: AdoptProps & { draf
         message: adoptionMessage(account, d, nonce, deadline),
       });
       // The protocol's dry run with the real signature: its own verdict on
-      // this adoption now, the source screen included.
+      // everything else about this adoption now.
       const call = adoptCall(d, deadline, signature);
       const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, ...call, account }));
       if (dry.kind === 'reverted') return stop(format('recover.dryRunRefused', { reason: refusalFromError(dry.error).reason }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
+      // The last read before the send: the screen may have flagged the
+      // source while the wallet was signing.
+      await screened();
       setStep(format('accept.stepOf', { n: '2', total: '2', what: text('recover.stepSend') }));
       return sendWrite(config, { address: diamond, ...call, chainId: chain.chainId, account });
     },
