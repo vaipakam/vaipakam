@@ -2492,3 +2492,15 @@ NFT는 대여 기간 내내 내 볼트에 머물며, 대여가 열려 있는 동
 ### 프로토콜 콘솔: 읽는 스위치
 
 설정에서 읽는 것: `partialFillEnabled`, `lenderIntentEnabled`, `autoLendEnabled`, `periodicInterestEnabled`(1a 등급), `autoExtendEnabled`, `autoRefinanceEnabled`(1b 등급), `keepersPaused`(4 등급). 이번 버전에서 이름만 표시하고 읽지 않는 것: 전체 수수료 요율, 솔버 용량 제한, 내부 매칭 청산과 할인 청산, 담보 매각 리스팅, 백스톱 참여, 키퍼 보상, 위험 접근 게이트, 수수료 할인 가격 출처, 보상 보관 전환, 보상 청구 기한. 값은 실효 게터에서 오므로 거버넌스가 정하지 않은 곳에는 기본값이 적용됩니다. 0인 금리 모델, 주소, 심볼, ID는 미설정으로, 0인 더스트 하한은 꺼짐으로, 빈 유예 일정은 내장 기본값으로, 0인 `autoPauseAvailableAt`은 없음으로 표시합니다. 인덱스가 변경을 들을 수 없는 설정은 스냅샷에서 보여 줄 때 표시가 붙습니다.
+
+<a id="recover-adopt"></a>
+
+### 복구: 인수가 확인되고 서명되는 방식
+
+수치는 `untrackedHolding(user, asset, tokenId)`(ERC-20은 토큰 0)이며, `vaultBannedSource`, 지갑 자체의 심사, 보호 모드, `paused()`, `getSanctionsOracle()`, `adoptionAckTextHash()`, `adoptionNonce`와 같은 블록에서 읽습니다. 표준은 컨트랙트가 ERC-165로 밝히는 것입니다. 지갑은 도메인 `Vaipakam Vault Adoption`, 버전 `1`의 EIP-712 타입 데이터에 서명합니다: `AdoptionAcknowledgment(user, asset, kind, tokenId, declaredSource, amount, nonce, deadline, ackTextHash)`. `ackTextHash`는 선언문 정확한 바이트의 keccak-256이며, 프로토콜이 다른 해시를 묶고 있으면 앱은 서명을 요청하지 않습니다. 이어서 `adoptUntracked`가 순서대로 확인합니다: 호출자의 제재 심사, 교체로 지갑이 퇴역하지 않았는지, 기한, 서명이 호출자에게 복원되는지(그래서 컨트랙트 계정은 인수할 수 없음), 볼트 존재, 세어지지 않은 수치 대비 수량, 심사 대비 신고된 출처. 심사가 설정되지 않았거나 답할 수 없으면 거부합니다. 지목된 출처는 revert 없이 `VaultBannedFromAdoption`을 내보내고 `vaultBannedSource`를 설정하며, 그렇지 않으면 `UntrackedAdopted`가 반영을 기록합니다. 완료 카드는 영수증의 이 이벤트들에서 결과를 읽습니다.
+
+<a id="recover-disown"></a>
+
+### 복구: 포기가 기록되는 방식
+
+`disownUntracked(kind, asset, tokenId)`에는 볼트와 0보다 큰 미반영 수치만 필요합니다. 일시 중지 확인, 제재 심사, 관리자 확인이 없어 교체된 지갑과 막힌 볼트도 쓸 수 있으며, 서명도 필요 없습니다. `UntrackedDisowned(account, asset, tokenId, observedAmount, blockNumber)`를 내보내고, 완료 카드는 영수증의 이 이벤트에서 기록된 수량을 읽습니다.

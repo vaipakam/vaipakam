@@ -1639,3 +1639,15 @@ La Consola del protocolo muestra los ajustes e interruptores del protocolo en la
 ### Consola del protocolo: interruptores y la pausa global
 
 Cada interruptor aparece con su clase y lo que detiene. Los interruptores de nuevas posiciones solo detienen nuevas ofertas y préstamos. Los de ciclo de vida detienen también una función en los préstamos abiertos, mientras el reembolso, añadir garantía y los reclamos siguen abiertos. Los interruptores de keepers solo cambian quién ejecuta un paso; siempre puedes ejecutarlo tú. La pausa global se lee en vivo: mientras está activa se detienen las nuevas posiciones, los reclamos, los retiros, las liquidaciones y los impagos, pero el reembolso total y parcial y añadir garantía siguen abiertos. Un interruptor que la página aún no lee se nombra igualmente, con su estado como no leído. Una pausa administrativa larga abre una vía de escape que devuelve lo que está libre en tu bóveda, y la Consola dice cuándo se abre.
+
+<a id="recover-adopt"></a>
+
+### Recuperar: adoptar un activo enviado directamente a tu bóveda
+
+Tu bóveda solo cuenta lo que llega a través del protocolo: un depósito, un préstamo, un cobro. Un token o NFT enviado directamente a la dirección de tu bóveda, desde una cartera o un exchange, queda allí sin contar, así que no puedes retirarlo. La página Recuperar muestra la cifra del propio protocolo de lo que queda sin contar. Si lo enviaste tú, adóptalo: indicas la dirección de origen, lees la declaración y escribes CONFIRM, luego la firmas y envías la adopción. Nada se mueve; el activo pasa a contar como tuyo y solo sale mediante un retiro ordinario. El protocolo vuelve a revisar el origen al confirmar. Si el filtro de sanciones lo marca, no se acredita nada y tu bóveda queda bloqueada hasta que esa dirección salga de la lista, por eso la app nunca envía una adopción para un origen que el filtro ya marca. Adoptar está cerrado mientras el protocolo está en pausa, para una cartera reemplazada y para una cuenta de contrato. Nunca adoptes lo que otra persona te envió.
+
+<a id="recover-disown"></a>
+
+### Recuperar: renunciar a un activo
+
+Si llegó a tu bóveda algo que no reclamas, renuncia a ello. Renunciar deja constancia en la cadena, a la vista de todos, de que no lo reclamas. No mueve ni acredita nada, y el activo sigue en tu bóveda sin contar. No pide declaración, firma ni filtro de sanciones, y sigue abierto mientras el protocolo está en pausa, para una cartera reemplazada y para una bóveda bloqueada por una adopción anterior.

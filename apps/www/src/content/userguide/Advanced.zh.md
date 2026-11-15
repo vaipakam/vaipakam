@@ -2333,3 +2333,15 @@ Keeper 部分在同一个区块读取 `getKeeperAccess`、`getApprovedKeepers`�
 ### 协议控制台：读取哪些开关
 
 从设置中读取：`partialFillEnabled`、`lenderIntentEnabled`、`autoLendEnabled` 和 `periodicInterestEnabled`（1a 类），`autoExtendEnabled` 和 `autoRefinanceEnabled`（1b 类），以及 `keepersPaused`（4 类）。本版本只列名称、不读取的有：完整费用费率、求解器容量限制、内部撮合清算与折价清算、抵押品出售挂单、后备支持选择加入、守护者奖励、风险访问门槛、费用折扣价格来源、奖励托管切换以及奖励领取期限。数值来自有效值 getter，因此治理未设置之处适用默认值；为零的利率模型、地址、符号或 id 写作未设置，为零的尘埃下限写作关闭，空的宽限期表写作内置默认值，为零的 `autoPauseAvailableAt` 写作从未。索引无法感知其变更的设置，在从快照显示时会加注。
+
+<a id="recover-adopt"></a>
+
+### 找回：认领如何被检查和签名
+
+数额为 `untrackedHolding(user, asset, tokenId)`（ERC-20 用代币 0），与 `vaultBannedSource`、钱包自身的筛查、其保护模式、`paused()`、`getSanctionsOracle()`、`adoptionAckTextHash()` 和 `adoptionNonce` 在同一区块读取。标准以合约通过 ERC-165 声明的为准。钱包在域 `Vaipakam Vault Adoption`、版本 `1` 上签署 EIP-712 类型化数据：`AdoptionAcknowledgment(user, asset, kind, tokenId, declaredSource, amount, nonce, deadline, ackTextHash)`，其中 `ackTextHash` 是声明原文字节的 keccak-256；若协议绑定的是另一个哈希，应用不会请求签名。随后 `adoptUntracked` 依次检查：调用者的制裁筛查、钱包未被替换而退役、截止时间、签名能恢复为调用者（因此合约账户不能认领）、存在金库、数量不超过未计入数额，以及申报来源的筛查——未设置筛查或筛查无法应答时拒绝。被标记的来源不会回滚，而是发出 `VaultBannedFromAdoption` 并设置 `vaultBannedSource`；否则由 `UntrackedAdopted` 记录记入。完成卡片从收据中的这些事件读取结果。
+
+<a id="recover-disown"></a>
+
+### 找回：放弃如何被记录
+
+`disownUntracked(kind, asset, tokenId)` 只需要一个金库和大于零的未计入数额。它没有暂停检查、制裁筛查或管理者检查，因此被替换的钱包和被禁止的金库也能使用，且不需要签名。它发出 `UntrackedDisowned(account, asset, tokenId, observedAmount, blockNumber)`，完成卡片从收据中的该事件读取记录的数额。

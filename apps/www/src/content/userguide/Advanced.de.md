@@ -2789,3 +2789,15 @@ Die Konsole liest `GET /config/:chainId` des Indexers. Den Snapshot nutzt sie nu
 ### Protokollkonsole: welche Schalter gelesen werden
 
 Aus den Einstellungen gelesen: `partialFillEnabled`, `lenderIntentEnabled`, `autoLendEnabled` und `periodicInterestEnabled` (Klasse 1a), `autoExtendEnabled` und `autoRefinanceEnabled` (Klasse 1b) sowie `keepersPaused` (Klasse 4). In dieser Version genannt, aber nicht gelesen: der volle Gebührentarif, das Kapazitätslimit des Solvers, die Liquidation per internem Abgleich und mit Abschlag, die Verkaufslistung von Sicherheiten, das Backstop-Opt-in, die Keeper-Vergütung, das Risikozugangs-Tor, die Preisquelle des Gebührenrabatts, der Wechsel der Belohnungsverwahrung und der Anspruchshorizont. Die Werte stammen aus effektiven Gettern, also gilt ein Standard, wo die Governance keinen gesetzt hat; ein Zinsmodell, eine Adresse, ein Symbol oder eine Id mit null steht als nicht gesetzt, eine Staubgrenze von null als aus, ein leerer Kulanzplan als eingebauter Standard und ein `autoPauseAvailableAt` von null als nie. Eine Einstellung, deren Änderung der Index nicht hört, ist markiert, wenn sie aus dem Snapshot kommt.
+
+<a id="recover-adopt"></a>
+
+### Wiederherstellen: wie eine Übernahme geprüft und signiert wird
+
+Die Zahl ist `untrackedHolding(user, asset, tokenId)` (Token 0 für ein ERC-20), gelesen in einem Block zusammen mit `vaultBannedSource`, der Prüfung der Wallet selbst, ihrem Schutzmodus, `paused()`, `getSanctionsOracle()`, `adoptionAckTextHash()` und `adoptionNonce`. Der Standard ist der, den der Vertrag über ERC-165 angibt. Die Wallet signiert typisierte EIP-712-Daten auf der Domain `Vaipakam Vault Adoption`, Version `1`: `AdoptionAcknowledgment(user, asset, kind, tokenId, declaredSource, amount, nonce, deadline, ackTextHash)`, wobei `ackTextHash` der keccak-256 der exakten Bytes der Erklärung ist; die App verlangt keine Signatur, wenn das Protokoll einen anderen Hash bindet. `adoptUntracked` prüft dann der Reihe nach: die Sanktionsprüfung des Aufrufers, dass kein Ersatz die Wallet stillgelegt hat, die Frist, dass die Signatur auf den Aufrufer zurückführt (ein Vertragskonto kann also nicht übernehmen), einen Tresor, den Betrag gegen die ungezählte Zahl und die angegebene Herkunft gegen die Prüfung, mit Ablehnung, wenn keine Prüfung gesetzt ist oder sie nicht antworten kann. Eine markierte Herkunft löst `VaultBannedFromAdoption` aus und setzt `vaultBannedSource` ohne Revert; sonst hält `UntrackedAdopted` die Gutschrift fest. Die Abschlusskarte liest das Ergebnis aus diesen Events im Beleg.
+
+<a id="recover-disown"></a>
+
+### Wiederherstellen: wie eine Zurückweisung festgehalten wird
+
+`disownUntracked(kind, asset, tokenId)` braucht nur einen Tresor und eine ungezählte Zahl über null. Es hat keine Pausenprüfung, keine Sanktionsprüfung und keine Verwalterprüfung, sodass eine ersetzte Wallet und ein gesperrter Tresor es nutzen können, und es verlangt keine Signatur. Es löst `UntrackedDisowned(account, asset, tokenId, observedAmount, blockNumber)` aus, und die Abschlusskarte liest den festgehaltenen Betrag aus diesem Event im Beleg.

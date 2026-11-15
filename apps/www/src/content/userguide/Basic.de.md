@@ -1661,3 +1661,15 @@ Die Protokollkonsole listet die Einstellungen und Schalter des Protokolls im Net
 ### Protokollkonsole: Schalter und die globale Pause
 
 Jeder Schalter steht mit seiner Klasse und dem, was er stoppt, in der Liste. Schalter für neue Positionen stoppen nur neue Angebote und Kredite. Lebenszyklus-Schalter stoppen eine Funktion auch bei offenen Krediten, während Rückzahlung, Nachschießen von Sicherheiten und Beanspruchungen offen bleiben. Keeper-Schalter ändern nur, wer einen Schritt ausführt; Sie können ihn immer selbst ausführen. Die globale Pause wird live gelesen: Solange sie gilt, stoppen neue Positionen, Beanspruchungen, Auszahlungen, Liquidationen und Ausfälle, aber vollständige und teilweise Rückzahlung und das Nachschießen von Sicherheiten bleiben offen. Ein Schalter, den die Seite noch nicht liest, wird trotzdem genannt, mit dem Zustand „nicht gelesen“. Eine lange administrative Pause öffnet einen Notausgang, der zurückgibt, was in Ihrem Tresor frei ist, und die Konsole sagt, wann er öffnet.
+
+<a id="recover-adopt"></a>
+
+### Wiederherstellen: ein direkt an Ihren Tresor gesendetes Asset übernehmen
+
+Ihr Tresor zählt nur, was über das Protokoll hineinkommt: eine Einzahlung, ein Darlehen, eine Forderung. Ein Token oder NFT, das direkt an die Adresse Ihres Tresors gesendet wurde, von einer Wallet oder einer Börse, liegt dort ungezählt, und Sie können es nicht abheben. Die Seite Wiederherstellen zeigt die eigene Zahl des Protokolls für das Ungezählte. Wenn Sie es selbst gesendet haben, übernehmen Sie es: Sie nennen die Herkunftsadresse, lesen die Erklärung und tippen CONFIRM, dann signieren Sie sie und senden die Übernahme. Nichts bewegt sich; das Asset zählt als Ihres und verlässt den Tresor nur durch eine normale Abhebung. Das Protokoll prüft die Herkunft bei der Bestätigung erneut. Markiert die Sanktionsprüfung sie, wird nichts gutgeschrieben und Ihr Tresor bleibt gesperrt, bis die Adresse von der Liste genommen ist; deshalb sendet die App nie eine Übernahme für eine bereits markierte Herkunft. Übernehmen ist geschlossen, solange das Protokoll pausiert, für eine ersetzte Wallet und für ein Vertragskonto. Übernehmen Sie nie, was Ihnen jemand anderes gesendet hat.
+
+<a id="recover-disown"></a>
+
+### Wiederherstellen: ein Asset zurückweisen
+
+Ist etwas in Ihrem Tresor angekommen, das Sie nicht beanspruchen, weisen Sie es zurück. Das Zurückweisen hält auf der Chain für alle sichtbar fest, dass Sie es nicht beanspruchen. Es bewegt und schreibt nichts gut, und das Asset bleibt ungezählt in Ihrem Tresor. Es verlangt keine Erklärung, keine Signatur und keine Sanktionsprüfung und bleibt offen, solange das Protokoll pausiert, für eine ersetzte Wallet und für einen durch eine frühere Übernahme gesperrten Tresor.

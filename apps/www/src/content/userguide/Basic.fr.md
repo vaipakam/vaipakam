@@ -1657,3 +1657,15 @@ La Console du protocole liste les réglages et interrupteurs du protocole sur le
 ### Console du protocole : interrupteurs et pause globale
 
 Chaque interrupteur est listé avec sa classe et ce qu’il arrête. Les interrupteurs de nouvelles positions n’arrêtent que les nouvelles offres et les nouveaux prêts. Ceux du cycle de vie arrêtent aussi une fonction sur les prêts ouverts, tandis que le remboursement, l’ajout de garantie et les réclamations restent ouverts. Les interrupteurs des keepers changent seulement qui exécute une étape ; vous pouvez toujours l’exécuter vous-même. La pause globale est lue en direct : tant qu’elle est active, les nouvelles positions, réclamations, retraits, liquidations et défauts s’arrêtent, mais le remboursement total et partiel et l’ajout de garantie restent ouverts. Un interrupteur que la page ne lit pas encore est quand même nommé, avec son état indiqué comme non lu. Une longue pause administrative ouvre une voie de secours qui rend ce qui est libre dans votre coffre, et la Console indique quand elle s’ouvre.
+
+<a id="recover-adopt"></a>
+
+### Récupérer : adopter un actif envoyé directement dans votre coffre
+
+Votre coffre ne compte que ce qui y arrive par le protocole : un dépôt, un prêt, une réclamation. Un jeton ou un NFT envoyé directement à l’adresse de votre coffre, depuis un portefeuille ou une plateforme d’échange, y reste non compté, et vous ne pouvez pas le retirer. La page Récupérer affiche le chiffre du protocole pour ce qui reste non compté. Si vous l’avez envoyé vous-même, adoptez-le : vous indiquez l’adresse d’origine, lisez la déclaration et tapez CONFIRM, puis vous la signez et envoyez l’adoption. Rien ne bouge ; l’actif est compté comme le vôtre et ne sort que par un retrait ordinaire. Le protocole contrôle à nouveau l’origine à la confirmation. Si le filtre de sanctions la signale, rien n’est crédité et votre coffre est bloqué jusqu’au retrait de cette adresse de la liste ; l’application n’envoie donc jamais une adoption pour une origine déjà signalée. L’adoption est fermée pendant une pause du protocole, pour un portefeuille remplacé et pour un compte contrat. N’adoptez jamais ce qu’une autre personne vous a envoyé.
+
+<a id="recover-disown"></a>
+
+### Récupérer : renoncer à un actif
+
+Si votre coffre a reçu quelque chose que vous ne revendiquez pas, renoncez-y. Renoncer inscrit sur la chaîne, à la vue de tous, que vous ne le revendiquez pas. Rien n’est déplacé ni crédité, et l’actif reste dans votre coffre, non compté. Aucune déclaration, signature ni filtre de sanctions n’est demandé, et cela reste ouvert pendant une pause du protocole, pour un portefeuille remplacé et pour un coffre bloqué par une adoption antérieure.

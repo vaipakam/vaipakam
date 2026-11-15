@@ -2799,3 +2799,15 @@ La Console lit `GET /config/:chainId` de l’indexeur. Elle n’utilise l’inst
 ### Console du protocole : quels interrupteurs sont lus
 
 Lus dans les réglages : `partialFillEnabled`, `lenderIntentEnabled`, `autoLendEnabled` et `periodicInterestEnabled` (classe 1a), `autoExtendEnabled` et `autoRefinanceEnabled` (classe 1b), et `keepersPaused` (classe 4). Nommés mais non lus dans cette version : le tarif complet, la limite de capacité du solveur, la liquidation par appariement interne et avec décote, la mise en vente de la garantie, l’adhésion au filet de sécurité, la récompense des keepers, la barrière d’accès au risque, la source de prix de la remise, la bascule de garde des récompenses et l’horizon de réclamation. Les valeurs viennent de getters effectifs, donc une valeur par défaut s’applique là où la gouvernance n’en a fixé aucune ; un modèle de taux, une adresse, un symbole ou un id à zéro s’écrit non défini, un seuil de poussière à zéro désactivé, un calendrier de grâce vide comme celui par défaut, et un `autoPauseAvailableAt` à zéro comme jamais. Un réglage dont l’index n’entend pas le changement est signalé quand il vient de l’instantané.
+
+<a id="recover-adopt"></a>
+
+### Récupérer : comment une adoption est vérifiée et signée
+
+Le chiffre est `untrackedHolding(user, asset, tokenId)` (jeton 0 pour un ERC-20), lu au même bloc que `vaultBannedSource`, le filtrage du portefeuille lui-même, son mode de protection, `paused()`, `getSanctionsOracle()`, `adoptionAckTextHash()` et `adoptionNonce`. Le standard est celui que le contrat déclare via ERC-165. Le portefeuille signe des données typées EIP-712 sur le domaine `Vaipakam Vault Adoption`, version `1` : `AdoptionAcknowledgment(user, asset, kind, tokenId, declaredSource, amount, nonce, deadline, ackTextHash)`, où `ackTextHash` est le keccak-256 des octets exacts de la déclaration ; l’application ne demande aucune signature si le protocole fixe un autre hash. `adoptUntracked` vérifie ensuite, dans l’ordre : le filtrage de l’appelant, qu’un remplacement n’a pas retiré le portefeuille, l’échéance, que la signature correspond à l’appelant (un compte contrat ne peut donc pas adopter), un coffre, le montant face au chiffre non compté, et l’origine déclarée face au filtre, avec un refus si aucun filtre n’est défini ou s’il ne peut répondre. Une origine signalée émet `VaultBannedFromAdoption` et fixe `vaultBannedSource` sans revert ; sinon `UntrackedAdopted` enregistre le crédit. La carte finale lit le résultat dans ces événements du reçu.
+
+<a id="recover-disown"></a>
+
+### Récupérer : comment une renonciation est enregistrée
+
+`disownUntracked(kind, asset, tokenId)` ne demande qu’un coffre et un chiffre non compté supérieur à zéro. Il n’a ni contrôle de pause, ni filtrage de sanctions, ni contrôle de gestionnaire : un portefeuille remplacé et un coffre bloqué peuvent donc l’utiliser, et aucune signature n’est requise. Il émet `UntrackedDisowned(account, asset, tokenId, observedAmount, blockNumber)`, et la carte finale lit le montant enregistré dans cet événement du reçu.
