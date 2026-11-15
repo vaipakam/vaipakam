@@ -2672,7 +2672,6 @@
         "LoanDefaulted": "Prêt en défaut",
         "OwedAtDefaultRecorded": "Montant dû au défaut enregistré",
         "OwedAtInternalMatchRecorded": "Montant soldé par appariement interne enregistré",
-        "LoanLiquidated": "Prêt liquidé",
         "BackstopAbsorbedLoan": "Prêt absorbé par le backstop",
         "LoanExtended": "Prêt prolongé",
         "LoanRefinanced": "Prêt refinancé",

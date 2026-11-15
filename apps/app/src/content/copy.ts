@@ -6753,7 +6753,6 @@ const copySource = {
       LoanDefaulted: 'Loan defaulted',
       OwedAtDefaultRecorded: 'Amount owed at default recorded',
       OwedAtInternalMatchRecorded: 'Amount cleared by internal matching recorded',
-      LoanLiquidated: 'Loan liquidated',
       BackstopAbsorbedLoan: 'Loan absorbed by backstop',
       LoanExtended: 'Loan extended',
       LoanRefinanced: 'Loan refinanced',

@@ -5886,7 +5886,7 @@ export async function processLoanLogs(
       // T-090 v1.1 Sub 2 — HF-liquidation OR time-default path
       // force-cancelled the intent. The lender-protection action
       // proceeds in the same tx via downstream events
-      // (LoanLiquidated / LoanDefaulted etc.) — those handlers do
+      // (HFLiquidationTriggered / LoanDefaulted etc.) — those handlers do
       // the loan-side flip and its cleanup. Here we just delete the
       // intent row.
       await _deleteSwapToRepayIntent(env, chainId, Number(a.loanId as bigint));
@@ -6371,10 +6371,6 @@ export async function processLoanLogs(
           blockNumber: log.blockNumber,
         });
       }
-    } else if (log.eventName === 'LoanLiquidated') {
-      const r = await flipLoanStatus(env, chainId, a, log, 'liquidated');
-      if (r) statusUpdates++;
-      await _clearClosedLoanSideTables(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'HFLiquidationTriggered') {
       // #1293 — HF-based liquidation terminalizes the loan Active→Defaulted
       // through `EncumbranceMutateFacet.terminalize` (RiskFacet.sol:930 full
@@ -6408,7 +6404,7 @@ export async function processLoanLogs(
       // FallbackPending in the index (it emits no `LenderFundsClaimed`).
       const r = await flipLoanStatus(env, chainId, a, log, 'defaulted');
       if (r) statusUpdates++;
-      // Mirror LoanDefaulted/LoanLiquidated: clear any indexed prepay-listing
+      // Mirror LoanDefaulted: clear any indexed prepay-listing
       // row on this terminal so the frontend can't serve a stale live listing
       // (the on-chain LibPrepayCleanup clear emits no cancel event).
       await _clearClosedLoanSideTables(env, chainId, Number(a.loanId as bigint));
@@ -7601,7 +7597,7 @@ async function _maybePublishToOpenSea(
 ///      prepay-listing row for `loanId` on EVERY terminal-event
 ///      handler that closes the loan (LoanRepaid /
 ///      LoanPreclosedDirect / OffsetCompleted / LoanRefinanced /
-///      LoanDefaulted / LoanLiquidated). The Seaport executor's
+///      LoanDefaulted / HFLiquidationTriggered). The Seaport executor's
 ///      zone callback already gates on `loan.status == Active`,
 ///      so a later fill against the stale orderHash would revert
 ///      on-chain — but the indexer's `prepay_listings` row

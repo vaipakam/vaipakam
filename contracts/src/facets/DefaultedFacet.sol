@@ -125,21 +125,6 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         LibVaipakam.LoanStatus newStatus
     );
 
-    /// @notice Emitted when a liquidation is triggered for liquid collateral.
-    /// @dev    Mutates `s.loans[loanId].status` to `Defaulted` (downstream
-    ///         of the swap-success path). Treated as a `loan-mutation` for
-    ///         the cache-merge contract — the row's terminal label flips
-    ///         from `Active` to `LoanLiquidated` on the NFT side.
-    /// @param loanId The ID of the liquidated loan.
-    /// @param proceeds The amount recovered from liquidation.
-    /// @param treasuryFee The treasury fee deducted (if any).
-    /// @custom:event-category state-change/loan-mutation
-    event LoanLiquidated(
-        uint256 indexed loanId,
-        uint256 proceeds,
-        uint256 treasuryFee
-    );
-
     // Facet-specific errors (shared errors inherited from IVaipakamErrors)
     error NotDefaultedYet();
     /// @notice l2 sequencer is offline or still in its 1h recovery grace

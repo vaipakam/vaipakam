@@ -2672,7 +2672,6 @@
         "LoanDefaulted": "贷款已违约",
         "OwedAtDefaultRecorded": "已记录违约时欠款",
         "OwedAtInternalMatchRecorded": "已记录内部撮合清偿金额",
-        "LoanLiquidated": "贷款已清算",
         "BackstopAbsorbedLoan": "贷款被 backstop 吸收",
         "LoanExtended": "贷款已延长",
         "LoanRefinanced": "贷款已再融资",

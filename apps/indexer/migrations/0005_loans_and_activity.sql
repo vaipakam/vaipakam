@@ -95,7 +95,9 @@ CREATE TABLE IF NOT EXISTS activity_events (
   --                       second row OR via the loans-table JOIN)
   --   LoanRepaid        → repayer
   --   LoanDefaulted     → NULL (system-driven)
-  --   LoanLiquidated    → NULL (liquidator captured in args_json)
+  --   LoanLiquidated    → never emitted; the event was removed (#3367).
+  --                       A time-based default's sale names its caller
+  --                       in ForcedSaleSettled.keeper.
   actor           TEXT,
   -- Full decoded args as JSON for fallback rendering. The key columns
   -- above are what the Activity page filters on; args_json is what it

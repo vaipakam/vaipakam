@@ -194,7 +194,7 @@ const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<string, ActorRead
   ],
   // No entry, so no actor, by design for: a status edge (`LoanStatusChanged`),
   // a settlement or default record (`LoanSettled`, `LoanDefaulted`,
-  // `LoanLiquidated`, `OwedAt*Recorded`, …) and a system-triggered cancel
+  // `OwedAt*Recorded`, …) and a system-triggered cancel
   // (`SwapToRepayIntentForceCancelled`, whose `source` is the Diamond). Each
   // is a consequence of the call that produced it, whose own row carries
   // the actor. Their loan references are still filed (`activityRefs.ts`).
