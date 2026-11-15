@@ -42,6 +42,7 @@ function figures(over: Partial<ProtocolFigures> = {}): ProtocolFigures {
     },
     locked: { ok: true, value: { total: 0n, erc20Collateral: 0n, nftCollateralLoans: 0n } },
     health: { ok: true, value: { utilizationBps: 0n, collateral: 0n, debt: 0n, paused: false } },
+    escape: { ok: true, value: { open: false, opensAt: 0n } },
     offersPosted: { ok: true, value: 0n },
     assets: { ok: true, value: { rows: [], meta: {} } },
     custody: { ok: true, value: { kind: 'external', address: TREASURY } },
@@ -91,6 +92,26 @@ describe('AnalyticsView', () => {
     const out = html(figures({ block: { number: 1000n, timestamp: BigInt(NOW + 60) } }));
     expect(out).toContain('how old these figures are is unknown');
     expect(out).not.toContain('0 s ago');
+  });
+
+  it('says an unread pause state, never shows it as not paused', () => {
+    const out = html(figures({ health: { ok: false, reason: 'upstream timeout' } }));
+    expect(out).toContain('Whether the protocol is paused on Anvil could not be read (upstream timeout).');
+  });
+
+  it('under a pause, says whether withdrawals have reopened, when they do, or that none is scheduled', () => {
+    const paused = { ok: true as const, value: { utilizationBps: 0n, collateral: 0n, debt: 0n, paused: true } };
+    const open = html(figures({ health: paused, escape: { ok: true, value: { open: true, opensAt: BigInt(NOW - 10) } } }));
+    expect(open).toContain('The protocol is paused on Anvil.');
+    expect(open).toContain('Withdrawals of free holdings have reopened under this pause');
+    expect(open).toContain('href="/vault"');
+    const later = html(figures({ health: paused, escape: { ok: true, value: { open: false, opensAt: BigInt(NOW + 86_400) } } }));
+    expect(later).toContain('Withdrawals of free holdings reopen under this pause at');
+    expect(html(figures({ health: paused }))).toContain('No reopening of withdrawals is scheduled under this pause');
+    expect(html(figures({ health: paused, escape: { ok: false, reason: 'rpc down' } }))).toContain(
+      'Whether withdrawals have reopened under this pause could not be read (rpc down).',
+    );
+    expect(html(figures())).not.toContain('data-testid="analytics-paused"');
   });
 
   it('says there is no rate before any loan, rather than 0%', () => {

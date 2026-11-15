@@ -1525,7 +1525,11 @@ above. Each resolves here, so a route reviewer needs no private file:
   contract holds are always shown with why (a vault on older code pays its
   own code's treasury, and fees that reached the contract stay there),
   counting only assets of open loans. A treasury that differs from the deployment record is
-  flagged. The page says nothing comes from the indexer database, shows
+  flagged. The pause is read at the same block: an unread pause is said,
+  never shown as not paused, and under a pause the page says whether
+  withdrawals of free holdings have reopened by the escape route, when
+  they do, or that none is scheduled, and points to the Vault page for the
+  reader's own account. The page says nothing comes from the indexer database, shows
   no price, return, buyback or chart across networks, and states the
   treasury is not invested to earn a return.
 - **RB-ANALYTICS-VPFI** — the Analytics page's VPFI section (RW-60) reads

@@ -11,7 +11,7 @@
  * the sum of the parts it lists plus the assets the rule could not value.
  */
 import { hexToString, type Abi, type PublicClient } from 'viem';
-import { AdminFacetABI, ConfigFacetABI, MetricsFacetABI, NumeraireConfigFacetABI, NumeraireValueFacetABI } from '@vaipakam/contracts/abis';
+import { AdminFacetABI, ConfigFacetABI, MetricsFacetABI, NumeraireConfigFacetABI, NumeraireValueFacetABI, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
 import type { SupportedChain } from '../../chain/chains';
 import { isContractAnswer } from '../reads/answer';
 import { readTokenMeta, type TokenMetaMap } from '../reads/tokens';
@@ -24,6 +24,7 @@ const CONFIG = ConfigFacetABI as Abi;
 const ADMIN = AdminFacetABI as Abi;
 const NUMERAIRE = NumeraireConfigFacetABI as Abi;
 const VALUE = NumeraireValueFacetABI as Abi;
+const PAYOUT = VaultPayoutFacetABI as Abi;
 
 const ZERO = '0x0000000000000000000000000000000000000000';
 
@@ -99,6 +100,10 @@ export interface ProtocolFigures {
   stats: Figure<ProtocolStats>;
   locked: Figure<LockedValue>;
   health: Figure<ProtocolHealth>;
+  /** Under a manual pause, whether withdrawals of free holdings have
+   *  reopened (`isEscapeOpen`) and when they do (`escapeOpensAt`, 0 when
+   *  none is scheduled: no manual pause, or an automatic window). */
+  escape: Figure<{ open: boolean; opensAt: bigint }>;
   offersPosted: Figure<bigint>;
   assets: Figure<{ rows: AssetLifetime[]; meta: TokenMetaMap }>;
   custody: Figure<Custody>;
@@ -168,7 +173,7 @@ export async function readProtocolFigures(c: PublicClient, chain: SupportedChain
     return { rows, meta };
   };
 
-  const [deployedAt, symbol, stats, locked, health, offersPosted, assetRows, custody, feeRates, treasury, convert, vpfi] = await Promise.allSettled([
+  const [deployedAt, symbol, stats, locked, health, escape, offersPosted, assetRows, custody, feeRates, treasury, convert, vpfi] = await Promise.allSettled([
     c.getBlock({ blockNumber: BigInt(chain.deployBlock) }).then((b) => b.timestamp),
     read<Hex>(NUMERAIRE, 'getNumeraireSymbol').then((raw) => {
       const text = hexToString(raw, { size: 32 }).replace(/\0+$/, '');
@@ -197,6 +202,7 @@ export async function readProtocolFigures(c: PublicClient, chain: SupportedChain
       debt,
       paused,
     })),
+    Promise.all([read<boolean>(PAYOUT, 'isEscapeOpen'), read<bigint>(PAYOUT, 'escapeOpensAt')]).then(([open, opensAt]) => ({ open, opensAt })),
     read<readonly [bigint, bigint]>(METRICS, 'getGlobalCounts').then(([, offers]) => offers),
     assets(),
     read<Hex>(ADMIN, 'getTreasury').then((t) => custodyOf(t, diamond)),
@@ -226,6 +232,7 @@ export async function readProtocolFigures(c: PublicClient, chain: SupportedChain
     stats: settle(stats),
     locked: settle(locked),
     health: settle(health),
+    escape: settle(escape),
     offersPosted: settle(offersPosted),
     assets: settle(assetRows),
     custody: settle(custody),

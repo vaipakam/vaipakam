@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { getSupportedChain, SUPPORTED_CHAINS, type SupportedChain } from '../../chain/chains';
 import {
@@ -115,12 +115,47 @@ function useUnit(f: ProtocolFigures) {
   return { unit: symbol, value: (v: bigint) => `${formatFigureText(v, 18)} ${symbol}` };
 }
 
+/**
+ * The pause, as read at the page's block. An unread pause state is said,
+ * never shown as not paused. Under a pause, withdrawals of free holdings
+ * follow the protocol's escape route: the notice says whether it is open,
+ * when it opens, or that none is scheduled, and points to the Vault page,
+ * which states the route for the reader's own account.
+ */
+function PauseNotice({ chain, f }: { chain: SupportedChain; f: ProtocolFigures }) {
+  const { text, format } = useCopy();
+  if (!f.health.ok) {
+    return (
+      <div data-testid="analytics-paused-unread">
+        <Notice tone="warn" tier="A">
+          {format('analytics.pausedUnread', { chain: chain.name, reason: f.health.reason })}
+        </Notice>
+      </div>
+    );
+  }
+  if (!f.health.value.paused) return null;
+  const e = f.escape;
+  const escape = !e.ok
+    ? format('analytics.escapeUnread', { reason: e.reason })
+    : e.value.open
+      ? text('analytics.escapeOpen')
+      : e.value.opensAt > 0n
+        ? format('analytics.escapeOpensAt', { time: formatUtc(Number(e.value.opensAt)) })
+        : text('analytics.escapeNone');
+  return (
+    <div data-testid="analytics-paused">
+      <Notice tone="warn" tier="A">
+        {format('analytics.paused', { chain: chain.name })} {escape} <Link to="/vault">{text('analytics.escapeVault')}</Link>
+      </Notice>
+    </div>
+  );
+}
+
 function Figures({ chain, f, rereadError, nowSec }: { chain: SupportedChain; f: ProtocolFigures; rereadError: string | null; nowSec: number }) {
   const { text, format } = useCopy();
   const at = Number(f.block.timestamp);
   // A block time ahead of the device clock, by any margin, is an unknown age.
   const known = at > 0 && at <= nowSec;
-  const paused = f.health.ok && f.health.value.paused;
   return (
     <>
       <p className="tier-b stamp" data-testid="analytics-read-at">
@@ -145,11 +180,7 @@ function Figures({ chain, f, rereadError, nowSec }: { chain: SupportedChain; f: 
         </a>{' '}
         {text('analytics.noIndexer')}
       </p>
-      {paused && (
-        <Notice tone="warn" tier="A">
-          {format('analytics.paused', { chain: chain.name })}
-        </Notice>
-      )}
+      <PauseNotice chain={chain} f={f} />
       <WhyLink summaryKey="analytics.whySummary" detailKey="analytics.why" />
       <Activity f={f} />
       <OpenLoans f={f} />

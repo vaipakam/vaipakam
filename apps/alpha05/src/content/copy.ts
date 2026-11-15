@@ -5612,8 +5612,18 @@ export const copy = {
     explorer: B('View on the explorer'),
     noIndexer: B('Nothing on this page comes from the app’s indexer database.'),
     paused: A(
-      'The protocol is paused on {{chain}}. New positions, claims, withdrawals, liquidations and defaults wait; repayment and adding collateral stay open.',
+      'The protocol is paused on {{chain}}. New positions, claims, liquidations and defaults wait; repayment and adding collateral stay open.',
     ),
+    pausedUnread: A('Whether the protocol is paused on {{chain}} could not be read ({{reason}}).'),
+    escapeOpen: A(
+      'Withdrawals of free holdings have reopened under this pause: an account without protected mode withdraws straight to itself, and a protected account’s withdrawals queue behind its delay.',
+    ),
+    escapeOpensAt: A(
+      'Withdrawals of free holdings reopen under this pause at {{time}}: then an account without protected mode withdraws straight to itself, and a protected account’s withdrawals queue behind its delay.',
+    ),
+    escapeNone: A('No reopening of withdrawals is scheduled under this pause, so they wait until it ends.'),
+    escapeUnread: A('Whether withdrawals have reopened under this pause could not be read ({{reason}}).'),
+    escapeVault: B('The Vault page shows the route for your account.'),
     whySummary: B('Each figure is read at the block above; a figure that failed says so.'),
     why: C(
       'Every figure on this page is read from the protocol contract on the chosen network, all at one block, so the parts and their totals describe the same moment. A figure that could not be read says so in its place and is never shown as zero. A rate with nothing to divide by, such as the average rate before any loan has opened, says there is none yet. Values in the reference currency use the protocol’s own valuation rule, the one it uses for loan-to-value; an asset it cannot value counts as nothing in a total, and the page names that asset. The counters start with this deployment.',
