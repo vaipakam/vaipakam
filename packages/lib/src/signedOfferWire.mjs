@@ -172,5 +172,48 @@ export function signedOfferRowProblem(row) {
       return `${column} is ${JSON.stringify(row[column])} but the order says ${JSON.stringify(value)}`;
     }
   }
+  // #3327 part 2: `offer_set` is NULL for an offer signed alone, else the
+  // canonical placement JSON the route writes. A malformed one would be served
+  // as a set offer no taker can fill.
+  const set = row.offer_set;
+  if (set !== null && set !== undefined) {
+    if (typeof set !== 'string') return 'offer_set is not text';
+    let placement;
+    try {
+      placement = JSON.parse(set);
+    } catch {
+      return 'offer_set is not JSON';
+    }
+    const problem = placementProblem(placement);
+    if (problem) return `offer_set is not a placement (${problem})`;
+    if (canonicalPlacementJson(placement) !== set) return 'offer_set is not in canonical form';
+  }
   return null;
+}
+
+/** #3327 part 2 — `LibSignedOffer.MAX_SET_SIZE`: the most offers one set
+ *  signature covers. */
+export const MAX_SIGNED_OFFER_SET = 32;
+
+const SET_HASH = /^0x[0-9a-f]{64}$/;
+
+/** Why `value` is not a well-formed placement of a set offer, or null. A
+ *  placement (`LibSignedOffer.OfferSet`) names the struct hashes of the set's
+ *  other offers in signing order and this offer's index among them. A set
+ *  holds two to {@link MAX_SIGNED_OFFER_SET} offers, so a placement names one
+ *  to 31 others, as lowercase 32-byte hashes, and an index no greater than
+ *  their count. An offer signed alone has no placement. */
+export function placementProblem(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return 'set-not-object';
+  for (const k of Object.keys(value)) if (k !== 'others' && k !== 'index') return 'set-unknown-field';
+  const { others, index } = value;
+  if (!Array.isArray(others) || others.length < 1 || others.length >= MAX_SIGNED_OFFER_SET) return 'set-size';
+  if (!others.every((h) => typeof h === 'string' && SET_HASH.test(h))) return 'set-hash';
+  if (typeof index !== 'number' || !Number.isInteger(index) || index < 0 || index > others.length) return 'set-index';
+  return null;
+}
+
+/** The `offer_set` column's text for a well-formed placement. */
+export function canonicalPlacementJson(placement) {
+  return JSON.stringify({ others: placement.others, index: placement.index });
 }

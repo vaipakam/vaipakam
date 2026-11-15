@@ -1,0 +1,13 @@
+-- #3327 — record the set a signed offer was signed in.
+--
+-- A maker may sign up to 32 offers with one signature, as the EIP-712 typed
+-- list `SignedOfferSet(SignedOffer[] offers)`. A taker fills one offer of the
+-- set, and to check the signature the Diamond needs the other offers' hashes
+-- and this offer's place in the list. `offer_set` keeps exactly that, as JSON
+-- `{"others":["0x…",…],"index":n}`, so the book can hand it back with the
+-- order. NULL means the offer was signed alone, which is every row stored
+-- before this column existed.
+--
+-- Additive: a nullable column with no default. The code still serving while
+-- it lands never names the column, and its rows are offers signed alone.
+ALTER TABLE signed_offers ADD COLUMN offer_set TEXT;

@@ -26,6 +26,8 @@ import type { CreateOfferPayload } from './offerSchema';
 import {
   SIGNED_OFFER_FIELDS,
   SIGNED_OFFER_FIELD_NAMES as SIGNED_OFFER_WIRE_FIELD_NAMES,
+  placementProblem,
+  type SignedOfferPlacement,
 } from '@vaipakam/lib/signedOfferWire';
 
 /** The 35-field SignedOffer typed-data description — struct order EXACTLY
@@ -250,6 +252,18 @@ export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
  *  `FillAuth` argument every fill entry takes, empty. */
 export const NO_FILL_AUTH = { validUntil: 0n, coSignature: '0x' as Hex } as const;
 
+/** #3327 part 2 — the `OfferSet` argument every fill entry takes: where the
+ *  order sits in the set its maker signed with one signature (the other
+ *  orders' struct hashes, in signing order, and its index), or the empty
+ *  placement the contract reads as "signed alone". */
+export function signedOfferSetArg(
+  set: SignedOfferPlacement | null,
+): { others: readonly Hex[]; index: bigint } {
+  return set === null
+    ? { others: [], index: 0n }
+    : { others: set.others, index: BigInt(set.index) };
+}
+
 export function wireFromCreatePayload(
   payload: CreateOfferPayload,
   signer: string,
@@ -417,6 +431,9 @@ export interface SignedRowMeta {
   signature: string;
   order: SignedOrderWire;
   filledAmount: string;
+  /** #3327 part 2 — the order's place in the set its maker signed; null
+   *  when it was signed alone. */
+  set: SignedOfferPlacement | null;
 }
 
 /**
@@ -454,6 +471,10 @@ export function signedRowToDeskRow(
   // contract's no-deadline sentinel. GTT expiry (`expiresAt`) is left to
   // `isLiveMarketRow`, same as on-chain rows.
   if (row.deadline !== 0 && row.deadline <= nowSec) return null;
+  // #3327 part 2 — a set order's fill needs its placement to check the
+  // signature, so a row naming a malformed one cannot be filled.
+  const set = row.set ?? null;
+  if (set !== null && placementProblem(set) !== null) return null;
   const o = row.order;
   let remaining: bigint;
   try {
@@ -505,6 +526,7 @@ export function signedRowToDeskRow(
       signature: row.signature,
       order: o,
       filledAmount: row.filledAmount,
+      set,
     },
   };
 }

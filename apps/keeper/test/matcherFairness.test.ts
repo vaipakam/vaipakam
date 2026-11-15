@@ -194,7 +194,7 @@ describe('runIntentFillPass — the honest borrower is filled with the last prev
     const owner = addr(0xa);
     const intentRow = {
       owner, lendingAsset: LEND, collateralAsset: COLL, maxExposure: 10n ** 24n, minRateBps: 0n,
-      maxInitLtvBps: 8000, maxDurationDays: 365, minFillAmount: 1n, requiresKeeperAuth: false,
+      maxInitLtvBps: 8000, maxDurationDays: 365, minFillAmount: 1n, requiresKeeperAuth: false, lendUntil: 0n, acceptsProRata: false,
       livePrincipal: 0n, availableCapital: 10n ** 24n,
     };
     const book = [...Array.from({ length: 50 }, (_, i) => offer(1000 + i, SPAMMER, 1)), offer(2, HONEST, 1)];

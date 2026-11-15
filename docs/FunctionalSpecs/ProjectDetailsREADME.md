@@ -855,6 +855,24 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   signature itself, so an offer signed before this change cannot be filled
   after it; the book removes such offers.
 
+  **One signature over a set of offers (#3327).** A maker who quotes several
+  offers at once (a ladder of rates or sizes) may sign them together, up to
+  32 offers in one signature. What the wallet shows for that signature is the
+  readable list of every offer's terms, never an opaque digest, so the maker
+  sees exactly what they authorise. Signing together changes nothing else:
+  each offer keeps its own identity, its own fill record, its own deadline,
+  expiry and protections, and is filled, matched, previewed and cancelled on
+  its own. A fill of one offer of a set carries the other offers' identities
+  and its place in the list, which is what lets the signature be checked; a
+  fill that misstates either is refused as an invalid signature. Offers of a
+  set share one nonce by convention, so cancelling that nonce stops the whole
+  set in one step, while cancelling one offer by its own identity leaves the
+  rest standing. The wallet-backed fill (a fill paid straight from the maker's
+  wallet) takes only an offer signed alone. The off-chain book accepts each
+  offer of a set on its own, checks the signature against the set it names,
+  keeps that placement with the offer, and serves it with the order so any
+  taker can fill it.
+
 ### Standing lending intents (v1)
 
 - A lender may register a **standing lending intent** for an ERC-20 asset-pair:
@@ -951,9 +969,54 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   Each fill is held to the intent's bounds: not below the minimum fill size, not
   past the exposure cap, not over the maximum term, not below the maximum-LTV
   collateral requirement (a fill the protocol can't price the collateral for is
-  refused, not opened blind to the bound), and carrying the lender's full-term-
-  interest floor (a borrower can't escape the lender's committed interest by
-  repaying early).
+  refused, not opened blind to the bound), not past the lender's **lend-until
+  time** when one is set, and on the interest terms the lender accepts: by
+  default the lender's full-term-interest floor with no partial repayment (a
+  borrower can't escape the lender's committed interest by repaying early).
+- **Lend-until time (#3618).** A lender may give an intent an optional end time,
+  for money that is free only for a fixed window. A fill is admitted only when
+  the loan's agreed maturity — now plus the borrower offer's term — falls at or
+  before it, alongside the maximum-term bound, so the longest term that fits
+  shrinks by itself as the window runs down, with no state change. A repaid
+  intent loan is rolled back behind the intent only while at least a one-day
+  loan could still be agreed inside the window; after that the roll is refused
+  and the loan settles through the normal lender claim, so the money returns to
+  the lender's vault rather than sitting behind an intent that can no longer lend
+  it. The time must be none, or late enough that a one-day loan still fits once
+  the newly set terms may be filled: every set of the intent restarts the
+  minimum terms age before the next fill, so the one-day minimum is counted from
+  the end of that wait, not from the moment of setting. Once less than a one-day
+  loan fits, the keeper discovery feed no longer lists the intent (it can fill
+  nothing), while the registry count is unchanged so paging still covers every
+  registered intent. When the time passes nothing moves by itself: the intent
+  stays stored, its un-lent capital stays reserved behind it until the lender
+  withdraws it (open at any time) or sets a new date, and open loans are
+  untouched. The time bounds **agreed** maturity only, never when the money comes
+  back: a borrower may repay late inside the grace window, a default or
+  liquidation settles when it settles, and a protocol pause extends every loan's
+  deadlines by the paused time, so any of these can end a loan after the
+  lend-until time. Wherever the app shows the time it says "no new loan will be
+  agreed to run past this date", never that funds return by it. Protocol-run
+  intents (the backstop and the aggregator adapters) carry no end time.
+- **Pro-rata opt-in (#3619).** By default an intent fills only borrower requests
+  on full-term interest that do not allow partial repayment. A lender may opt
+  the intent into pro-rata requests as well; it then fills full-term and
+  pro-rata requests alike, and each loan carries the interest mode the borrower
+  chose. On a pro-rata loan the lender earns interest only for the time the money
+  is out, which the app states at setup. An opted-in intent may also fill a
+  pro-rata request that allows partial repayment; a full-term request that
+  allows partial repayment is refused whether or not the intent opted in,
+  because a partial repayment pays only the interest accrued on the repaid
+  slice. A partial repayment takes the route it takes on any loan: it is paid to
+  the current holder of the lender position (held locked for them instead if
+  they are sanctions-frozen, sold-interest claims first). It does not pass
+  through the lender's vault and is not re-committed behind the intent, so that
+  slice leaves auto-lend, which the app states at setup. The intent's exposure
+  cap keeps counting the original fill until the loan closes, so a partial
+  repayment never frees cap early. When such a loan is finally repaid, a roll
+  re-commits only what the final repayment delivered (the remaining principal
+  and its interest), never the original fill. There is no pro-rata-only mode.
+  Protocol-run intents never opt in.
 - **Previewing a fill.** Before submitting, a solver can ask the protocol — read-
   only and without spending gas — whether one specific fill (a named intent, a
   borrower offer, an amount, and the prospective filler the fill would be
@@ -962,7 +1025,8 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   order: the intent's bounds (active, not below minimum fill, within the exposure
   cap, within the maximum term, full-term and no-partial-repay honoured by the
   borrower offer, a resolvable collateral requirement, and sufficient funded
-  capital), the shared match-admission checks (asset continuity, term match,
+  capital — with the lend-until and pro-rata rules applied exactly as the fill
+  applies them), the shared match-admission checks (asset continuity, term match,
   range overlap, synthetic health-factor), the keeper-authorisation requirement
   for a keeper-gated intent — judged against the named prospective filler, not
   the caller of the preview — and the progressive risk-access gate. On success it
@@ -1004,8 +1068,10 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   roll without trusting an off-chain index (the roller signs transactions, so its
   decisions must come from authoritative chain state), the protocol maintains an
   enumerable on-chain registry of live intent-originated loans and exposes a
-  paginated read view returning only the fully-repaid ones — the roll candidates
-  — each with its originating owner, asset pair, and original fill amount. A loan
+  paginated read view returning only the fully-repaid ones whose intent can still
+  take a roll (active, and inside its lend-until time) — the roll candidates —
+  each with its originating owner, asset pair, and original fill amount (the
+  exposure the roll frees; the amount re-committed is the loan's lender claim). A loan
   joins the registry when a fill records its intent origin and leaves it when that
   origin is cleared (a normal claim or a roll), so the registry never grows
   unboundedly. The view is keyed off the recorded origin, so a sold position is
@@ -1534,7 +1600,7 @@ Vaipakam mints unique NFTs to represent offers, enhancing traceability and user 
       - logs and audit trails should make it clear which external address executed the action and under which consent path it was allowed
 - **Auto-Lifecycle Consent and Keeper Actions:**
   - Auto-lend, auto-refinance, and auto-extend are opt-in convenience surfaces layered on top of the existing offer, refinance, and keeper-authority model. They must default off for every user, loan, and fresh deployment.
-  - Auto-lend is a per-user surface for passive lending, expressed through the standing **lender-intent** layer rather than fixed-duration offer posting. A lender configures an intent on a lending-asset and collateral-asset pair with their own bounds — maximum exposure, minimum fill size, minimum rate floor, maximum initial LTV, and maximum loan term — funds working capital, and records the auto-lend consent marker. The protocol keeper then fills matching borrower demand within those bounds and, when the lender delegates the dedicated auto-roll authority, redeploys fully-repaid intent loans straight back into the lender's capital. Enabling is an ordered, resumable sequence: **consent is recorded first**, then keeper delegation (auto-roll, plus signed-fill when the intent is kept keeper-gated) and intent registration, then **capital is funded last**. The relative order of delegation vs registration is intent-state-dependent: for a **paused/inactive relist or a fresh registration, the keeper is delegated before registration** so that registration (which reactivates and re-lists a paused intent's reserved capital into the fill registry) can never make capital fillable before the keeper is delegated; but for an **already-active intent whose terms are being updated (e.g. tightening rate/LTV/term), the new terms are registered before the keeper is delegated**, so the keeper cannot fill the already-fillable intent under the old, looser terms in the window between transactions. Either way consent precedes any registration and capital is never committed to custody before a fillable, properly delegated intent exists. The dapp must reflect both governing kill switches honestly: the auto-lend consent switch gates the consent step, and the intent-fill switch governs whether keeper fills may execute yet (an intent may be registered and funded while filling is paused, and begins filling automatically once governance re-enables it). Auto-lend remains opt-in, default-off, and is not guaranteed lending execution. Because the auto-lend consent marker carries no on-chain fill enforcement, **pausing genuinely stops fills by cancelling (de-listing) the standing intent** — not merely clearing the marker; the lender's un-lent capital stays reserved and is either resumable (re-enabling re-registers the intent without re-funding) or withdrawable to the wallet at any time. A full stop withdraws the un-lent capital and cancels the intent. A lender may hold **multiple** standing intents at once — one per lending and collateral pair — and the platform exposes a **per-owner enumeration** of them so the lender can see and manage all of their intents in one place, including **paused** intents that still hold reserved capital (an active intent is distinguishable from a paused one). This per-owner listing is lender-only: the intent layer is a lender-side construct, so there is no borrower-side intent to enumerate (borrowers participate through the offer book).
+  - Auto-lend is a per-user surface for passive lending, expressed through the standing **lender-intent** layer rather than fixed-duration offer posting. A lender configures an intent on a lending-asset and collateral-asset pair with their own bounds — maximum exposure, minimum fill size, minimum rate floor, maximum initial LTV, and maximum loan term, plus an optional lend-until time and an optional pro-rata opt-in (see "Lend-until time" and "Pro-rata opt-in" in the standing-intent section) — funds working capital, and records the auto-lend consent marker. The protocol keeper then fills matching borrower demand within those bounds and, when the lender delegates the dedicated auto-roll authority, redeploys fully-repaid intent loans straight back into the lender's capital. Enabling is an ordered, resumable sequence: **consent is recorded first**, then keeper delegation (auto-roll, plus signed-fill when the intent is kept keeper-gated) and intent registration, then **capital is funded last**. The relative order of delegation vs registration is intent-state-dependent: for a **paused/inactive relist or a fresh registration, the keeper is delegated before registration** so that registration (which reactivates and re-lists a paused intent's reserved capital into the fill registry) can never make capital fillable before the keeper is delegated; but for an **already-active intent whose terms are being updated (e.g. tightening rate/LTV/term), the new terms are registered before the keeper is delegated**, so the keeper cannot fill the already-fillable intent under the old, looser terms in the window between transactions. Either way consent precedes any registration and capital is never committed to custody before a fillable, properly delegated intent exists. The dapp must reflect both governing kill switches honestly: the auto-lend consent switch gates the consent step, and the intent-fill switch governs whether keeper fills may execute yet (an intent may be registered and funded while filling is paused, and begins filling automatically once governance re-enables it). Auto-lend remains opt-in, default-off, and is not guaranteed lending execution. Because the auto-lend consent marker carries no on-chain fill enforcement, **pausing genuinely stops fills by cancelling (de-listing) the standing intent** — not merely clearing the marker; the lender's un-lent capital stays reserved and is either resumable (re-enabling re-registers the intent without re-funding) or withdrawable to the wallet at any time. A full stop withdraws the un-lent capital and cancels the intent. A lender may hold **multiple** standing intents at once — one per lending and collateral pair — and the platform exposes a **per-owner enumeration** of them so the lender can see and manage all of their intents in one place, including **paused** intents that still hold reserved capital (an active intent is distinguishable from a paused one). This per-owner listing is lender-only: the intent layer is a lender-side construct, so there is no borrower-side intent to enumerate (borrowers participate through the offer book).
   - Auto-refinance caps are borrower-controlled offer-posting terms. A borrower may set default caps that are copied into new loans, or set per-loan caps directly. Default cap copying must remain disabled for illiquid ERC-20 collateral and NFT-collateral loans; those positions may be enrolled only through explicit per-loan borrower action because failure to find a match can transfer the full collateral in-kind. Keeper-driven refinance may proceed only when the replacement borrower offer is explicitly tagged with the target loan id, the cap setter is still the current borrower-position NFT holder, and the replacement terms satisfy the capped rate and expiry before the offer can be accepted.
   - Auto-refinance is best-effort. Caps and posted offers do not guarantee that a compatible lender will accept before the grace boundary, so borrowers remain responsible for monitoring the loan and repaying or refinancing manually when needed.
   - Borrower-direct refinance remains available without auto-refinance caps because the borrower-position NFT holder is acting directly for their own position.
@@ -1854,7 +1920,7 @@ Range Orders let users express lender and borrower intent as canonical limit ord
 - **Bot-Facing Preview:** Matching bots should use the read-only match preview to filter candidate lender / borrower pairs before submitting a transaction. Preview should enforce asset continuity, duration compatibility, lifecycle-term agreement, range overlap, midpoint term calculation, and a synthetic Health Factor check. That check is the initiation risk gate (the loan-to-value cap and the Health Factor floor), and the preview applies it under exactly the rule the binding accept does: a loan carries the gate only when both of its legs are liquid. A pair with an illiquid leg is admitted on both parties' consent to the illiquid terms, so the preview must not refuse it on a loan-to-value or Health Factor figure the accept never computes, whichever loan-to-value regime is on; a rental never carries the gate. The same one rule decides whether the create-time offer bounds, the lender-intent fill and the refinance re-check apply the gate, so no path can refuse a pair another admits (#2956).
 - **Match Amount and Rate:** A match lends the **largest amount both offers accept**: the smaller of the lender's remaining capacity and the borrower's remaining request, further limited to what the borrower's available collateral covers at the lender's collateral requirement (pro-rated to the amount) and to the most that collateral may back under the loan-initiation risk rule (the health-factor floor, or the asset and liquidity-tier loan-to-value cap where depth-tiered risk is on), and never below the larger of the two offers' minimum fills. Both parties said they take anything in that window, and every extra match is another loan, more gas and another matcher share, so the match fills as much as it can at once. The collateral locked is the lender's pro-rated requirement, raised to the borrower's own collateral floor and, where that alone would fail the initiation risk rule, raised to the least collateral that passes it, so long as the borrower's offer can supply it. A borrower whose collateral cannot cover even the minimum is refused for insufficient collateral, and one that cannot reach the risk floor at the minimum is refused with the risk reason. The **rate** is the midpoint of the two offers' rate overlap, so neither side takes the whole surplus. An all-or-nothing offer and a refinance carry-over match keep their own amount rules (the offer's full amount, or the refinanced loan's carried amount). The match preview reports the same amount the match executes (owner decision 2026-11-08, #3326).
 - **Duration Compatibility:** A matched loan runs for the borrower offer's term. Where both offers chose full-term interest the term is part of the price (the borrower owes interest for all of it), so the two offers must name the same term. Where both chose pro-rata interest, interest is owed only for the time the loan is actually held and the borrower may repay at any moment, so a pro-rata lender's term is the longest it will lend for: a borrower asking for that term or a shorter one may be matched, and the loan runs for exactly the term the borrower asked for. A borrower is never given a shorter term than it asked for, and a lender never lends for longer than it offered. A ranged pro-rata lender offer may therefore be filled by several borrowers with different shorter terms, each as its own loan. The term is never derived or split between the two offers (no tolerance window, no midpoint), so there is nothing new to disclose beyond the loan's own term, which the loan record and its creation event state. Every other pair is refused with a duration reason, by the match and its preview alike. Direct acceptance is unchanged: the acceptor takes the offer's own term, and a borrower who needs a shorter term under pro-rata can repay early at no extra cost. The app should tell a lender choosing pro-rata that its term is the longest it lends for (#3615).
-- **Lifecycle Terms Must Agree:** A match binds both parties to one loan, so it is admitted only between two offers that chose the same lifecycle terms: the interest mode (full-term or pro-rata), whether partial repayment is allowed, whether a prepay listing is allowed, and the periodic-interest cadence, and, for an NFT rental, the asset the rental fee is paid in. A pair that differs on any of them is refused with a lifecycle-terms reason, by the match and by its preview alike, rather than one side's choice silently overriding the other's (#2727). Whether the borrower allows a parallel sale of their open offer is not a loan term and is not compared: only a borrower offer can carry it, and it governs the open offer, never the loan. A standing lender intent fills on full-term interest, so it matches only borrower offers that chose full-term interest; its other lifecycle terms are the protocol defaults (no partial repay, no prepay listing, no periodic cadence).
+- **Lifecycle Terms Must Agree:** A match binds both parties to one loan, so it is admitted only between two offers that chose the same lifecycle terms: the interest mode (full-term or pro-rata), whether partial repayment is allowed, whether a prepay listing is allowed, and the periodic-interest cadence, and, for an NFT rental, the asset the rental fee is paid in. A pair that differs on any of them is refused with a lifecycle-terms reason, by the match and by its preview alike, rather than one side's choice silently overriding the other's (#2727). Whether the borrower allows a parallel sale of their open offer is not a loan term and is not compared: only a borrower offer can carry it, and it governs the open offer, never the loan. A standing lender intent fills on full-term interest with no partial repay by default; an intent whose lender opted into pro-rata requests (#3619) takes the borrower request's interest mode, and its partial-repay choice when that request is pro-rata. Its remaining lifecycle terms are the protocol defaults (no prepay listing, no periodic cadence).
 - **Permissionless Match Execution:** `matchOffers` is intentionally open to any caller when enabled. It is analogous to liquidation in that the caller cannot steal funds or set arbitrary terms; it can only execute a match allowed by two live offers and the protocol's deterministic matching rules. The protocol does not rank eligible counterparties or refuse a match because a "better" offer exists elsewhere in the book: each party already gets terms inside its own limits, a ranking check would need an unbounded scan of the book, and anyone could revert a match by posting a slightly better offer in the same block. The order in which a matcher considers pairs is its own policy; the keeper's is the per-creator fairness walk (#3242, #3615).
 - **Matcher Economics:** The caller of `matchOffers` receives the configured matcher share of the Loan Initiation Fee. The default is `1%` of the LIF treasury flow, but governance may tune this through live protocol configuration (`lifMatcherFeeBps`) within the documented safety cap (the 50% maximum fee bound, or 50%). Frontend and bot surfaces should read the live value from the live protocol configuration rather than assuming the default.
 - **Keeper Matcher Pass:** The dedicated keeper may run the Range Orders matcher as a third pass alongside liquidation monitoring and daily oracle snapshots. This pass must remain separately gated by the matching kill-switch and deployment runbook, because it signs transactions. It should reuse the bot-facing match preview and submit only deterministic protocol-valid matches. Its work must be bounded by what it pays for: each live offer is considered once per run, even when the order book changes while it is being read, and a party holding offers on both sides of a market is passed over without any per-pair work, since a party can never be matched against themselves. Every pair it does consider costs a match preview and counts against the run's preview budget.

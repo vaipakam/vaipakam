@@ -2289,7 +2289,7 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 ### 오퍼 페이지
 
-`/offers/:id`는 한 블록에서 `OfferCancelFacet.getOffer(id)`, `MetricsFacet.getOfferState(id)`, `getOfferLinkedLoanId(id)`를 읽으며, 연결된 지갑을 거치며, 지갑을 연결하기 전에는 아무것도 읽지 않습니다. 생성자가 0이면 기록이 삭제되었거나(아무것도 체결되지 않은 취소) 기록된 적이 없다는 뜻입니다. 프로토콜은 오퍼 수를 보관하지 않으므로 페이지는 어느 쪽인지 말하지 않습니다. 0이 아닌 연결 대출은 대출 매각(차입자 오퍼) 또는 상계(대출자 오퍼)를, 차입자 오퍼의 `refinanceTargetLoanId`는 재융자 요청을 표시합니다. 받기는 공유 `acceptOffer` 흐름(서명된 `AcceptTerms`, 정확한 승인, 모의 실행, 측정된 결과)을 자체 저장 키로 실행하고, 취소와 정리는 공유 `cancelOffer` 흐름을 실행합니다. 임대, NFT 담보, 대출 매각, 상계는 현재 앱으로 연결합니다.
+`/offers/:id`는 한 블록에서 `OfferCancelFacet.getOffer(id)`, `MetricsFacet.getOfferState(id)`, `getOfferLinkedLoanId(id)`를 읽으며, 연결된 지갑을 거치며, 지갑을 연결하기 전에는 아무것도 읽지 않습니다. 생성자가 0이면 기록이 삭제되었거나(아무것도 체결되지 않은 취소) 기록된 적이 없다는 뜻입니다. 프로토콜은 오퍼 수를 보관하지 않으므로 페이지는 어느 쪽인지 말하지 않습니다. 0이 아닌 연결 대출은 대출 매각(차입자 오퍼) 또는 상계(대출자 오퍼)를, 차입자 오퍼의 `refinanceTargetLoanId`는 재융자 요청을 표시합니다. 받기는 공유 `acceptOffer` 흐름(서명된 `AcceptTerms`, 정확한 승인, 모의 실행, 측정된 결과)을 자체 저장 키로 실행하고, 취소와 정리는 공유 `cancelOffer` 흐름을 실행합니다. 임대, NFT 담보, 대출 매각, 상계는 현재 앱으로 연결합니다. 독자가 올린 열린 일반 토큰 대 토큰 오퍼에 대해, 페이지는 인덱서의 `GET /offers/:id/nearest?chainId&limit=5`에 페어 반대편의 가장 가까운 열린 오퍼(먼저 이자율 차이, 다음 기간 차이)를 묻고, 각각과 매칭 스위치를 한 블록에서 읽으며, 열린 각 페어에 대해 `OfferMatchFacet.previewMatch(lenderId, borrowerId, sender, sender)`를 묻습니다. 표시되는 차이는 가장 가까운 오퍼에 대한 미리보기의 첫 `MatchError`이며, `Ok`를 돌려주는 페어는 지금 매칭 가능하다고 표시될 뿐 매칭되었다고 표시되지 않습니다(#3623).
 
 <a id="offer-cancel"></a>
 

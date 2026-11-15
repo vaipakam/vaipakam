@@ -10,6 +10,7 @@
 
 import type { ProtocolKnobKey } from '@vaipakam/lib/protocolKnobs';
 import type { SignedOrderWire } from '../lib/signedOffer';
+import type { SignedOfferPlacement } from '@vaipakam/lib/signedOfferWire';
 import { indexerOrigin, indexerWsOrigin as wsOriginOf } from '../lib/endpoints';
 import { probeIndexerRead, type IndexerReadOutcome } from '../lib/readProbe';
 
@@ -834,6 +835,10 @@ export interface IndexedSignedOffer {
    *  yet known, so it is not offered to takers, but its signature is still
    *  valid and the maker can still cancel it. */
   replayPending?: boolean;
+  /** #3327 part 2 — where the order sits in the set its maker signed with
+   *  one signature, which the fill sends with it; null when it was signed
+   *  alone. Optional so an older Worker, which serves no sets, still parses. */
+  set?: SignedOfferPlacement | null;
 }
 
 export interface SignedOffersBook {
