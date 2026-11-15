@@ -69,6 +69,8 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         counterparty providing the other leg.
     /// @param o         The signed offer terms.
     /// @param sig       The signer's EIP-712 signature (EOA or ERC-1271).
+    /// @param set       Where `o` sits in the set its maker signed (#3327
+    ///                  part 2); no others when the maker signed `o` alone.
     /// @param terms     The acceptor's EIP-712-signed `AcceptTerms` (#662) —
     ///                  carries the acceptor's single fallback-terms consent +
     ///                  every loan-affecting field, bound against the
@@ -80,12 +82,13 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
     function acceptSignedOffer(
         LibSignedOffer.SignedOffer calldata o,
         bytes calldata sig,
+        LibSignedOffer.OfferSet calldata set,
         LibAcceptTerms.AcceptTerms calldata terms,
         bytes calldata acceptSig,
         LibSignedOffer.FillAuth calldata auth
     ) external nonReentrant whenNotPaused returns (uint256 loanId) {
         bytes32 orderHash = _vetSignedOffer(o, auth);
-        (bool ok, ) = LibSignedOffer.verify(o, sig);
+        (bool ok, ) = LibSignedOffer.verify(o, sig, set);
         if (!ok) revert LibSignedOffer.SignedOfferBadSignature();
         // Consume BEFORE any external interaction (CEI).
         LibVaipakam.storageSlot().signedOfferFilled[orderHash] = LibSignedOffer.ceilingOf(o);
@@ -198,6 +201,31 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
     {
         return LibSignedOffer.digest(o);
     }
+
+    /// @notice #3327 part 2 — the full EIP-712 digest a maker signs to
+    ///         authorize every offer in `offers` with one signature. Each
+    ///         offer still fills, and cancels, on its own; sharing one nonce
+    ///         lets `invalidateSignedOfferNonce` cancel the whole set.
+    /// @dev Reverts {SignedOfferSetSize} for fewer than two or more than
+    ///      `LibSignedOffer.MAX_SET_SIZE` offers (a single offer is signed
+    ///      with {hashSignedOffer}).
+    function hashSignedOfferSet(LibSignedOffer.SignedOffer[] calldata offers)
+        external
+        view
+        returns (bytes32)
+    {
+        uint256 n = offers.length;
+        if (n < 2 || n > LibSignedOffer.MAX_SET_SIZE) revert SignedOfferSetSize(n);
+        bytes32[] memory hashes = new bytes32[](n);
+        for (uint256 i; i < n; ++i) hashes[i] = LibSignedOffer.hashStruct(offers[i]);
+        return keccak256(
+            abi.encodePacked("\x19\x01", LibSignedOffer.domainSeparator(), LibSignedOffer.setStructHash(hashes))
+        );
+    }
+
+    /// @notice #3327 part 2 — a signed set holds two to
+    ///         `LibSignedOffer.MAX_SET_SIZE` offers.
+    error SignedOfferSetSize(uint256 count);
 
     /// @notice #3327 — the EIP-712 digest an offer's co-signer signs for one
     ///         fill: the order, the taker, the order's fill ledger before this

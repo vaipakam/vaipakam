@@ -2309,7 +2309,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         Permit2 witness), signer-only cancel + batch nonce
     ///         invalidation, and the four read views.
     function _getSignedOfferFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](11);
+        s = new bytes4[](12);
         s[0] = SignedOfferFacet.acceptSignedOffer.selector;
         s[1] = SignedOfferFacet.acceptSignedOfferWithPermit.selector;
         s[2] = SignedOfferFacet.cancelSignedOffer.selector;
@@ -2322,6 +2322,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[8] = SignedOfferFacet.cancelSignedOffersBelow.selector;
         s[9] = SignedOfferFacet.signedOfferCancelFloor.selector;
         s[10] = SignedOfferFacet.hashSignedOfferFill.selector;
+        // #3327 part 2 — the digest a maker signs for a set of offers.
+        s[11] = SignedOfferFacet.hashSignedOfferSet.selector;
     }
 
     function _getLenderIntentFacetSelectors() internal pure returns (bytes4[] memory s) {

@@ -592,6 +592,8 @@ contract OfferPreviewFacet {
      *      read. The fill's own simulation remains the final word.
      * @param o        The signed order, as the book lists it.
      * @param sig      The signer's signature over it (EOA or ERC-1271).
+     * @param set      Where the order sits in the set its maker signed
+     *                 (#3327 part 2); no others when signed alone.
      * @param acceptor The prospective taker.
      * @param auth     The co-signer's authorization the fill would carry
      *                 (#3327); ignored when the order names no co-signer.
@@ -599,6 +601,7 @@ contract OfferPreviewFacet {
     function previewSignedOfferAccept(
         LibSignedOffer.SignedOffer calldata o,
         bytes calldata sig,
+        LibSignedOffer.OfferSet calldata set,
         address acceptor,
         LibSignedOffer.FillAuth calldata auth
     ) external view returns (SignedAcceptPreview memory p) {
@@ -616,7 +619,7 @@ contract OfferPreviewFacet {
             o.signer, p.stakeAsset, 0, LibVaipakam.trackedHolding(o.signer, p.stakeAsset, 0)
         );
         p.accept = _previewAcceptCore(
-            _asMaterialized(params, o.signer), 0, acceptor, LibPausable.paused(), _signedBlock(o, sig, acceptor, auth, p, params)
+            _asMaterialized(params, o.signer), 0, acceptor, LibPausable.paused(), _signedBlock(o, sig, set, acceptor, auth, p, params)
         );
     }
 
@@ -624,6 +627,7 @@ contract OfferPreviewFacet {
     function _signedBlock(
         LibSignedOffer.SignedOffer calldata o,
         bytes calldata sig,
+        LibSignedOffer.OfferSet calldata set,
         address acceptor,
         LibSignedOffer.FillAuth calldata auth,
         SignedAcceptPreview memory p,
@@ -643,7 +647,7 @@ contract OfferPreviewFacet {
         if (f == LibSignedOffer.VetFailure.CoSignatureInvalid) {
             return OfferAcceptFacet.AcceptError.SignedOfferCoSignatureInvalid;
         }
-        (bool ok, ) = LibSignedOffer.verify(o, sig);
+        (bool ok, ) = LibSignedOffer.verify(o, sig, set);
         if (!ok) return OfferAcceptFacet.AcceptError.SignedOfferBadSignature;
         // `OfferCreateFacet._materializeSignedOffer`'s shape: both legs
         // ERC-20, no refinance target.
