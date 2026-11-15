@@ -2757,6 +2757,18 @@ above. Each resolves here, so a route reviewer needs no private file:
   loan: the signed review carries the line. The list is part of the Terms
   text from version 2, so accepting that version records it, and a change to
   the list is a new version that every wallet accepts again.
+- **RB-WALLET-KEYS** — The platform creates and holds no wallets (owner
+  decision 2026-11-15, #3662 parked), so the app says what a visitor needs
+  before anything connects (#3671). The wallet picker and Home, while no
+  wallet is connected, state that a self-custody wallet is needed, that the
+  platform never holds its keys and cannot recover them, and that losing the
+  keys loses access to the funds, linked to a public key-safety page. That
+  page needs no wallet, is linked from the footer, explains a recovery
+  phrase and how to keep it, and names no wallet brand. The connect button
+  is never disabled and reads "Connecting…" only while an earlier session
+  resumes: a connect the picker started (a phone connection prepares its
+  link as the picker opens) can stay pending after the picker closes, and
+  must never leave the visitor with a button that cannot be pressed.
 
 ## 3. Companion specifications
 

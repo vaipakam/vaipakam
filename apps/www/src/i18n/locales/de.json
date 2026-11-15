@@ -258,8 +258,9 @@
       },
       "basics-wallet": {
         "q": "Brauche ich eine Krypto-Wallet, und was ist das?",
-        "a1": "Eine Wallet (MetaMask, Rabby, Coinbase Wallet und ähnliche) ist die App, die den privaten Schlüssel verwahrt, der die On-Chain-Vermögenswerte kontrolliert. Sie ist gleichzeitig Login und Signaturwerkzeug — so erkennt Vaipakam, dass eine Transaktion tatsächlich vom Kontoinhaber stammt.",
-        "a2": "Eine Wallet wird nur benötigt, um eine Position aktiv zu <em>bewirtschaften</em> (ein Angebot erstellen, einen Kredit annehmen, zurückzahlen, einfordern). Das Analytics-Dashboard und die Kreditdetails lassen sich auch ganz ohne Wallet ansehen. Vaipakam sieht oder speichert niemals private Schlüssel — die Wallet bleibt vollständig im Browser oder in der Erweiterung."
+        "a1": "Eine Wallet ist die App oder das Gerät, das die privaten Schlüssel eines On-Chain-Kontos verwahrt. Sie ist gleichzeitig Login und Signaturwerkzeug — so erkennt Vaipakam, dass eine Transaktion tatsächlich vom Kontoinhaber stammt. Vaipakam braucht eine selbstverwahrte Wallet, deren Schlüssel nur ihr Besitzer hält; Vaipakam erstellt für niemanden eine Wallet.",
+        "a2": "Eine Wallet wird nur benötigt, um eine Position aktiv zu <em>bewirtschaften</em> (ein Angebot erstellen, einen Kredit annehmen, zurückzahlen, einfordern). Die Analysen und die wichtigsten Risiken lassen sich auch ganz ohne Wallet lesen. Vaipakam sieht, speichert oder rettet niemals private Schlüssel: Gehen die Schlüssel oder die Wiederherstellungsphrase verloren, kann niemand den Zugang zum Guthaben wiederherstellen.",
+        "a3": "Das Handbuch erklärt, <guide>wie Sie die Schlüssel einer Wallet sicher aufbewahren</guide>, ohne eine Wallet zu empfehlen."
       },
       "basics-collateral": {
         "q": "Warum erfordert das Leihen eine „Sicherheit\"?",

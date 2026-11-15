@@ -1480,6 +1480,16 @@ Ein Angebot eines Tokens gegen Token-Sicherheiten kann einen Preisbewegungsschut
 
 Jedes Konto beginnt auf der niedrigsten Risikostufe, nur Blue-Chip-Assets, und nur Sie können sie anheben. Ein Paar braucht die Stufe seines riskanteren Tokens: Blue-Chip-Tokens brauchen nichts, andere liquide Tokens brauchen „Liquide Assets“, und ein illiquider Token braucht „Jedes Asset, auch illiquide“ sowie Ihre Zustimmung zu genau diesem Paar. Wenn das Annehmen eines Angebots oder das Stellen einer Anfrage einen solchen Schritt braucht, sagt die Prüfung das an Ort und Stelle und bietet ihn als eine Wallet-Bestätigung mit eigenem Beleg an: was sich ändert, welche Paare es betrifft, wann es wirksam wird und dass keine Mittel bewegt werden. Das Anheben der Stufe oder die Zustimmung zu einem Paar kann eine vom Protokoll festgelegte Wartezeit haben; für eine angehobene Stufe zeigt die App den Zeitpunkt des Inkrafttretens, von der Chain gelesen, für eine Zustimmung sagt sie, dass das Protokoll diese Zeit noch nicht veröffentlicht, und sie bietet denselben Schritt nie zweimal an, weil ein zweiter die Wartezeit neu starten würde. Das Senken der Stufe wirkt immer sofort. Veröffentlicht das Protokoll neue Risikobedingungen, zählen Ihre Stufe und Zustimmungen erst wieder, wenn Sie sie erneut bestätigen. Haben Sie den strengen Modus eingeschaltet, braucht auch jedes liquide Paar Ihre Bestätigung. Eine Sperre durch die Risikostufe des Kreditgebers wird als seine gezeigt: Nichts in Ihrem Konto würde sie ändern.
 
+<a id="wallet-keys"></a>
+
+### Ihre Wallet und ihre Schlüssel
+
+Vaipakam erstellt und verwahrt keine Wallets. Sie brauchen eine selbstverwahrte Wallet: eine App oder ein Gerät, das die Schlüssel zu Ihrem eigenen Konto hält. Niemand hier kann diese Schlüssel sehen, Ihr Guthaben bewegen oder Ihren Zugang wiederherstellen. Wenn Sie die Schlüssel verlieren, verlieren Sie den Zugang zu Ihrem Guthaben. Die App sagt das in der Wallet-Auswahl und vor dem Verbinden auf der Startseite, und ihre Fußzeile verlinkt eine kurze Seite dazu, wie Sie Ihre Schlüssel sicher aufbewahren. Diese Seite nennt keine Wallet-Marke.
+
+Beim Einrichten zeigt eine Wallet eine Wiederherstellungsphrase, eine Liste von Wörtern. Schreiben Sie sie auf Papier und halten Sie sie geheim. Geben Sie sie nie auf einer Website ein, speichern Sie sie nie online und teilen Sie sie mit niemandem: Niemand von Vaipakam wird je danach fragen. Prüfen Sie die Adresse der Seite und lesen Sie, was Ihre Wallet anzeigt, bevor Sie etwas bestätigen. Für größere Beträge ist eine Wallet sicherer, deren Schlüssel auf einem eigenen Hardware-Gerät bleiben, und es ist ratsam, zuerst einen kleinen Betrag zu versuchen.
+
+Am Computer verbinden Sie sich über die Browser-Erweiterung Ihrer Wallet oder scannen den Code der Auswahl mit der Wallet auf Ihrem Telefon. Am Telefon öffnen Sie die App im eigenen Browser Ihrer Wallet-App oder wählen in der Auswahl „Other“. Ohne Wallet können Sie trotzdem die wichtigsten Risiken und die Analysen lesen.
+
 <a id="terms-gate"></a>
 
 ### Die Abfrage der Nutzungsbedingungen

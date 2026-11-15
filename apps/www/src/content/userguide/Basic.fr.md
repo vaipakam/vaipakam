@@ -1476,6 +1476,16 @@ Une offre d'un jeton contre une garantie en jeton peut porter une garde de varia
 
 Chaque compte commence au niveau de risque le plus bas, actifs blue-chip uniquement, et vous seul pouvez le relever. Une paire exige le niveau de son jeton le plus risqué : les jetons blue-chip n'exigent rien, les autres jetons liquides exigent « Actifs liquides », et un jeton illiquide exige « Tout actif, y compris illiquide » ainsi que votre accord pour cette paire précise. Quand accepter une offre ou publier une demande exige une telle étape, la vérification l'indique sur place et la propose en une seule confirmation de portefeuille avec son propre reçu : ce qui change, quelles paires elle couvre, quand elle prend effet et qu'aucun fonds ne bouge. Relever votre niveau, ou donner votre accord pour une paire, peut attendre un délai fixé par le protocole ; pour un niveau relevé, l'application affiche l'heure de prise d'effet, lue sur la chaîne ; pour un accord, elle indique que le protocole ne publie pas encore cette heure ; et elle ne propose jamais deux fois la même étape, car une seconde relancerait l'attente. Abaisser votre niveau prend toujours effet immédiatement. Quand le protocole publie de nouvelles conditions de risque, votre niveau et vos accords cessent de compter jusqu'à ce que vous les confirmiez à nouveau. Si vous avez activé le mode strict, chaque paire liquide exige aussi votre reconnaissance. Un blocage dû au niveau de risque du prêteur est présenté comme le sien : rien dans votre compte ne le changerait.
 
+<a id="wallet-keys"></a>
+
+### Votre portefeuille et ses clés
+
+Vaipakam ne crée ni ne détient de portefeuilles. Il vous faut un portefeuille en autoconservation : une application ou un appareil qui détient les clés de votre propre compte. Personne ici ne peut voir ces clés, déplacer vos fonds ni rétablir votre accès ; si vous perdez les clés, vous perdez l'accès aux fonds. L'application le dit dans le sélecteur de portefeuille et sur l'accueil avant la connexion, et son pied de page renvoie à une courte page sur la façon de garder vos clés en sécurité. Cette page ne cite aucune marque de portefeuille.
+
+À sa création, un portefeuille affiche une phrase de récupération, une liste de mots. Écrivez-la sur papier et gardez-la pour vous. Ne la saisissez jamais sur un site web, ne la stockez jamais en ligne et ne la partagez jamais : personne chez Vaipakam ne vous la demandera. Vérifiez l'adresse du site et lisez ce qu'affiche votre portefeuille avant d'approuver quoi que ce soit. Pour des montants importants, un portefeuille dont les clés restent sur un appareil matériel distinct est plus sûr, et il est prudent d'essayer d'abord avec un petit montant.
+
+Sur un ordinateur, connectez-vous par l'extension de navigateur de votre portefeuille, ou scannez le code du sélecteur avec le portefeuille de votre téléphone. Sur un téléphone, ouvrez l'application dans le navigateur intégré de votre portefeuille, ou choisissez « Other » dans le sélecteur. Sans portefeuille, vous pouvez quand même lire les risques clés et les analyses.
+
 <a id="terms-gate"></a>
 
 ### La demande d'acceptation des Conditions

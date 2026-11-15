@@ -258,8 +258,9 @@
       },
       "basics-wallet": {
         "q": "¿Necesito una billetera de criptomonedas y qué es eso?",
-        "a1": "Una billetera (MetaMask, Rabby, Coinbase Wallet y similares) es la aplicación que custodia la clave privada que controla los activos en cadena. Es a la vez un inicio de sesión y una pluma para firmar — es como Vaipakam sabe que una transacción procede realmente del titular de la cuenta.",
-        "a2": "Solo se necesita una billetera para <em>actuar</em> sobre una posición (crear una oferta, aceptar un préstamo, repagar, reclamar). Navegar por el panel de analítica y consultar los detalles del préstamo funciona sin billetera. Vaipakam nunca ve ni almacena las claves privadas — la billetera vive íntegramente en el navegador o la extensión."
+        "a1": "Una billetera es la aplicación o el dispositivo que guarda las claves privadas que controlan una cuenta en la cadena. Es a la vez inicio de sesión y pluma para firmar: así sabe Vaipakam que una transacción proviene realmente del titular de la cuenta. Vaipakam necesita una billetera de autocustodia, cuyas claves solo tiene su dueño; no crea billeteras para nadie.",
+        "a2": "Solo se necesita una billetera para <em>actuar</em> sobre una posición (crear una oferta, aceptar un préstamo, pagar, reclamar). Las analíticas y los riesgos clave se pueden leer sin billetera. Vaipakam nunca ve, guarda ni recupera claves privadas: si se pierden las claves o la frase de recuperación, nadie puede devolver el acceso a los fondos.",
+        "a3": "La guía de usuario explica <guide>cómo mantener a salvo las claves de una billetera</guide>, sin recomendar ninguna."
       },
       "basics-collateral": {
         "q": "¿Por qué pedir prestado requiere \"colateral\"?",
