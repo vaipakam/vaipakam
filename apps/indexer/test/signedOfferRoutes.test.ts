@@ -88,6 +88,10 @@ function makeOrder(overrides: Partial<SignedOrderWire> = {}): SignedOrderWire {
     creatorFull: false,
     creatorMaxCStar: '0',
     creatorAllowFullDowngrade: false,
+    maxTreasuryFeeBps: '200',
+    maxLoanInitiationFeeBps: '20',
+    allowedTaker: '0x0000000000000000000000000000000000000000',
+    coSigner: '0x0000000000000000000000000000000000000000',
     signer: SIGNER.address.toLowerCase(),
     nonce: '7',
     deadline: String(DEADLINE_7D),
@@ -789,6 +793,13 @@ const SEL_MIN_OFFER = toFunctionSelector(
   }) as AbiFunction,
 );
 
+const SEL_CANCEL_FLOOR = toFunctionSelector(
+  getAbiItem({
+    abi: DIAMOND_SIGNED_OFFER_ABI as Abi,
+    name: 'signedOfferCancelFloor',
+  }) as AbiFunction,
+);
+
 interface RpcReq {
   jsonrpc: string;
   id: number;
@@ -798,7 +809,12 @@ interface RpcReq {
 
 /** Answer the gate's two eth_calls from canned chain state; anything else
  *  (other URLs, other methods, other selectors) throws loudly. */
-function stubRpc(state: { nonceUsed: boolean; filled: bigint; floor?: readonly [boolean, bigint] }): void {
+function stubRpc(state: {
+  nonceUsed: boolean;
+  filled: bigint;
+  floor?: readonly [boolean, bigint];
+  cancelFloor?: bigint;
+}): void {
   vi.stubGlobal(
     'fetch',
     async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -838,6 +854,12 @@ function stubRpc(state: { nonceUsed: boolean; filled: bigint; floor?: readonly [
             abi: DIAMOND_SIGNED_OFFER_ABI as Abi,
             functionName: 'signedOfferFilledAmount',
             result: state.filled,
+          });
+        } else if (data.startsWith(SEL_CANCEL_FLOOR) && state.cancelFloor !== undefined) {
+          result = encodeFunctionResult({
+            abi: DIAMOND_SIGNED_OFFER_ABI as Abi,
+            functionName: 'signedOfferCancelFloor',
+            result: state.cancelFloor,
           });
         } else if (data.startsWith(SEL_MIN_OFFER) && state.floor) {
           result = encodeFunctionResult({
@@ -987,6 +1009,21 @@ describe('POST /signed-offers — chain-state ingest gate (Codex #1145 r7)', () 
     const res = await post(env, rangedPartialOrder());
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: 'nonce-used' });
+  });
+
+  it('#3327 — an order below the signer\'s cancel floor is 409 below-cancel-floor', async () => {
+    stubRpc({ nonceUsed: false, filled: 0n, cancelFloor: 8n });
+    const { env } = makeChainEnv();
+    const res = await post(env, rangedPartialOrder()); // nonce 7
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'below-cancel-floor' });
+  });
+
+  it('#3327 — an order at the cancel floor is admitted', async () => {
+    stubRpc({ nonceUsed: false, filled: 0n, cancelFloor: 7n });
+    const { env } = makeChainEnv();
+    const res = await post(env, rangedPartialOrder());
+    expect(res.status).toBe(201);
   });
 
   it('an untouched ledger still lands 201 with filled_amount 0', async () => {

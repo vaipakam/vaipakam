@@ -813,6 +813,41 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   on-chain offers, the matcher, and the signed fill alike — so the last second
   of an offer's life is never fillable on one path and refused on another.
 
+  **Maker protections on a signed offer (#3327).** A signed offer lives off the
+  chain for as long as its maker leaves it, and anyone holding the signature
+  can fill it, so the maker binds four more terms into what they sign:
+
+  - **Fee caps.** The highest treasury fee on interest and the highest loan
+    initiation fee the maker accepts. A fill is refused while either protocol
+    fee is above its cap, so a fee raised after signing never lands on a loan
+    the maker did not agree to. An interface signs the fees it showed the
+    maker as the caps, and refuses to post an order when the fees moved
+    between the maker's review and the signature.
+  - **Allowed taker.** Optionally, the one wallet that may fill the offer. On a
+    direct fill that is the wallet sending the fill; on a match it is the
+    creator of the counterparty offer, since the matcher is only a relay. Left
+    empty, anyone may fill.
+  - **Co-signer.** Optionally, a second key whose fresh approval each fill
+    needs. The approval names the offer, the taker, the amount filled and a
+    time it lapses, which may be at most fifteen minutes away, so a stolen or
+    leaked maker signature alone cannot be filled. Left empty, no approval is
+    needed.
+  - **Cancel floor.** A maker can cancel, in one transaction, every offer they
+    signed with a nonce below a floor they choose. The floor only rises. An
+    interface draws a new offer's nonce at or above the floor, so a fresh
+    offer is never born cancelled, and the off-chain book drops every offer
+    below the floor as soon as it rises.
+
+  One fill rule decides all of these for every path (the direct fill, the
+  match and the accept preview), in one order: the offer's own state, the
+  deadline, the expiry, the cancelled nonce, the cancel floor, the treasury
+  cap, the initiation-fee cap, the taker, then the co-signature. The accept
+  preview reports each as its own refusal. An interface that cannot obtain a
+  co-signature, or is not the named taker, must say so and offer no fill
+  rather than send one that would fail. Changing the signed fields changes the
+  signature itself, so an offer signed before this change cannot be filled
+  after it; the book removes such offers.
+
 ### Standing lending intents (v1)
 
 - A lender may register a **standing lending intent** for an ERC-20 asset-pair:

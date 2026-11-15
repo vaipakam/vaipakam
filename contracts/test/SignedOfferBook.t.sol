@@ -110,6 +110,8 @@ contract SignedOfferBookTest is SetupTest {
             uint8(LibVaipakam.PeriodicInterestCadence.None);
         o.refinanceTargetLoanId = 0;
         o.useFullTermInterest = false;
+        o.maxTreasuryFeeBps = type(uint16).max; // #3327: no fee cap in these suites
+        o.maxLoanInitiationFeeBps = type(uint16).max;
         o.signer = signer;
         o.nonce = nonce;
         o.deadline = deadline; // 0 ⇒ GTC signature
@@ -253,7 +255,7 @@ contract SignedOfferBookTest is SetupTest {
         vm.recordLogs();
         vm.prank(borrower);
         uint256 loanId = SignedOfferFacet(address(diamond)).acceptSignedOffer(
-            o, sig, terms, acceptSig
+            o, sig, terms, acceptSig, _noAuth()
         );
 
         assertGt(loanId, 0, "loan initiated");
@@ -302,7 +304,7 @@ contract SignedOfferBookTest is SetupTest {
 
         vm.prank(borrower);
         uint256 loanId =
-            SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig);
+            SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig, _noAuth());
         assertGt(loanId, 0, "direct fill with amountMax==0 must not revert AmountMaxMustBePositive");
         assertEq(
             LoanFacet(address(diamond)).getLoanDetails(loanId).principal,
@@ -331,9 +333,9 @@ contract SignedOfferBookTest is SetupTest {
             _borrowerAcceptTerms(o);
 
         vm.prank(borrower);
-        vm.expectRevert(SignedOfferFacet.SignedOfferBadSignature.selector);
+        vm.expectRevert(LibSignedOffer.SignedOfferBadSignature.selector);
         SignedOfferFacet(address(diamond)).acceptSignedOffer(
-            o, sig, terms, acceptSig
+            o, sig, terms, acceptSig, _noAuth()
         );
     }
 
@@ -352,9 +354,9 @@ contract SignedOfferBookTest is SetupTest {
             _borrowerAcceptTerms(o);
 
         vm.prank(borrower);
-        vm.expectRevert(SignedOfferFacet.SignedOfferBadSignature.selector);
+        vm.expectRevert(LibSignedOffer.SignedOfferBadSignature.selector);
         SignedOfferFacet(address(diamond)).acceptSignedOffer(
-            o, badSig, terms, acceptSig
+            o, badSig, terms, acceptSig, _noAuth()
         );
     }
 
@@ -372,7 +374,7 @@ contract SignedOfferBookTest is SetupTest {
 
         vm.prank(borrower);
         SignedOfferFacet(address(diamond)).acceptSignedOffer(
-            o, sig, terms, acceptSig
+            o, sig, terms, acceptSig, _noAuth()
         );
 
         bytes32 orderHash =
@@ -383,12 +385,12 @@ contract SignedOfferBookTest is SetupTest {
         vm.prank(borrower);
         vm.expectRevert(
             abi.encodeWithSelector(
-                SignedOfferFacet.SignedOfferConsumed.selector,
+                LibSignedOffer.SignedOfferConsumed.selector,
                 orderHash
             )
         );
         SignedOfferFacet(address(diamond)).acceptSignedOffer(
-            o, sig, terms, acceptSig
+            o, sig, terms, acceptSig, _noAuth()
         );
     }
 
@@ -411,12 +413,12 @@ contract SignedOfferBookTest is SetupTest {
         vm.prank(borrower);
         vm.expectRevert(
             abi.encodeWithSelector(
-                SignedOfferFacet.SignedOfferConsumed.selector,
+                LibSignedOffer.SignedOfferConsumed.selector,
                 orderHash
             )
         );
         SignedOfferFacet(address(diamond)).acceptSignedOffer(
-            o, sig, terms, acceptSig
+            o, sig, terms, acceptSig, _noAuth()
         );
     }
 
@@ -450,12 +452,12 @@ contract SignedOfferBookTest is SetupTest {
         vm.prank(borrower);
         vm.expectRevert(
             abi.encodeWithSelector(
-                SignedOfferFacet.SignedOfferNonceInvalidated.selector,
+                LibSignedOffer.SignedOfferNonceInvalidated.selector,
                 o.nonce
             )
         );
         SignedOfferFacet(address(diamond)).acceptSignedOffer(
-            o, sig, terms, acceptSig
+            o, sig, terms, acceptSig, _noAuth()
         );
     }
 
@@ -483,7 +485,7 @@ contract SignedOfferBookTest is SetupTest {
             )
         );
         SignedOfferFacet(address(diamond)).acceptSignedOffer(
-            o, sig, terms, acceptSig
+            o, sig, terms, acceptSig, _noAuth()
         );
     }
 
@@ -505,12 +507,12 @@ contract SignedOfferBookTest is SetupTest {
         vm.prank(borrower);
         vm.expectRevert(
             abi.encodeWithSelector(
-                SignedOfferFacet.SignedOfferExpired.selector,
+                LibSignedOffer.SignedOfferExpired.selector,
                 expiresAt
             )
         );
         SignedOfferFacet(address(diamond)).acceptSignedOffer(
-            o, sig, terms, acceptSig
+            o, sig, terms, acceptSig, _noAuth()
         );
     }
 
@@ -553,9 +555,9 @@ contract SignedOfferBookTest is SetupTest {
             _borrowerAcceptTerms(o);
 
         vm.prank(borrower);
-        vm.expectRevert(SignedOfferFacet.SignedOfferBadSignature.selector);
+        vm.expectRevert(LibSignedOffer.SignedOfferBadSignature.selector);
         SignedOfferFacet(address(diamond)).acceptSignedOffer(
-            o, wrongChainSig, terms, acceptSig
+            o, wrongChainSig, terms, acceptSig, _noAuth()
         );
     }
 
@@ -587,7 +589,7 @@ contract SignedOfferBookTest is SetupTest {
 
         vm.prank(borrower);
         uint256 loanId = SignedOfferFacet(address(diamond)).acceptSignedOffer(
-            o, sig, terms, acceptSig
+            o, sig, terms, acceptSig, _noAuth()
         );
 
         assertGt(loanId, 0, "1271-signed loan initiated");
@@ -636,7 +638,7 @@ contract SignedOfferBookTest is SetupTest {
 
         vm.prank(borrower);
         uint256 loanId = SignedOfferFacet(address(diamond))
-            .acceptSignedOfferWithPermit(o, permit, "", terms, acceptSig);
+            .acceptSignedOfferWithPermit(o, permit, "", terms, acceptSig, _noAuth());
 
         assertGt(loanId, 0, "wallet-backed loan initiated");
         LibVaipakam.Loan memory loan =
@@ -682,7 +684,7 @@ contract SignedOfferBookTest is SetupTest {
         vm.prank(borrower);
         vm.expectRevert(SignedOfferFacet.WalletBackedMustBeAon.selector);
         SignedOfferFacet(address(diamond)).acceptSignedOfferWithPermit(
-            o, permit, "", terms, acceptSig
+            o, permit, "", terms, acceptSig, _noAuth()
         );
     }
 
@@ -708,7 +710,7 @@ contract SignedOfferBookTest is SetupTest {
         vm.prank(borrower);
         vm.expectRevert(OfferCreateFacet.SignedOfferUnsupportedShape.selector);
         SignedOfferFacet(address(diamond)).acceptSignedOffer(
-            o, sig, terms, acceptSig
+            o, sig, terms, acceptSig, _noAuth()
         );
     }
 
@@ -719,7 +721,7 @@ contract SignedOfferBookTest is SetupTest {
         bytes memory sig,
         address acceptor
     ) internal view returns (OfferPreviewFacet.SignedAcceptPreview memory) {
-        return OfferPreviewFacet(address(diamond)).previewSignedOfferAccept(o, sig, acceptor);
+        return OfferPreviewFacet(address(diamond)).previewSignedOfferAccept(o, sig, acceptor, _noAuth());
     }
 
     function _assertCode(
@@ -747,7 +749,7 @@ contract SignedOfferBookTest is SetupTest {
 
         (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) = _borrowerAcceptTerms(o);
         vm.prank(borrower);
-        uint256 loanId = SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig);
+        uint256 loanId = SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig, _noAuth());
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(loan.principal, p.accept.effectivePrincipal, "principal as previewed");
         assertEq(loan.interestRateBps, p.accept.interestRateBps, "rate as previewed");
@@ -809,8 +811,8 @@ contract SignedOfferBookTest is SetupTest {
         vm.warp(uint256(expiresAt));
         _assertCode(_previewSigned(o, sig, borrower), OfferAcceptFacet.AcceptError.OfferExpired, "expired");
         vm.prank(borrower);
-        vm.expectRevert(abi.encodeWithSelector(SignedOfferFacet.SignedOfferExpired.selector, expiresAt));
-        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig);
+        vm.expectRevert(abi.encodeWithSelector(LibSignedOffer.SignedOfferExpired.selector, expiresAt));
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig, _noAuth());
     }
 
     function test_3552_previewReportsAnUnsupportedShape() public {
@@ -846,7 +848,7 @@ contract SignedOfferBookTest is SetupTest {
         (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) = _borrowerAcceptTerms(o);
         vm.prank(borrower);
         vm.expectRevert(abi.encodeWithSelector(ProfileFacet.SanctionedAddress.selector, signer));
-        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig);
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig, _noAuth());
     }
 
     function test_3552_previewReportsAPausedAssetBeforeTheStake() public {
@@ -857,7 +859,7 @@ contract SignedOfferBookTest is SetupTest {
         (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) = _borrowerAcceptTerms(o);
         vm.prank(borrower);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.AssetPaused.selector, o.collateralAsset));
-        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig);
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig, _noAuth());
     }
 
     function test_3552_previewReportsTheValueFloor() public {
@@ -871,7 +873,7 @@ contract SignedOfferBookTest is SetupTest {
         (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) = _borrowerAcceptTerms(o);
         vm.prank(borrower);
         vm.expectPartialRevert(LibOfferAdmission.OfferBelowMinimumValue.selector);
-        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig);
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig, _noAuth());
     }
 
     function test_3552_previewReportsThePauseFirst() public {
@@ -956,7 +958,7 @@ contract SignedOfferBookTest is SetupTest {
         (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) = _borrowerAcceptTerms(o);
         vm.expectRevert(abi.encodeWithSelector(LibRiskAccess.RiskTierTooLow.selector, signer, ILLIQUID, BLUECHIP));
         vm.prank(borrower);
-        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig);
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig, _noAuth());
 
         // Signer armed on the reported pair: only the taker's block is left.
         _arm(signer, pair);
@@ -965,7 +967,7 @@ contract SignedOfferBookTest is SetupTest {
         assertEq(a, 1, "taker still under-tiered");
         vm.expectRevert(abi.encodeWithSelector(LibRiskAccess.RiskTierTooLow.selector, borrower, ILLIQUID, BLUECHIP));
         vm.prank(borrower);
-        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig);
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig, _noAuth());
 
         // Taker opts up but records no consent: the consent block (2).
         vm.prank(borrower);
@@ -976,7 +978,7 @@ contract SignedOfferBookTest is SetupTest {
             abi.encodeWithSelector(LibRiskAccess.IlliquidPairNotConsented.selector, borrower, LibRiskAccess.pairKey(pair))
         );
         vm.prank(borrower);
-        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig);
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig, _noAuth());
 
         // Consent on the reported pair: both clear, and the fill goes through.
         vm.prank(borrower);
@@ -985,7 +987,7 @@ contract SignedOfferBookTest is SetupTest {
         assertEq(c, 0, "signer clear");
         assertEq(a, 0, "taker clear");
         vm.prank(borrower);
-        uint256 loanId = SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig);
+        uint256 loanId = SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig, _noAuth());
 
         // The stored-offer view, keyed on the offer the fill created, names
         // the same pair: the two builders cannot disagree.
@@ -993,6 +995,201 @@ contract SignedOfferBookTest is SetupTest {
             RiskPreviewFacet(address(diamond)).acceptMidTierAckPair(LoanFacet(address(diamond)).getLoanDetails(loanId).offerId);
         assertEq(LibRiskAccess.pairKey(stored), LibRiskAccess.pairKey(pair), "same pair as the stored-offer view");
     }
+
+    /// @dev #3327: no co-signer named, so the fill authorisation is empty.
+    function _noAuth() internal pure returns (LibSignedOffer.FillAuth memory auth) {}
+
+    // ─── 16. #3327 maker protections: fee caps, taker, cancel floor, co-signer ──
+
+    uint256 internal constant COSIGNER_PK = 0xC051;
+
+    /// @dev A co-signature from `pk` over one fill of `o` by `taker`.
+    function _coSign(
+        LibSignedOffer.SignedOffer memory o,
+        address taker,
+        uint256 fillAmount,
+        uint64 validUntil,
+        uint256 pk
+    ) internal view returns (LibSignedOffer.FillAuth memory auth) {
+        bytes32 orderHash = SignedOfferFacet(address(diamond)).signedOfferOrderHash(o);
+        bytes32 d = SignedOfferFacet(address(diamond)).hashSignedOfferFill(orderHash, taker, fillAmount, validUntil);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, d);
+        auth.validUntil = validUntil;
+        auth.coSignature = abi.encodePacked(r, s, v);
+    }
+
+    /// @dev Fill `o` (signed, vault funded) as the borrower with `auth`.
+    function _fill(LibSignedOffer.SignedOffer memory o, LibSignedOffer.FillAuth memory auth)
+        internal
+        returns (uint256 loanId)
+    {
+        bytes memory sig = _sign(o);
+        (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) = _borrowerAcceptTerms(o);
+        vm.prank(borrower);
+        loanId = SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig, auth);
+    }
+
+    /// @dev Expect the next borrower fill of `o` with `auth` to revert `err`.
+    function _expectFillRevert(
+        LibSignedOffer.SignedOffer memory o,
+        LibSignedOffer.FillAuth memory auth,
+        bytes memory err
+    ) internal {
+        bytes memory sig = _sign(o);
+        (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) = _borrowerAcceptTerms(o);
+        vm.prank(borrower);
+        vm.expectRevert(err);
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, terms, acceptSig, auth);
+    }
+
+    /// @dev A treasury fee raised above the maker's cap refuses the fill, and
+    ///      the preview says so; a cap at the live fee fills.
+    function test_3327_treasuryFeeAboveCapRefused() public {
+        LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(1601, 0);
+        o.maxTreasuryFeeBps = 200;
+        o.maxLoanInitiationFeeBps = 20;
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+        ConfigFacet(address(diamond)).setFeesConfig(250, 20);
+        _expectFillRevert(
+            o,
+            _noAuth(),
+            abi.encodeWithSelector(LibSignedOffer.SignedOfferTreasuryFeeAboveCap.selector, uint256(250), uint256(200))
+        );
+        _assertCode(
+            _previewSigned(o, _sign(o), borrower), OfferAcceptFacet.AcceptError.SignedOfferFeeAboveCap, "preview"
+        );
+        ConfigFacet(address(diamond)).setFeesConfig(200, 20);
+        assertGt(_fill(o, _noAuth()), 0, "cap at the live fee fills");
+    }
+
+    /// @dev The same for the loan-initiation fee; a cap of 0 accepts only 0.
+    function test_3327_loanInitiationFeeAboveCapRefused() public {
+        LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(1602, 0);
+        o.maxTreasuryFeeBps = 200;
+        o.maxLoanInitiationFeeBps = 0;
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+        ConfigFacet(address(diamond)).setFeesConfig(200, 20);
+        _expectFillRevert(
+            o,
+            _noAuth(),
+            abi.encodeWithSelector(
+                LibSignedOffer.SignedOfferLoanInitiationFeeAboveCap.selector, uint256(20), uint256(0)
+            )
+        );
+    }
+
+    /// @dev An offer naming a taker fills only for that taker.
+    function test_3327_allowedTakerBindsTheCaller() public {
+        LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(1603, 0);
+        o.allowedTaker = address(0xBEEF);
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+        _expectFillRevert(
+            o,
+            _noAuth(),
+            abi.encodeWithSelector(LibSignedOffer.SignedOfferTakerNotAllowed.selector, borrower, address(0xBEEF))
+        );
+        _assertCode(
+            _previewSigned(o, _sign(o), borrower), OfferAcceptFacet.AcceptError.SignedOfferTakerNotAllowed, "preview"
+        );
+        o.allowedTaker = borrower;
+        _assertCode(_previewSigned(o, _sign(o), borrower), OfferAcceptFacet.AcceptError.None, "named taker clear");
+        assertGt(_fill(o, _noAuth()), 0, "the named taker fills");
+    }
+
+    /// @dev Raising the cancel floor cancels every offer below it in one
+    ///      call; offers at or above it still fill; the floor never lowers.
+    function test_3327_cancelFloor() public {
+        LibSignedOffer.SignedOffer memory below = _lenderSignedOffer(1604, 0);
+        LibSignedOffer.SignedOffer memory at = _lenderSignedOffer(2000, 0);
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+
+        vm.expectEmit(true, false, false, true, address(diamond));
+        emit SignedOfferFacet.SignedOfferCancelFloorRaised(signer, 2000);
+        vm.prank(signer);
+        SignedOfferFacet(address(diamond)).cancelSignedOffersBelow(2000);
+        assertEq(SignedOfferFacet(address(diamond)).signedOfferCancelFloor(signer), 2000, "floor");
+
+        _expectFillRevert(
+            below,
+            _noAuth(),
+            abi.encodeWithSelector(LibSignedOffer.SignedOfferBelowCancelFloor.selector, uint256(1604), uint256(2000))
+        );
+        _assertCode(
+            _previewSigned(below, _sign(below), borrower),
+            OfferAcceptFacet.AcceptError.SignedOfferBelowCancelFloor,
+            "preview"
+        );
+
+        vm.prank(signer);
+        vm.expectRevert(
+            abi.encodeWithSelector(SignedOfferFacet.SignedOfferCancelFloorNotRaised.selector, uint256(2000), uint256(2000))
+        );
+        SignedOfferFacet(address(diamond)).cancelSignedOffersBelow(2000);
+
+        assertGt(_fill(at, _noAuth()), 0, "an offer at the floor still fills");
+    }
+
+    /// @dev Another wallet's floor does not touch this signer's offers.
+    function test_3327_cancelFloorIsPerSigner() public {
+        LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(1605, 0);
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+        vm.prank(borrower);
+        SignedOfferFacet(address(diamond)).cancelSignedOffersBelow(type(uint256).max);
+        assertGt(_fill(o, _noAuth()), 0, "fills");
+    }
+
+    /// @dev A named co-signer: no signature, a wrong signer, an expired one
+    ///      and one valid too far ahead are all refused; a fresh one fills.
+    function test_3327_coSignerGatesTheFill() public {
+        address coSigner = vm.addr(COSIGNER_PK);
+        LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(1606, 0);
+        o.coSigner = coSigner;
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+        bytes memory refused = abi.encodeWithSelector(LibSignedOffer.SignedOfferCoSignatureInvalid.selector);
+        uint64 soon = uint64(block.timestamp + 5 minutes);
+
+        _expectFillRevert(o, _noAuth(), refused);
+        _expectFillRevert(o, _coSign(o, borrower, PRINCIPAL, soon, signerPk), refused);
+        _expectFillRevert(o, _coSign(o, borrower, PRINCIPAL - 1, soon, COSIGNER_PK), refused);
+        _expectFillRevert(o, _coSign(o, address(0xBEEF), PRINCIPAL, soon, COSIGNER_PK), refused);
+        _expectFillRevert(o, _coSign(o, borrower, PRINCIPAL, uint64(block.timestamp + 16 minutes), COSIGNER_PK), refused);
+        LibSignedOffer.FillAuth memory stale = _coSign(o, borrower, PRINCIPAL, soon, COSIGNER_PK);
+        vm.warp(block.timestamp + 6 minutes);
+        _expectFillRevert(o, stale, refused);
+
+        LibSignedOffer.FillAuth memory fresh =
+            _coSign(o, borrower, PRINCIPAL, uint64(block.timestamp + 15 minutes), COSIGNER_PK);
+        _assertCode(
+            OfferPreviewFacet(address(diamond)).previewSignedOfferAccept(o, _sign(o), borrower, _noAuth()),
+            OfferAcceptFacet.AcceptError.SignedOfferCoSignatureInvalid,
+            "preview without the co-signature"
+        );
+        _assertCode(
+            OfferPreviewFacet(address(diamond)).previewSignedOfferAccept(o, _sign(o), borrower, fresh),
+            OfferAcceptFacet.AcceptError.None,
+            "preview with it"
+        );
+        assertGt(_fill(o, fresh), 0, "a fresh co-signature fills");
+    }
+
+    /// @dev The four new fields are signed: changing any one breaks the
+    ///      maker's signature.
+    function test_3327_newFieldsAreSigned() public view {
+        LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(1607, 0);
+        bytes32 h = SignedOfferFacet(address(diamond)).hashSignedOffer(o);
+        o.maxTreasuryFeeBps = 1;
+        assertTrue(SignedOfferFacet(address(diamond)).hashSignedOffer(o) != h, "treasury cap");
+        o = _lenderSignedOffer(1607, 0);
+        o.maxLoanInitiationFeeBps = 1;
+        assertTrue(SignedOfferFacet(address(diamond)).hashSignedOffer(o) != h, "LIF cap");
+        o = _lenderSignedOffer(1607, 0);
+        o.allowedTaker = borrower;
+        assertTrue(SignedOfferFacet(address(diamond)).hashSignedOffer(o) != h, "taker");
+        o = _lenderSignedOffer(1607, 0);
+        o.coSigner = borrower;
+        assertTrue(SignedOfferFacet(address(diamond)).hashSignedOffer(o) != h, "co-signer");
+    }
+
 }
 
 /**
@@ -1043,4 +1240,5 @@ contract Mock1271Wallet is IERC1271, IERC721Receiver {
         }
         return 0xffffffff;
     }
+
 }

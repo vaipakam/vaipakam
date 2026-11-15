@@ -63,6 +63,7 @@ import {
   type OfferTerms,
 } from '../../lib/offerSchema';
 import { readLiveProtocolFees, useProtocolFees } from '../../data/fees';
+import { readSignedOfferCancelFloor } from '../../data/signedTakerRefusal';
 import { useOfferBookFloor } from '../../data/offerFloor';
 import {
   needsSecurityCheck,
@@ -889,6 +890,16 @@ export function OrderTicket({
           copy.desk.ticket.overDurationCap(liveFees.maxOfferDurationDays),
         );
       }
+      // #3327 — the order signs the fees the review showed as its caps, so
+      // a fee change since the review stops the post rather than signing
+      // caps the maker never saw.
+      if (
+        liveFees.treasuryFeeBps !== fees.treasuryFeeBps ||
+        liveFees.loanInitiationFeeBps !== fees.loanInitiationFeeBps
+      ) {
+        void queryClient.invalidateQueries({ queryKey: ['protocolFees'] });
+        throw new Error(copy.desk.ticket.feesChanged);
+      }
       await Promise.all([
         assertAssetNotPausedLive({
           publicClient,
@@ -963,7 +974,15 @@ export function OrderTicket({
       //    bound. `_vetSignedOffer` judges the deadline against
       //    `block.timestamp`, so chain time is the only honest anchor
       //    (the same doctrine as `assertExpiryStillValidLive`).
-      const nonce = randomSignedOfferNonce();
+      // #3327 — drawn at or above the signer's cancel floor (a Diamond
+      // that predates the floor has none).
+      const nonce = randomSignedOfferNonce(
+        (await readSignedOfferCancelFloor(
+          publicClient,
+          walletChain.diamondAddress,
+          address as `0x${string}`,
+        )) ?? 0n,
+      );
       const deadline =
         payload.expiresAt !== 0n
           ? payload.expiresAt
@@ -984,7 +1003,17 @@ export function OrderTicket({
             allowDowngrade: makerFull.allowDowngrade,
           }
         : undefined;
-      const order = wireFromCreatePayload(payload, address, nonce, deadline, makerFullIntent);
+      const order = wireFromCreatePayload(
+        payload,
+        address,
+        nonce,
+        deadline,
+        {
+          maxTreasuryFeeBps: liveFees.treasuryFeeBps,
+          maxLoanInitiationFeeBps: liveFees.loanInitiationFeeBps,
+        },
+        makerFullIntent,
+      );
       const signature = await signedOffer.sign(order);
       const res = await postSignedOffer(
         walletChain.chainId,
@@ -998,7 +1027,9 @@ export function OrderTicket({
         throw new Error(
           res.error === 'below-offer-floor'
             ? copy.desk.ticket.gaslessBelowFloor
-            : copy.desk.ticket.gaslessRejected(res.error),
+            : res.error === 'below-cancel-floor'
+              ? copy.desk.ticket.gaslessBelowCancelFloor
+              : copy.desk.ticket.gaslessRejected(res.error),
         );
       }
       setGaslessPosted(res.orderHash);
@@ -1067,7 +1098,7 @@ export function OrderTicket({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [postMode, fieldsComplete, decimalsReady, side, form, fillMode, expiry, customExpiry, lendingMeta.data, collateralMeta.data]);
 
-  const feePreview = useMemo((): { commit: string; fee: string } | null => {
+  const feePreview = useMemo((): { commit: string; fee: string; capNote: string | null } | null => {
     if (!fieldsComplete || !decimalsReady || !fees.ready) return null;
     const payload = buildPayload(false, nowSec);
     if (!payload) return null;
@@ -1076,6 +1107,10 @@ export function OrderTicket({
     const lendSym = lendingMeta.data?.symbol ?? '';
     const collSym = collateralMeta.data?.symbol ?? '';
     const gasless = postMode === 'gasless';
+    // #3327 — a gasless order signs both fees as its caps; say so.
+    const capNote = gasless
+      ? text.feeCapNote(String(fees.treasuryFeeBps / 100), String(fees.loanInitiationFeeBps / 100))
+      : null;
     if (side === 'lender') {
       const escrow = formatTokenAmountExact(payload.amountMax, lendDec);
       const netRate = (
@@ -1087,6 +1122,7 @@ export function OrderTicket({
           ? text.commitAtFill(escrow, lendSym)
           : text.escrowNow(escrow, lendSym),
         fee: text.netYield(netRate, String(fees.treasuryFeeBps / 100)),
+        capNote,
       };
     }
     const lock = formatTokenAmountExact(payload.collateralAmountMax, collDec);
@@ -1100,6 +1136,7 @@ export function OrderTicket({
         formatTokenAmountExact(lifAmt, lendDec),
         lendSym,
       ),
+      capNote,
     };
     // buildPayload reads only state captured by these deps, plus the
     // ticking clock (same pattern as simTx above).
@@ -1451,6 +1488,7 @@ export function OrderTicket({
           <p className="desk-fee-preview-title">{text.feePreviewTitle}</p>
           <p>{feePreview.commit}</p>
           <p>{feePreview.fee}</p>
+          {feePreview.capNote ? <p>{feePreview.capNote}</p> : null}
         </div>
       ) : null}
 

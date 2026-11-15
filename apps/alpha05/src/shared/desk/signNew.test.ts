@@ -32,6 +32,8 @@ const ctx: TicketContext = {
   terms: 'ready',
 };
 const NOW = 1_000_000n;
+/** #3327 — the live fees and the signer's cancel floor a review signs against. */
+const TERMS = { treasuryFeeBps: 200n, lifBps: 20n, cancelFloor: 0n };
 
 function draftOf(patch: Partial<TicketInput> = {}) {
   const input: TicketInput = { ...DEFAULT_TICKET, amount: '0.5', collateral: '250', rate: '6', mode: 'sign', ...patch };
@@ -75,7 +77,7 @@ describe('the ticket in sign mode (OFF-59)', () => {
 describe('signedOrderFrom', () => {
   it('signs the terms a posted offer would send, in the wire form the book stores', () => {
     const draft = draftOf();
-    const o = signedOrderFrom(draft, ME, 42n);
+    const o = signedOrderFrom(draft, ME, 42n, TERMS);
     const p = createParams(draft.parsed, draft.pair, draft.expiresAt, draft.side);
     expect(o).toMatchObject({
       offerType: '0',
@@ -91,6 +93,12 @@ describe('signedOrderFrom', () => {
       fillMode: '1',
       creatorFull: false,
       creatorMaxCStar: '0',
+      // #3327 — the fees the review shows are the caps the maker signs; the
+      // app names no taker and no co-signer.
+      maxTreasuryFeeBps: '200',
+      maxLoanInitiationFeeBps: '20',
+      allowedTaker: '0x0000000000000000000000000000000000000000',
+      coSigner: '0x0000000000000000000000000000000000000000',
       signer: ME.toLowerCase(),
       nonce: '42',
     });
@@ -102,18 +110,18 @@ describe('signedOrderFrom', () => {
   });
 
   it('carries a borrower’s whole collateral as one figure', () => {
-    const o = signedOrderFrom(draftOf({ side: 'borrower' }), ME, 1n);
+    const o = signedOrderFrom(draftOf({ side: 'borrower' }), ME, 1n, TERMS);
     expect(o).toMatchObject({ offerType: '1', collateralAmount: '250000000', collateralAmountMax: '250000000', amount: o.amountMax });
   });
 
   it('refuses every shape a signed order cannot carry', () => {
     const d = draftOf();
-    expect(() => signedOrderFrom({ ...d, expiresAt: 0n }, ME, 1n)).toThrow('expiry');
-    expect(() => signedOrderFrom({ ...d, parsed: { ...d.parsed, fillMode: 'partial' } }, ME, 1n)).toThrow('one size');
-    expect(() => signedOrderFrom({ ...d, parsed: { ...d.parsed, amount: 1n } }, ME, 1n)).toThrow('one size');
-    expect(() => signedOrderFrom({ ...d, parsed: { ...d.parsed, collateralFloor: 1n } }, ME, 1n)).toThrow('one size');
-    expect(() => signedOrderFrom({ ...d, parsed: { ...d.parsed, guardBps: 500 } }, ME, 1n)).toThrow('price guard');
-    expect(() => signedOrderFrom({ ...d, pair: { ...d.pair, leg: { kind: 'erc721', tokenId: 1n } } }, ME, 1n)).toThrow('token collateral');
+    expect(() => signedOrderFrom({ ...d, expiresAt: 0n }, ME, 1n, TERMS)).toThrow('expiry');
+    expect(() => signedOrderFrom({ ...d, parsed: { ...d.parsed, fillMode: 'partial' } }, ME, 1n, TERMS)).toThrow('one size');
+    expect(() => signedOrderFrom({ ...d, parsed: { ...d.parsed, amount: 1n } }, ME, 1n, TERMS)).toThrow('one size');
+    expect(() => signedOrderFrom({ ...d, parsed: { ...d.parsed, collateralFloor: 1n } }, ME, 1n, TERMS)).toThrow('one size');
+    expect(() => signedOrderFrom({ ...d, parsed: { ...d.parsed, guardBps: 500 } }, ME, 1n, TERMS)).toThrow('price guard');
+    expect(() => signedOrderFrom({ ...d, pair: { ...d.pair, leg: { kind: 'erc721', tokenId: 1n } } }, ME, 1n, TERMS)).toThrow('token collateral');
   });
 });
 
@@ -130,7 +138,7 @@ describe('randomNonce and the domain', () => {
 });
 
 describe('the review', () => {
-  const sign = signDraftFrom(draftOf(), 84532, ME, 9n);
+  const sign = signDraftFrom(draftOf(), 84532, ME, TERMS, 9n);
   const read = (free: SignReview['free'], chainNow = NOW + 10n): SignReview => ({ chainNow, free, readAt: 1 });
 
   it('is built once, for one wallet on one network', () => {
@@ -159,21 +167,22 @@ describe('the review', () => {
       'signNew.rowOrder',
       'signNew.rowLapses',
       'signNew.rowFills',
+      'signNew.rowFeeCaps',
       'signNew.rowNow',
       'signNew.rowAtFill',
       'signNew.rowFree',
     ]);
-    expect(r.rows[4]).toMatchObject({ value: { kind: 'amount', asset: WETH.toLowerCase(), amount: 5n * 10n ** 17n }, binding: true, movesOut: true });
+    expect(r.rows[5]).toMatchObject({ value: { kind: 'amount', asset: WETH.toLowerCase(), amount: 5n * 10n ** 17n }, binding: true, movesOut: true });
     expect(r.consequences).toContain('signedOrders.onlyWay');
     expect(r.consequences).toContain(`signNew.short(${4n * 10n ** 17n} of a1)`);
     const unread = signNewReceipt(sign, read({ kind: 'unread', reason: 'rpc down' }), amount, copy);
-    expect(unread.rows[5]!.value).toEqual({ kind: 'unknown', why: 'rpc down' });
+    expect(unread.rows[6]!.value).toEqual({ kind: 'unknown', why: 'rpc down' });
     expect(unread.consequences.some((c) => typeof c === 'string' && c.startsWith('signNew.short'))).toBe(false);
   });
 });
 
 describe('listing on the offer book', () => {
-  const sign = signDraftFrom(draftOf(), 84532, ME, 9n);
+  const sign = signDraftFrom(draftOf(), 84532, ME, TERMS, 9n);
   const rec = { identity: sign.identity, chainId: 84532, order: sign.order, orderHash: sign.orderHash, signature: '0xabcd' as Hex };
   const poster = (answer: () => Promise<{ status: number; body: unknown }>, seen: unknown[] = []): IndexerPoster => ({
     origin: 'https://index.test',

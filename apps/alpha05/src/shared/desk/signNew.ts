@@ -20,7 +20,11 @@
  * since nobody else holds its signature.
  */
 import type { Abi, PublicClient } from 'viem';
-import { VaultDepositoryFacetABI } from '@vaipakam/contracts/abis';
+import { SignedOfferFacetABI, VaultDepositoryFacetABI } from '@vaipakam/contracts/abis';
+import { refusalFromError } from '../eligibility/refusal';
+import { readLifBps, readTreasuryFeeBps } from '../offers/reads';
+import { isContractAnswer } from '../reads/answer';
+import { formatBps } from '../ui/format';
 import type { CopyAccess } from '../copy/useCopy';
 import { ASSET_TYPE } from '../nft/nft';
 import { createParams } from '../post/postModel';
@@ -35,6 +39,36 @@ type Hex = `0x${string}`;
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
 
 const DEPOSITORY = VaultDepositoryFacetABI as Abi;
+const SIGNED_OFFER = SignedOfferFacetABI as Abi;
+const ZERO = '0x0000000000000000000000000000000000000000';
+
+/**
+ * #3327 — what the order signs beside its terms: the protocol fees read now,
+ * signed as the highest the maker accepts (a later rise refuses the fill
+ * instead of re-pricing it), and the signer's cancel floor, which the nonce
+ * is drawn above (every order with a nonce below it is cancelled).
+ */
+export interface SignTerms {
+  treasuryFeeBps: bigint;
+  lifBps: bigint;
+  cancelFloor: bigint;
+}
+
+export async function readSignTerms(c: PublicClient, diamond: Hex, account: Hex): Promise<SignTerms> {
+  const [treasuryFeeBps, lifBps, cancelFloor] = await Promise.all([
+    readTreasuryFeeBps(c, diamond),
+    readLifBps(c, diamond),
+    (c.readContract({ address: diamond, abi: SIGNED_OFFER, functionName: 'signedOfferCancelFloor', args: [account] }) as Promise<bigint>).catch(
+      (e: unknown) => {
+        // A deployment that predates the floor has none; any other failure
+        // is thrown, so an unread floor never reads as none.
+        if (isContractAnswer(e) && refusalFromError(e).code === 'FunctionDoesNotExist') return 0n;
+        throw e;
+      },
+    ),
+  ]);
+  return { treasuryFeeBps, lifBps, cancelFloor };
+}
 
 /** The order under review: built once, with its nonce, for one wallet on
  *  one network. */
@@ -74,7 +108,7 @@ export function identityOf(chainId: number, account: Hex): string {
  * only an on-chain cancel would ever stop it. Each refusal throws: the
  * ticket never builds such a draft in sign mode.
  */
-export function signedOrderFrom(draft: PostDraft, signer: Hex, nonce: bigint): SignedOrderWire {
+export function signedOrderFrom(draft: PostDraft, signer: Hex, nonce: bigint, terms: SignTerms): SignedOrderWire {
   const { parsed, pair } = draft;
   if (pair.leg.kind !== 'erc20') throw new Error('a signed order takes token collateral only');
   if (draft.expiresAt === 0n) throw new Error('a signed order needs an expiry');
@@ -113,16 +147,28 @@ export function signedOrderFrom(draft: PostDraft, signer: Hex, nonce: bigint): S
     creatorFull: false,
     creatorMaxCStar: '0',
     creatorAllowFullDowngrade: false,
+    maxTreasuryFeeBps: String(terms.treasuryFeeBps),
+    maxLoanInitiationFeeBps: String(terms.lifBps),
+    // This app names no taker and no co-signer (#3327 follow-ups).
+    allowedTaker: ZERO,
+    coSigner: ZERO,
     signer: lower(signer),
     nonce: String(nonce),
     deadline: String(p.expiresAt),
   };
 }
 
-/** The order a ticket's draft signs, with a fresh nonce. Throws when the
- *  draft is not one a signed order can carry (`signedOrderFrom`). */
-export function signDraftFrom(draft: PostDraft, chainId: number, account: Hex, nonce: bigint = randomNonce()): SignDraft {
-  const order = signedOrderFrom(draft, account, nonce);
+/** The order a ticket's draft signs, with a fresh nonce above the signer's
+ *  cancel floor. Throws when the draft is not one a signed order can carry
+ *  (`signedOrderFrom`). */
+export function signDraftFrom(
+  draft: PostDraft,
+  chainId: number,
+  account: Hex,
+  terms: SignTerms,
+  nonce: bigint = terms.cancelFloor + randomNonce(),
+): SignDraft {
+  const order = signedOrderFrom(draft, account, nonce, terms);
   return { identity: identityOf(chainId, account), chainId, draft, order, orderHash: orderHashOf(order) };
 }
 
@@ -181,6 +227,17 @@ export function signNewReceipt(d: SignDraft, r: SignReview, amount: AmountWords,
     { label: text('signNew.rowOrder'), value: textValue(figured((exact) => orderSentence(d.order, amount, copy, exact))), binding: true },
     { label: text('signNew.rowLapses'), value: { kind: 'text', text: lapseText(d.order, copy) }, binding: true },
     { label: text('signNew.rowFills'), value: { kind: 'text', text: text('signNew.fillsWhole') }, binding: true },
+    {
+      label: text('signNew.rowFeeCaps'),
+      value: {
+        kind: 'text',
+        text: format('signNew.feeCaps', {
+          interest: formatBps(BigInt(d.order.maxTreasuryFeeBps)),
+          start: formatBps(BigInt(d.order.maxLoanInitiationFeeBps)),
+        }),
+      },
+      binding: true,
+    },
     { label: text('signNew.rowNow'), value: { kind: 'text', text: text('signNew.nowNothing') }, binding: false },
     { label: text('signNew.rowAtFill'), value: { kind: 'amount', asset: stake.asset, amount: stake.amount }, binding: true, movesOut: true },
     {
@@ -189,7 +246,12 @@ export function signNewReceipt(d: SignDraft, r: SignReview, amount: AmountWords,
       binding: false,
     },
   ];
-  const consequences: ReceiptText[] = [text('signNew.checksAtFill'), text('signedOrders.onlyWay'), text('signNew.network')];
+  const consequences: ReceiptText[] = [
+    text('signNew.checksAtFill'),
+    text('signNew.feeCapsNote'),
+    text('signedOrders.onlyWay'),
+    text('signNew.network'),
+  ];
   const short = stakeShortfall(d, r);
   if (short !== null && short > 0n) {
     consequences.push(figured((exact) => format('signNew.short', { missing: amount(stake.asset, short, exact) })));
@@ -218,6 +280,8 @@ export function refusalSentence(code: string, copy: Copy): string {
     case 'order-consumed':
     case 'order-terminal':
       return copy.text('signNew.refusedUsed');
+    case 'below-cancel-floor':
+      return copy.text('signNew.refusedCancelFloor');
     case 'expired':
     case 'deadline-passed':
     case 'invalid-expiresAt':

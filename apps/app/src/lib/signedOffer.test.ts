@@ -20,6 +20,8 @@ import {
   signedOfferRemaining,
   signedOrderHash,
   signedOrderTimeWindowsOpen,
+  randomSignedOfferNonce,
+  signedOrderTakerRefusal,
   signedRowToDeskRow,
   wireFromCreatePayload,
   type SignedOrderWire,
@@ -64,9 +66,12 @@ function payload(p: Partial<CreateOfferPayload> = {}): CreateOfferPayload {
   };
 }
 
+/** #3327 — the fees the maker reviewed, signed as caps. */
+const CAPS = { maxTreasuryFeeBps: 200, maxLoanInitiationFeeBps: 20 };
+
 function wire(p: Partial<SignedOrderWire> = {}): SignedOrderWire {
   return {
-    ...wireFromCreatePayload(payload(), MAKER, 42n, 0n),
+    ...wireFromCreatePayload(payload(), MAKER, 42n, 0n, CAPS),
     ...p,
   };
 }
@@ -127,13 +132,13 @@ function chainOffer(p: Partial<IndexedOffer> = {}): IndexedOffer {
 }
 
 describe('wireFromCreatePayload', () => {
-  it('emits exactly the 31 struct fields in canonical order', () => {
-    const w = wireFromCreatePayload(payload(), MAKER, 42n, 123n);
+  it('emits exactly the 35 struct fields in canonical order', () => {
+    const w = wireFromCreatePayload(payload(), MAKER, 42n, 123n, CAPS);
     expect(Object.keys(w)).toEqual(SIGNED_OFFER_FIELD_NAMES);
   });
 
   it('lowercases addresses, stringifies uints, stamps signer/nonce/deadline', () => {
-    const w = wireFromCreatePayload(payload(), MAKER, 42n, 123n);
+    const w = wireFromCreatePayload(payload(), MAKER, 42n, 123n, CAPS);
     expect(w.lendingAsset).toBe(LEND.toLowerCase());
     expect(w.collateralAsset).toBe(COLL.toLowerCase());
     expect(w.signer).toBe(MAKER.toLowerCase());
@@ -470,5 +475,38 @@ describe('topOfBookMatchPair (slice B)', () => {
       lenderOfferId: 9,
       borrowerOfferId: 2,
     });
+  });
+});
+
+describe('maker protections (#3327)', () => {
+  const OTHER = '0xDdDd000000000000000000000000000000000004';
+  it('signs the reviewed fees as caps and names no taker or co-signer', () => {
+    const w = wire();
+    expect(w.maxTreasuryFeeBps).toBe('200');
+    expect(w.maxLoanInitiationFeeBps).toBe('20');
+    expect(w.allowedTaker).toBe('0x0000000000000000000000000000000000000000');
+    expect(w.coSigner).toBe('0x0000000000000000000000000000000000000000');
+  });
+
+  it('refuses a taker the order does not name, and any co-signed order', () => {
+    expect(signedOrderTakerRefusal(wire(), OTHER)).toBeNull();
+    expect(signedOrderTakerRefusal(wire({ allowedTaker: OTHER.toLowerCase() }), OTHER)).toBeNull();
+    expect(signedOrderTakerRefusal(wire({ allowedTaker: OTHER.toLowerCase() }), MAKER)).toBe('taker');
+    expect(signedOrderTakerRefusal(wire({ allowedTaker: OTHER.toLowerCase() }), undefined)).toBe('taker');
+    expect(signedOrderTakerRefusal(wire({ coSigner: OTHER.toLowerCase() }), OTHER)).toBe('coSigner');
+  });
+
+  it('judges the cancel floor and the fee caps only when they were read', () => {
+    const w = wire();
+    expect(signedOrderTakerRefusal(w, OTHER, { cancelFloor: 42n })).toBeNull();
+    expect(signedOrderTakerRefusal(w, OTHER, { cancelFloor: 43n })).toBe('cancelled');
+    expect(signedOrderTakerRefusal(w, OTHER, { fees: { treasuryFeeBps: 200, loanInitiationFeeBps: 20 } })).toBeNull();
+    expect(signedOrderTakerRefusal(w, OTHER, { fees: { treasuryFeeBps: 201, loanInitiationFeeBps: 20 } })).toBe('feeAboveCap');
+    expect(signedOrderTakerRefusal(w, OTHER, { fees: { treasuryFeeBps: 200, loanInitiationFeeBps: 21 } })).toBe('feeAboveCap');
+  });
+
+  it('draws a nonce at or above the cancel floor', () => {
+    const floor = 1n << 100n;
+    for (let i = 0; i < 8; i++) expect(randomSignedOfferNonce(floor) >= floor).toBe(true);
   });
 });
