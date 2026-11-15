@@ -95,6 +95,11 @@ An intent fills only full-term, no-partial-repay borrower requests today, delibe
 
 Built with the end date because both append to the same record and change the same function: one signature change, one fresh deploy.
 
-Extra tests: flag off refuses a pro-rata request (match and preview agree); flag on fills it and the loan is pro-rata; flag on still fills a full-term request as full-term; an early repay of a pro-rata intent loan pays accrued interest only and the roll re-commits exactly what the vault received; partial-repay requests stay refused.
+Extra tests:
+
+- Flag off refuses a pro-rata request (match and preview agree); flag on fills it and the loan is pro-rata; flag on still fills a full-term request as full-term.
+- An early repay of a pro-rata intent loan pays accrued interest only, and the roll re-commits exactly what the vault received.
+- Partial repayment, refused cases: a request that allows it is refused when the flag is off, and when the request is full-term (flag on or off).
+- Partial repayment, admitted case: flag on and a pro-rata request that allows it is filled; a partial repay pays the lender's vault at once and leaves the exposure counter unchanged; after the final repayment the roll re-commits only what the lender claim still holds (never the original fill amount) and the exposure counter drops by the original fill amount exactly once.
 
 Alternatives considered: pro-rata for every intent (rejected: changes the deal for lenders who chose full-term); one intent per interest mode (rejected: a second key on the registry, the capital lien and every view).

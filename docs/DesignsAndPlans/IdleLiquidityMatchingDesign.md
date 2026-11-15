@@ -83,7 +83,16 @@ The user chooses: **accept now** (the existing direct accept; the resting offer 
 
 ### B2. Keeper: new and changed offers are looked at first
 
-The matcher walks the whole book each pass. Add a short "fresh" lane ahead of the fairness walk: offers created or re-priced since the last pass are previewed against their bucket first, once their terms age has passed (5 seconds by default), under the same per-creator fairness units and the same preview budget, so a spammer still buys nothing. Result: a new offer with a resting counterparty is matched on the next keeper pass, not whenever the rotating walk reaches it.
+The matcher walks the whole book each pass. Add a short "fresh" lane ahead of the fairness walk: offers created or re-priced since the last pass are previewed against their bucket first, once their terms age has passed (5 seconds by default).
+
+The lane must not take the ordinary walk's turn. The rotating walk exists so that every creator pair is eventually looked at even when a pass covers only part of the book, and a stream of new or repeatedly re-priced offers could otherwise starve it. So:
+
+- **Hard quota.** The fresh lane may spend at most a fixed minority share of the pass (previews, submissions and wall time alike; a plain var, starting at a quarter). The rest is reserved for the ordinary walk whether or not the lane used its share.
+- **Once per offer.** An offer enters the lane once for its creation. A re-price does not re-enter it inside a cool-off window, so re-pricing cannot buy standing priority.
+- **Same fairness units inside the lane** (one unit per creator pair), so one wallet's burst of new offers is one unit.
+- **Test:** under sustained fresh traffic larger than the quota, a resting pair elsewhere in the book is still previewed within the same number of passes as today.
+
+Result: a new offer with a resting counterparty is matched on the next keeper pass, and the walk's eventual-progress guarantee is unchanged.
 
 ### Alternatives considered
 
@@ -106,7 +115,10 @@ For each of the user's open offers (and intents), the app shows the nearest coun
 
 Where the gap is something the maker can change, one tap opens the existing edit flow with the value pre-filled; the user reviews and signs as usual (an edit restarts the terms age, which the screen says). The hint never promises a match: another taker can reach the counterparty first.
 
-Indexer: one route returning, for an offer id, the closest opposite-side offers on its pair with the differing dimension named. The app confirms the top candidate with `previewMatch` so the stated reason is the protocol's own.
+Indexer: one route with two forms.
+
+- **By offer id:** the closest opposite-side offers on its pair, with the differing dimension named. The app confirms the top candidate with `previewMatch`, so the stated reason is the protocol's own.
+- **By intent key** (owner, lending asset, collateral asset): the closest borrower requests on the pair. An intent has no resting offer id (its lender slice exists only inside a fill), so `previewMatch` cannot answer for it. The app confirms with `RiskPreviewFacet.previewIntent`, naming a candidate fill amount (sized as the keeper sizes it: within the intent's minimum fill, exposure headroom and un-lent capital, and the request's bounds) and the solver context the fill would run under. That preview reports the intent-specific refusals (exposure, capital, longest term, lend-until, interest mode, partial repayment, keeper authorization), which is what the intent card shows.
 
 ### Alternatives considered
 
