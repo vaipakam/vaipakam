@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibTreasury} from "../libraries/LibTreasury.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -71,11 +72,6 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
         _checkAdminOrUnpauser();
         _;
     }
-
-    /// @notice Emitted when the protocol treasury address is updated.
-    /// @param newTreasury The newly-set treasury address.
-    /// @custom:event-category informational/config
-    event TreasurySet(address indexed newTreasury);
 
     /// @notice Emitted when the 0x proxy used for liquidation swaps is updated.
     /// @param newTreasury The newly-set 0x proxy address (parameter kept as
@@ -156,19 +152,9 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
     ///         different members).
     error SwapAdapterReorderMismatch();
 
-    /// @notice Sets the treasury address that receives protocol fees.
-    /// @dev ADMIN_ROLE-only. Reverts with InvalidAddress on zero. Emits
-    ///      TreasurySet. Does not sweep existing balances; only routes
-    ///      future credits.
-    /// @param newTreasury The new treasury address (must be non-zero).
-    function setTreasury(address newTreasury) external onlyRole(LibAccessControl.ADMIN_ROLE) {
-        if (newTreasury == address(0)) revert InvalidAddress();
-
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        s.treasury = newTreasury;
-
-        emit TreasurySet(newTreasury);
-    }
+    // #3569 — `setTreasury` is retired. The treasury is the vault code's
+    // immutable `TREASURY`; moving it is new vault code registered on the
+    // vault beacon, which waits the beacon's code delay. See {getTreasury}.
 
     /// @notice Sets the 0x ExchangeProxy address used by RiskFacet /
     ///         DefaultedFacet for liquidation swaps.
@@ -576,11 +562,15 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
     // no time-weighted record of its reserves, so the route search no
     // longer reads one (see `OracleFacet._foldRoutes`).
 
-    /// @notice Returns the current protocol treasury address.
-    /// @return treasury The configured treasury address (zero if unset).
+    /// @notice Returns the protocol treasury: the `TREASURY` the current
+    ///         vault code names (#3569).
+    /// @dev There is no other copy. A fee the Diamond moves goes here; a fee
+    ///      drawn from a vault goes to the treasury that vault's own code
+    ///      names, which differs only for a vault pinned to an older version.
+    /// @return treasury The current vault code's treasury, or zero when no
+    ///         vault beacon is set.
     function getTreasury() external view returns (address treasury) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        return s.treasury;
+        return LibTreasury.currentOrZero();
     }
 
     // ─── Phase 1 KYC Pass-Through ──────────────────────────────────────────

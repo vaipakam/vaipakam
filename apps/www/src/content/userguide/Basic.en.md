@@ -1608,3 +1608,27 @@ On the order ticket you can choose "Signed without gas" instead of posting. You 
 ### Rate Desk: Your Signed Orders
 
 A signed order is an offer you agree to by signing, without paying gas. The offer book keeps your signature, and nothing reaches the chain until someone fills it. Below a market's order ticket, the Rate desk lists the signed orders your wallet has on that market, as the offer book lists them, and checks each one on the chain: open, partly filled by matches (the rest can still be filled until you cancel it), fully filled or cancelled, stopped because its nonce was cancelled, or lapsed. Nothing is set aside for a signed order: a fill draws the amount or the collateral from your own vault at that moment, and fails if your vault cannot cover it. Removing an order from the offer book would not stop it, because anyone who already has the signature can still send it. The only way to stop one before it lapses is to cancel it on the chain, which costs gas and returns nothing, since nothing was held. You can cancel one order or, when several of your open orders share one nonce, all of them at once; that also stops any other order you signed with that nonce, on any market. A fill sent before your cancel can still land first. When the chain replaces some recent blocks, the offer book re-checks your orders and leaves them out of the shared list until it has. Such an order is marked here. Its standing is still read from the chain, and while the chain shows it open, anyone already holding its signature can still fill it and you can still cancel it.
+
+<a id="console-source"></a>
+
+### Protocol Console: Where the Settings Come From
+
+The Protocol Console lists the protocol's settings and switches on the network you are looking at. It is public and read-only: you need no wallet, and nothing can be changed there. The page shows the index's saved copy of the settings only while that copy is less than a day old and has not fallen behind a governance change; otherwise it reads the settings straight from the chain and says why. If neither answer can be used, the settings are shown as unknown, never as unset or zero. A change to a setting never reprices a loan that is already open.
+
+<a id="console-switches"></a>
+
+### Protocol Console: Switches and the Global Pause
+
+Each switch is listed with its class and what it stops. New-position switches stop new offers and loans only. Lifecycle switches stop one feature on open loans too, while repayment, adding collateral and claims stay open. Keeper switches only change who runs a step; you can always run it yourself. The global pause is read live: while it is on, new positions, claims, withdrawals, liquidations and defaults stop, but full and partial repayment and adding collateral stay open. A switch the page does not read yet is still named, with its state shown as not read. A long administrative pause opens an escape route that returns what is free in your vault, and the Console says when it opens.
+
+<a id="recover-adopt"></a>
+
+### Recover: Adopting an Asset Sent Straight to Your Vault
+
+Your vault counts only what reaches it through the protocol: a deposit, a loan, a claim. A token or NFT sent straight to your vault's address, from a wallet or an exchange, sits there uncounted, so you cannot withdraw it. The Recover page shows the protocol's own figure for what sits uncounted. If you sent it yourself, adopt it: you name the address it came from, read the declaration and type CONFIRM, then sign it and send the adoption. Nothing moves; the asset is counted as yours and leaves only through an ordinary withdrawal. The protocol screens the source again when it confirms. If the sanctions screen flags it, nothing is credited and your vault is barred until that address is de-listed, so the app never sends an adoption for a source the screen already flags. Adopting is closed while the protocol is paused, for a replaced wallet and for a contract account. Never adopt what someone else sent you.
+
+<a id="recover-disown"></a>
+
+### Recover: Disowning an Asset
+
+If something reached your vault that you do not claim, disown it. Disowning records on the chain, for anyone to see, that you do not claim it. It moves and credits nothing, and the asset stays in your vault, uncounted. It asks no declaration, signature or sanctions screen, and it stays open while the protocol is paused, for a replaced wallet and for a vault an earlier adoption barred.

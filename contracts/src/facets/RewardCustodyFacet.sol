@@ -10,6 +10,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
+import {LibTreasury} from "../libraries/LibTreasury.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {RewardCustodyHolder} from "../RewardCustodyHolder.sol";
@@ -318,15 +319,14 @@ contract RewardCustodyFacet is DiamondAccessControl {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (token == address(0)) revert IVaipakamErrors.InvalidAddress();
         if (token == s.vpfiToken) revert IVaipakamErrors.RewardCustodySweepIsVpfi();
-        address treasury = s.treasury;
-        if (treasury == address(0)) revert IVaipakamErrors.RewardCustodyTreasuryUnset();
+        address treasury = _treasury();
         LibRewardCustody.requireConstructedHere(s, holder);
         uint256 holderBefore = IERC20(token).balanceOf(holder);
         uint256 before = IERC20(token).balanceOf(treasury);
         RewardCustodyHolder(holder).release(token, treasury, amount);
         uint256 received = IERC20(token).balanceOf(treasury) - before;
         LibRewardCustody.requireDebited(holder, holderBefore, IERC20(token).balanceOf(holder), amount);
-        LibRewardCustody.creditDiamondTreasury(s, token, received);
+        LibRewardCustody.creditDiamondTreasury(s, token, received, treasury);
         emit RewardCustodyForeignTokenSwept(holder, token, treasury, amount, received);
     }
 
@@ -350,8 +350,7 @@ contract RewardCustodyFacet is DiamondAccessControl {
         uint256 amount
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address treasury = s.treasury;
-        if (treasury == address(0)) revert IVaipakamErrors.RewardCustodyTreasuryUnset();
+        address treasury = _treasury();
         // A Diamond that is its own treasury has no tracked native balance and
         // no native claim path (Codex #2158 post-cap P2): a native sweep into
         // it would move currency out of a holder that CAN release it into a
@@ -399,8 +398,7 @@ contract RewardCustodyFacet is DiamondAccessControl {
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (token == address(0)) revert IVaipakamErrors.InvalidAddress();
-        address treasury = s.treasury;
-        if (treasury == address(0)) revert IVaipakamErrors.RewardCustodyTreasuryUnset();
+        address treasury = _treasury();
         // A Diamond that is its own treasury has no NFT withdrawal path
         // (Codex #2158 post-cap P2): delivering there would move the token
         // from a holder that CAN release it into raw Diamond ownership with
@@ -446,8 +444,7 @@ contract RewardCustodyFacet is DiamondAccessControl {
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (token == address(0)) revert IVaipakamErrors.InvalidAddress();
-        address treasury = s.treasury;
-        if (treasury == address(0)) revert IVaipakamErrors.RewardCustodyTreasuryUnset();
+        address treasury = _treasury();
         // Same refusal as the ERC-721 sweep: no NFT withdrawal path exists on
         // a Diamond that is its own treasury (Codex #2158 post-cap P2).
         if (treasury == address(this)) revert IVaipakamErrors.RewardCustodyNftToDiamondTreasury();
@@ -533,8 +530,7 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (token == address(0)) revert IVaipakamErrors.RewardCustodyTokenUnset();
         address bound = s.rewardCustodyHolder;
         if (bound == address(0)) revert IVaipakamErrors.RewardCustodyHolderNotBound();
-        address treasury = s.treasury;
-        if (treasury == address(0)) revert IVaipakamErrors.RewardCustodyTreasuryUnset();
+        address treasury = _treasury();
         uint256 held = IERC20(token).balanceOf(bound);
         uint256 attributed = LibRewardCustody.attributedTotal(s);
         uint256 unattributed = held > attributed ? held - attributed : 0;
@@ -542,7 +538,7 @@ contract RewardCustodyFacet is DiamondAccessControl {
             revert IVaipakamErrors.RewardCustodyExceedsUnattributed(amount, unattributed);
         }
         LibRewardCustody.releaseMeasured(token, bound, treasury, amount);
-        LibRewardCustody.creditDiamondTreasury(s, token, amount);
+        LibRewardCustody.creditDiamondTreasury(s, token, amount, treasury);
         emit RewardCustodyUnattributedVpfiSwept(bound, treasury, amount, unattributed);
     }
 
@@ -939,13 +935,12 @@ contract RewardCustodyFacet is DiamondAccessControl {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (!LibRewardCustody.active(s)) revert IVaipakamErrors.RewardCustodyNotActivated();
         if (amount == 0) revert IVaipakamErrors.InvalidAmount();
-        address treasury = s.treasury;
-        if (treasury == address(0)) revert IVaipakamErrors.RewardCustodyTreasuryUnset();
+        address treasury = _treasury();
         uint256 recorded = s.strandedReturnOverage;
         if (amount > recorded) revert IVaipakamErrors.RewardCustodyOverageExceedsRecorded(amount, recorded);
         s.strandedReturnOverage = recorded - amount;
         LibRewardCustody.releaseFromRow(s, LibVaipakam.RewardCustodyRow.Overage, treasury, amount);
-        LibRewardCustody.creditDiamondTreasury(s, s.vpfiToken, amount);
+        LibRewardCustody.creditDiamondTreasury(s, s.vpfiToken, amount, treasury);
         emit RewardCustodyOverageReleased(treasury, amount, recorded - amount);
     }
 
@@ -1005,10 +1000,9 @@ contract RewardCustodyFacet is DiamondAccessControl {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (!LibRewardCustody.active(s)) revert IVaipakamErrors.RewardCustodyNotActivated();
         if (amount == 0) revert IVaipakamErrors.InvalidAmount();
-        address treasury = s.treasury;
-        if (treasury == address(0)) revert IVaipakamErrors.RewardCustodyTreasuryUnset();
+        address treasury = _treasury();
         LibRewardCustody.releaseFromRow(s, LibVaipakam.RewardCustodyRow.Restitution, treasury, amount);
-        LibRewardCustody.creditDiamondTreasury(s, s.vpfiToken, amount);
+        LibRewardCustody.creditDiamondTreasury(s, s.vpfiToken, amount, treasury);
         emit RewardCustodyRestitutionReleased(treasury, amount, dispositionId);
     }
 
@@ -1112,6 +1106,13 @@ contract RewardCustodyFacet is DiamondAccessControl {
     // facets at EIP-170 budget pay one call rather than the implementation.
     // Deliberately NOT `nonReentrant`: each runs inside a caller's guarded
     // frame, exactly as `VaultFactoryFacet.vaultCreditFromDiamondERC20` does.
+
+    /// @dev The treasury the current vault code names (#3569); refuses by
+    ///      name when there is none.
+    function _treasury() private view returns (address treasury) {
+        treasury = LibTreasury.currentOrZero();
+        if (treasury == address(0)) revert IVaipakamErrors.RewardCustodyTreasuryUnset();
+    }
 
     function _requireDiamondInternal() private view {
         if (msg.sender != address(this)) revert IVaipakamErrors.RewardCustodyOnlyDiamondInternal(msg.sender);

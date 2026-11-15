@@ -255,13 +255,6 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().nextOfferId = v;
     }
 
-    /// @notice Overwrite the treasury address. Tests use this so they can
-    ///         receive initiation / interest fees at the Diamond itself
-    ///         (address(this)) without having to cut AdminFacet in.
-    function setTreasuryAddress(address t) external {
-        LibVaipakam.storageSlot().treasury = t;
-    }
-
     /// @notice Test-only: flip the README §16 Phase 1 KYC pass-through flag.
     ///         Allows tests that exercise the retained tiered-KYC framework
     ///         to activate enforcement without cutting AdminFacet into their

@@ -845,9 +845,6 @@ library LibVaipakam {
     uint16 constant USER_SIDE_SHARE_CAP_MIN_BPS = 50; // 0.5% floor
     uint16 constant USER_SIDE_SHARE_CAP_MAX_BPS = 5000; // 50% ceiling
 
-    /// @custom:event-category informational/config
-    event TreasurySet(address indexed newTreasury);
-
     // Shared errors consolidated in IVaipakamErrors.sol
 
     /**
@@ -3152,7 +3149,7 @@ library LibVaipakam {
         uint256 nextLoanId;
         uint256 nextTokenId; // For Vaipakam NFTs
         address retiredVaipakamVaultTemplate; // #3204: retired; vaults resolve their code through `vaultBeacon`
-        address treasury; // Configurable treasury address
+        address retiredTreasury; // #3569: retired; the treasury is the vault code's immutable TREASURY (LibTreasury)
         address zeroExProxy; // 0x proxy for liquidations
         address allowanceTarget; // allowance target for 0x proxy protocol
         address retiredNumeraireChainlinkDenominator; // #3272: retired; the price guard holds it

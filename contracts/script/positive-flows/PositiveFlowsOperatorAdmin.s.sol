@@ -242,11 +242,11 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
     ///      The scenario walks the shape the deployment has. It no longer
     ///      switches an external-treasury deployment to the Diamond for the
     ///      withdrawal half: since #3431 a vault pays treasury fees only to
-    ///      the treasury fixed in its code, so after `setTreasury(diamond)`
-    ///      the next accept's fee is refused by the vault
-    ///      (`OutflowDestinationRefused`). Moving the treasury is a vault code
-    ///      change; #3569 tracks making `setTreasury` say so. The withdrawal
-    ///      half therefore runs only on a Diamond-as-treasury deployment.
+    ///      the treasury fixed in its code, and since #3569 that code is the
+    ///      only place the treasury is written: moving it is new vault code
+    ///      through the beacon's wait, not a call this scenario can make. The
+    ///      withdrawal half therefore runs only on a Diamond-as-treasury
+    ///      deployment.
     ///
     ///      The fee checked is the initiation fee, read from what the
     ///      borrower received (principal less the fee). Interest-side fees

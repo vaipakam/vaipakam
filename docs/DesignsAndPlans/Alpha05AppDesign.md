@@ -470,6 +470,42 @@ failed read and a failed re-read are each stated, never shown as an empty
 queue. The page also says that a queued change does not expire: it stays
 runnable until it is run or cancelled.
 
+### RB-CONSOLE — the protocol's settings are public, with their source
+
+One public page, reached by direct link with no wallet and never withheld
+by the Terms prompt, states the protocol's settings and switches on the
+chain the screen describes. It has no controls: every change goes through
+the governance queue, which it links. Each value is labelled by name, and
+a setting whose zero means none set is written as unset or off, never 0.
+The settings come from the index's snapshot only while it is dated, at
+most a day old by the reader's clock, not marked behind a governance
+change, and labelled (the index tied its names to the code that
+answered); otherwise from one read of the chain at one block, with the
+reason stated. A chain answer from a block before the snapshot's (or
+before the change the snapshot is behind) counts as failed, and with no
+usable answer the settings are unknown, never unset. An answer whose time
+is ahead of the reader's clock has an unknown age and is marked
+unverified; one more than a day old is flagged. When this build's ABI does
+not describe the code that answered the settings bundle, the page says
+the protocol's code has changed since the app was built and lists the
+bundle's settings as not answered. A setting that can change without an
+on-chain announcement says so when shown from the snapshot. Every switch
+of RB-SWITCH is named with its class and what it blocks; one the readers
+do not publish yet is named with its state as not read, never left out.
+The global administrative pause is read live at one block, never from the
+snapshot, with what it stops, what stays open, and when an automatic pause
+could next start against the reader's clock. Whether governance's pause,
+which has no set end, is in force comes from the pause log, because it can
+run together with an automatic window; a refresh that fails while an older
+answer is held states the pause as unknown. Under governance's pause the
+page states when its escape route reopens withdrawals of what is free, or
+that none is scheduled, since withdrawals are not closed for good. A
+snapshot that does not list the settings it left unanswered is not used,
+so a setting it omits is never dropped from the page unnamed. The page says it shows a
+subset and names what it omits, says a retune never reprices an open
+loan, and lists no running total as a setting. Keeper posture waits on
+RW-78.
+
 ### RB-STATUS — every matrix row has a status
 
 `approved` (canonical intended behaviour), `proposed` (a departure or new
@@ -1438,6 +1474,31 @@ above. Each resolves here, so a route reviewer needs no private file:
   If the pause, the route or, under an open route, the mode is unread, no
   entry point is chosen and nothing is sent. The finish card reads
   `EscapeWithdrawal` and the token's own transfer to the wallet.
+- **RB-RECOVER** — an asset sent straight to the connected wallet's vault
+  (ACC-25, ACC-26, ACC-27, NFT-33) is found on the Recover page by its
+  contract and, for an NFT, its token id; its standard is the one the
+  contract claims, never chosen. The page states the protocol's own
+  `untrackedHolding` figure, never a balance difference, and an unread
+  figure is said to be unread, never zero. What stops adopting is stated
+  in the order the protocol checks it (a retired wallet, a contract
+  account, a barred vault, the wallet's own screen, no screen set, the
+  pause, a declaration the protocol binds that differs from the app's),
+  with each unread fact stated as unread. Adopting names the source,
+  shows the declaration word for word, takes a typed CONFIRM, and signs
+  the protocol's own EIP-712 type; a source the screen flags or cannot
+  answer for is never sent, because sending would bar the vault or revert.
+  The protocol's dry run passes for a flagged source (it bars rather than
+  reverts), so the app asks the screen itself before the signature and
+  again after it, as the last read before sending.
+  Disowning asks no declaration, signature or screen and stays open to a
+  replaced wallet, a barred vault and a pause. A vault is barred only
+  while the screen still flags the source an earlier adoption declared:
+  the protocol keeps that record after a de-listing, so the page reads the
+  screen for it, states a barred vault's source, says when the bar has
+  lifted, and treats an unanswered screen as unread. Both finish cards read `UntrackedAdopted`,
+  `VaultBannedFromAdoption` or `UntrackedDisowned` for this account and
+  asset. While the protocol is paused the page states the escape route
+  (LN-57) and links the Vault page, which carries it.
 - **RB-ADDRESS-GUARD** — every address a user enters to receive funds or
   control (#3415) goes through one address box. It shows the address in
   full, with the first and last digits set apart and never shortened. It

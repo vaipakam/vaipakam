@@ -60,7 +60,6 @@ import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {OwnershipFacet} from "../src/facets/OwnershipFacet.sol";
 import {LibTestProtectedCut} from "./helpers/LibTestProtectedCut.sol";
-import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 // #229 — the remaining production facets being added to SetupTest's
 // 28-facet cut. DiamondLoupeFacet + OracleAdminFacet + LegalFacet
 // have no existing import in HelperTest because the prior
@@ -130,7 +129,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](250); // #910 +setKeeperTierRaw +setTierLiqDiscountBpsRaw (was 248); #3272 p2 -setEthUsdFeedRaw -setWethContractRaw (was 250); #3205 -getLockedTokenCount -getOperatorApprovalEpoch -getOperatorApprovalGrantEpoch -forceSetLockWithoutCounter (was 254); #3204 -setVaultVersionRaw -setMandatoryVaultVersionRaw (was 256); #2828 -clearTransportBatchDaysRaw (was 257); protected vault +setTrackedHoldingRaw (was 256); #1209 r2 +pushSellerClaimRaw (was 255); #1209 -setLenderPaidThroughRaw -setLenderPaidThroughWithPrincipalRaw -setLenderMarkVoidedRaw -setLenderTenureStartRaw (was 259); #2961 +setPacketDisposedRaw (was 258); #2876 +setOfferPrepayListingExecutorRaw (was 257); #1980 -setBorrowerLifVpfiHeldRaw (was 258); #918 setDayDeliveryProvedByRaw -> setDayDeliveryLandedRaw (net 0); #2910 PR 2 -setRemitReservationFinalizedRaw -setReleasedRemitHistoryRaw -setRemitReservationReleasedRaw (was 261); #2910 -setRecoveryAttributionRaw (was 262); #2875 item 3 +setRecycleBucketAbsorbedRaw -setRecycleCustodyRelocatedRaw -setReleasedRemitStrandedRaw -setRemitReleasedCountRaw (was 264, net 262); #2875 -clearDayLapseClockRaw -setReceivedRemitRaw (was 266); #1944 +setDayDeliveryProvedByRaw -setMirrorCommitReservedRaw (net 0); #2740 -getPrincipalPlusAccruedInterest -getTreasuryAndPrecloseFee +getSaleLegs (was 267); #2736 +setTierLtvCacheRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
+        selectors = new bytes4[](249); // #3569 -setTreasuryAddress (was 250); #910 +setKeeperTierRaw +setTierLiqDiscountBpsRaw (was 248); #3272 p2 -setEthUsdFeedRaw -setWethContractRaw (was 250); #3205 -getLockedTokenCount -getOperatorApprovalEpoch -getOperatorApprovalGrantEpoch -forceSetLockWithoutCounter (was 254); #3204 -setVaultVersionRaw -setMandatoryVaultVersionRaw (was 256); #2828 -clearTransportBatchDaysRaw (was 257); protected vault +setTrackedHoldingRaw (was 256); #1209 r2 +pushSellerClaimRaw (was 255); #1209 -setLenderPaidThroughRaw -setLenderPaidThroughWithPrincipalRaw -setLenderMarkVoidedRaw -setLenderTenureStartRaw (was 259); #2961 +setPacketDisposedRaw (was 258); #2876 +setOfferPrepayListingExecutorRaw (was 257); #1980 -setBorrowerLifVpfiHeldRaw (was 258); #918 setDayDeliveryProvedByRaw -> setDayDeliveryLandedRaw (net 0); #2910 PR 2 -setRemitReservationFinalizedRaw -setReleasedRemitHistoryRaw -setRemitReservationReleasedRaw (was 261); #2910 -setRecoveryAttributionRaw (was 262); #2875 item 3 +setRecycleBucketAbsorbedRaw -setRecycleCustodyRelocatedRaw -setReleasedRemitStrandedRaw -setRemitReleasedCountRaw (was 264, net 262); #2875 -clearDayLapseClockRaw -setReceivedRemitRaw (was 266); #1944 +setDayDeliveryProvedByRaw -setMirrorCommitReservedRaw (net 0); #2740 -getPrincipalPlusAccruedInterest -getTreasuryAndPrecloseFee +getSaleLegs (was 267); #2736 +setTierLtvCacheRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -211,7 +210,6 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setOffer.selector;
         selectors[n++] = TestMutatorFacet.setNextLoanId.selector;
         selectors[n++] = TestMutatorFacet.setNextOfferId.selector;
-        selectors[n++] = TestMutatorFacet.setTreasuryAddress.selector;
         selectors[n++] = TestMutatorFacet.setKYCEnforcementFlag.selector;
         // #687-B: 5 staking accrual mutator/getters removed with the 5% yield;
         // the 5 former tail entries fill the freed slots ([6],[11]-[14]) so this
@@ -754,61 +752,60 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](48);
-        selectors[0] = AdminFacet.setTreasury.selector;
-        selectors[1] = AdminFacet.getTreasury.selector;
-        selectors[2] = AdminFacet.setZeroExProxy.selector;
-        selectors[3] = AdminFacet.setallowanceTarget.selector;
-        selectors[4] = AdminFacet.pause.selector;
-        selectors[5] = AdminFacet.unpause.selector;
-        selectors[6] = AdminFacet.paused.selector;
-        selectors[7] = AdminFacet.setKYCEnforcement.selector;
-        selectors[8] = AdminFacet.isKYCEnforcementEnabled.selector;
-        selectors[9] = AdminFacet.pauseAsset.selector;
-        selectors[10] = AdminFacet.unpauseAsset.selector;
-        selectors[11] = AdminFacet.isAssetPaused.selector;
-        selectors[12] = AdminFacet.addSwapAdapter.selector;
-        selectors[13] = AdminFacet.removeSwapAdapter.selector;
-        selectors[14] = AdminFacet.reorderSwapAdapters.selector;
-        selectors[15] = AdminFacet.getSwapAdapters.selector;
-        selectors[16] = AdminFacet.setPancakeswapV3Factory.selector;
-        selectors[17] = AdminFacet.getPancakeswapV3Factory.selector;
-        selectors[18] = AdminFacet.setSushiswapV3Factory.selector;
-        selectors[19] = AdminFacet.getSushiswapV3Factory.selector;
+        selectors = new bytes4[](47);
+        selectors[0] = AdminFacet.getTreasury.selector;
+        selectors[1] = AdminFacet.setZeroExProxy.selector;
+        selectors[2] = AdminFacet.setallowanceTarget.selector;
+        selectors[3] = AdminFacet.pause.selector;
+        selectors[4] = AdminFacet.unpause.selector;
+        selectors[5] = AdminFacet.paused.selector;
+        selectors[6] = AdminFacet.setKYCEnforcement.selector;
+        selectors[7] = AdminFacet.isKYCEnforcementEnabled.selector;
+        selectors[8] = AdminFacet.pauseAsset.selector;
+        selectors[9] = AdminFacet.unpauseAsset.selector;
+        selectors[10] = AdminFacet.isAssetPaused.selector;
+        selectors[11] = AdminFacet.addSwapAdapter.selector;
+        selectors[12] = AdminFacet.removeSwapAdapter.selector;
+        selectors[13] = AdminFacet.reorderSwapAdapters.selector;
+        selectors[14] = AdminFacet.getSwapAdapters.selector;
+        selectors[15] = AdminFacet.setPancakeswapV3Factory.selector;
+        selectors[16] = AdminFacet.getPancakeswapV3Factory.selector;
+        selectors[17] = AdminFacet.setSushiswapV3Factory.selector;
+        selectors[18] = AdminFacet.getSushiswapV3Factory.selector;
         // Auto-pause primitive (Phase 1 follow-up).
-        selectors[20] = AdminFacet.autoPause.selector;
-        selectors[21] = AdminFacet.pausedUntil.selector;
+        selectors[19] = AdminFacet.autoPause.selector;
+        selectors[20] = AdminFacet.pausedUntil.selector;
         // T-092 (#508) — auto-lifecycle admin kill switches.
-        selectors[22] = AdminFacet.setAutoLendEnabled.selector;
-        selectors[23] = AdminFacet.setAutoRefinanceEnabled.selector;
-        selectors[24] = AdminFacet.setAutoExtendEnabled.selector;
+        selectors[21] = AdminFacet.setAutoLendEnabled.selector;
+        selectors[22] = AdminFacet.setAutoRefinanceEnabled.selector;
+        selectors[23] = AdminFacet.setAutoExtendEnabled.selector;
         // Codex round-1 P2 — getters.
-        selectors[25] = AdminFacet.getAutoLendEnabled.selector;
-        selectors[26] = AdminFacet.getAutoRefinanceEnabled.selector;
-        selectors[27] = AdminFacet.getAutoExtendEnabled.selector;
+        selectors[24] = AdminFacet.getAutoLendEnabled.selector;
+        selectors[25] = AdminFacet.getAutoRefinanceEnabled.selector;
+        selectors[26] = AdminFacet.getAutoExtendEnabled.selector;
         // #633 — per-venue swap-adapter pause + feature kill-switches.
-        selectors[28] = AdminFacet.setSwapAdapterDisabled.selector;
-        selectors[29] = AdminFacet.isSwapAdapterDisabled.selector;
-        selectors[30] = AdminFacet.setAggregatorAdaptersPaused.selector;
-        selectors[31] = AdminFacet.setKeepersPaused.selector;
-        selectors[32] = AdminFacet.setPeerLtvReadsPaused.selector;
-        selectors[33] = AdminFacet.keepersPaused.selector;
-        selectors[34] = AdminFacet.setPartialLiquidationSizing.selector;
-        selectors[35] = AdminFacet.getPartialLiquidationSizing.selector;
-        selectors[36] = AdminFacet.getMaxPartialLiquidationCloseFactorBps.selector;
-        selectors[37] = AdminFacet.unpauseIfPauseEpoch.selector;
-        selectors[38] = AdminFacet.launch.selector;
-        selectors[39] = AdminFacet.pausedSecondsAt.selector;
-        selectors[40] = AdminFacet.getPauseIntervals.selector;
-        selectors[41] = AdminFacet.autoPauseCooldownSeconds.selector;
-        selectors[42] = AdminFacet.autoPauseAvailableAt.selector;
-        selectors[43] = AdminFacet.setAutoPauseCooldownSeconds.selector;
+        selectors[27] = AdminFacet.setSwapAdapterDisabled.selector;
+        selectors[28] = AdminFacet.isSwapAdapterDisabled.selector;
+        selectors[29] = AdminFacet.setAggregatorAdaptersPaused.selector;
+        selectors[30] = AdminFacet.setKeepersPaused.selector;
+        selectors[31] = AdminFacet.setPeerLtvReadsPaused.selector;
+        selectors[32] = AdminFacet.keepersPaused.selector;
+        selectors[33] = AdminFacet.setPartialLiquidationSizing.selector;
+        selectors[34] = AdminFacet.getPartialLiquidationSizing.selector;
+        selectors[35] = AdminFacet.getMaxPartialLiquidationCloseFactorBps.selector;
+        selectors[36] = AdminFacet.unpauseIfPauseEpoch.selector;
+        selectors[37] = AdminFacet.launch.selector;
+        selectors[38] = AdminFacet.pausedSecondsAt.selector;
+        selectors[39] = AdminFacet.getPauseIntervals.selector;
+        selectors[40] = AdminFacet.autoPauseCooldownSeconds.selector;
+        selectors[41] = AdminFacet.autoPauseAvailableAt.selector;
+        selectors[42] = AdminFacet.setAutoPauseCooldownSeconds.selector;
         // #1637 — reads for the two kill switches.
-        selectors[44] = AdminFacet.aggregatorAdaptersPaused.selector;
-        selectors[45] = AdminFacet.peerLtvReadsPaused.selector;
+        selectors[43] = AdminFacet.aggregatorAdaptersPaused.selector;
+        selectors[44] = AdminFacet.peerLtvReadsPaused.selector;
         // #3173 — the bounded escape period.
-        selectors[46] = AdminFacet.setEscapeGraceSeconds.selector;
-        selectors[47] = AdminFacet.getEscapeGraceSeconds.selector;
+        selectors[45] = AdminFacet.setEscapeGraceSeconds.selector;
+        selectors[46] = AdminFacet.getEscapeGraceSeconds.selector;
         return selectors;
     }
 
@@ -1470,14 +1467,6 @@ contract HelperTest {
     /// @dev Selectors for `ProtectedAccountFacet` — protected account mode: settings, allowlist, signers, lock and replacement.
     function getProtectedAccountFacetSelectors() public pure returns (bytes4[] memory selectors) {
         return LibTestProtectedCut.selectors();
-    }
-
-    /// @dev The ProtectedAccountFacet cut as a one-entry list, built here so
-    ///      a test contract near solc's size limits adds it with one external
-    ///      call instead of inlining {LibTestProtectedCut.withProtected}.
-    function protectedAccountCut() public returns (IDiamondCut.FacetCut[] memory cuts) {
-        cuts = new IDiamondCut.FacetCut[](1);
-        cuts[0] = LibTestProtectedCut.cut();
     }
 
     /// @dev Selectors for `VaultPayoutFacet` — the payout queue, the vault credit and the escape route.

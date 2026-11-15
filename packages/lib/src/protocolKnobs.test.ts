@@ -60,9 +60,10 @@ describe('PROTOCOL_KNOB_GETTERS', () => {
     // the guard's settings: each changes in a transaction the guard or the
     // registry announces, from an address the snapshot does not hear. A
     // setting added later that has a silent setter must be marked here, by
-    // name.
+    // name. #3569 — the treasury too: it is the vault code's, and moves with
+    // the vault beacon's current version.
     expect([...EVENTLESS_PROTOCOL_KNOBS].sort()).toEqual(
-      ['priceGuard', ...PRICE_GUARD_KNOB_GETTERS.map((k) => k.key)].sort(),
+      ['priceGuard', 'treasury', ...PRICE_GUARD_KNOB_GETTERS.map((k) => k.key)].sort(),
     );
   });
 

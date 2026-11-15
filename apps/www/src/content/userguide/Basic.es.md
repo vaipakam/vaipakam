@@ -1627,3 +1627,27 @@ En el ticket de orden puedes elegir "Signed without gas" en lugar de publicar. F
 ### Rate desk: tus órdenes firmadas
 
 Una orden firmada es una oferta que aceptas firmándola, sin pagar gas. El libro de ofertas guarda tu firma, y nada llega a la cadena hasta que alguien la llena. Bajo el ticket de orden de un mercado, el Rate desk lista las órdenes firmadas de tu wallet en ese mercado, tal como las lista el libro de ofertas, y comprueba cada una en la cadena: abierta, parcialmente llenada por emparejamientos (el resto aún puede llenarse hasta que la canceles), llenada del todo o cancelada, detenida porque su nonce se canceló, o vencida. No se aparta nada para una orden firmada: un llenado toma el importe o la garantía de tu propio vault en ese momento, y falla si tu vault no lo cubre. Quitar una orden del libro de ofertas no la detendría, porque cualquiera que ya tenga la firma puede seguir enviándola. La única forma de detener una antes de que venza es cancelarla en la cadena, lo que cuesta gas y no devuelve nada, ya que no se retenía nada. Puedes cancelar una orden o, cuando varias de tus órdenes abiertas comparten un nonce, todas a la vez; eso también detiene cualquier otra orden que firmaste con ese nonce, en cualquier mercado. Un llenado enviado antes de tu cancelación aún puede llegar primero. Cuando la cadena reemplaza algunos bloques recientes, el libro de ofertas vuelve a comprobar tus órdenes y las deja fuera de la lista compartida hasta terminar. Esa orden se marca aquí. Su estado se sigue leyendo de la cadena y, mientras la cadena la muestre abierta, quien ya tenga su firma aún puede llenarla y tú aún puedes cancelarla.
+
+<a id="console-source"></a>
+
+### Consola del protocolo: de dónde vienen los ajustes
+
+La Consola del protocolo muestra los ajustes e interruptores del protocolo en la red que estás viendo. Es pública y de solo lectura: no necesitas cartera y nada se puede cambiar allí. La página muestra la copia guardada del índice solo mientras tiene menos de un día y no se ha quedado atrás de un cambio de gobernanza; si no, lee los ajustes directamente de la cadena y dice por qué. Si no se puede usar ninguna respuesta, los ajustes se muestran como desconocidos, nunca como sin definir ni como cero. Un cambio de ajuste nunca cambia el precio de un préstamo ya abierto.
+
+<a id="console-switches"></a>
+
+### Consola del protocolo: interruptores y la pausa global
+
+Cada interruptor aparece con su clase y lo que detiene. Los interruptores de nuevas posiciones solo detienen nuevas ofertas y préstamos. Los de ciclo de vida detienen también una función en los préstamos abiertos, mientras el reembolso, añadir garantía y los reclamos siguen abiertos. Los interruptores de keepers solo cambian quién ejecuta un paso; siempre puedes ejecutarlo tú. La pausa global se lee en vivo: mientras está activa se detienen las nuevas posiciones, los reclamos, los retiros, las liquidaciones y los impagos, pero el reembolso total y parcial y añadir garantía siguen abiertos. Un interruptor que la página aún no lee se nombra igualmente, con su estado como no leído. Una pausa administrativa larga abre una vía de escape que devuelve lo que está libre en tu bóveda, y la Consola dice cuándo se abre.
+
+<a id="recover-adopt"></a>
+
+### Recuperar: adoptar un activo enviado directamente a tu bóveda
+
+Tu bóveda solo cuenta lo que llega a través del protocolo: un depósito, un préstamo, un cobro. Un token o NFT enviado directamente a la dirección de tu bóveda, desde una cartera o un exchange, queda allí sin contar, así que no puedes retirarlo. La página Recuperar muestra la cifra del propio protocolo de lo que queda sin contar. Si lo enviaste tú, adóptalo: indicas la dirección de origen, lees la declaración y escribes CONFIRM, luego la firmas y envías la adopción. Nada se mueve; el activo pasa a contar como tuyo y solo sale mediante un retiro ordinario. El protocolo vuelve a revisar el origen al confirmar. Si el filtro de sanciones lo marca, no se acredita nada y tu bóveda queda bloqueada hasta que esa dirección salga de la lista, por eso la app nunca envía una adopción para un origen que el filtro ya marca. Adoptar está cerrado mientras el protocolo está en pausa, para una cartera reemplazada y para una cuenta de contrato. Nunca adoptes lo que otra persona te envió.
+
+<a id="recover-disown"></a>
+
+### Recuperar: renunciar a un activo
+
+Si llegó a tu bóveda algo que no reclamas, renuncia a ello. Renunciar deja constancia en la cadena, a la vista de todos, de que no lo reclamas. No mueve ni acredita nada, y el activo sigue en tu bóveda sin contar. No pide declaración, firma ni filtro de sanciones, y sigue abierto mientras el protocolo está en pausa, para una cartera reemplazada y para una bóveda bloqueada por una adopción anterior.

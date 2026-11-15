@@ -6,7 +6,7 @@
  * the page then shows its address. A wallet with a deposit, a token sent in by
  * a plain transfer and a loan's collateral sees the protocol's own figures:
  * what is counted, what is free to withdraw, what its positions hold, and the
- * uncounted part with the route to adopt it. Runs on the desktop and the
+ * uncounted part with a link that opens Recover on that asset. Runs on the desktop and the
  * phone project; the chain is reverted after each test.
  */
 import { erc20Abi, parseEther, type Address } from 'viem';
@@ -87,7 +87,7 @@ test('the holdings show the protocol’s figures: counted, free, held by a loan,
   await expect(page.getByTestId(`vault-withdrawable-${weth}`)).toHaveText('0.02 WETH');
   await expect(page.getByTestId(`vault-held-${weth}`)).toHaveText('0 WETH');
   await expect(page.getByTestId(`vault-untracked-${weth}`)).toContainText('0.001 WETH reached your vault outside the protocol');
-  await expect(page.getByTestId(`vault-untracked-${weth}`).getByRole('link', { name: 'Adopt or disown it' })).toHaveAttribute('href', /\/recover$/);
+  await expect(page.getByTestId(`vault-untracked-${weth}`).getByRole('link', { name: 'Adopt or disown it' })).toHaveAttribute('href', new RegExp(`/recover\\?asset=${WETH}$`, 'i'));
   await expect(row).toContainText('Found through deposited, a loan');
   await expect(page.getByTestId('vault-address-value')).toHaveText(new RegExp(lenderVault, 'i'));
   await fitsWidth(page);

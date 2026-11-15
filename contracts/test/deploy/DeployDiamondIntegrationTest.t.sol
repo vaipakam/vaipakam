@@ -12,6 +12,7 @@ import {DiamondInterfacesInit} from "../../src/DiamondInterfacesInit.sol";
 import {DiamondFacetNames} from "./DiamondFacetNames.sol";
 import {DiamondLoupeFacet} from "../../src/facets/DiamondLoupeFacet.sol";
 import {AdminFacet} from "../../src/facets/AdminFacet.sol";
+import {IVaultTreasuryEndpoint} from "../../src/libraries/LibTreasury.sol";
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
@@ -102,9 +103,9 @@ contract DeployDiamondIntegrationTest is Test, DiamondFacetNames {
     ///      keeps the value derivable and distinct from any role-zero.
     address internal constant ADMIN_FOR_HANDOVER = address(0xA11CE);
 
-    /// @dev Treasury address. Distinct from admin so the post-deploy
-    ///      `Diamond.treasury() == admin` check would fail loudly if
-    ///      AdminFacet.setTreasury() somehow stored the wrong address.
+    /// @dev Treasury address. Distinct from admin so a deploy that built the
+    ///      vault code with the wrong treasury fails loudly (#3569: the vault
+    ///      code's immutable TREASURY is the only copy).
     address internal constant TREASURY = address(0xBEEF);
 
     // ─── Helpers ──────────────────────────────────────────────────────
@@ -304,13 +305,18 @@ contract DeployDiamondIntegrationTest is Test, DiamondFacetNames {
         );
     }
 
-    /// @notice Treasury was wired in Step 5b.
-    function test_DeployedDiamond_TreasurySet() public {
+    /// @notice #3569 — the treasury is the vault code's: the beacon's
+    ///         implementation fixes TREASURY, the Diamond reads that same
+    ///         address, and no setter is routed that could move it.
+    function test_DeployedDiamond_TreasuryIsTheVaultCodes() public {
         (address diamond,,) = _deploy(true);
+        address impl = VaultBeacon(VaultFactoryFacet(diamond).getVaultBeacon()).implementation();
+        assertEq(IVaultTreasuryEndpoint(impl).TREASURY(), TREASURY, "the vault code must fix TREASURY_ADDRESS");
+        assertEq(AdminFacet(diamond).getTreasury(), TREASURY, "the Diamond must read the vault code's treasury");
         assertEq(
-            AdminFacet(diamond).getTreasury(),
-            TREASURY,
-            "treasury address must match TREASURY_ADDRESS env"
+            DiamondLoupeFacet(diamond).facetAddress(bytes4(keccak256("setTreasury(address)"))),
+            address(0),
+            "the retired treasury setter must not be routed"
         );
     }
 

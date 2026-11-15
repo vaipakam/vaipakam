@@ -15,8 +15,9 @@ import {RegistryKeys} from "./RegistryKeys.sol";
  *         `docs/DesignsAndPlans/VaultOutflowPolicyDesign.md` §3.6). It holds
  *         two kinds of entry, each named by a `bytes32` key from
  *         {RegistryKeys}:
- *         - a **pointer**: one address per key (the price guard, and later
- *           the treasury and the backstop);
+ *         - a **pointer**: one address per key (the price guard). The
+ *           treasury is not one: since #3569 it is the vault code's own
+ *           immutable `TREASURY`, written nowhere else;
  *         - a **membership set**: any number of addresses per key (later the
  *           swap adapters and conduits).
  *         Pointers and sets are separate namespaces; {RegistryKeys} never

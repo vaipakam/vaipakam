@@ -1733,7 +1733,7 @@
     "L|vaipakam|491|0|uint256|rewardBudgetArmedFreshPaid",
     "L|vaipakam|492|0|bool|retiredArmedFreshPaidSeeded",
     "L|vaipakam|496|0|uint256|internalVehicleLoanCount",
-    "L|vaipakam|4|0|address|treasury",
+    "L|vaipakam|4|0|address|retiredTreasury",
     "L|vaipakam|501|0|uint256|perkSpendCumulative",
     "L|vaipakam|506|0|bool|rewardRoleConfigured",
     "L|vaipakam|506|1|address|rewardCustodyHolder",

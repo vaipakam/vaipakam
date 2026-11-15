@@ -10,6 +10,7 @@ import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
 import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
@@ -140,11 +141,18 @@ contract LoanFacetTest is Test {
     ///      FeeEntitlementFacet. Cut in its own call: adding it to setUp's
     ///      cut literal trips a solc internal error in this compile unit.
     function _cutFeeEntitlement() private {
-        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](1);
+        // #3379 B2 — ProtectedAccountFacet rides in this same cut: a separate
+        // diamondCut call takes this contract past solc's assembly tag limit.
+        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](2);
         cut[0] = IDiamondCut.FacetCut({
             facetAddress: ArtifactDeploy.deploy(type(FeeEntitlementFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getFeeEntitlementFacetSelectors()
+        });
+        cut[1] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(ProtectedAccountFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getProtectedAccountFacetSelectors()
         });
         IDiamondCut(address(diamond)).diamondCut(cut, address(0), "");
     }
@@ -335,9 +343,6 @@ contract LoanFacetTest is Test {
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
-        // #3379 B2 — ProtectedAccountFacet, built in HelperTest: inlining the
-        // library here takes this contract past solc's assembly tag limit.
-        IDiamondCut(address(diamond)).diamondCut(helperTest.protectedAccountCut(), address(0), "");
         _cutFeeEntitlement();
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
@@ -345,7 +350,6 @@ contract LoanFacetTest is Test {
         // Diamond born paused (LibPausable). Clear via direct
         // storage write since this fixture doesn't cut AdminFacet.
         vm.store(address(diamond), bytes32(uint256(0x2160e84a745d8897ad2778886d40d3563c8bc30c059c5f2173e21e9d47057400)), bytes32(0));
-        TestMutatorFacet(address(diamond)).setTreasuryAddress(address(diamond));
 
         // Init vault factory with impl
         vm.prank(owner);

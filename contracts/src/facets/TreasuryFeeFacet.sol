@@ -4,7 +4,7 @@ pragma solidity ^0.8.29;
 
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
-import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibTreasury} from "../libraries/LibTreasury.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
@@ -65,8 +65,8 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *      TRUST MODEL: the `address(this)` gate is the whole of it. A wallet pull
  *      spends an allowance the payer granted the Diamond, and a vault leg
  *      moves a user's vault balance, so neither may be reachable from outside
- *      the Diamond. The treasury is read from storage, never taken from the
- *      caller. There is no reentrancy guard of its own: every caller already
+ *      the Diamond. The treasury is read from the vault code (#3569), never
+ *      taken from the caller. There is no reentrancy guard of its own: every caller already
  *      holds the Diamond guard and has checked pause, and a token re-entering
  *      these selectors fails the gate.
  */
@@ -75,8 +75,9 @@ contract TreasuryFeeFacet is ITreasuryFeeHost, IVaipakamErrors {
     function collectFeeFromPayer(address payer, address asset, uint256 amount) external {
         if (msg.sender != address(this)) revert UnauthorizedCrossFacetCall();
         if (amount == 0) return;
-        LibDelivery.pullExact(asset, payer, LibVaipakam.storageSlot().treasury, amount);
-        LibFacet.recordTreasuryAccrual(asset, amount);
+        address treasury = LibTreasury.current();
+        LibDelivery.pullExact(asset, payer, treasury, amount);
+        LibFacet.recordTreasuryAccrual(asset, amount, treasury);
     }
 
     /// @inheritdoc ITreasuryFeeHost
@@ -86,10 +87,11 @@ contract TreasuryFeeFacet is ITreasuryFeeHost, IVaipakamErrors {
     {
         if (msg.sender != address(this)) revert UnauthorizedCrossFacetCall();
         if (amount == 0) return 0;
-        // #3205 part 2 — the treasury class: the policy pays the configured
-        // treasury, and the vault checks it against the registry.
-        accrued = LibVaultOutflow.toTreasury(user, asset, amount, 0, OutflowReason.FEE);
-        LibFacet.recordTreasuryAccrual(asset, accrued);
+        // #3205 part 2 / #3569 — the treasury class: the vault pays the
+        // treasury its own code names, and the accrual is recorded there.
+        address treasury;
+        (accrued, treasury) = LibVaultOutflow.toTreasury(user, asset, amount, 0, OutflowReason.FEE);
+        LibFacet.recordTreasuryAccrual(asset, accrued, treasury);
     }
 
     /// @inheritdoc ITreasuryFeeHost
@@ -99,9 +101,9 @@ contract TreasuryFeeFacet is ITreasuryFeeHost, IVaipakamErrors {
     {
         if (msg.sender != address(this)) revert UnauthorizedCrossFacetCall();
         if (amount == 0) return 0;
-        address treasury = LibVaipakam.storageSlot().treasury;
+        address treasury = LibTreasury.current();
         // The Diamond as its own treasury already holds the share (#2623).
         accrued = treasury == address(this) ? amount : LibDelivery.pushMeasured(asset, treasury, amount);
-        LibFacet.recordTreasuryAccrual(asset, accrued);
+        LibFacet.recordTreasuryAccrual(asset, accrued, treasury);
     }
 }
