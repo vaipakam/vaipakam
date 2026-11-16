@@ -124,6 +124,7 @@ import {InstantFillFacet} from "../src/facets/InstantFillFacet.sol";
 import {InstantTakeoverFacet} from "../src/facets/InstantTakeoverFacet.sol";
 import {OfferMaterializeFacet} from "../src/facets/OfferMaterializeFacet.sol";
 import {CollectionOfferFacet} from "../src/facets/CollectionOfferFacet.sol";
+import {ReadyBalanceFacet} from "../src/facets/ReadyBalanceFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -610,11 +611,28 @@ contract HelperTest {
 
     /// @dev #3328 — mirrors `DeployDiamond._getOfferMaterializeSelectors`.
     function getOfferMaterializeFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](5);
         selectors[0] = OfferMaterializeFacet.createSignedOfferVault.selector;
         selectors[1] = OfferMaterializeFacet.createSignedOfferWallet.selector;
         selectors[2] = OfferMaterializeFacet.createCollectionSlice.selector;
         selectors[3] = OfferMaterializeFacet.createSignedCollectionSlice.selector;
+        selectors[4] = OfferMaterializeFacet.createCommittedSliceVault.selector;
+    }
+
+    /// @dev #3344 — mirrors `DeployDiamond._getReadyBalanceSelectors`.
+    function getReadyBalanceFacetSelectors() public pure returns (bytes4[] memory s) {
+        s = new bytes4[](11);
+        s[0] = ReadyBalanceFacet.depositToReady.selector;
+        s[1] = ReadyBalanceFacet.requestReadyTopUp.selector;
+        s[2] = ReadyBalanceFacet.cancelReadyTopUp.selector;
+        s[3] = ReadyBalanceFacet.releaseReady.selector;
+        s[4] = ReadyBalanceFacet.setReadyIdlePeriod.selector;
+        s[5] = ReadyBalanceFacet.extendReadyUntil.selector;
+        s[6] = ReadyBalanceFacet.spendReady.selector;
+        s[7] = ReadyBalanceFacet.readySpendable.selector;
+        s[8] = ReadyBalanceFacet.getReadyBalance.selector;
+        s[9] = ReadyBalanceFacet.getReadySettings.selector;
+        s[10] = ReadyBalanceFacet.getReadyIdleBounds.selector;
     }
 
     /// @dev #3328 — mirrors `DeployDiamond._getCollectionOfferSelectors`.

@@ -14,6 +14,7 @@ import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
+import {LibReadyBalance} from "../libraries/LibReadyBalance.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -933,8 +934,10 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             uint256 fromReserve = reserved < charge ? reserved : charge;
             LibEncumbrance.unlienExtendReserve(loan.id, borrowerNftOwner, principalAsset, fromReserve);
             // The rest is the holder's other free vault balance: the depository
-            // ledger (what of it they may withdraw) pays first.
+            // ledger (what of it they may withdraw) pays first, and a protected
+            // holder may spend only its Ready balance on it (#3344).
             LibDepositoryLedger.spend(borrowerNftOwner, principalAsset, 0, charge - fromReserve);
+            LibReadyBalance.spendViaHost(borrowerNftOwner, principalAsset, charge - fromReserve);
             emit ExtendChargeDrawn(
                 loan.id, borrowerNftOwner, principalAsset, fromReserve, charge - fromReserve, reserved - fromReserve
             );

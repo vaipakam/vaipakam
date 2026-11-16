@@ -411,6 +411,17 @@ runs half of it on old code:
   `LibPairCalm`, shared with `SaleFloorFacet`. Reaches a chain by fresh
   deploy or `RefreshAllFacetsInPlace`.
 
+- **ReadyBalanceFacet + OfferMaterializeFacet + InstantFillFacet +
+  AutoLifecycleFacet + VaultDepositoryFacet + the vault template — the
+  protected Ready balance (#3344).** The three spend sites (a vault-backed
+  signed offer, the instant-market borrower's vault collateral, the
+  auto-extension charge beyond the reserve) self-call `spendReady`, and the
+  depository withdraw reads `readySpendable` to keep Ready out of a wallet. A
+  spend site refreshed without the host reverts `FunctionDoesNotExist` for
+  every account (a hard revert, never an unchecked spend). Intent and instant
+  slices materialize through `createCommittedSliceVault`, which draws neither
+  the depository ledger nor Ready. Reaches a chain by fresh deploy.
+
 - **Every facet that reads a loan deadline (#668 / #935, owner decision
   D2).** A loan's due date and grace end are read only through
   `LibLoanClock`, which adds the paused time since the loan started (from the

@@ -183,8 +183,9 @@ library LibIntentFill {
     }
 
     /// @dev Materialize a single-fill slice as an on-chain offer with
-    ///      `creator` through the self-gated vault-backed entry (draws free
-    ///      vault balance and liens it). Bubbles the inner revert.
+    ///      `creator` through the self-gated committed-capital entry (checks
+    ///      and liens free vault balance; draws neither the depository ledger
+    ///      nor the Ready balance, #3344). Bubbles the inner revert.
     function materialize(LibVaipakam.CreateOfferParams memory params, address creator)
         internal
         returns (uint256 sliceOfferId)
@@ -192,7 +193,7 @@ library LibIntentFill {
         // slither-disable-next-line low-level-calls
         (bool ok, bytes memory res) = address(this).call(
             abi.encodeWithSelector(
-                OfferMaterializeFacet.createSignedOfferVault.selector, creator, params,
+                OfferMaterializeFacet.createCommittedSliceVault.selector, creator, params,
                 LibSignedOffer.MakerFull(false, 0, false) // #1949 — a slice carries no maker Full
             )
         );

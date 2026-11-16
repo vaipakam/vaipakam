@@ -58,6 +58,7 @@
     "InstantTakeoverFacet",
     "OfferMaterializeFacet",
     "CollectionOfferFacet",
+    "ReadyBalanceFacet",
     "ClaimFacet",
     "OracleFacet",
     "OracleAdminFacet",

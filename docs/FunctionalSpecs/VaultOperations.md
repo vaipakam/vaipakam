@@ -93,6 +93,38 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   marketplace fees only to its owner or allowed destinations. A locked or
   replaced account cannot post it; the protection check runs again at fill.
 
+## Ready balance (protected accounts)
+
+- A protected account's vault holds two parts of each token: the Ready
+  balance and the Protected balance. The owner's own actions may spend
+  existing vault balance on a protocol step at once only from Ready: a
+  vault-backed signed offer, the collateral of an instant-market borrow, and
+  an auto-extension charge beyond the loan's own reserve. Money the owner
+  sends from the wallet in the same action is new money and is never
+  delayed.
+- Ready is off until the owner funds it. A deposit from the wallet straight
+  into Ready is instant. Moving Protected balance into Ready waits the
+  account's delay, and the owner or any signer may cancel it meanwhile.
+  Moving Ready back to Protected is instant and may be done by the owner or
+  any signer.
+- Ready never pays a wallet. A withdrawal reaches only the Protected balance,
+  so Ready leaves the vault only after it is moved back to Protected and then
+  through the usual delayed payout.
+- A lock, a switch-off of protected mode, or an account replacement empties
+  Ready and cancels any pending top-up, for good: after an unlock the owner
+  funds Ready again.
+- The owner may set an idle period of one to thirty days. Ready not spent or
+  topped up for that long counts as Protected balance again, at the
+  deadline, with no transaction needed. Setting or shortening the period is
+  instant; lengthening it or turning it off waits the delay. The owner may
+  keep a token's Ready counting for up to thirty days from now at once.
+- Returned principal, interest and claims go to the Protected balance; Ready
+  never refills itself.
+- Every move into, out of, or spent from Ready is reported, with the account,
+  token, amount and direction, and the app can read each token's Ready
+  balance, any pending top-up and when Ready stops counting, with the reason
+  when it counts as nothing. The Protected balance is never called savings.
+
 ## Delayed changes and account replacement
 
 - Changes that loosen protection, including switching NFT protection off,

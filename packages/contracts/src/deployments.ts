@@ -252,6 +252,8 @@ export interface DeploymentFacets {
   offerMaterializeFacet?: HexAddress;
   /** #3328 — NFT collection offers. */
   collectionOfferFacet?: HexAddress;
+  /** #3344 — a protected account's Ready balance. */
+  readyBalanceFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */

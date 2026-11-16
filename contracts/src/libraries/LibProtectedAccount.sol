@@ -12,6 +12,7 @@ import {LibPausable} from "./LibPausable.sol";
 interface IVaultProtectionRead {
     function protectionCore() external view returns (bool enabled, bool locked, uint32 delay, address owner, bool retired);
     function protectionLockCount() external view returns (uint64);
+    function protectionEpoch() external view returns (uint64);
     function allowEntry(address destination) external view returns (ProtectionEntry memory);
     function signerEntry(address who) external view returns (ProtectionSigner memory);
     function protectionSignersEmptied() external view returns (uint64);

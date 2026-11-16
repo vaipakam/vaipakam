@@ -53,6 +53,7 @@ import {MarketLedgerFacet} from "../src/facets/MarketLedgerFacet.sol";
 import {InstantMarketFacet} from "../src/facets/InstantMarketFacet.sol";
 import {InstantFillFacet} from "../src/facets/InstantFillFacet.sol";
 import {InstantTakeoverFacet} from "../src/facets/InstantTakeoverFacet.sol";
+import {ReadyBalanceFacet} from "../src/facets/ReadyBalanceFacet.sol";
 import {OfferMaterializeFacet} from "../src/facets/OfferMaterializeFacet.sol";
 import {CollectionOfferFacet} from "../src/facets/CollectionOfferFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
@@ -442,6 +443,7 @@ contract SetupTest is Test {
     InstantMarketFacet instantMarketFacet;
     InstantFillFacet instantFillFacet;
     InstantTakeoverFacet instantTakeoverFacet;
+    ReadyBalanceFacet readyBalanceFacet;
     OfferMaterializeFacet offerMaterializeFacet;
     CollectionOfferFacet collectionOfferFacet;
     SaleExitVerdictFacet saleExitVerdictFacet;
@@ -628,6 +630,7 @@ contract SetupTest is Test {
         instantMarketFacet = InstantMarketFacet(ArtifactDeploy.deploy(type(InstantMarketFacet).name));
         instantFillFacet = InstantFillFacet(ArtifactDeploy.deploy(type(InstantFillFacet).name));
         instantTakeoverFacet = InstantTakeoverFacet(ArtifactDeploy.deploy(type(InstantTakeoverFacet).name));
+        readyBalanceFacet = ReadyBalanceFacet(ArtifactDeploy.deploy(type(ReadyBalanceFacet).name));
         offerMaterializeFacet = OfferMaterializeFacet(ArtifactDeploy.deploy(type(OfferMaterializeFacet).name));
         collectionOfferFacet = CollectionOfferFacet(ArtifactDeploy.deploy(type(CollectionOfferFacet).name));
         saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
@@ -667,7 +670,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](125);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](126);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1212,6 +1215,11 @@ contract SetupTest is Test {
             facetAddress: address(collectionOfferFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getCollectionOfferFacetSelectors()
+        });
+        cuts[125] = IDiamondCut.FacetCut({
+            facetAddress: address(readyBalanceFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getReadyBalanceFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).

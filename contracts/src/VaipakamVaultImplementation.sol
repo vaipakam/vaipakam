@@ -904,6 +904,13 @@ contract VaipakamVaultImplementation is
         return LibVaultProtectionStorage.layout().lockCount;
     }
 
+    /// @notice #3344 — the protection epoch: bumped by a lock, a replacement
+    ///         and a switch-off. The Diamond's Ready balance counts only while
+    ///         the epoch it was set in is current.
+    function protectionEpoch() external view returns (uint64) {
+        return LibVaultProtectionStorage.layout().epoch;
+    }
+
     /// @notice How many times this record's signer set has gone from
     ///         non-empty to empty (Codex #3489 r14): the Diamond's co-sign
     ///         requirement binds only under the number it was set at.

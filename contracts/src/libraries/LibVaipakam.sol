@@ -8561,6 +8561,43 @@ library LibVaipakam {
         ///      the retired one-account `protectedRetiredAccountOf`.
         ///      Appended — append-only.
         mapping(address => EnumerableSet.AddressSet) protectedManagedAccounts;
+        /// @dev #3344 — per protected account, its Ready settings (idle
+        ///      period, ready-until). Written only by `LibReadyBalance`.
+        ///      Appended — append-only.
+        mapping(address => ReadyAccount) readyAccount;
+        /// @dev #3344 — per protected account and ERC-20, its Ready amount and
+        ///      any pending top-up. Written only by `LibReadyBalance`.
+        ///      Appended — append-only.
+        mapping(address => mapping(address => ReadyAsset)) readyAsset;
+    }
+
+    /// @notice #3344 — a protected account's Ready settings. See
+    ///         `docs/DesignsAndPlans/ReadyBalanceDesign.md`.
+    /// @dev    `idle` is the idle period in seconds (0 = no expiry). A
+    ///         lengthening or switch-off waits the delay as `pendingIdle`
+    ///         from `pendingIdleAt`, bound to `pendingEpoch`.
+    struct ReadyAccount {
+        uint32 idle;
+        uint32 pendingIdle;
+        uint64 pendingIdleAt;
+        uint64 pendingEpoch;
+        bool pendingIdleSet;
+    }
+
+    /// @notice #3344 — one asset's Ready amount and pending top-up.
+    /// @dev    `amount` counts while `epoch` is the vault's current protection
+    ///         epoch and, with an idle period set, until
+    ///         `max(touched + idle, extendedUntil)`. `pending` counts from
+    ///         `pendingAt` while `pendingEpoch` is current and, with an idle
+    ///         period, until `pendingAt + idle`.
+    struct ReadyAsset {
+        uint256 amount;
+        uint256 pending;
+        uint64 epoch;
+        uint64 pendingAt;
+        uint64 pendingEpoch;
+        uint64 touched;
+        uint64 extendedUntil;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.

@@ -5,6 +5,8 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
+import {LibReadyBalance} from "../libraries/LibReadyBalance.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibMarketLedger} from "../libraries/LibMarketLedger.sol";
 import {LibIntentFill} from "../libraries/LibIntentFill.sol";
@@ -216,11 +218,21 @@ contract InstantFillFacet {
         private
         returns (uint256 fromWallet)
     {
+        // #3344 — only what the borrower may spend at once from the vault
+        // counts: all free balance, or a protected account's Ready balance.
+        // That part is drawn here (depository ledger first, then Ready); the
+        // slice is then materialized as committed collateral, so neither is
+        // drawn twice, and the wallet part is never counted as owner balance.
         uint256 free = LibEncumbrance.freeBalance(
             borrower, collateralAsset, 0, LibVaipakam.trackedHolding(borrower, collateralAsset, 0)
         );
-        if (free >= need) return 0;
-        fromWallet = need - free;
+        uint256 usable = LibReadyBalance.spendableViaHost(borrower, collateralAsset);
+        if (usable > free) usable = free;
+        uint256 fromVault = usable >= need ? need : usable;
+        LibDepositoryLedger.spend(borrower, collateralAsset, 0, fromVault);
+        LibReadyBalance.spendViaHost(borrower, collateralAsset, fromVault);
+        if (fromVault == need) return 0;
+        fromWallet = need - fromVault;
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultDepositERC20.selector, borrower, collateralAsset, fromWallet

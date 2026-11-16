@@ -93,6 +93,7 @@ import {MarketLedgerFacet} from "../src/facets/MarketLedgerFacet.sol";
 import {InstantMarketFacet} from "../src/facets/InstantMarketFacet.sol";
 import {InstantFillFacet} from "../src/facets/InstantFillFacet.sol";
 import {InstantTakeoverFacet} from "../src/facets/InstantTakeoverFacet.sol";
+import {ReadyBalanceFacet} from "../src/facets/ReadyBalanceFacet.sol";
 import {OfferMaterializeFacet} from "../src/facets/OfferMaterializeFacet.sol";
 import {CollectionOfferFacet} from "../src/facets/CollectionOfferFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
@@ -338,7 +339,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // selectors move between facets (a Replace onto the new address).
     // 123 -> 124: CollectionOfferFacet (#3328) - NFT collection offers; its
     // selectors are new (an Add).
-    uint256 public constant EXPECTED_FACETS = 124;
+    // 124 -> 125: ReadyBalanceFacet (#3344) - a protected account's Ready
+    // balance; its selectors are new (an Add).
+    uint256 public constant EXPECTED_FACETS = 125;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1411,6 +1414,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             "collectionOfferFacet",
             ArtifactDeploy.deploy(type(CollectionOfferFacet).name),
             _getCollectionOfferSelectors()
+        );
+        items[124] = Item(
+            "readyBalanceFacet", ArtifactDeploy.deploy(type(ReadyBalanceFacet).name), _getReadyBalanceSelectors()
         );
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /

@@ -132,11 +132,13 @@ abstract contract DiamondFacetNames {
     ///      119 → 121 with `InstantMarketFacet` and `InstantFillFacet` (#3656
     ///      — the instant borrow and its one-fill executor).
     ///      123 → 124 with `CollectionOfferFacet` (#3328 — NFT collection offers).
+    ///      124 → 125 with `ReadyBalanceFacet` (#3344 — a protected account's
+    ///      Ready balance).
     ///      122 → 123 with `OfferMaterializeFacet` (#3328 — the signed-offer
     ///      and intent-slice materialize entries, split off `OfferCreateFacet`).
     ///      121 → 122 with `InstantTakeoverFacet` (#3656 §7 — the takeover
     ///      at face value).
-    function cutFacetNames() internal pure returns (string[124] memory) {
+    function cutFacetNames() internal pure returns (string[125] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -311,6 +313,8 @@ abstract contract DiamondFacetNames {
             "OfferMaterializeFacet",
             // NFT collection offers (#3328).
             "CollectionOfferFacet",
+            // A protected account's Ready balance (#3344).
+            "ReadyBalanceFacet",
             "SwapToRepayFacet",
             "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",

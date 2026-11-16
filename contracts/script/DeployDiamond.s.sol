@@ -69,6 +69,7 @@ import {InstantFillFacet} from "../src/facets/InstantFillFacet.sol";
 import {InstantTakeoverFacet} from "../src/facets/InstantTakeoverFacet.sol";
 import {OfferMaterializeFacet} from "../src/facets/OfferMaterializeFacet.sol";
 import {CollectionOfferFacet} from "../src/facets/CollectionOfferFacet.sol";
+import {ReadyBalanceFacet} from "../src/facets/ReadyBalanceFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {VaultProtection} from "../src/vault/VaultProtection.sol";
@@ -592,6 +593,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
             OfferMaterializeFacet(ArtifactDeploy.deploy(type(OfferMaterializeFacet).name));
         CollectionOfferFacet collectionOfferFacet =
             CollectionOfferFacet(ArtifactDeploy.deploy(type(CollectionOfferFacet).name));
+        ReadyBalanceFacet readyBalanceFacet =
+            ReadyBalanceFacet(ArtifactDeploy.deploy(type(ReadyBalanceFacet).name));
         // #1841 - the one sale-exit verdict: the lender exit chooser's view and
         // the guard both sale entries self-call.
         SaleExitVerdictFacet saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
@@ -640,7 +643,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](124);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](125);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -767,6 +770,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[121] = _buildCut(address(instantTakeoverFacet), _getInstantTakeoverSelectors());
         cuts[122] = _buildCut(address(offerMaterializeFacet), _getOfferMaterializeSelectors());
         cuts[123] = _buildCut(address(collectionOfferFacet), _getCollectionOfferSelectors());
+        cuts[124] = _buildCut(address(readyBalanceFacet), _getReadyBalanceSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1526,6 +1530,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("instantTakeoverFacet", address(instantTakeoverFacet));
         Deployments.writeFacet("offerMaterializeFacet", address(offerMaterializeFacet));
         Deployments.writeFacet("collectionOfferFacet", address(collectionOfferFacet));
+        Deployments.writeFacet("readyBalanceFacet", address(readyBalanceFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
         Deployments.writeFacet("refinancePayoffFacet", address(refinancePayoffFacet));
@@ -2048,11 +2053,29 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      off-chain offer or an intent slice into an on-chain offer at fill
     ///      (#396 v0.5; vault-backed and Permit2-witness funding).
     function _getOfferMaterializeSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](5);
         s[0] = OfferMaterializeFacet.createSignedOfferVault.selector;
         s[1] = OfferMaterializeFacet.createSignedOfferWallet.selector;
         s[2] = OfferMaterializeFacet.createCollectionSlice.selector;
         s[3] = OfferMaterializeFacet.createSignedCollectionSlice.selector;
+        s[4] = OfferMaterializeFacet.createCommittedSliceVault.selector;
+    }
+
+    /// @dev Selectors for `ReadyBalanceFacet` (#3344) — a protected
+    ///      account's Ready balance: its entries, views and the spend host.
+    function _getReadyBalanceSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](11);
+        s[0] = ReadyBalanceFacet.depositToReady.selector;
+        s[1] = ReadyBalanceFacet.requestReadyTopUp.selector;
+        s[2] = ReadyBalanceFacet.cancelReadyTopUp.selector;
+        s[3] = ReadyBalanceFacet.releaseReady.selector;
+        s[4] = ReadyBalanceFacet.setReadyIdlePeriod.selector;
+        s[5] = ReadyBalanceFacet.extendReadyUntil.selector;
+        s[6] = ReadyBalanceFacet.spendReady.selector;
+        s[7] = ReadyBalanceFacet.readySpendable.selector;
+        s[8] = ReadyBalanceFacet.getReadyBalance.selector;
+        s[9] = ReadyBalanceFacet.getReadySettings.selector;
+        s[10] = ReadyBalanceFacet.getReadyIdleBounds.selector;
     }
 
     /// @dev Selectors for `CollectionOfferFacet` (#3328) — NFT collection

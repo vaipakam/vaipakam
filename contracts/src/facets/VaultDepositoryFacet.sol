@@ -10,6 +10,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibProtectedAccount, IVaultProtectionRead} from "../libraries/LibProtectedAccount.sol";
 import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
+import {LibReadyBalance} from "../libraries/LibReadyBalance.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -386,8 +387,22 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
         view
         returns (uint256)
     {
-        if (kind == uint8(LibVaipakam.AssetType.ERC20)) tokenId = 0;
-        return LibDepositoryLedger.withdrawable(user, asset, tokenId, freeHolding(user, kind, asset, tokenId));
+        uint256 free = freeHolding(user, kind, asset, tokenId);
+        if (kind == uint8(LibVaipakam.AssetType.ERC20)) {
+            tokenId = 0;
+            // #3344 — Ready never pays a wallet: a protected account's Ready
+            // balance leaves only after it is released back to Protected.
+            uint256 ready = _readyOf(user, asset);
+            free = free > ready ? free - ready : 0;
+        }
+        return LibDepositoryLedger.withdrawable(user, asset, tokenId, free);
+    }
+
+    /// @dev #3344 — `user`'s effective Ready balance of `asset` (zero for an
+    ///      account not in protected mode).
+    function _readyOf(address user, address asset) private view returns (uint256) {
+        if (!LibProtectedAccount.isProtected(user)) return 0;
+        return LibReadyBalance.spendableViaHost(user, asset);
     }
 
     /// @notice `user`'s depository holding of `asset` / `tokenId`: what they

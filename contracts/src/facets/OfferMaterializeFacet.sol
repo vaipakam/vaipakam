@@ -9,6 +9,7 @@ import {LibOfferAdmission} from "../libraries/LibOfferAdmission.sol";
 import {LibOfferCreate} from "../libraries/LibOfferCreate.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
+import {LibReadyBalance} from "../libraries/LibReadyBalance.sol";
 import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -52,7 +53,8 @@ contract OfferMaterializeFacet is DiamondPausable, IVaipakamErrors {
     enum Source {
         Signed,
         CollectionParent,
-        SignedCollection
+        SignedCollection,
+        Committed
     }
 
     /// @notice The signed offer's shape isn't supported in v0.5 (only ERC-20
@@ -100,6 +102,29 @@ contract OfferMaterializeFacet is DiamondPausable, IVaipakamErrors {
         ISignatureTransfer.PermitTransferFrom memory emptyPermit;
         return _materializeSignedOffer(
             creator, params, SignedFunding.VaultBacked, emptyPermit, bytes32(0), "", full, Source.Signed
+        );
+    }
+
+    /// @notice #3344 — materialize a single-fill slice funded by capital
+    ///         ALREADY committed in `creator`'s vault: a lender intent's
+    ///         capital the caller has just released from its lien, or an
+    ///         instant-market borrower's collateral the caller has just sized
+    ///         (and drawn from Ready / the depository ledger itself).
+    /// @dev    Diamond-only (`LibIntentFill.materialize`). The free balance is
+    ///         still checked and liened, but neither the depository ledger
+    ///         nor the Ready balance is drawn: the money was committed
+    ///         before, not spent from the owner's own balance now.
+    function createCommittedSliceVault(
+        address creator,
+        LibVaipakam.CreateOfferParams calldata params,
+        LibSignedOffer.MakerFull calldata full
+    ) external whenNotPaused returns (uint256 offerId) {
+        if (msg.sender != address(this)) {
+            revert UnauthorizedCrossFacetCall();
+        }
+        ISignatureTransfer.PermitTransferFrom memory emptyPermit;
+        return _materializeSignedOffer(
+            creator, params, SignedFunding.VaultBacked, emptyPermit, bytes32(0), "", full, Source.Committed
         );
     }
 
@@ -194,9 +219,9 @@ contract OfferMaterializeFacet is DiamondPausable, IVaipakamErrors {
         // v0.5 supported shapes: ERC-20 Lender-principal offer, or
         // ERC-20-collateral Borrower offer. NFT lender / NFT-rental
         // (prepay) / refinance-tagged are deferred.
-        address fundedAsset = source != Source.Signed
-            ? _resolveCollectionSliceAsset(params)
-            : _resolveSignedOfferStakeAsset(params);
+        address fundedAsset = (source == Source.Signed || source == Source.Committed)
+            ? _resolveSignedOfferStakeAsset(params)
+            : _resolveCollectionSliceAsset(params);
         if (params.refinanceTargetLoanId != 0) {
             revert SignedOfferUnsupportedShape();
         }
@@ -219,9 +244,15 @@ contract OfferMaterializeFacet is DiamondPausable, IVaipakamErrors {
                 revert SignedOfferInsufficientFreeBalance(fundedAsset, free, amount);
             }
             // The signer spends free vault balance: the depository ledger
-            // (what of it the signer may withdraw) pays first. A collection
-            // slice's principal is the parent's escrow, not that balance.
-            if (source != Source.CollectionParent) LibDepositoryLedger.spend(creator, fundedAsset, 0, amount);
+            // (what of it the signer may withdraw) pays first, and a
+            // protected signer may spend only its Ready balance (#3344). A
+            // collection slice's principal is the parent's escrow, and a
+            // committed slice's is capital committed before: neither is that
+            // balance.
+            if (source == Source.Signed || source == Source.SignedCollection) {
+                LibDepositoryLedger.spend(creator, fundedAsset, 0, amount);
+                LibReadyBalance.spendViaHost(creator, fundedAsset, amount);
+            }
         } else {
             // Wallet-witness: one Permit2 signature binds the pull + the terms.
             LibPermit2.pullWithWitness(

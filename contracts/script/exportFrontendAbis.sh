@@ -319,6 +319,8 @@ FACETS=(
   "OfferMaterializeFacet"
   # #3328: NFT collection offers.
   "CollectionOfferFacet"
+  # #3344: a protected account's Ready balance.
+  "ReadyBalanceFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"
