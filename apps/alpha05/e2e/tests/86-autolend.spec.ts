@@ -72,7 +72,9 @@ test('a lender sets up Auto-lend: one choice, an exact approval, terms and fundi
   await expect(form).toContainText('takes at most 18 decimals.');
   await page.getByTestId('autolend-amount').fill('0.5');
   await page.getByTestId('autolend-rate').fill('5');
-  await page.getByTestId('autolend-ltv').fill('60');
+  // Below the about 53% this pair's floor allows on the test chain; a higher
+  // ceiling is refused in the review (unit-tested in autoLend.test.ts).
+  await page.getByTestId('autolend-ltv').fill('50');
   await page.getByTestId('autolend-days').fill('30');
   await page.getByTestId('autolend-prorata').check();
   // Basic carries no exposure or smallest-loan fields.
@@ -87,7 +89,7 @@ test('a lender sets up Auto-lend: one choice, an exact approval, terms and fundi
   await expect(receipt).toContainText('Moves from your wallet to your own vault');
   await expect(receipt).toContainText('Most lent out at once');
   await expect(receipt).toContainText('5% a year');
-  await expect(receipt).toContainText('60% of the collateral’s value');
+  await expect(receipt).toContainText('50% of the collateral’s value');
   await expect(receipt).toContainText('30 days');
   await expect(receipt).toContainText('Smallest loan');
   await expect(receipt).toContainText('No end date: it lends until you stop it');
@@ -123,7 +125,7 @@ test('a lender sets up Auto-lend: one choice, an exact approval, terms and fundi
   expect(intent.active).toBe(true);
   expect(intent.maxExposure).toBe(parseEther('0.5'));
   expect(intent.minRateBps).toBe(500n);
-  expect(intent.maxInitLtvBps).toBe(6000);
+  expect(intent.maxInitLtvBps).toBe(5000);
   expect(intent.maxDurationDays).toBe(30);
   expect(intent.minFillAmount > 0n).toBe(true);
   expect(intent.requiresKeeperAuth).toBe(false);
