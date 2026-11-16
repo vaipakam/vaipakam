@@ -1789,14 +1789,24 @@ above. Each resolves here, so a route reviewer needs no private file:
   matcher pass's state is disclosed, and so is whether the protocol's keeper
   may roll repaid loans for the wallet (keeper access and the auto-roll
   action): without it repaid money comes back as a claim, and the review says
-  so instead of promising relending. A risk-access step a fill would need
+  so instead of promising relending; a VPFI lend is never rolled, and the
+  review says that whatever the keeper settings. The smallest loan defaults
+  to a tenth of what can be lent from the start (the funding or the most at
+  once, whichever is smaller), and one above the funding is refused, since
+  no fill can exceed the money set aside. The review reads the protocol's
+  own loan-start bound for the pair (`initRiskBounds`, valued with
+  `getNumeraireValue`) and refuses a ceiling above it at today's prices, or
+  any setup when the network opens no loan against the collateral; an
+  unread bound is stated. A risk-access step a fill would need
   (the level, the illiquid pair consent, the strict acknowledgement) is
   offered before the setup, since the protocol checks it at each fill. A
   failed re-read on Positions is stated beside the figures it kept. The
   terms and the money go in one transaction, so neither lands alone; an
   unused approval is put back. The finish card measures the set and funded
   events and the token's move into the vault. Positions lists each intent
-  with its waiting and lent amounts and its state (lending, ended, stopped);
+  with its waiting amount, the amount counted against its most at once (each
+  loan counts in full until its repayment is claimed or lent again, so it is
+  never called "lent now"), and its state (lending, ended, stopped);
   changing, funding, withdrawing and stopping follow in the next part.
 - **RB-PRICE-GUARD** — the maker's price-move guard (#3358) is shown on the
   page of an open or ended loan offer of a token against token collateral.

@@ -51,6 +51,7 @@ export function AutoLendSection() {
               <p className="tier-a">{text(state === 'active' ? 'autoLend.stateActive' : state === 'ended' ? 'autoLend.stateEnded' : 'autoLend.stateStopped')}</p>
               <p>{format('autoLend.cardUnlent', { amount: amt(i.availableCapital, i.lendingAsset) })}</p>
               <p>{format('autoLend.cardLent', { amount: amt(i.livePrincipal, i.lendingAsset) })}</p>
+              {i.livePrincipal > 0n && <p className="tier-b">{text('autoLend.cardLentWhy')}</p>}
               <p className="tier-b">{format('autoLend.cardCap', { amount: amt(i.maxExposure, i.lendingAsset) })}</p>
               <p className="tier-b">
                 {format('autoLend.cardTerms', { rate: bpsPercent(Number(i.minRateBps)), ltv: bpsPercent(Number(i.maxInitLtvBps)), days: String(i.maxDurationDays) })}

@@ -28,7 +28,7 @@
  */
 import { erc20Abi, parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
 import { LenderIntentFacetABI, NumeraireValueFacetABI } from '@vaipakam/contracts/abis';
-import { CONFIG } from '../offers/reads';
+import { CONFIG, OFFER_PREVIEW } from '../offers/reads';
 import { readIntentGates, type IntentGate } from '../offers/intents';
 import { batchCall, type BatchStep } from '../tx/batch';
 import { parseAmount, parseDays, parseRateBps, type ParseError } from '../post/postModel';
@@ -182,16 +182,19 @@ export function exposureOf(p: ParsedAutoLend): bigint {
 }
 
 /**
- * The smallest loan the setup records: the typed one, else a tenth of the
- * exposure cap rounded up, raised to the network's minimum (`floor`, in the
- * lending asset, rounded up) and capped at the exposure. null when the
+ * The smallest loan the setup records: the typed one, else a tenth of what
+ * can be lent from the start (the funding, or the most at once when that is
+ * smaller) rounded up, raised to the network's minimum (`floor`, in the
+ * lending asset, rounded up) and capped at that same figure, since no fill
+ * can be larger than the money set aside. null when the
  * default is asked for and the network minimum could not be read: the review
  * then names that instead of guessing a figure.
  */
 export function resolvedMinFill(p: ParsedAutoLend, floor: bigint | null): bigint | null {
   if (p.minFill !== null) return p.minFill;
   if (floor === null) return null;
-  const cap = exposureOf(p);
+  const exposure = exposureOf(p);
+  const cap = exposure < p.fund ? exposure : p.fund;
   const tenth = (cap + DEFAULT_SPLIT - 1n) / DEFAULT_SPLIT;
   const pick = tenth > floor ? tenth : floor;
   return pick > cap ? cap : pick;
@@ -313,7 +316,13 @@ export type SetupBlock =
   | { kind: 'lendUntil'; earliest: bigint }
   | { kind: 'floorUnread' }
   | { kind: 'belowFloor'; floor: bigint }
-  | { kind: 'balance'; balance: bigint };
+  | { kind: 'minAboveFund'; minFill: bigint }
+  | { kind: 'balance'; balance: bigint }
+  /** The LTV ceiling is above the highest the network takes for the pair
+   *  at today's prices, read by the review (`ltvCapBlock`). */
+  | { kind: 'ltvCap'; capBps: number }
+  /** The network opens no new loan against this collateral now. */
+  | { kind: 'ltvClosed' };
 
 export function setupBlocks(draft: AutoLendDraft, f: SetupFacts): SetupBlock[] {
   const out: SetupBlock[] = [];
@@ -323,8 +332,48 @@ export function setupBlocks(draft: AutoLendDraft, f: SetupFacts): SetupBlock[] {
   const minFill = resolvedMinFill(draft.parsed, f.floor);
   if (minFill === null) out.push({ kind: 'floorUnread' });
   else if (f.floor !== null && minFill < f.floor) out.push({ kind: 'belowFloor', floor: f.floor });
+  // Every fill must be at least the smallest loan and at most the money set
+  // aside, so a smallest loan above the funding could never be made (an
+  // Advanced most-at-once above the funding lets the floor reach past it).
+  if (minFill !== null && minFill > draft.parsed.fund) out.push({ kind: 'minAboveFund', minFill });
   if (f.balance < draft.parsed.fund) out.push({ kind: 'balance', balance: f.balance });
   return out;
+}
+
+/** The highest loan-to-value the network takes for the pair now: none when
+ *  the protocol's loan-start risk bound does not apply to it (an unpriced
+ *  leg), closed when it opens no new loan against the collateral. */
+export type LtvCap = { kind: 'none' } | { kind: 'closed' } | { kind: 'cap'; bps: number };
+
+const NO_LOANS = 2n ** 256n - 1n;
+
+/** The loan-start bound read through the protocol's own rule
+ *  (`OfferPreviewFacet.initRiskBounds`, which every match asks): the least
+ *  collateral it takes for `amount`, turned into a loan-to-value with the
+ *  protocol's own values of both legs (the debt rounded up, the collateral
+ *  down), rounded up so a ceiling exactly at the bound is never refused.
+ *  A fill whose collateral at the setup's ceiling is under that least
+ *  collateral is refused, so a ceiling above it never lends. */
+export async function readLtvCap(c: PublicClient, diamond: Hex, lending: Hex, collateral: Hex, amount: bigint): Promise<LtvCap> {
+  const [floor] = (await c.readContract({ address: diamond, abi: OFFER_PREVIEW, functionName: 'initRiskBounds', args: [lending, collateral, amount, 0n] })) as readonly [
+    bigint,
+    boolean,
+    bigint,
+  ];
+  if (floor === 0n) return { kind: 'none' };
+  if (floor === NO_LOANS) return { kind: 'closed' };
+  const value = (asset: Hex, v: bigint, debt: boolean) =>
+    c.readContract({ address: diamond, abi: NUMERAIRE, functionName: 'getNumeraireValue', args: [asset, v, debt] }) as Promise<bigint>;
+  const [lend, coll] = await Promise.all([value(lending, amount, true), value(collateral, floor, false)]);
+  if (coll === 0n) throw new Error('collateral valued at nothing');
+  return { kind: 'cap', bps: Number((lend * 10_000n + coll - 1n) / coll) };
+}
+
+/** The block a ceiling above the network's bound earns, if any. */
+export function ltvCapBlock(ltvBps: number, cap: LtvCap | null): SetupBlock | null {
+  if (cap === null || cap.kind === 'none') return null;
+  if (cap.kind === 'closed') return { kind: 'ltvClosed' };
+  return ltvBps > cap.bps ? { kind: 'ltvCap', capBps: cap.bps } : null;
 }
 
 /** Whether the instruction can be filled at all on this network now, from

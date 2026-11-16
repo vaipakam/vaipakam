@@ -16,10 +16,14 @@ import { allowanceSteps } from '../tx/approval';
 import { chainValidUntil } from '../tx/deadline';
 import { askThrough } from '../tx/simulate';
 import { networkKeeper, readKeeperSettings } from '../keepers/keepers';
+import { VPFITokenFacetABI } from '@vaipakam/contracts/abis';
+import type { Abi } from 'viem';
 import type { Posture } from '../capability/types';
 import {
   exposureOf,
   fillPosture,
+  ltvCapBlock,
+  readLtvCap,
   readSetupFacts,
   resolvedMinFill,
   setupBlocks,
@@ -27,6 +31,7 @@ import {
   wholeDays,
   type AutoLendDraft,
   type FillPosture,
+  type LtvCap,
   type SetupBlock,
   type SetupFacts,
 } from './autoLend';
@@ -55,17 +60,31 @@ export interface AutoLendReview {
    *  a keeper the wallet has not allowed, and the money then comes back as
    *  a claim instead of being lent again. */
   roll: RollPermission;
+  /** The highest loan-to-value the network takes for the pair at the
+   *  review's prices; null when it could not be read. Checked at each fill,
+   *  not when the setup is sent, so the dry run cannot show it. */
+  ltvCap: LtvCap | null;
   verdict: CreateVerdict;
 }
 
-export type RollPermission = 'allowed' | 'not-allowed' | 'unknown';
+/** `vpfi`: the protocol never rolls a VPFI loan
+ *  (`LenderIntentVpfiRollUnsupported`), whatever the keeper settings. */
+export type RollPermission = 'allowed' | 'not-allowed' | 'vpfi' | 'unknown';
+
+const VPFI_TOKEN = VPFITokenFacetABI as Abi;
 
 /** The protocol's `KEEPER_ACTION_AUTO_ROLL` bit. */
 const AUTO_ROLL = 1 << 7;
 
 /** Whether this network's keeper may roll repaid loans for the wallet:
  *  keeper access on, and the keeper approved with the auto-roll action. */
-async function readRollPermission(own: OwnStateClient, diamond: Hex): Promise<RollPermission> {
+async function readRollPermission(own: OwnStateClient, diamond: Hex, lending: Hex): Promise<RollPermission> {
+  try {
+    const vpfi = (await own.read((c) => c.readContract({ address: diamond, abi: VPFI_TOKEN, functionName: 'getVPFIToken' }) as Promise<Hex>)).value;
+    if (vpfi.toLowerCase() === lending.toLowerCase()) return 'vpfi';
+  } catch {
+    return 'unknown';
+  }
   const keeper = networkKeeper(own.chainId);
   if (keeper === null) return 'unknown';
   try {
@@ -111,8 +130,18 @@ export async function readAutoLendReview(own: OwnStateClient, diamond: Hex, draf
           )
         ).length;
   const minFill = resolvedMinFill(draft.parsed, facts.floor);
-  const blocks = setupBlocks(draft, facts);
-  const [risk, roll] = await Promise.all([readRiskNeed(own, diamond, draft.lending, draft.collateral), readRollPermission(own, diamond)]);
+  const [risk, roll, ltvCap] = await Promise.all([
+    readRiskNeed(own, diamond, draft.lending, draft.collateral),
+    readRollPermission(own, diamond, draft.lending),
+    minFill === null || minFill === 0n
+      ? Promise.resolve(null)
+      : own
+          .read((c) => readLtvCap(c, diamond, draft.lending, draft.collateral, minFill))
+          .then((x) => x.value)
+          .catch(() => null),
+  ]);
+  const capBlock = ltvCapBlock(draft.parsed.maxInitLtvBps, ltvCap);
+  const blocks = capBlock === null ? setupBlocks(draft, facts) : [...setupBlocks(draft, facts), capBlock];
   let verdict: CreateVerdict;
   if (minFill === null) {
     verdict = { kind: 'unreadable', reason: 'minimum loan unread' };
@@ -125,7 +154,7 @@ export async function readAutoLendReview(own: OwnStateClient, diamond: Hex, draf
     const v = judgeDryRun(dry, true);
     verdict = v.kind === 'ok' && !covers ? { kind: 'needs-approval' } : v;
   }
-  return { draft, identity, readAt: Date.now(), facts, minFill, blocks, approvalSteps, posture: fillPosture(facts.gates), risk, roll, verdict };
+  return { draft, identity, readAt: Date.now(), facts, minFill, blocks, approvalSteps, posture: fillPosture(facts.gates), risk, roll, ltvCap, verdict };
 }
 
 /** What moved between a review and a re-read of it, as a key: a change in
@@ -139,6 +168,7 @@ export function reviewKey(r: AutoLendReview): string {
     r.posture,
     r.risk ?? '',
     r.roll,
+    r.ltvCap === null ? 'x' : r.ltvCap.kind === 'cap' ? r.ltvCap.bps : r.ltvCap.kind,
     r.blocks.map((b) => b.kind).join(','),
     r.facts.minTermsAgeSec,
     r.facts.floor ?? 'x',
@@ -158,8 +188,14 @@ export function blockText(b: SetupBlock, r: AutoLendReview, meta: TokenMetaMap |
       return text('autoLend.blockFloorUnread');
     case 'belowFloor':
       return format('autoLend.blockFloor', { floor: amt(b.floor) });
+    case 'minAboveFund':
+      return format('autoLend.blockMinAboveFund', { min: amt(b.minFill), fund: amt(r.draft.parsed.fund) });
     case 'balance':
       return format('autoLend.blockBalance', { have: amt(b.balance), need: amt(r.draft.parsed.fund) });
+    case 'ltvCap':
+      return format('autoLend.blockLtvCap', { ltv: bpsPercent(r.draft.parsed.maxInitLtvBps), cap: bpsPercent(b.capBps) });
+    case 'ltvClosed':
+      return text('autoLend.blockLtvClosed');
   }
 }
 
@@ -210,9 +246,19 @@ export function autoLendReceipt(r: AutoLendReview, meta: TokenMetaMap | null, co
   const consequences: ReceiptText[] = [
     text('autoLend.loseNoDirect'),
     text('autoLend.loseSizing'),
-    text(r.roll === 'allowed' ? 'autoLend.loseRelend' : r.roll === 'not-allowed' ? 'autoLend.loseRelendOff' : 'autoLend.loseRelendUnknown'),
+    text(
+      r.roll === 'allowed'
+        ? 'autoLend.loseRelend'
+        : r.roll === 'not-allowed'
+          ? 'autoLend.loseRelendOff'
+          : r.roll === 'vpfi'
+            ? 'autoLend.loseRelendVpfi'
+            : 'autoLend.loseRelendUnknown',
+    ),
     text('autoLend.loseVault'),
   ];
+  if (r.ltvCap === null) consequences.push(text('autoLend.loseLtvCapUnread'));
+  else if (r.ltvCap.kind === 'cap') consequences.push(format('autoLend.loseLtvCap', { cap: bpsPercent(r.ltvCap.bps) }));
   if (d.lendUntil !== 0n) consequences.push(format('autoLend.loseUntil', { date: new Date(Number(d.lendUntil) * 1000).toLocaleString() }));
   if (p.acceptsProRata) consequences.push(text('autoLend.loseProRata'));
   const ageDays = wholeDays(r.facts.minTermsAgeSec);

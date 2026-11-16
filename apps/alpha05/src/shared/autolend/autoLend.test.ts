@@ -7,6 +7,7 @@ import {
   earliestLendUntil,
   fillPosture,
   INTENT,
+  ltvCapBlock,
   lendUntilSeconds,
   localToday,
   parseAutoLend,
@@ -124,6 +125,23 @@ describe('what stops a setup before any dry run', () => {
     expect(setupBlocks(small, facts())).toContainEqual({ kind: 'belowFloor', floor: 10n * E6 });
     expect(setupBlocks(autoLendDraft(USDC, WETH, parsed()), facts({ floor: null })).map((b) => b.kind)).toContain('floorUnread');
     expect(setupBlocks(autoLendDraft(USDC, WETH, parsed()), facts({ balance: 10n }))).toContainEqual({ kind: 'balance', balance: 10n });
+  });
+
+  it('stops a smallest loan above the money set aside, which no fill could meet', () => {
+    // Advanced: most at once 5000, funded 100; the floor of 10 resolves under
+    // the funding, an explicit smallest loan of 200 does not.
+    const d = autoLendDraft(USDC, WETH, parsed({ amount: '100', exposure: '5000', minFill: '200' }, true));
+    expect(setupBlocks(d, facts())).toContainEqual({ kind: 'minAboveFund', minFill: 200n * E6 });
+    expect(setupBlocks(autoLendDraft(USDC, WETH, parsed({ amount: '100', exposure: '5000' }, true)), facts()).map((b) => b.kind)).not.toContain('minAboveFund');
+  });
+
+  it('stops a loan-to-value ceiling above the network’s bound for the pair, and only that', () => {
+    expect(ltvCapBlock(6000, { kind: 'cap', bps: 5500 })).toEqual({ kind: 'ltvCap', capBps: 5500 });
+    expect(ltvCapBlock(5500, { kind: 'cap', bps: 5500 })).toBeNull();
+    expect(ltvCapBlock(6000, { kind: 'none' })).toBeNull();
+    expect(ltvCapBlock(6000, { kind: 'closed' })).toEqual({ kind: 'ltvClosed' });
+    // Unread is stated as a consequence, not a block.
+    expect(ltvCapBlock(6000, null)).toBeNull();
   });
 
   it('finds nothing to stop a setup that fits', () => {
