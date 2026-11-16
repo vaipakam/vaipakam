@@ -3970,6 +3970,7 @@ export async function processSignedOfferLogs(
     'SignedOfferCancelled',
     'SignedOfferNonceBurned',
     'SignedOfferCancelFloorRaised',
+    'SignedCollectionOfferFilled',
   ]);
   // Replay in chain log order (the scan already delivers logs ordered by
   // (blockNumber, logIndex)): a match ratchet followed by a cancel in the
@@ -4104,6 +4105,53 @@ export async function processSignedOfferLogs(
              WHERE chain_id = ? AND order_hash = ? AND status = 'active'`
           : `UPDATE signed_offers
              SET filled_amount = ?, updated_at = ?
+             WHERE chain_id = ? AND order_hash = ? AND status = 'active'`,
+      )
+        .bind(absFilled.toString(), now, chainId, orderHash)
+        .run();
+      if ((r.meta?.changes ?? 0) > 0) updates++;
+    } else if (log.eventName === 'SignedCollectionOfferFilled') {
+      // #3328 — one loan of a signed collection offer. The event carries the
+      // loans left, so the row's status needs no ledger read; the filled
+      // principal is the block-pinned ledger (each fill counts one loan's
+      // amount), read only for an order the book carries. The book admits no
+      // collection order today (the POST route refuses setKind != 0), so this
+      // is normally a no-op; it keeps the row honest if that changes.
+      const orderHash = (a.orderHash as string).toLowerCase();
+      const row = await env.DB.prepare(
+        `SELECT status FROM signed_offers WHERE chain_id = ? AND order_hash = ?`,
+      )
+        .bind(chainId, orderHash)
+        .first<{ status: string }>();
+      if (!row) {
+        console.log(
+          `[chainIndexer] SignedCollectionOfferFilled for untracked order ${orderHash} (chain ${chainId}) — no-op`,
+        );
+        continue;
+      }
+      let absFilled: bigint;
+      try {
+        absFilled = (await client.readContract({
+          address: diamond,
+          abi: DIAMOND_SIGNED_OFFER_ABI,
+          functionName: 'signedOfferFilledAmount',
+          args: [orderHash],
+          blockNumber: log.blockNumber,
+        })) as bigint;
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[chainIndexer] signedOfferFilledAmount(${orderHash}) for SignedCollectionOfferFilled failed; aborting scan so the cursor doesn't advance`,
+          redactedError(err),
+        );
+        throw err;
+      }
+      const done = Number(a.loansLeft) === 0;
+      const r = await env.DB.prepare(
+        done
+          ? `UPDATE signed_offers SET status = 'filled', filled_amount = ?, updated_at = ?
+             WHERE chain_id = ? AND order_hash = ? AND status = 'active'`
+          : `UPDATE signed_offers SET filled_amount = ?, updated_at = ?
              WHERE chain_id = ? AND order_hash = ? AND status = 'active'`,
       )
         .bind(absFilled.toString(), now, chainId, orderHash)

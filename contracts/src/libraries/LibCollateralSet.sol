@@ -57,6 +57,9 @@ library LibCollateralSet {
     error CollateralLabelTooLong(uint256 length, uint256 max);
     /// @notice The membership proof is longer than allowed.
     error CollateralProofTooDeep(uint256 depth, uint256 max);
+    /// @notice #3328 — the excluded ids a signed fill presented do not hash
+    ///         to the signed `exclusionsHash`.
+    error CollateralExclusionsMismatch();
 
     /// @notice Reverts with the first problem in `input`; returns when the
     ///         set is well formed.
@@ -105,17 +108,79 @@ library LibCollateralSet {
         view
         returns (bool)
     {
-        LibVaipakam.CollateralSetKind kind = set.kind;
-        if (kind == LibVaipakam.CollateralSetKind.None) return false;
         uint256[] storage ex = set.exclusions;
         uint256 n = ex.length;
         for (uint256 i; i < n; ++i) {
             if (ex[i] == tokenId) return false;
         }
+        return _inKind(set.kind, set.low, set.high, set.root, tokenId, proof);
+    }
+
+    /// @notice #3328 — {contains} for a SIGNED collection offer, whose set
+    ///         lives in the signed terms rather than in storage. The fill
+    ///         presents the excluded ids; they must hash to the signed
+    ///         `exclusionsHash` (zero when none), or the set is refused.
+    function containsSigned(
+        LibVaipakam.CollateralSetKind kind,
+        uint256 low,
+        uint256 high,
+        bytes32 root,
+        bytes32 exclusionsHash,
+        uint256[] calldata exclusions,
+        uint256 tokenId,
+        bytes32[] calldata proof
+    ) internal pure returns (bool) {
+        if (exclusionsHashOf(exclusions) != exclusionsHash) revert CollateralExclusionsMismatch();
+        uint256 n = exclusions.length;
+        for (uint256 i; i < n; ++i) {
+            if (exclusions[i] == tokenId) return false;
+        }
+        return _inKind(kind, low, high, root, tokenId, proof);
+    }
+
+    /// @notice The hash a signed offer carries for its excluded ids:
+    ///         zero for none, else keccak256 of the ids packed in order.
+    function exclusionsHashOf(uint256[] calldata exclusions) internal pure returns (bytes32) {
+        return exclusions.length == 0 ? bytes32(0) : keccak256(abi.encodePacked(exclusions));
+    }
+
+    /// @notice #3328 — reverts with the first problem in a signed set's
+    ///         terms, the checks {validate} makes of an on-chain one (a
+    ///         signed set carries no label; its exclusions are checked by
+    ///         count when presented, and a Listed set must name none).
+    function validateSigned(
+        LibVaipakam.CollateralSetKind kind,
+        uint256 low,
+        uint256 high,
+        bytes32 root,
+        uint32 listCount,
+        bytes32 exclusionsHash,
+        uint256 exclusionCount
+    ) internal pure {
+        if (kind == LibVaipakam.CollateralSetKind.None) revert CollateralSetKindMissing();
+        if (kind == LibVaipakam.CollateralSetKind.Range && low > high) revert CollateralRangeInverted(low, high);
+        if (kind == LibVaipakam.CollateralSetKind.Listed) {
+            if (root == bytes32(0) || listCount == 0) revert CollateralListEmpty();
+            if (exclusionsHash != bytes32(0)) revert CollateralExclusionsOnList();
+        }
+        if (exclusionCount > MAX_EXCLUSIONS) revert CollateralExclusionsTooMany(exclusionCount, MAX_EXCLUSIONS);
+    }
+
+    /// @dev The kind's own rule, after exclusions: any id, the inclusive
+    ///      range, or a bounded Merkle proof under the root.
+    function _inKind(
+        LibVaipakam.CollateralSetKind kind,
+        uint256 low,
+        uint256 high,
+        bytes32 root,
+        uint256 tokenId,
+        bytes32[] calldata proof
+    ) private pure returns (bool) {
+        if (kind == LibVaipakam.CollateralSetKind.None) return false;
         if (kind == LibVaipakam.CollateralSetKind.Collection) return true;
-        if (kind == LibVaipakam.CollateralSetKind.Range) return tokenId >= set.low && tokenId <= set.high;
+        if (kind == LibVaipakam.CollateralSetKind.Range) return tokenId >= low && tokenId <= high;
         if (proof.length > MAX_PROOF_DEPTH) revert CollateralProofTooDeep(proof.length, MAX_PROOF_DEPTH);
-        return MerkleProof.verifyCalldata(proof, set.root, leaf(tokenId));
+        return MerkleProof.verifyCalldata(proof, root, leaf(tokenId));
     }
 
     /// @notice The Listed-set leaf of `tokenId` (OpenZeppelin standard tree).

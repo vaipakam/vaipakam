@@ -20,112 +20,41 @@
  * hooks) so vitest can pin the wire mapping, the remaining-size math and
  * the ladder-merge shape deterministically.
  */
-import { hashStruct, type Address, type Hex } from 'viem';
+import { hashStruct, type Hex } from 'viem';
 import type { IndexedOffer, IndexedSignedOffer } from '../data/indexer';
 import type { CreateOfferPayload } from './offerSchema';
 import {
   SIGNED_OFFER_FIELDS,
   SIGNED_OFFER_FIELD_NAMES as SIGNED_OFFER_WIRE_FIELD_NAMES,
+  NO_COLLECTION,
   placementProblem,
   type SignedOfferPlacement,
+  type SignedOrderWire,
 } from '@vaipakam/lib/signedOfferWire';
+import { signedOfferMessage, type SignedOfferMessage } from '@vaipakam/lib/signedOfferSet';
 
-/** The 35-field SignedOffer typed-data description — struct order EXACTLY
+/** The 44-field SignedOffer typed-data description — struct order EXACTLY
  *  as `LibSignedOffer.SignedOffer` declares it (enums ⇒ uint8, GTT ⇒
  *  uint64). The list is `@vaipakam/lib/signedOfferWire`'s, the same one the
  *  indexer's ingest gate derives its typehash from (#3327: one statement,
  *  where the app used to carry its own copy). */
 export const SIGNED_OFFER_TYPES = { SignedOffer: SIGNED_OFFER_FIELDS } as const;
 
-/** The 35 field names in canonical struct order — the POST body /
+/** The 44 field names in canonical struct order — the POST body /
  *  `order_json` key order the indexer stores and replays. */
 export const SIGNED_OFFER_FIELD_NAMES: readonly string[] = SIGNED_OFFER_WIRE_FIELD_NAMES;
 
 /** The wire shape the indexer's POST/GET routes speak: every uint as a
- *  decimal string, addresses lowercase 0x-40-hex, bools as booleans.
- *  Takers replay this verbatim into `acceptSignedOffer`. */
-export interface SignedOrderWire {
-  offerType: string;
-  lendingAsset: string;
-  amount: string;
-  amountMax: string;
-  interestRateBps: string;
-  interestRateBpsMax: string;
-  collateralAsset: string;
-  collateralAmount: string;
-  collateralAmountMax: string;
-  durationDays: string;
-  assetType: string;
-  collateralAssetType: string;
-  tokenId: string;
-  quantity: string;
-  collateralTokenId: string;
-  collateralQuantity: string;
-  prepayAsset: string;
-  allowsPartialRepay: boolean;
-  allowsPrepayListing: boolean;
-  allowsParallelSale: boolean;
-  expiresAt: string;
-  fillMode: string;
-  periodicInterestCadence: string;
-  refinanceTargetLoanId: string;
-  useFullTermInterest: boolean;
-  /** #1949 — the maker's Full tariff opt-in, carried on the signed artifact. */
-  creatorFull: boolean;
-  creatorMaxCStar: string;
-  creatorAllowFullDowngrade: boolean;
-  /** #3327 — the highest protocol fees (bps) the maker accepts at fill. */
-  maxTreasuryFeeBps: string;
-  maxLoanInitiationFeeBps: string;
-  /** #3327 — the one account allowed to take the order (zero = anyone). */
-  allowedTaker: string;
-  /** #3327 — the co-signer whose fresh signature each fill needs (zero = none). */
-  coSigner: string;
-  signer: string;
-  nonce: string;
-  deadline: string;
-}
+ *  decimal string, addresses lowercase 0x-40-hex, bytes32 lowercase hex,
+ *  bools as booleans. Takers replay this verbatim into `acceptSignedOffer`.
+ *  The type is `@vaipakam/lib/signedOfferWire`'s, derived from the one
+ *  field list. */
+export type { SignedOrderWire };
 
 /** Wire → the bigint-typed message viem's typed-data encoder (and the
  *  `acceptSignedOffer` / `cancelSignedOffer` ABI tuple) expects. */
-export function signedOfferTypedMessage(order: SignedOrderWire) {
-  return {
-    offerType: Number(order.offerType),
-    lendingAsset: order.lendingAsset as Address,
-    amount: BigInt(order.amount),
-    amountMax: BigInt(order.amountMax),
-    interestRateBps: BigInt(order.interestRateBps),
-    interestRateBpsMax: BigInt(order.interestRateBpsMax),
-    collateralAsset: order.collateralAsset as Address,
-    collateralAmount: BigInt(order.collateralAmount),
-    collateralAmountMax: BigInt(order.collateralAmountMax),
-    durationDays: BigInt(order.durationDays),
-    assetType: Number(order.assetType),
-    collateralAssetType: Number(order.collateralAssetType),
-    tokenId: BigInt(order.tokenId),
-    quantity: BigInt(order.quantity),
-    collateralTokenId: BigInt(order.collateralTokenId),
-    collateralQuantity: BigInt(order.collateralQuantity),
-    prepayAsset: order.prepayAsset as Address,
-    allowsPartialRepay: order.allowsPartialRepay,
-    allowsPrepayListing: order.allowsPrepayListing,
-    allowsParallelSale: order.allowsParallelSale,
-    expiresAt: BigInt(order.expiresAt),
-    fillMode: Number(order.fillMode),
-    periodicInterestCadence: Number(order.periodicInterestCadence),
-    refinanceTargetLoanId: BigInt(order.refinanceTargetLoanId),
-    useFullTermInterest: order.useFullTermInterest,
-    creatorFull: order.creatorFull,
-    creatorMaxCStar: BigInt(order.creatorMaxCStar),
-    creatorAllowFullDowngrade: order.creatorAllowFullDowngrade,
-    maxTreasuryFeeBps: Number(order.maxTreasuryFeeBps),
-    maxLoanInitiationFeeBps: Number(order.maxLoanInitiationFeeBps),
-    allowedTaker: order.allowedTaker as Address,
-    coSigner: order.coSigner as Address,
-    signer: order.signer as Address,
-    nonce: BigInt(order.nonce),
-    deadline: BigInt(order.deadline),
-  };
+export function signedOfferTypedMessage(order: SignedOrderWire): SignedOfferMessage {
+  return signedOfferMessage(order);
 }
 
 /** The order hash — the EIP-712 STRUCT hash (`hashStruct`), matching
@@ -310,6 +239,9 @@ export function wireFromCreatePayload(
     signer: signer.toLowerCase(),
     nonce: nonce.toString(),
     deadline: deadline.toString(),
+    // The app signs ordinary orders only; collection offers are posted
+    // on-chain (#3328).
+    ...NO_COLLECTION,
   };
 }
 

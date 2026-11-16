@@ -38,6 +38,15 @@ export type SignedOfferFields = readonly [
   { readonly name: 'signer'; readonly type: 'address' },
   { readonly name: 'nonce'; readonly type: 'uint256' },
   { readonly name: 'deadline'; readonly type: 'uint256' },
+  { readonly name: 'setKind'; readonly type: 'uint8' },
+  { readonly name: 'setLow'; readonly type: 'uint256' },
+  { readonly name: 'setHigh'; readonly type: 'uint256' },
+  { readonly name: 'setRoot'; readonly type: 'bytes32' },
+  { readonly name: 'setListCount'; readonly type: 'uint32' },
+  { readonly name: 'setListHash'; readonly type: 'bytes32' },
+  { readonly name: 'exclusionsHash'; readonly type: 'bytes32' },
+  { readonly name: 'loans'; readonly type: 'uint16' },
+  { readonly name: 'startTime'; readonly type: 'uint64' },
 ];
 
 export const SIGNED_OFFER_FIELDS: SignedOfferFields;
@@ -48,6 +57,20 @@ export const SIGNED_OFFER_FIELD_NAMES: readonly string[];
 export type SignedOrderWire = {
   [F in SignedOfferFields[number] as F['name']]: F['type'] extends 'bool' ? boolean : string;
 };
+
+/** #3328 — the collection fields of an ordinary order, at their zero wire
+ *  values. */
+export const NO_COLLECTION: Readonly<{
+  setKind: '0';
+  setLow: '0';
+  setHigh: '0';
+  setRoot: `0x${string}`;
+  setListCount: '0';
+  setListHash: `0x${string}`;
+  exclusionsHash: `0x${string}`;
+  loans: '0';
+  startTime: '0';
+}>;
 
 export interface SignedOfferColumns {
   signer: string;

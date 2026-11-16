@@ -34,6 +34,7 @@ import { figured, textValue } from '../receipt/types';
 import { IndexerUnavailable, type IndexerPoster } from '../reads/world/indexerClient';
 import { lapseText, orderSentence, type AmountWords } from './cancelSigned';
 import { bookAnswer, nonceAboveFloor, orderHashOf, signedStake, type BookAnswer, type SignedOrderWire } from './signedOrder';
+import { NO_COLLECTION } from '@vaipakam/lib/signedOfferWire';
 import { loanRiskKey } from '../risk/keyRisks';
 
 type Hex = `0x${string}`;
@@ -156,6 +157,8 @@ export function signedOrderFrom(draft: PostDraft, signer: Hex, nonce: bigint, te
     signer: lower(signer),
     nonce: String(nonce),
     deadline: String(p.expiresAt),
+    // An ordinary order: collection offers are posted on-chain (#3328).
+    ...NO_COLLECTION,
   };
 }
 

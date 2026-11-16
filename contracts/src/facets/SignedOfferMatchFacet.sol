@@ -170,7 +170,7 @@ contract SignedOfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         LibSignedOffer.FillAuth calldata auth
     ) private view returns (bytes32 orderHash) {
         orderHash = LibSignedOffer.hashStruct(o);
-        LibSignedOffer.requireFillable(o, orderHash, taker, fillAmount, auth);
+        LibSignedOffer.requireFillable(o, orderHash, taker, fillAmount, auth, false);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 ceiling = LibSignedOffer.ceilingOf(o);
         uint256 filled = s.signedOfferFilled[orderHash];

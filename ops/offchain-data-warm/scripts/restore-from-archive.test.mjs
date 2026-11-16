@@ -15,7 +15,7 @@ import {
   openSync, readFileSync, statSync, symlinkSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { canonicalOrderJson, signedOfferColumns } from '../../../packages/lib/src/signedOfferWire.mjs';
+import { NO_COLLECTION, canonicalOrderJson, signedOfferColumns } from '../../../packages/lib/src/signedOfferWire.mjs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 
@@ -476,6 +476,7 @@ function signedOrder(over = {}) {
     maxTreasuryFeeBps: '200', maxLoanInitiationFeeBps: '20',
     allowedTaker: `0x${'0'.repeat(40)}`, coSigner: `0x${'0'.repeat(40)}`,
     signer: `0x${'c'.repeat(40)}`, nonce: '0', deadline: '0',
+    ...NO_COLLECTION,
     ...over,
   };
 }

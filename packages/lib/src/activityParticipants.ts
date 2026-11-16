@@ -118,6 +118,22 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['IntentLoanRolled', ['roller']],
   // The solver sent the fill the credit was spent on.
   ['IntentPriorityFill', ['solver']],
+  // The owner, or its keeper, re-committed held capital to the owner's intent.
+  ['HeldRecommittedToIntent', ['owner', 'roller']],
+  // ── The instant market (#3656).
+  ['InstantBorrowed', ['borrower']],
+  ['InstantSlotSet', ['owner']],
+  ['InstantTakenOver', ['outgoingLender', 'incomingLender']],
+  // ── Collection offers (#3328).
+  ['CollectionOfferCreated', ['lender']],
+  ['SignedCollectionOfferFilled', ['signer', 'borrower']],
+  // ── Held payments and deferred sales.
+  // A lender payment held in the stored lender's vault, and its later claim
+  // by the current holder.
+  ['LenderPaymentHeld', ['custody']],
+  ['HeldForLenderClaimed', ['claimant']],
+  // Whoever submitted the forced sale that failed and was deferred.
+  ['ForcedSaleFallbackDeferred', ['caller']],
   // ── A wallet's own settings and consents.
   ['AutoLendConsentChanged', ['user']],
   ['AutoOptInOnNewLoanChanged', ['user']],

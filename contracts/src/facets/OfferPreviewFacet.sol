@@ -636,6 +636,7 @@ contract OfferPreviewFacet {
         LibVaipakam.CreateOfferParams memory params
     ) private view returns (OfferAcceptFacet.AcceptError) {
         LibSignedOffer.VetFailure f = LibSignedOffer.vetFailure(o, p.orderHash, acceptor, auth);
+        if (f == LibSignedOffer.VetFailure.WrongRoute) return OfferAcceptFacet.AcceptError.SignedOfferUnsupportedShape;
         if (f == LibSignedOffer.VetFailure.FullNeedsMaxCStar) return OfferAcceptFacet.AcceptError.SignedOfferMalformed;
         if (f == LibSignedOffer.VetFailure.DeadlinePassed) return OfferAcceptFacet.AcceptError.SignedOfferDeadlinePassed;
         if (f == LibSignedOffer.VetFailure.Expired) return OfferAcceptFacet.AcceptError.OfferExpired;

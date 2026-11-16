@@ -609,15 +609,16 @@ contract HelperTest {
 
     /// @dev #3328 — mirrors `DeployDiamond._getOfferMaterializeSelectors`.
     function getOfferMaterializeFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](4);
         selectors[0] = OfferMaterializeFacet.createSignedOfferVault.selector;
         selectors[1] = OfferMaterializeFacet.createSignedOfferWallet.selector;
         selectors[2] = OfferMaterializeFacet.createCollectionSlice.selector;
+        selectors[3] = OfferMaterializeFacet.createSignedCollectionSlice.selector;
     }
 
     /// @dev #3328 — mirrors `DeployDiamond._getCollectionOfferSelectors`.
     function getCollectionOfferFacetSelectors() public pure returns (bytes4[] memory s) {
-        s = new bytes4[](10);
+        s = new bytes4[](12);
         s[0] = CollectionOfferFacet.createCollectionOffer.selector;
         s[1] = CollectionOfferFacet.reduceCollectionLoans.selector;
         s[2] = CollectionOfferFacet.fillCollectionOffer.selector;
@@ -628,6 +629,8 @@ contract HelperTest {
         s[7] = CollectionOfferFacet.takeFailure.selector;
         s[8] = CollectionOfferFacet.setCollectionOfferLimits.selector;
         s[9] = CollectionOfferFacet.getCollectionOfferLimits.selector;
+        s[10] = CollectionOfferFacet.fillSignedCollectionOffer.selector;
+        s[11] = CollectionOfferFacet.signedFillKey.selector;
     }
 
     /// @dev T-086 Round-8 (#358) — the two parallel-sale selectors live

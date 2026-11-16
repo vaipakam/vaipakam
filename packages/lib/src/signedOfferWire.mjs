@@ -1,7 +1,7 @@
 /**
  * A signed offer as the platform stores it (#1131, #1481).
  *
- * The maker signs a 35-field `SignedOffer` struct (EIP-712, struct order
+ * The maker signs a 44-field `SignedOffer` struct (EIP-712, struct order
  * exactly as `LibSignedOffer.SignedOffer` declares it). The indexer keeps
  * that order as `order_json` — the payload a taker replays on chain — beside
  * the market columns the book filters and sorts on, which are copies of
@@ -25,7 +25,7 @@
  * the indexer's `signedOfferEip712.ts`.
  */
 
-/** The 35 fields, in struct order, with their EIP-712 types. Field order is
+/** The 44 fields, in struct order, with their EIP-712 types. Field order is
  *  load-bearing: it fixes the typehash and so every signature and order hash.
  *  The indexer's typehash test pins this list to the contract's type string. */
 export const SIGNED_OFFER_FIELDS = Object.freeze([
@@ -68,20 +68,51 @@ export const SIGNED_OFFER_FIELDS = Object.freeze([
   { name: 'signer', type: 'address' },
   { name: 'nonce', type: 'uint256' },
   { name: 'deadline', type: 'uint256' },
+  // #3328 — a collection offer: a lender offer against a set of NFT tokens
+  // for several loans. setKind 0 is an ordinary offer and the rest are zero.
+  { name: 'setKind', type: 'uint8' },
+  { name: 'setLow', type: 'uint256' },
+  { name: 'setHigh', type: 'uint256' },
+  { name: 'setRoot', type: 'bytes32' },
+  { name: 'setListCount', type: 'uint32' },
+  { name: 'setListHash', type: 'bytes32' },
+  { name: 'exclusionsHash', type: 'bytes32' },
+  { name: 'loans', type: 'uint16' },
+  { name: 'startTime', type: 'uint64' },
 ].map((f) => Object.freeze(f)));
 
-/** The 35 field names in struct order. */
+const ZERO_BYTES32 = `0x${'0'.repeat(64)}`;
+
+/** #3328 — the collection fields of an ORDINARY order, at their zero wire
+ *  values: an order that is not a collection offer carries exactly these.
+ *  Builders spread it into the orders they sign; the indexer's book admits
+ *  only orders that carry it. */
+export const NO_COLLECTION = Object.freeze({
+  setKind: '0',
+  setLow: '0',
+  setHigh: '0',
+  setRoot: ZERO_BYTES32,
+  setListCount: '0',
+  setListHash: ZERO_BYTES32,
+  exclusionsHash: ZERO_BYTES32,
+  loans: '0',
+  startTime: '0',
+});
+
+/** The 44 field names in struct order. */
 export const SIGNED_OFFER_FIELD_NAMES = Object.freeze(SIGNED_OFFER_FIELDS.map((f) => f.name));
 
 /** The stored wire form of each EIP-712 type: an address lowercased, a bool
- *  as a JSON boolean, a uint as a canonical decimal string (no sign, no
- *  leading zero) within its width. */
+ *  as a JSON boolean, a bytes32 as lowercase 0x-64-hex, a uint as a canonical
+ *  decimal string (no sign, no leading zero) within its width. */
 const ADDRESS = /^0x[0-9a-f]{40}$/;
+const BYTES32 = /^0x[0-9a-f]{64}$/;
 const DEC = /^(0|[1-9][0-9]*)$/;
 
 function wireValueProblem(type, value) {
   if (type === 'address') return typeof value === 'string' && ADDRESS.test(value) ? null : 'a lowercase address';
   if (type === 'bool') return typeof value === 'boolean' ? null : 'a boolean';
+  if (type === 'bytes32') return typeof value === 'string' && BYTES32.test(value) ? null : 'a lowercase 32-byte hex';
   const width = /^uint(\d+)$/.exec(type);
   if (width) {
     if (typeof value !== 'string' || !DEC.test(value)) return 'a canonical decimal string';
@@ -90,7 +121,7 @@ function wireValueProblem(type, value) {
   return `a known type (${type})`;
 }
 
-/** The canonical `order_json`: the 35 fields in struct order. Stable key
+/** The canonical `order_json`: the 44 fields in struct order. Stable key
  *  order makes the same order serialize to the same bytes, so two copies are
  *  comparable as strings. The order must already be in wire form. */
 export function canonicalOrderJson(order) {
@@ -101,7 +132,7 @@ export function canonicalOrderJson(order) {
 
 /**
  * Read a stored `order_json`. Returns `{ order }` only when the text is the
- * canonical serialization of an object carrying exactly the 35 fields, each
+ * canonical serialization of an object carrying exactly the 44 fields, each
  * in its wire form; otherwise `{ error }`, naming the first problem.
  */
 export function parseStoredOrderJson(json) {

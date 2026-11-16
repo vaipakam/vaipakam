@@ -45,7 +45,7 @@ import {
 import { slotRefusalStatus, takeCallerSlot } from '@vaipakam/lib/rateLimit';
 import { readJsonBody } from '@vaipakam/lib/requestBody';
 import { redactedError } from '@vaipakam/lib/errorDescription';
-import { canonicalOrderJson, signedOfferColumns } from '@vaipakam/lib/signedOfferWire';
+import { NO_COLLECTION, canonicalOrderJson, signedOfferColumns } from '@vaipakam/lib/signedOfferWire';
 import { canonicalPlacementJson, placementProblem, type SignedOfferPlacement } from '@vaipakam/lib/signedOfferSet';
 
 /** A signed offer: the order struct and its signature, which for a smart
@@ -239,7 +239,7 @@ function validateOrder(
   raw: Record<string, unknown>,
   now: number,
 ): { order: SignedOrderWire } | { error: string } {
-  // Exactly the 35 struct fields — unknown keys are rejected so order_json
+  // Exactly the 44 struct fields — unknown keys are rejected so order_json
   // stays the canonical replay payload (extra junk would survive into the
   // stored JSON otherwise).
   const keys = Object.keys(raw);
@@ -303,6 +303,17 @@ function validateOrder(
       return { error: `invalid-${f}` };
     }
     out[f] = v;
+  }
+
+  // #3328 — a signed COLLECTION offer (setKind != 0) is filled only through
+  // `CollectionOfferFacet.fillSignedCollectionOffer`, never through the
+  // acceptSignedOffer / match routes this book serves (the contract refuses
+  // it there with `SignedOfferWrongRoute`), and its collateral is an NFT,
+  // which the v0.5 shape check below refuses anyway. So the book carries
+  // only ordinary orders: every collection field must be its zero value.
+  for (const [f, zero] of Object.entries(NO_COLLECTION)) {
+    if (raw[f] !== zero) return { error: f === 'setKind' ? 'unsupported-collection' : `invalid-${f}` };
+    out[f] = zero;
   }
 
   // durationDays — the contracts' hard governance ceiling is

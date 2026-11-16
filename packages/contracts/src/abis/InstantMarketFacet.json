@@ -348,37 +348,10 @@
         "internalType": "uint256"
       },
       {
-        "name": "fills",
-        "type": "tuple[]",
+        "name": "loansOpened",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "struct InstantMarketFacet.InstantFill[]",
-        "components": [
-          {
-            "name": "sourceIndex",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "loanId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "amount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "rateBps",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collateral",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
+        "internalType": "uint256"
       },
       {
         "name": "skipped",
@@ -397,6 +370,49 @@
             "internalType": "bytes"
           }
         ]
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "InstantLoanOpened",
+    "inputs": [
+      {
+        "name": "groupId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "sourceIndex",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "rateBps",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "collateral",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false

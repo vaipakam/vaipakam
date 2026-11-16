@@ -13,6 +13,8 @@
  *    with `LibSignedOffer.hashStruct` byte-for-byte.
  */
 import { encodeFunctionData } from 'viem';
+import { signedOfferMessage, type SignedOfferMessage } from '@vaipakam/lib/signedOfferSet';
+import type { SignedOrderWire } from '@vaipakam/lib/signedOfferWire';
 import { anvilRpc, setBalance } from './anvil';
 import {
   DIAMOND,
@@ -27,47 +29,9 @@ import { accountFor, type Role } from './wallets';
 
 const STUB_ORIGIN = `http://127.0.0.1:${Number(process.env.APP_E2E_STUB_PORT ?? 8788)}`;
 
-/** The 35-field wire order as the book serves it (mirror of the app's
- *  `SignedOrderWire` — decimal-string uints, lowercase addresses; #1949
- *  added the maker's three Full-tariff fields). */
-export interface WireOrder {
-  offerType: string;
-  lendingAsset: string;
-  amount: string;
-  amountMax: string;
-  interestRateBps: string;
-  interestRateBpsMax: string;
-  collateralAsset: string;
-  collateralAmount: string;
-  collateralAmountMax: string;
-  durationDays: string;
-  assetType: string;
-  collateralAssetType: string;
-  tokenId: string;
-  quantity: string;
-  collateralTokenId: string;
-  collateralQuantity: string;
-  prepayAsset: string;
-  allowsPartialRepay: boolean;
-  allowsPrepayListing: boolean;
-  allowsParallelSale: boolean;
-  expiresAt: string;
-  fillMode: string;
-  periodicInterestCadence: string;
-  refinanceTargetLoanId: string;
-  useFullTermInterest: boolean;
-  creatorFull: boolean;
-  creatorMaxCStar: string;
-  creatorAllowFullDowngrade: boolean;
-  // #3327 — the maker's fee caps, taker binding and co-signer.
-  maxTreasuryFeeBps: string;
-  maxLoanInitiationFeeBps: string;
-  allowedTaker: string;
-  coSigner: string;
-  signer: string;
-  nonce: string;
-  deadline: string;
-}
+/** The wire order as the book serves it: the one field list's
+ *  `SignedOrderWire` (decimal-string uints, lowercase addresses). */
+export type WireOrder = SignedOrderWire;
 
 export interface SignedBookRow {
   orderHash: `0x${string}`;
@@ -106,44 +70,8 @@ export async function fetchSignedBook(
 
 /** Wire order → the bigint-typed tuple the Diamond's SignedOffer ABI
  *  expects (mirror of the app's `signedOfferTypedMessage`). */
-export function wireToTyped(o: WireOrder) {
-  return {
-    offerType: Number(o.offerType),
-    lendingAsset: o.lendingAsset as `0x${string}`,
-    amount: BigInt(o.amount),
-    amountMax: BigInt(o.amountMax),
-    interestRateBps: BigInt(o.interestRateBps),
-    interestRateBpsMax: BigInt(o.interestRateBpsMax),
-    collateralAsset: o.collateralAsset as `0x${string}`,
-    collateralAmount: BigInt(o.collateralAmount),
-    collateralAmountMax: BigInt(o.collateralAmountMax),
-    durationDays: BigInt(o.durationDays),
-    assetType: Number(o.assetType),
-    collateralAssetType: Number(o.collateralAssetType),
-    tokenId: BigInt(o.tokenId),
-    quantity: BigInt(o.quantity),
-    collateralTokenId: BigInt(o.collateralTokenId),
-    collateralQuantity: BigInt(o.collateralQuantity),
-    prepayAsset: o.prepayAsset as `0x${string}`,
-    allowsPartialRepay: o.allowsPartialRepay,
-    allowsPrepayListing: o.allowsPrepayListing,
-    allowsParallelSale: o.allowsParallelSale,
-    expiresAt: BigInt(o.expiresAt),
-    fillMode: Number(o.fillMode),
-    periodicInterestCadence: Number(o.periodicInterestCadence),
-    refinanceTargetLoanId: BigInt(o.refinanceTargetLoanId),
-    useFullTermInterest: o.useFullTermInterest,
-    creatorFull: o.creatorFull,
-    creatorMaxCStar: BigInt(o.creatorMaxCStar),
-    creatorAllowFullDowngrade: o.creatorAllowFullDowngrade,
-    maxTreasuryFeeBps: Number(o.maxTreasuryFeeBps),
-    maxLoanInitiationFeeBps: Number(o.maxLoanInitiationFeeBps),
-    allowedTaker: o.allowedTaker as `0x${string}`,
-    coSigner: o.coSigner as `0x${string}`,
-    signer: o.signer as `0x${string}`,
-    nonce: BigInt(o.nonce),
-    deadline: BigInt(o.deadline),
-  };
+export function wireToTyped(o: WireOrder): SignedOfferMessage {
+  return signedOfferMessage(o);
 }
 
 /** `SignedOfferFacet.signedOfferOrderHash(order)` — the CONTRACT's own

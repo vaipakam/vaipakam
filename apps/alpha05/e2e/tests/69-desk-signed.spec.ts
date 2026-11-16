@@ -18,6 +18,7 @@
 import type { Hex } from 'viem';
 import { postLenderOffer, WETH } from '@vaipakam/anvil-harness/lending';
 import type { Page } from '@playwright/test';
+import { NO_COLLECTION } from '@vaipakam/lib/signedOfferWire';
 import { orderHashOf, SIGNED_OFFER_TYPES, typedMessage, type SignedOrderWire } from '../../src/shared/desk/signedOrder';
 import { scenario } from '../lib/chain';
 import { postSignedOrder, setSignedBookLag } from '../lib/stub';
@@ -79,6 +80,7 @@ test('your signed orders are listed with the chain’s standing, and each is can
     signer: accountFor(role).address.toLowerCase(),
     nonce: '1001',
     deadline: until,
+    ...NO_COLLECTION,
     ...patch,
   });
   const post = async (role: Role, o: SignedOrderWire) => {

@@ -2017,17 +2017,18 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      off-chain offer or an intent slice into an on-chain offer at fill
     ///      (#396 v0.5; vault-backed and Permit2-witness funding).
     function _getOfferMaterializeSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = OfferMaterializeFacet.createSignedOfferVault.selector;
         s[1] = OfferMaterializeFacet.createSignedOfferWallet.selector;
         s[2] = OfferMaterializeFacet.createCollectionSlice.selector;
+        s[3] = OfferMaterializeFacet.createSignedCollectionSlice.selector;
     }
 
     /// @dev Selectors for `CollectionOfferFacet` (#3328) — NFT collection
     ///      offers: create, reduce, the borrower's fill, a matcher's
     ///      pairing, the views and the limits.
     function _getCollectionOfferSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](10);
+        s = new bytes4[](12);
         s[0] = CollectionOfferFacet.createCollectionOffer.selector;
         s[1] = CollectionOfferFacet.reduceCollectionLoans.selector;
         s[2] = CollectionOfferFacet.fillCollectionOffer.selector;
@@ -2038,6 +2039,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[7] = CollectionOfferFacet.takeFailure.selector;
         s[8] = CollectionOfferFacet.setCollectionOfferLimits.selector;
         s[9] = CollectionOfferFacet.getCollectionOfferLimits.selector;
+        s[10] = CollectionOfferFacet.fillSignedCollectionOffer.selector;
+        s[11] = CollectionOfferFacet.signedFillKey.selector;
     }
 
     /// @dev T-086 Round-8 (#358) — borrow-OR-sell parallel-sale facet

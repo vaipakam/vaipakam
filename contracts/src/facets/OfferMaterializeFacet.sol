@@ -43,6 +43,18 @@ contract OfferMaterializeFacet is DiamondPausable, IVaipakamErrors {
         WalletWitness
     }
 
+    /// @dev #3328 — what the materialized offer is: an ordinary signed offer
+    ///      (both legs ERC-20), one loan of an on-chain collection offer
+    ///      (principal from the parent's escrow, so the depository ledger is
+    ///      not drawn), or one loan of a signed collection offer (principal
+    ///      from the signer's free vault balance, drawn as any signed fill).
+    ///      Both collection kinds may name NFT collateral.
+    enum Source {
+        Signed,
+        CollectionParent,
+        SignedCollection
+    }
+
     /// @notice The signed offer's shape isn't supported in v0.5 (only ERC-20
     ///         Lender-principal and ERC-20-collateral Borrower offers; NFT
     ///         lender / NFT-rental / refinance-tagged are out of v0.5 scope).
@@ -87,7 +99,7 @@ contract OfferMaterializeFacet is DiamondPausable, IVaipakamErrors {
         }
         ISignatureTransfer.PermitTransferFrom memory emptyPermit;
         return _materializeSignedOffer(
-            creator, params, SignedFunding.VaultBacked, emptyPermit, bytes32(0), "", full, false
+            creator, params, SignedFunding.VaultBacked, emptyPermit, bytes32(0), "", full, Source.Signed
         );
     }
 
@@ -114,7 +126,29 @@ contract OfferMaterializeFacet is DiamondPausable, IVaipakamErrors {
         }
         ISignatureTransfer.PermitTransferFrom memory emptyPermit;
         return _materializeSignedOffer(
-            lender, params, SignedFunding.VaultBacked, emptyPermit, bytes32(0), "", full, true
+            lender, params, SignedFunding.VaultBacked, emptyPermit, bytes32(0), "", full, Source.CollectionParent
+        );
+    }
+
+    /// @notice #3328 — materialize one loan of a SIGNED collection offer: a
+    ///         one-token lender slice of the signed terms, funded from the
+    ///         signer's free vault balance at this fill. Nothing was reserved
+    ///         when the offer was signed, so the free balance is checked here
+    ///         and drawn from the depository ledger like any vault-backed
+    ///         signed fill.
+    /// @dev    Diamond-only (`CollectionOfferFacet`). The collateral may be
+    ///         ERC-721 / ERC-1155, as for the on-chain collection slice.
+    function createSignedCollectionSlice(
+        address signer,
+        LibVaipakam.CreateOfferParams calldata params,
+        LibSignedOffer.MakerFull calldata full
+    ) external whenNotPaused returns (uint256 offerId) {
+        if (msg.sender != address(this)) {
+            revert UnauthorizedCrossFacetCall();
+        }
+        ISignatureTransfer.PermitTransferFrom memory emptyPermit;
+        return _materializeSignedOffer(
+            signer, params, SignedFunding.VaultBacked, emptyPermit, bytes32(0), "", full, Source.SignedCollection
         );
     }
 
@@ -137,7 +171,7 @@ contract OfferMaterializeFacet is DiamondPausable, IVaipakamErrors {
             revert UnauthorizedCrossFacetCall();
         }
         return _materializeSignedOffer(
-            creator, params, SignedFunding.WalletWitness, permit, witness, permitSig, full, false
+            creator, params, SignedFunding.WalletWitness, permit, witness, permitSig, full, Source.Signed
         );
     }
 
@@ -155,12 +189,12 @@ contract OfferMaterializeFacet is DiamondPausable, IVaipakamErrors {
         bytes32 witness,
         bytes memory permitSig,
         LibSignedOffer.MakerFull memory full,
-        bool collectionSlice
+        Source source
     ) private returns (uint256 offerId) {
         // v0.5 supported shapes: ERC-20 Lender-principal offer, or
         // ERC-20-collateral Borrower offer. NFT lender / NFT-rental
         // (prepay) / refinance-tagged are deferred.
-        address fundedAsset = collectionSlice
+        address fundedAsset = source != Source.Signed
             ? _resolveCollectionSliceAsset(params)
             : _resolveSignedOfferStakeAsset(params);
         if (params.refinanceTargetLoanId != 0) {
@@ -187,7 +221,7 @@ contract OfferMaterializeFacet is DiamondPausable, IVaipakamErrors {
             // The signer spends free vault balance: the depository ledger
             // (what of it the signer may withdraw) pays first. A collection
             // slice's principal is the parent's escrow, not that balance.
-            if (!collectionSlice) LibDepositoryLedger.spend(creator, fundedAsset, 0, amount);
+            if (source != Source.CollectionParent) LibDepositoryLedger.spend(creator, fundedAsset, 0, amount);
         } else {
             // Wallet-witness: one Permit2 signature binds the pull + the terms.
             LibPermit2.pullWithWitness(

@@ -92,6 +92,25 @@ library LibSignedOffer {
         address signer; // MUST equal the recovered / 1271 signer
         uint256 nonce; // per-signer batch-cancel nonce
         uint256 deadline; // signature validity deadline (unix-seconds)
+        // #3328 — a collection offer: a lender offer against a SET of NFT
+        // tokens for several loans, one token per loan. `setKind` 0 (None)
+        // is an ordinary offer and every field below is then zero; any other
+        // kind is filled only through `CollectionOfferFacet`
+        // ({fillFailure}'s route rule). `exclusionsHash` is
+        // keccak256(abi.encodePacked(ids)) of the excluded ids (zero when
+        // none); the fill presents the ids. `loans` bounds how many fills the
+        // order's ledger admits; `startTime` is when the maker signed it, and
+        // the order's expiry and deadline may be no later than it plus the
+        // governed maximum, so an order withheld for months is expired.
+        uint8 setKind; // LibVaipakam.CollateralSetKind
+        uint256 setLow;
+        uint256 setHigh;
+        bytes32 setRoot;
+        uint32 setListCount;
+        bytes32 setListHash;
+        bytes32 exclusionsHash;
+        uint16 loans;
+        uint64 startTime;
     }
 
     /// @dev keccak256 of the canonical type string. The string MUST list the
@@ -134,7 +153,16 @@ library LibSignedOffer {
         "address coSigner,"
         "address signer,"
         "uint256 nonce,"
-        "uint256 deadline"
+        "uint256 deadline,"
+        "uint8 setKind,"
+        "uint256 setLow,"
+        "uint256 setHigh,"
+        "bytes32 setRoot,"
+        "uint32 setListCount,"
+        "bytes32 setListHash,"
+        "bytes32 exclusionsHash,"
+        "uint16 loans,"
+        "uint64 startTime"
         ")"
     );
 
@@ -185,7 +213,16 @@ library LibSignedOffer {
         "address coSigner,"
         "address signer,"
         "uint256 nonce,"
-        "uint256 deadline"
+        "uint256 deadline,"
+        "uint8 setKind,"
+        "uint256 setLow,"
+        "uint256 setHigh,"
+        "bytes32 setRoot,"
+        "uint32 setListCount,"
+        "bytes32 setListHash,"
+        "bytes32 exclusionsHash,"
+        "uint16 loans,"
+        "uint64 startTime"
         ")"
     );
 
@@ -290,6 +327,10 @@ library LibSignedOffer {
     error SignedOfferTakerNotAllowed(address taker, address allowedTaker);
     error SignedOfferCoSignatureInvalid();
     error SignedOfferConsumed(bytes32 orderHash);
+    /// @notice #3328 — the order is a collection offer and this route is not
+    ///         `CollectionOfferFacet`'s, or it is an ordinary offer presented
+    ///         to the collection route.
+    error SignedOfferWrongRoute(uint8 setKind);
     /// @notice The maker's signature did not recover to / 1271-validate
     ///         against `o.signer`.
     error SignedOfferBadSignature();
@@ -310,7 +351,10 @@ library LibSignedOffer {
         TreasuryFeeAboveCap,
         LoanInitiationFeeAboveCap,
         TakerNotAllowed,
-        CoSignatureInvalid
+        CoSignatureInvalid,
+        // #3328 — a collection offer outside the collection route, or an
+        // ordinary offer inside it. Checked first.
+        WrongRoute
     }
 
     /// @notice The first refusal of a fill of `fillAmount` of `o` (order hash
@@ -328,8 +372,13 @@ library LibSignedOffer {
         bytes32 orderHash,
         address taker,
         uint256 fillAmount,
-        FillAuth calldata auth
+        FillAuth calldata auth,
+        bool collectionRoute
     ) internal view returns (VetFailure) {
+        // #3328 — a collection offer fills only through the collection route,
+        // one token per loan; every other route would read it as one loan of
+        // its whole ceiling.
+        if ((o.setKind != 0) != collectionRoute) return VetFailure.WrongRoute;
         if (!fullWellFormed(o)) return VetFailure.FullNeedsMaxCStar;
         if (LibTiming.deadlinePassed(o.deadline)) return VetFailure.DeadlinePassed;
         // The offer-expiry rule every other offer path reads ("expired AT and
@@ -357,7 +406,7 @@ library LibSignedOffer {
         view
         returns (VetFailure f)
     {
-        f = fillFailure(o, orderHash, taker, ceilingOf(o), auth);
+        f = fillFailure(o, orderHash, taker, ceilingOf(o), auth, false);
         if (f == VetFailure.None && LibVaipakam.storageSlot().signedOfferFilled[orderHash] != 0) {
             f = VetFailure.Consumed;
         }
@@ -369,15 +418,17 @@ library LibSignedOffer {
         bytes32 orderHash,
         address taker,
         uint256 fillAmount,
-        FillAuth calldata auth
+        FillAuth calldata auth,
+        bool collectionRoute
     ) internal view {
-        revertFor(o, orderHash, taker, fillFailure(o, orderHash, taker, fillAmount, auth));
+        revertFor(o, orderHash, taker, fillFailure(o, orderHash, taker, fillAmount, auth, collectionRoute));
     }
 
     /// @notice Revert with the error that states refusal `f` of `o` taken by
     ///         `taker`; return when `f` is `None`.
     function revertFor(SignedOffer calldata o, bytes32 orderHash, address taker, VetFailure f) internal view {
         if (f == VetFailure.None) return;
+        if (f == VetFailure.WrongRoute) revert SignedOfferWrongRoute(o.setKind);
         if (f == VetFailure.FullNeedsMaxCStar) revert SignedOfferFullNeedsMaxCStar();
         if (f == VetFailure.DeadlinePassed) revert LibTiming.DeadlinePassed(o.deadline);
         if (f == VetFailure.Expired) revert SignedOfferExpired(o.expiresAt);
@@ -439,7 +490,19 @@ library LibSignedOffer {
     /// @notice The offer's principal ceiling (`amountMax`, or `amount` for a
     ///         single-value offer).
     function ceilingOf(SignedOffer calldata o) internal pure returns (uint256) {
-        return o.amountMax == 0 ? o.amount : o.amountMax;
+        return ceiling(o.amount, o.amountMax, o.setKind, o.loans);
+    }
+
+    /// @notice The order's principal ceiling from its fields: `amountMax`
+    ///         (or `amount` for a single-value offer), and for a collection
+    ///         offer (#3328) the per-loan `amount` times `loans`.
+    function ceiling(uint256 amount, uint256 amountMax, uint8 setKind, uint16 loans)
+        internal
+        pure
+        returns (uint256)
+    {
+        if (setKind != 0) return amount * loans;
+        return amountMax == 0 ? amount : amountMax;
     }
 
     /// @notice #1949 — the maker Full intent for the part of `o` a fill materializes:
@@ -466,19 +529,19 @@ library LibSignedOffer {
         returns (MakerFull memory f)
     {
         if (!o.creatorFull) return f;
-        uint256 ceiling = o.amountMax == 0 ? o.amount : o.amountMax;
+        uint256 whole = ceiling(o.amount, o.amountMax, o.setKind, o.loans);
         f.full = true;
         f.allowDowngrade = o.creatorAllowFullDowngrade;
-        f.maxCStar = _cumCeiling(o.creatorMaxCStar, filledBefore + fillAmount, ceiling)
-            - _cumCeiling(o.creatorMaxCStar, filledBefore, ceiling);
+        f.maxCStar = _cumCeiling(o.creatorMaxCStar, filledBefore + fillAmount, whole)
+            - _cumCeiling(o.creatorMaxCStar, filledBefore, whole);
     }
 
     /// @dev The cumulative pro-rata ceiling at principal `filled` of an order of size
-    ///      `ceiling`: the whole signed ceiling at (or past) the order's size, else its
+    ///      `size`: the whole signed ceiling at (or past) the order's size, else its
     ///      share rounded up. Monotone in `filled`, so the slice difference above can
     ///      never underflow.
-    function _cumCeiling(uint256 maxCStar, uint256 filled, uint256 ceiling) private pure returns (uint256) {
-        return filled >= ceiling ? maxCStar : Math.mulDiv(maxCStar, filled, ceiling, Math.Rounding.Ceil);
+    function _cumCeiling(uint256 maxCStar, uint256 filled, uint256 size) private pure returns (uint256) {
+        return filled >= size ? maxCStar : Math.mulDiv(maxCStar, filled, size, Math.Rounding.Ceil);
     }
     bytes32 private constant DOMAIN_VERSION_HASH = keccak256("1");
 
@@ -559,6 +622,17 @@ library LibSignedOffer {
                     o.signer,
                     o.nonce,
                     o.deadline
+                ),
+                abi.encode(
+                    o.setKind,
+                    o.setLow,
+                    o.setHigh,
+                    o.setRoot,
+                    o.setListCount,
+                    o.setListHash,
+                    o.exclusionsHash,
+                    o.loans,
+                    o.startTime
                 )
             )
         );

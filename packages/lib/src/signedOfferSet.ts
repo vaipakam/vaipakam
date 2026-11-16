@@ -19,12 +19,46 @@ import {
   SIGNED_OFFER_FIELDS,
   canonicalPlacementJson,
   placementProblem,
+  type SignedOfferFields,
   type SignedOfferPlacement,
+  type SignedOrderWire,
 } from './signedOfferWire.mjs';
 
 // The placement wire rule lives in the plain-JS wire module, which the
 // restore converter also reads; re-exported here so callers have one import.
 export { MAX_SIGNED_OFFER_SET, canonicalPlacementJson, placementProblem, type SignedOfferPlacement };
+
+/** The primitive viem's typed-data encoder takes for an EIP-712 type: a
+ *  number up to 48 bits, a bigint above, hex for an address or a bytes32. */
+type MessageValue<T extends string> = T extends 'bool'
+  ? boolean
+  : T extends 'address' | 'bytes32'
+    ? Hex
+    : T extends 'uint8' | 'uint16' | 'uint32'
+      ? number
+      : bigint;
+
+/** A signed offer as viem's typed-data encoder (and the Diamond's
+ *  `SignedOffer` ABI tuple) takes it. */
+export type SignedOfferMessage = {
+  [F in SignedOfferFields[number] as F['name']]: MessageValue<F['type']>;
+};
+
+/** Wire order to {@link SignedOfferMessage}, field by field from the one
+ *  field list, so no caller keeps its own copy of the struct (#3328: the
+ *  apps, the indexer and the e2e helpers each had one). The wire shape must
+ *  already be valid: `BigInt` throws on a malformed figure. */
+export function signedOfferMessage(order: SignedOrderWire): SignedOfferMessage {
+  const out: Record<string, unknown> = {};
+  for (const { name, type } of SIGNED_OFFER_FIELDS) {
+    const v = (order as Record<string, unknown>)[name];
+    if (type === 'bool') out[name] = v;
+    else if (type === 'address' || type === 'bytes32') out[name] = v as Hex;
+    else if (type === 'uint8' || type === 'uint16' || type === 'uint32') out[name] = Number(v);
+    else out[name] = BigInt(v as string);
+  }
+  return out as SignedOfferMessage;
+}
 
 /** The typed-data types a wallet signs for a set. */
 export const SIGNED_OFFER_SET_TYPES = {

@@ -27,6 +27,7 @@ import {
   type Hex,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
+import { NO_COLLECTION } from '@vaipakam/lib/signedOfferWire';
 import {
   SIGNED_OFFER_TYPES,
   SIGNED_OFFER_FIELD_NAMES,
@@ -78,7 +79,16 @@ const CONTRACT_TYPE_STRING =
   'address coSigner,' +
   'address signer,' +
   'uint256 nonce,' +
-  'uint256 deadline' +
+  'uint256 deadline,' +
+  'uint8 setKind,' +
+  'uint256 setLow,' +
+  'uint256 setHigh,' +
+  'bytes32 setRoot,' +
+  'uint32 setListCount,' +
+  'bytes32 setListHash,' +
+  'bytes32 exclusionsHash,' +
+  'uint16 loans,' +
+  'uint64 startTime' +
   ')';
 
 const TEST_PK =
@@ -139,6 +149,7 @@ function makeOrder(overrides: Partial<SignedOrderWire> = {}): SignedOrderWire {
     signer: SIGNER.address.toLowerCase(),
     nonce: '7',
     deadline: DEADLINE_7D,
+    ...NO_COLLECTION,
     ...overrides,
   };
 }
@@ -153,7 +164,7 @@ describe('signedOfferEip712 — hash agreement with LibSignedOffer.sol', () => {
       SIGNED_OFFER_TYPES.SignedOffer.map((f) => `${f.type} ${f.name}`).join(',') +
       ')';
     expect(derived).toBe(CONTRACT_TYPE_STRING);
-    expect(SIGNED_OFFER_FIELD_NAMES.length).toBe(35);
+    expect(SIGNED_OFFER_FIELD_NAMES.length).toBe(44);
   });
 
   it('orderHashOf equals a manually-assembled keccak256(abi.encode(typehash, ...fields))', () => {
@@ -326,7 +337,25 @@ describe('validateOrder — the POST shape gate', () => {
     expect('order' in out && out.order.maxTreasuryFeeBps).toBe('0');
   });
 
-  it('rejects a missing / extra field (exact 35-key contract)', () => {
+  it('#3328 — refuses a collection order and any non-zero collection field', () => {
+    const r = (o: Partial<SignedOrderWire>) => makeOrder(o) as unknown as Record<string, unknown>;
+    expectError(r({ setKind: '1', loans: '3' }), 'unsupported-collection');
+    expectError(r({ loans: '3' }), 'invalid-loans');
+    expectError(
+      r({ exclusionsHash: `0x${'1'.repeat(64)}` }),
+      'invalid-exclusionsHash',
+    );
+    expectError(r({ startTime: '1' }), 'invalid-startTime');
+  });
+
+  it('#3328 — the collection fields change the order hash', () => {
+    const base = orderHashOf(makeOrder());
+    expect(orderHashOf(makeOrder({ setKind: '1' }))).not.toBe(base);
+    expect(orderHashOf(makeOrder({ setRoot: `0x${'2'.repeat(64)}` }))).not.toBe(base);
+    expect(orderHashOf(makeOrder({ startTime: '1' }))).not.toBe(base);
+  });
+
+  it('rejects a missing / extra field (exact 44-key contract)', () => {
     const missing = makeOrder() as unknown as Record<string, unknown>;
     delete missing.nonce;
     expectError(missing, 'order-field-count');

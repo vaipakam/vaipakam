@@ -25,6 +25,7 @@ import { erc20Abi, parseEther, type Hex } from 'viem';
 import { WETH } from '@vaipakam/anvil-harness/lending';
 import { TOKEN_ABI } from '@vaipakam/anvil-harness/scenarioChain';
 import type { Page } from '@playwright/test';
+import { NO_COLLECTION } from '@vaipakam/lib/signedOfferWire';
 import { orderHashOf, SIGNED_OFFER_TYPES, typedMessage, type SignedOrderWire } from '../../src/shared/desk/signedOrder';
 import { scenario } from '../lib/chain';
 import { postSignedOrder } from '../lib/stub';
@@ -78,6 +79,7 @@ async function signedLenderOrder(role: Role, tliq: Hex, diamond: Hex, until: str
     signer: accountFor(role).address.toLowerCase(),
     nonce: '3001',
     deadline: until,
+    ...NO_COLLECTION,
     ...patch,
   };
   const signature = await accountFor(role).signTypedData({

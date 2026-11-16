@@ -1058,7 +1058,9 @@ contract SignedOfferBookTest is SetupTest {
                 "uint256 refinanceTargetLoanId,bool useFullTermInterest,bool creatorFull,",
                 "uint256 creatorMaxCStar,bool creatorAllowFullDowngrade,uint16 maxTreasuryFeeBps,",
                 "uint16 maxLoanInitiationFeeBps,address allowedTaker,address coSigner,address signer,",
-                "uint256 nonce,uint256 deadline)"
+                "uint256 nonce,uint256 deadline,uint8 setKind,uint256 setLow,uint256 setHigh,",
+                "bytes32 setRoot,uint32 setListCount,bytes32 setListHash,bytes32 exclusionsHash,",
+                "uint16 loans,uint64 startTime)"
             )
         );
         assertEq(typeHash, LibSignedOffer.SIGNED_OFFER_SET_TYPEHASH, "set typehash");

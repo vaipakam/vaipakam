@@ -33,7 +33,7 @@ import {
   MAX_SIGNED_OFFER_BODY_BYTES,
 } from '../src/signedOfferRoutes';
 import { createSqliteD1 } from './helpers/sqliteD1';
-import { signedOfferRowProblem } from '@vaipakam/lib/signedOfferWire';
+import { NO_COLLECTION, signedOfferRowProblem } from '@vaipakam/lib/signedOfferWire';
 import { SIGNED_OFFER_SET_TYPES, placementsOf } from '@vaipakam/lib/signedOfferSet';
 import {
   SIGNED_OFFER_TYPES,
@@ -96,6 +96,7 @@ function makeOrder(overrides: Partial<SignedOrderWire> = {}): SignedOrderWire {
     signer: SIGNER.address.toLowerCase(),
     nonce: '7',
     deadline: String(DEADLINE_7D),
+    ...NO_COLLECTION,
     ...overrides,
   };
 }

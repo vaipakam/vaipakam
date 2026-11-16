@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { encodeAbiParameters, encodeEventTopics, keccak256, type Log } from 'viem';
-import { canonicalOrderJson } from '@vaipakam/lib/signedOfferWire';
+import { NO_COLLECTION, canonicalOrderJson } from '@vaipakam/lib/signedOfferWire';
 import { cancelCall, measureSignedCancel, orderSentence, signedCancelBlockers, signedCancelReceipt, targetKey, type SignedCancelReview } from './cancelSigned';
 import { fillable, mySignedOrderFrom, readMySignedOrders, sharedNonces, SIGNED_OFFER, standingOf, type MySignedOrder } from './mySignedOrders';
 import { lapsesAt, orderHashOf, signedStake, signedStakeLeft, SIGNED_OFFER_TYPES, typedMessage, type SignedOrderWire } from './signedOrder';
@@ -53,6 +53,7 @@ function order(patch: Partial<SignedOrderWire> = {}): SignedOrderWire {
     signer: ME,
     nonce: '7',
     deadline: '2000',
+    ...NO_COLLECTION,
     ...patch,
   };
 }

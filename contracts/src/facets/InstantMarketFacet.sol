@@ -94,8 +94,21 @@ contract InstantMarketFacet is DiamondReentrancyGuard, DiamondPausable, DiamondA
         bytes reason;
     }
 
-    /// @notice One instant borrow, stated whole: the loans it opened, the
-    ///         sources it skipped and why, and where the collateral came from
+    /// @notice One loan an instant borrow opened, one event per loan so
+    ///         each carries its own loan id (the activity feed files it by
+    ///         that id). Emitted before the {InstantBorrowed} that sums them.
+    event InstantLoanOpened(
+        uint256 indexed groupId,
+        uint256 indexed loanId,
+        uint256 sourceIndex,
+        uint256 amount,
+        uint256 rateBps,
+        uint256 collateral
+    );
+
+    /// @notice One instant borrow, stated whole: what it borrowed (its loans
+    ///         are the group's {InstantLoanOpened} events), the sources it
+    ///         skipped and why, and where the collateral came from
     ///         (`fromWallet` was deposited from the wallet; the rest of
     ///         `collateralLocked` was already free in the borrower's vault).
     event InstantBorrowed(
@@ -106,7 +119,7 @@ contract InstantMarketFacet is DiamondReentrancyGuard, DiamondPausable, DiamondA
         uint256 totalBorrowed,
         uint256 collateralLocked,
         uint256 fromWallet,
-        InstantFill[] fills,
+        uint256 loansOpened,
         InstantSkip[] skipped
     );
 
@@ -302,6 +315,7 @@ contract InstantMarketFacet is DiamondReentrancyGuard, DiamondPausable, DiamondA
                 rateBps: res.rateBps,
                 collateral: res.collateral
             });
+            emit InstantLoanOpened(groupId, res.loanId, i, res.amount, res.rateBps, res.collateral);
             fr.remaining -= res.amount;
             fr.collRemaining -= res.collateral;
             fromWallet += res.fromWallet;
@@ -320,7 +334,7 @@ contract InstantMarketFacet is DiamondReentrancyGuard, DiamondPausable, DiamondA
             received,
             req.collateralOffered - fr.collRemaining,
             fromWallet,
-            fills,
+            nFills,
             skipped
         );
     }

@@ -63,6 +63,10 @@
       "class": "user",
       "why": "the borrower opens its own loan against its own token, under its own signed acceptance"
     },
+    "CollectionOfferFacet.fillSignedCollectionOffer(struct:LibSignedOffer.SignedOffer,bytes,struct:LibSignedOffer.OfferSet,struct:CollectionOfferFacet.SignedTake,struct:LibAcceptTerms.AcceptTerms,bytes,struct:LibSignedOffer.FillAuth)": {
+      "class": "user",
+      "why": "the borrower opens its own loan against its own token, from a lender's signed collection offer, under its own signed acceptance"
+    },
     "CollectionOfferFacet.matchCollectionOffer(uint256,uint256,bytes32[])": {
       "class": "gap",
       "issue": "#3688",

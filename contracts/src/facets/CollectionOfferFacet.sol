@@ -132,6 +132,39 @@ contract CollectionOfferFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
     /// @notice Only the offer's lender (its account manager) may do this.
     error NotCollectionOfferLender();
 
+    /// @notice #3328 — what a borrower presents to fill a signed collection
+    ///         offer: the token, its Listed-set proof (empty otherwise), and
+    ///         the excluded ids the signed `exclusionsHash` names (empty when
+    ///         none).
+    struct SignedTake {
+        uint256 tokenId;
+        bytes32[] proof;
+        uint256[] exclusions;
+    }
+
+    /// @notice One loan opened from a SIGNED collection offer, against
+    ///         `tokenId`, through the one-token slice `sliceOfferId`;
+    ///         `loansLeft` is how many more the order admits.
+    /// @custom:event-category state-change/offer-mutation
+    event SignedCollectionOfferFilled(
+        bytes32 indexed orderHash,
+        address indexed signer,
+        address indexed borrower,
+        uint256 tokenId,
+        uint256 sliceOfferId,
+        uint256 loanId,
+        uint16 loansLeft
+    );
+    /// @notice A signed collection offer must have started (its signed start
+    ///         time is not in the future) and must expire, and its signature
+    ///         deadline must pass, no later than the start time plus the
+    ///         longest lifetime.
+    error SignedCollectionLifetimeInvalid(uint64 startTime, uint64 expiresAt, uint256 deadline, uint256 latest);
+    /// @notice The signed collection offer would not take the token: the
+    ///         caller is its maker, it has no loans left, or the token is not
+    ///         in its set.
+    error SignedCollectionTakeRefused(bytes32 orderHash, uint256 tokenId, TakeFailure reason);
+
     // ─── Settings ─────────────────────────────────────────────────────────
 
     /// @notice Set the most loans one offer funds (1 to 200) and the longest
@@ -234,15 +267,46 @@ contract CollectionOfferFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
     ) external nonReentrant whenNotPaused returns (uint256 loanId) {
         uint256 slice = _drawSlice(offerId, tokenId, proof, msg.sender);
         OfferAcceptFacet(address(this)).verifyAndBindAccept(slice, fillKey(offerId, tokenId), terms, signature, msg.sender);
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        s.signedOfferAcceptor = msg.sender;
-        bytes memory res = LibFacet.crossFacetCallReturn(
-            abi.encodeWithSelector(OfferAcceptFacet.acceptOfferInternal.selector, slice, terms.riskAndTermsConsent),
-            bytes4(0)
+        loanId = _acceptSlice(slice, terms.riskAndTermsConsent);
+        _afterFill(LibVaipakam.storageSlot(), offerId, tokenId, slice, loanId);
+    }
+
+    /// @notice Borrow from a SIGNED collection offer against your token
+    ///         (design section 6). Nothing was reserved when the lender
+    ///         signed: the loan's principal is drawn from the lender's free
+    ///         vault balance now, and a fill that finds it short is refused.
+    ///         Each fill is one loan of the signed per-loan `amount`; the
+    ///         order's fill ledger admits at most `loans` of them, and every
+    ///         signed-offer check applies (fee caps, taker, co-signer,
+    ///         nonce, cancel floor, deadline, expiry).
+    /// @param take  The token, its Listed-set proof, and the excluded ids
+    ///        the signed `exclusionsHash` names.
+    /// @param terms The caller's signed acceptance of the one-token loan:
+    ///        its `offerKey` is {signedFillKey}`(orderHash, tokenId)`.
+    function fillSignedCollectionOffer(
+        LibSignedOffer.SignedOffer calldata o,
+        bytes calldata sig,
+        LibSignedOffer.OfferSet calldata set,
+        SignedTake calldata take,
+        LibAcceptTerms.AcceptTerms calldata terms,
+        bytes calldata acceptSig,
+        LibSignedOffer.FillAuth calldata auth
+    ) external nonReentrant whenNotPaused returns (uint256 loanId) {
+        bytes32 orderHash = LibSignedOffer.hashStruct(o);
+        LibSignedOffer.requireFillable(o, orderHash, msg.sender, o.amount, auth, true);
+        (bool ok, ) = LibSignedOffer.verify(o, sig, set);
+        if (!ok) revert LibSignedOffer.SignedOfferBadSignature();
+        _requireSignedTake(o, orderHash, take);
+        // Consume one loan BEFORE any external interaction (CEI).
+        uint256 filledBefore = _consumeSignedLoan(o, orderHash, take.tokenId);
+        uint256 slice = _materializeSignedSlice(o, take.tokenId, filledBefore);
+        OfferAcceptFacet(address(this)).verifyAndBindAccept(
+            slice, signedFillKey(orderHash, take.tokenId), terms, acceptSig, msg.sender
         );
-        s.signedOfferAcceptor = address(0);
-        loanId = abi.decode(res, (uint256));
-        _afterFill(s, offerId, tokenId, slice, loanId);
+        loanId = _acceptSlice(slice, terms.riskAndTermsConsent);
+        emit SignedCollectionOfferFilled(
+            orderHash, o.signer, msg.sender, take.tokenId, slice, loanId, uint16(o.loans - (filledBefore / o.amount) - 1)
+        );
     }
 
     /// @notice Pair a collection offer with a posted borrower offer whose
@@ -279,6 +343,12 @@ contract CollectionOfferFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
     }
 
     // ─── Views ────────────────────────────────────────────────────────────
+
+    /// @notice The `AcceptTerms.offerKey` a borrower signs to fill SIGNED
+    ///         collection offer `orderHash` with `tokenId`.
+    function signedFillKey(bytes32 orderHash, uint256 tokenId) public pure returns (bytes32) {
+        return keccak256(abi.encode("vaipakam.signed-collection-fill", orderHash, tokenId));
+    }
 
     /// @notice The `AcceptTerms.offerKey` a borrower signs to fill collection
     ///         offer `offerId` with `tokenId`.
@@ -489,5 +559,108 @@ contract CollectionOfferFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
             offerId, msg.sender, set.kind, perLoan, loans, set.low, set.high, set.root,
             set.listCount, set.listHash, set.label, set.exclusions, publishedIds
         );
+    }
+
+    /// @dev Route the slice through the ordinary accept, as the caller.
+    function _acceptSlice(uint256 slice, bool consent) private returns (uint256 loanId) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.signedOfferAcceptor = msg.sender;
+        bytes memory res = LibFacet.crossFacetCallReturn(
+            abi.encodeWithSelector(OfferAcceptFacet.acceptOfferInternal.selector, slice, consent),
+            bytes4(0)
+        );
+        s.signedOfferAcceptor = address(0);
+        loanId = abi.decode(res, (uint256));
+    }
+
+    /// @dev The signed collection offer's own checks: its shape (the on-chain
+    ///      form's), its loan count, its lifetime from the signed start time,
+    ///      the set's terms, and the caller's token in the set.
+    function _requireSignedTake(LibSignedOffer.SignedOffer calldata o, bytes32 orderHash, SignedTake calldata take)
+        private
+        view
+    {
+        if (
+            o.offerType != uint8(LibVaipakam.OfferType.Lender)
+                || o.setKind > uint8(LibVaipakam.CollateralSetKind.Listed)
+                || o.assetType != uint8(LibVaipakam.AssetType.ERC20)
+                || o.collateralAssetType == uint8(LibVaipakam.AssetType.ERC20)
+                || o.collateralAsset == address(this)
+                || o.refinanceTargetLoanId != 0
+                || o.amount == 0
+                || (o.amountMax != 0 && o.amountMax != o.amount)
+                || (o.interestRateBpsMax != 0 && o.interestRateBpsMax != o.interestRateBps)
+                || (o.collateralAmountMax != 0 && o.collateralAmountMax != o.collateralAmount)
+        ) revert CollectionOfferShape();
+        (uint16 maxLoans, uint32 maxExpiry) = getCollectionOfferLimits();
+        if (o.loans == 0 || o.loans > maxLoans) revert CollectionLoansOutOfRange(o.loans, maxLoans);
+        // The lifetime runs from when the maker signed, not from the fill: an
+        // order withheld past it is expired whatever its own expiry says.
+        uint256 latest = uint256(o.startTime) + maxExpiry;
+        if (
+            o.startTime > block.timestamp || o.expiresAt == 0 || o.expiresAt > latest
+                || o.deadline == 0 || o.deadline > latest
+        ) revert SignedCollectionLifetimeInvalid(o.startTime, o.expiresAt, o.deadline, latest);
+        if (msg.sender == o.signer) revert SignedCollectionTakeRefused(orderHash, take.tokenId, TakeFailure.OwnOffer);
+        LibCollateralSet.validateSigned(
+            LibVaipakam.CollateralSetKind(o.setKind),
+            o.setLow,
+            o.setHigh,
+            o.setRoot,
+            o.setListCount,
+            o.exclusionsHash,
+            take.exclusions.length
+        );
+        if (
+            !LibCollateralSet.containsSigned(
+                LibVaipakam.CollateralSetKind(o.setKind),
+                o.setLow,
+                o.setHigh,
+                o.setRoot,
+                o.exclusionsHash,
+                take.exclusions,
+                take.tokenId,
+                take.proof
+            )
+        ) revert SignedCollectionTakeRefused(orderHash, take.tokenId, TakeFailure.NotInSet);
+    }
+
+    /// @dev Count one loan against the order's fill ledger; returns the
+    ///      principal filled before it. A cancelled order's ledger stands at
+    ///      its ceiling, so it has no loans left.
+    function _consumeSignedLoan(LibSignedOffer.SignedOffer calldata o, bytes32 orderHash, uint256 tokenId)
+        private
+        returns (uint256 filledBefore)
+    {
+        mapping(bytes32 => uint256) storage ledger = LibVaipakam.storageSlot().signedOfferFilled;
+        filledBefore = ledger[orderHash];
+        if (filledBefore + o.amount > LibSignedOffer.ceilingOf(o)) {
+            revert SignedCollectionTakeRefused(orderHash, tokenId, TakeFailure.NoLoansLeft);
+        }
+        ledger[orderHash] = filledBefore + o.amount;
+    }
+
+    /// @dev The one-token lender slice of the signed terms, materialized
+    ///      from the signer's free vault balance.
+    function _materializeSignedSlice(LibSignedOffer.SignedOffer calldata o, uint256 tokenId, uint256 filledBefore)
+        private
+        returns (uint256 slice)
+    {
+        LibVaipakam.CreateOfferParams memory q = LibSignedOffer.toCreateOfferParams(o);
+        q.amountMax = q.amount;
+        q.interestRateBpsMax = q.interestRateBps;
+        q.collateralAmountMax = q.collateralAmount;
+        q.collateralTokenId = tokenId;
+        q.fillMode = LibVaipakam.FillMode.Aon;
+        bytes memory res = LibFacet.crossFacetCallReturn(
+            abi.encodeWithSelector(
+                OfferMaterializeFacet.createSignedCollectionSlice.selector,
+                o.signer,
+                q,
+                LibSignedOffer.makerFullFor(o, filledBefore, o.amount)
+            ),
+            bytes4(0)
+        );
+        slice = abi.decode(res, (uint256));
     }
 }

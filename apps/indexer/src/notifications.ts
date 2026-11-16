@@ -186,6 +186,7 @@ export const NOTIF_DELIBERATELY_NOT_HANDLED: Readonly<Record<string, string>> = 
   LoanSettled: 'PR2 — folded into the claim-available row precision pass',
   LoanSaleCompleted: 'PR2 — secondary-market sale completed → new/old lender',
   LoanSold: 'PR2 — secondary-market sale → both sides',
+  InstantTakenOver: 'PR2 — an instant-market loan taken over at face value → outgoing and incoming lender, the same rows as LoanSaleCompleted (#3656)',
   LoanObligationTransferred: 'PR2 — obligation transfer → both sides',
   LoanExtended: 'PR2 — loan extended → both sides',
   PeriodicInterestAutoLiquidated: 'PR2 — periodic-interest auto-liquidation → borrower',
@@ -213,6 +214,14 @@ export const NOTIF_DELIBERATELY_NOT_HANDLED: Readonly<Record<string, string>> = 
   // ── Internal / companion / transient — no user-facing notification ─
   OfferCreated: 'own action — the creator initiated it; no inbound notification',
   OfferCreatedDetails: 'companion to OfferCreated — no row',
+  CollectionOfferCreated: 'own action — the lender posted its own collection offer (#3328)',
+  CollectionOfferReduced: 'own action — the lender lowered its own collection offer\'s loan count (#3328)',
+  CollectionOfferFilled:
+    'companion to the same transaction\'s LoanInitiated (mapped, both sides), which tells the lender and the borrower the loan opened (#3328)',
+  SignedCollectionOfferFilled:
+    'companion to the same transaction\'s LoanInitiated (mapped, both sides), which tells the signer and the borrower the loan opened (#3328)',
+  HeldRecommittedToIntent:
+    'own action — the intent owner (or its keeper) re-committed held capital to its own intent; the loan keeps running, nothing changes for the borrower',
   OfferModified: 'own action — the creator repriced their own offer',
   OfferCanceled: 'own action — the creator cancelled their own offer',
   OfferCanceledDetails: 'companion to OfferCanceled — no row',
