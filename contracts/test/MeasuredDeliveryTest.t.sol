@@ -43,6 +43,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {defaultQuote, liquidationQuote} from "./helpers/ForcedSaleQuote.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
+import {LibTestGuard} from "./helpers/LibTestGuard.sol";
 
 /// @dev Exposes {LibDelivery.pullExact}, which only libraries reach.
 contract LibDeliveryHarness {
@@ -346,8 +347,10 @@ contract MeasuredDeliveryTest is SetupTest {
             "fixture: only the vault's own transfers (the two pulls) are charged"
         );
 
+        LibTestGuard.hold(address(diamond)); // a fixture standing in for the guarded caller (#3432)
         vm.prank(address(diamond));
         (bool ok, ) = FallbackCustodyFacet(address(diamond)).retryFallbackSwap(LOAN, defaultAdapterCalls());
+        LibTestGuard.release(address(diamond));
 
         assertTrue(ok, "the retry sold");
         assertEq(_row(), 0, "the row is spent");
@@ -372,8 +375,10 @@ contract MeasuredDeliveryTest is SetupTest {
         assertGt(bc0, row - restored, "fixture: the borrower slice covers the round trip's loss");
 
         _failEverySwap();
+        LibTestGuard.hold(address(diamond)); // a fixture standing in for the guarded caller (#3432)
         vm.prank(address(diamond));
         (bool ok, ) = FallbackCustodyFacet(address(diamond)).retryFallbackSwap(LOAN, defaultAdapterCalls());
+        LibTestGuard.release(address(diamond));
         _swapsFill();
 
         assertFalse(ok, "the retry failed");
@@ -891,8 +896,10 @@ contract MeasuredDeliveryTest is SetupTest {
         _chargesFee(mockERC20, address(0));
         uint256 accrued0 = TreasuryFacet(address(diamond)).getTreasuryBalance(mockERC20);
 
+        LibTestGuard.hold(address(diamond)); // a fixture standing in for the guarded caller (#3432)
         vm.prank(address(diamond));
         uint256 accrued = TreasuryFeeFacet(address(diamond)).collectFeeFromVault(borrower, mockERC20, 4 ether);
+        LibTestGuard.release(address(diamond));
 
         assertEq(accrued, _less(4 ether), "the host returns what arrived");
         assertEq(

@@ -163,6 +163,7 @@ contract PrepayListingFacet is
         external
         override
         whenNotPaused
+        guardedCallback
     {
         // ── Privileged-caller gate ─────────────────────────────────────
         // The diamond accepts finalization callbacks ONLY from the
@@ -272,6 +273,7 @@ contract PrepayListingFacet is
         external
         override
         whenNotPaused
+        guardedCallback
     {
         (address owner, address asset, uint256 tokenId, uint256 ref) = _listingGrantSubject(loanId, offerId);
         if (owner == address(0)) return;
@@ -284,6 +286,7 @@ contract PrepayListingFacet is
     function executorCloseListingGrant(uint256 loanId, uint96 offerId)
         external
         override
+        guardedCallback
         returns (uint256 consumed)
     {
         (address owner,,,) = _listingGrantSubject(loanId, offerId);

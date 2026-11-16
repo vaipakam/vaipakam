@@ -25,6 +25,14 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   Deposit and withdrawal cards, the desk, accept reviews, fee checks, and
   locked-balance displays use that same figure. A queued payout is not free
   capital that can be spent again.
+- A vault takes instructions from one caller only: the protocol contract
+  that created it. It does not trust itself, and it has no separate owner
+  record that could be handed to someone else.
+- Moving an asset out of a vault can hand control to someone else, such as an
+  NFT recipient's receiving hook or an approved spender. Every such move
+  happens only inside a protocol action that already refuses to be
+  re-entered, so a recipient or spender cannot call back into the protocol
+  mid-move. A move attempted outside such an action is refused.
 
 ## Adopting or disowning an untracked asset
 

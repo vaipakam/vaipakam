@@ -69,4 +69,18 @@ abstract contract DiamondReentrancyGuard {
         _;
         LibReentrancyGuard._exit();
     }
+
+    /// @dev For a trusted contract's callback that arrives either on its own
+    ///      (a marketplace fill a buyer started) or nested inside one of the
+    ///      Diamond's own guarded actions (the Diamond started that fill).
+    ///      Takes the guard when nothing holds it, and otherwise runs inside
+    ///      the action that does, so the callback's vault moves are always
+    ///      inside a guarded action (#3432). The caller gate is the entry's
+    ///      own; this modifier admits nobody by itself.
+    modifier guardedCallback() {
+        bool took = !LibReentrancyGuard.entered();
+        if (took) LibReentrancyGuard._enter();
+        _;
+        if (took) LibReentrancyGuard._exit();
+    }
 }

@@ -17,6 +17,7 @@ import {IZeroExProxy} from "../src/interfaces/IZeroExProxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {defaultQuote} from "./helpers/ForcedSaleQuote.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
+import {LibTestGuard} from "./helpers/LibTestGuard.sol";
 
 /**
  * @title  FallbackCustodyFacetGateTest
@@ -307,9 +308,11 @@ contract FallbackCustodyFacetGateTest is SetupTest {
         uint256 treasury0 = _bal(treasury);
         uint256 lenderVault0 = _bal(lenderVault);
 
+        LibTestGuard.hold(address(diamond)); // stands in for the guarded claim (#3432)
         vm.prank(address(diamond));
         (uint256 toTreasury, uint256 toLenderSlice, uint256 retained) = FallbackCustodyFacet(address(diamond))
             .disposeFallbackCustody(loanId, lender, LibFallbackCustody.Move.ToLender);
+        LibTestGuard.release(address(diamond));
 
         assertEq(toTreasury, treasuryCol, "returns the treasury slice");
         assertEq(toLenderSlice, lenderCol, "returns the lender slice");

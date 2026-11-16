@@ -17,6 +17,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
+import {LibTestGuard} from "./helpers/LibTestGuard.sol";
 
 /// @title  TreasuryFromVaultCodeTest
 /// @notice #3569 (owner decision 2026-11-12, "Vault code only") — the
@@ -75,8 +76,10 @@ contract TreasuryFromVaultCodeTest is SetupTest {
     }
 
     function _vaultFee(uint256 amount) internal returns (uint256 accrued) {
+        LibTestGuard.hold(address(diamond)); // stands in for the guarded fee payer (#3432)
         vm.prank(address(diamond));
         accrued = TreasuryFeeFacet(address(diamond)).collectFeeFromVault(borrower, mockERC20, amount);
+        LibTestGuard.release(address(diamond));
     }
 
     // ─── The Diamond reads the vault code ────────────────────────────────

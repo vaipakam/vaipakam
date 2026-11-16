@@ -14,6 +14,8 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibTreasury} from "../libraries/LibTreasury.sol";
 import {LibSellerPayAuth} from "../libraries/LibSellerPayAuth.sol";
 import {LibAcceptContext} from "../libraries/LibAcceptContext.sol";
+import {LibReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
+import {LibFillLock} from "../libraries/LibFillLock.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {VaultOutflowTypes} from "../vault/VaultOutflowTypes.sol";
@@ -122,8 +124,21 @@ contract VaultOutflowFacet is IVaipakamErrors {
     ///      `VaultFactoryFacet.WithdrawWouldUnderflowLien`).
     error WithdrawWouldUnderflowLien(address user, address asset, uint256 tokenId, uint256 amount, uint256 free);
 
+    /// @dev #3432 — a vault movement ran with neither the Diamond's
+    ///      reentrancy guard nor a fill lock held.
+    error VaultMoveOutsideGuard();
+
+    /// @dev A self-call, and only inside a guarded action (#3432). A vault
+    ///      move hands control to someone else (an NFT receiver's hook, a
+    ///      grant's spender), and the vault carries no guard of its own, so
+    ///      the Diamond must already refuse a re-entry when the move runs:
+    ///      its reentrancy guard is held, or a 1inch fill holds the fill lock
+    ///      (under which the Diamond's fallback admits only self-calls and
+    ///      the order protocol). Checked here, at the one host every vault
+    ///      move passes, rather than trusted of every caller.
     modifier onlyDiamondInternal() {
         if (msg.sender != address(this)) revert OnlyDiamondInternal();
+        if (!LibReentrancyGuard.entered() && LibFillLock.heldBy() == bytes32(0)) revert VaultMoveOutsideGuard();
         _;
     }
 

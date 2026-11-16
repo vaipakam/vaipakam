@@ -161,7 +161,14 @@ contract PrepayListingFacetTest is SetupTest {
         (, uint256 owed, bool claimed) = ClaimFacet(address(diamond)).getClaimableAmount(TEST_LOAN_ID, true);
         assertEq(owed, pctx.lenderLeg, "the lender's claim names its due");
         assertFalse(claimed, "the lender has not claimed yet");
-        assertEq(IERC20(mockERC20).balanceOf(_scBorrower), 3 ether, "borrower holder paid the remainder");
+        // #3629 — the remainder is held for the borrower position's claim in
+        // the borrower's vault, never paid to a wallet at the sale.
+        assertEq(IERC20(mockERC20).balanceOf(_scBorrower), 0, "nothing paid to the borrower wallet at the sale");
+        assertEq(
+            IERC20(mockERC20).balanceOf(VaultFactoryFacet(address(diamond)).getUserVaultAddress(_scBorrower)),
+            3 ether,
+            "the remainder waits in the borrower vault"
+        );
 
         LibVaipakam.Loan memory readBack = _readLoan(TEST_LOAN_ID);
         assertEq(

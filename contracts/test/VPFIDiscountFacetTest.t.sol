@@ -38,6 +38,7 @@ import {VaultOutflowTypes, OutflowReason} from "../src/vault/VaultOutflowTypes.s
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
+import {LibTestGuard} from "./helpers/LibTestGuard.sol";
 
 /// @title VPFIDiscountFacetTest
 /// @notice Exercises the borrower VPFI discount mechanism end-to-end
@@ -185,11 +186,13 @@ contract VPFIDiscountFacetTest is SetupTest {
 
         // The holder payout of 40 VPFI from the holder's own vault.
         vm.recordLogs();
+        LibTestGuard.hold(address(diamond));
         vm.prank(address(diamond));
         VaultOutflowFacet(address(diamond)).vaultOutflowArgs(
             borrower, uint8(VaultOutflowTypes.AssetKind.ERC20), address(vpfiToken), 0, 40 ether, address(0),
             uint8(VaultOutflowTypes.OutflowClass.PositionHolder), loanId, l.lenderTokenId, OutflowReason.CLAIM
         );
+        LibTestGuard.release(address(diamond));
 
         (uint40 start1, uint16 day1, uint120 close1, uint120 min1) =
             TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(borrower);
@@ -231,11 +234,13 @@ contract VPFIDiscountFacetTest is SetupTest {
         LibTestPositionNFT.core(address(diamond)).mint(lender, l.lenderTokenId); // another owner holds it
 
         vm.recordLogs();
+        LibTestGuard.hold(address(diamond));
         vm.prank(address(diamond));
         VaultOutflowFacet(address(diamond)).vaultOutflowArgs(
             borrower, uint8(VaultOutflowTypes.AssetKind.ERC20), address(vpfiToken), 0, 40 ether, address(0),
             uint8(VaultOutflowTypes.OutflowClass.PositionHolder), loanId, l.lenderTokenId, OutflowReason.CLAIM
         );
+        LibTestGuard.release(address(diamond));
         assertEq(_vpfiDebits(vm.getRecordedLogs()), 40 ether, "one retention debit, for what left the vault");
     }
 

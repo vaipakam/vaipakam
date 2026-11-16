@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {ERC165Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/introspection/ERC165Upgradeable.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -43,8 +42,10 @@ interface IVaultOwnerView {
  * @notice The code every per-user vault runs, resolved through the VaultBeacon (#3204).
  * @dev Each vault is a `BeaconProxy`; the code it runs changes only through the
  *      beacon's timelocked registration and the owner's own pin, never through
- *      an upgrade entry on the vault. Ownable (owned by the Diamond) gates the
- *      deposit entry.
+ *      an upgrade entry on the vault. One rule says who may move assets:
+ *      only the Diamond recorded at creation ({onlyDiamond}); the vault
+ *      calls none of its own gated entries, so it is not trusted itself
+ *      (#3432).
  *      It handles ERC20 deposits and NFT (ERC721/1155) deposits. Every movement
  *      OUT passes {transferOut} or {grantAllowance}, which check the
  *      destination themselves (#3205 part 2, `VaultOutflowPolicyDesign.md` §3).
@@ -52,13 +53,19 @@ interface IVaultOwnerView {
  *      Implements IERC721Receiver and IERC1155Receiver for safe transfers.
  *      For ERC721 rentals: Vault calls setUser without necessarily holding the NFT (assumes operator approval).
  *      For ERC1155: Holds tokens, calls setUser if the contract supports IERC4907 (try-catch to handle non-support).
- *      Custom errors for gas efficiency. No reentrancy as asset ops are atomic.
- *      A proxy's initialize sets its owner to the Diamond; the implementation itself
- *      is never initialized (its constructor disables that, #905).
+ *      Custom errors for gas efficiency.
+ *      Reentrancy: an NFT outflow calls the receiver's hook and a grant hands
+ *      control to its spender, so asset moves are NOT atomic by themselves.
+ *      The vault carries no guard of its own; every gated entry is reached
+ *      only from a Diamond path that holds the Diamond's reentrancy guard,
+ *      and a hook that re-enters the Diamond is refused there (#3432;
+ *      `VaultReentrancyTest` holds it for the outflow and grant entries).
+ *      A proxy's initialize records the Diamond and the owner wallet; the
+ *      implementation itself is never initialized (its constructor disables
+ *      that, #905).
  *      Expand for Phase 2 (e.g., multi-asset batches).
  */
 contract VaipakamVaultImplementation is
-    OwnableUpgradeable,
     ERC165Upgradeable,
     IERC721Receiver,
     IERC1155Receiver
@@ -102,7 +109,7 @@ contract VaipakamVaultImplementation is
     ///      list of concurrent rentals so ERC-1155 can expose the active
     ///      aggregate quantity and the minimum active expiry. ERC-721
     ///      rentals always collapse to a single entry with quantity = 1.
-    ///      Storage kept at the tail of the layout for UUPS-upgrade safety.
+    ///      Storage kept at the tail of the layout so a new vault version registered on the beacon keeps it.
     ///      `rentalId` (#902) keys an ERC-1155 row to the one rental (the
     ///      Diamond's loan id) it records, so concurrent rentals of the same
     ///      token are separate rows and closing one leaves the others; it is
@@ -155,13 +162,11 @@ contract VaipakamVaultImplementation is
     ///      Storage layout note: appended to the tail of the
     ///      pre-gap layout, paired with a corresponding decrement
     ///      of `__gap` below to keep the overall slot footprint
-    ///      constant across UUPS upgrades.
+    ///      constant across vault versions.
     mapping(bytes32 => address) private _listingExecutor;
 
     // Custom errors for clarity and gas efficiency.
-    /// @dev Caller is not the Diamond (or this contract itself via
-    ///      self-call). Replaces the prior string revert
-    ///      `"Only Diamond can execute"`.
+    /// @dev Caller is not the Diamond this vault recorded at creation.
     error NotAuthorized();
     error InvalidAmount();
     error TransferFailed();
@@ -185,16 +190,15 @@ contract VaipakamVaultImplementation is
     ///      ledger entry and could only be recovered by an admin sweep.
     error UnauthorizedNFTSender();
 
-    /// @dev Shared check for every function that must be callable only by
-    ///      the owning Diamond (or via a controlled self-call). Consolidates
-    ///      the repeated `msg.sender == diamond || msg.sender == address(this)`
-    ///      guard into one site so any future hardening (e.g. routing via
-    ///      a dedicated facet) only has to change here.
+    /// @dev The one check for "who may call the vault": the Diamond recorded
+    ///      at creation, and nothing else (#3432). The vault never calls its
+    ///      own gated entries, so it is not exempt; a future entry that needs
+    ///      a self-call must name that one call rather than widen this rule.
     /// @dev Extracted modifier body to keep the modifier itself a thin
     ///      wrapper — every call site inlines the modifier, so the
     ///      check living in a private function dedupes the bytecode.
     function _checkDiamond() private view {
-        if (msg.sender != diamond && msg.sender != address(this)) {
+        if (msg.sender != diamond) {
             revert NotAuthorized();
         }
     }
@@ -208,9 +212,8 @@ contract VaipakamVaultImplementation is
      * @notice Locks the implementation contract itself (#905).
      * @dev Only a proxy is ever initialized. The implementation's own
      *      storage is never used, so its initializer is disabled at
-     *      construction: nobody can call `initialize` on it to become its
-     *      owner, whatever path deployed it, and with no owner nobody can
-     *      reach `_authorizeUpgrade` on it either. This used to depend on
+     *      construction: nobody can call `initialize` on it to name a
+     *      Diamond of their choosing, whatever path deployed it. This used to depend on
      *      every deployer remembering to initialize the template in the
      *      same transaction; `upgradeVaultImplementation` checks only that
      *      the new implementation has code, so a template deployed without
@@ -247,7 +250,7 @@ contract VaipakamVaultImplementation is
 
     /**
      * @notice Initializes one user's vault proxy.
-     * @dev Sets the owner to the Diamond. Called once, by the factory, in
+     * @dev Records the Diamond and the owner wallet. Called once, by the factory, in
      *      the proxy's construction ({VaultFactoryFacet.getOrCreateUserVault}).
      *      Never callable on the implementation itself (see the constructor).
      */
@@ -255,7 +258,6 @@ contract VaipakamVaultImplementation is
         address diamondAddress,
         address vaultOwnerWallet
     ) external initializer {
-        __Ownable_init(diamondAddress); // Diamond as owner
         __ERC165_init();
         diamond = diamondAddress;
         ownerWallet = vaultOwnerWallet;
@@ -276,12 +278,12 @@ contract VaipakamVaultImplementation is
 
     /**
      * @notice Deposits ERC-20 tokens into this vault.
-     * @dev Safe transfer from caller. Callable by owner (Diamond/facets).
+     * @dev Safe transfer from the Diamond, which pulled the tokens first.
      * @param token The ERC-20 token address.
      * @param amount The amount to deposit.
      */
     // forge-lint: disable-next-line(mixed-case-function)
-    function depositERC20(address token, uint256 amount) external onlyOwner {
+    function depositERC20(address token, uint256 amount) external onlyDiamond {
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
     }
 
