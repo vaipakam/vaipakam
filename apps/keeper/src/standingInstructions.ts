@@ -204,6 +204,15 @@ export interface ReserveView {
   interestNow: bigint;
   repayDue: bigint;
   repayShortBy: bigint;
+  /** The skip the contract would make of a top-up now, before the reserve
+   *  and price checks (a `SKIP_REASONS` code; 0 = none). */
+  topUpSkipNow: number;
+  /** The same for the interest and repayment instructions, which share the
+   *  payment asset. */
+  paymentSkipNow: number;
+  /** The loan's borrower record is not the current holder yet. A top-up
+   *  consolidates first, so this alone holds nothing back. */
+  consolidationPending: boolean;
 }
 
 /** The loan's effective due date and grace end (`getLoanDeadlines`). */
@@ -217,6 +226,9 @@ export interface Deadlines {
 export interface LoanVerdict {
   send: Step[];
   held: { step: Step; why: string }[];
+  /** Due instructions held because the view predicts the contract's skip,
+   *  with its `SKIP_REASONS` code. */
+  skipped: { step: Step; code: number }[];
 }
 
 /**
@@ -227,7 +239,7 @@ export interface LoanVerdict {
  * it closes the loan.
  */
 export function loanVerdict(v: ReserveView, d: Deadlines | null, now: bigint, interval: bigint): LoanVerdict {
-  const out: LoanVerdict = { send: [], held: [] };
+  const out: LoanVerdict = { send: [], held: [], skipped: [] };
   const i = v.instructions;
   if (i.owner === zeroAddress) return out;
   const wants: Step[] = [];
@@ -247,10 +259,7 @@ export function loanVerdict(v: ReserveView, d: Deadlines | null, now: bigint, in
       const from = d.maturity > lead ? d.maturity - lead : 0n;
       if (now >= from && now <= d.graceEnd && BigInt(v.repayDue) > 0n) {
         if (BigInt(v.repayShortBy) > 0n) out.held.push({ step: 'repay', why: `the payment reserve is ${v.repayShortBy} short of the ${v.repayDue} due` });
-        else {
-          out.send.push('repay');
-          return out;
-        }
+        else out.send.push('repay');
       }
     }
   }
@@ -270,6 +279,22 @@ export function loanVerdict(v: ReserveView, d: Deadlines | null, now: bigint, in
     if (BigInt(v.interestNow) > 0n) out.send.push('interest');
     else if (BigInt(v.interestShortfall) > 0n && BigInt(v.paymentReserve) === 0n) out.held.push({ step: 'interest', why: 'the payment reserve is empty' });
   }
+  // A call the view says the contract would only skip is held instead of
+  // sent, so it costs no gas; the borrower is told as for a landed skip.
+  // Not-consolidated is not predictable (a top-up consolidates first) and is
+  // left to the receipt.
+  const due = out.send;
+  out.send = [];
+  for (const step of due) {
+    const code = Number(step === 'topUp' ? v.topUpSkipNow : v.paymentSkipNow);
+    if (code === 0) out.send.push(step);
+    else {
+      out.held.push({ step, why: `the contract would skip it: ${SKIP_REASONS.get(code) ?? `skip reason ${code}`}` });
+      out.skipped.push({ step, code });
+    }
+  }
+  // A repayment closes the loan, so it goes alone.
+  if (out.send.includes('repay')) out.send = ['repay'];
   return out;
 }
 
@@ -847,6 +872,11 @@ async function runInstructions(
       if (deps.notify !== undefined) notices.push(...lowReserveNotices(id, view, d, now, periodEnds.get(id) ?? null));
       const verdict = loanVerdict(view, d, now, interval);
       for (const h of verdict.held) if (deps.armed.has(h.step)) report.held.push(`${h.step} loan ${id}: ${h.why}`);
+      if (deps.notify !== undefined) {
+        for (const k of verdict.skipped) {
+          if (deps.armed.has(k.step)) notices.push({ key: `skip:${k.step}:${id}:${k.code}`, every: SKIP_EVERY_SEC, loanId: id, owner, kind: 'skip', instruction: k.step, code: k.code, missing: null });
+        }
+      }
       for (const step of verdict.send) {
         if (!deps.armed.has(step)) continue;
         const until = holds.get(`${step}:${id}`);

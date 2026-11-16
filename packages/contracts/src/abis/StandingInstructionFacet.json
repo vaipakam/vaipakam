@@ -152,6 +152,21 @@
             "name": "repayShortBy",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "topUpSkipNow",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "paymentSkipNow",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "consolidationPending",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }

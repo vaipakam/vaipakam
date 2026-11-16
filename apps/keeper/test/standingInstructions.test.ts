@@ -85,7 +85,9 @@ interface FakeLoan {
   repayDue: bigint;
   maturity: bigint;
   graceEnd: bigint;
-  /** A skip the view cannot see (a live sale, a locked account), by code. */
+  /** A skip the view predicts (a live sale, a pause, a locked account), by code. */
+  viewSkip: number;
+  /** A skip the view cannot predict (not yet consolidated), by code. */
   hiddenSkip: number;
 }
 
@@ -109,6 +111,7 @@ const loan = (over: Partial<FakeLoan> = {}): FakeLoan => ({
   repayDue: 5_000n,
   maturity: NOW + 30n * 24n * HOUR,
   graceEnd: NOW + 31n * 24n * HOUR,
+  viewSkip: 0,
   hiddenSkip: 0,
   ...over,
 });
@@ -153,6 +156,9 @@ class FakeDiamond {
       interestNow: 0n,
       repayDue: 0n,
       repayShortBy: 0n,
+      topUpSkipNow: 0,
+      paymentSkipNow: 0,
+      consolidationPending: false,
     };
     if (!l.active) return v;
     v.ownerHoldsPosition = l.owner !== zeroAddress && l.holder === l.owner;
@@ -162,6 +168,11 @@ class FakeDiamond {
     if (this.now >= l.periodEnd) v.interestNow = l.interestShortfall < v.paymentReserve ? l.interestShortfall : v.paymentReserve;
     v.repayDue = l.repayDue;
     v.repayShortBy = l.repayDue > v.paymentReserve ? l.repayDue - v.paymentReserve : 0n;
+    if (mine) {
+      v.topUpSkipNow = l.viewSkip;
+      v.paymentSkipNow = l.viewSkip;
+      v.consolidationPending = l.hiddenSkip === 8;
+    }
     return v;
   }
 
@@ -213,7 +224,7 @@ class FakeDiamond {
       if (l.trigger === 0n) throw revert('StandingInstructionNotSet', [id, 1]);
       if (!l.active) throw revert('LoanNotActive');
       if (l.lastTopUpAt !== 0n && this.now < l.lastTopUpAt + this.interval) throw revert('TopUpTooSoon', [id, l.lastTopUpAt + this.interval]);
-      const skip = l.holder !== l.owner ? 1 : l.hiddenSkip || (l.collateralReserve === 0n ? 2 : !l.priceKnown ? 5 : 0);
+      const skip = l.holder !== l.owner ? 1 : (l.viewSkip || l.hiddenSkip) || (l.collateralReserve === 0n ? 2 : !l.priceKnown ? 5 : 0);
       if (skip !== 0) return () => this.skip(id, 1, skip);
       if (l.hf >= l.trigger) throw revert('LoanHealthAboveTrigger', [id, l.hf, l.trigger]);
       return () => {
@@ -231,7 +242,7 @@ class FakeDiamond {
       if (!l.active) throw revert('LoanNotActive');
       if (this.now < l.periodEnd) throw revert('StandingInstructionNotDue', [id, 2, l.periodEnd]);
       if (l.interestShortfall === 0n) throw revert('NothingOwed', [id]);
-      const skip = l.holder !== l.owner ? 1 : l.hiddenSkip || (l.paymentReserve === 0n ? 2 : 0);
+      const skip = l.holder !== l.owner ? 1 : (l.viewSkip || l.hiddenSkip) || (l.paymentReserve === 0n ? 2 : 0);
       if (skip !== 0) return () => this.skip(id, 2, skip);
       return () => {
         const amount = l.interestShortfall < l.paymentReserve ? l.interestShortfall : l.paymentReserve;
@@ -247,7 +258,7 @@ class FakeDiamond {
       const from = l.maturity > l.lead ? l.maturity - l.lead : 0n;
       if (this.now < from) throw revert('StandingInstructionNotDue', [id, 3, from]);
       if (this.now > l.graceEnd) throw revert('StandingInstructionWindowClosed', [id, 3]);
-      let skip = l.holder !== l.owner ? 1 : l.hiddenSkip;
+      let skip = l.holder !== l.owner ? 1 : l.viewSkip || l.hiddenSkip;
       if (skip === 0 && l.paymentReserve === 0n) skip = 2;
       if (skip === 0 && l.paymentReserve < l.repayDue) return () => this.skip(id, 3, 3, l.repayDue - l.paymentReserve);
       if (skip !== 0) return () => this.skip(id, 3, skip);
@@ -535,12 +546,12 @@ describe('a run', () => {
   });
 
   it('reads a skip the view cannot see from the receipt, and holds that instruction before trying again', async () => {
-    add(1n, loan({ ...underTrigger, hiddenSkip: 4 }));
+    add(1n, loan({ ...underTrigger, hiddenSkip: 8 }));
     const first = await run();
     expect(sent()).toEqual(['runCollateralTopUp(1)']);
     expect(first.ran).toEqual([]);
-    expect(first.skips).toEqual([{ step: 'topUp', loanId: 1n, reason: 'a sale, offset, refinance or intent is live on the loan' }]);
-    expect(describeReport(first)).toContain('skipped-by-contract=topUp:1(a sale, offset, refinance or intent is live on the loan)');
+    expect(first.skips).toEqual([{ step: 'topUp', loanId: 1n, reason: "the collateral has not yet moved to the new holder's vault" }]);
+    expect(describeReport(first)).toContain("skipped-by-contract=topUp:1(the collateral has not yet moved to the new holder's vault)");
     const until = NOW + BigInt(SKIP_HOLD_SEC);
     expect((await cursors.get([HOLDS_ITEM])).get(HOLDS_ITEM)).toBe(encodeHolds(new Map([['topUp:1', until]])));
 
@@ -554,6 +565,21 @@ describe('a run', () => {
     expect(sent()).toEqual(['runCollateralTopUp(1)', 'runCollateralTopUp(1)']);
     expect(third.ran).toHaveLength(1);
     expect((await cursors.get([HOLDS_ITEM])).get(HOLDS_ITEM), 'the lapsed hold is dropped').toBe('{}');
+  });
+
+  it('holds, without sending, a due call the view says the contract would skip', async () => {
+    add(1n, loan({ ...underTrigger, viewSkip: 4 }));
+    add(2n, loan({ payInterest: true, paymentReserve: 100n, interestShortfall: 50n, periodEnd: NOW, viewSkip: 7 }));
+    const r = await run();
+    expect(sent()).toEqual([]);
+    expect(d.simulated).toEqual([]);
+    expect(r.held).toEqual([
+      'topUp loan 1: the contract would skip it: a sale, offset, refinance or intent is live on the loan',
+      "interest loan 2: the contract would skip it: the borrower's account is locked",
+    ]);
+    d.loans.get(1n)!.viewSkip = 0;
+    await run({ visit: 1 });
+    expect(sent(), 'no receipt hold: sent once the view clears').toEqual(['runCollateralTopUp(1)']);
   });
 
   it('sends nothing while the platform is paused', async () => {
@@ -633,19 +659,19 @@ describe('a run', () => {
     });
 
     it('tells the owner of a skip once a day, and of a short repayment reserve from three days before the window', async () => {
-      add(1n, loan({ ...underTrigger, hiddenSkip: 7 }));
+      add(1n, loan({ ...underTrigger, viewSkip: 7 }));
       add(2n, loan({ repayAtDue: true, paymentReserve: 4_000n, maturity: NOW + BigInt(LOW_WARN_SEC) }));
       await run({ notify });
       expect(inbox.map((a) => a.alert)).toEqual([
-        { kind: 'standingReserveLow', loanId: 2, instruction: 'repay', missing: expect.stringMatching(/^0\.001 USDC/), dueAt: Number(NOW + BigInt(LOW_WARN_SEC)) },
         { kind: 'standingSkipped', loanId: 1, instruction: 'topUp', reason: 'accountLocked', missing: null },
+        { kind: 'standingReserveLow', loanId: 2, instruction: 'repay', missing: expect.stringMatching(/^0\.001 USDC/), dueAt: Number(NOW + BigInt(LOW_WARN_SEC)) },
       ]);
       d.now = NOW + 31n * 60n; // past the skip hold, inside the day
       await run({ notify, visit: 1 });
       expect(inbox, 'both throttled for the day').toHaveLength(2);
       d.now = NOW + 24n * HOUR;
       await run({ notify, visit: 2 });
-      expect(inbox.map((a) => a.alert.kind)).toEqual(['standingReserveLow', 'standingSkipped', 'standingReserveLow', 'standingSkipped']);
+      expect(inbox.map((a) => a.alert.kind)).toEqual(['standingSkipped', 'standingReserveLow', 'standingSkipped', 'standingReserveLow']);
     });
 
     it('sends again next run what no channel took', async () => {
