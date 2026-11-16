@@ -1766,6 +1766,52 @@ above. Each resolves here, so a route reviewer needs no private file:
   what left or reached the wallet. The why-match panel's rate gap links to
   this flow filled in with the rate that closes the gap: the bound of the
   reader's range on the counterparty's side moves to their nearest bound.
+- **RB-AUTOLEND** — the Lend page asks once how a lend runs (#3624,
+  IdleLiquidityMatchingDesign §4a): a one-time offer, or "keep lending when
+  repaid", which sets up Auto-lend, the lender's standing intent. Auto-lend is
+  the intent everywhere in the app; the old auto-post-on-deposit switch is
+  named as unused in the console and is not built on (#3691). The option is
+  closed, with the reason, while the protocol is paused or matching or the
+  intent switch is off, and when the pair already carries an intent (shown on
+  Positions); an unread switch leaves it open and the review reads it again.
+  The form parses every figure exactly and checks the term against the
+  network's maximum; an end date is a local day, refused before today. The
+  review is read at one block and is the protocol's dry run of `setLenderIntent`
+  and `fundLenderIntent` batched through the multicall, from the wallet: the
+  terms alone while the allowance does not cover the amount, the whole batch
+  after an exact approval. It states every bound figure (the smallest loan
+  resolved from the network floor, or said to be unread), the first fill
+  time after the terms-age wait, and the consequences: nothing promises a
+  fill, the collateral is sized at fill prices, repaid money is lent again
+  until stopped or the end date, the money stays in the wallet's own vault,
+  the end-date copy follows AutoLendLendUntilDesign §3 ("no new loan will be
+  agreed to run past" it, never a return date), and pro-rata follows §9. The
+  matcher pass's state is disclosed, and so is whether the protocol's keeper
+  may roll repaid loans for the wallet (keeper access and the auto-roll
+  action): without it repaid money comes back as a claim, and the review says
+  so instead of promising relending; with it, the review still says the
+  keeper re-lends only a repayment worth a hundred times its fee (and none
+  while it cannot price the fee), a skipped one waiting as a claim; a VPFI lend is never rolled, and the
+  review says that whatever the keeper settings. The smallest loan defaults
+  to a tenth of what can be lent from the start (the funding or the most at
+  once, whichever is smaller), and one above the funding is refused, since
+  no fill can exceed the money set aside. The review reads the protocol's
+  own loan-start bound for the pair (`initRiskBounds`, valued with
+  `getNumeraireValue`) and refuses a ceiling above it at today's prices, or
+  any setup when the network opens no loan against the collateral; an
+  unread bound is stated. A risk-access step a fill would need
+  (the level, the illiquid pair consent, the strict acknowledgement) is
+  offered before the setup, since the protocol checks it at each fill. A
+  failed re-read on Positions is stated beside the figures it kept. The
+  terms and the money go in one transaction, so neither lands alone; an
+  unused approval is put back. The finish card measures the set and funded
+  events and the token's move into the vault. Positions lists each intent
+  with its waiting amount, the amount counted against its most at once (each
+  loan counts in full until its repayment is claimed or lent again, so it is
+  never called "lent now"), and its state; above the cards it reads the
+  same fill gates at the same block and says when the network does not fill
+  Auto-lend now (paused, switched off, the service paused, or unread) (lending, ended, stopped);
+  changing, funding, withdrawing and stopping follow in the next part.
 - **RB-PRICE-GUARD** — the maker's price-move guard (#3358) is shown on the
   page of an open or ended loan offer of a token against token collateral.
   Read at the offer's own block, it states the limit, when it was set, and whether

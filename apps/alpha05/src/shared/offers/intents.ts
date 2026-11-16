@@ -99,6 +99,24 @@ export function intentMatching(r: Pick<IntentsRead, 'closed' | 'pausedOwners'>):
   return 'on';
 }
 
+/** Every gate in {@link INTENT_GATES}, read at `blockNumber`: true when it
+ *  is closed, null when it could not be read. One reading for the borrow
+ *  side's standing lenders and the lender's own Auto-lend setup, so the two
+ *  never disagree on whether intents fill. */
+export async function readIntentGates(client: PublicClient, diamond: Hex, blockNumber: bigint): Promise<Record<IntentGate, boolean | null>> {
+  const gateKeys = Object.keys(INTENT_GATES) as IntentGate[];
+  const values = await Promise.all(
+    gateKeys.map((k) => {
+      const g = INTENT_GATES[k];
+      return (client.readContract({ address: diamond, abi: GATE_ABI[g.abi], functionName: g.fn, blockNumber }) as Promise<boolean>).then(
+        (v) => v === g.closedWhen,
+        (): boolean | null => null,
+      );
+    }),
+  );
+  return Object.fromEntries(gateKeys.map((k, i) => [k, values[i]])) as Record<IntentGate, boolean | null>;
+}
+
 /**
  * Reads the network's active lender intents, up to the view's cap, and
  * every gate a fill against them passes. Everything is read at one block:
@@ -111,16 +129,7 @@ export async function readLenderIntents(client: PublicClient, diamond: Hex): Pro
   const atRead = client.getBlock({ blockNumber }).then((b) => b.timestamp);
   const read = <T>(abi: Abi, functionName: string, args?: readonly unknown[]) =>
     client.readContract({ address: diamond, abi, functionName, args, blockNumber }) as Promise<T>;
-  const gateKeys = Object.keys(INTENT_GATES) as IntentGate[];
-  const gatesRead = Promise.all(
-    gateKeys.map((k) => {
-      const g = INTENT_GATES[k];
-      return read<boolean>(GATE_ABI[g.abi], g.fn).then(
-        (v) => v === g.closedWhen,
-        (): boolean | null => null,
-      );
-    }),
-  );
+  const gatesRead = readIntentGates(client, diamond, blockNumber);
   const intents: IntentSummary[] = [];
   let total = 0n;
   let scanned = 0;
@@ -135,8 +144,7 @@ export async function readLenderIntents(client: PublicClient, diamond: Hex): Pro
     scanned = Number(all < offset + BigInt(INTENT_PAGE) ? all : offset + BigInt(INTENT_PAGE));
     if (BigInt(scanned) >= all) break;
   }
-  const values = await gatesRead;
-  const closed = Object.fromEntries(gateKeys.map((k, i) => [k, values[i]])) as Record<IntentGate, boolean | null>;
+  const closed = await gatesRead;
   let pausedOwners: string[] | null = [];
   if (closed.aggregators === true) {
     const owners = [...new Set(intents.map((i) => i.owner.toLowerCase()))];
