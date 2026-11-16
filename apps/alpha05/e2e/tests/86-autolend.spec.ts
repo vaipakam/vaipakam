@@ -259,3 +259,91 @@ test('on Positions a lender adds money, takes back money not lent, and stops, ea
   await stop.getByRole('button', { name: 'Close' }).click();
   await expect(page.getByTestId('autolend-card')).toHaveCount(0, { timeout: 60_000 });
 });
+
+test('on Positions a lender changes the limits, stops keeping money set aside, and starts again with more', async ({ launchWallet }) => {
+  const sc = scenario();
+  const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;
+  const lender = accountFor('lender').address;
+  await sc.diamondWrite('admin', 'setPartialFillEnabled', [true]);
+  await sc.diamondWrite('admin', 'setLenderIntentEnabled', [true]);
+  await sc.write('lender', WETH, WETH_ABI, 'deposit', [], parseEther('1'));
+  await sc.write('lender', WETH, erc20Abi, 'approve', [sc.diamond, parseEther('0.5')]);
+  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, parseEther('1'), 500n, 5000, 30, parseEther('0.05'), false, 0n, false, true, await txDeadline(sc)]);
+  await sc.diamondWrite('lender', 'fundLenderIntent', [WETH, tliq, parseEther('0.5')]);
+  const capital = () => sc.read<bigint>('getLenderIntentCapital', [lender, WETH, tliq]);
+  const stored = () => sc.read<StoredIntent>('getLenderIntent', [lender, WETH, tliq]);
+  const firstSetAt = (await stored()).termsSetAt;
+
+  const { page, flags } = await launchWallet('lender');
+  await page.goto('/positions');
+  await connectWallet(page);
+  const card = page.getByTestId('autolend-card');
+  await expect(card).toHaveAttribute('data-state', 'active', { timeout: 60_000 });
+
+  // Change: the form opens on the recorded limits; only the rate moves.
+  await card.getByTestId('autolend-change').click();
+  const form = card.getByTestId('autolend-form');
+  await expect(form).toContainText('Change Auto-lend');
+  await expect(card.getByTestId('autolend-rate')).toHaveValue('5');
+  await expect(card.getByTestId('autolend-ltv')).toHaveValue('50');
+  await expect(card.getByTestId('autolend-days')).toHaveValue('30');
+  await expect(card.getByTestId('autolend-amount')).toHaveValue('');
+  await card.getByTestId('autolend-rate').fill('6');
+  await fitsWidth(page);
+  await card.getByTestId('autolend-review').click();
+  const setup = card.getByTestId('autolend-setup');
+  const receipt = setup.locator('.receipt');
+  await expect(receipt).toContainText('Change Auto-lend', { timeout: 60_000 });
+  await expect(receipt).toContainText('Nothing: no money is added');
+  await expect(receipt).toContainText('6% a year');
+  await expect(receipt).toContainText('this change restarts that wait');
+  await expect(receipt).toContainText('Loans already made keep the terms they were made on');
+  await expect(receipt).toContainText('Wallet prompts: 1');
+  await fitsWidth(page);
+  await setup.getByTestId('autolend-consent').check();
+  let sent = flags.sentTransactions;
+  await setup.getByRole('button', { name: 'Confirm in wallet' }).click();
+  await expect(setup.locator('[data-phase="measured"]')).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
+  expect(flags.sentTransactions).toBe(sent + 1);
+  // The chain agrees: the new rate, the limits not typed kept as recorded,
+  // the money untouched and the wait restarted.
+  let intent = await stored();
+  expect(intent.minRateBps).toBe(600n);
+  expect(intent.maxExposure).toBe(parseEther('1'));
+  expect(intent.minFillAmount).toBe(parseEther('0.05'));
+  expect(intent.termsSetAt > firstSetAt).toBe(true);
+  expect(await capital()).toBe(parseEther('0.5'));
+  await setup.getByRole('button', { name: 'Close' }).click();
+
+  // Stop, keeping the money set aside: the card stays, stopped.
+  await card.getByTestId('autolend-stop').click();
+  await card.getByTestId('autolend-stop-takeback').uncheck();
+  await card.getByTestId('autolend-manage-review').click();
+  const stop = card.getByTestId('autolend-manage-stop');
+  sent = flags.sentTransactions;
+  await stop.getByRole('button', { name: 'Confirm in wallet' }).click({ timeout: 60_000 });
+  await expect(stop.locator('[data-phase="measured"]')).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
+  await stop.getByRole('button', { name: 'Close' }).click();
+  await expect(card).toHaveAttribute('data-state', 'stopped', { timeout: 60_000 });
+
+  // Start again, adding money in the same step.
+  await card.getByTestId('autolend-change').click();
+  await expect(card.getByTestId('autolend-form')).toContainText('Start Auto-lend again');
+  await card.getByTestId('autolend-amount').fill('0.1');
+  await card.getByTestId('autolend-review').click();
+  const again = card.getByTestId('autolend-setup');
+  await expect(again.locator('.receipt')).toContainText('This starts the Auto-lend again', { timeout: 60_000 });
+  await expect(again.locator('.receipt')).toContainText('Added from your wallet to your own vault');
+  await expect(again.locator('.receipt')).toContainText('Wallet prompts: 2');
+  await again.getByTestId('autolend-consent').check();
+  sent = flags.sentTransactions;
+  await again.getByRole('button', { name: 'Confirm in wallet' }).click();
+  await expect(again.locator('[data-phase="measured"]')).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
+  expect(flags.sentTransactions).toBe(sent + 2);
+  intent = await stored();
+  expect(intent.active).toBe(true);
+  expect(intent.minRateBps).toBe(600n);
+  expect(await capital()).toBe(parseEther('0.6'));
+  await again.getByRole('button', { name: 'Close' }).click();
+  await expect(card).toHaveAttribute('data-state', 'active', { timeout: 60_000 });
+});

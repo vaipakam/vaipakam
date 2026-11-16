@@ -3,19 +3,23 @@ import { decodeFunctionData, encodeEventTopics, encodeAbiParameters, type Abi, t
 import { MulticallFacetABI } from '@vaipakam/contracts/abis';
 import {
   autoLendDraft,
+  bpsText,
   DEFAULT_AUTOLEND_INPUT,
   earliestLendUntil,
   fillPosture,
+  inputFromIntent,
   INTENT,
   ltvCapBlock,
   lendUntilSeconds,
   localToday,
   parseAutoLend,
   resolvedMinFill,
+  setAsideAfter,
   setupBlocks,
   setupCall,
   setupLogs,
   type AutoLendInput,
+  type IntentRecord,
   type SetupFacts,
 } from './autoLend';
 import { autoLendOption } from './lendChoice';
@@ -38,11 +42,38 @@ const parsed = (over: Partial<AutoLendInput> = {}, advanced = false) => {
   return p.parsed;
 };
 
+const NONE: IntentRecord = {
+  active: false,
+  maxExposure: 0n,
+  minRateBps: 0n,
+  maxInitLtvBps: 0,
+  maxDurationDays: 0,
+  minFillAmount: 0n,
+  requiresKeeperAuth: false,
+  termsSetAt: 0n,
+  lendUntil: 0n,
+  acceptsProRata: false,
+};
+const RECORD: IntentRecord = {
+  ...NONE,
+  active: true,
+  maxExposure: 2000n * E6,
+  minRateBps: 550n,
+  maxInitLtvBps: 6000,
+  maxDurationDays: 60,
+  minFillAmount: 200n * E6,
+  termsSetAt: NOW - DAY,
+};
+
 function facts(over: Partial<SetupFacts> = {}): SetupFacts {
   return {
     blockNumber: 10n,
     chainNow: NOW,
     existing: null,
+    record: NONE,
+    unlent: 0n,
+    lent: 0n,
+    priority: false,
     minFillValue: 10n * 10n ** 18n,
     floor: 10n * E6,
     minTermsAgeSec: 3600n,
@@ -153,7 +184,7 @@ describe('what stops a setup before any dry run', () => {
 describe('the setup call', () => {
   it('sends the terms and the funding as one batch, every step required, terms first', () => {
     const d = autoLendDraft(USDC, WETH, parsed({ proRata: true, lendUntil: '2027-03-01' }));
-    const call = setupCall(d, 100n * E6, 99n);
+    const call = setupCall(d, 100n * E6, 99n, null);
     expect(call.functionName).toBe('multicall');
     const steps = call.args[0] as readonly { callData: Hex; allowFailure: boolean }[];
     expect(steps.map((s) => s.allowFailure)).toEqual([false, false]);
@@ -169,8 +200,57 @@ describe('the setup call', () => {
   });
 
   it('sends the terms alone for the dry run that comes before an approval', () => {
-    const call = setupCall(autoLendDraft(USDC, WETH, parsed()), 100n * E6, 99n, true);
+    const call = setupCall(autoLendDraft(USDC, WETH, parsed()), 100n * E6, 99n, null, true);
     expect(call.functionName).toBe('setLenderIntent');
+  });
+});
+
+describe('a change of an Auto-lend', () => {
+  const change = (over: Partial<AutoLendInput> = {}, advanced = false) => {
+    const p = parseAutoLend(input({ amount: '', ...over }), 6, 365, advanced, '2027-01-10', true);
+    if (!p.ok) throw new Error(JSON.stringify(p.errors));
+    return autoLendDraft(USDC, WETH, p.parsed, true);
+  };
+
+  it('may add nothing: an empty or zero amount adds none, and sends the terms alone', () => {
+    expect(change().parsed.fund).toBe(0n);
+    expect(change({ amount: '0' }).parsed.fund).toBe(0n);
+    const call = setupCall(change(), 200n * E6, 99n, RECORD);
+    expect(call.functionName).toBe('setLenderIntent');
+    // The recorded most at once and the fill restriction are kept.
+    expect(call.args[2]).toBe(2000n * E6);
+    expect(call.args[7]).toBe(false);
+    expect(setupCall(change(), 200n * E6, 99n, { ...RECORD, requiresKeeperAuth: true }).args[7]).toBe(true);
+  });
+
+  it('adds money in the same batch when an amount is typed', () => {
+    const call = setupCall(change({ amount: '50' }), 200n * E6, 99n, RECORD);
+    expect(call.functionName).toBe('multicall');
+  });
+
+  it('keeps the recorded smallest loan unless one is typed', () => {
+    expect(resolvedMinFill(change().parsed, 10n * E6, RECORD)).toBe(200n * E6);
+    expect(resolvedMinFill(change({ minFill: '300' }, true).parsed, 10n * E6, RECORD)).toBe(300n * E6);
+  });
+
+  it('counts the money already waiting, and refuses a pair with nothing to change', () => {
+    const f = facts({ record: RECORD, existing: RECORD, unlent: 150n * E6 });
+    expect(setAsideAfter(change({ amount: '100' }), f)).toBe(250n * E6);
+    expect(setupBlocks(change(), f)).toEqual([{ kind: 'minAboveFund', minFill: 200n * E6 }]);
+    expect(setupBlocks(change({ amount: '100' }), f)).toEqual([]);
+    expect(setupBlocks(change(), facts()).map((b) => b.kind)).toContain('missing');
+  });
+
+  it('refuses a smallest loan above a kept most at once', () => {
+    const f = facts({ record: RECORD, existing: RECORD, unlent: 5000n * E6 });
+    expect(setupBlocks(change({ minFill: '2500' }, true), f)).toEqual([{ kind: 'minAboveExposure', minFill: 2500n * E6 }]);
+  });
+
+  it('opens the form on the recorded limits, exactly', () => {
+    const i = inputFromIntent({ ...RECORD, lendUntil: 0n }, 6);
+    expect(i).toMatchObject({ amount: '', rate: '5.5', ltv: '60', days: '60', lendUntil: '', exposure: '2000', minFill: '200' });
+    expect(bpsText(725n)).toBe('7.25');
+    expect(bpsText(800n)).toBe('8');
   });
 });
 

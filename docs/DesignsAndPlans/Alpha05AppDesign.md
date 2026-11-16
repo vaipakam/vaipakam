@@ -1829,7 +1829,17 @@ above. Each resolves here, so a route reviewer needs no private file:
   leaves nothing set aside ends the Auto-lend and the protocol drops it from
   the wallet's list; its finish card stays, saying so, until closed. Each finish
   card measures the step from the transaction's own logs and the token's
-  moves. Changing the limits and starting again follow in the next part.
+  moves. A card also changes the limits, or starts a stopped Auto-lend
+  again: the setup's own form opens on the limits recorded now, money may be
+  added in the same transaction, and a limit not typed (the most at once, the
+  smallest loan, the keeper-only setting) keeps its recorded value. The
+  protocol replaces the terms in place, so the review states what that
+  resets: the wait before the next loan starts again even for limits kept,
+  a priority-routing opt-in is switched off (or that it could not be read),
+  loans already made keep their own terms, and a most-at-once at or below
+  the amount counted against it makes no new loan until enough loans end.
+  A smallest loan above the most at once, or above the money that would
+  wait, is refused before the dry run.
 - **RB-PRICE-GUARD** — the maker's price-move guard (#3358) is shown on the
   page of an open or ended loan offer of a token against token collateral.
   Read at the offer's own block, it states the limit, when it was set, and whether
