@@ -1,3 +1,4 @@
+import type { CopyKey } from '../copy/useCopy';
 import { useCopy } from '../copy/useCopy';
 import { bpsPercent } from '../offers/priceGuard';
 import { assetName, tokenAmount, useTokenMeta } from '../reads/tokens';
@@ -5,7 +6,12 @@ import { useOwnRead } from '../reads/useOwnRead';
 import { useOwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
 import { OwnStamp } from '../ui/OwnStamp';
-import { autoLendState, readMyAutoLend, sortMyAutoLend } from './myAutoLend';
+import { autoLendState, readMyAutoLend, sortMyAutoLend, type MyAutoLend, type AutoLendState } from './myAutoLend';
+import { AutoLendManage, useManageOpen, useOpenManages, type OpenManage } from './AutoLendManage';
+import { manageOffers, type ManageKind } from './manage';
+import type { OwnStateClient } from '../../chain/ownRail';
+import type { SupportedChain } from '../../chain/chains';
+import type { TokenMetaMap } from '../reads/tokens';
 
 type Hex = `0x${string}`;
 
@@ -31,13 +37,23 @@ export function AutoLendSection() {
   const read = useOwnRead(['autolend', 'mine'], (c) => readMyAutoLend(c, diamond, own!.account), { enabled: chain !== null });
   const assets = (read.data?.rows ?? []).flatMap((r) => [r.intent.lendingAsset, r.intent.collateralAsset]);
   const meta = useTokenMeta(assets).data;
+  const who = `${own?.chainId ?? ''}:${own?.account ?? ''}`;
+  const opened = useOpenManages();
   if (read.state === 'reading' && read.data === null) return <p className="tier-b">{text('autoLend.sectionReading')}</p>;
   if (read.data === null) {
     return read.state === 'failed' ? <p className="tier-a">{format('autoLend.sectionFailed', { reason: read.error ?? '' })}</p> : null;
   }
   const { rows, total, at, posture } = read.data;
   const anyLending = rows.some((r) => autoLendState(r, at) === 'active');
-  if (rows.length === 0) return null;
+  // A stop that takes back every coin tears the Auto-lend down, and the
+  // protocol drops it from the wallet's list. Its open step (the finish
+  // card, or a tracker still waiting) stays on screen until it is closed,
+  // from the record kept with the panel, not with the list.
+  const keyOf = (r: { lending: Hex; collateral: Hex }) => `${r.lending.toLowerCase()}-${r.collateral.toLowerCase()}`;
+  const live = new Set(rows.map((r) => keyOf({ lending: r.intent.lendingAsset, collateral: r.intent.collateralAsset })));
+  const gone = opened.filter((o) => o.who === who && !live.has(keyOf(o)));
+  const held = chain !== null && own !== null ? gone.map((o) => <HeldManage key={keyOf(o)} row={o} chain={chain} own={own} meta={meta ?? null} onDone={read.refetch} />) : [];
+  if (rows.length === 0) return held.length === 0 ? null : <section className="positions-section autolend-section">{held}</section>;
   const amt = (v: bigint, a: Hex) => tokenAmount(v, a, meta, format);
   return (
     <section className="positions-section autolend-section" aria-labelledby="autolend-section-title" data-testid="autolend-section">
@@ -76,12 +92,92 @@ export function AutoLendSection() {
               {i.acceptsProRata && <p className="tier-b">{text('autoLend.cardProRata')}</p>}
               {state === 'ended' && <p className="tier-a">{text('autoLend.cardEndedNote')}</p>}
               {state === 'stopped' && <p className="tier-a">{text('autoLend.cardStoppedNote')}</p>}
-              <p className="tier-b">{text('autoLend.cardManageSoon')}</p>
+              {chain !== null && own !== null && <ManageRow row={r} state={state} chain={chain} own={own} meta={meta ?? null} onDone={read.refetch} />}
+              <p className="tier-b">{text('autoLend.cardChangeSoon')}</p>
             </li>
           );
         })}
       </ul>
+      {held}
       {BigInt(rows.length) < total && <p className="tier-b">{format('autoLend.sectionMore', { shown: String(rows.length), total: total.toString() })}</p>}
     </section>
+  );
+}
+
+/** The open step of an Auto-lend that has left the wallet's list (stopped
+ *  with nothing set aside): its panel, until closed, then nothing. */
+function HeldManage({ row, chain, own, meta, onDone }: { row: OpenManage; chain: SupportedChain; own: OwnStateClient; meta: TokenMetaMap | null; onDone: () => void }) {
+  const { text, format } = useCopy();
+  const { kind, open } = useManageOpen(row.lending, row.collateral);
+  if (kind === null) return null;
+  return (
+    <div className="card autolend-card" data-testid="autolend-card" data-state="gone">
+      <h3>{format('autoLend.cardTitle', { lend: assetName(row.lending, meta), coll: assetName(row.collateral, meta) })}</h3>
+      <p className="tier-b">{text('autoLend.cardGoneNote')}</p>
+      <AutoLendManage
+        kind={kind}
+        lending={row.lending}
+        collateral={row.collateral}
+        unlent={row.unlent}
+        chain={chain}
+        own={own}
+        meta={meta}
+        onClose={() => {
+          open(null);
+          onDone();
+        }}
+      />
+    </div>
+  );
+}
+
+const MANAGE_BUTTON: Record<ManageKind, CopyKey> = { add: 'autoLend.mAddLabel', takeBack: 'autoLend.mTakeBackLabel', stop: 'autoLend.mStopLabel' };
+
+/** One card's management: the steps that fit where it stands, and the open
+ *  step's panel, kept open while its transaction is in flight. */
+function ManageRow({
+  row,
+  state,
+  chain,
+  own,
+  meta,
+  onDone,
+}: {
+  row: MyAutoLend;
+  state: AutoLendState;
+  chain: SupportedChain;
+  own: OwnStateClient;
+  meta: TokenMetaMap | null;
+  onDone: () => void;
+}) {
+  const { text } = useCopy();
+  const i = row.intent;
+  const { kind, open } = useManageOpen(i.lendingAsset, i.collateralAsset, { who: `${own.chainId}:${own.account}`, unlent: i.availableCapital });
+  const offers = manageOffers(row.active, state === 'ended', i.availableCapital);
+  if (kind !== null)
+    return (
+      <AutoLendManage
+        kind={kind}
+        lending={i.lendingAsset}
+        collateral={i.collateralAsset}
+        unlent={i.availableCapital}
+        chain={chain}
+        own={own}
+        meta={meta}
+        onClose={() => {
+          open(null);
+          onDone();
+        }}
+      />
+    );
+  if (offers.length === 0) return null;
+  return (
+    <p className="actions" data-testid="autolend-manage">
+      {offers.map((k) => (
+        <button key={k} type="button" className={k === 'stop' ? 'btn' : 'btn btn-primary'} onClick={() => open(k)} data-testid={`autolend-${k}`}>
+          {text(MANAGE_BUTTON[k])}
+        </button>
+      ))}
+    </p>
   );
 }

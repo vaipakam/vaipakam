@@ -5,7 +5,7 @@
 // up), and where the Auto-lend option is open fills the form with small
 // figures, opens the review and prints it: the protocol's own dry-run
 // verdict, every figure bound and every consequence. Nothing is confirmed.
-// Then prints the Auto-lend cards on Positions. Checks that nothing scrolls
+// Then prints the Auto-lend cards on Positions and the manage steps each offers. Checks that nothing scrolls
 // sideways and saves screenshots per device. A full setup is covered by the
 // CI-Anvil spec (86-autolend.spec.ts).
 // Usage: node e2e/live/autolend-watch.cjs <address>
@@ -63,6 +63,9 @@ async function session(b, opts, label) {
   await section.waitFor({ timeout: 90000 }).catch(() => {});
   await p.waitForTimeout(4000);
   console.log(`--- positions\n${(await section.count()) ? await text(section) : 'no Auto-lend section'}`);
+  // Each card's manage steps (add, take back, stop), as offered; nothing is opened.
+  const manage = p.getByTestId('autolend-manage');
+  for (let i = 0; i < (await manage.count()); i++) console.log(`--- manage ${i + 1}: ${await text(manage.nth(i))}`);
   console.log('scrollWidth/innerWidth', await width(p));
   await p.screenshot({ path: `${OUT}/autolend-${label}-positions.png`, fullPage: true });
   console.log('errors:', errs);

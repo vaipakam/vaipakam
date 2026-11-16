@@ -1810,8 +1810,26 @@ above. Each resolves here, so a route reviewer needs no private file:
   loan counts in full until its repayment is claimed or lent again, so it is
   never called "lent now"), and its state; above the cards it reads the
   same fill gates at the same block and says when the network does not fill
-  Auto-lend now (paused, switched off, the service paused, or unread) (lending, ended, stopped);
-  changing, funding, withdrawing and stopping follow in the next part.
+  Auto-lend now (paused, switched off, the service paused, or unread) (lending, ended, stopped).
+  Each card then offers the steps that fit where its Auto-lend stands: add
+  money while it can still lend, take back money not lent while some waits,
+  and stop while it runs. Each step has its own review read at one block and
+  the protocol's dry run from the wallet, and states the figures it binds and
+  its consequences: money added above the most at once waits until loans
+  end; nothing promises a fill; a stop ends new loans at once and leaves open
+  loans to run, and the money it does not take back stays set aside. Adding
+  needs a running Auto-lend that has not ended, neither asset nor the
+  protocol paused, and an exact approval put back if the step fails. Taking
+  back is capped at the money not lent, stays open while an asset is paused
+  but not while the protocol is, and states its route the way a vault
+  withdrawal does (paid now, queued behind the protected-mode delay, or held
+  in the vault). A stop alone stays open while the protocol is paused; a stop
+  that takes the money back goes as one batched transaction, so the
+  Auto-lend is never stopped with its take-back failing alone. A stop that
+  leaves nothing set aside ends the Auto-lend and the protocol drops it from
+  the wallet's list; its finish card stays, saying so, until closed. Each finish
+  card measures the step from the transaction's own logs and the token's
+  moves. Changing the limits and starting again follow in the next part.
 - **RB-PRICE-GUARD** — the maker's price-move guard (#3358) is shown on the
   page of an open or ended loan offer of a token against token collateral.
   Read at the offer's own block, it states the limit, when it was set, and whether
