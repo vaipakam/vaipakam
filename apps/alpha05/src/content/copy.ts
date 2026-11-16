@@ -4810,6 +4810,7 @@ export const copy = {
     cardNoUntil: B('No end date'),
     cardProRata: B('Also lends to borrowers who pay only for the time borrowed'),
     cardEndedNote: A('No new loan can fit before its end date. Its waiting money stays set aside in your vault until you take it back or set a new date.'),
+    cardGoneNote: B('This Auto-lend is stopped with nothing set aside, so it leaves this list once you close this.'),
     cardStoppedNote: A('Stopped: nothing new is lent. Money still set aside stays in your vault until you take it back.'),
     cardChangeSoon: B('Changing the limits arrives in the next update.'),
     mAddLabel: B('Add money'),

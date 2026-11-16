@@ -252,7 +252,10 @@ test('on Positions a lender adds money, takes back money not lent, and stops, ea
   const intent = await sc.read<StoredIntent>('getLenderIntent', [lender, WETH, tliq]);
   expect(intent.active).toBe(false);
   expect(await capital()).toBe(0n);
+  // Stopped with nothing set aside, the protocol drops it from the wallet's
+  // list; the finish card stays until it is closed, then the card is gone.
+  await expect(card).toHaveAttribute('data-state', 'gone', { timeout: 60_000 });
+  await expect(card).toContainText('leaves this list once you close this');
   await stop.getByRole('button', { name: 'Close' }).click();
-  await expect(card).toHaveAttribute('data-state', 'stopped', { timeout: 60_000 });
-  await expect(card.getByTestId('autolend-manage')).toHaveCount(0);
+  await expect(page.getByTestId('autolend-card')).toHaveCount(0, { timeout: 60_000 });
 });

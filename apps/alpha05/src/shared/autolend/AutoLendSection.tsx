@@ -2,6 +2,7 @@ import type { CopyKey } from '../copy/useCopy';
 import { useCopy } from '../copy/useCopy';
 import { bpsPercent } from '../offers/priceGuard';
 import { assetName, tokenAmount, useTokenMeta } from '../reads/tokens';
+import { useState } from 'react';
 import { useOwnRead } from '../reads/useOwnRead';
 import { useOwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
@@ -37,13 +38,29 @@ export function AutoLendSection() {
   const read = useOwnRead(['autolend', 'mine'], (c) => readMyAutoLend(c, diamond, own!.account), { enabled: chain !== null });
   const assets = (read.data?.rows ?? []).flatMap((r) => [r.intent.lendingAsset, r.intent.collateralAsset]);
   const meta = useTokenMeta(assets).data;
+  const who = `${own?.chainId ?? ''}:${own?.account ?? ''}`;
+  // Every Auto-lend this wallet's list has shown, so one the protocol drops
+  // mid-step (a stop that takes back every coin) keeps its open finish card.
+  const [seen, setSeen] = useState<{ who: string; data: unknown; rows: Map<string, MyAutoLend> }>({ who: '', data: null, rows: new Map() });
+  if (read.data !== null && (seen.data !== read.data || seen.who !== who)) {
+    const next = new Map(seen.who === who ? seen.rows : []);
+    for (const r of read.data.rows) next.set(`${r.intent.lendingAsset}-${r.intent.collateralAsset}`, r);
+    setSeen({ who, data: read.data, rows: next });
+  }
   if (read.state === 'reading' && read.data === null) return <p className="tier-b">{text('autoLend.sectionReading')}</p>;
   if (read.data === null) {
     return read.state === 'failed' ? <p className="tier-a">{format('autoLend.sectionFailed', { reason: read.error ?? '' })}</p> : null;
   }
   const { rows, total, at, posture } = read.data;
   const anyLending = rows.some((r) => autoLendState(r, at) === 'active');
-  if (rows.length === 0) return null;
+  // A stop that takes back every coin tears the Auto-lend down, and the
+  // protocol drops it from the wallet's list. Its open step (the finish
+  // card) stays on screen until it is closed, held from the last list read.
+  const keyOf = (r: MyAutoLend) => `${r.intent.lendingAsset}-${r.intent.collateralAsset}`;
+  const live = new Set(rows.map(keyOf));
+  const gone = seen.who === who ? [...seen.rows.values()].filter((r) => !live.has(keyOf(r))) : [];
+  const held = chain !== null && own !== null ? gone.map((r) => <HeldManage key={keyOf(r)} row={r} chain={chain} own={own} meta={meta ?? null} onDone={read.refetch} />) : [];
+  if (rows.length === 0) return held.length === 0 ? null : <section className="positions-section autolend-section">{held}</section>;
   const amt = (v: bigint, a: Hex) => tokenAmount(v, a, meta, format);
   return (
     <section className="positions-section autolend-section" aria-labelledby="autolend-section-title" data-testid="autolend-section">
@@ -88,8 +105,37 @@ export function AutoLendSection() {
           );
         })}
       </ul>
+      {held}
       {BigInt(rows.length) < total && <p className="tier-b">{format('autoLend.sectionMore', { shown: String(rows.length), total: total.toString() })}</p>}
     </section>
+  );
+}
+
+/** The open step of an Auto-lend that has left the wallet's list (stopped
+ *  with nothing set aside): its panel, until closed, then nothing. */
+function HeldManage({ row, chain, own, meta, onDone }: { row: MyAutoLend; chain: SupportedChain; own: OwnStateClient; meta: TokenMetaMap | null; onDone: () => void }) {
+  const { text, format } = useCopy();
+  const i = row.intent;
+  const { kind, open } = useManageOpen(i.lendingAsset, i.collateralAsset);
+  if (kind === null) return null;
+  return (
+    <div className="card autolend-card" data-testid="autolend-card" data-state="gone">
+      <h3>{format('autoLend.cardTitle', { lend: assetName(i.lendingAsset, meta), coll: assetName(i.collateralAsset, meta) })}</h3>
+      <p className="tier-b">{text('autoLend.cardGoneNote')}</p>
+      <AutoLendManage
+        kind={kind}
+        lending={i.lendingAsset}
+        collateral={i.collateralAsset}
+        unlent={i.availableCapital}
+        chain={chain}
+        own={own}
+        meta={meta}
+        onClose={() => {
+          open(null);
+          onDone();
+        }}
+      />
+    </div>
   );
 }
 

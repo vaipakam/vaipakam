@@ -1825,7 +1825,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   withdrawal does (paid now, queued behind the protected-mode delay, or held
   in the vault). A stop alone stays open while the protocol is paused; a stop
   that takes the money back goes as one batched transaction, so the
-  Auto-lend is never stopped with its take-back failing alone. Each finish
+  Auto-lend is never stopped with its take-back failing alone. A stop that
+  leaves nothing set aside ends the Auto-lend and the protocol drops it from
+  the wallet's list; its finish card stays, saying so, until closed. Each finish
   card measures the step from the transaction's own logs and the token's
   moves. Changing the limits and starting again follow in the next part.
 - **RB-PRICE-GUARD** — the maker's price-move guard (#3358) is shown on the
