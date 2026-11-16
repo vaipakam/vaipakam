@@ -2419,6 +2419,12 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 `OfferMutateFacet.modifyOffer(offerId, {amount, amountMax, interestRateBps, interestRateBpsMax, collateralAmount, collateralAmountMax}, validUntil)` を使い、`validUntil` はチェーンの時刻から取ります（#3412）。ファセットは変わるグループだけを検査します。それぞれの `LibOfferShape` の規則（上限以下の正の下限、全部か無しの `fillMode` では金額が一つ、金利の上限は最大 10,000 bps、貸し手の担保の数値は一つ）、`amountFilled` や `collateralAmountFilled` を下回らないこと、金額の変更ではケイデンスの規則と価値の下限、金額や担保の変更ではオファーの上下限です。作成者以外、受け入れ済みのオファー、一時停止中の資産やプロトコル、制裁対象の呼び出し元、設定済みの `parallelSaleOrderHash`、消費済みまたはリンク済みの売却用オファー、オフセット用オファーは拒否され、借り換えの印が付いたオファーは金額と担保を保ちます。貸し手の ERC-20 オファーは `amountMax` の差を、ERC-20 担保の借り手の ERC-20 リクエストは `collateralAmountMax` の差を精算します。増加分はウォレットが Diamond に与えた承認のもとで `vaultDepositERC20` によりウォレットから引き出され、減少分は理由 `OFFER_REFUND` でボールトの出金経路から出ていき、保護モードはそれをキューに入れるか保留します。変更は `termsSetAt` を打ち直すため約定は `getMinTermsAgeSec` だけ待ち、`backstopEligibleAfter` は消去されます。確認画面は同じブロックで `getOffer`、`getOffersWithState`、`getOfferLinkedLoanId`、`paused()`、`getMinTermsAgeSec`、作成者の保護アカウント、引き出しがある場合はウォレットの残高と承認を読み、`modifyOffer` を試行します。引き出しが承認を超えるときは正確な承認の後に試行します。完了カードは `OfferModified` を確認内容と照合し、トークンの移転と支払い記録を計測します。マッチングのセクションの金利の差は、読者の範囲のうち相手側の境界を相手の最も近い境界で埋めます（#3659）。
 
+<a id="lend-auto"></a>
+
+### Auto-lend
+
+貸すページの選択肢は、借りる側が常設の貸し手について読むのと同じスイッチ（`paused()`、部分約定とレンダーインテントのスイッチ、キーパーとアグリゲーターの一時停止）と `getLenderIntent(wallet, lending, collateral)` を一つのブロックで読みます。プロトコルが一時停止中、スイッチがオフ、またはペアにインテントが有効な間、Auto-lend の選択肢は閉じられます。確認画面は一つのブロックで `getLenderIntent`、`getMinIntentFillNumeraire`（`getAmountForNumeraireValue` で換算し切り上げ）、`getMinTermsAgeSec`、同じスイッチ、ウォレットの残高と承認額、ペアのリスクアクセスを読み、`MulticallFacet.multicall` (`setLenderIntent(lending, collateral, maxExposure, minRateBps, maxInitLtvBps, maxDurationDays, minFillAmount, false, lendUntil, acceptsProRata, true, validUntil)`, `fundLenderIntent(lending, collateral, amount)`) をドライランします。承認額が金額に満たない間は `setLenderIntent` のみをドライランし、ちょうどその金額を承認した後にバッチ全体を再度ドライランします。`maxExposure` の既定値は拠出額、`minFillAmount` はその10分の1（ネットワークの下限以上）です。`lendUntil` は選んだ現地日の終わりで、`now + getMinTermsAgeSec + 1 day` 以上である必要があります。リスクアクセスは約定のたびに確認されるため、確認画面は設定の前にその手順を提示します。完了カードはレシートの `LenderIntentSet` と `LenderIntentFunded`、およびウォレットの金庫へのトークン送金を読みます。ポジションは `getLenderIntentsByOwner` を資本、貸出中の元本、状態とともに表示します。非アクティブなら停止、1日のローンが `lendUntil` までに収まらなくなれば終了です。約定はキーパーの `matcher` パスまたは他の約定者から来ます。プロトコル自身のものが動いていない場合、確認画面がそう示します (#3624)。
+
 <a id="offers-price-guard"></a>
 
 ### 価格変動ガード

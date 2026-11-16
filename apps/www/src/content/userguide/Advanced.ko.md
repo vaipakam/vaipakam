@@ -2311,6 +2311,12 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 `OfferMutateFacet.modifyOffer(offerId, {amount, amountMax, interestRateBps, interestRateBpsMax, collateralAmount, collateralAmountMax}, validUntil)`를 쓰며, `validUntil`은 체인의 시계에서 가져옵니다(#3412). 파셋은 바뀌는 묶음만 검사합니다. 각각에 대한 `LibOfferShape` 규칙(상한을 넘지 않는 양의 하한, 전부 아니면 무 `fillMode`에서는 금액 하나, 최대 10,000 bps의 이자율 상한, 대출자의 담보 수치 하나), `amountFilled`나 `collateralAmountFilled` 미만 금지, 금액 변경 시 주기 규칙과 가치 하한, 금액이나 담보 변경 시 오퍼 한도입니다. 생성자가 아닌 호출, 수락된 오퍼, 일시 중지된 자산이나 프로토콜, 제재 대상 호출자, 설정된 `parallelSaleOrderHash`, 소진되었거나 연결된 매각 수단, 상계 수단은 거절하며, 리파이낸스로 표시된 오퍼는 금액과 담보를 유지합니다. 대출자의 ERC-20 오퍼는 `amountMax`의 차이를, ERC-20 담보를 건 차입자의 ERC-20 요청은 `collateralAmountMax`의 차이를 정산합니다. 증가분은 지갑이 Diamond에 준 승인 아래 `vaultDepositERC20`으로 지갑에서 가져오고, 감소분은 사유 `OFFER_REFUND`로 볼트 출금 경로를 통해 나가며, 보호 모드는 이를 대기열에 넣거나 보류합니다. 변경은 `termsSetAt`을 다시 찍어 체결이 `getMinTermsAgeSec`만큼 기다리게 하고, `backstopEligibleAfter`를 지웁니다. 검토는 한 블록에서 `getOffer`, `getOffersWithState`, `getOfferLinkedLoanId`, `paused()`, `getMinTermsAgeSec`, 생성자의 보호 계정, 그리고 인출이 있으면 지갑의 잔액과 승인을 읽고, `modifyOffer`를 모의 실행합니다. 인출이 승인을 넘으면 정확한 승인 뒤에 실행합니다. 완료 카드는 `OfferModified`를 검토 내용과 비교하고 토큰 이전과 지급 기록을 측정합니다. 매칭 섹션의 이자율 차이는 독자 범위 중 상대편 쪽 경계를 상대의 가장 가까운 경계로 채웁니다(#3659).
 
+<a id="lend-auto"></a>
+
+### Auto-lend
+
+빌려주기의 선택은 차입 측이 상시 대출자에 대해 읽는 것과 같은 스위치(`paused()`, 부분 체결과 대출자 인텐트 스위치, 키퍼와 애그리게이터 일시 중지)와 `getLenderIntent(wallet, lending, collateral)`를 한 블록에서 읽습니다. 프로토콜이 일시 중지되었거나 스위치가 꺼져 있거나 쌍에 인텐트가 활성화되어 있으면 Auto-lend 선택은 닫힙니다. 검토는 한 블록에서 `getLenderIntent`, `getMinIntentFillNumeraire`(`getAmountForNumeraireValue`로 환산, 올림), `getMinTermsAgeSec`, 같은 스위치, 지갑의 잔액과 승인액, 쌍의 위험 접근 필요를 읽은 뒤 `MulticallFacet.multicall` (`setLenderIntent(lending, collateral, maxExposure, minRateBps, maxInitLtvBps, maxDurationDays, minFillAmount, false, lendUntil, acceptsProRata, true, validUntil)`, `fundLenderIntent(lending, collateral, amount)`)을 드라이런합니다. 승인액이 금액을 덮지 못하는 동안에는 `setLenderIntent`만 드라이런하고, 정확히 그 금액을 승인한 뒤 배치를 다시 드라이런합니다. `maxExposure`의 기본값은 예치 금액이고 `minFillAmount`는 그 10분의 1이며 네트워크 하한 이상입니다. `lendUntil`은 선택한 현지 날짜의 끝이며 최소 `now + getMinTermsAgeSec + 1 day`이어야 합니다. 위험 접근은 체결마다 확인되므로 검토는 설정 전에 그 단계를 제시합니다. 완료 카드는 영수증의 `LenderIntentSet`과 `LenderIntentFunded`, 그리고 지갑 볼트로의 토큰 전송을 읽습니다. 포지션은 `getLenderIntentsByOwner`를 자본, 대출 중 원금, 상태와 함께 나열합니다. 비활성이면 중지, 하루짜리 대출이 `lendUntil` 전에 더 이상 들어가지 않으면 종료입니다. 체결은 키퍼의 `matcher` 패스나 다른 체결자에게서 오며, 프로토콜 자체 패스가 돌지 않으면 검토가 이를 알립니다 (#3624).
+
 <a id="offers-price-guard"></a>
 
 ### 가격 변동 보호

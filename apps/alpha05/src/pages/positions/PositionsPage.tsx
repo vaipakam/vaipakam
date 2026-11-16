@@ -9,6 +9,7 @@ import { PositionsSummary } from '../../shared/positions/PositionsSummary';
 import { part, usePositionBook } from '../../shared/positions/usePositionBook';
 import { useTokenMeta } from '../../shared/reads/tokens';
 import { OwnStamp } from '../../shared/ui/OwnStamp';
+import { AutoLendSection } from '../../shared/autolend/AutoLendSection';
 
 type Hex = `0x${string}`;
 type Side = 'all' | 'lent' | 'borrowed';
@@ -23,7 +24,7 @@ type Side = 'all' | 'lent' | 'borrowed';
  * deadline first, the children of one offer grouped, each obligation's
  * stage with its pause credit, and the health factor), then ended loans
  * with their status. A side choice narrows all three to what the wallet
- * lent or borrowed. Every row opens its position, where the protocol's
+ * lent or borrowed. The wallet's Auto-lend follows (#3624). Every row opens its position, where the protocol's
  * verdict decides which actions are open (RB-ELIG); this page signs nothing.
  */
 export function PositionsPage() {
@@ -88,6 +89,9 @@ export function PositionsPage() {
               <EndedSection read={ended} meta={meta} payoutKeys={payoutKeys} />
             </>
           )}
+          {/* #3624: shown with or without loans, since a funded Auto-lend
+              that has lent nothing yet is still money of the wallet's. */}
+          <AutoLendSection />
           <p>
             <Link to="/activity" data-testid="positions-activity-link">
               {text('activity.fromHere')}

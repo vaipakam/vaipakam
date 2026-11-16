@@ -1433,6 +1433,12 @@ Cancel on an open offer you made takes it off the book and returns what it still
 
 Change this offer, on the page of an open loan offer or request you posted, changes its rate range, its amount range or its collateral without cancelling it. The term and the repayment options stay as posted; to change those, cancel and post again. A refinance request can change only its rate, and a sale or early-close listing cannot change. The form starts from the offer's own figures. The review shows each figure before and after and what moves: raising what the offer locks moves the difference from your wallet into your vault, after an approval of exactly that much; lowering it returns the difference to your wallet, or to your payout queue when protected mode is on. A rate change moves nothing. After a change the offer cannot be taken for a short wait, so no one takes it on terms they did not see. If someone takes the whole offer first, the change is refused and nothing moves. While the protocol is paused, changes are closed.
 
+<a id="lend-auto"></a>
+
+### Auto-lend: keep lending when repaid
+
+On Lend, after the pair, you choose how the lend runs: once, as an offer a borrower can take, or keep lending when repaid, which sets up Auto-lend. Auto-lend is a standing instruction, not an offer. You set the amount, the lowest rate you accept, how much you lend against the collateral's value, the longest term, an optional end date, and whether you also lend to borrowers who pay interest only for the time they borrow. The money moves from your wallet into your own vault, set aside for Auto-lend, and a matching service lends it to borrowers' requests that fit your limits. Nothing promises a fill. Each loan's collateral is sized from your ceiling at the prices when it is filled. Repaid money is lent again until you stop it or its end date passes, and no new loan is agreed to run past that date. New terms wait a short time before the first loan. The review shows every figure; your wallet approves exactly the amount, then one transaction records the terms and moves the money together. One pair carries one Auto-lend, and yours are listed on Positions. While the protocol is paused or matching or Auto-lend is switched off on the network, the choice is closed and says why. In Advanced mode you can also set the most lent out at once and the smallest loan. Money not lent can be taken back at any time; adding money, taking it back, changing the limits and stopping arrive in a later update of this app.
+
 <a id="offers-price-guard"></a>
 
 ### Price-move guard

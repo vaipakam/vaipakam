@@ -2152,6 +2152,12 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 `OfferMutateFacet.modifyOffer(offerId, {amount, amountMax, interestRateBps, interestRateBpsMax, collateralAmount, collateralAmountMax}, validUntil)`，其中 `validUntil` 取自链上时钟（#3412）。该 facet 只检查发生变化的组：每组的 `LibOfferShape` 规则（下限为正且不高于上限；全部或全无的 `fillMode` 只有一个金额；利率上限最多 10,000 bps；出借人只有一个抵押数字），不得低于 `amountFilled` 或 `collateralAmountFilled`，金额变化时检查付息周期规则和价值下限，金额或抵押变化时检查报价上下限。它拒绝非创建者、已接受的报价、已暂停的资产或协议、受制裁的调用者、已设置的 `parallelSaleOrderHash`、已消耗或已关联的出售载体以及抵销载体；带再融资标记的报价保持其金额和抵押。出借人的 ERC-20 报价结算 `amountMax` 的差额，以 ERC-20 作抵押的借款人 ERC-20 请求结算 `collateralAmountMax` 的差额：增加部分在钱包对 Diamond 的授权下由 `vaultDepositERC20` 从钱包拉取，减少部分以原因 `OFFER_REFUND` 经金库出账离开金库，保护模式会将其排队或扣留。修改会重新标记 `termsSetAt`，因此成交需等待 `getMinTermsAgeSec`，并清除 `backstopEligibleAfter`。审核在同一区块读取 `getOffer`、`getOffersWithState`、`getOfferLinkedLoanId`、`paused()`、`getMinTermsAgeSec`、创建者的保护账户，以及在需要拉取时钱包的余额和授权；它试运行 `modifyOffer`，当拉取超过授权时在精确授权之后试运行。完成卡片将 `OfferModified` 与审核内容比对，并计量代币转账和支付记录。撮合部分的利率差距会把读者区间中对手方一侧的边界填为对方最近的边界（#3659）。
 
+<a id="lend-auto"></a>
+
+### Auto-lend
+
+出借页面的选项在同一区块读取借款侧为常设出借人读取的同一组开关（`paused()`、部分成交与出借人意向开关、keeper 与聚合器暂停）以及 `getLenderIntent(wallet, lending, collateral)`；当协议暂停、某个开关关闭或该币对已有生效的意向时，Auto-lend 选项关闭。审核在同一区块读取 `getLenderIntent`、`getMinIntentFillNumeraire`（用 `getAmountForNumeraireValue` 换算并向上取整）、`getMinTermsAgeSec`、同一组开关、钱包余额与授权额度，以及该币对的风险准入要求，然后试运行 `MulticallFacet.multicall` (`setLenderIntent(lending, collateral, maxExposure, minRateBps, maxInitLtvBps, maxDurationDays, minFillAmount, false, lendUntil, acceptsProRata, true, validUntil)`, `fundLenderIntent(lending, collateral, amount)`)。授权不足以覆盖金额时，只试运行 `setLenderIntent`，在批准恰好该金额后再试运行整批。`maxExposure` 默认为注入金额，`minFillAmount` 默认为其十分之一，且不低于网络下限；`lendUntil` 是所选本地日期的结束时刻，且须不早于 `now + getMinTermsAgeSec + 1 day`。风险准入在每次成交时检查，因此审核会在设置前提供该步骤。完成卡片从回执读取 `LenderIntentSet` 和 `LenderIntentFunded`，以及代币转入钱包金库的记录。持仓页面列出 `getLenderIntentsByOwner`，含资本、在贷本金和状态：未生效即已停止，一天期贷款无法在 `lendUntil` 之前完成即已结束。成交来自 keeper 的 `matcher` 流程或任何其他成交方；协议自身的流程未运行时，审核会说明 (#3624)。
+
 <a id="offers-price-guard"></a>
 
 ### 价格变动保护
