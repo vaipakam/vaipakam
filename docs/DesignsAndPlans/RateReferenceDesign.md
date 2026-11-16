@@ -22,21 +22,21 @@ A floating loan records the rate reference's address when it opens, with the pri
 ## 3. Sources and readers
 
 - **A source is an outside lending market's current variable borrowing rate for the asset on this chain.** Each kind of market is read through a **reader**: a small fixed contract with no owner and no settings that returns the rate as a simple annual rate, 1e18-scaled, and whether the read succeeded. A reader converts whatever the market reports (a per-second or per-block rate, a compounded yearly figure) to that one convention, so the quorum compares like with like.
-- **A binding** names, per asset, up to five sources: the reader, the market, and the market's own identifier for the asset. Bindings change only through the contract's delayed changes. The guardian or the owner may **mute** a source at once; unmuting waits the delay.
+- **A binding** names, per asset, up to five sources: the reader, the market, and the market's own identifier for the asset. Bindings change only through the contract's delayed changes, removal of a source included. The guardian or the owner may **mute** a source at once; unmuting waits the delay. A mute does not take the source out of the quorum: it stops the asset's reference from moving at all (section 4).
 - **Two reader shapes ship first:** a market that reports a current variable borrow rate per asset, and a market that reports a borrow rate per unit of time at its current utilisation. More are added as contracts later without touching the rate reference.
 - **The build admits no real source.** Each comes later as a governance proposal with the checklist below. Outside markets' testnet deployments are thin and their rates mean nothing, so the three testnets use **mock sources**: test contracts whose rate the test admin sets, at least three per asset, refused on every mainnet chain id. The real readers are exercised in fork tests.
-- **Fewer than three live sources for an asset means no reference for it.** A floating offer or a market-linked limit for that asset is refused by name; fixed loans are untouched. No lower minimum is offered: with two sources one bad reading decides the rate.
+- **Fewer than three sources bound to an asset means no reference for it.** A floating offer or a market-linked limit for that asset is refused by name; fixed loans are untouched. No lower minimum is offered: with two sources one bad reading decides the rate. The same holds at every update: a new reference is accepted only from three or more readings (section 4). An asset bound to exactly three sources therefore holds whenever one read fails, so four or five is the sound number to propose.
 - Names of markets stay out of the repository. The app names an asset's sources to users.
 
 **Checklist for proposing a source**, kept with the proposal: the market's size in the asset on this chain; how its rate is computed; what it costs to move that rate within one transaction and for an hour; who can upgrade or pause the market and with what delay; its rate convention and the reader used; and that it is independent of the asset's other sources (not the same liquidity or the same rate curve under another name).
 
 ## 4. Reading the quorum
 
-An update reads every live source of the asset. A read that fails, or a muted source, is left out.
+An update reads every source bound to the asset. A read that fails is left out.
 
-- With three or more readings: take the **median**. It is accepted if at least two readings, the median counted, lie within the **agreement tolerance** of it.
-- With exactly two: accepted if they lie within the tolerance of each other; the figure is their mean.
-- Otherwise the previous reference **holds**, and the event says why (too few readings, or no agreement).
+- **While any source of the asset is muted, the reference holds.** A mute is a stop and nothing else. If it only dropped the source, the guardian could turn a set of readings that do not agree into one that does, or shift the median, and so change the rate on open loans at once. Taking a source out of the quorum is a delayed change; a mute holds the last agreed figure until then, or until the source is unmuted after the delay.
+- With three or more readings and no mute: take the **median**. It is accepted if at least two readings, the median counted, lie within the **agreement tolerance** of it.
+- Otherwise the previous reference **holds**, and the event says why (a muted source, fewer than three readings, or no agreement). Two readings are never enough, however close.
 
 The accepted figure is then limited two ways. It may not exceed the protocol's maximum interest rate. And it may not differ from the previous reference by more than the **step limit**: a rate of change per hour, applied to the time since the last update and counted as at most one update interval. Calling the update many times in a row therefore moves the reference no further than waiting would, and a long gap does not store up a large jump.
 
@@ -58,7 +58,7 @@ That order matters. Whoever sends the update chooses its moment, and a market's 
 - The first update in each UTC hour records a **checkpoint**: the index, the held time and the timestamp, keyed by the hour, as the hourly price checkpoints are. Each checkpoint also names the hour of the one before it, so a reader finds the checkpoint it needs in a few reads without scanning.
 - **`averaged(asset)`**, on the rate reference, returns the average reference over the window and whether it is **available**, exactly as `MarketLinkedRateLimitsDesign.md` section 4.3 defines: from the newest checkpoint at least the window old (24 hours by default, bounded 12 to 72); available only if the index was updated within the staleness limit, that checkpoint is at most twice the window old, and held time is no more than half of the window.
 - `LibRateReference` in the Diamond is the one place facets read it through the registry pointer. It carries no second copy of the rule.
-- **`status(asset)`** returns the current reference, the index, the time of the last update, whether the reference is holding and since when, and whether it is stale. Part 2 refuses to open a new floating loan on a stale reference.
+- **`status(asset)`** returns the current reference, the index, the time of the last update, whether the reference is holding and since when, and whether it is stale: not updated within the staleness limit, or holding for longer than it. Part 2 refuses to open a new floating loan on a stale reference. Open loans keep accruing at the held figure.
 
 ## 7. Settings and starting values
 
@@ -92,7 +92,7 @@ It needs no place held for it: when built, it is one more reader, reading a Diam
 
 Under #3437 any governance-settable state behind an address a loan carries must be versioned or stop-only.
 
-- A mute is stop-only and reaches every loan at once: the muted source drops out of the quorum, and if that leaves too few the reference holds.
+- A mute is stop-only and reaches every loan at once: the reference holds at its last agreed figure for as long as any source of the asset is muted (section 4). It can never make a reading acceptable that was not, nor move the figure.
 - A binding or setting change takes effect from its execution forward for every loan reading the contract. It cannot be versioned per loan: the index is one shared total, which is what makes floating interest exact with no per-loan upkeep. So the parties sign the contract's address and its rule (a median of the asset's listed sources, limited as above), not a frozen source list, and the review says that the source list can change after a published delay. The step limit, the tolerance and the protocol maximum bound what any such change can do to an open loan.
 - The index, the held time and the checkpoints are measured state, not settings.
 
@@ -118,13 +118,13 @@ No Diamond storage changes in part 1.
 
 ## 13. Tests
 
-1. Quorum: median of three, four and five; two that agree and two that do not; one reading; a failing reader and a muted source are left out; the hold event names the reason.
+1. Quorum: median of three, four and five; no agreement holds; two readings hold even when equal; one reading holds; a failing reader is left out; the hold event names the reason. A mute holds the reference whatever the other readings are: four readings that do not agree stay held after any one is muted, and three that agree are held, not re-read, once one is muted.
 2. Limits: the step limit over a short and a long gap, counted as at most one interval; many updates in one block move the reference no further than one; the protocol maximum.
 3. Index: equals the sum of in-force reference times seconds over any sequence; a new reading never prices time before it; growth at the held figure while holding; held time equals the seconds held.
 4. A source pushed for one transaction, with the update sent in it, changes interest over the next hour by no more than the step limit allows, and the next update returns at the same speed.
 5. Checkpoints: one per UTC hour, first caller; the link to the previous hour; `averaged` over the window, and unavailable for each stated reason.
 6. Starting an asset: the first reference is the one measured at proposal and carried through the delay; a pushed reading at execution gains nothing; fewer than three sources is refused.
-7. Delayed changes, bounds on every setting, mute at once and unmute after the delay, a mute that drops the quorum below its minimum holds the reference.
+7. Delayed changes, bounds on every setting, mute at once and unmute after the delay; removing a muted source by a delayed change lets the remaining three or more resume, and leaves an asset with fewer than three without a reference.
 8. Readers: each converts its market's convention to the one annual rate, against a fork; the mock source is refused on a mainnet chain id.
 9. Minimum spacing: an early update changes nothing.
 
