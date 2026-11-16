@@ -1021,6 +1021,11 @@ The owner answered the open questions on 2026-11-16, for testnet and testing
 purposes. They are the inputs for the next fresh testnet deploy; the deploy
 itself had not been started when they were recorded.
 
+**When the deploy may start (owner, 2026-11-16):** only after ALL contract
+engineering work in every thread is finished and merged. Before starting,
+confirm with the owner that no contract change is still open in any thread;
+then take `main` at that point as the deploy's commit (§1.1).
+
 1. **Abandon the live offers and loans on the current Diamonds: yes.** They
    exist only for testing. Pass `--confirm-orphans-prior-onchain-state` to the
    `contracts --fresh` phase on each chain (§2.4 item 2). The remittance drain
