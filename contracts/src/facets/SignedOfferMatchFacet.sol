@@ -3,7 +3,6 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
-import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -48,14 +47,10 @@ contract SignedOfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         uint256 fillAmount
     );
 
-    /// @notice The signed offer is fully filled or cancelled.
-    error SignedOfferConsumed(bytes32 orderHash);
-    /// @notice The signer batch-invalidated this offer's nonce.
-    error SignedOfferNonceBurned(uint256 nonce);
-    /// @notice The signature did not recover to / 1271-validate against `o.signer`.
-    error SignedOfferBadSignature();
-    /// @notice The signed offer's GTT window has passed.
-    error SignedOfferGttExpired(uint64 expiresAt);
+    // The fill refusals shared with the direct route (consumed, expired,
+    // cancelled nonce or floor, fee caps, taker, co-signature, bad signature)
+    // are LibSignedOffer's (#3327), so both routes refuse an offer alike.
+
     /// @notice `fillAmount` is zero, exceeds the remaining, or violates the
     ///         signer's AON intent (an AON offer must be filled in full).
     error SignedOfferFillInvalid(uint256 fillAmount, uint256 remaining);
@@ -74,23 +69,31 @@ contract SignedOfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         `LibOfferMatch.previewMatch` inside `executeMatch`.
     /// @param o                   The signed offer terms.
     /// @param sig                 The signer's EIP-712 signature (EOA / 1271).
+    /// @param set                 Where `o` sits in the set its maker signed
+    ///                            (#3327 part 2); no others when signed alone.
     /// @param counterpartyOfferId The on-chain offer on the OTHER side.
     /// @param fillAmount          The principal this match fills (≤ remaining).
+    /// @param auth                The offer's co-signer's authorization of this
+    ///                            slice (#3327), naming the counterparty offer's
+    ///                            creator as the taker; ignored when the offer
+    ///                            names no co-signer.
     /// @return loanId             The initiated loan.
     function matchSignedOffer(
         LibSignedOffer.SignedOffer calldata o,
         bytes calldata sig,
+        LibSignedOffer.OfferSet calldata set,
         uint256 counterpartyOfferId,
-        uint256 fillAmount
+        uint256 fillAmount,
+        LibSignedOffer.FillAuth calldata auth
     ) external nonReentrant whenNotPaused returns (uint256 loanId) {
         LibVaipakam._assertNotSanctioned(msg.sender); // matcher = LIF recipient
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (!s.protocolCfg.partialFillEnabled) {
             revert LibOfferMatchExecute.FunctionDisabled(3);
         }
-        bytes32 orderHash = _vetSignedOfferForMatch(o, fillAmount);
-        (bool ok, ) = LibSignedOffer.verify(o, sig);
-        if (!ok) revert SignedOfferBadSignature();
+        bytes32 orderHash = _vetSignedOfferForMatch(o, fillAmount, s.offers[counterpartyOfferId].creator, auth);
+        (bool ok, ) = LibSignedOffer.verify(o, sig, set);
+        if (!ok) revert LibSignedOffer.SignedOfferBadSignature();
 
         // CEI: record the slice consumed BEFORE the materialize + match
         // external calls (bounded by the ceiling in the vet above). Capture the
@@ -155,29 +158,24 @@ contract SignedOfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         );
     }
 
-    /// @dev Pre-fill checks for a signed-offer match: deadline / GTT / nonce /
-    ///      remaining + the AON-full-fill guard. Returns the order hash.
+    /// @dev Pre-fill checks for a signed-offer match: the fill rule every
+    ///      route shares ({LibSignedOffer.requireFillable}: Full ceiling,
+    ///      deadline, expiry, nonce, cancel floor, fee caps, taker,
+    ///      co-signature), then this route's own slice checks (remaining, the
+    ///      AON-full-fill guard, the minimum slice). `taker` is the
+    ///      counterparty offer's creator. Returns the order hash.
     function _vetSignedOfferForMatch(
         LibSignedOffer.SignedOffer calldata o,
-        uint256 fillAmount
+        uint256 fillAmount,
+        address taker,
+        LibSignedOffer.FillAuth calldata auth
     ) private view returns (bytes32 orderHash) {
-        LibSignedOffer.requireFullWellFormed(o); // #1949 — a Full opt-in needs a ceiling
-        // #3412 — the signature's own deadline, through the one timing rule
-        // (optional: 0 = the signer set none).
-        LibTiming.checkDeadline(o.deadline);
-        // #1195 B3 (Pass-2, §1075) — the GTT rule is "expired AT and after the
-        // deadline": the one offer-expiry rule (#3552).
-        if (LibVaipakam.offerExpiryPassed(o.expiresAt)) {
-            revert SignedOfferGttExpired(o.expiresAt);
-        }
         orderHash = LibSignedOffer.hashStruct(o);
+        LibSignedOffer.requireFillable(o, orderHash, taker, fillAmount, auth);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (s.signedOfferNonceUsed[o.signer][o.nonce]) {
-            revert SignedOfferNonceBurned(o.nonce);
-        }
-        uint256 ceiling = o.amountMax == 0 ? o.amount : o.amountMax;
+        uint256 ceiling = LibSignedOffer.ceilingOf(o);
         uint256 filled = s.signedOfferFilled[orderHash];
-        if (filled >= ceiling) revert SignedOfferConsumed(orderHash);
+        if (filled >= ceiling) revert LibSignedOffer.SignedOfferConsumed(orderHash);
         uint256 remaining = ceiling - filled;
         if (fillAmount == 0 || fillAmount > remaining) {
             revert SignedOfferFillInvalid(fillAmount, remaining);

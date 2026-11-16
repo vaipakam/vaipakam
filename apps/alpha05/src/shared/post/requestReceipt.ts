@@ -16,6 +16,7 @@ import { lockedName, ltvText, needsApproval, promptCount, type LtvRead, type Pos
 import { tariffConsequences, tariffRows } from './tariffReview';
 import { guardConsequences, guardRows } from './guardPost';
 import { scheduleConsequences, scheduleRows } from './scheduleReview';
+import { loanRiskKey } from '../risk/keyRisks';
 
 type Hex = `0x${string}`;
 
@@ -166,7 +167,16 @@ export function requestReceipt(r: PostReview, meta: TokenMetaMap | null, copy: P
     text('request.loseBinding'),
   ];
 
-  return { title: text('request.title'), rows, consequences, prompts: promptCount(r), readAt: r.readAt };
+  return {
+    title: text('request.title'),
+    rows,
+    consequences,
+    // A posted request is classed again when it fills, so its settlement
+    // is not known now.
+    ifWrong: text(loanRiskKey('borrower', 'unknown')),
+    prompts: promptCount(r),
+    readAt: r.readAt,
+  };
 }
 
 /**
@@ -192,6 +202,8 @@ export function matchConsequences(r: PostReview, meta: TokenMetaMap | null, copy
     );
   }
   out.push(copy.text('request.loseMatchKeepsRest'));
+  // #3615: a lender's longer pro-rata offer may match; the loan keeps this term.
+  if (!parsed.fullTerm) out.push(copy.format('request.proRataTermMatch', { days: String(parsed.durationDays) }));
   return out;
 }
 

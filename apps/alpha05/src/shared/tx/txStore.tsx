@@ -43,6 +43,14 @@ export interface Submission {
   measure: (receipt: TransactionReceipt, at: AnchoredReader) => Promise<readonly LegOutcome[]>;
   unwind?: () => Promise<LegOutcome | null>;
   release?: () => Promise<LegOutcome | null>;
+  /** What EARLIER transactions of the same action changed, for an action
+   *  sent as several transactions of which this is the one the tracker
+   *  follows (Codex #3489 r19). Read on every ending, the reverted one
+   *  included: a reverted receipt changed nothing itself, but the steps
+   *  that landed before it did, and an outcome that omitted them would
+   *  report a partly done action as one that changed nothing. Absent or
+   *  empty for a one-transaction action. */
+  landedBefore?: () => Promise<readonly LegOutcome[]>;
   /** What the flow set up for the call that stands until the call settles
    *  and its clean-up runs (an ERC-1155 operator approval), as the page
    *  says it; null when nothing does. Kept here, with the hash, so a page

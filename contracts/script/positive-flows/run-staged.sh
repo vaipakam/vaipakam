@@ -54,13 +54,21 @@ MARGIN_SECONDS=2
 MAX_WAIT_SECONDS="${STAGED_MAX_WAIT_SECONDS:-1800}"
 # Exit code for "the next stage is not due yet; run this again later".
 NOT_YET=75
-# Gas headroom over what forge's simulation measured, in percent (forge's
-# default is 130). A stage's simulation runs every step at one timestamp, so a
-# loan opened and repaid in one step accrues no interest there; on chain the
-# repayment lands seconds later, interest is due, and its fee legs cost more
-# gas than the simulation saw (measured: a repay of an illiquid-asset loan used
-# 639,222 gas against a 648,919 limit and ran out inside a nested call).
-GAS_ESTIMATE_MULTIPLIER=200
+# How each broadcast's gas limit is sized. A stage is sent with
+# --skip-simulation, so forge asks the node (eth_estimateGas) for every
+# transaction, against the chain as it stands when that transaction is sent,
+# and adds this headroom in percent (forge's default, 130). It is NOT sized
+# from forge's own simulation: that reports the gas a transaction USED, and a
+# price read through the Diamond needs a fixed reserve on top of it (the
+# guard is handed exactly its read budget, and the Diamond refuses the read
+# with PriceReadOutOfGas when it cannot hand it over). A transaction that
+# reads a price late in its run needs that reserve whatever it used, so no
+# multiplier on the used figure covers it (measured: a keeper's preclose used
+# 710,238 gas of a 1,169,532 limit, twice its simulated use, and was refused
+# at its price read). The node's estimator searches for the limit the
+# transaction actually needs. The simulation still runs: stage() itself
+# executes every step locally before anything is sent.
+GAS_ESTIMATE_MULTIPLIER=130
 
 for tool in forge cast jq; do
   command -v "$tool" >/dev/null 2>&1 || { echo "run-staged.sh: $tool is required" >&2; exit 1; }
@@ -142,7 +150,7 @@ while :; do
   fresh_block
   echo "== stage =="
   forge script "$TARGET" --sig "stage()" --rpc-url "$RPC" \
-    --broadcast --slow --disable-block-gas-limit \
+    --broadcast --slow --skip-simulation --disable-block-gas-limit \
     --gas-estimate-multiplier "$GAS_ESTIMATE_MULTIPLIER" "$@"
   [ -e "$RECORD" ] || { echo "run-staged.sh: the stage wrote no record at $RECORD" >&2; exit 1; }
   if [ "$(jq -r '.finished' "$RECORD")" != "true" ]; then

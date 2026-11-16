@@ -8,6 +8,8 @@ import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
 import {VaipakamNFTFacet} from "../../src/facets/VaipakamNFTFacet.sol";
 import {LibTiming} from "../../src/libraries/LibTiming.sol";
 import {Deployments} from "../lib/Deployments.sol";
+import {LibSwap} from "../../src/libraries/LibSwap.sol";
+import {FixedRateSwapAdapter} from "../mocks/FixedRateSwapAdapter.sol";
 
 /**
  * @title PositiveFlowsStaged
@@ -97,7 +99,12 @@ import {Deployments} from "../lib/Deployments.sol";
  *         the module's waits.
  */
 abstract contract PositiveFlowsStaged is PositiveFlowsBase {
-    uint256 private constant RECORD_VERSION = 2;
+    /// @dev The record's format. Raised whenever a record written before
+    ///      the change would be read differently after it, so the old record
+    ///      is refused by name instead of misread. 3: a swap adapter a
+    ///      scenario registers is recorded as `swapAdapter_<index>` (the
+    ///      timed module's `settlementAdapter` entry is retired).
+    uint256 private constant RECORD_VERSION = 3;
 
     /// @notice `run()` under `--broadcast` reached a wait between two steps.
     ///         A broadcast cannot wait between its own transactions; use the
@@ -141,17 +148,49 @@ abstract contract PositiveFlowsStaged is PositiveFlowsBase {
     function _runStep(uint256 index, uint256 step) internal virtual;
 
     /// @dev Whether the setting `name`, recorded with {_toRestore}, still
-    ///      differs on the chain from what putting back `value` leaves. A
-    ///      module that records a setting overrides this and {_restore}.
+    ///      differs on the chain from what putting back `value` leaves. The
+    ///      base knows one setting, a swap adapter a scenario registered for
+    ///      its own run ({_registerRunSwapAdapter}). A module that records
+    ///      another overrides this and {_restore}, and passes every name it
+    ///      does not know to `super`.
     function _stillToRestore(string memory name, uint256 value) internal view virtual returns (bool) {
-        value;
+        if (_isRunSwapAdapter(name)) return _isSwapAdapter(address(uint160(value)));
         revert(string.concat(moduleName(), ": records no setting called ", name));
     }
 
     /// @dev Puts back the setting `name`, recorded with {_toRestore}.
     function _restore(string memory name, uint256 value) internal virtual {
-        value;
+        if (_isRunSwapAdapter(name)) return _removeFixedRateAdapter(FixedRateSwapAdapter(address(uint160(value))));
         revert(string.concat(moduleName(), ": records no setting called ", name));
+    }
+
+    // ─── A swap adapter registered for one scenario's run ─────────────────
+
+    /// @dev Recorded under this prefix and the scenario's index, with the
+    ///      adapter's address: put back means off the Diamond's swap list.
+    string private constant RUN_SWAP_ADAPTER = "swapAdapter_";
+
+    /// @dev {PositiveFlowsBase-_registerFixedRateAdapter}, recorded as a
+    ///      setting to put back ({_toRestore}), so a run that stops before
+    ///      the scenario removes the adapter can be unwound. Remove it with
+    ///      {PositiveFlowsBase-_removeFixedRateAdapter} as before; the record
+    ///      keeps the entry and the chain shows it put back.
+    function _registerRunSwapAdapter()
+        internal
+        returns (FixedRateSwapAdapter adapter, LibSwap.AdapterCall[] memory route)
+    {
+        (adapter, route) = _registerFixedRateAdapter();
+        _toRestore(string.concat(RUN_SWAP_ADAPTER, vm.toString(_current)), uint256(uint160(address(adapter))));
+    }
+
+    function _isRunSwapAdapter(string memory name) private pure returns (bool) {
+        bytes memory n = bytes(name);
+        bytes memory p = bytes(RUN_SWAP_ADAPTER);
+        if (n.length <= p.length) return false;
+        for (uint256 i = 0; i < p.length; i++) {
+            if (n[i] != p[i]) return false;
+        }
+        return true;
     }
 
     // ─── What a step says about the next one ──────────────────────────────
@@ -181,6 +220,11 @@ abstract contract PositiveFlowsStaged is PositiveFlowsBase {
         bytes32 h = keccak256(bytes(name));
         require(_restoreListed(h), string.concat(moduleName(), ": no step recorded the setting ", name, " to put back"));
         return _restoreValue[h];
+    }
+
+    /// @dev Whether a step of this run recorded the setting `name`.
+    function _restoreRecorded(string memory name) internal view returns (bool) {
+        return _restoreListed(keccak256(bytes(name)));
     }
 
     function _restoreListed(bytes32 h) private view returns (bool) {
@@ -498,7 +542,8 @@ abstract contract PositiveFlowsStaged is PositiveFlowsBase {
     ///      version of this runner.
     function _checkRecord(string memory json) private view {
         require(vm.parseJsonUint(json, ".version") == RECORD_VERSION,
-            string.concat(moduleName(), ": the staged-run record is from another version of this runner"));
+            string.concat(moduleName(), ": the staged-run record is from another version of this runner. Finish",
+                " or unwind it from the commit that wrote it, then remove it for a fresh run"));
         require(_eq(vm.parseJsonString(json, ".module"), moduleName()),
             string.concat(moduleName(), ": the staged-run record is another module's"));
         require(vm.parseJsonUint(json, ".chainId") == block.chainid,

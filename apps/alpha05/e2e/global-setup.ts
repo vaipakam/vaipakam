@@ -2,7 +2,9 @@
  * E2E bootstrap, in order:
  *   1. spawn a BARE Anvil (no fork; nothing here reads a live chain)
  *   2. deploy the repository's current contracts onto it and present it as
- *      Base Sepolia (`@vaipakam/anvil-harness`), writing the e2e bundle
+ *      Base Sepolia (`@vaipakam/anvil-harness`), then a governance timelock
+ *      with two changes queued in it (`lib/governance.ts`, #3306), and write
+ *      the e2e bundle
  *   3. spawn the stand-in Worker (the indexer's health route hydrated from
  *      the chain, and the RPC proxy's route forwarding to Anvil)
  *   4. generate + fund the ephemeral role wallets
@@ -16,6 +18,7 @@ import { bundleWith, deployFromSource } from '@vaipakam/anvil-harness/fixture';
 import { assertNothingListening, spawnAnvil } from '@vaipakam/anvil-harness/process';
 import { ANVIL_URL } from './lib/anvil';
 import { E2E_BUNDLE, E2E_BUNDLE_RUN_ID, FIXTURE_FILE, STATE_DIR, e2eRunId } from './lib/artifacts';
+import { deployGovernanceFixture } from './lib/governance';
 import { STUB_ORIGIN, STUB_PORT } from './lib/stub';
 import { createAndFundWallets } from './lib/wallets';
 
@@ -58,14 +61,19 @@ export default async function globalSetup(): Promise<void> {
   console.log('[e2e] anvil ready (bare chain)');
 
   const { diamond, admin, adminKey, artifact } = await deployFromSource(ANVIL_URL);
+  // The governance page reads the timelock the deployment records, so it
+  // goes into the bundle as `timelock`, as a deploy records it. The admin's
+  // funded key deploys it and is its proposer; nothing queued is executed.
+  const governance = await deployGovernanceFixture({ url: ANVIL_URL, control: anvil.control, diamond, proposerKey: adminKey });
+  artifact.timelock = governance.timelock;
   fs.writeFileSync(E2E_BUNDLE, JSON.stringify(bundleWith(artifact), null, 2));
   // The admin's key is an ephemeral key Anvil funded for this run; specs that
   // pause the protocol act as the admin through it (`lib/chain.ts`).
-  fs.writeFileSync(FIXTURE_FILE, JSON.stringify({ diamond, adminKey, artifact }, null, 2));
+  fs.writeFileSync(FIXTURE_FILE, JSON.stringify({ diamond, adminKey, artifact, governance }, null, 2));
   // The stamp goes LAST: readers wait for it, so it must not appear before
   // the bundle it vouches for is complete.
   fs.writeFileSync(E2E_BUNDLE_RUN_ID, e2eRunId());
-  console.log(`[e2e] fixture deployed from source — Diamond ${diamond}, admin ${admin}; chain now presents 84532`);
+  console.log(`[e2e] fixture deployed from source — Diamond ${diamond}, admin ${admin}, timelock ${governance.timelock}; chain now presents 84532`);
 
   const stub = spawn(process.execPath, [path.join(HERE, 'lib', 'indexer-stub.mjs')], {
     stdio: ['ignore', 'inherit', 'inherit'],

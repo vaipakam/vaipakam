@@ -82,7 +82,7 @@ library LibMetricsTypes {
         uint64 minHealthFactorAtInit;
     }
 
-    /// @dev #625 WI-2a — one row of `MetricsFacet.getActiveLenderIntents`: the lender's
+    /// @dev #625 WI-2a — one row of `LenderIntentFacet.getActiveLenderIntents`: the lender's
     ///      standing bounds plus the two figures a keeper needs to size a fill —
     ///      `livePrincipal` (exposure already out) and `availableCapital` (un-lent, liened
     ///      capital the fill draws from; a fill exceeding it reverts
@@ -100,6 +100,11 @@ library LibMetricsTypes {
         bool requiresKeeperAuth;
         uint256 livePrincipal;
         uint256 availableCapital;
+        // #3618 — the intent's lend-until time (0 = none): a fill whose agreed
+        // maturity falls after it is refused.
+        uint64 lendUntil;
+        // #3619 — the intent also fills pro-rata requests.
+        bool acceptsProRata;
     }
 
     function toLenderIntentSummary(
@@ -119,7 +124,9 @@ library LibMetricsTypes {
             minFillAmount: i.minFillAmount,
             requiresKeeperAuth: i.requiresKeeperAuth,
             livePrincipal: livePrincipal,
-            availableCapital: availableCapital
+            availableCapital: availableCapital,
+            lendUntil: i.lendUntil,
+            acceptsProRata: i.acceptsProRata
         });
     }
 
@@ -150,14 +157,17 @@ library LibMetricsTypes {
         });
     }
 
-    /// @dev #625 WI-2c — one row of `MetricsFacet.getRollableIntentLoans`: a
+    /// @dev #625 WI-2c — one row of `LenderIntentFacet.getRollableIntentLoans`: a
     ///      fully-repaid intent-originated loan a keeper can AUTO-ROLL via
     ///      `LenderIntentFacet.rollIntentLoan(loanId)`. `owner` /
     ///      `lendingAsset` / `collateralAsset` come from the per-loan
     ///      `intentOrigin` (NOT the live `loan.lender`, which a position sale
     ///      mutates — a sold position is reported but `rollIntentLoan` rejects
     ///      it, so the keeper still keys auth off `owner`). `amount` is the
-    ///      original fill that would be re-liened as intent capital.
+    ///      ORIGINAL fill, the exposure the roll releases. What the roll
+    ///      re-liens is the lender claim (principal + interest as repaid), which
+    ///      differs from it: it adds interest, and after a partial repayment
+    ///      (#3619) it carries only the remainder.
     struct RollableIntentLoan {
         uint256 loanId;
         address owner;

@@ -111,6 +111,8 @@ contract SignedOfferMatcherTest is SetupTest {
             uint8(LibVaipakam.PeriodicInterestCadence.None);
         o.refinanceTargetLoanId = 0;
         o.useFullTermInterest = false;
+        o.maxTreasuryFeeBps = type(uint16).max; // #3327: no fee cap in these suites
+        o.maxLoanInitiationFeeBps = type(uint16).max;
         o.signer = signer;
         o.nonce = nonce;
         o.deadline = 0; // GTC signature
@@ -264,6 +266,40 @@ contract SignedOfferMatcherTest is SetupTest {
         );
     }
 
+    // ─── 0. #3327 part 2: a match fills one offer of a signed set ─────────
+
+    function test_3327_matchFillsOneOfferOfASet() public {
+        LibSignedOffer.SignedOffer[] memory set = new LibSignedOffer.SignedOffer[](2);
+        set[0] = _lenderSignedOffer(3327, PRINCIPAL, PRINCIPAL, LibVaipakam.FillMode.Partial);
+        set[1] = _lenderSignedOffer(3327, PRINCIPAL, PRINCIPAL, LibVaipakam.FillMode.Partial);
+        set[1].expiresAt = uint64(block.timestamp + 30 days);
+        (uint8 v, bytes32 r, bytes32 s_) =
+            vm.sign(signerPk, SignedOfferFacet(address(diamond)).hashSignedOfferSet(set));
+        bytes memory sig = abi.encodePacked(r, s_, v);
+        LibSignedOffer.OfferSet memory place;
+        place.others = new bytes32[](1);
+        place.others[0] = _orderHash(set[0]);
+        place.index = 1;
+
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+        uint256 borrowerOfferId = _postBorrowerCounterparty(borrower, PRINCIPAL);
+
+        LibSignedOffer.OfferSet memory wrong;
+        wrong.others = place.others;
+        wrong.index = 0;
+        vm.prank(keeper);
+        vm.expectRevert(LibSignedOffer.SignedOfferBadSignature.selector);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(set[1], sig, wrong, borrowerOfferId, PRINCIPAL, _noAuth());
+
+        vm.prank(keeper);
+        uint256 loanId = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
+            set[1], sig, place, borrowerOfferId, PRINCIPAL, _noAuth()
+        );
+        assertGt(loanId, 0, "loan from the set's second offer");
+        assertEq(SignedOfferFacet(address(diamond)).signedOfferFilledAmount(_orderHash(set[1])), PRINCIPAL, "its ledger");
+        assertEq(SignedOfferFacet(address(diamond)).signedOfferFilledAmount(_orderHash(set[0])), 0, "the other stays open");
+    }
+
     // ─── 1. Full match: signed LENDER × on-chain BORROWER ──────────────────
 
     function test_fullMatch_signedLender_onchainBorrower() public {
@@ -282,7 +318,7 @@ contract SignedOfferMatcherTest is SetupTest {
         // Keeper fills the whole ceiling.
         vm.prank(keeper);
         uint256 loanId = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
-            o, sig, borrowerOfferId, PRINCIPAL
+            o, sig, _alone(), borrowerOfferId, PRINCIPAL, _noAuth()
         );
 
         assertGt(loanId, 0, "loan initiated");
@@ -327,7 +363,7 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.recordLogs();
         vm.prank(keeper);
         SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
-            o, sig, borrowerOfferId, PRINCIPAL
+            o, sig, _alone(), borrowerOfferId, PRINCIPAL, _noAuth()
         );
 
         // Find the SignedOfferMatched log and assert its indexed topics.
@@ -386,7 +422,7 @@ contract SignedOfferMatcherTest is SetupTest {
         // ── Slice 1.
         vm.prank(keeper);
         uint256 loan1 = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
-            o, sig, cp1, PRINCIPAL
+            o, sig, _alone(), cp1, PRINCIPAL, _noAuth()
         );
         assertGt(loan1, 0, "slice 1 loan");
         assertEq(
@@ -403,7 +439,7 @@ contract SignedOfferMatcherTest is SetupTest {
         // ── Slice 2.
         vm.prank(keeper);
         uint256 loan2 = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
-            o, sig, cp2, PRINCIPAL
+            o, sig, _alone(), cp2, PRINCIPAL, _noAuth()
         );
         assertGt(loan2, 0, "slice 2 loan");
         assertTrue(loan2 != loan1, "distinct loan ids");
@@ -416,7 +452,7 @@ contract SignedOfferMatcherTest is SetupTest {
         // ── Slice 3 consumes the residual ceiling.
         vm.prank(keeper);
         uint256 loan3 = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
-            o, sig, cp3, PRINCIPAL
+            o, sig, _alone(), cp3, PRINCIPAL, _noAuth()
         );
         assertGt(loan3, 0, "slice 3 loan");
         assertEq(
@@ -431,11 +467,11 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.prank(keeper);
         vm.expectRevert(
             abi.encodeWithSelector(
-                SignedOfferMatchFacet.SignedOfferConsumed.selector, orderHash
+                LibSignedOffer.SignedOfferConsumed.selector, orderHash
             )
         );
         SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
-            o, sig, cp4, PRINCIPAL
+            o, sig, _alone(), cp4, PRINCIPAL, _noAuth()
         );
     }
 
@@ -462,7 +498,7 @@ contract SignedOfferMatcherTest is SetupTest {
             )
         );
         SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
-            o, sig, borrowerOfferId, ceiling + PRINCIPAL
+            o, sig, _alone(), borrowerOfferId, ceiling + PRINCIPAL, _noAuth()
         );
     }
 
@@ -488,7 +524,7 @@ contract SignedOfferMatcherTest is SetupTest {
             )
         );
         SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
-            o, sig, borrowerOfferId, partialFill
+            o, sig, _alone(), borrowerOfferId, partialFill, _noAuth()
         );
     }
 
@@ -503,7 +539,7 @@ contract SignedOfferMatcherTest is SetupTest {
 
         vm.prank(keeper);
         uint256 loanId = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
-            o, sig, borrowerOfferId, PRINCIPAL
+            o, sig, _alone(), borrowerOfferId, PRINCIPAL, _noAuth()
         );
         assertGt(loanId, 0, "AON full fill loan");
         LibVaipakam.Loan memory loan =
@@ -534,7 +570,7 @@ contract SignedOfferMatcherTest is SetupTest {
 
         vm.prank(keeper);
         uint256 loanId = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
-            o, sig, lenderOfferId, PRINCIPAL
+            o, sig, _alone(), lenderOfferId, PRINCIPAL, _noAuth()
         );
 
         assertGt(loanId, 0, "mirror loan initiated");
@@ -566,9 +602,9 @@ contract SignedOfferMatcherTest is SetupTest {
         o.interestRateBps = RATE_BPS + 1;
 
         vm.prank(keeper);
-        vm.expectRevert(SignedOfferMatchFacet.SignedOfferBadSignature.selector);
+        vm.expectRevert(LibSignedOffer.SignedOfferBadSignature.selector);
         SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
-            o, sig, borrowerOfferId, PRINCIPAL
+            o, sig, _alone(), borrowerOfferId, PRINCIPAL, _noAuth()
         );
     }
 
@@ -589,11 +625,11 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.prank(keeper);
         vm.expectRevert(
             abi.encodeWithSelector(
-                SignedOfferMatchFacet.SignedOfferConsumed.selector, orderHash
+                LibSignedOffer.SignedOfferConsumed.selector, orderHash
             )
         );
         SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
-            o, sig, borrowerOfferId, PRINCIPAL
+            o, sig, _alone(), borrowerOfferId, PRINCIPAL, _noAuth()
         );
     }
 
@@ -611,9 +647,9 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.warp(uint256(expiresAt)); // block.timestamp == expiresAt exactly
         vm.prank(keeper);
         vm.expectRevert(
-            abi.encodeWithSelector(SignedOfferMatchFacet.SignedOfferGttExpired.selector, expiresAt)
+            abi.encodeWithSelector(LibSignedOffer.SignedOfferExpired.selector, expiresAt)
         );
-        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, borrowerOfferId, PRINCIPAL);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, _alone(), borrowerOfferId, PRINCIPAL, _noAuth());
     }
 
     function test_nonceBurned_reverts() public {
@@ -630,11 +666,11 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.prank(keeper);
         vm.expectRevert(
             abi.encodeWithSelector(
-                SignedOfferMatchFacet.SignedOfferNonceBurned.selector, o.nonce
+                LibSignedOffer.SignedOfferNonceInvalidated.selector, o.nonce
             )
         );
         SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
-            o, sig, borrowerOfferId, PRINCIPAL
+            o, sig, _alone(), borrowerOfferId, PRINCIPAL, _noAuth()
         );
     }
 
@@ -657,7 +693,7 @@ contract SignedOfferMatcherTest is SetupTest {
             abi.encodeWithSignature("FunctionDisabled(uint8)", uint8(3))
         );
         SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
-            o, sig, borrowerOfferId, PRINCIPAL
+            o, sig, _alone(), borrowerOfferId, PRINCIPAL, _noAuth()
         );
     }
 
@@ -685,7 +721,7 @@ contract SignedOfferMatcherTest is SetupTest {
                 ceiling // remaining (nothing filled yet)
             )
         );
-        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp, belowMin);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, _alone(), cp, belowMin, _noAuth());
     }
 
     /// @notice A keeper may not leave a sub-minimum dust REMAINDER. Filling
@@ -709,7 +745,7 @@ contract SignedOfferMatcherTest is SetupTest {
                 ceiling // remaining
             )
         );
-        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp, fill);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, _alone(), cp, fill, _noAuth());
     }
 
     /// @notice A RANGED all-or-nothing signed offer (`amount != amountMax`) is
@@ -734,7 +770,7 @@ contract SignedOfferMatcherTest is SetupTest {
                 ceiling // remaining
             )
         );
-        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp, ceiling);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, _alone(), cp, ceiling, _noAuth());
     }
 
     /// @notice A matched signed offer with a NON-constant collateral ratio
@@ -755,7 +791,7 @@ contract SignedOfferMatcherTest is SetupTest {
 
         vm.prank(keeper);
         vm.expectRevert(SignedOfferMatchFacet.SignedOfferRatioNotConstant.selector);
-        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp, PRINCIPAL);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, _alone(), cp, PRINCIPAL, _noAuth());
     }
 
     /// @dev Pull the `sliceOfferId` (first data word) out of the most recent
@@ -810,7 +846,7 @@ contract SignedOfferMatcherTest is SetupTest {
 
         vm.prank(keeper);
         uint256 loanId = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
-            o, sig, lenderOfferId, PRINCIPAL
+            o, sig, _alone(), lenderOfferId, PRINCIPAL, _noAuth()
         );
 
         LibVaipakam.Loan memory loan =
@@ -847,9 +883,9 @@ contract SignedOfferMatcherTest is SetupTest {
         uint256 cp2 = _postLenderCounterparty(l2, PRINCIPAL);
 
         vm.prank(keeper);
-        uint256 loan1 = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp1, PRINCIPAL);
+        uint256 loan1 = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, _alone(), cp1, PRINCIPAL, _noAuth());
         vm.prank(keeper);
-        uint256 loan2 = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp2, PRINCIPAL);
+        uint256 loan2 = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, _alone(), cp2, PRINCIPAL, _noAuth());
 
         uint256 c1 = LoanFacet(address(diamond)).getLoanDetails(loan1).collateralAmount;
         uint256 c2 = LoanFacet(address(diamond)).getLoanDetails(loan2).collateralAmount;
@@ -879,7 +915,7 @@ contract SignedOfferMatcherTest is SetupTest {
                 2 * PRINCIPAL // remaining (= ceiling, nothing filled)
             )
         );
-        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, lenderOfferId, dust);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, _alone(), lenderOfferId, dust, _noAuth());
     }
 
     /// @notice The borrower's signed collateral floor is threaded into the
@@ -945,7 +981,7 @@ contract SignedOfferMatcherTest is SetupTest {
 
         vm.prank(keeper);
         uint256 loanId = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
-            o, sig, cp, PRINCIPAL
+            o, sig, _alone(), cp, PRINCIPAL, _noAuth()
         );
         assertGt(loanId, 0, "match admitted at the borrower floor");
         assertEq(
@@ -990,9 +1026,9 @@ contract SignedOfferMatcherTest is SetupTest {
         uint256 cp2 = _postLenderCounterparty(l2, 5_000 ether);
 
         vm.prank(keeper);
-        uint256 loan1 = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp1, 4_000 ether);
+        uint256 loan1 = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, _alone(), cp1, 4_000 ether, _noAuth());
         vm.prank(keeper);
-        uint256 loan2 = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp2, 5_000 ether);
+        uint256 loan2 = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, _alone(), cp2, 5_000 ether, _noAuth());
 
         uint256 c1 = LoanFacet(address(diamond)).getLoanDetails(loan1).collateralAmount;
         uint256 c2 = LoanFacet(address(diamond)).getLoanDetails(loan2).collateralAmount;
@@ -1018,7 +1054,7 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.recordLogs();
         vm.prank(keeper);
         SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
-            o, sig, borrowerOfferId, PRINCIPAL
+            o, sig, _alone(), borrowerOfferId, PRINCIPAL, _noAuth()
         );
         uint256 sliceOfferId = _lastSliceOfferId();
         uint256 slicePosToken =
@@ -1039,4 +1075,132 @@ contract SignedOfferMatcherTest is SetupTest {
             );
         }
     }
+
+    /// @dev #3327: no co-signer named, so the fill authorisation is empty.
+    function _noAuth() internal pure returns (LibSignedOffer.FillAuth memory auth) {}
+
+    /// @dev An offer signed alone (#3327 part 2): no other offers in its set.
+    function _alone() internal pure returns (LibSignedOffer.OfferSet memory set) {}
+
+    // ─── #3327 maker protections on the match route ───────────────────────
+
+    /// @dev On a match the taker is the counterparty offer's creator, not
+    ///      the keeper that submits it.
+    function test_3327_allowedTakerIsTheCounterpartyCreator() public {
+        LibSignedOffer.SignedOffer memory o =
+            _lenderSignedOffer(3301, PRINCIPAL, PRINCIPAL, LibVaipakam.FillMode.Partial);
+        o.allowedTaker = borrower;
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+
+        address stranger = _newCounterparty("stranger3327");
+        uint256 strangerOffer = _postBorrowerCounterparty(stranger, PRINCIPAL);
+        bytes memory sig = _sign(o);
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibSignedOffer.SignedOfferTakerNotAllowed.selector, stranger, borrower)
+        );
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, _alone(), strangerOffer, PRINCIPAL, _noAuth());
+
+        uint256 borrowerOfferId = _postBorrowerCounterparty(borrower, PRINCIPAL);
+        vm.prank(keeper);
+        uint256 loanId =
+            SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, _alone(), borrowerOfferId, PRINCIPAL, _noAuth());
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(loanId).borrower, borrower, "named taker");
+    }
+
+    /// @dev A co-signature on a match is for that slice and that taker.
+    function test_3327_coSignerGatesTheMatch() public {
+        uint256 coSignerPk = 0xC052;
+        LibSignedOffer.SignedOffer memory o =
+            _lenderSignedOffer(3302, PRINCIPAL, PRINCIPAL, LibVaipakam.FillMode.Partial);
+        o.coSigner = vm.addr(coSignerPk);
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+        uint256 borrowerOfferId = _postBorrowerCounterparty(borrower, PRINCIPAL);
+        bytes memory sig = _sign(o);
+        bytes32 orderHash = _orderHash(o);
+        uint64 until = uint64(block.timestamp + 10 minutes);
+
+        // Signed for the keeper rather than the counterparty creator.
+        LibSignedOffer.FillAuth memory auth;
+        auth.validUntil = until;
+        (uint8 v, bytes32 r, bytes32 s2) = vm.sign(
+            coSignerPk, SignedOfferFacet(address(diamond)).hashSignedOfferFill(orderHash, keeper, 0, PRINCIPAL, until)
+        );
+        auth.coSignature = abi.encodePacked(r, s2, v);
+        vm.prank(keeper);
+        vm.expectRevert(LibSignedOffer.SignedOfferCoSignatureInvalid.selector);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, _alone(), borrowerOfferId, PRINCIPAL, auth);
+
+        (v, r, s2) = vm.sign(
+            coSignerPk, SignedOfferFacet(address(diamond)).hashSignedOfferFill(orderHash, borrower, 0, PRINCIPAL, until)
+        );
+        auth.coSignature = abi.encodePacked(r, s2, v);
+        vm.prank(keeper);
+        assertGt(
+            SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, _alone(), borrowerOfferId, PRINCIPAL, auth),
+            0,
+            "co-signed slice fills"
+        );
+    }
+
+    /// @dev A co-signature authorizes ONE fill: it is bound to the order's
+    ///      fill ledger before that fill, so replaying it for a second slice
+    ///      of a partially fillable order (same taker, same amount, still
+    ///      inside its window) is refused, and the second slice needs a fresh
+    ///      approval over the raised ledger.
+    function test_3327_coSignatureIsSpentByItsFill() public {
+        uint256 coSignerPk = 0xC053;
+        uint256 ceiling = 3 * PRINCIPAL;
+        LibSignedOffer.SignedOffer memory o =
+            _lenderSignedOffer(3304, PRINCIPAL, ceiling, LibVaipakam.FillMode.Partial);
+        o.coSigner = vm.addr(coSignerPk);
+        _fundActorVault(signer, mockERC20, ceiling);
+        uint256 first = _postBorrowerCounterparty(borrower, PRINCIPAL);
+        uint256 second = _postBorrowerCounterparty(borrower, PRINCIPAL);
+        bytes memory sig = _sign(o);
+        bytes32 orderHash = _orderHash(o);
+        uint64 until = uint64(block.timestamp + 10 minutes);
+
+        LibSignedOffer.FillAuth memory auth;
+        auth.validUntil = until;
+        (uint8 v, bytes32 r, bytes32 s2) = vm.sign(
+            coSignerPk, SignedOfferFacet(address(diamond)).hashSignedOfferFill(orderHash, borrower, 0, PRINCIPAL, until)
+        );
+        auth.coSignature = abi.encodePacked(r, s2, v);
+        vm.prank(keeper);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, _alone(), first, PRINCIPAL, auth);
+
+        vm.prank(keeper);
+        vm.expectRevert(LibSignedOffer.SignedOfferCoSignatureInvalid.selector);
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, _alone(), second, PRINCIPAL, auth);
+
+        (v, r, s2) = vm.sign(
+            coSignerPk,
+            SignedOfferFacet(address(diamond)).hashSignedOfferFill(orderHash, borrower, PRINCIPAL, PRINCIPAL, until)
+        );
+        auth.coSignature = abi.encodePacked(r, s2, v);
+        vm.prank(keeper);
+        assertGt(
+            SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, _alone(), second, PRINCIPAL, auth),
+            0,
+            "a fresh approval over the raised ledger fills the second slice"
+        );
+    }
+
+    /// @dev A fee raised above the maker's cap refuses the match too.
+    function test_3327_feeCapOnTheMatch() public {
+        LibSignedOffer.SignedOffer memory o =
+            _lenderSignedOffer(3303, PRINCIPAL, PRINCIPAL, LibVaipakam.FillMode.Partial);
+        o.maxTreasuryFeeBps = 200;
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+        uint256 borrowerOfferId = _postBorrowerCounterparty(borrower, PRINCIPAL);
+        bytes memory sig = _sign(o);
+        ConfigFacet(address(diamond)).setFeesConfig(300, 20);
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibSignedOffer.SignedOfferTreasuryFeeAboveCap.selector, uint256(300), uint256(200))
+        );
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, _alone(), borrowerOfferId, PRINCIPAL, _noAuth());
+    }
+
 }

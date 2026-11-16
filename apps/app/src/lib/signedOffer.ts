@@ -5,7 +5,7 @@
  * Mirrors the indexer's `apps/indexer/src/signedOfferEip712.ts` (which in
  * turn mirrors `contracts/src/libraries/LibSignedOffer.sol`):
  *
- *  - `SIGNED_OFFER_TYPES.SignedOffer` lists the 31 fields in the SAME
+ *  - `SIGNED_OFFER_TYPES.SignedOffer` lists the 35 fields in the SAME
  *    order as the Solidity struct / `SIGNED_OFFER_TYPEHASH` type string.
  *    Field order is load-bearing — any drift silently changes every hash
  *    and breaks both the maker's signature and the taker's replay.
@@ -23,52 +23,23 @@
 import { hashStruct, type Address, type Hex } from 'viem';
 import type { IndexedOffer, IndexedSignedOffer } from '../data/indexer';
 import type { CreateOfferPayload } from './offerSchema';
+import {
+  SIGNED_OFFER_FIELDS,
+  SIGNED_OFFER_FIELD_NAMES as SIGNED_OFFER_WIRE_FIELD_NAMES,
+  placementProblem,
+  type SignedOfferPlacement,
+} from '@vaipakam/lib/signedOfferWire';
 
-/** The 31-field SignedOffer typed-data description — struct order EXACTLY
+/** The 35-field SignedOffer typed-data description — struct order EXACTLY
  *  as `LibSignedOffer.SignedOffer` declares it (enums ⇒ uint8, GTT ⇒
- *  uint64). Byte-for-byte the same list the indexer's ingest gate derives
- *  its typehash from. */
-export const SIGNED_OFFER_TYPES = {
-  SignedOffer: [
-    { name: 'offerType', type: 'uint8' },
-    { name: 'lendingAsset', type: 'address' },
-    { name: 'amount', type: 'uint256' },
-    { name: 'amountMax', type: 'uint256' },
-    { name: 'interestRateBps', type: 'uint256' },
-    { name: 'interestRateBpsMax', type: 'uint256' },
-    { name: 'collateralAsset', type: 'address' },
-    { name: 'collateralAmount', type: 'uint256' },
-    { name: 'collateralAmountMax', type: 'uint256' },
-    { name: 'durationDays', type: 'uint256' },
-    { name: 'assetType', type: 'uint8' },
-    { name: 'collateralAssetType', type: 'uint8' },
-    { name: 'tokenId', type: 'uint256' },
-    { name: 'quantity', type: 'uint256' },
-    { name: 'collateralTokenId', type: 'uint256' },
-    { name: 'collateralQuantity', type: 'uint256' },
-    { name: 'prepayAsset', type: 'address' },
-    { name: 'allowsPartialRepay', type: 'bool' },
-    { name: 'allowsPrepayListing', type: 'bool' },
-    { name: 'allowsParallelSale', type: 'bool' },
-    { name: 'expiresAt', type: 'uint64' },
-    { name: 'fillMode', type: 'uint8' },
-    { name: 'periodicInterestCadence', type: 'uint8' },
-    { name: 'refinanceTargetLoanId', type: 'uint256' },
-    { name: 'useFullTermInterest', type: 'bool' },
-    // #1949 — the maker's Full tariff opt-in rides the artifact they sign.
-    { name: 'creatorFull', type: 'bool' },
-    { name: 'creatorMaxCStar', type: 'uint256' },
-    { name: 'creatorAllowFullDowngrade', type: 'bool' },
-    { name: 'signer', type: 'address' },
-    { name: 'nonce', type: 'uint256' },
-    { name: 'deadline', type: 'uint256' },
-  ],
-} as const;
+ *  uint64). The list is `@vaipakam/lib/signedOfferWire`'s, the same one the
+ *  indexer's ingest gate derives its typehash from (#3327: one statement,
+ *  where the app used to carry its own copy). */
+export const SIGNED_OFFER_TYPES = { SignedOffer: SIGNED_OFFER_FIELDS } as const;
 
-/** The 31 field names in canonical struct order — the POST body /
+/** The 35 field names in canonical struct order — the POST body /
  *  `order_json` key order the indexer stores and replays. */
-export const SIGNED_OFFER_FIELD_NAMES: readonly string[] =
-  SIGNED_OFFER_TYPES.SignedOffer.map((f) => f.name);
+export const SIGNED_OFFER_FIELD_NAMES: readonly string[] = SIGNED_OFFER_WIRE_FIELD_NAMES;
 
 /** The wire shape the indexer's POST/GET routes speak: every uint as a
  *  decimal string, addresses lowercase 0x-40-hex, bools as booleans.
@@ -103,6 +74,13 @@ export interface SignedOrderWire {
   creatorFull: boolean;
   creatorMaxCStar: string;
   creatorAllowFullDowngrade: boolean;
+  /** #3327 — the highest protocol fees (bps) the maker accepts at fill. */
+  maxTreasuryFeeBps: string;
+  maxLoanInitiationFeeBps: string;
+  /** #3327 — the one account allowed to take the order (zero = anyone). */
+  allowedTaker: string;
+  /** #3327 — the co-signer whose fresh signature each fill needs (zero = none). */
+  coSigner: string;
   signer: string;
   nonce: string;
   deadline: string;
@@ -140,6 +118,10 @@ export function signedOfferTypedMessage(order: SignedOrderWire) {
     creatorFull: order.creatorFull,
     creatorMaxCStar: BigInt(order.creatorMaxCStar),
     creatorAllowFullDowngrade: order.creatorAllowFullDowngrade,
+    maxTreasuryFeeBps: Number(order.maxTreasuryFeeBps),
+    maxLoanInitiationFeeBps: Number(order.maxLoanInitiationFeeBps),
+    allowedTaker: order.allowedTaker as Address,
+    coSigner: order.coSigner as Address,
     signer: order.signer as Address,
     nonce: BigInt(order.nonce),
     deadline: BigInt(order.deadline),
@@ -257,11 +239,37 @@ export interface MakerFullIntent {
   allowDowngrade: boolean;
 }
 
+/** #3327 — the fee caps the maker signs: the protocol fees shown in the
+ *  review, so a later fee rise refuses the fill instead of re-pricing it. */
+export interface MakerFeeCaps {
+  maxTreasuryFeeBps: number;
+  maxLoanInitiationFeeBps: number;
+}
+
+export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+
+/** #3327 — the fill authorisation for an order with no co-signer: the
+ *  `FillAuth` argument every fill entry takes, empty. */
+export const NO_FILL_AUTH = { validUntil: 0n, coSignature: '0x' as Hex } as const;
+
+/** #3327 part 2 — the `OfferSet` argument every fill entry takes: where the
+ *  order sits in the set its maker signed with one signature (the other
+ *  orders' struct hashes, in signing order, and its index), or the empty
+ *  placement the contract reads as "signed alone". */
+export function signedOfferSetArg(
+  set: SignedOfferPlacement | null,
+): { others: readonly Hex[]; index: bigint } {
+  return set === null
+    ? { others: [], index: 0n }
+    : { others: set.others, index: BigInt(set.index) };
+}
+
 export function wireFromCreatePayload(
   payload: CreateOfferPayload,
   signer: string,
   nonce: bigint,
   deadline: bigint,
+  feeCaps: MakerFeeCaps,
   makerFull?: MakerFullIntent,
 ): SignedOrderWire {
   return {
@@ -293,6 +301,12 @@ export function wireFromCreatePayload(
     creatorFull: makerFull?.full ?? false,
     creatorMaxCStar: (makerFull?.maxCStar ?? 0n).toString(),
     creatorAllowFullDowngrade: makerFull?.allowDowngrade ?? false,
+    maxTreasuryFeeBps: String(feeCaps.maxTreasuryFeeBps),
+    maxLoanInitiationFeeBps: String(feeCaps.maxLoanInitiationFeeBps),
+    // The app offers neither a named taker nor a co-signer yet (#3327
+    // follow-ups); both are signed as "none".
+    allowedTaker: ZERO_ADDRESS,
+    coSigner: ZERO_ADDRESS,
     signer: signer.toLowerCase(),
     nonce: nonce.toString(),
     deadline: deadline.toString(),
@@ -348,19 +362,61 @@ export function collapseForSignedPost(
   return { ...payload, amount: payload.amountMax, fillMode };
 }
 
-/** Random 64-bit nonce. The contract's signed-offer nonces are ARBITRARY
- *  (a `signer → nonce → used` mapping, burned only by an explicit
- *  `invalidateSignedOfferNonce`), NOT sequential — so a random draw needs
- *  no on-chain read and can't collide with the maker's other live orders
- *  (64 bits ≫ any plausible order count). A per-order unique nonce also
- *  keeps `invalidateSignedOfferNonce` a single-order batch-cancel rather
- *  than accidentally revoking unrelated orders sharing a nonce. */
-export function randomSignedOfferNonce(): bigint {
+/** #3327 — why a taker cannot fill a signed order, or `null` when nothing
+ *  the order itself says stands in the way. Mirrors the refusals
+ *  `LibSignedOffer.fillFailure` adds:
+ *   - `taker`: the order names another wallet as its only taker;
+ *   - `coSigner`: the order needs a fresh co-signature per fill, which this
+ *     app cannot request yet (the fill would be refused without it);
+ *   - `feeAboveCap`: a live protocol fee is above the maker's cap (only
+ *     judged when `fees` is given);
+ *   - `cancelled`: the nonce is below the signer's cancel floor (only
+ *     judged when `cancelFloor` is given). */
+export type SignedTakerRefusal = 'taker' | 'coSigner' | 'feeAboveCap' | 'cancelled';
+
+export function signedOrderTakerRefusal(
+  order: SignedOrderWire,
+  taker: string | undefined,
+  live?: {
+    fees?: { treasuryFeeBps: number; loanInitiationFeeBps: number };
+    cancelFloor?: bigint;
+  },
+): SignedTakerRefusal | null {
+  if (order.allowedTaker !== ZERO_ADDRESS && order.allowedTaker !== taker?.toLowerCase()) {
+    return 'taker';
+  }
+  if (order.coSigner !== ZERO_ADDRESS) return 'coSigner';
+  if (live?.cancelFloor !== undefined && BigInt(order.nonce) < live.cancelFloor) return 'cancelled';
+  if (
+    live?.fees !== undefined &&
+    (live.fees.treasuryFeeBps > Number(order.maxTreasuryFeeBps) ||
+      live.fees.loanInitiationFeeBps > Number(order.maxLoanInitiationFeeBps))
+  ) {
+    return 'feeAboveCap';
+  }
+  return null;
+}
+
+const MAX_UINT256 = (1n << 256n) - 1n;
+
+/** Random 64-bit nonce at or above the signer's cancel floor. The
+ *  contract's signed-offer nonces are ARBITRARY (a `signer → nonce → used`
+ *  mapping, burned only by an explicit `invalidateSignedOfferNonce`), NOT
+ *  sequential — so a random draw can't collide with the maker's other live
+ *  orders (64 bits ≫ any plausible order count), and a per-order unique
+ *  nonce keeps `invalidateSignedOfferNonce` a single-order cancel. #3327:
+ *  every order of the signer with a nonce below `floor`
+ *  (`signedOfferCancelFloor`) is cancelled, so the draw starts at it. */
+export function randomSignedOfferNonce(floor: bigint = 0n): bigint {
   const bytes = new Uint8Array(8);
   crypto.getRandomValues(bytes);
   let n = 0n;
   for (const b of bytes) n = (n << 8n) | BigInt(b);
-  return n;
+  // The draw stays inside [floor, 2^256 - 1]: a floor near the top of the
+  // range leaves less than 64 bits of room, and `floor + n` would then
+  // exceed uint256 and the signature could never be encoded or filled.
+  const room = MAX_UINT256 - floor;
+  return floor + (room >= n ? n : n % (room + 1n));
 }
 
 // ---------------------------------------------------------------------------
@@ -375,6 +431,9 @@ export interface SignedRowMeta {
   signature: string;
   order: SignedOrderWire;
   filledAmount: string;
+  /** #3327 part 2 — the order's place in the set its maker signed; null
+   *  when it was signed alone. */
+  set: SignedOfferPlacement | null;
 }
 
 /**
@@ -412,6 +471,10 @@ export function signedRowToDeskRow(
   // contract's no-deadline sentinel. GTT expiry (`expiresAt`) is left to
   // `isLiveMarketRow`, same as on-chain rows.
   if (row.deadline !== 0 && row.deadline <= nowSec) return null;
+  // #3327 part 2 — a set order's fill needs its placement to check the
+  // signature, so a row naming a malformed one cannot be filled.
+  const set = row.set ?? null;
+  if (set !== null && placementProblem(set) !== null) return null;
   const o = row.order;
   let remaining: bigint;
   try {
@@ -463,6 +526,7 @@ export function signedRowToDeskRow(
       signature: row.signature,
       order: o,
       filledAmount: row.filledAmount,
+      set,
     },
   };
 }

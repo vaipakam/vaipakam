@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
+import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -200,24 +201,15 @@ contract CancelAfterPartialFillTest is SetupTest {
             collateralRequired: 500
         });
         address nominee = makeAddr("offerNominee");
-        ProtectedAccountFacet p = ProtectedAccountFacet(address(diamond));
-        vm.prank(lender2);
-        p.enableProtectedMode(2 days, true);
+        LibTestProtection.enableWithNfts(address(diamond), lender2, 2 days);
         address[3] memory signers = [makeAddr("os1"), makeAddr("os2"), makeAddr("os3")];
         for (uint256 i; i < 3; ++i) {
-            vm.prank(lender2);
-            p.addSigner(lender2, signers[i]);
-            vm.prank(signers[i]);
-            p.acceptSignerRole(lender2);
-            vm.warp(vm.getBlockTimestamp() + 2 days);
-            p.finalizeAddSigner(lender2, signers[i]);
+            LibTestProtection.addSigner(address(diamond), lender2, lender2, signers[i], 2 days);
         }
-        vm.prank(signers[0]);
-        p.proposeReplacement(lender2, nominee);
-        vm.prank(signers[1]);
-        p.approveReplacement(lender2);
+        LibTestProtection.propose(address(diamond), lender2, signers[0], nominee);
+        LibTestProtection.approve(address(diamond), lender2, signers[1], nominee);
         vm.warp(vm.getBlockTimestamp() + 2 days);
-        p.finalizeReplacement(lender2);
+        LibTestProtection.finalizeReplacement(address(diamond), lender2);
 
         vm.prank(lender2);
         vm.expectRevert(

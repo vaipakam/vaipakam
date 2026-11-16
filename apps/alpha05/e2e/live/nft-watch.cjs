@@ -11,7 +11,7 @@
 // Usage: node e2e/live/nft-watch.cjs <address> [heldTokenId]  (screenshots
 // go to $LIVE_OUT or /tmp; $LIVE_URL overrides the deployed origin)
 const { chromium, devices } = require('playwright');
-const { watchedPage, connect } = require('./watch-wallet.cjs');
+const { watchedPage, connect, passTakeNow } = require('./watch-wallet.cjs');
 const ADDR = process.argv[2];
 const HELD = process.argv[3] ?? null;
 const URL = (process.env.LIVE_URL ?? 'https://alpha05.vaipakam.com/').replace(/\/?$/, '/borrow');
@@ -53,6 +53,7 @@ async function session(b, opts, label) {
   await p.waitForTimeout(1500);
   await p.screenshot({ path: `${OUT}/live-nft-${label}-form.png`, fullPage: false });
   await p.getByTestId('request-review').click();
+  await passTakeNow(p);
   const flow = p.locator('.post-request');
   await flow.waitFor({ timeout: 60000 });
   await p.waitForTimeout(8000);

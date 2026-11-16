@@ -59,6 +59,7 @@ import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.s
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {OwnershipFacet} from "../src/facets/OwnershipFacet.sol";
+import {LibTestProtectedCut} from "./helpers/LibTestProtectedCut.sol";
 // #229 — the remaining production facets being added to SetupTest's
 // 28-facet cut. DiamondLoupeFacet + OracleAdminFacet + LegalFacet
 // have no existing import in HelperTest because the prior
@@ -1173,7 +1174,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](12);
         selectors[0] = SignedOfferFacet.acceptSignedOffer.selector;
         selectors[1] = SignedOfferFacet.acceptSignedOfferWithPermit.selector;
         selectors[2] = SignedOfferFacet.cancelSignedOffer.selector;
@@ -1182,6 +1183,12 @@ contract HelperTest {
         selectors[5] = SignedOfferFacet.signedOfferOrderHash.selector;
         selectors[6] = SignedOfferFacet.signedOfferFilledAmount.selector;
         selectors[7] = SignedOfferFacet.isSignedOfferNonceUsed.selector;
+        // #3327 — the cancel floor and its read.
+        selectors[8] = SignedOfferFacet.cancelSignedOffersBelow.selector;
+        selectors[9] = SignedOfferFacet.signedOfferCancelFloor.selector;
+        selectors[10] = SignedOfferFacet.hashSignedOfferFill.selector;
+        // #3327 part 2 — the digest a maker signs for a set of offers.
+        selectors[11] = SignedOfferFacet.hashSignedOfferSet.selector;
     }
 
     function getLenderIntentFacetSelectors()
@@ -1189,7 +1196,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](16);
+        selectors = new bytes4[](18);
         selectors[0] = LenderIntentFacet.setLenderIntent.selector;
         selectors[1] = LenderIntentFacet.cancelLenderIntent.selector;
         selectors[2] = LenderIntentFacet.setLenderIntentEnabled.selector;
@@ -1206,6 +1213,8 @@ contract HelperTest {
         selectors[13] = LenderIntentFacet.getLenderIntentPriority.selector; // #2550
         selectors[14] = LenderIntentFacet.setMinIntentFillNumeraire.selector; // #2760
         selectors[15] = LenderIntentFacet.getMinIntentFillNumeraire.selector; // #2760
+        selectors[16] = LenderIntentFacet.getActiveLenderIntents.selector; // #625 WI-2a, moved off MetricsFacet (#3618)
+        selectors[17] = LenderIntentFacet.getRollableIntentLoans.selector; // #625 WI-2c, moved off MetricsFacet (#3618)
     }
 
     function getRiskAccessFacetSelectors()
@@ -1465,48 +1474,12 @@ contract HelperTest {
 
     /// @dev Selectors for `ProtectedAccountFacet` — protected account mode: settings, allowlist, signers, lock and replacement.
     function getProtectedAccountFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](36);
-        selectors[0] = ProtectedAccountFacet.acceptSignerRole.selector;
-        selectors[1] = ProtectedAccountFacet.addAllowlisted.selector;
-        selectors[2] = ProtectedAccountFacet.addSigner.selector;
-        selectors[3] = ProtectedAccountFacet.approveReplacement.selector;
-        selectors[4] = ProtectedAccountFacet.cancelAddAllowlisted.selector;
-        selectors[5] = ProtectedAccountFacet.cancelAddSigner.selector;
-        selectors[6] = ProtectedAccountFacet.cancelRemoveSigner.selector;
-        selectors[7] = ProtectedAccountFacet.cancelReplacement.selector;
-        selectors[8] = ProtectedAccountFacet.cancelSettingChange.selector;
-        selectors[9] = ProtectedAccountFacet.enableProtectedMode.selector;
-        selectors[10] = ProtectedAccountFacet.finalizeAddAllowlisted.selector;
-        selectors[11] = ProtectedAccountFacet.finalizeAddSigner.selector;
-        selectors[12] = ProtectedAccountFacet.finalizeRemoveSigner.selector;
-        selectors[13] = ProtectedAccountFacet.finalizeReplacement.selector;
-        selectors[14] = ProtectedAccountFacet.finalizeSettingChanges.selector;
-        selectors[15] = ProtectedAccountFacet.getAllowlist.selector;
-        selectors[16] = ProtectedAccountFacet.getAllowlistPendingAt.selector;
-        selectors[17] = ProtectedAccountFacet.getProtectedAccount.selector;
-        selectors[18] = ProtectedAccountFacet.getProtectedDelayBounds.selector;
-        selectors[19] = ProtectedAccountFacet.getProtectedSigners.selector;
-        selectors[20] = ProtectedAccountFacet.getReplacement.selector;
-        selectors[21] = ProtectedAccountFacet.getRetiredAccountOf.selector;
-        selectors[22] = ProtectedAccountFacet.getSignerChange.selector;
-        selectors[23] = ProtectedAccountFacet.lockVault.selector;
-        selectors[24] = ProtectedAccountFacet.lockVaultFor.selector;
-        selectors[25] = ProtectedAccountFacet.proposeReplacement.selector;
-        selectors[26] = ProtectedAccountFacet.removeAllowlisted.selector;
-        selectors[27] = ProtectedAccountFacet.requestDisableProtectedMode.selector;
-        selectors[28] = ProtectedAccountFacet.requestRemoveSigner.selector;
-        selectors[29] = ProtectedAccountFacet.requestUnlock.selector;
-        selectors[30] = ProtectedAccountFacet.setProtectedDelay.selector;
-        selectors[31] = ProtectedAccountFacet.setRequireCosign.selector;
-        selectors[32] = ProtectedAccountFacet.getPendingAllowlistAdditions.selector;
-        selectors[33] = ProtectedAccountFacet.getPendingSignerAdditions.selector;
-        selectors[34] = ProtectedAccountFacet.isListingLegAllowed.selector;
-        selectors[35] = ProtectedAccountFacet.lockPositionNfts.selector;
+        return LibTestProtectedCut.selectors();
     }
 
     /// @dev Selectors for `VaultPayoutFacet` — the payout queue, the vault credit and the escape route.
     function getVaultPayoutFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](14);
+        selectors = new bytes4[](16);
         selectors[0] = VaultPayoutFacet.applyPayoutGate.selector;
         selectors[1] = VaultPayoutFacet.cancelPayout.selector;
         selectors[2] = VaultPayoutFacet.cosignPayout.selector;
@@ -1523,6 +1496,10 @@ contract HelperTest {
         // #3361 — the global open-payout set, for the keepers.
         selectors[12] = VaultPayoutFacet.getOpenPayoutCount.selector;
         selectors[13] = VaultPayoutFacet.getOpenPayoutIds.selector;
+        // Codex #3489 r2 — the release's co-sign rule, per row.
+        selectors[14] = VaultPayoutFacet.payoutNeedsCosign.selector;
+        // Codex #3489 r12 — whether the release would cancel the row.
+        selectors[15] = VaultPayoutFacet.payoutReleaseCancels.selector;
     }
 
     /// @dev Selectors for `VaultDepositoryFacet` — the depository vault: deposit, withdraw, adopt, disown and the upgrade pin.
@@ -1794,7 +1771,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](53);
+        selectors = new bytes4[](51);
         selectors[0] = MetricsFacet.getProtocolTVL.selector;
         selectors[1] = MetricsFacet.getProtocolStats.selector;
         selectors[2] = MetricsFacet.getUserCount.selector;
@@ -1863,18 +1840,16 @@ contract HelperTest {
         // Used by SignedOfferMatcherTest to assert a consumed transient
         // lender slice is de-listed. Already cut in DeployDiamond.s.sol.
         selectors[44] = MetricsFacet.getUserPositionOffers.selector;
-        selectors[45] = MetricsFacet.getActiveLenderIntents.selector; // #625 WI-2a
-        selectors[46] = MetricsFacet.getRollableIntentLoans.selector; // #625 WI-2c
         // #769 — paginated position views (exercised by MetricsPositionPaginatedTest).
-        selectors[47] = MetricsFacet.getUserPositionLoansPaginated.selector;
-        selectors[48] = MetricsFacet.getUserPositionOffersPaginated.selector;
-        selectors[49] = MetricsFacet.getOfferState.selector; // #955 (#921 item 4)
+        selectors[45] = MetricsFacet.getUserPositionLoansPaginated.selector;
+        selectors[46] = MetricsFacet.getUserPositionOffersPaginated.selector;
+        selectors[47] = MetricsFacet.getOfferState.selector; // #955 (#921 item 4)
         // #1503 item 25 — routed in DeployDiamond since #769; the test diamond
         // lagged, surfacing when the item-25 rekey test read the buyer's
         // position through it.
-        selectors[50] = MetricsFacet.getUserPositionLoans.selector;
-        selectors[51] = MetricsFacet.isSaleVehicleLoan.selector; // #1503 item 26
-        selectors[52] = MetricsFacet.getLifetimeLendingAssets.selector; // #1832
+        selectors[48] = MetricsFacet.getUserPositionLoans.selector;
+        selectors[49] = MetricsFacet.isSaleVehicleLoan.selector; // #1503 item 26
+        selectors[50] = MetricsFacet.getLifetimeLendingAssets.selector; // #1832
         return selectors;
     }
 

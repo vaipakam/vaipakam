@@ -228,7 +228,6 @@ export const NOTIF_DELIBERATELY_NOT_HANDLED: Readonly<Record<string, string>> = 
   CollateralAdded: 'own action — the borrower topped up their own collateral',
   LoanFallbackPending: 'transient — status stays active through the fallback episode',
   LoanCuredFromFallback: 'transient — pairs with LoanFallbackPending',
-  LoanLiquidated: 'declared but never `emit`ted (DefaultedFacet.sol) — the time-based liquidation close-out sets the NFT LoanLiquidated status and emits LoanDefaulted (mapped), so a liquidation already produces a loan_defaulted row (Codex #1292 r3)',
   LoanPartiallyLiquidated: 'partial-liquidation companion — loan stays ACTIVE with reduced size (NOT terminal), unlike the mapped terminal HFLiquidationTriggered',
   AutoDailyDeducted: 'NFT-rental daily-fee deduction — high-frequency, not per-event notified',
   AutoListOptOutCleared: 'UI-facing auto-list signal — no loan-state notification',

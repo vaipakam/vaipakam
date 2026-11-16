@@ -73,6 +73,22 @@ library LibSignedOffer {
         bool creatorFull;
         uint256 creatorMaxCStar;
         bool creatorAllowFullDowngrade;
+        // #3327 — the highest protocol fees the maker accepts, in bps. A fill
+        // while governance has either fee above its cap is refused, so a
+        // resting offer is never re-priced by a later fee change. Stated by
+        // the maker, never implied: a cap of 0 accepts only a zero fee.
+        uint16 maxTreasuryFeeBps;
+        uint16 maxLoanInitiationFeeBps;
+        // #3327 — the one account that may take this offer (address(0) =
+        // anyone). On a direct fill that is the caller; on a match, the
+        // counterparty offer's creator.
+        address allowedTaker;
+        // #3327 — an optional co-signer (address(0) = none) whose fresh
+        // signature over each fill ({FILL_TYPEHASH}) the fill must carry. Its
+        // only power is to refuse a fill by not signing: it can neither change
+        // the terms nor fill alone. The maker cancels instantly, off-chain, by
+        // telling it to stop signing; the on-chain cancels stay the hard stop.
+        address coSigner;
         address signer; // MUST equal the recovered / 1271 signer
         uint256 nonce; // per-signer batch-cancel nonce
         uint256 deadline; // signature validity deadline (unix-seconds)
@@ -112,11 +128,80 @@ library LibSignedOffer {
         "bool creatorFull,"
         "uint256 creatorMaxCStar,"
         "bool creatorAllowFullDowngrade,"
+        "uint16 maxTreasuryFeeBps,"
+        "uint16 maxLoanInitiationFeeBps,"
+        "address allowedTaker,"
+        "address coSigner,"
         "address signer,"
         "uint256 nonce,"
         "uint256 deadline"
         ")"
     );
+
+    /// @notice #3327 part 2 — the EIP-712 type a maker signs to authorize a
+    ///         SET of offers with one signature. The offers are a typed
+    ///         array, so the wallet shows every offer's terms before signing:
+    ///         nothing is signed blind. A fill presents one offer plus the
+    ///         struct hashes of the others ({OfferSet}).
+    ///         Written as one literal so the compiler folds it to a word (a
+    ///         hash composed from a string constant is computed at run time
+    ///         and carries the whole string in the bytecode). The test suite
+    ///         pins it to `"SignedOfferSet(SignedOffer[] offers)"` followed
+    ///         by the {SIGNED_OFFER_TYPEHASH} type string.
+    bytes32 internal constant SIGNED_OFFER_SET_TYPEHASH = keccak256(
+        "SignedOfferSet(SignedOffer[] offers)"
+        "SignedOffer("
+        "uint8 offerType,"
+        "address lendingAsset,"
+        "uint256 amount,"
+        "uint256 amountMax,"
+        "uint256 interestRateBps,"
+        "uint256 interestRateBpsMax,"
+        "address collateralAsset,"
+        "uint256 collateralAmount,"
+        "uint256 collateralAmountMax,"
+        "uint256 durationDays,"
+        "uint8 assetType,"
+        "uint8 collateralAssetType,"
+        "uint256 tokenId,"
+        "uint256 quantity,"
+        "uint256 collateralTokenId,"
+        "uint256 collateralQuantity,"
+        "address prepayAsset,"
+        "bool allowsPartialRepay,"
+        "bool allowsPrepayListing,"
+        "bool allowsParallelSale,"
+        "uint64 expiresAt,"
+        "uint8 fillMode,"
+        "uint8 periodicInterestCadence,"
+        "uint256 refinanceTargetLoanId,"
+        "bool useFullTermInterest,"
+        "bool creatorFull,"
+        "uint256 creatorMaxCStar,"
+        "bool creatorAllowFullDowngrade,"
+        "uint16 maxTreasuryFeeBps,"
+        "uint16 maxLoanInitiationFeeBps,"
+        "address allowedTaker,"
+        "address coSigner,"
+        "address signer,"
+        "uint256 nonce,"
+        "uint256 deadline"
+        ")"
+    );
+
+    /// @notice #3327 part 2 — the most offers one set signature may cover.
+    ///         It bounds the calldata a fill carries (one word per other
+    ///         offer) and keeps the wallet's review readable.
+    uint256 internal constant MAX_SET_SIZE = 32;
+
+    /// @notice #3327 part 2 — where a filled offer sits in the set its
+    ///         maker signed: the struct hashes of the set's OTHER offers in
+    ///         signing order, and this offer's position among them. No
+    ///         others means the maker signed this offer alone.
+    struct OfferSet {
+        bytes32[] others;
+        uint256 index;
+    }
 
     /// @notice Permit2 witness type declaration for the wallet-backed fill
     ///         path. Permit2 prepends its own
@@ -140,7 +225,8 @@ library LibSignedOffer {
         "bool allowsPartialRepay,bool allowsPrepayListing,bool allowsParallelSale,"
         "uint64 expiresAt,uint8 fillMode,uint8 periodicInterestCadence,"
         "uint256 refinanceTargetLoanId,bool useFullTermInterest,bool creatorFull,"
-        "uint256 creatorMaxCStar,bool creatorAllowFullDowngrade,address signer,"
+        "uint256 creatorMaxCStar,bool creatorAllowFullDowngrade,uint16 maxTreasuryFeeBps,"
+        "uint16 maxLoanInitiationFeeBps,address allowedTaker,address coSigner,address signer,"
         "uint256 nonce,uint256 deadline)"
         "TokenPermissions(address token,uint256 amount)";
 
@@ -160,49 +246,200 @@ library LibSignedOffer {
         bool allowDowngrade;
     }
 
-    /// @notice #1949 — vetting: a Full opt-in without a ceiling can never materialize
-    ///         (the standing-offer setter refuses the same shape), so refuse it before
-    ///         any value moves. Both fill paths call this first.
-    function requireFullWellFormed(SignedOffer calldata o) internal pure {
-        if (!fullWellFormed(o)) revert SignedOfferFullNeedsMaxCStar();
-    }
-
-    /// @notice #1949 — whether `o`'s maker Full opt-in carries a ceiling (the
-    ///         rule {requireFullWellFormed} enforces, as an answer).
+    /// @notice #1949 — whether `o`'s maker Full opt-in carries a ceiling. A Full
+    ///         opt-in without one can never materialize (the standing-offer setter
+    ///         refuses the same shape), so {fillFailure} refuses it first, before
+    ///         any value moves.
     function fullWellFormed(SignedOffer calldata o) internal pure returns (bool) {
         return !(o.creatorFull && o.creatorMaxCStar == 0);
     }
 
-    /// @notice #3552 — why the vault-backed fill would refuse `o` before
-    ///         checking its signature, or `None`. The one statement of those
-    ///         checks: `SignedOfferFacet` reverts on the answer, and
+    /// @notice #3327 — the co-signer's authorization of one fill: a short-lived
+    ///         EIP-712 signature by `o.coSigner` over {FILL_TYPEHASH}. Ignored
+    ///         (and may be empty) when the offer names no co-signer.
+    struct FillAuth {
+        uint64 validUntil;
+        bytes coSignature;
+    }
+
+    /// @notice #3327 — what a co-signer signs for one fill, in the offer's own
+    ///         EIP-712 domain: the order, who takes it, how much of the order
+    ///         was already filled, how much this fill takes, and until when.
+    ///         `filledBefore` is the order's fill ledger
+    ///         (`signedOfferFilled[orderHash]`) before this fill. Every fill
+    ///         raises that ledger, so a co-signature authorizes exactly one
+    ///         fill: a second slice of a partially fillable order sees a higher
+    ///         ledger and needs a fresh approval.
+    bytes32 internal constant FILL_TYPEHASH = keccak256(
+        "SignedOfferFill(bytes32 orderHash,address taker,uint256 filledBefore,uint256 fillAmount,uint64 validUntil)"
+    );
+
+    /// @notice #3327 — the longest a co-signature may stay usable. A short
+    ///         bound is what makes "stop signing" an effective cancel: once the
+    ///         co-signer stops, every signature it already gave dies within it.
+    uint64 internal constant MAX_COSIGN_WINDOW = 15 minutes;
+
+    // #3327 — the refusals of the one fill rule below, shared by every fill
+    // route (direct, wallet-backed, match) so each refuses the same offer with
+    // the same error.
+    error SignedOfferExpired(uint64 expiresAt);
+    error SignedOfferNonceInvalidated(uint256 nonce);
+    error SignedOfferBelowCancelFloor(uint256 nonce, uint256 floor);
+    error SignedOfferTreasuryFeeAboveCap(uint256 liveBps, uint256 capBps);
+    error SignedOfferLoanInitiationFeeAboveCap(uint256 liveBps, uint256 capBps);
+    error SignedOfferTakerNotAllowed(address taker, address allowedTaker);
+    error SignedOfferCoSignatureInvalid();
+    error SignedOfferConsumed(bytes32 orderHash);
+    /// @notice The maker's signature did not recover to / 1271-validate
+    ///         against `o.signer`.
+    error SignedOfferBadSignature();
+
+    /// @notice Why a fill of `o` would be refused before the maker's own
+    ///         signature is checked, or `None`. One statement of those checks:
+    ///         every fill route reverts on the answer ({requireFillable}), and
     ///         `OfferPreviewFacet.previewSignedOfferAccept` reports it.
+    ///         APPENDED members only — off-chain decoders read the values.
     enum VetFailure {
         None,
         FullNeedsMaxCStar,
         DeadlinePassed,
         Expired,
         NonceInvalidated,
-        Consumed
+        Consumed,
+        BelowCancelFloor,
+        TreasuryFeeAboveCap,
+        LoanInitiationFeeAboveCap,
+        TakerNotAllowed,
+        CoSignatureInvalid
     }
 
-    /// @notice The first pre-signature check of a fill that `o` (whose order
-    ///         hash is `orderHash`) fails now, in the fill's order: a Full
-    ///         opt-in without a ceiling, the signature's own deadline (0 = none
-    ///         set), the order's expiry (0 = good till cancelled), the signer's
-    ///         batch-cancelled nonce, then an order hash already filled or
-    ///         cancelled.
-    function vetFailure(SignedOffer calldata o, bytes32 orderHash) internal view returns (VetFailure) {
+    /// @notice The first refusal of a fill of `fillAmount` of `o` (order hash
+    ///         `orderHash`) taken by `taker` with the co-signer's `auth`, in
+    ///         this order: a Full opt-in without a ceiling, the signature's
+    ///         deadline (0 = none set), the order's expiry (0 = good till
+    ///         cancelled), the signer's cancelled nonce, the signer's cancel
+    ///         floor, either protocol fee above the maker's cap, a taker the
+    ///         offer does not allow, then a missing, expired or wrong
+    ///         co-signature. How much of the order is left is each route's own
+    ///         check: the direct fill takes the whole order ({vetFailure}), a
+    ///         match a slice.
+    function fillFailure(
+        SignedOffer calldata o,
+        bytes32 orderHash,
+        address taker,
+        uint256 fillAmount,
+        FillAuth calldata auth
+    ) internal view returns (VetFailure) {
         if (!fullWellFormed(o)) return VetFailure.FullNeedsMaxCStar;
         if (LibTiming.deadlinePassed(o.deadline)) return VetFailure.DeadlinePassed;
         // The offer-expiry rule every other offer path reads ("expired AT and
-        // after `expiresAt`"); this check used `>` and left the exact second to
-        // the materialized offer's own expiry refusal.
+        // after `expiresAt`", #3552).
         if (LibVaipakam.offerExpiryPassed(o.expiresAt)) return VetFailure.Expired;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.signedOfferNonceUsed[o.signer][o.nonce]) return VetFailure.NonceInvalidated;
-        if (s.signedOfferFilled[orderHash] != 0) return VetFailure.Consumed;
+        if (o.nonce < s.signedOfferNonceFloor[o.signer]) return VetFailure.BelowCancelFloor;
+        if (LibVaipakam.cfgTreasuryFeeBps() > o.maxTreasuryFeeBps) return VetFailure.TreasuryFeeAboveCap;
+        if (LibVaipakam.cfgLoanInitiationFeeBps() > o.maxLoanInitiationFeeBps) {
+            return VetFailure.LoanInitiationFeeAboveCap;
+        }
+        if (o.allowedTaker != address(0) && taker != o.allowedTaker) return VetFailure.TakerNotAllowed;
+        if (o.coSigner != address(0) && !coSignatureValid(o, orderHash, taker, fillAmount, auth)) {
+            return VetFailure.CoSignatureInvalid;
+        }
         return VetFailure.None;
+    }
+
+    /// @notice The direct (whole-order) fill's refusal: {fillFailure} for the
+    ///         order's whole ceiling, then an order hash already filled or
+    ///         cancelled.
+    function vetFailure(SignedOffer calldata o, bytes32 orderHash, address taker, FillAuth calldata auth)
+        internal
+        view
+        returns (VetFailure f)
+    {
+        f = fillFailure(o, orderHash, taker, ceilingOf(o), auth);
+        if (f == VetFailure.None && LibVaipakam.storageSlot().signedOfferFilled[orderHash] != 0) {
+            f = VetFailure.Consumed;
+        }
+    }
+
+    /// @notice Revert with the refusal {fillFailure} names, if any.
+    function requireFillable(
+        SignedOffer calldata o,
+        bytes32 orderHash,
+        address taker,
+        uint256 fillAmount,
+        FillAuth calldata auth
+    ) internal view {
+        revertFor(o, orderHash, taker, fillFailure(o, orderHash, taker, fillAmount, auth));
+    }
+
+    /// @notice Revert with the error that states refusal `f` of `o` taken by
+    ///         `taker`; return when `f` is `None`.
+    function revertFor(SignedOffer calldata o, bytes32 orderHash, address taker, VetFailure f) internal view {
+        if (f == VetFailure.None) return;
+        if (f == VetFailure.FullNeedsMaxCStar) revert SignedOfferFullNeedsMaxCStar();
+        if (f == VetFailure.DeadlinePassed) revert LibTiming.DeadlinePassed(o.deadline);
+        if (f == VetFailure.Expired) revert SignedOfferExpired(o.expiresAt);
+        if (f == VetFailure.NonceInvalidated) revert SignedOfferNonceInvalidated(o.nonce);
+        if (f == VetFailure.BelowCancelFloor) {
+            revert SignedOfferBelowCancelFloor(o.nonce, LibVaipakam.storageSlot().signedOfferNonceFloor[o.signer]);
+        }
+        if (f == VetFailure.TreasuryFeeAboveCap) {
+            revert SignedOfferTreasuryFeeAboveCap(LibVaipakam.cfgTreasuryFeeBps(), o.maxTreasuryFeeBps);
+        }
+        if (f == VetFailure.LoanInitiationFeeAboveCap) {
+            revert SignedOfferLoanInitiationFeeAboveCap(LibVaipakam.cfgLoanInitiationFeeBps(), o.maxLoanInitiationFeeBps);
+        }
+        if (f == VetFailure.TakerNotAllowed) revert SignedOfferTakerNotAllowed(taker, o.allowedTaker);
+        if (f == VetFailure.CoSignatureInvalid) revert SignedOfferCoSignatureInvalid();
+        revert SignedOfferConsumed(orderHash);
+    }
+
+    /// @notice #3327 — whether `auth` is `o.coSigner`'s live signature over
+    ///         this fill: unexpired, valid for at most {MAX_COSIGN_WINDOW} from
+    ///         now, and signed (EOA or ERC-1271) over {fillDigest} for the
+    ///         order's fill ledger as it stands before this fill, so it can
+    ///         be spent once.
+    function coSignatureValid(
+        SignedOffer calldata o,
+        bytes32 orderHash,
+        address taker,
+        uint256 fillAmount,
+        FillAuth calldata auth
+    ) internal view returns (bool) {
+        if (auth.validUntil < block.timestamp) return false;
+        if (auth.validUntil > block.timestamp + MAX_COSIGN_WINDOW) return false;
+        return SignatureChecker.isValidSignatureNow(
+            o.coSigner,
+            fillDigest(
+                orderHash, taker, LibVaipakam.storageSlot().signedOfferFilled[orderHash], fillAmount, auth.validUntil
+            ),
+            auth.coSignature
+        );
+    }
+
+    /// @notice #3327 — the EIP-712 digest a co-signer signs for one fill.
+    function fillDigest(
+        bytes32 orderHash,
+        address taker,
+        uint256 filledBefore,
+        uint256 fillAmount,
+        uint64 validUntil
+    ) internal view returns (bytes32) {
+        return keccak256(
+            abi.encodePacked(
+                "\x19\x01",
+                domainSeparator(),
+                keccak256(abi.encode(FILL_TYPEHASH, orderHash, taker, filledBefore, fillAmount, validUntil))
+            )
+        );
+    }
+
+    /// @notice The offer's principal ceiling (`amountMax`, or `amount` for a
+    ///         single-value offer).
+    function ceilingOf(SignedOffer calldata o) internal pure returns (uint256) {
+        return o.amountMax == 0 ? o.amount : o.amountMax;
     }
 
     /// @notice #1949 — the maker Full intent for the part of `o` a fill materializes:
@@ -275,7 +512,7 @@ library LibSignedOffer {
     ///         `SignedOffer` field is a STATIC EIP-712 type (uint/address/bool/
     ///         bytes32), so `abi.encode` is plain 32-byte-word concatenation and
     ///         the three chunks concatenated are byte-identical to the single
-    ///         32-arg encode. Keep chunk widths ≤10 if fields are added.
+    ///         36-arg encode. Keep chunk widths ≤10 if fields are added.
     function hashStruct(SignedOffer memory o) internal pure returns (bytes32) {
         return keccak256(
             bytes.concat(
@@ -314,7 +551,15 @@ library LibSignedOffer {
                     o.creatorMaxCStar,
                     o.creatorAllowFullDowngrade
                 ),
-                abi.encode(o.signer, o.nonce, o.deadline)
+                abi.encode(
+                    o.maxTreasuryFeeBps,
+                    o.maxLoanInitiationFeeBps,
+                    o.allowedTaker,
+                    o.coSigner,
+                    o.signer,
+                    o.nonce,
+                    o.deadline
+                )
             )
         );
     }
@@ -344,16 +589,48 @@ library LibSignedOffer {
     ///         lives in the signature check (the digest folds in the
     ///         chain-bound domain separator), so a cross-chain replay fails at
     ///         signature verification regardless of the ledger key.
-    function verify(SignedOffer memory o, bytes memory signature)
+    function verify(SignedOffer memory o, bytes memory signature, OfferSet calldata set)
         internal
         view
         returns (bool ok, bytes32 orderHash)
     {
         orderHash = hashStruct(o);
+        (bool formed, bytes32 signedHash) = signedStructHash(orderHash, set);
+        if (!formed) return (false, orderHash);
         bytes32 fullDigest = keccak256(
-            abi.encodePacked("\x19\x01", domainSeparator(), orderHash)
+            abi.encodePacked("\x19\x01", domainSeparator(), signedHash)
         );
         ok = SignatureChecker.isValidSignatureNow(o.signer, fullDigest, signature);
+    }
+
+    /// @notice #3327 part 2 — the struct hash the maker signed for the offer
+    ///         whose struct hash is `orderHash`: the offer itself when `set`
+    ///         names no others, else the {SIGNED_OFFER_SET_TYPEHASH} struct
+    ///         with the offer at `set.index` among `set.others`. `formed` is
+    ///         false for a set larger than {MAX_SET_SIZE} or an index past
+    ///         its end. The fill ledger stays keyed by `orderHash`, so each
+    ///         offer of a set fills and cancels on its own.
+    function signedStructHash(bytes32 orderHash, OfferSet calldata set)
+        internal
+        pure
+        returns (bool formed, bytes32 h)
+    {
+        uint256 others = set.others.length;
+        if (others == 0) return (true, orderHash);
+        if (others >= MAX_SET_SIZE || set.index > others) return (false, bytes32(0));
+        bytes32[] memory hashes = new bytes32[](others + 1);
+        for (uint256 i; i <= others; ++i) {
+            hashes[i] = i < set.index ? set.others[i] : (i == set.index ? orderHash : set.others[i - 1]);
+        }
+        return (true, setStructHash(hashes));
+    }
+
+    /// @notice #3327 part 2 — the {SIGNED_OFFER_SET_TYPEHASH} struct hash of
+    ///         a set whose offers have struct hashes `hashes`, in signing
+    ///         order (EIP-712 hashes an array of structs as the hash of their
+    ///         concatenated struct hashes).
+    function setStructHash(bytes32[] memory hashes) internal pure returns (bytes32) {
+        return keccak256(abi.encode(SIGNED_OFFER_SET_TYPEHASH, keccak256(abi.encodePacked(hashes))));
     }
 
     /// @notice Map a `SignedOffer` to the on-chain `CreateOfferParams` used to

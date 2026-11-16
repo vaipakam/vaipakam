@@ -72,6 +72,10 @@ const CONTRACT_TYPE_STRING =
   'bool creatorFull,' +
   'uint256 creatorMaxCStar,' +
   'bool creatorAllowFullDowngrade,' +
+  'uint16 maxTreasuryFeeBps,' +
+  'uint16 maxLoanInitiationFeeBps,' +
+  'address allowedTaker,' +
+  'address coSigner,' +
   'address signer,' +
   'uint256 nonce,' +
   'uint256 deadline' +
@@ -128,6 +132,10 @@ function makeOrder(overrides: Partial<SignedOrderWire> = {}): SignedOrderWire {
     creatorFull: false,
     creatorMaxCStar: '0',
     creatorAllowFullDowngrade: false,
+    maxTreasuryFeeBps: '200',
+    maxLoanInitiationFeeBps: '20',
+    allowedTaker: '0x0000000000000000000000000000000000000000',
+    coSigner: '0x0000000000000000000000000000000000000000',
     signer: SIGNER.address.toLowerCase(),
     nonce: '7',
     deadline: DEADLINE_7D,
@@ -145,7 +153,7 @@ describe('signedOfferEip712 — hash agreement with LibSignedOffer.sol', () => {
       SIGNED_OFFER_TYPES.SignedOffer.map((f) => `${f.type} ${f.name}`).join(',') +
       ')';
     expect(derived).toBe(CONTRACT_TYPE_STRING);
-    expect(SIGNED_OFFER_FIELD_NAMES.length).toBe(31);
+    expect(SIGNED_OFFER_FIELD_NAMES.length).toBe(35);
   });
 
   it('orderHashOf equals a manually-assembled keccak256(abi.encode(typehash, ...fields))', () => {
@@ -298,7 +306,27 @@ describe('validateOrder — the POST shape gate', () => {
     expect(out).toEqual({ error });
   }
 
-  it('rejects a missing / extra field (exact 28-key contract)', () => {
+  it('#3327 — checks the maker-protection fields and keeps a named taker and co-signer', () => {
+    const r = (o: Partial<SignedOrderWire>) => makeOrder(o) as unknown as Record<string, unknown>;
+    expectError(r({ maxTreasuryFeeBps: '65536' }), 'invalid-maxTreasuryFeeBps');
+    expectError(r({ maxLoanInitiationFeeBps: '-1' }), 'invalid-maxLoanInitiationFeeBps');
+    expectError(r({ allowedTaker: '0x12' }), 'invalid-allowedTaker');
+    expectError(r({ coSigner: 'nope' }), 'invalid-coSigner');
+    const out = validateOrder(
+      r({
+        maxTreasuryFeeBps: '0',
+        maxLoanInitiationFeeBps: '65535',
+        allowedTaker: '0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
+        coSigner: '0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD',
+      }),
+      NOW,
+    );
+    expect('order' in out && out.order.allowedTaker).toBe('0xcccccccccccccccccccccccccccccccccccccccc');
+    expect('order' in out && out.order.coSigner).toBe('0xdddddddddddddddddddddddddddddddddddddddd');
+    expect('order' in out && out.order.maxTreasuryFeeBps).toBe('0');
+  });
+
+  it('rejects a missing / extra field (exact 35-key contract)', () => {
     const missing = makeOrder() as unknown as Record<string, unknown>;
     delete missing.nonce;
     expectError(missing, 'order-field-count');

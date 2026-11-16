@@ -31,6 +31,10 @@ export type SignedOfferFields = readonly [
   { readonly name: 'creatorFull'; readonly type: 'bool' },
   { readonly name: 'creatorMaxCStar'; readonly type: 'uint256' },
   { readonly name: 'creatorAllowFullDowngrade'; readonly type: 'bool' },
+  { readonly name: 'maxTreasuryFeeBps'; readonly type: 'uint16' },
+  { readonly name: 'maxLoanInitiationFeeBps'; readonly type: 'uint16' },
+  { readonly name: 'allowedTaker'; readonly type: 'address' },
+  { readonly name: 'coSigner'; readonly type: 'address' },
   { readonly name: 'signer'; readonly type: 'address' },
   { readonly name: 'nonce'; readonly type: 'uint256' },
   { readonly name: 'deadline'; readonly type: 'uint256' },
@@ -69,3 +73,13 @@ export function canonicalOrderJson(order: SignedOrderWire): string;
 export function parseStoredOrderJson(json: unknown): { order: SignedOrderWire } | { error: string };
 export function signedOfferColumns(order: SignedOrderWire): SignedOfferColumns;
 export function signedOfferRowProblem(row: Record<string, unknown>): string | null;
+
+/** #3327 part 2 — where one offer sits in the set its maker signed
+ *  (`LibSignedOffer.OfferSet`). */
+export interface SignedOfferPlacement {
+  others: `0x${string}`[];
+  index: number;
+}
+export const MAX_SIGNED_OFFER_SET: 32;
+export function placementProblem(value: unknown): string | null;
+export function canonicalPlacementJson(placement: SignedOfferPlacement): string;

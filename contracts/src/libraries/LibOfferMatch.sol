@@ -13,6 +13,7 @@ import {LibPausable} from "./LibPausable.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 import {OfferPreviewFacet} from "../facets/OfferPreviewFacet.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {LibIntentTerms} from "./LibIntentTerms.sol";
 
 /**
  * @title LibOfferMatch
@@ -177,7 +178,12 @@ library LibOfferMatch {
         // #3443 — the intent's terms were set less than the minimum age ago
         // (`IntentTermsTooFresh`); it can be filled within seconds. Checked
         // right after `Inactive`, where `matchIntent` checks it. APPENDED.
-        TermsTooFresh
+        TermsTooFresh,
+        // #3618 — the loan's agreed maturity (now + the request's term) falls
+        // after the intent's lend-until time (`LenderIntentPastLendUntil`).
+        // Checked right after `DurationTooLong`, where `matchIntent` checks it.
+        // APPENDED.
+        PastLendUntil
     }
 
     /// @notice Structured outcome of `RiskPreviewFacet.previewIntent`. `ok` is
@@ -903,11 +909,20 @@ library LibOfferMatch {
         if (cp.durationDays > intent.maxDurationDays) {
             return _intentFail(res, IntentError.DurationTooLong);
         }
-        if (!cp.useFullTermInterest) {
-            return _intentFail(res, IntentError.FullTermRequired);
-        }
-        if (cp.allowsPartialRepay) {
-            return _intentFail(res, IntentError.PartialRepayNotAllowed);
+        // #3618 / #3619 — the same rule `matchIntent` applies, from the one
+        // library ({LibIntentTerms}), in the same order.
+        {
+            (bool fits, ) = LibIntentTerms.fitsLendUntil(intent, cp.durationDays);
+            if (!fits) return _intentFail(res, IntentError.PastLendUntil);
+            LibIntentTerms.Lifecycle verdict = LibIntentTerms.lifecycleVerdict(
+                intent.acceptsProRata, cp.useFullTermInterest, cp.allowsPartialRepay
+            );
+            if (verdict == LibIntentTerms.Lifecycle.FullTermRequired) {
+                return _intentFail(res, IntentError.FullTermRequired);
+            }
+            if (verdict == LibIntentTerms.Lifecycle.PartialRepayNotAllowed) {
+                return _intentFail(res, IntentError.PartialRepayNotAllowed);
+            }
         }
 
         uint256 reqColl = LibRiskMath.minCollateralForLtvCap(
@@ -1033,7 +1048,7 @@ library LibOfferMatch {
             fillAmount,
             reqColl,
             intent.minRateBps,
-            cp.durationDays
+            cp
         );
         MatchResult memory mr = _previewMatchCore(slice, cp, s, 0);
         res.intentError = IntentError.Ok;
@@ -1071,8 +1086,8 @@ library LibOfferMatch {
         uint256 fillAmount,
         uint256 reqColl,
         uint256 minRateBps,
-        uint256 durationDays
-    ) private pure returns (LibVaipakam.Offer memory o) {
+        LibVaipakam.Offer storage cp
+    ) private view returns (LibVaipakam.Offer memory o) {
         o.creator = creator;
         o.offerType = LibVaipakam.OfferType.Lender;
         o.lendingAsset = lendingAsset;
@@ -1085,11 +1100,13 @@ library LibOfferMatch {
         o.interestRateBpsMax = LibVaipakam.MAX_INTEREST_BPS; // accept any rate ≥ floor
         o.collateralAmount = reqColl; // init-LTV-cap requirement
         o.collateralAmountMax = reqColl;
-        o.durationDays = durationDays; // == counterparty term (≤ maxDuration)
+        o.durationDays = cp.durationDays; // == counterparty term (≤ maxDuration, inside lendUntil)
         o.fillMode = LibVaipakam.FillMode.Partial;
-        // #2727 — the lifecycle terms a lender intent stands for, the same
-        // ones `matchIntent`'s slice carries: full-term interest, no partial
-        // repay, no prepay listing, no periodic cadence (the zero defaults).
-        o.useFullTermInterest = true;
+        // #2727 / #3619 — the lifecycle terms `matchIntent`'s slice carries:
+        // the request's interest mode and repayment shape (already checked
+        // against the intent), no prepay listing, no periodic cadence (the
+        // zero defaults).
+        o.useFullTermInterest = cp.useFullTermInterest;
+        o.allowsPartialRepay = cp.allowsPartialRepay;
     }
 }

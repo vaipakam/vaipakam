@@ -18,7 +18,7 @@
  * protocol still takes a deposit then), so the review states which.
  */
 import { erc20Abi, parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
-import { AdminFacetABI, ProtectedAccountFacetABI, VaultDepositoryFacetABI, VaultFactoryFacetABI, VPFIDiscountFacetABI } from '@vaipakam/contracts/abis';
+import { AdminFacetABI, VaultDepositoryFacetABI, VaultFactoryFacetABI, VPFIDiscountFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
 import { ASSET_TYPE, diamondMayMove, holds, readErc1155, readErc721, type Erc1155State, type Erc721State, type Standard } from '../nft/nft';
@@ -26,7 +26,7 @@ import { tokenAcceptsApproval } from '../offers/reads';
 import { answerOrNull } from '../reads/answer';
 import { frozenState, readSanctionsPosture, type FrozenState } from '../sanctions/posture';
 import { allowanceSteps } from '../tx/approval';
-import { payoutRoute, protectionFrom, type PayoutRoute, type ProtectedAccountAnswer, type Protection } from '../protection/payout';
+import { payoutRoute, protectionFrom, readProtectedAccountAnswer, type PayoutRoute, type Protection } from '../protection/payout';
 import { routeChanged } from '../protection/payoutCopy';
 import { readVpfiFacts, type VpfiFacts } from '../rewards/vpfiFacts';
 import { permitCovers, readPermitRoute, type PermitRoute, type PermitTransfer } from '../permit2/signatureTransfer';
@@ -37,7 +37,6 @@ type Copy = Pick<CopyAccess, 'text' | 'format'>;
 const DEPOSITORY = VaultDepositoryFacetABI as Abi;
 const FACTORY = VaultFactoryFacetABI as Abi;
 const ADMIN = AdminFacetABI as Abi;
-const PROTECTED = ProtectedAccountFacetABI as Abi;
 const VPFI_DISCOUNT = VPFIDiscountFacetABI as Abi;
 const ZERO = '0x0000000000000000000000000000000000000000';
 
@@ -124,7 +123,7 @@ export async function readDepositReview(own: OwnStateClient, diamond: Hex, draft
         c.readContract({ address: diamond, abi: FACTORY, functionName: 'getUserVaultAddress', args: [account], ...at }) as Promise<Hex>,
         answerOrNull(c.readContract({ address: diamond, abi: ADMIN, functionName: 'paused', ...at }) as Promise<boolean>),
         readSanctionsPosture(c, diamond, account, block),
-        answerOrNull(c.readContract({ address: diamond, abi: PROTECTED, functionName: 'getProtectedAccount', args: [account], ...at }) as Promise<ProtectedAccountAnswer>),
+        readProtectedAccountAnswer(c, diamond, account, block),
       ]);
       let holding: DepositHolding;
       // An ERC-721 token needs one approval for that token unless the

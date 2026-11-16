@@ -81,6 +81,11 @@ export const ACCEPT_ERRORS = [
   'SignedOfferUnsupportedShape',
   'SignedOfferMakerShort',
   'SignedOfferBelowMinimumValue',
+  // #3327 — the maker protections' refusals, appended in the enum.
+  'SignedOfferBelowCancelFloor',
+  'SignedOfferFeeAboveCap',
+  'SignedOfferTakerNotAllowed',
+  'SignedOfferCoSignatureInvalid',
 ] as const;
 export type AcceptErrorName = (typeof ACCEPT_ERRORS)[number] | 'Unrecognised';
 
@@ -99,6 +104,10 @@ const SIGNED_ONLY: ReadonlySet<AcceptErrorName> = new Set<AcceptErrorName>([
   'SignedOfferUnsupportedShape',
   'SignedOfferMakerShort',
   'SignedOfferBelowMinimumValue',
+  'SignedOfferBelowCancelFloor',
+  'SignedOfferFeeAboveCap',
+  'SignedOfferTakerNotAllowed',
+  'SignedOfferCoSignatureInvalid',
 ]);
 
 /** Codes this build reads with `previewAccept` and that call never reports:
@@ -115,6 +124,10 @@ const NOT_FROM_PREVIEW_ACCEPT: ReadonlySet<AcceptErrorName> = new Set<AcceptErro
   'SignedOfferUnsupportedShape',
   'SignedOfferMakerShort',
   'SignedOfferBelowMinimumValue',
+  'SignedOfferBelowCancelFloor',
+  'SignedOfferFeeAboveCap',
+  'SignedOfferTakerNotAllowed',
+  'SignedOfferCoSignatureInvalid',
 ]);
 
 /** The refusal as the page states it: a code the preview that was read

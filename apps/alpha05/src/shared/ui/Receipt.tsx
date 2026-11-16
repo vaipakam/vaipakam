@@ -3,6 +3,7 @@ import { useCopy } from '../copy/useCopy';
 import { readText, textCut, type Receipt as ReceiptModel, type ReceiptValue } from '../receipt/types';
 import { formatAge, formatFigure, formatUnits, shortAddress } from './format';
 import { Icon } from './Icon';
+import { RISKS_PATH } from '../risk/keyRisks';
 
 /** What a surface knows about an asset; `null` when it has not identified it. */
 export interface AssetInfo {
@@ -58,7 +59,7 @@ export function Receipt({ receipt, describeAsset, nowMs }: ReceiptProps) {
   const unknownWord = text('receipt.unknown');
   const [exact, setExact] = useState(false);
   const values = receipt.rows.map((row) => renderValue(row.value, describeAsset, unknownWord, exact));
-  const anyCut = values.some((v) => v.cut) || receipt.consequences.some(textCut);
+  const anyCut = values.some((v) => v.cut) || receipt.consequences.some(textCut) || (receipt.ifWrong !== undefined && textCut(receipt.ifWrong));
   return (
     <section className="receipt" aria-label={receipt.title}>
       <h2>{receipt.title}</h2>
@@ -86,6 +87,14 @@ export function Receipt({ receipt, describeAsset, nowMs }: ReceiptProps) {
         <button type="button" className="btn btn-link receipt-exact" aria-pressed={exact} onClick={() => setExact((x) => !x)} data-testid="receipt-exact">
           {text(exact ? 'receipt.showShort' : 'receipt.showExact')}
         </button>
+      )}
+      {receipt.ifWrong !== undefined && (
+        <p className="if-wrong tier-a" data-testid="receipt-if-wrong">
+          <strong>{text('keyRisks.ifWrong')}:</strong> {readText(receipt.ifWrong, exact)}{' '}
+          <a href={RISKS_PATH} target="_blank" rel="noreferrer">
+            {text('keyRisks.all')}
+          </a>
+        </p>
       )}
       {receipt.consequences.length > 0 && (
         <ul className="consequences tier-a" aria-label={text('receipt.consequences')}>

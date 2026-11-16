@@ -46,6 +46,10 @@
       "types": "./src/loanClock.ts",
       "default": "./src/loanClock.ts"
     },
+    "./signedOfferSet": {
+      "types": "./src/signedOfferSet.ts",
+      "default": "./src/signedOfferSet.ts"
+    },
     "./loanClockSnapshot": {
       "types": "./src/loanClockSnapshot.ts",
       "default": "./src/loanClockSnapshot.ts"
@@ -149,6 +153,10 @@
     "./protectedAccountView": {
       "types": "./src/protectedAccountView.ts",
       "default": "./src/protectedAccountView.ts"
+    },
+    "./vaultProtectionAuth": {
+      "types": "./src/vaultProtectionAuth.ts",
+      "default": "./src/vaultProtectionAuth.ts"
     },
     "./protocolKnobs": {
       "types": "./src/protocolKnobs.ts",

@@ -1,4 +1,5 @@
 import { lazy, type ComponentType } from 'react';
+import { ActivityPage } from '../pages/activity/ActivityPage';
 import { AlertsPage } from '../pages/alerts/AlertsPage';
 import { BorrowPage } from '../pages/borrow/BorrowPage';
 import { ClaimsPage } from '../pages/claims/ClaimsPage';
@@ -13,6 +14,8 @@ import { ProtectionPage } from '../pages/protection/ProtectionPage';
 import { RecoverPage } from '../pages/recover/RecoverPage';
 import { RentPage } from '../pages/rent/RentPage';
 import { RewardsPage } from '../pages/rewards/RewardsPage';
+import { RisksPage } from '../pages/risks/RisksPage';
+import { WalletKeysPage } from '../pages/walletKeys/WalletKeysPage';
 import { SettingsPage } from '../pages/settings/SettingsPage';
 import { VaultPage } from '../pages/vault/VaultPage';
 
@@ -41,6 +44,7 @@ export const BUILT_PAGES: Readonly<Record<string, ComponentType>> = {
   '/offers': OffersPage,
   '/offers/:id': OfferPage,
   '/alerts': AlertsPage,
+  '/activity': ActivityPage,
   '/settings': SettingsPage,
   '/rent': RentPage,
   '/rewards': RewardsPage,
@@ -49,4 +53,6 @@ export const BUILT_PAGES: Readonly<Record<string, ComponentType>> = {
   '/console': ConsolePage,
   '/recover': RecoverPage,
   '/analytics': AnalyticsPage,
+  '/risks': RisksPage,
+  '/wallet-keys': WalletKeysPage,
 };

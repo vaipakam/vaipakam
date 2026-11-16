@@ -2,7 +2,6 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
-import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 import {LibAcceptTerms} from "../libraries/LibAcceptTerms.sol";
 import {LibPermit2, ISignatureTransfer} from "../libraries/LibPermit2.sol";
@@ -54,14 +53,10 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
         uint256 loanId
     );
 
-    /// @notice The signed offer was already filled or cancelled.
-    error SignedOfferConsumed(bytes32 orderHash);
-    /// @notice The signer batch-invalidated this offer's nonce.
-    error SignedOfferNonceInvalidated(uint256 nonce);
-    /// @notice The signature did not recover to / 1271-validate against `o.signer`.
-    error SignedOfferBadSignature();
-    /// @notice The signed offer's GTT window has passed.
-    error SignedOfferExpired(uint64 expiresAt);
+    // The fill refusals (consumed, expired, cancelled nonce or floor, fee
+    // caps, taker, co-signature, bad signature) are LibSignedOffer's, shared
+    // with the match route (#3327).
+
     /// @notice Wallet-backed (Permit2-witness) signed offers are AON-only — a
     ///         single transfer signature authorizes exactly one pull.
     error WalletBackedMustBeAon();
@@ -74,23 +69,29 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         counterparty providing the other leg.
     /// @param o         The signed offer terms.
     /// @param sig       The signer's EIP-712 signature (EOA or ERC-1271).
+    /// @param set       Where `o` sits in the set its maker signed (#3327
+    ///                  part 2); no others when the maker signed `o` alone.
     /// @param terms     The acceptor's EIP-712-signed `AcceptTerms` (#662) —
     ///                  carries the acceptor's single fallback-terms consent +
     ///                  every loan-affecting field, bound against the
     ///                  materialized offer before any value moves.
     /// @param acceptSig ECDSA / ERC-1271 signature over `terms`.
+    /// @param auth      The offer's co-signer's authorization of this fill
+    ///                  (#3327); ignored when the offer names no co-signer.
     /// @return loanId   The initiated loan id.
     function acceptSignedOffer(
         LibSignedOffer.SignedOffer calldata o,
         bytes calldata sig,
+        LibSignedOffer.OfferSet calldata set,
         LibAcceptTerms.AcceptTerms calldata terms,
-        bytes calldata acceptSig
+        bytes calldata acceptSig,
+        LibSignedOffer.FillAuth calldata auth
     ) external nonReentrant whenNotPaused returns (uint256 loanId) {
-        bytes32 orderHash = _vetSignedOffer(o);
-        (bool ok, ) = LibSignedOffer.verify(o, sig);
-        if (!ok) revert SignedOfferBadSignature();
+        bytes32 orderHash = _vetSignedOffer(o, auth);
+        (bool ok, ) = LibSignedOffer.verify(o, sig, set);
+        if (!ok) revert LibSignedOffer.SignedOfferBadSignature();
         // Consume BEFORE any external interaction (CEI).
-        LibVaipakam.storageSlot().signedOfferFilled[orderHash] = _ceiling(o);
+        LibVaipakam.storageSlot().signedOfferFilled[orderHash] = LibSignedOffer.ceilingOf(o);
         uint256 offerId = _materializeVault(o);
         // #662 — bind the acceptor's signed terms against the materialized
         // offer. `offerKey` is the signed-offer order hash (no offerId existed
@@ -112,21 +113,24 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
     ///                  acceptor consent + every loan-affecting field, bound
     ///                  against the materialized offer before any value moves.
     /// @param acceptSig ECDSA / ERC-1271 signature over `terms`.
+    /// @param auth      The offer's co-signer's authorization of this fill
+    ///                  (#3327); ignored when the offer names no co-signer.
     /// @return loanId   The initiated loan id.
     function acceptSignedOfferWithPermit(
         LibSignedOffer.SignedOffer calldata o,
         ISignatureTransfer.PermitTransferFrom calldata permit,
         bytes calldata permitSig,
         LibAcceptTerms.AcceptTerms calldata terms,
-        bytes calldata acceptSig
+        bytes calldata acceptSig,
+        LibSignedOffer.FillAuth calldata auth
     ) external nonReentrant whenNotPaused returns (uint256 loanId) {
         if (LibVaipakam.FillMode(o.fillMode) != LibVaipakam.FillMode.Aon) {
             revert WalletBackedMustBeAon();
         }
         // The witness IS the order hash — Permit2 verifies the signer signed
         // over it; that is the terms binding (no separate offer signature).
-        bytes32 orderHash = _vetSignedOffer(o);
-        LibVaipakam.storageSlot().signedOfferFilled[orderHash] = _ceiling(o);
+        bytes32 orderHash = _vetSignedOffer(o, auth);
+        LibVaipakam.storageSlot().signedOfferFilled[orderHash] = LibSignedOffer.ceilingOf(o);
         uint256 offerId = _materializeWallet(o, permit, orderHash, permitSig);
         // #662 — bind the acceptor's signed terms against the materialized offer.
         OfferAcceptFacet(address(this)).verifyAndBindAccept(
@@ -142,6 +146,11 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
     event SignedOfferCancelled(bytes32 indexed orderHash, address indexed signer);
     /// @notice A signer batch-invalidated a signed-offer nonce.
     event SignedOfferNonceBurned(address indexed signer, uint256 nonce);
+    /// @notice #3327 — a signer raised their cancel floor: every signed offer
+    ///         of theirs whose nonce is below `floor` is cancelled.
+    event SignedOfferCancelFloorRaised(address indexed signer, uint256 floor);
+    /// @notice #3327 — the cancel floor only rises.
+    error SignedOfferCancelFloorNotRaised(uint256 floor, uint256 current);
     /// @notice Only the offer's signer may cancel it.
     error NotSignedOfferSigner();
 
@@ -154,7 +163,7 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
     {
         if (msg.sender != o.signer) revert NotSignedOfferSigner();
         bytes32 orderHash = LibSignedOffer.hashStruct(o);
-        LibVaipakam.storageSlot().signedOfferFilled[orderHash] = _ceiling(o);
+        LibVaipakam.storageSlot().signedOfferFilled[orderHash] = LibSignedOffer.ceilingOf(o);
         emit SignedOfferCancelled(orderHash, o.signer);
     }
 
@@ -165,7 +174,24 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
         emit SignedOfferNonceBurned(msg.sender, nonce);
     }
 
+    /// @notice #3327 — cancel EVERY signed offer the caller signed with a
+    ///         nonce below `floor`, in one transaction (the response to a key
+    ///         scare or a sharp market move). The floor only rises, so a
+    ///         cancelled offer never comes back.
+    function cancelSignedOffersBelow(uint256 floor) external whenNotPaused {
+        uint256 current = LibVaipakam.storageSlot().signedOfferNonceFloor[msg.sender];
+        if (floor <= current) revert SignedOfferCancelFloorNotRaised(floor, current);
+        LibVaipakam.storageSlot().signedOfferNonceFloor[msg.sender] = floor;
+        emit SignedOfferCancelFloorRaised(msg.sender, floor);
+    }
+
     // ─── Views ───────────────────────────────────────────────────────────
+
+    /// @notice #3327 — the signer's cancel floor: their signed offers with a
+    ///         nonce below it are cancelled (0 = none raised).
+    function signedOfferCancelFloor(address signer) external view returns (uint256) {
+        return LibVaipakam.storageSlot().signedOfferNonceFloor[signer];
+    }
 
     /// @notice The full EIP-712 digest the signer signs off-chain for `o`.
     function hashSignedOffer(LibSignedOffer.SignedOffer calldata o)
@@ -174,6 +200,47 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
         returns (bytes32)
     {
         return LibSignedOffer.digest(o);
+    }
+
+    /// @notice #3327 part 2 — the full EIP-712 digest a maker signs to
+    ///         authorize every offer in `offers` with one signature. Each
+    ///         offer still fills, and cancels, on its own; sharing one nonce
+    ///         lets `invalidateSignedOfferNonce` cancel the whole set.
+    /// @dev Reverts {SignedOfferSetSize} for fewer than two or more than
+    ///      `LibSignedOffer.MAX_SET_SIZE` offers (a single offer is signed
+    ///      with {hashSignedOffer}).
+    function hashSignedOfferSet(LibSignedOffer.SignedOffer[] calldata offers)
+        external
+        view
+        returns (bytes32)
+    {
+        uint256 n = offers.length;
+        if (n < 2 || n > LibSignedOffer.MAX_SET_SIZE) revert SignedOfferSetSize(n);
+        bytes32[] memory hashes = new bytes32[](n);
+        for (uint256 i; i < n; ++i) hashes[i] = LibSignedOffer.hashStruct(offers[i]);
+        return keccak256(
+            abi.encodePacked("\x19\x01", LibSignedOffer.domainSeparator(), LibSignedOffer.setStructHash(hashes))
+        );
+    }
+
+    /// @notice #3327 part 2 — a signed set holds two to
+    ///         `LibSignedOffer.MAX_SET_SIZE` offers.
+    error SignedOfferSetSize(uint256 count);
+
+    /// @notice #3327 — the EIP-712 digest an offer's co-signer signs for one
+    ///         fill: the order, the taker, the order's fill ledger before this
+    ///         fill (`signedOfferFilledAmount(orderHash)`), the fill amount and
+    ///         the latest time the co-signature may be used (at most 15
+    ///         minutes ahead). Binding the ledger makes each co-signature good
+    ///         for one fill only.
+    function hashSignedOfferFill(
+        bytes32 orderHash,
+        address taker,
+        uint256 filledBefore,
+        uint256 fillAmount,
+        uint64 validUntil
+    ) external view returns (bytes32) {
+        return LibSignedOffer.fillDigest(orderHash, taker, filledBefore, fillAmount, validUntil);
     }
 
     /// @notice The order hash (struct hash) — the on-chain ledger key.
@@ -206,35 +273,19 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
 
     // ─── Internals ───────────────────────────────────────────────────────
 
-    /// @dev Shared pre-fill checks (Full ceiling, deadline, GTT, nonce,
-    ///      replay), stated once in {LibSignedOffer.vetFailure} so the accept
-    ///      preview reports exactly what this refuses (#3552). Returns the
-    ///      order hash. `deadline`/`expiresAt` of 0 mean none set.
-    function _vetSignedOffer(LibSignedOffer.SignedOffer calldata o)
+    /// @dev The whole-order fill's checks, stated once in
+    ///      {LibSignedOffer.vetFailure} so the accept preview reports exactly
+    ///      what this refuses (#3552, #3327). The taker is the caller. Returns
+    ///      the order hash.
+    function _vetSignedOffer(LibSignedOffer.SignedOffer calldata o, LibSignedOffer.FillAuth calldata auth)
         private
         view
         returns (bytes32 orderHash)
     {
         orderHash = LibSignedOffer.hashStruct(o);
-        LibSignedOffer.VetFailure f = LibSignedOffer.vetFailure(o, orderHash);
-        if (f == LibSignedOffer.VetFailure.None) return orderHash;
-        if (f == LibSignedOffer.VetFailure.FullNeedsMaxCStar) revert LibSignedOffer.SignedOfferFullNeedsMaxCStar();
-        if (f == LibSignedOffer.VetFailure.DeadlinePassed) revert LibTiming.DeadlinePassed(o.deadline);
-        if (f == LibSignedOffer.VetFailure.Expired) revert SignedOfferExpired(o.expiresAt);
-        if (f == LibSignedOffer.VetFailure.NonceInvalidated) revert SignedOfferNonceInvalidated(o.nonce);
-        revert SignedOfferConsumed(orderHash);
+        LibSignedOffer.revertFor(o, orderHash, msg.sender, LibSignedOffer.vetFailure(o, orderHash, msg.sender, auth));
     }
 
-    /// @dev The offer's principal ceiling — the consume value (any non-zero
-    ///      blocks a re-fill; the ceiling shape is forward-compatible with the
-    ///      matcher phase's partial decrement).
-    function _ceiling(LibSignedOffer.SignedOffer calldata o)
-        private
-        pure
-        returns (uint256)
-    {
-        return o.amountMax == 0 ? o.amount : o.amountMax;
-    }
 
     /// @dev Materialize the vault-backed offer via `OfferCreateFacet`. Built
     ///      params + low-level `abi.encodeWithSelector` + `.call` (the typed
@@ -250,7 +301,7 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
                 OfferCreateFacet.createSignedOfferVault.selector,
                 o.signer,
                 params,
-                LibSignedOffer.makerFullFor(o, 0, _ceiling(o)) // #1949 — the whole order
+                LibSignedOffer.makerFullFor(o, 0, LibSignedOffer.ceilingOf(o)) // #1949 — the whole order
             )
         );
         offerId = abi.decode(res, (uint256));
@@ -273,7 +324,7 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
                 permit,
                 witness,
                 permitSig,
-                LibSignedOffer.makerFullFor(o, 0, _ceiling(o)) // #1949 — the whole order
+                LibSignedOffer.makerFullFor(o, 0, LibSignedOffer.ceilingOf(o)) // #1949 — the whole order
             )
         );
         offerId = abi.decode(res, (uint256));

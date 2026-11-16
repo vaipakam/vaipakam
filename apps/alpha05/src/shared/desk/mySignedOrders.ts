@@ -126,6 +126,9 @@ export type SignedStanding =
   | 'used'
   /** The signer cancelled every order carrying this nonce. */
   | 'nonce-cancelled'
+  /** #3327 — the signer cancelled every order with a nonce below a floor,
+   *  and this order's nonce is below it. */
+  | 'floor-cancelled'
   /** Its expiry or its signature's deadline has passed on the chain's clock. */
   | 'lapsed'
   | 'unread';
@@ -138,10 +141,17 @@ export function fillable(s: SignedStanding | undefined): boolean {
 /** The chain's own rule: an order is spent only when its cumulative fill
  *  reaches its ceiling (a cancel writes the ceiling); a fill below it is
  *  a partial match, and the rest stays fillable. */
-export function standingOf(order: SignedOrderWire, filled: bigint | null, nonceUsed: boolean | null, chainNow: number | null): SignedStanding {
-  if (filled === null || nonceUsed === null || chainNow === null) return 'unread';
+export function standingOf(
+  order: SignedOrderWire,
+  filled: bigint | null,
+  nonceUsed: boolean | null,
+  chainNow: number | null,
+  cancelFloor: bigint | null = 0n,
+): SignedStanding {
+  if (filled === null || nonceUsed === null || chainNow === null || cancelFloor === null) return 'unread';
   if (filled >= signedCeiling(order)) return 'used';
   if (nonceUsed) return 'nonce-cancelled';
+  if (BigInt(order.nonce) < cancelFloor) return 'floor-cancelled';
   const lapse = lapsesAt(order);
   if (lapse !== null && chainNow > lapse) return 'lapsed';
   return filled > 0n ? 'partly-filled' : 'open';
@@ -161,15 +171,30 @@ export async function readSignedStandings(
   const at = { blockNumber: read.number };
   const chainNow = Number(read.timestamp);
   const ask = <T>(p: Promise<unknown>) => answerOrNull(p as Promise<T>);
+  // #3327 — each signer's cancel floor, read once at the same block. The
+  // view never reverts on a deployment that has it, so a refused read is a
+  // deployment without the floor: no order is below it.
+  const floors = new Map<string, Promise<bigint>>();
+  const floorOf = (signer: string) => {
+    let f = floors.get(signer);
+    if (f === undefined) {
+      f = ask<bigint>(
+        c.readContract({ address: diamond, abi: SIGNED_OFFER, functionName: 'signedOfferCancelFloor', args: [signer as Hex], ...at }),
+      ).then((v) => v ?? 0n);
+      floors.set(signer, f);
+    }
+    return f;
+  };
   const rows = await Promise.all(
     orders.map(async (o) => {
-      const [filled, nonceUsed] = await Promise.all([
+      const [filled, nonceUsed, cancelFloor] = await Promise.all([
         ask<bigint>(c.readContract({ address: diamond, abi: SIGNED_OFFER, functionName: 'signedOfferFilledAmount', args: [o.orderHash], ...at })),
         ask<boolean>(
           c.readContract({ address: diamond, abi: SIGNED_OFFER, functionName: 'isSignedOfferNonceUsed', args: [o.order.signer, BigInt(o.order.nonce)], ...at }),
         ),
+        floorOf(o.order.signer),
       ]);
-      return { hash: o.orderHash, standing: standingOf(o.order, filled, nonceUsed, chainNow), filled };
+      return { hash: o.orderHash, standing: standingOf(o.order, filled, nonceUsed, chainNow, cancelFloor), filled };
     }),
   );
   const filled = new Map<Hex, bigint>();

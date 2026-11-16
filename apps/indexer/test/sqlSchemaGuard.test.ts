@@ -208,7 +208,12 @@ describe('SQL-vs-schema guard (#1149)', () => {
     // final feed's own query, as fixed clauses with every value bound.
     // Executed against the REAL migrated schema by `test/pendingLane.test.ts`
     // (unfiltered and filtered by loan).
-    expect(skipped.length).toBeLessThanOrEqual(31);
+    // Raised 31 → 32 for #3677 (Codex #3678 r1): the activity participant
+    // write is one multi-row INSERT whose VALUES list repeats a fixed
+    // `(?, ?, ?, ?)` group per row, so a page costs a few statements; every
+    // value is bound. Executed against the REAL migrated schema by
+    // `test/walletActivity.test.ts` (the backfill and its row budget).
+    expect(skipped.length).toBeLessThanOrEqual(32);
   });
 
   it('every static SQL statement prepares against the migrated schema', () => {

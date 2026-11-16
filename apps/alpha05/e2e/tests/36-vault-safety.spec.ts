@@ -17,9 +17,9 @@ import type { Page } from '@playwright/test';
 import { anvilRpc } from '../lib/anvil';
 import { scenario } from '../lib/chain';
 import { connectWallet, expect, test } from '../lib/wallet';
+import { enableProtection, protectionMode } from '../lib/protection';
 
 type Hex = `0x${string}`;
-type Mode = { enabled: boolean; locked: boolean; delaySeconds: number };
 
 const DAY = 24 * 60 * 60;
 const HOLDER_LOCK = parseAbi(['function isLocked(address holder) view returns (bool)']);
@@ -48,7 +48,10 @@ test('protected mode is turned on in Basic mode with the shortest delay, and the
   await expect(receipt).toContainText('Turn on protected mode', { timeout: 60_000 });
   await expect(receipt).toContainText('Every payout from your vault to this wallet');
   await expect(receipt).toContainText('It never delays what you owe others');
-  await expect(receipt).toContainText('Wallet prompts: 1');
+  // #3379 B2: a wallet with no vault creates it, then the vault turns the
+  // mode on and applies the platform side in the same transaction (#3489
+  // r16): two prompts.
+  await expect(receipt).toContainText('Wallet prompts: 2');
   await fitsWidth(page);
 
   const sent = flags.sentTransactions;
@@ -56,8 +59,8 @@ test('protected mode is turned on in Basic mode with the shortest delay, and the
   const finish = flow.locator('[data-phase="measured"]');
   await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 120_000 });
   await expect(finish).toContainText('Protected mode is on: payouts to your wallet wait 2 days.');
-  expect(flags.sentTransactions).toBe(sent + 1);
-  const mode = await sc.read<Mode>('getProtectedAccount', [me]);
+  expect(flags.sentTransactions).toBe(sent + 2);
+  const mode = await protectionMode(sc, me);
   expect(mode.enabled).toBe(true);
   expect(Number(mode.delaySeconds)).toBe(2 * DAY);
   // Basic mode leaves position NFT protection off: no holder lock at the
@@ -80,7 +83,7 @@ test('a lock cancels the queued payout, and the unlock is asked, waits the delay
   await sc.write('lender', WETH, TOKEN_ABI, 'deposit', [], amount);
   await sc.write('lender', WETH, TOKEN_ABI, 'approve', [sc.diamond, amount]);
   await sc.diamondWrite('lender', 'depositToVault', [0, WETH, 0n, amount]);
-  await sc.diamondWrite('lender', 'enableProtectedMode', [2 * DAY, false]);
+  await enableProtection(sc, 'lender', 2 * DAY);
   await sc.diamondWrite('lender', 'withdrawFromVault', [me, 0, WETH, 0n, amount, me]);
   expect(await sc.read<readonly bigint[]>('getPendingPayoutIds', [me])).toHaveLength(1);
 
@@ -104,9 +107,11 @@ test('a lock cancels the queued payout, and the unlock is asked, waits the delay
   await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 120_000 });
   await expect(finish).toContainText('Your account is locked.');
   await expect(finish).toContainText('Queued payouts cancelled: 1.');
+  // #3489 r9: one transaction, the vault's lock, which applies the platform
+  // side (the queued payout cancelled) in the same transaction.
   expect(flags.sentTransactions).toBe(sent + 1);
   expect(await sc.read<readonly bigint[]>('getPendingPayoutIds', [me])).toHaveLength(0);
-  expect((await sc.read<Mode>('getProtectedAccount', [me])).locked).toBe(true);
+  expect((await protectionMode(sc, me)).locked).toBe(true);
   await finish.getByRole('button', { name: 'Close' }).click();
 
   await expect(card.getByTestId('vault-safety-state')).toHaveAttribute('data-state', 'locked', { timeout: 60_000 });
@@ -133,8 +138,10 @@ test('a lock cancels the queued payout, and the unlock is asked, waits the delay
   finish = flow.locator('[data-phase="measured"]');
   await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 120_000 });
   await expect(finish).toContainText('Unlock');
+  // #3489 r12: one transaction, the vault's finalizer, which applies the
+  // unlock's platform side in the same transaction.
   expect(flags.sentTransactions).toBe(sent + 1);
-  expect((await sc.read<Mode>('getProtectedAccount', [me])).locked).toBe(false);
+  expect((await protectionMode(sc, me)).locked).toBe(false);
   await finish.getByRole('button', { name: 'Close' }).click();
   await expect(card.getByTestId('vault-safety-state')).toHaveAttribute('data-state', 'on', { timeout: 60_000 });
   await fitsWidth(page);

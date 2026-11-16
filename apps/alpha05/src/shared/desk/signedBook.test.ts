@@ -44,6 +44,10 @@ function order(patch: Partial<SignedOrderWire> = {}): SignedOrderWire {
     creatorFull: false,
     creatorMaxCStar: '0',
     creatorAllowFullDowngrade: false,
+    maxTreasuryFeeBps: '200',
+    maxLoanInitiationFeeBps: '20',
+    allowedTaker: ZERO,
+    coSigner: ZERO,
     signer: MAKER,
     nonce: '7',
     deadline: '2000',
@@ -55,7 +59,7 @@ function row(o: SignedOrderWire, signature: string = SIG) {
   return { orderHash: orderHashOf(o), signer: o.signer, order: JSON.parse(canonicalOrderJson(o)), signature, status: 'active', filledAmount: '0' };
 }
 
-const book = (o: SignedOrderWire): BookSignedOrder => ({ orderHash: orderHashOf(o), order: o, signature: SIG as Hex, replayPending: false });
+const book = (o: SignedOrderWire): BookSignedOrder => ({ orderHash: orderHashOf(o), order: o, signature: SIG as Hex, replayPending: false, set: null });
 
 describe('a market’s signed book, from the offer book', () => {
   it('keeps any maker’s order on this market with a readable signature, and nothing else', () => {
@@ -65,6 +69,14 @@ describe('a market’s signed book, from the offer book', () => {
     expect(bookSignedOrderFrom(row(order(), `0x${'ab'.repeat(64)}`), market)).toBeNull();
     expect(bookSignedOrderFrom(row(order({ durationDays: '7' })), market)).toBeNull();
     expect(bookSignedOrderFrom({ ...row(order()), orderHash: `0x${'1'.repeat(64)}` }, market)).toBeNull();
+  });
+
+  it('keeps the set an order was signed in, and reads a broken set as unreadable (#3327 part 2)', () => {
+    const set = { others: [`0x${'e'.repeat(64)}` as Hex], index: 1 };
+    expect(bookSignedOrderFrom({ ...row(order()), set }, market)).toEqual({ ...book(order()), set });
+    expect(bookSignedOrderFrom({ ...row(order()), set: null }, market)).toEqual(book(order()));
+    expect(bookSignedOrderFrom({ ...row(order()), set: { others: [], index: 0 } }, market)).toBeNull();
+    expect(bookSignedOrderFrom({ ...row(order()), set: { others: ['0x1'], index: 0 } }, market)).toBeNull();
   });
 
   it('stands a lender at its rate and a borrower at the higher of its two rates', () => {

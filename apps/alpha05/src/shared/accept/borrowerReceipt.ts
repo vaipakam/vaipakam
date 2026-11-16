@@ -12,6 +12,7 @@ import { exactTokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatBps, formatSpan } from '../ui/format';
 import { cadenceText, needsApproval, promptCount, valueRows, ZERO, ZERO_HASH, type AcceptReview } from './acceptReview';
 import { sourceLabel } from './acceptSource';
+import { loanRiskKey, settlementOf } from '../risk/keyRisks';
 
 type Hex = `0x${string}`;
 
@@ -215,6 +216,7 @@ export function borrowerReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy
     title: format('accept.title', { id: sourceLabel(r.source) }),
     rows,
     consequences,
+    ifWrong: text(loanRiskKey('borrower', settlementOf(r.lendingClass, r.collateralClass))),
     prompts: promptCount(r),
     readAt: r.readAt,
   };

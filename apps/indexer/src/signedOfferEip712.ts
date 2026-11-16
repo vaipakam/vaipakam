@@ -4,7 +4,7 @@
  *
  * Mirrors `contracts/src/libraries/LibSignedOffer.sol` exactly:
  *
- *   - `SIGNED_OFFER_TYPES.SignedOffer` lists the 31 fields in the SAME order
+ *   - `SIGNED_OFFER_TYPES.SignedOffer` lists the 35 fields in the SAME order
  *     as the Solidity struct / `SIGNED_OFFER_TYPEHASH` type string
  *     (LibSignedOffer.sol:39-105). Field order is load-bearing — any drift
  *     silently changes every hash. The unit test
@@ -27,7 +27,7 @@
 import {
   hashStruct,
   hashTypedData,
-  recoverTypedDataAddress,
+  recoverAddress,
   type Address,
   type Hex,
   type TypedDataDomain,
@@ -37,14 +37,15 @@ import {
   SIGNED_OFFER_FIELD_NAMES,
   type SignedOrderWire,
 } from '@vaipakam/lib/signedOfferWire';
+import { signedDigest, type SignedOfferDomain, type SignedOfferPlacement } from '@vaipakam/lib/signedOfferSet';
 
-/** The 31-field SignedOffer typed-data description — struct order EXACTLY as
+/** The 35-field SignedOffer typed-data description — struct order EXACTLY as
  *  `LibSignedOffer.SignedOffer` declares it (enums ⇒ uint8, GTT ⇒ uint64).
  *  The list itself is `@vaipakam/lib/signedOfferWire`'s, the one statement of
  *  the stored order the POST route and the restore converter share (#1481). */
 export const SIGNED_OFFER_TYPES = { SignedOffer: SIGNED_OFFER_FIELDS } as const;
 
-/** The 31 field names in canonical struct order, and the wire-shape order:
+/** The 35 field names in canonical struct order, and the wire-shape order:
  *  every uint as a decimal string, addresses as lowercase 0x-40-hex, bools as
  *  booleans. That is BOTH the POST body shape and the stored `order_json`
  *  shape — takers replay it verbatim into `acceptSignedOffer`. */
@@ -56,7 +57,7 @@ export { SIGNED_OFFER_FIELD_NAMES, type SignedOrderWire };
 export function signedOfferDomain(
   chainId: number,
   diamond: Address,
-): TypedDataDomain {
+): SignedOfferDomain {
   return {
     name: 'Vaipakam SignedOffer',
     version: '1',
@@ -99,6 +100,10 @@ export function toTypedMessage(order: SignedOrderWire) {
     creatorFull: order.creatorFull,
     creatorMaxCStar: BigInt(order.creatorMaxCStar),
     creatorAllowFullDowngrade: order.creatorAllowFullDowngrade,
+    maxTreasuryFeeBps: Number(order.maxTreasuryFeeBps),
+    maxLoanInitiationFeeBps: Number(order.maxLoanInitiationFeeBps),
+    allowedTaker: order.allowedTaker as Address,
+    coSigner: order.coSigner as Address,
     signer: order.signer as Address,
     nonce: BigInt(order.nonce),
     deadline: BigInt(order.deadline),
@@ -132,8 +137,10 @@ export function signedOfferDigest(
 }
 
 /**
- * Verify that `signature` recovers `order.signer` over the order's full
- * EIP-712 digest for this (chainId, diamond) domain.
+ * Verify that `signature` recovers `order.signer` over the digest the maker
+ * signed for this (chainId, diamond) domain: the order's own when it was
+ * signed alone (`placement` null), else the digest of the set it sits in
+ * (#3327 part 2, `@vaipakam/lib/signedOfferSet`).
  *
  * **EOA-only (v1 limitation).** The contract accepts BOTH ECDSA and ERC-1271
  * contract signatures (OZ `SignatureChecker` in `LibSignedOffer.verify`), but
@@ -150,13 +157,11 @@ export async function verifySignedOfferSignature(
   signature: Hex,
   chainId: number,
   diamond: Address,
+  placement: SignedOfferPlacement | null = null,
 ): Promise<boolean> {
   try {
-    const recovered = await recoverTypedDataAddress({
-      domain: signedOfferDomain(chainId, diamond),
-      types: SIGNED_OFFER_TYPES,
-      primaryType: 'SignedOffer',
-      message: toTypedMessage(order),
+    const recovered = await recoverAddress({
+      hash: signedDigest(orderHashOf(order), placement, signedOfferDomain(chainId, diamond)),
       signature,
     });
     return recovered.toLowerCase() === order.signer.toLowerCase();

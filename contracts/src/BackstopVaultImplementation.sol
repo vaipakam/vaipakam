@@ -34,6 +34,8 @@ interface IBackstopDiamond {
         uint32 maxDurationDays,
         uint256 minFillAmount,
         bool requiresKeeperAuth,
+        uint64 lendUntil,
+        bool acceptsProRata,
         bool riskAndTermsConsent,
         uint64 validUntil
     ) external;
@@ -155,6 +157,8 @@ contract BackstopVaultImplementation is
             maxDurationDays,
             minFillAmount,
             true, // requiresKeeperAuth — self-only
+            0, // lendUntil — none: a protocol-run intent lends without an end date (#3618)
+            false, // acceptsProRata — full-term only, the committed-interest deal (#3619)
             true, // riskAndTermsConsent
             uint64(block.timestamp) // validUntil — in-transaction, no queue to wait in (#3412)
         );

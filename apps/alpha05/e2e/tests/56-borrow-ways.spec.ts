@@ -93,7 +93,7 @@ test('Advanced adds a loan-to-value limit, and the standing lenders are stated w
   const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;
   const offerId = await postLenderOffer(sc, { lender: 'lender', principalWeth: '0.2', collateralTliq: '1000', rateBps: 450, days: 30 });
   // A standing intent for the pair, funded with 0.5 WETH under a 1 WETH cap.
-  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, parseEther('1'), 350n, 7000, 60, parseEther('0.1'), false, true, await txDeadline(sc)]);
+  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, parseEther('1'), 350n, 7000, 60, parseEther('0.1'), false, 0n, false, true, await txDeadline(sc)]);
   await sc.write('lender', WETH, WETH_ABI, 'deposit', [], parseEther('0.5'));
   await sc.write('lender', WETH, erc20Abi, 'approve', [sc.diamond, parseEther('0.5')]);
   await sc.diamondWrite('lender', 'fundLenderIntent', [WETH, tliq, parseEther('0.5')]);
@@ -114,7 +114,7 @@ test('Advanced adds a loan-to-value limit, and the standing lenders are stated w
   await expect(standing).toContainText(/stands? ready for this pair: up to [\d.]+ \S+/, { timeout: 60_000 });
   await expect(standing).toContainText(/at rates from [\d.]+%/);
   await expect(ways).toContainText('a fill is likely but neither instant nor guaranteed');
-  await expect(ways).toContainText(/Their limits reach \d+ days and [\d.]+% loan-to-value at most\./);
+  await expect(ways).toContainText(/Their limits reach \d+ days and [\d.]+% loan-to-value at most, end dates counted as read now\./);
 
   // The loan-to-value limit: zero hides every offer whose ratio is a figure.
   const offers = page.getByRole('region', { name: 'Offers you can take' });
@@ -129,13 +129,17 @@ test('Advanced adds a loan-to-value limit, and the standing lenders are stated w
   await ways.getByTestId('request-open').click();
   await expect(page.getByRole('heading', { level: 2, name: 'Your borrow request' })).toBeVisible();
   await expect(page.getByTestId('standing-ready')).toContainText(/ready for this pair/, { timeout: 60_000 });
-  // Terms no standing lender accepts say so instead of a likely fill.
+  // Pro-rata interest no lender here opted into (#3619) says so instead of a likely fill.
   await page.getByTestId('request-prorata').check();
-  await expect(page.getByTestId('standing-blocked')).toContainText('so no standing lender can fill it');
+  await expect(page.getByTestId('standing-blocked')).toContainText('none of the lenders here has opted in to that');
   await expect(page.locator('form')).not.toContainText('a fill is likely');
+  // A longer pro-rata lender offer may match; the loan keeps the borrower's term (#3615).
+  await expect(page.getByTestId('request-prorata-term')).toContainText('a lender’s pro-rata offer for a longer term');
+  await expect(page.getByTestId('request-prorata-term')).toContainText('Your loan always runs for exactly the term you ask for.');
   // Back to the full term's interest, the likely fill returns…
   await page.locator('input[name="request-interest"]').first().check();
   await expect(page.getByTestId('standing-blocked')).toHaveCount(0);
+  await expect(page.getByTestId('request-prorata-term')).toHaveCount(0);
   await expect(page.locator('form')).toContainText('a fill is likely');
   // …and an interest schedule rules every standing lender out again.
   await page.getByTestId('request-amount').fill(String(wholeWeth));
@@ -151,7 +155,7 @@ test('Advanced adds a loan-to-value limit, and the standing lenders are stated w
 test('with the standing-intent switch off, the lenders are not offered as a likely fill', async ({ launchWallet }) => {
   const sc = scenario();
   const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;
-  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, parseEther('1'), 350n, 7000, 60, parseEther('0.1'), false, true, await txDeadline(sc)]);
+  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, parseEther('1'), 350n, 7000, 60, parseEther('0.1'), false, 0n, false, true, await txDeadline(sc)]);
   await sc.write('lender', WETH, WETH_ABI, 'deposit', [], parseEther('0.5'));
   await sc.write('lender', WETH, erc20Abi, 'approve', [sc.diamond, parseEther('0.5')]);
   await sc.diamondWrite('lender', 'fundLenderIntent', [WETH, tliq, parseEther('0.5')]);
@@ -171,7 +175,7 @@ test('with the standing-intent switch off, the lenders are not offered as a like
 test('with every keeper paused, the matching service is said to fill none and others still may', async ({ launchWallet }) => {
   const sc = scenario();
   const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;
-  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, parseEther('1'), 350n, 7000, 60, parseEther('0.1'), false, true, await txDeadline(sc)]);
+  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, parseEther('1'), 350n, 7000, 60, parseEther('0.1'), false, 0n, false, true, await txDeadline(sc)]);
   await sc.write('lender', WETH, WETH_ABI, 'deposit', [], parseEther('0.5'));
   await sc.write('lender', WETH, erc20Abi, 'approve', [sc.diamond, parseEther('0.5')]);
   await sc.diamondWrite('lender', 'fundLenderIntent', [WETH, tliq, parseEther('0.5')]);
@@ -192,7 +196,7 @@ test('with every keeper paused, the matching service is said to fill none and ot
 test('with the protocol paused, nothing is said to fill against the standing lenders', async ({ launchWallet }) => {
   const sc = scenario();
   const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;
-  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, parseEther('1'), 350n, 7000, 60, parseEther('0.1'), false, true, await txDeadline(sc)]);
+  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, parseEther('1'), 350n, 7000, 60, parseEther('0.1'), false, 0n, false, true, await txDeadline(sc)]);
   await sc.write('lender', WETH, WETH_ABI, 'deposit', [], parseEther('0.5'));
   await sc.write('lender', WETH, erc20Abi, 'approve', [sc.diamond, parseEther('0.5')]);
   await sc.diamondWrite('lender', 'fundLenderIntent', [WETH, tliq, parseEther('0.5')]);
@@ -213,7 +217,7 @@ test('a lender that chooses its fillers is stated apart, without a likely fill',
   const sc = scenario();
   const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;
   // requiresKeeperAuth: only the lender or a filler it authorized may fill.
-  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, parseEther('1'), 350n, 7000, 60, parseEther('0.1'), true, true, await txDeadline(sc)]);
+  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, parseEther('1'), 350n, 7000, 60, parseEther('0.1'), true, 0n, false, true, await txDeadline(sc)]);
   await sc.write('lender', WETH, WETH_ABI, 'deposit', [], parseEther('0.5'));
   await sc.write('lender', WETH, erc20Abi, 'approve', [sc.diamond, parseEther('0.5')]);
   await sc.diamondWrite('lender', 'fundLenderIntent', [WETH, tliq, parseEther('0.5')]);
@@ -234,7 +238,7 @@ test('a lender that chooses its fillers is stated apart, without a likely fill',
 test('a borrower’s own standing intent is never counted as a lender ready for them', async ({ launchWallet }) => {
   const sc = scenario();
   const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;
-  await sc.diamondWrite('borrower', 'setLenderIntent', [WETH, tliq, parseEther('1'), 350n, 7000, 60, parseEther('0.1'), false, true, await txDeadline(sc)]);
+  await sc.diamondWrite('borrower', 'setLenderIntent', [WETH, tliq, parseEther('1'), 350n, 7000, 60, parseEther('0.1'), false, 0n, false, true, await txDeadline(sc)]);
   await sc.write('borrower', WETH, WETH_ABI, 'deposit', [], parseEther('0.5'));
   await sc.write('borrower', WETH, erc20Abi, 'approve', [sc.diamond, parseEther('0.5')]);
   await sc.diamondWrite('borrower', 'fundLenderIntent', [WETH, tliq, parseEther('0.5')]);

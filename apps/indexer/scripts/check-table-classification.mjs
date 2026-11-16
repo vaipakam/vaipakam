@@ -131,6 +131,8 @@ const CLASSIFICATION = {
       'numbered above every mark, which re-examines rather than skips',
   },
   loan_participants: { class: 'replay-derived', reason: 'append-only chain history (#1450 r31)' },
+  activity_participants: { class: 'replay-derived', reason: 'per-event participants, derived from activity_events (#3677)' },
+  activity_participants_state: { class: 'replay-derived', reason: 'backfill watermark over activity_events (#3677)' },
   loan_lifecycle_state: {
     class: 'replay-derived',
     reason: 'the status each loan last announced, read off LoanInitiated / LoanStatusChanged (#2337)',

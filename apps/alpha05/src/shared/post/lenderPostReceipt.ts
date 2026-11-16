@@ -28,6 +28,7 @@ import { ltvText, needsApproval, promptCount, stakeOfDraft, type PostReview } fr
 import { scheduleConsequences, scheduleRows } from './scheduleReview';
 import { tariffConsequences, tariffRows } from './tariffReview';
 import { guardConsequences, guardRows } from './guardPost';
+import { loanRiskKey } from '../risk/keyRisks';
 
 type Hex = `0x${string}`;
 
@@ -145,7 +146,16 @@ export function lenderPostReceipt(r: PostReview, meta: TokenMetaMap | null, copy
     text('lendOffer.loseBinding'),
   ];
 
-  return { title: text('lendOffer.title'), rows, consequences, prompts: promptCount(r), readAt: r.readAt };
+  return {
+    title: text('lendOffer.title'),
+    rows,
+    consequences,
+    // A posted offer is classed again when it fills (the loan stores the
+    // classes read then), so its settlement is not known now.
+    ifWrong: text(loanRiskKey('lender', 'unknown')),
+    prompts: promptCount(r),
+    readAt: r.readAt,
+  };
 }
 
 /**
@@ -166,14 +176,18 @@ export function matchConsequences(r: PostReview, meta: TokenMetaMap | null, copy
   const { text, format } = copy;
   const { parsed, pair } = r.draft;
   const sw = r.risk.partialFill;
+  // #3615: a pro-rata match may run for a borrower's shorter term.
+  const term = parsed.fullTerm ? [] : [format('lendOffer.loseProRataTerm', { days: String(parsed.durationDays) })];
   if (!isRanged(parsed)) {
     return [
       text(sw === null ? 'lendOffer.loseMatchUnread' : sw ? 'lendOffer.loseMatch' : 'lendOffer.loseMatchOff'),
+      ...term,
     ];
   }
   return [
     figured((x) => format('lendOffer.loseRangeParts', { part: tokenAmount(parsed.amount, pair.lending, meta, format, x) })),
     text(sw === null ? 'lendOffer.loseRangeMatchUnread' : sw ? 'lendOffer.loseRangeMatch' : 'lendOffer.loseRangeMatchOff'),
+    ...term,
     text('lendOffer.loseRangeNoDirect'),
     text('lendOffer.loseRangeShare'),
     text('lendOffer.loseFillFixed'),

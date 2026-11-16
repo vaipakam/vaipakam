@@ -1,7 +1,7 @@
 /**
  * A signed offer as the platform stores it (#1131, #1481).
  *
- * The maker signs a 31-field `SignedOffer` struct (EIP-712, struct order
+ * The maker signs a 35-field `SignedOffer` struct (EIP-712, struct order
  * exactly as `LibSignedOffer.SignedOffer` declares it). The indexer keeps
  * that order as `order_json` — the payload a taker replays on chain — beside
  * the market columns the book filters and sorts on, which are copies of
@@ -25,7 +25,7 @@
  * the indexer's `signedOfferEip712.ts`.
  */
 
-/** The 31 fields, in struct order, with their EIP-712 types. Field order is
+/** The 35 fields, in struct order, with their EIP-712 types. Field order is
  *  load-bearing: it fixes the typehash and so every signature and order hash.
  *  The indexer's typehash test pins this list to the contract's type string. */
 export const SIGNED_OFFER_FIELDS = Object.freeze([
@@ -58,12 +58,19 @@ export const SIGNED_OFFER_FIELDS = Object.freeze([
   { name: 'creatorFull', type: 'bool' },
   { name: 'creatorMaxCStar', type: 'uint256' },
   { name: 'creatorAllowFullDowngrade', type: 'bool' },
+  // #3327 — the maker's protections: the highest protocol fees it accepts,
+  // the one taker allowed (zero = anyone) and an optional co-signer (zero =
+  // none) whose fresh signature every fill must carry.
+  { name: 'maxTreasuryFeeBps', type: 'uint16' },
+  { name: 'maxLoanInitiationFeeBps', type: 'uint16' },
+  { name: 'allowedTaker', type: 'address' },
+  { name: 'coSigner', type: 'address' },
   { name: 'signer', type: 'address' },
   { name: 'nonce', type: 'uint256' },
   { name: 'deadline', type: 'uint256' },
 ].map((f) => Object.freeze(f)));
 
-/** The 31 field names in struct order. */
+/** The 35 field names in struct order. */
 export const SIGNED_OFFER_FIELD_NAMES = Object.freeze(SIGNED_OFFER_FIELDS.map((f) => f.name));
 
 /** The stored wire form of each EIP-712 type: an address lowercased, a bool
@@ -83,7 +90,7 @@ function wireValueProblem(type, value) {
   return `a known type (${type})`;
 }
 
-/** The canonical `order_json`: the 31 fields in struct order. Stable key
+/** The canonical `order_json`: the 35 fields in struct order. Stable key
  *  order makes the same order serialize to the same bytes, so two copies are
  *  comparable as strings. The order must already be in wire form. */
 export function canonicalOrderJson(order) {
@@ -94,7 +101,7 @@ export function canonicalOrderJson(order) {
 
 /**
  * Read a stored `order_json`. Returns `{ order }` only when the text is the
- * canonical serialization of an object carrying exactly the 31 fields, each
+ * canonical serialization of an object carrying exactly the 35 fields, each
  * in its wire form; otherwise `{ error }`, naming the first problem.
  */
 export function parseStoredOrderJson(json) {
@@ -165,5 +172,48 @@ export function signedOfferRowProblem(row) {
       return `${column} is ${JSON.stringify(row[column])} but the order says ${JSON.stringify(value)}`;
     }
   }
+  // #3327 part 2: `offer_set` is NULL for an offer signed alone, else the
+  // canonical placement JSON the route writes. A malformed one would be served
+  // as a set offer no taker can fill.
+  const set = row.offer_set;
+  if (set !== null && set !== undefined) {
+    if (typeof set !== 'string') return 'offer_set is not text';
+    let placement;
+    try {
+      placement = JSON.parse(set);
+    } catch {
+      return 'offer_set is not JSON';
+    }
+    const problem = placementProblem(placement);
+    if (problem) return `offer_set is not a placement (${problem})`;
+    if (canonicalPlacementJson(placement) !== set) return 'offer_set is not in canonical form';
+  }
   return null;
+}
+
+/** #3327 part 2 — `LibSignedOffer.MAX_SET_SIZE`: the most offers one set
+ *  signature covers. */
+export const MAX_SIGNED_OFFER_SET = 32;
+
+const SET_HASH = /^0x[0-9a-f]{64}$/;
+
+/** Why `value` is not a well-formed placement of a set offer, or null. A
+ *  placement (`LibSignedOffer.OfferSet`) names the struct hashes of the set's
+ *  other offers in signing order and this offer's index among them. A set
+ *  holds two to {@link MAX_SIGNED_OFFER_SET} offers, so a placement names one
+ *  to 31 others, as lowercase 32-byte hashes, and an index no greater than
+ *  their count. An offer signed alone has no placement. */
+export function placementProblem(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return 'set-not-object';
+  for (const k of Object.keys(value)) if (k !== 'others' && k !== 'index') return 'set-unknown-field';
+  const { others, index } = value;
+  if (!Array.isArray(others) || others.length < 1 || others.length >= MAX_SIGNED_OFFER_SET) return 'set-size';
+  if (!others.every((h) => typeof h === 'string' && SET_HASH.test(h))) return 'set-hash';
+  if (typeof index !== 'number' || !Number.isInteger(index) || index < 0 || index > others.length) return 'set-index';
+  return null;
+}
+
+/** The `offer_set` column's text for a well-formed placement. */
+export function canonicalPlacementJson(placement) {
+  return JSON.stringify({ others: placement.others, index: placement.index });
 }

@@ -46,6 +46,10 @@ function order(patch: Partial<SignedOrderWire> = {}): SignedOrderWire {
     creatorFull: false,
     creatorMaxCStar: '0',
     creatorAllowFullDowngrade: false,
+    maxTreasuryFeeBps: '200',
+    maxLoanInitiationFeeBps: '20',
+    allowedTaker: ZERO,
+    coSigner: ZERO,
     signer: ME,
     nonce: '7',
     deadline: '2000',
@@ -144,6 +148,10 @@ describe('where the chain stands', () => {
     expect(standingOf(order(), 0n, false, 2001)).toBe('lapsed');
     expect(standingOf(order(), 0n, false, 2000)).toBe('open');
     expect(standingOf(order(), null, false, 1)).toBe('unread');
+    // #3327 — nonce 7 sits below a floor of 8, at the floor it does not.
+    expect(standingOf(order(), 0n, false, 2000, 8n)).toBe('floor-cancelled');
+    expect(standingOf(order(), 0n, false, 2000, 7n)).toBe('open');
+    expect(standingOf(order(), 200000000000000000n, false, 1, 8n)).toBe('used');
   });
 
   it('a fill below the ceiling leaves the rest fillable, as the matcher allows', () => {

@@ -1901,25 +1901,38 @@ cd contracts
 ionice -c 2 -n 0 forge script script/PositiveFlows.s.sol \
   --rpc-url http://localhost:8545 --disable-block-gas-limit --skip-simulation
 
-# Positive, broadcast in stages — the modules a rehearsal leaves on chain
-# (#3502). Each stage is one `forge script --broadcast`; the runner steps the
-# Anvil clock past the terms age between stages, then runs the read-only
-# finish that prints each scenario's result and removes the run's record
-# (contracts/deployments/<chain>/positive-flows-staged-<module>.json). A stage
-# runs only on top of a stage that landed whole: if a broadcast stops part-way,
-# the next stage refuses and names the record to remove for a fresh run.
-# PositiveFlowsTimed's steps wait longer (the five-minute cancel cooldown, a
-# periodic checkpoint a month after its loan opens, #3574); on Anvil the
-# runner steps the clock for those too. Its PF-116 changes the
-# periodic-interest switch, a swap adapter and the finer-cadence threshold
-# across a wait, and the record lists them under `restore_`: if that run is
-# abandoned, put them back with
-#   forge script script/positive-flows/PositiveFlowsTimed.s.sol --sig "unwind()" \
+# Positive, broadcast in stages — every module, as a rehearsal leaves it on
+# chain (#3502, #3574). Each stage is one `forge script --broadcast`; the
+# runner steps the Anvil clock past the terms age between stages, then runs
+# the read-only finish that prints each scenario's result and removes the
+# run's record (contracts/deployments/<chain>/positive-flows-staged-<module>.json).
+# A stage runs only on top of a stage that landed whole: if a broadcast stops
+# part-way, the next stage refuses and names the record to remove for a fresh
+# run. Some steps wait longer than the terms age, and on Anvil the runner
+# steps the clock for those too: PositiveFlowsTimed's (the five-minute cancel
+# cooldown, a periodic checkpoint a month after its loan opens) and
+# PositiveFlowsVaultAndVpfi's PF-250 (the minimum VPFI staking period plus a
+# day, read from the Diamond).
+# Some scenarios change a setting and hold it across a wait:
+# PositiveFlowsTimed's PF-116 (the periodic-interest switch, a swap adapter,
+# the finer-cadence threshold), PositiveFlowsSwapToRepay (a swap adapter per
+# scenario), PositiveFlowsKeeperAutomation (a keeper approval),
+# PositiveFlowsOperatorAdmin (a sanctions flag, the pauses, the initiation
+# fee) and PositiveFlowsVaultAndVpfi (the VPFI discount config and the
+# borrower's consent; it never replaces a registered VPFI token, because that
+# cannot be undone). The record lists every such setting under
+# `restore_`: if a run is abandoned, put back whatever the chain still shows
+# changed with
+#   forge script script/positive-flows/<module>.s.sol --sig "unwind()" \
 #     --rpc-url http://localhost:8545 --broadcast
 # before removing the record.
+# Each stage's gas limits come from the node's estimate at send time
+# (`--skip-simulation`), because a price read needs a fixed gas reserve that
+# no multiplier on forge's measured use covers.
 # One module at a time, since each checks its actors' nonces:
-for m in PositiveFlowsBasicLifecycle PositiveFlowsAdvancedCredit PositiveFlowsLenderIntent \
-         PositiveFlowsPositionHolder PositiveFlowsTimed; do
+for m in PositiveFlowsBasicLifecycle PositiveFlowsAdvancedCredit PositiveFlowsVaultAndVpfi \
+         PositiveFlowsLenderIntent PositiveFlowsPositionHolder PositiveFlowsKeeperAutomation \
+         PositiveFlowsOperatorAdmin PositiveFlowsSwapToRepay PositiveFlowsTimed; do
   bash script/positive-flows/run-staged.sh "$m" || break
 done
 

@@ -27,6 +27,21 @@ type Hex = `0x${string}`;
 
 const RISK_PREVIEW = RiskPreviewFacetABI as Abi;
 
+/** #3327 — the fill authorisation this app sends: none. It holds no
+ *  co-signer key and asks no co-signing service, so the protocol's own
+ *  preview refuses an order that names a co-signer
+ *  (`SignedOfferCoSignatureInvalid`), as it refuses one reserved for another
+ *  taker (`SignedOfferTakerNotAllowed`); the review states that refusal
+ *  rather than sending a fill that would fail on the chain. */
+export const NO_FILL_AUTH = { validUntil: 0n, coSignature: '0x' as Hex } as const;
+
+/** #3327 part 2 — the set argument every fill and preview of `o` sends:
+ *  its placement in the set its maker signed, or the empty placement the
+ *  contract reads as "signed alone". */
+export function setArg(o: BookSignedOrder): { others: readonly Hex[]; index: bigint } {
+  return o.set === null ? { others: [], index: 0n } : { others: o.set.others, index: BigInt(o.set.index) };
+}
+
 const ZERO_HASH: Hex = '0x0000000000000000000000000000000000000000000000000000000000000000';
 
 /** The offer a fill of `o` would write, in the shape `getOffer` returns:
@@ -101,7 +116,7 @@ export async function readSignedPreview(c: PublicClient, diamond: Hex, o: BookSi
     address: diamond,
     abi: OFFER_PREVIEW,
     functionName: 'previewSignedOfferAccept',
-    args: [typedMessage(o.order), o.signature, acceptor],
+    args: [typedMessage(o.order), o.signature, setArg(o), acceptor, NO_FILL_AUTH],
     ...(b ? { blockNumber: b.blockNumber } : {}),
   })) as Raw;
   return signedPreviewFrom(raw);
@@ -129,14 +144,15 @@ export async function readSignedRiskBlocks(c: PublicClient, diamond: Hex, o: Boo
   return { creator: Number(creator), acceptor: Number(taker), pair: pairFrom(pair) };
 }
 
-/** The fill call: the order, the maker's signature, the taker's signed
- *  terms and the taker's signature over them. */
+/** The fill call: the order, the maker's signature, the order's place in
+ *  the set that signature covers, the taker's signed terms and the taker's
+ *  signature over them. */
 export function signedFillCall(
   o: BookSignedOrder,
   terms: unknown,
   termsSignature: Hex,
 ): { abi: Abi; functionName: 'acceptSignedOffer'; args: readonly unknown[] } {
-  return { abi: SIGNED_OFFER, functionName: 'acceptSignedOffer', args: [typedMessage(o.order), o.signature, terms, termsSignature] };
+  return { abi: SIGNED_OFFER, functionName: 'acceptSignedOffer', args: [typedMessage(o.order), o.signature, setArg(o), terms, termsSignature, NO_FILL_AUTH] };
 }
 
 /** The offer and loan the fill of `orderHash` created, from the Diamond's

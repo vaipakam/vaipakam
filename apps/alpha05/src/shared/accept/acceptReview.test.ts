@@ -132,6 +132,11 @@ describe('acceptReceipt', () => {
     expect(both).toEqual(expect.arrayContaining(['accept.loseIlliquidLending', 'accept.loseIlliquidCollateral']));
     expect(lose(review())).toContain('accept.losePause');
   });
+  it('states the one if-things-go-wrong line for the side and how the loan settles (#3661)', () => {
+    const ifWrong = (r: AcceptReview) => acceptReceipt(r, null, copy).ifWrong;
+    expect(ifWrong(review())).toBe('keyRisks.borrowerSale');
+    expect(ifWrong(review({ collateralClass: 'illiquid' }))).toBe('keyRisks.borrowerInKind');
+  });
 });
 
 describe('changedBetween', () => {
@@ -162,7 +167,7 @@ describe('retired vault-version refusal (#3204)', () => {
 describe('signed-offer refusals (#3552)', () => {
   it('read as the code this build cannot name, since previewAccept never reports them', () => {
     const signed = ACCEPT_ERRORS.filter((n) => n.startsWith('SignedOffer'));
-    expect(signed).toHaveLength(8);
+    expect(signed).toHaveLength(12);
     for (const error of signed) {
       const preview = { ...review().preview, error };
       expect(reviewBlockers(review({ preview }), null, copy)).toEqual(['accept.err.Unrecognised']);

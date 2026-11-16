@@ -24,6 +24,7 @@ import { redactedError } from '@vaipakam/lib/errorDescription';
 import { chainNotServed, parseChainId, requestedChainId } from './servedChain';
 import { CURSOR_KIND } from './chainIndexer';
 import { PENDING_MAX_ROWS, readPendingLane, type PendingLaneJson } from './pendingLane';
+import { WALLET_LOAN_CONDITION, walletActivityComplete, walletEventsPage } from './walletActivity';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import {
   liquidatorWindowBinds,
@@ -44,6 +45,7 @@ import {
   repairObservationPosition,
   repairObservationsPage,
   repairObservationToJson,
+  walletRepairObservationsPage,
 } from './repairObservations';
 import {
   CANDLE_INTERVALS,
@@ -656,6 +658,17 @@ export async function handleLoansByCurrentHolder(
 const MAX_ACTIVITY_KINDS = 8;
 
 /** GET /activity?chainId=8453&actor=0x...&loanId=N&offerId=N&kind=K[,K...]&limit=50&before=<block:logIndex>&repairObservations=1&pending=1
+ *  GET /activity?chainId=8453&wallet=0x...&limit=50&before=<block:logIndex>&repairObservations=1&pending=1
+ *
+ *  `wallet` (#3677) serves ONE wallet's history: the events on any loan it
+ *  ever held a position in, and the events naming it as a participant by the
+ *  shared rule (see `walletActivity.ts`). It stands alone: combined with
+ *  `actor`, `loanId`, `offerId` or `kind` it is refused, since each leg is
+ *  read to the page's limit on its own index and a further filter would cut
+ *  the union below it. The answer carries `walletComplete`: false while the
+ *  participant index is still being filled from older history, null when
+ *  that could not be read — never present the page as the wallet's whole
+ *  history unless it is true.
  *
  *  `pending=1` (#3411 part 2) adds `pending`: events above the chain's safe
  *  block, not final yet, on the first page only (see `pendingLane.ts`).
@@ -672,6 +685,8 @@ export async function handleActivity(req: Request, env: Env): Promise<Response> 
   const offerIdRaw = url.searchParams.get('offerId');
   const kind = url.searchParams.get('kind');
   const beforeRaw = url.searchParams.get('before');
+  const walletRaw = url.searchParams.get('wallet');
+  if (walletRaw !== null) return handleWalletActivity(url, env, chainId, limit, walletRaw);
 
   const where: string[] = ['chain_id = ?'];
   const binds: (string | number)[] = [chainId];
@@ -801,6 +816,91 @@ export async function handleActivity(req: Request, env: Env): Promise<Response> 
     });
   } catch (err) {
     console.error('[loanRoutes] activity failed', redactedError(err));
+    return jsonResponse({ error: 'activity-failed' }, 500);
+  }
+}
+
+/** #3677 — `/activity?wallet=`: one wallet's history (see `handleActivity`). */
+async function handleWalletActivity(
+  url: URL,
+  env: Env,
+  chainId: number,
+  limit: number,
+  walletRaw: string,
+): Promise<Response> {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(walletRaw)) return jsonResponse({ error: 'bad-wallet' }, 400);
+  for (const p of ['actor', 'loanId', 'offerId', 'kind']) {
+    if (url.searchParams.has(p)) return jsonResponse({ error: 'wallet-filter-alone' }, 400);
+  }
+  const wallet = walletRaw.toLowerCase();
+  const beforeRaw = url.searchParams.get('before');
+  let before: { block: number; logIndex: number } | undefined;
+  if (beforeRaw) {
+    const m = beforeRaw.match(/^(\d+):(\d+)$/);
+    if (!m) return jsonResponse({ error: 'bad-before' }, 400);
+    before = { block: Number.parseInt(m[1], 10), logIndex: Number.parseInt(m[2], 10) };
+  }
+  const notServed = chainNotServed(env, chainId);
+  if (notServed) return notServed;
+  try {
+    const rows = await walletEventsPage(env.DB, chainId, wallet, before, limit).all<ActivityRow>();
+    const wantObservations = url.searchParams.get('repairObservations') === '1';
+    let observations: RepairObservationRow[] | null = [];
+    if (wantObservations) {
+      try {
+        const r = await walletRepairObservationsPage(env.DB, chainId, wallet, before, limit).all<RepairObservationRow>();
+        observations = r.results ?? [];
+      } catch (err) {
+        console.warn('[loanRoutes] wallet activity: repaired-loan endings not read; served as unknown', redactedError(err));
+        observations = null;
+      }
+    }
+    type Item =
+      | { at: { block: number; logIndex: number }; event: ActivityRow }
+      | { at: { block: number; logIndex: number }; observation: RepairObservationRow };
+    const merged: Item[] = [
+      ...(rows.results ?? []).map((r) => ({ at: { block: r.block_number, logIndex: r.log_index }, event: r })),
+      ...(observations ?? []).map((o) => ({ at: repairObservationPosition(o), observation: o })),
+    ]
+      .sort((a, b) => b.at.block - a.at.block || b.at.logIndex - a.at.logIndex)
+      .slice(0, limit);
+    const events = merged.flatMap((m) => ('event' in m ? [activityToJson(m.event)] : []));
+    const repairObservations =
+      observations === null ? null : merged.flatMap((m) => ('observation' in m ? [repairObservationToJson(m.observation)] : []));
+    const last = merged.length === limit ? merged[merged.length - 1] : null;
+    const nextBefore = last ? `${last.at.block}:${last.at.logIndex}` : null;
+    let pending: PendingLaneJson | null | undefined;
+    if (url.searchParams.get('pending') === '1' && !before) {
+      try {
+        pending = await readPendingLane(
+          env.DB,
+          chainId,
+          CURSOR_KIND,
+          {
+            // The pending rows carry their participants inline (0095).
+            where: [`(${WALLET_LOAN_CONDITION} OR participants LIKE ?)`],
+            binds: [chainId, wallet, `% ${wallet} %`],
+          },
+          Math.min(limit, PENDING_MAX_ROWS),
+          Math.floor(Date.now() / 1000),
+        );
+      } catch (err) {
+        console.warn('[loanRoutes] wallet activity: pending lane not read; served as unknown', redactedError(err));
+        pending = null;
+      }
+    }
+    const walletComplete = await walletActivityComplete(env.DB, chainId);
+    return jsonResponse({
+      chainId,
+      wallet,
+      events,
+      ...(wantObservations ? { repairObservations } : {}),
+      ...(pending !== undefined ? { pending } : {}),
+      walletComplete,
+      nextBefore,
+    });
+  } catch (err) {
+    console.error('[loanRoutes] wallet activity failed', redactedError(err));
     return jsonResponse({ error: 'activity-failed' }, 500);
   }
 }

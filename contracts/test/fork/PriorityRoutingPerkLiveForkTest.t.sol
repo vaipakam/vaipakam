@@ -240,7 +240,7 @@ contract PriorityRoutingPerkLiveForkTest is Test {
     function _openIntent(address lender) internal {
         vm.prank(lender);
         LenderIntentFacet(diamond).setLenderIntent(
-            weth, collateral, 10 * PRINCIPAL, RATE_BPS, MAX_INIT_LTV_BPS, DURATION_DAYS, PRINCIPAL / 10, false, true,
+            weth, collateral, 10 * PRINCIPAL, RATE_BPS, MAX_INIT_LTV_BPS, DURATION_DAYS, PRINCIPAL / 10, false, 0, false, true,
             type(uint64).max
         );
         uint256 fund = 4 * PRINCIPAL;

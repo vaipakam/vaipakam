@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useConfig } from 'wagmi';
-import { writeContract } from 'wagmi/actions';
+import { sendWrite } from '../tx/send';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import type { SavedAddress } from '../address/book';
@@ -94,12 +94,14 @@ export function SignerActionFlow({ chain, own, account, storeKey, choice, saved,
       const stop = (reason: string): never => {
         throw new StatedRefusal({ code: 'SignerStopped', reason, reopensAt: null, remedy: null });
       };
-      const call = signerCall(action, account, signer);
-      const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, ...call, account: own.account }));
+      // #3379 B2: a signer change is a write to the account's vault.
+      const call = signerCall(action, account, signer, own.account, review.facts.vault, diamond);
+      if (call === null) return stop(text('safety.notEnabled'));
+      const dry = await askThrough(own, (c) => c.simulateContract({ ...call, account: own.account }));
       if (dry.kind === 'reverted') return stop(format('safety.dryRunRefused', { reason: refusalFromError(dry.error).reason }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
       setStep(format('accept.stepOf', { n: '1', total: '1', what: text(STEP[action]) }));
-      return writeContract(config, { address: diamond, ...call, chainId: chain.chainId, account: own.account });
+      return sendWrite(config, { ...call, chainId: chain.chainId, account: own.account } as never);
     },
     measure: async (receipt) => (review ? measureSigner(review, receipt.logs, diamond, copy) : []),
     release: async () => null,

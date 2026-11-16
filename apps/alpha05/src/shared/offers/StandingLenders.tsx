@@ -39,10 +39,12 @@ const BLOCK_COPY: Readonly<Record<IntentRequestBlock, CopyKey>> = {
  * match with oneself. Lenders that let only fillers they have chosen fill
  * against them are stated apart, and the likely fill is never claimed for
  * them, since whether the matching service is among those fillers is not
- * read here. Before a request is typed it states the terms every
- * intent fill requires (the full term's interest, no partial repayment, no
- * interest schedule); in the request form, terms that rule every intent out
- * say so instead of the likely fill.
+ * read here. Before a request is typed it states the terms intent fills
+ * take (full-term interest unless a lender opted into pro-rata, partial
+ * repayment only with pro-rata, no interest schedule); in the request form
+ * only the lenders whose terms take the request are counted, and terms that
+ * rule every lender here out say so instead of the likely fill. The longest
+ * term shown counts each lender's end date as of the reading.
  */
 export function StandingLenders({
   diamond,
@@ -65,9 +67,14 @@ export function StandingLenders({
   const read = useOwnRead(['borrow', 'intents', diamond.toLowerCase()], (c) => readLenderIntents(c, diamond));
   const partial = read.data !== null && BigInt(read.data.scanned) < read.data.total;
   const opts = { exclude: account, unavailable: read.data?.pausedOwners };
-  const ready = read.data ? standingReady(read.data.intents, lending, collateral, opts) : null;
-  const open = read.data ? standingReady(read.data.intents, lending, collateral, { ...opts, limited: false }) : null;
-  const limited = read.data ? standingReady(read.data.intents, lending, collateral, { ...opts, limited: true }) : null;
+  // With a request typed, only the lenders whose terms take it are counted
+  // (#3619: pro-rata interest only from a lender who opted in).
+  const fit = request === undefined ? opts : { ...opts, request };
+  const at = read.data?.at ?? 0n;
+  const any = read.data ? standingReady(read.data.intents, lending, collateral, at, opts) : null;
+  const ready = read.data ? standingReady(read.data.intents, lending, collateral, at, fit) : null;
+  const open = read.data ? standingReady(read.data.intents, lending, collateral, at, { ...fit, limited: false }) : null;
+  const limited = read.data ? standingReady(read.data.intents, lending, collateral, at, { ...fit, limited: true }) : null;
   const figures = (r: StandingReady) => ({
     count: String(r.lenders),
     amount: tokenAmount(r.largest, lending, meta, format),
@@ -75,7 +82,9 @@ export function StandingLenders({
   });
   const matching = read.data ? intentMatching(read.data) : 'unknown';
   const stale = read.data !== null && read.error !== null;
-  const blocked = request ? intentRequestBlock(request) : null;
+  // Terms no intent takes, or, failing that, a pro-rata request none of the
+  // lenders here opted into.
+  const blocked = request ? (intentRequestBlock(request) ?? (ready === null ? 'pro-rata' : null)) : null;
 
   let body: ReactNode;
   if (read.data === null) {
@@ -93,7 +102,7 @@ export function StandingLenders({
     );
   } else if (matching === 'off') {
     body = <p className="tier-a">{text('borrow.standingOff')}</p>;
-  } else if (ready === null) {
+  } else if (any === null) {
     body = (
       <p className="tier-b">
         {partial ? format('borrow.standingNonePart', { shown: String(read.data.scanned), total: read.data.total.toString() }) : text('borrow.standingNone')}
@@ -137,7 +146,7 @@ export function StandingLenders({
           open !== null && <p className="tier-b">{text('borrow.standingFill')}</p>
         )}
         {request === undefined && <p className="tier-b">{text('borrow.standingTerms')}</p>}
-        {isAdvanced && <p className="tier-b">{format('borrow.standingLimits', { days: String(ready.maxDays), ltv: formatBps(BigInt(ready.maxLtvBps)) })}</p>}
+        {isAdvanced && <p className="tier-b">{format('borrow.standingLimits', { days: String((ready ?? any).maxDays), ltv: formatBps(BigInt((ready ?? any).maxLtvBps)) })}</p>}
         {partial && <p className="tier-b">{format('borrow.standingPart', { shown: String(read.data.scanned), total: read.data.total.toString() })}</p>}
       </>
     );
