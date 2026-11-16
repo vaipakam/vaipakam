@@ -96,6 +96,7 @@ import {InstantTakeoverFacet} from "../src/facets/InstantTakeoverFacet.sol";
 import {ReadyBalanceFacet} from "../src/facets/ReadyBalanceFacet.sol";
 import {OfferMaterializeFacet} from "../src/facets/OfferMaterializeFacet.sol";
 import {CollectionOfferFacet} from "../src/facets/CollectionOfferFacet.sol";
+import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
@@ -341,7 +342,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // selectors are new (an Add).
     // 124 -> 125: ReadyBalanceFacet (#3344) - a protected account's Ready
     // balance; its selectors are new (an Add).
-    uint256 public constant EXPECTED_FACETS = 125;
+    // 125 -> 126: FeeLevelsFacet (#3649) - the initiation fee's term
+    // schedule; all three selectors are new (an Add).
+    uint256 public constant EXPECTED_FACETS = 126;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1418,6 +1421,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[124] = Item(
             "readyBalanceFacet", ArtifactDeploy.deploy(type(ReadyBalanceFacet).name), _getReadyBalanceSelectors()
         );
+        items[125] = Item("feeLevelsFacet", ArtifactDeploy.deploy(type(FeeLevelsFacet).name), _getFeeLevelsSelectors());
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

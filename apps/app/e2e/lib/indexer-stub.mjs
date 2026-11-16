@@ -760,7 +760,7 @@ function readBody(req) {
  * 365-day create horizon, `LibVaipakam.MAX_OFFER_EXPIRY_HORIZON` — and
  * `ranged-collateral-ratio` — ranged principal whose collateral fails
  * the matcher's constant-ratio vet,
- * `OfferMatchFacet._vetSignedOfferForMatch`; round-4 P2s:
+ * `SignedOfferFacet._vetSignedOfferForMatch`; round-4 P2s:
  * `cadence-interval-too-long` / `cadence-required-multiyear` — the two
  * STATIC gates of `OfferCreateFacet._validatePeriodicCadence`: a
  * non-None periodic cadence whose interval (Monthly 30d / Quarterly 90d

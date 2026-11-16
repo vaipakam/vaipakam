@@ -146,6 +146,8 @@ export function signedOrderFrom(draft: PostDraft, signer: Hex, nonce: bigint, te
     periodicInterestCadence: String(p.periodicInterestCadence),
     refinanceTargetLoanId: String(p.refinanceTargetLoanId),
     useFullTermInterest: p.useFullTermInterest,
+    // This app posts no lender "either" offers (#3621); the flag stays 0.
+    lifecycleFlex: '0',
     creatorFull: false,
     creatorMaxCStar: '0',
     creatorAllowFullDowngrade: false,

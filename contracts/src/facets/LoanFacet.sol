@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibInitiationFee} from "../libraries/LibInitiationFee.sol";
 import {LibPriceRead} from "../libraries/LibPriceRead.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
@@ -997,9 +998,14 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // ONLY when the fee is actually charged, so `getLoanDetails` honestly
         // reports 0 on the paths that skip it rather than a rate never applied.
         if (!isSaleVehicle && loan.assetType == LibVaipakam.AssetType.ERC20) {
+            // #3649 — the rate for the loan's agreed term, in whole bps
+            // rounded down; the charged amount itself is exact.
             loan.loanInitiationFeeBpsAtInit = uint16(
-                LibVaipakam.cfgLoanInitiationFeeBps()
+                LibInitiationFee.rateBpsDown(loan.durationDays)
             );
+            // The term the fee pays for, counted from this start (#3649).
+            loan.lifTermOrigin = loan.startTime;
+            loan.lifPaidDays = uint32(loan.durationDays);
         }
     }
 

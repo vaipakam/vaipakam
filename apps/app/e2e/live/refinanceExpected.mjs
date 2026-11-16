@@ -475,6 +475,7 @@ export function expectedCreateOfferCall({ loan, loanId, rateBps, days, anchor })
         allowsParallelSale: false,
         refinanceTargetLoanId: loanId,
         useFullTermInterest: loan.useFullTermInterest,
+        lifecycleFlex: 0, // #3621
       },
       validUntil: afterAnchor('transaction deadline', anchor, TX_DEADLINE_SEC),
     },

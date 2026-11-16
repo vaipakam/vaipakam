@@ -86,6 +86,7 @@ function makeOrder(overrides: Partial<SignedOrderWire> = {}): SignedOrderWire {
     periodicInterestCadence: '0',
     refinanceTargetLoanId: '0',
     useFullTermInterest: false,
+    lifecycleFlex: '0',
     creatorFull: false,
     creatorMaxCStar: '0',
     creatorAllowFullDowngrade: false,
@@ -336,7 +337,7 @@ describe('POST /signed-offers — expiresAt create-horizon cap (Codex #1145 r3)'
 });
 
 describe('POST /signed-offers — ranged constant-ratio vet (Codex #1145 r3)', () => {
-  // Mirrors OfferMatchFacet._vetSignedOfferForMatch's
+  // Mirrors SignedOfferFacet._vetSignedOfferForMatch's
   // `collateralAmount * ceiling == effCollMax * amount` cross-multiplication
   // for ranged rows (amountMax > amount), which are matcher-only depth.
 

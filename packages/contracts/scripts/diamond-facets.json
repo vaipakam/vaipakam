@@ -59,6 +59,7 @@
     "OfferMaterializeFacet",
     "CollectionOfferFacet",
     "ReadyBalanceFacet",
+    "FeeLevelsFacet",
     "ClaimFacet",
     "OracleFacet",
     "OracleAdminFacet",

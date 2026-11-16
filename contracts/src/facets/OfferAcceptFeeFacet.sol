@@ -147,6 +147,7 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
         uint256 initiationFee = LibVPFIDiscount.holdOnlyBorrowerLif(
             borrower,
             effectivePrincipal,
+            offer.durationDays, // #3649 — the accepted offer's term is the loan's
             isLiquid,
             borrowerFull
         );

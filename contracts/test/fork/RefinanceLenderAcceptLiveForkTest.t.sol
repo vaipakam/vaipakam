@@ -144,6 +144,7 @@ contract RefinanceLenderAcceptLiveForkTest is Test {
         returns (LibVaipakam.CreateOfferParams memory)
     {
         return LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Borrower,
             lendingAsset: weth,
             amount: PRINCIPAL,

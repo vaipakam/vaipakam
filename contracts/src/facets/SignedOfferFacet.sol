@@ -9,6 +9,7 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {OfferMaterializeFacet} from "./OfferMaterializeFacet.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
  * @title SignedOfferFacet
@@ -271,7 +272,129 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
         return LibVaipakam.storageSlot().signedOfferNonceUsed[signer][nonce];
     }
 
+    // ─── The match route's signed-offer half ─────────────────────────────
+
+    /**
+     * @notice The signed-offer half of `SignedOfferMatchFacet.matchSignedOffer`
+     *         (#3443 follow-up): run the fill rule and the slice rules, check
+     *         the maker's signature, record the slice in the fill ledger and
+     *         materialize it as an on-chain offer funded from the signer's
+     *         vault.
+     * @dev    `address(this)`-gated: reached only by the match facet's
+     *         self-call, which holds the Diamond's reentrancy guard and pause
+     *         check, so this carries neither. The ledger is written before
+     *         the materialize call and the match that follows (CEI).
+     * @param taker The counterparty offer's creator, who takes the slice.
+     * @return orderHash    The signed offer's hash.
+     * @return sliceOfferId The materialized slice's offer id.
+     */
+    function takeSignedMatchSlice(
+        LibSignedOffer.SignedOffer calldata o,
+        bytes calldata sig,
+        LibSignedOffer.OfferSet calldata set,
+        address taker,
+        uint256 fillAmount,
+        LibSignedOffer.FillAuth calldata auth
+    ) external returns (bytes32 orderHash, uint256 sliceOfferId) {
+        if (msg.sender != address(this)) revert IVaipakamErrors.UnauthorizedCrossFacetCall();
+        orderHash = _vetSignedOfferForMatch(o, fillAmount, taker, auth);
+        (bool ok, ) = LibSignedOffer.verify(o, sig, set);
+        if (!ok) revert LibSignedOffer.SignedOfferBadSignature();
+        // Capture the PRE-fill cumulative so the slice collateral is priced as
+        // the cumulative difference (rounding-exact across slices — see
+        // LibSignedOffer.toCreateOfferParams).
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 filledBefore = s.signedOfferFilled[orderHash];
+        s.signedOfferFilled[orderHash] = filledBefore + fillAmount;
+        bytes memory res = _selfCall(
+            abi.encodeWithSelector(
+                OfferMaterializeFacet.createSignedOfferVault.selector,
+                o.signer,
+                LibSignedOffer.toCreateOfferParams(o, filledBefore, fillAmount),
+                LibSignedOffer.makerFullFor(o, filledBefore, fillAmount) // #1949 — the slice's cumulative share
+            )
+        );
+        sliceOfferId = abi.decode(res, (uint256));
+    }
+
     // ─── Internals ───────────────────────────────────────────────────────
+
+    /// @dev Pre-fill checks for a signed-offer match: the fill rule every
+    ///      route shares ({LibSignedOffer.requireFillable}: Full ceiling,
+    ///      deadline, expiry, nonce, cancel floor, fee caps, taker,
+    ///      co-signature), then this route's own slice checks (remaining, the
+    ///      AON-full-fill guard, the minimum slice). `taker` is the
+    ///      counterparty offer's creator. Returns the order hash.
+    function _vetSignedOfferForMatch(
+        LibSignedOffer.SignedOffer calldata o,
+        uint256 fillAmount,
+        address taker,
+        LibSignedOffer.FillAuth calldata auth
+    ) private view returns (bytes32 orderHash) {
+        orderHash = LibSignedOffer.hashStruct(o);
+        LibSignedOffer.requireFillable(o, orderHash, taker, fillAmount, auth, false);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 ceiling = LibSignedOffer.ceilingOf(o);
+        uint256 filled = s.signedOfferFilled[orderHash];
+        if (filled >= ceiling) revert LibSignedOffer.SignedOfferConsumed(orderHash);
+        uint256 remaining = ceiling - filled;
+        if (fillAmount == 0 || fillAmount > remaining) {
+            revert LibSignedOffer.SignedOfferFillInvalid(fillAmount, remaining);
+        }
+        // #616 round-3 (Codex P2) — reject a zero signed minimum. With
+        // `amount == 0`, any dust `fillAmount` clears the min-slice +
+        // dust-remainder guards below, and once `takeSignedMatchSlice` rewrites
+        // the slice to `amount = amountMax = fillAmount` the create-time
+        // positive-amount invariant never sees the malformed zero — a keeper
+        // could drain the signed max in arbitrarily tiny vault-backed loans.
+        if (o.amount == 0) revert LibSignedOffer.SignedOfferFillInvalid(fillAmount, remaining);
+        // #616 round-3 (Codex P1) — a matched signed offer must carry a CONSTANT
+        // collateral:principal ratio (collMin:amount == collMax:amountMax),
+        // cross-multiplied to avoid division. Each slice then prices collateral
+        // as collMin*fill/amount, which is ADDITIVE: the per-slice locks sum to
+        // exactly collMax at full fill, so a keeper cannot split a non-constant
+        // range into slices that lock more aggregate collateral than the signer
+        // signed (the round-3 over-collection vector). A varying ratio across
+        // the fill is not a sliceable order — express it as separate signed
+        // offers, or a single AON offer (one ratio, one fill). For AON
+        // (amount == ceiling) this same check forces collMin == collMax,
+        // matching its single principal value. This mirrors how 0x / Seaport /
+        // CoW carry one price per order and partial-fill pro-rata.
+        {
+            uint256 effCollMax = o.collateralAmountMax == 0
+                ? o.collateralAmount
+                : o.collateralAmountMax;
+            if (o.collateralAmount * ceiling != effCollMax * o.amount) {
+                revert LibSignedOffer.SignedOfferRatioNotConstant();
+            }
+        }
+        if (LibVaipakam.FillMode(o.fillMode) == LibVaipakam.FillMode.Aon) {
+            // AON structural invariant (mirrors createOffer): an all-or-nothing
+            // offer must be a single fixed size — `amount == amountMax`. A
+            // ranged AON signature is malformed; reject it before slicing
+            // (otherwise `takeSignedMatchSlice` would rewrite it to a single value
+            // and the invariant the direct path enforces would be bypassed).
+            if (o.amount != ceiling) revert LibSignedOffer.SignedOfferFillInvalid(fillAmount, remaining);
+            // AON intent: filled in full, in a single un-pre-filled match.
+            if (filled != 0 || fillAmount != ceiling) {
+                revert LibSignedOffer.SignedOfferFillInvalid(fillAmount, remaining);
+            }
+        } else {
+            // Partial-fillable: honour the signer's MINIMUM slice size (`amount`)
+            // and never strand sub-minimum dust. A keeper may not fill below
+            // `amount`, nor leave a remainder that is non-zero but < `amount`
+            // (it would be an unfillable off-chain dust remainder). `_materialize
+            // Slice` rewrites the slice to a single value, so `previewMatch` can
+            // no longer see the signed minimum — it must be enforced HERE.
+            if (fillAmount < o.amount) {
+                revert LibSignedOffer.SignedOfferFillInvalid(fillAmount, remaining);
+            }
+            uint256 postRemainder = remaining - fillAmount;
+            if (postRemainder != 0 && postRemainder < o.amount) {
+                revert LibSignedOffer.SignedOfferFillInvalid(fillAmount, remaining);
+            }
+        }
+    }
 
     /// @dev The whole-order fill's checks, stated once in
     ///      {LibSignedOffer.vetFailure} so the accept preview reports exactly

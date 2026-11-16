@@ -70,6 +70,7 @@ const CONTRACT_TYPE_STRING =
   'uint8 periodicInterestCadence,' +
   'uint256 refinanceTargetLoanId,' +
   'bool useFullTermInterest,' +
+  'uint8 lifecycleFlex,' +
   'bool creatorFull,' +
   'uint256 creatorMaxCStar,' +
   'bool creatorAllowFullDowngrade,' +
@@ -139,6 +140,7 @@ function makeOrder(overrides: Partial<SignedOrderWire> = {}): SignedOrderWire {
     periodicInterestCadence: '0',
     refinanceTargetLoanId: '0',
     useFullTermInterest: false,
+    lifecycleFlex: '0',
     creatorFull: false,
     creatorMaxCStar: '0',
     creatorAllowFullDowngrade: false,
@@ -164,7 +166,7 @@ describe('signedOfferEip712 — hash agreement with LibSignedOffer.sol', () => {
       SIGNED_OFFER_TYPES.SignedOffer.map((f) => `${f.type} ${f.name}`).join(',') +
       ')';
     expect(derived).toBe(CONTRACT_TYPE_STRING);
-    expect(SIGNED_OFFER_FIELD_NAMES.length).toBe(44);
+    expect(SIGNED_OFFER_FIELD_NAMES.length).toBe(45);
   });
 
   it('orderHashOf equals a manually-assembled keccak256(abi.encode(typehash, ...fields))', () => {
@@ -355,7 +357,7 @@ describe('validateOrder — the POST shape gate', () => {
     expect(orderHashOf(makeOrder({ startTime: '1' }))).not.toBe(base);
   });
 
-  it('rejects a missing / extra field (exact 44-key contract)', () => {
+  it('rejects a missing / extra field (exact 45-key contract)', () => {
     const missing = makeOrder() as unknown as Record<string, unknown>;
     delete missing.nonce;
     expectError(missing, 'order-field-count');
@@ -676,7 +678,7 @@ describe('validateOrder — the POST shape gate', () => {
     });
 
     it('rejects a ranged row with a non-constant collateral ratio (SignedOfferRatioNotConstant)', () => {
-      // #1145 r3 — mirrors OfferMatchFacet._vetSignedOfferForMatch:
+      // #1145 r3 — mirrors SignedOfferFacet._vetSignedOfferForMatch:
       // `collateralAmount * ceiling == effCollMax * amount`, ranged rows
       // only (they are matcher-only depth).
       expectError(

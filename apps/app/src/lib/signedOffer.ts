@@ -5,7 +5,7 @@
  * Mirrors the indexer's `apps/indexer/src/signedOfferEip712.ts` (which in
  * turn mirrors `contracts/src/libraries/LibSignedOffer.sol`):
  *
- *  - `SIGNED_OFFER_TYPES.SignedOffer` lists the 35 fields in the SAME
+ *  - `SIGNED_OFFER_TYPES.SignedOffer` lists the 36 fields in the SAME
  *    order as the Solidity struct / `SIGNED_OFFER_TYPEHASH` type string.
  *    Field order is load-bearing — any drift silently changes every hash
  *    and breaks both the maker's signature and the taker's replay.
@@ -33,14 +33,14 @@ import {
 } from '@vaipakam/lib/signedOfferWire';
 import { signedOfferMessage, type SignedOfferMessage } from '@vaipakam/lib/signedOfferSet';
 
-/** The 44-field SignedOffer typed-data description — struct order EXACTLY
+/** The 45-field SignedOffer typed-data description — struct order EXACTLY
  *  as `LibSignedOffer.SignedOffer` declares it (enums ⇒ uint8, GTT ⇒
  *  uint64). The list is `@vaipakam/lib/signedOfferWire`'s, the same one the
  *  indexer's ingest gate derives its typehash from (#3327: one statement,
  *  where the app used to carry its own copy). */
 export const SIGNED_OFFER_TYPES = { SignedOffer: SIGNED_OFFER_FIELDS } as const;
 
-/** The 44 field names in canonical struct order — the POST body /
+/** The 45 field names in canonical struct order — the POST body /
  *  `order_json` key order the indexer stores and replays. */
 export const SIGNED_OFFER_FIELD_NAMES: readonly string[] = SIGNED_OFFER_WIRE_FIELD_NAMES;
 
@@ -227,6 +227,7 @@ export function wireFromCreatePayload(
     periodicInterestCadence: String(payload.periodicInterestCadence),
     refinanceTargetLoanId: payload.refinanceTargetLoanId.toString(),
     useFullTermInterest: payload.useFullTermInterest,
+    lifecycleFlex: '0',
     creatorFull: makerFull?.full ?? false,
     creatorMaxCStar: (makerFull?.maxCStar ?? 0n).toString(),
     creatorAllowFullDowngrade: makerFull?.allowDowngrade ?? false,
@@ -249,7 +250,7 @@ export function wireFromCreatePayload(
  * Collapse a LENDER payload to the single-value shape a signed post must
  * carry to be consumable (#1145 round-2 Codex P2).
  *
- * `OfferMatchFacet._vetSignedOfferForMatch` requires a CONSTANT
+ * `SignedOfferFacet._vetSignedOfferForMatch` requires a CONSTANT
  * collateral:principal ratio across the signed range before it will
  * materialize any slice:
  *

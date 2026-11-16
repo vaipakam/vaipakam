@@ -63,6 +63,7 @@ function payload(p: Partial<CreateOfferPayload> = {}): CreateOfferPayload {
     allowsPrepayListing: false,
     refinanceTargetLoanId: 0n,
     useFullTermInterest: false,
+    lifecycleFlex: 0,
     ...p,
   };
 }
@@ -155,7 +156,7 @@ describe('wireFromCreatePayload', () => {
 
 describe('collapseForSignedPost (#1145 round-2)', () => {
   /** The matcher's constant-ratio gate, verbatim from
-   *  `SignedOfferMatchFacet._vetSignedOfferForMatch`:
+   *  `SignedOfferFacet._vetSignedOfferForMatch`:
    *  `collateralAmount * ceiling == effCollMax * amount` — every signed
    *  post the ticket publishes must satisfy it or no keeper slice can
    *  ever materialize. */

@@ -246,6 +246,16 @@ runs half of it on old code:
   refreshes RiskPreviewFacet with the match hosts, so it carries the host
   itself and needs no refusal for it.
 
+- **SignedOfferFacet + SignedOfferMatchFacet (#3443 follow-up).** The
+  keeper match of a signed offer runs its signed-offer half (the fill and
+  slice rules, the maker's signature, the fill ledger and the slice's
+  materialization) through one self-call, `takeSignedMatchSlice`, and keeps
+  only the match. Split because the match facet had passed EIP-170 by 342
+  bytes. A match facet refreshed without the host reverts
+  `FunctionDoesNotExist` on every signed match (a hard revert, never an
+  unchecked slice). Reaches a chain by fresh deploy or
+  `RefreshAllFacetsInPlace`.
+
 - **SaleExitVerdictFacet + EarlyWithdrawalFacet + EarlyWithdrawalDirectFacet
   (#1841).** Both lender-exit entries run their opening checks through one
   self-call, `requireSaleExitOpen`, and carry no copy of those checks. An entry

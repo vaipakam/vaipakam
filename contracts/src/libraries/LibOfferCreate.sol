@@ -755,6 +755,9 @@ library LibOfferCreate {
         // settlementInterest` reads to apply the full-term FLOOR
         // (when `true`) or pure pro-rata-elapsed (when `false`).
         offer.useFullTermInterest = params.useFullTermInterest;
+        // #3621 — the lender's "either" marks; `OfferBookFacet.openOfferOnBook`
+        // refuses them on an offer that cannot carry them.
+        offer.lifecycleFlex = params.lifecycleFlex;
         // #1347 — the creator's Full VPFI tariff opt-in (`Offer.creatorFull` /
         // `creatorMaxCStar` / `creatorAllowFullDowngrade`) is NOT a
         // `CreateOfferParams` field: it is authorized post-create by the creator

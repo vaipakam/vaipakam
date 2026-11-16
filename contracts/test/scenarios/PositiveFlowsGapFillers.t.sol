@@ -356,6 +356,7 @@ contract PositiveFlowsGapFillers is Test {
         vm.prank(lender);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockUsdc,
                 amount: PRINCIPAL,

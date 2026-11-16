@@ -466,6 +466,7 @@ contract CollectionOfferFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
         q.fillMode = LibVaipakam.FillMode.Aon;
         q.allowsPrepayListing = p.allowsPrepayListing;
         q.useFullTermInterest = p.useFullTermInterest;
+        q.lifecycleFlex = p.lifecycleFlex;
     }
 
     function _afterFill(LibVaipakam.Storage storage s, uint256 offerId, uint256 tokenId, uint256 slice, uint256 loanId)

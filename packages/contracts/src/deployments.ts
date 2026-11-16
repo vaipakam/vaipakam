@@ -254,6 +254,7 @@ export interface DeploymentFacets {
   collectionOfferFacet?: HexAddress;
   /** #3344 — a protected account's Ready balance. */
   readyBalanceFacet?: HexAddress;
+  feeLevelsFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */

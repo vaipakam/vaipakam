@@ -134,6 +134,9 @@ contract OfferCreateFacet is
         //    Borrower offer from a standard one without a follow-up
         //    `getOffer` read (Codex round-1 P2).
         uint256 refinanceTargetLoanId;
+        // ── #3621 — the lender's "either" marks ({LibVaipakam.Offer.lifecycleFlex}),
+        //    so a cache can show which borrower settings the offer also takes.
+        uint8 lifecycleFlex;
     }
 
     /// @notice Companion to {OfferCreated} — full self-sufficient

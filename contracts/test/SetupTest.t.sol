@@ -56,6 +56,7 @@ import {InstantTakeoverFacet} from "../src/facets/InstantTakeoverFacet.sol";
 import {ReadyBalanceFacet} from "../src/facets/ReadyBalanceFacet.sol";
 import {OfferMaterializeFacet} from "../src/facets/OfferMaterializeFacet.sol";
 import {CollectionOfferFacet} from "../src/facets/CollectionOfferFacet.sol";
+import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {TestOfferFloor} from "./helpers/TestOfferFloor.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -446,6 +447,7 @@ contract SetupTest is Test {
     ReadyBalanceFacet readyBalanceFacet;
     OfferMaterializeFacet offerMaterializeFacet;
     CollectionOfferFacet collectionOfferFacet;
+    FeeLevelsFacet feeLevelsFacet;
     SaleExitVerdictFacet saleExitVerdictFacet;
     SellerClaimFacet sellerClaimFacet;
     RefinancePayoffFacet refinancePayoffFacet;
@@ -633,6 +635,7 @@ contract SetupTest is Test {
         readyBalanceFacet = ReadyBalanceFacet(ArtifactDeploy.deploy(type(ReadyBalanceFacet).name));
         offerMaterializeFacet = OfferMaterializeFacet(ArtifactDeploy.deploy(type(OfferMaterializeFacet).name));
         collectionOfferFacet = CollectionOfferFacet(ArtifactDeploy.deploy(type(CollectionOfferFacet).name));
+        feeLevelsFacet = FeeLevelsFacet(ArtifactDeploy.deploy(type(FeeLevelsFacet).name));
         saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
         sellerClaimFacet = SellerClaimFacet(ArtifactDeploy.deploy(type(SellerClaimFacet).name));
         refinancePayoffFacet = RefinancePayoffFacet(ArtifactDeploy.deploy(type(RefinancePayoffFacet).name));
@@ -670,7 +673,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](126);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](127);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1220,6 +1223,12 @@ contract SetupTest is Test {
             facetAddress: address(readyBalanceFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getReadyBalanceFacetSelectors()
+        });
+        // #3649 — the initiation fee's term schedule.
+        cuts[126] = IDiamondCut.FacetCut({
+            facetAddress: address(feeLevelsFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getFeeLevelsFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).

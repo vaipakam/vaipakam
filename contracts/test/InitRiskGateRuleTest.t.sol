@@ -47,6 +47,7 @@ contract InitRiskGateRuleTest is SetupTest {
         returns (LibVaipakam.CreateOfferParams memory)
     {
         return LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: offerType,
             lendingAsset: mockERC20,
             amount: PRINCIPAL,

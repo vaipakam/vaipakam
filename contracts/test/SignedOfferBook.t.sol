@@ -826,6 +826,24 @@ contract SignedOfferBookTest is SetupTest {
         );
     }
 
+    /// @dev #3621 — only a lender order may carry "either" marks, and only
+    ///      the defined bits; the fill refuses the rest when the order opens
+    ///      on the book, so the preview names them as a shape it cannot take.
+    function test_3621_previewRefusesFlexOutsideALenderOrder() public {
+        LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(1521, 0);
+        o.lifecycleFlex = 4;
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+        _assertCode(
+            _previewSigned(o, _sign(o), borrower), OfferAcceptFacet.AcceptError.SignedOfferUnsupportedShape, "unknown bit"
+        );
+        o = _lenderSignedOffer(1522, 0);
+        o.lifecycleFlex = LibVaipakam.LIFECYCLE_FLEX_MASK;
+        assertTrue(
+            _previewSigned(o, _sign(o), borrower).accept.errorCode != OfferAcceptFacet.AcceptError.SignedOfferUnsupportedShape,
+            "a lender order may carry both marks"
+        );
+    }
+
     function test_3552_previewReportsAnUnfundedSigner() public {
         LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(1508, 0);
         bytes memory sig = _sign(o);
@@ -1055,7 +1073,7 @@ contract SignedOfferBookTest is SetupTest {
                 "uint256 collateralTokenId,uint256 collateralQuantity,address prepayAsset,",
                 "bool allowsPartialRepay,bool allowsPrepayListing,bool allowsParallelSale,",
                 "uint64 expiresAt,uint8 fillMode,uint8 periodicInterestCadence,",
-                "uint256 refinanceTargetLoanId,bool useFullTermInterest,bool creatorFull,",
+                "uint256 refinanceTargetLoanId,bool useFullTermInterest,uint8 lifecycleFlex,bool creatorFull,",
                 "uint256 creatorMaxCStar,bool creatorAllowFullDowngrade,uint16 maxTreasuryFeeBps,",
                 "uint16 maxLoanInitiationFeeBps,address allowedTaker,address coSigner,address signer,",
                 "uint256 nonce,uint256 deadline,uint8 setKind,uint256 setLow,uint256 setHigh,",
@@ -1361,7 +1379,9 @@ contract SignedOfferBookTest is SetupTest {
         assertTrue(SignedOfferFacet(address(diamond)).hashSignedOffer(o) != h, "taker");
         o = _lenderSignedOffer(1607, 0);
         o.coSigner = borrower;
-        assertTrue(SignedOfferFacet(address(diamond)).hashSignedOffer(o) != h, "co-signer");
+        assertTrue(SignedOfferFacet(address(diamond)).hashSignedOffer(o) != h, "co-signer");        o = _lenderSignedOffer(1607, 0);
+        o.lifecycleFlex = LibVaipakam.LIFECYCLE_FLEX_PARTIAL_REPAY; // #3621
+        assertTrue(SignedOfferFacet(address(diamond)).hashSignedOffer(o) != h, "either marks");
     }
 
 }

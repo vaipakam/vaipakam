@@ -151,6 +151,7 @@ export function requestParams(intent) {
     allowsParallelSale: false,
     refinanceTargetLoanId: 0n,
     useFullTermInterest: true,
+    lifecycleFlex: 0, // #3621
   };
 }
 

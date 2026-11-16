@@ -28,6 +28,7 @@ export type SignedOfferFields = readonly [
   { readonly name: 'periodicInterestCadence'; readonly type: 'uint8' },
   { readonly name: 'refinanceTargetLoanId'; readonly type: 'uint256' },
   { readonly name: 'useFullTermInterest'; readonly type: 'bool' },
+  { readonly name: 'lifecycleFlex'; readonly type: 'uint8' },
   { readonly name: 'creatorFull'; readonly type: 'bool' },
   { readonly name: 'creatorMaxCStar'; readonly type: 'uint256' },
   { readonly name: 'creatorAllowFullDowngrade'; readonly type: 'bool' },

@@ -78,7 +78,8 @@ contract AutoLifecycleSettingsFacet is DiamondReentrancyGuard, DiamondPausable {
         bool enabled,
         uint16 minRateBps,
         uint16 maxRateBps,
-        uint64 maxNewExpiry
+        uint64 maxNewExpiry,
+        uint256 maxExtensionFee
     );
 
     /// @notice Emitted when the lender side updates per-loan extend caps.
@@ -262,13 +263,18 @@ contract AutoLifecycleSettingsFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         up). When enabled, the executor picks `newRateBps` in
     ///         `[lender.minRateBps, borrower.maxRateBps]` and
     ///         `newEndTime ≤ min(borrower.maxNewExpiry,
-    ///         lender.maxNewExpiry)`.
+    ///         lender.maxNewExpiry)`. #3649 — `maxExtensionFee` is the
+    ///         largest added initiation fee, in the lending asset, an
+    ///         extension may charge this holder's vault; 0 admits only an
+    ///         extension that adds no fee (FeeLevelsFacet.quoteExtensionFee
+    ///         prices one).
     function setAutoExtendBorrowerCaps(
         uint256 loanId,
         bool enabled,
         uint16 minRateBps,
         uint16 maxRateBps,
-        uint64 maxNewExpiry
+        uint64 maxNewExpiry,
+        uint256 maxExtensionFee
     ) external nonReentrant whenNotPaused {
         LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -283,10 +289,11 @@ contract AutoLifecycleSettingsFacet is DiamondReentrancyGuard, DiamondPausable {
             minRateBps: minRateBps,
             maxRateBps: maxRateBps,
             maxNewExpiry: maxNewExpiry,
-            setter: msg.sender
+            setter: msg.sender,
+            maxExtensionFee: maxExtensionFee
         });
         emit AutoExtendBorrowerCapsChanged(
-            loanId, msg.sender, enabled, minRateBps, maxRateBps, maxNewExpiry
+            loanId, msg.sender, enabled, minRateBps, maxRateBps, maxNewExpiry, maxExtensionFee
         );
     }
 
@@ -324,7 +331,8 @@ contract AutoLifecycleSettingsFacet is DiamondReentrancyGuard, DiamondPausable {
             minRateBps: minRateBps,
             maxRateBps: maxRateBps,
             maxNewExpiry: maxNewExpiry,
-            setter: msg.sender
+            setter: msg.sender,
+            maxExtensionFee: 0
         });
         emit AutoExtendLenderCapsChanged(
             loanId, msg.sender, enabled, minRateBps, maxRateBps, maxNewExpiry

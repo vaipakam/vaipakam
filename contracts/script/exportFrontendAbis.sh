@@ -321,6 +321,7 @@ FACETS=(
   "CollectionOfferFacet"
   # #3344: a protected account's Ready balance.
   "ReadyBalanceFacet"
+  "FeeLevelsFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"

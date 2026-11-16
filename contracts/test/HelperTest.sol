@@ -125,6 +125,7 @@ import {InstantTakeoverFacet} from "../src/facets/InstantTakeoverFacet.sol";
 import {OfferMaterializeFacet} from "../src/facets/OfferMaterializeFacet.sol";
 import {CollectionOfferFacet} from "../src/facets/CollectionOfferFacet.sol";
 import {ReadyBalanceFacet} from "../src/facets/ReadyBalanceFacet.sol";
+import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -1063,6 +1064,16 @@ contract HelperTest {
         selectors[1] = LoanClockFacet.getSequencerOutageWindow.selector;
     }
 
+    /// @dev #3649 — the initiation fee's term schedule.
+    ///      Mirrors `DeployDiamond._getFeeLevelsSelectors`.
+    function getFeeLevelsFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](4);
+        selectors[0] = FeeLevelsFacet.setLoanInitiationFeeTerms.selector;
+        selectors[1] = FeeLevelsFacet.getLoanInitiationFeeTerms.selector;
+        selectors[2] = FeeLevelsFacet.quoteLoanInitiationFee.selector;
+        selectors[3] = FeeLevelsFacet.quoteExtensionFee.selector;
+    }
+
     function getRepayFacetSelectors()
         public
         pure
@@ -1256,7 +1267,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](12);
+        selectors = new bytes4[](13);
         selectors[0] = SignedOfferFacet.acceptSignedOffer.selector;
         selectors[1] = SignedOfferFacet.acceptSignedOfferWithPermit.selector;
         selectors[2] = SignedOfferFacet.cancelSignedOffer.selector;
@@ -1271,6 +1282,8 @@ contract HelperTest {
         selectors[10] = SignedOfferFacet.hashSignedOfferFill.selector;
         // #3327 part 2 — the digest a maker signs for a set of offers.
         selectors[11] = SignedOfferFacet.hashSignedOfferSet.selector;
+        // The match route's signed-offer half (self-call only).
+        selectors[12] = SignedOfferFacet.takeSignedMatchSlice.selector;
     }
 
     function getLenderIntentFacetSelectors()

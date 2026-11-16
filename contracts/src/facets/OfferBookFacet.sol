@@ -50,6 +50,7 @@ contract OfferBookFacet is IVaipakamErrors {
     function openOfferOnBook(uint256 offerId, LibOfferAdmission.Route route) external {
         if (msg.sender != address(this)) revert UnauthorizedCrossFacetCall();
         LibVaipakam.Offer storage offer = LibVaipakam.storageSlot().offers[offerId];
+        LibOfferAdmission.enforceLifecycleFlex(offer, route);
         LibOfferAdmission.enforceBounds(offer, route);
         LibMetricsHooks.onOfferCreated(offer);
         emit OfferCreateFacet.OfferCreated(offerId, offer.creator, offer.offerType);
@@ -172,6 +173,7 @@ contract OfferBookFacet is IVaipakamErrors {
         // T-092 Phase 2b — the refinance target, so indexers can tell a
         // refinance-tagged borrower offer from a standard one.
         f.refinanceTargetLoanId = offer.refinanceTargetLoanId;
+        f.lifecycleFlex = offer.lifecycleFlex;
 
         emit OfferCreateFacet.OfferCreatedDetails(offerId, offer.creator, offer.lendingAsset, f);
     }

@@ -81,7 +81,7 @@ library LibVaipakam {
     ///      `MIN_HEALTH_FACTOR` (1.5e18) sits inside the band as the default.
     uint256 constant MIN_ADMISSION_HEALTH_FACTOR = 120 * 1e16; // 1.2e18
     uint256 constant MAX_ADMISSION_HEALTH_FACTOR = 200 * 1e16; // 2.0e18
-    uint256 constant TREASURY_FEE_BPS = 200; // 2% of interest (rev-8 fee freeze, #1352; was 100 = 1%)
+    uint256 constant TREASURY_FEE_BPS = 500; // 5% of interest (#3649 fee levels; was 200 = 2% under the #1352 freeze)
     /// @dev Pre-freeze 1% yield fee. The FROZEN grandfather fallback for a
     ///      snapshot-0 (pre-#957) open loan in {effectiveTreasuryFeeBps} — a
     ///      snapshot-0 loan resolves to this, NOT the live 200-bps default, so
@@ -103,6 +103,13 @@ library LibVaipakam {
     ///      clamp keeps a high hold-tier from crossing 50% after the bump.
     uint256 constant FULL_MODE_FEE_DISCOUNT_BONUS_BPS = 1000;
     uint256 constant BASIS_POINTS = 10000;
+
+    /// @notice #3621 — {Offer.lifecycleFlex} bits: a lender offer marks an
+    ///         option "either" (it takes both borrower settings in a match).
+    uint8 constant LIFECYCLE_FLEX_PARTIAL_REPAY = 1;
+    uint8 constant LIFECYCLE_FLEX_PREPAY_LISTING = 2;
+    /// @notice Every defined {Offer.lifecycleFlex} bit; any other is refused.
+    uint8 constant LIFECYCLE_FLEX_MASK = 3;
     uint256 constant HF_SCALE = 1e18; // Health Factor precision
     uint256 constant HF_LIQUIDATION_THRESHOLD = 1e18; // HF < 1 for liquidation
     uint256 constant SECONDS_PER_YEAR = 365 days;
@@ -450,6 +457,17 @@ library LibVaipakam {
     uint256 constant MAX_OPEN_OFFERS_PER_WALLET_FLOOR = 5;
     uint256 constant MAX_OPEN_OFFERS_PER_WALLET_CEIL = 1_000;
     uint256 constant LOAN_INITIATION_FEE_BPS = 20; // 0.2% fee deducted from ERC-20 principal at loan initiation (rev-8 fee freeze, #1352; was 10 = 0.1%). Charged once at accept — no post-init reader, so the bump affects new originations only (open loans already paid their LIF)
+    /// @dev #3649 — the loan initiation fee by term (`FeeLevelsDesign.md` §3).
+    ///      A loan of up to {LIF_BASE_TERM_DAYS_DEFAULT} days pays the base
+    ///      rate ({LOAN_INITIATION_FEE_BPS}); from there the rate rises in a
+    ///      straight line to {LIF_YEARLY_BPS_DEFAULT} at {LIF_YEAR_DAYS_DEFAULT}
+    ///      days; a longer loan pays {LIF_YEARLY_BPS_DEFAULT} per year of term,
+    ///      in proportion to its days. Each is a bounded setting
+    ///      (`FeeLevelsFacet.setLoanInitiationFeeTerms`); the rate is read only
+    ///      through `LibInitiationFee`.
+    uint256 constant LIF_BASE_TERM_DAYS_DEFAULT = 30;
+    uint256 constant LIF_YEARLY_BPS_DEFAULT = 50;
+    uint256 constant LIF_YEAR_DAYS_DEFAULT = 365;
     // Fallback-path split (README §7): lender gets principal + accrued
     // interest + {FALLBACK_LENDER_BONUS_BPS} of principal; treasury gets
     // {FALLBACK_TREASURY_BPS} of principal; borrower gets the remainder.
@@ -1175,7 +1193,7 @@ library LibVaipakam {
      */
     struct ProtocolConfig {
         // ── Packed BPS slot (14 × uint16 = 224 bits; 32 bits of headroom) ──
-        uint16 treasuryFeeBps; // 0 ⇒ TREASURY_FEE_BPS (200)
+        uint16 treasuryFeeBps; // 0 ⇒ TREASURY_FEE_BPS (500)
         uint16 loanInitiationFeeBps; // 0 ⇒ LOAN_INITIATION_FEE_BPS (20)
         uint16 liquidationHandlingFeeBps; // 0 ⇒ LIQUIDATION_HANDLING_FEE_BPS (200)
         uint16 maxLiquidationSlippageBps; // 0 ⇒ MAX_LIQUIDATION_SLIPPAGE_BPS (600)
@@ -1929,6 +1947,9 @@ library LibVaipakam {
         // unreachable dead code, so `settlementInterest` always
         // returned pro-rata regardless of intent.
         bool useFullTermInterest;
+        // #3621 — lender-only "either" marks for the partial-repay and
+        // prepay-listing options ({Offer.lifecycleFlex}). 0 = both exact.
+        uint8 lifecycleFlex;
     }
 
     /// @notice #193 — input bundle for `OfferMutateFacet.modifyOffer`.
@@ -2192,6 +2213,16 @@ library LibVaipakam {
         // filled. Written only through `LibTiming.stampOfferTerms`.
         // Appended — append-only.
         uint64 termsSetAt;
+        // #3621 — a LENDER offer's "either" marks for lifecycle options the
+        // borrower offer decides: bit 0 (`LIFECYCLE_FLEX_PARTIAL_REPAY`) = the
+        // lender also takes a borrower offer whose partial-repay setting
+        // differs from its own; bit 1 (`LIFECYCLE_FLEX_PREPAY_LISTING`) = the
+        // same for the prepay listing. Read only by the match rule
+        // (`LibOfferMatch`); the loan still copies the borrower offer, and a
+        // direct accept takes the stored values. 0 on every borrower offer,
+        // sale vehicle and NFT rental (refused at posting). Immutable after
+        // creation (no edit changes it). Appended.
+        uint8 lifecycleFlex;
     }
 
     /**
@@ -2462,7 +2493,7 @@ library LibVaipakam {
         // pre-#957 rate — NOT the live knob. That distinction is the whole
         // point of the field. The live knob is `cfgTreasuryFeeBps()`, which
         // returns the governance override in `protocolCfg.treasuryFeeBps`
-        // when set and otherwise `TREASURY_FEE_BPS` (200, the rev-8 freeze
+        // when set and otherwise `TREASURY_FEE_BPS` (500 since #3649; 200 under the rev-8 freeze
         // default, #1352) — so resolving a grandfathered loan against it
         // would reprice it at repay from 1% to WHATEVER IS LIVE THEN, in
         // EITHER DIRECTION. `setFeesConfig` bounds the override only from
@@ -2508,6 +2539,16 @@ library LibVaipakam {
         // the slot above.
         uint8 liqDiscountTierAtInit;
         uint16 liqDiscountBpsAtInit;
+        // #3649 — the term the initiation fee has been paid for. The fee
+        // depends only on a loan's total term, so an extension pays the fee
+        // at the new total term less the fee at `lifPaidDays`.
+        // `lifTermOrigin` is the start the total term is counted from (the
+        // origination start, never moved by an extension or a handover);
+        // the count excludes paused time, as the loan clock does. Both are 0
+        // on a loan that paid no initiation fee (a rental, a sale vehicle),
+        // and such a loan pays none on extension either.
+        uint64 lifTermOrigin;
+        uint32 lifPaidDays;
     }
 
     /**
@@ -3286,6 +3327,16 @@ library LibVaipakam {
         uint64 setAt;
         uint256 refCollateralPrice1e18;
         uint256 refPrincipalPrice1e18;
+    }
+
+    /// @dev #3649 — the initiation fee's term settings (`FeeLevelsDesign.md`
+    ///      §3). Zero in a field ⇒ its default: `baseTermDays` ⇒
+    ///      {LIF_BASE_TERM_DAYS_DEFAULT}, `yearlyBps` ⇒
+    ///      {LIF_YEARLY_BPS_DEFAULT}, `yearDays` ⇒ {LIF_YEAR_DAYS_DEFAULT}.
+    struct LifTermConfig {
+        uint16 baseTermDays;
+        uint16 yearlyBps;
+        uint16 yearDays;
     }
 
     struct Storage {
@@ -8569,6 +8620,12 @@ library LibVaipakam {
         ///      any pending top-up. Written only by `LibReadyBalance`.
         ///      Appended — append-only.
         mapping(address => mapping(address => ReadyAsset)) readyAsset;
+        /// @dev #3649 — the initiation fee's term settings beside the base
+        ///      rate (`protocolCfg.loanInitiationFeeBps`). Zero in a field ⇒
+        ///      its default. Written only by
+        ///      `FeeLevelsFacet.setLoanInitiationFeeTerms`; read only through
+        ///      `LibInitiationFee`. Appended — append-only.
+        LifTermConfig lifTermCfg;
     }
 
     /// @notice #3344 — a protected account's Ready settings. See
@@ -10063,6 +10120,11 @@ library LibVaipakam {
         uint16 maxRateBps;   //
         uint64 maxNewExpiry; // both sides store an outer bound; executor picks min(both)
         address setter;      // same NFT-transfer-staleness fence as AutoRefinanceCaps
+        // #3649 — borrower side only: the largest added initiation fee an
+        // extension may charge the borrower-position holder, in the lending
+        // asset. 0 admits only an extension that adds no fee. The lender
+        // side stores 0 and it is not read.
+        uint256 maxExtensionFee;
     }
 
     /// @notice #407 (2026-06-12) — vault encumbrance record. One row per

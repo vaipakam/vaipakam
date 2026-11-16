@@ -43,6 +43,7 @@ function order(patch: Partial<SignedOrderWire> = {}): SignedOrderWire {
     periodicInterestCadence: '0',
     refinanceTargetLoanId: '0',
     useFullTermInterest: true,
+    lifecycleFlex: '0',
     creatorFull: false,
     creatorMaxCStar: '0',
     creatorAllowFullDowngrade: false,
@@ -71,7 +72,7 @@ const copy = {
 };
 
 describe('the signed order', () => {
-  it('hashes as the EIP-712 struct of all 31 fields, in the contract’s order', () => {
+  it('hashes as the EIP-712 struct of all 36 fields, in the contract’s order', () => {
     const names = SIGNED_OFFER_TYPES.SignedOffer.map((f) => `${f.type} ${f.name}`).join(',');
     const typeHash = keccak256(new TextEncoder().encode(`SignedOffer(${names})`));
     const o = order();

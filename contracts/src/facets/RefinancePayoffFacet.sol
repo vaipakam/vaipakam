@@ -138,13 +138,17 @@ contract RefinancePayoffFacet is DiamondReentrancyGuard, DiamondPausable, IVaipa
             // request asks for.
             uint256 requestAmount = s.offers[offerId].amount;
             if (requestAmount == 0) requestAmount = loan.principal;
+            // #3649 — the fee rate is the request's term; an unposted request
+            // is sized at the loan's own term.
+            uint256 requestTerm = s.offers[offerId].durationDays;
+            if (requestTerm == 0) requestTerm = loan.durationDays;
             payoffNow = LibRefinancePayoff.amountAt(loanId, loan, block.timestamp);
-            walletShareNow = LibRefinancePayoff.walletShareAt(loanId, loan, requestAmount, block.timestamp);
+            walletShareNow = LibRefinancePayoff.walletShareAt(loanId, loan, requestAmount, requestTerm, block.timestamp);
             uint256 graceEnd = LibLoanClock.graceEnd(loan);
             uint256 at = by < graceEnd ? by : graceEnd;
             if (at > block.timestamp) {
                 payoffBy = LibRefinancePayoff.amountAt(loanId, loan, at);
-                walletShareBy = LibRefinancePayoff.walletShareAt(loanId, loan, requestAmount, at);
+                walletShareBy = LibRefinancePayoff.walletShareAt(loanId, loan, requestAmount, requestTerm, at);
             } else {
                 payoffBy = payoffNow;
                 walletShareBy = walletShareNow;

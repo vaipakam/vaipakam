@@ -138,7 +138,9 @@ abstract contract DiamondFacetNames {
     ///      and intent-slice materialize entries, split off `OfferCreateFacet`).
     ///      121 → 122 with `InstantTakeoverFacet` (#3656 §7 — the takeover
     ///      at face value).
-    function cutFacetNames() internal pure returns (string[125] memory) {
+    ///      125 → 126 with `FeeLevelsFacet` (#3649 — the initiation fee's
+    ///      term schedule).
+    function cutFacetNames() internal pure returns (string[126] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -315,6 +317,8 @@ abstract contract DiamondFacetNames {
             "CollectionOfferFacet",
             // A protected account's Ready balance (#3344).
             "ReadyBalanceFacet",
+            // The initiation fee's term schedule (#3649).
+            "FeeLevelsFacet",
             "SwapToRepayFacet",
             "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",

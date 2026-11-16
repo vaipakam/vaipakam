@@ -458,6 +458,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         returns (LibVaipakam.CreateOfferParams memory)
     {
         return LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: mockNft721,
             amount: 10,
@@ -959,7 +960,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         // borrower's total is unchanged by it.
         uint256 feeBase = (borrowerBefore -
             IERC20(mockERC20).balanceOf(borrower)) - principal;
-        uint256 fullFee = (feeBase * 200) / 10000; // TREASURY_FEE_BPS = 200 (rev-8 freeze, #1352)
+        uint256 fullFee = (feeBase * 500) / 10000; // TREASURY_FEE_BPS = 500 (#3649)
         // Mirror the contract's rounding EXACTLY: it computes the reduction as
         // `floor(fullFee × effBps / 10000)` then subtracts it, rather than
         // `floor(fullFee × (10000 − effBps) / 10000)` (which can differ by 1 wei).
@@ -1020,7 +1021,7 @@ contract VPFIDiscountFacetTest is SetupTest {
 
         uint256 feeBase = (borrowerBefore -
             IERC20(mockERC20).balanceOf(borrower)) - principal;
-        uint256 fullFee = (feeBase * 200) / 10000; // TREASURY_FEE_BPS = 200 (rev-8 freeze, #1352)
+        uint256 fullFee = (feeBase * 500) / 10000; // TREASURY_FEE_BPS = 500 (#3649)
         assertEq(
             IERC20(mockERC20).balanceOf(treasuryRecipient) - treasuryErc20Before,
             fullFee,
@@ -1056,7 +1057,7 @@ contract VPFIDiscountFacetTest is SetupTest {
 
         uint256 feeBase = (borrowerBefore -
             IERC20(mockERC20).balanceOf(borrower)) - principal;
-        uint256 fullFee = (feeBase * 200) / 10000; // TREASURY_FEE_BPS = 200 (rev-8 freeze, #1352)
+        uint256 fullFee = (feeBase * 500) / 10000; // TREASURY_FEE_BPS = 500 (#3649)
         assertEq(
             IERC20(mockERC20).balanceOf(treasuryRecipient) - treasuryErc20Before,
             fullFee,
@@ -1275,6 +1276,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         return
             OfferCreateFacet(address(diamond)).createOffer(
                 LibVaipakam.CreateOfferParams({
+                    lifecycleFlex: 0,
                     offerType: LibVaipakam.OfferType.Lender,
                     lendingAsset: mockERC20,
                     amount: amount,

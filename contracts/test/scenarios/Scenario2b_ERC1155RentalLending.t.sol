@@ -77,7 +77,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
     address mockZeroExProxy;
 
     uint256 constant BASIS_POINTS = 10000;
-    uint256 constant TREASURY_FEE_BPS = 200; // 2% (rev-8 freeze #1352; loans snapshot the live default at origination)
+    uint256 constant TREASURY_FEE_BPS = 500; // 5% (#3649; loans snapshot the live default at origination)
     uint256 constant RENTAL_BUFFER_BPS = 500; // 5%
 
     uint256 constant DAILY_FEE = 10 ether; // daily fee for the 5-token bundle
@@ -363,6 +363,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(mockNft1155),
                 amount: DAILY_FEE,

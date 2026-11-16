@@ -91,6 +91,7 @@ import InstantTakeoverFacetABI from './InstantTakeoverFacet.json';
 import OfferMaterializeFacetABI from './OfferMaterializeFacet.json';
 import CollectionOfferFacetABI from './CollectionOfferFacet.json';
 import ReadyBalanceFacetABI from './ReadyBalanceFacet.json';
+import FeeLevelsFacetABI from './FeeLevelsFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
 import OracleAdminFacetABI from './OracleAdminFacet.json';
@@ -292,6 +293,7 @@ export {
   OfferMaterializeFacetABI,
   CollectionOfferFacetABI,
   ReadyBalanceFacetABI,
+  FeeLevelsFacetABI,
   ClaimFacetABI,
   OracleFacetABI,
   OracleAdminFacetABI,

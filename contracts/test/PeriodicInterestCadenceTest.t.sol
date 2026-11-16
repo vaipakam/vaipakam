@@ -73,6 +73,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         LibVaipakam.PeriodicInterestCadence cadence
     ) internal view returns (LibVaipakam.CreateOfferParams memory) {
         return LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: mockERC20,
             amount: amount,

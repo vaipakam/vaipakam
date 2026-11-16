@@ -71,6 +71,10 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   // `from` is the side's previous holder, `to` its current one.
   ['CollateralConsolidated', ['from', 'to']],
   ['BorrowerSurplusClaimed', ['claimant']],
+  // #3629 — a payment held for an open loan's lender position: the stored
+  // lender's vault holds it (custody); the holder later claims it.
+  ['LenderPaymentHeld', ['custody']],
+  ['HeldForLenderClaimed', ['claimant']],
   ['LoanPreclosedDirect', ['borrower']],
   ['LoanObligationTransferred', ['originalBorrower', 'newBorrower']],
   ['LoanRefinanced', ['borrower', 'oldLender', 'newLender']],
@@ -116,6 +120,9 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['IntentMatched', ['lender', 'matcher']],
   // Whoever rolled the loan sent that transaction (the owner or a keeper).
   ['IntentLoanRolled', ['roller']],
+  // #3629 — held payments of an open intent loan went back behind the
+  // owner's intent; the owner's capital changed, the roller sent it.
+  ['HeldRecommittedToIntent', ['owner', 'roller']],
   // The solver sent the fill the credit was spent on.
   ['IntentPriorityFill', ['solver']],
   // The owner, or its keeper, re-committed held capital to the owner's intent.

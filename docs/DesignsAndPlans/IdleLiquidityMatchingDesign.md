@@ -59,6 +59,16 @@ No fund movement changes. **Facet room (2026-11-15):** OfferCreateFacet 23,990 (
 
 Equal values match as today; lender "either" matches both borrower values and the loan carries the borrower's; without the bit a differing pair is still `LifecycleTermsMismatch`; a borrower offer, rental or sale vehicle cannot set it; unknown bits refused; an edit restamps the age; preview and match agree on every case; a signed offer binds it.
 
+### As built (2026-11-15)
+
+Built as the rule above, with three differences from the change table, each because the code made the step unnecessary:
+
+- **No mutate step.** `ModifyOfferParams` cannot change any lifecycle option, so the marks are fixed at creation like the options they qualify. There is nothing to restamp.
+- **The acceptor's signed terms (`LibAcceptTerms`) are unchanged.** A direct accept takes the offer's stored values whatever its marks say, so the marks change nothing the acceptor agrees to. Only the maker's signed offer (`LibSignedOffer`, now 36 fields) carries them.
+- **The admission check sits in `OfferBookFacet.openOfferOnBook`**, the step every creation already ends with, rather than in `OfferCreateFacet`, which had about 400 bytes of room. It refuses unknown bits (`LifecycleFlexUnknownBits`), and marks on a borrower offer, an NFT rental or any offer the protocol creates on a user's behalf (sale vehicles, the offset offer, intent slices) with `LifecycleFlexNotAllowed`. A signed order is held to it when it opens on the book, and the signed-order accept preview reports such an order as an unsupported shape.
+
+The match rule (`LibOfferMatch._lifecycleTermsAgree`) reads only the lender offer's marks; a borrower offer's field is ignored there. `OfferCreatedDetails` states the marks. The indexer refuses marks on a signed borrower order at listing, and the new app's "why isn't my offer matching?" skips an option the lender takes either way. Neither app posts an offer with marks yet; the form and the offer page copy in "Consent and disclosure" are app work still to do.
+
 ### Alternatives considered
 
 1. **Automatic for pro-rata pairs** (no flag, like the term rule). Rejected for now: a partial repay leaves the lender a smaller live loan to track, and a prepay listing is a consent to a collateral sale; both deserve an explicit choice.

@@ -112,6 +112,7 @@ contract LenderIntentLendUntilTest is SetupTest {
         vm.prank(creator);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: principal,
@@ -592,7 +593,7 @@ contract LenderIntentLendUntilTest is SetupTest {
 
         uint64 farExpiry = uint64(vm.getBlockTimestamp() + 400 days);
         vm.prank(b);
-        AutoLifecycleSettingsFacet(address(diamond)).setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry);
+        AutoLifecycleSettingsFacet(address(diamond)).setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry, type(uint256).max);
         vm.prank(lender);
         AutoLifecycleSettingsFacet(address(diamond)).setAutoExtendLenderCaps(loanId, true, 0, 1000, farExpiry);
 

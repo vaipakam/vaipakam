@@ -35,7 +35,7 @@ the instant market's collateral sizing:
 | --- | --- | --- |
 | Vault-backed signed offer (signed accept, signed match, signed collection fill) | `OfferMaterializeFacet._materializeSignedOffer`, vault branch | Must come from Ready; consumes it |
 | Instant-market borrow, collateral already in the vault | `InstantFillFacet._fundCollateral` (sizing) then the same materialize branch | Only Ready counts as available; the rest is pulled from the wallet |
-| Auto-extension charge beyond the loan's reserve | `AutoLifecycleFacet._routeInterest` | Must come from Ready (it is a payment on the holder's own loan, an allowed instant use); consumes it |
+| Auto-extension charges beyond the loan's reserve: the interest and, since #3649, the extension's added initiation fee | `AutoLifecycleFacet._drawFromHolder` (one draw for both) | Must come from Ready (each is a payment on the holder's own loan, an allowed instant use); consumes it |
 
 Not covered, with the reason:
 
