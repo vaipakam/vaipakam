@@ -746,11 +746,13 @@ contract BackstopFacet is
     ///      the backstop vault to the Diamond, re-crediting `treasuryBalances` —
     ///      so over-seeded / paused / retired-pair cash is recoverable by
     ///      governance, not stuck until an upgrade. Requires Diamond-as-treasury.
+    ///      `nonReentrant`: the withdrawal is a vault move, which runs only
+    ///      inside a guarded action (#3432).
     function withdrawBackstopAbsorbToTreasury(
         address principal,
         address collateral,
         uint256 amount
-    ) external onlyRole(LibAccessControl.VAULT_ADMIN_ROLE) {
+    ) external nonReentrant onlyRole(LibAccessControl.VAULT_ADMIN_ROLE) {
         if (amount == 0) revert ZeroAmount();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vault = s.backstopVault;
@@ -779,10 +781,12 @@ contract BackstopFacet is
     ///      treasury the vault code names (#3569), never an address the caller
     ///      picks: a VAULT_ADMIN key can move warehoused collateral only to
     ///      that treasury, which moves only with new vault code.
+    ///      `nonReentrant`: the sweep is a vault move, which runs only inside a
+    ///      guarded action (#3432).
     function sweepBackstopAbsorbCollateral(
         address collateral,
         uint256 amount
-    ) external onlyRole(LibAccessControl.VAULT_ADMIN_ROLE) {
+    ) external nonReentrant onlyRole(LibAccessControl.VAULT_ADMIN_ROLE) {
         if (amount == 0) revert ZeroAmount();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vault = s.backstopVault;

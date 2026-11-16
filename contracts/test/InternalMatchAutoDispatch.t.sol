@@ -23,6 +23,7 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {liquidationQuote} from "./helpers/ForcedSaleQuote.sol";
+import {LibTestGuard} from "./helpers/LibTestGuard.sol";
 
 /**
  * @title InternalMatchAutoDispatch.t.sol
@@ -146,6 +147,9 @@ contract InternalMatchAutoDispatchTest is SetupTest {
         uint256 bBorrowerX = IERC20(mockERC20).balanceOf(bBorrowerVault);
         uint256 aBorrowerY = IERC20(mockCollateralERC20).balanceOf(aBorrowerVault);
 
+        // Stands in for the guarded liquidation that self-calls the
+        // dispatch: vault moves run only inside a guarded action (#3432).
+        LibTestGuard.hold(address(diamond));
         vm.expectEmit(true, true, false, true, address(diamond));
         emit RiskMatchLiquidationFacet.InternalMatchRefusedShortDelivery(
             LOAN_A, LOAN_B, mockERC20, 990, 981
@@ -153,6 +157,7 @@ contract InternalMatchAutoDispatchTest is SetupTest {
         vm.prank(address(diamond));
         bool dispatched = RiskMatchLiquidationFacet(address(diamond))
             .attemptInternalMatchAutoDispatch(LOAN_A, matcher);
+        LibTestGuard.release(address(diamond));
         assertFalse(dispatched, "a short leg refuses the match");
 
         LibVaipakam.Loan memory aAfter = LoanFacet(address(diamond)).getLoanDetails(LOAN_A);
@@ -273,9 +278,11 @@ contract InternalMatchAutoDispatchTest is SetupTest {
         // Cross-facet pattern — simulate `matcher` calling Diamond,
         // which delegates to RiskFacet's gated entry. `msg.sender` of
         // the inner call is the Diamond, satisfying onlyDiamondInternal.
+        LibTestGuard.hold(address(diamond)); // the guarded liquidation's stand-in (#3432)
         vm.prank(address(diamond));
         bool dispatched = RiskMatchLiquidationFacet(address(diamond))
             .attemptInternalMatchAutoDispatch(LOAN_A, matcher);
+        LibTestGuard.release(address(diamond));
         assertTrue(dispatched);
 
         LibVaipakam.Loan memory aAfter = LoanFacet(address(diamond)).getLoanDetails(LOAN_A);
@@ -321,9 +328,11 @@ contract InternalMatchAutoDispatchTest is SetupTest {
         ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
         m.setFlagged(matcher, true);
 
+        LibTestGuard.hold(address(diamond)); // the guarded liquidation's stand-in (#3432)
         vm.prank(address(diamond));
         bool dispatched = RiskMatchLiquidationFacet(address(diamond))
             .attemptInternalMatchAutoDispatch(LOAN_A, matcher);
+        LibTestGuard.release(address(diamond));
         assertTrue(dispatched, "match must still execute for a sanctioned matcher");
 
         // Both legs settled.

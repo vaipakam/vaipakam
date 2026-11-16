@@ -495,7 +495,13 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         );
 
         assertEq(uint256(LoanFacet(address(diamond)).getLoanDetails(LOAN_ID).status), uint256(LibVaipakam.LoanStatus.Repaid), "the fill closes the loan");
-        assertEq(principalAsset.balanceOf(borrowerEoa) - eoaBefore, params.takerAmount - payoff, "the ask above the debt is the borrower's surplus");
+        // #3629 — the ask above the debt is the borrower's surplus, held for the
+        // borrower position on its surplus row (in the borrower's vault) for the
+        // borrower claim; no wallet is paid by the fill.
+        assertEq(principalAsset.balanceOf(borrowerEoa), eoaBefore, "the fill pays no wallet");
+        (, uint256 surplusAmt, bool surplusClaimed) = ClaimFacet(address(diamond)).getBorrowerSurplusClaim(LOAN_ID);
+        assertEq(surplusAmt, params.takerAmount - payoff, "the ask above the debt is the borrower's surplus, held for the claim");
+        assertFalse(surplusClaimed, "and not yet claimed");
         (, uint256 claimAmt, , , , , , ) = ClaimFacet(address(diamond)).getClaimable(LOAN_ID, false);
         assertEq(claimAmt, LOAN_COLLATERAL - lot, "the borrower can claim every unit the fill did not take");
         assertEq(collateralAsset.balanceOf(borrowerVault), LOAN_COLLATERAL - lot, "and it is all in the vault");

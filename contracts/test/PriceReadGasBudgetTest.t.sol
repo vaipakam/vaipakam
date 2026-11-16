@@ -195,8 +195,12 @@ contract PriceReadGasBudgetTest is SetupTest {
     function test_addCollateral_shortForTheHealthRead_revertsByName() public {
         _createLoan();
         uint256 before = LoanFacet(address(diamond)).getLoanDetails(LOAN).collateralAmount;
+        // A limit of SELF_READ_GAS covers the top-up (about 67k here) but can
+        // never reach the read, which needs more than that left at its own
+        // point. A fixed figure (700k) went stale when the top-up got cheaper:
+        // the read is reached from about 684k on this fixture.
         vm.prank(borrower);
-        (bool ok, bytes memory ret) = address(diamond).call{gas: 700_000}(
+        (bool ok, bytes memory ret) = address(diamond).call{gas: LibPriceGuard.SELF_READ_GAS}(
             abi.encodeCall(AddCollateralFacet.addCollateral, (LOAN, 100 ether))
         );
         _assertOutOfGas(ok, ret);

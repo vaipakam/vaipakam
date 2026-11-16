@@ -2696,6 +2696,11 @@
   },
   {
     "type": "error",
+    "name": "ReentrancyGuardReentrantCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RefinanceBlockedByOffset",
     "inputs": [
       {

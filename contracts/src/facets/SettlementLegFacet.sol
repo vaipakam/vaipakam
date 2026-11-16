@@ -54,8 +54,12 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 contract SettlementLegFacet is IVaipakamErrors, DiamondReentrancyGuard, DiamondPausable {
     /// @notice The gas each attempt to move a leg is given: exactly this,
     ///         well above a vault-to-vault move that also creates the payee's
-    ///         vault.
-    uint256 internal constant ATTEMPT_GAS = 1_500_000;
+    ///         vault. A VPFI leg refreshes the tier record of both vaults'
+    ///         owners inside the move (#1820), and a first refresh after a
+    ///         long gap rewrites up to 30 day slots: measured at about 1.93M
+    ///         for a VPFI move between two such owners that also created the
+    ///         payee's vault, which 1.5M parked as if the token had refused it.
+    uint256 internal constant ATTEMPT_GAS = 3_000_000;
     /// @dev The CALL's own cost that the 63/64 rule applies after.
     uint256 private constant CALL_OVERHEAD_GAS = 20_000;
 

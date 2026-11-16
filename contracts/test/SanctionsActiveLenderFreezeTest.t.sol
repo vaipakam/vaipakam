@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {LibTestGuard} from "./helpers/LibTestGuard.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
@@ -215,9 +216,13 @@ contract SanctionsActiveLenderFreezeTest is SetupTest {
         _scaffoldActiveLoan();
         _fundActorVault(borrower, mockERC20, AMOUNT);
 
+        // The fixture calls the vault-moving host directly; it stands in for
+        // the guarded action that reaches it in production (#3432).
+        LibTestGuard.hold(address(diamond));
         TestMutatorFacet(address(diamond)).callHoldActiveLenderFromVault(
             LOAN_ID, borrower, mockERC20, AMOUNT
         );
+        LibTestGuard.release(address(diamond));
 
         _assertHeldClean();
     }
@@ -228,9 +233,13 @@ contract SanctionsActiveLenderFreezeTest is SetupTest {
         m.setFlagged(holder, true);
         _fundActorVault(borrower, mockERC20, AMOUNT);
 
+        // The fixture calls the vault-moving host directly; it stands in for
+        // the guarded action that reaches it in production (#3432).
+        LibTestGuard.hold(address(diamond));
         TestMutatorFacet(address(diamond)).callHoldActiveLenderFromVault(
             LOAN_ID, borrower, mockERC20, AMOUNT
         );
+        LibTestGuard.release(address(diamond));
 
         _assertParked();
     }

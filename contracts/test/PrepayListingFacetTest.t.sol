@@ -185,28 +185,12 @@ contract PrepayListingFacetTest is SetupTest {
         vm.prank(owner);
         PrepayListingFacet(address(diamond)).setCollateralListingExecutor(mockExecutor);
         address nftAsset = makeAddr("collateralNft");
-        LibVaipakam.Loan memory loan;
-        loan.id = TEST_LOAN_ID;
-        loan.lender = _scLender;
-        loan.borrower = _scBorrower;
-        loan.status = LibVaipakam.LoanStatus.Active;
-        loan.principal = 100e18;
-        loan.principalAsset = mockERC20;
-        loan.lenderTokenId = 91_001;
-        loan.borrowerTokenId = 91_002;
-        loan.interestRateBps = 1_200;
-        loan.startTime = uint64(block.timestamp);
-        loan.durationDays = 30;
+        LibVaipakam.Loan memory loan = _baseLoan(TEST_LOAN_ID, LibVaipakam.LoanStatus.Active);
         loan.collateralAssetType = LibVaipakam.AssetType.ERC1155;
         loan.collateralAsset = nftAsset;
         loan.collateralTokenId = 5;
         loan.collateralQuantity = 4;
-        TestMutatorFacet(address(diamond)).setLoan(TEST_LOAN_ID, loan);
-        TestMutatorFacet(address(diamond)).mintNFTRaw(_scLender, loan.lenderTokenId);
-        TestMutatorFacet(address(diamond)).mintNFTRaw(_scBorrower, loan.borrowerTokenId);
-        // #3205 — posting a loan-keyed listing opens the borrower position's
-        // route; its sale completes only through that route, unmoved.
-        TestMutatorFacet(address(diamond)).lockNFTRaw(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrepayCollateralListing);
+        _installLoan(loan);
         TestMutatorFacet(address(diamond)).setTrackedHoldingRaw(_scBorrower, nftAsset, 5, 6);
 
         IVaipakamPrepayContext.PrepayContext memory pctx =
@@ -226,7 +210,14 @@ contract PrepayListingFacetTest is SetupTest {
     // ─── Internal helpers ───────────────────────────────────────────────
 
     function _scaffoldLoan(uint256 id, LibVaipakam.LoanStatus status) internal {
-        LibVaipakam.Loan memory loan;
+        _installLoan(_baseLoan(id, status));
+    }
+
+    function _baseLoan(uint256 id, LibVaipakam.LoanStatus status)
+        internal
+        view
+        returns (LibVaipakam.Loan memory loan)
+    {
         loan.id = id;
         loan.lender = _scLender;
         loan.borrower = _scBorrower;
@@ -238,14 +229,17 @@ contract PrepayListingFacetTest is SetupTest {
         loan.interestRateBps = 1_200;
         loan.startTime = uint64(block.timestamp);
         loan.durationDays = 30;
-        // #2876 — the settlement resolves the live position holders, so the
-        // two position NFTs exist. LibVPFIDiscount on a loan with no LIF state
-        // is a no-op.
-        TestMutatorFacet(address(diamond)).setLoan(id, loan);
+    }
+
+    /// @dev #2876 — the settlement resolves the live position holders, so the
+    ///      two position NFTs exist. LibVPFIDiscount on a loan with no LIF
+    ///      state is a no-op. #3205 — posting a loan-keyed listing opens the
+    ///      borrower position's route; its sale completes only through that
+    ///      route, unmoved.
+    function _installLoan(LibVaipakam.Loan memory loan) internal {
+        TestMutatorFacet(address(diamond)).setLoan(loan.id, loan);
         TestMutatorFacet(address(diamond)).mintNFTRaw(_scLender, loan.lenderTokenId);
         TestMutatorFacet(address(diamond)).mintNFTRaw(_scBorrower, loan.borrowerTokenId);
-        // #3205 — posting a loan-keyed listing opens the borrower position's
-        // route; its sale completes only through that route, unmoved.
         TestMutatorFacet(address(diamond)).lockNFTRaw(loan.borrowerTokenId, LibPositionNFT.RouteReason.PrepayCollateralListing);
     }
 

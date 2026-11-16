@@ -11,6 +11,7 @@ import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 /// @dev Exposes the facet's attribute renderer so a test can read the traits
 ///      as text instead of decoding the base64 token URI.
@@ -46,7 +47,9 @@ contract PositionNftMetadataUnitsTest is SetupTest {
         ERC20Mock(usdc).mint(borrower, 1_000_000e6);
         vm.prank(borrower);
         ERC20Mock(usdc).approve(address(diamond), type(uint256).max);
-        harness = new NftAttributesHarness();
+        // From its artifact, never `new` (#2718 / #2789): a `new` compiles the
+        // facet's whole creation code into this test contract.
+        harness = NftAttributesHarness(ArtifactDeploy.deploy(type(NftAttributesHarness).name));
     }
 
     function _rental() internal returns (uint256 loanId) {
