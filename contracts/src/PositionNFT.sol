@@ -9,6 +9,7 @@ import {IERC2981} from "@openzeppelin/contracts/interfaces/IERC2981.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import {BeaconProxy} from "@openzeppelin/contracts/proxy/beacon/BeaconProxy.sol";
 
 /// @notice The pluggable part that draws a position NFT. It can only answer
 ///         reads; nothing it returns can move a token.
@@ -24,6 +25,23 @@ interface IPositionRenderer {
 ///         core grants it no right to call any mutating entry.
 interface IPositionTransferCheck {
     function checkPositionTransfer(address operator, address from, address to, uint256 tokenId) external;
+}
+
+/// @notice The parts of a holder's vault record this contract reads to tell
+///         whether a protected-account replacement retired the holder
+///         (#3526). Every read is a view.
+interface IPositionHolderVault {
+    function vaultDiamond() external view returns (address);
+    function vaultCreationOwner() external view returns (address);
+    function protectionCore()
+        external
+        view
+        returns (bool enabled, bool locked, uint32 delay, address owner, bool retired);
+}
+
+/// @notice The vault beacon's own record of the Diamond it serves.
+interface IPositionVaultBeacon {
+    function diamond() external view returns (address);
 }
 
 /**
@@ -62,12 +80,15 @@ interface IPositionTransferCheck {
  *           refuse a transfer.
  *         - Ownership can never be renounced.
  *
- *         Known residual until #3205 PR 2: the recovery transfer (a vault
- *         that recorded its owner's primary replacement moves that owner's
- *         tokens to the new wallet) needs the vault's own replacement record,
- *         which PR 2 adds. Until then a replaced account's tokens stay with
- *         the old wallet, guarded only by the holder lock. Both PRs land
- *         before any deploy.
+ *         - A holder whose own vault records a primary replacement (#3526,
+ *           protected account mode) is RETIRED: its old wallet may not ask to
+ *           unlock, and anyone may move its tokens to the wallet that vault
+ *           now names ({recover}), even while the holder lock is on. This
+ *           contract reads the replacement from the vault itself, found at
+ *           the address the Diamond's vault factory must have created it at
+ *           (CREATE2 from the Diamond, salted by the holder, through the one
+ *           vault beacon recorded here once at deploy). The Diamond's word is
+ *           never taken for it, so the Diamond still cannot move a token.
  */
 contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
     using EnumerableSet for EnumerableSet.AddressSet;
@@ -147,6 +168,17 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
     /// @dev Every holder with a pending delay lowering (`lowerAt` != 0). Kept
     ///      in step by {_setLowering}, the one writer of `lowerAt`.
     EnumerableSet.AddressSet private _pendingDelayChanges;
+    /// @notice #3526 — the vault beacon every user vault is created through,
+    ///         handed over once by the Diamond through {adoptVaultBeacon} (it
+    ///         is deployed after this contract, so it cannot be a constructor
+    ///         input). 0 until then, and while 0 no holder reads as retired.
+    address public vaultBeacon;
+    /// @dev The init-code hash of a user vault proxy for {vaultBeacon}: the
+    ///      factory creates every vault with exactly this code.
+    bytes32 private _vaultInitCodeHash;
+    /// @dev Set only for the length of one {recover} move, so the move may
+    ///      leave a locked holder. Transient: never seen by another call.
+    bool private transient _recovering;
 
     // ─── Events ──────────────────────────────────────────────────────────
 
@@ -172,6 +204,12 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
     event LockDelayLowerRequested(address indexed holder, uint256 newDelay, uint256 executableAt);
     /// @custom:event-category state-change/nft-mutation
     event LockDelayLowerCancelled(address indexed holder, uint256 newDelay, address indexed by);
+    /// @custom:event-category informational/governance
+    event VaultBeaconSet(address indexed beacon);
+    /// @notice #3526 — a retired holder's token moved to the wallet its vault
+    ///         names as the replacement.
+    /// @custom:event-category state-change/nft-mutation
+    event PositionRecovered(address indexed from, address indexed to, uint256 indexed tokenId, address by);
 
     // ─── Errors ──────────────────────────────────────────────────────────
 
@@ -191,6 +229,10 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
     error DelayTooLong(uint256 requested, uint256 max);
     error DelayAboveDiamondCap(uint256 requested, uint256 cap);
     error DelayNotHigher(uint256 current, uint256 requested);
+    error VaultBeaconAlreadySet(address beacon);
+    error VaultBeaconNotForDiamond(address beacon);
+    error HolderRetired(address holder);
+    error HolderNotRetired(address holder);
 
     // ─── Construction ────────────────────────────────────────────────────
 
@@ -232,6 +274,32 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
     {
         HolderLock storage l = _locks[holder];
         return (l.locked, l.delay, l.unlockAt, l.lowerDelay, l.lowerAt);
+    }
+
+    /// @notice #3526 — the vault the Diamond's factory creates (or created)
+    ///         for `holder`, or 0 while {vaultBeacon} is not recorded. The
+    ///         address is fixed by the holder alone; it may hold no code yet.
+    function vaultOf(address holder) public view returns (address) {
+        bytes32 h = _vaultInitCodeHash;
+        if (h == bytes32(0)) return address(0);
+        return address(
+            uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), diamond, bytes32(uint256(uint160(holder))), h))))
+        );
+    }
+
+    /// @notice #3526 — whether a primary replacement retired `holder`, read
+    ///         from the holder's own vault, and the wallet that vault names
+    ///         now (0 when not retired). A holder with no vault, a vault
+    ///         another account created, or one serving another Diamond, is
+    ///         not retired.
+    function retiredRecordOf(address holder) public view returns (bool retired, address replacement) {
+        address v = vaultOf(holder);
+        if (v == address(0) || v.code.length == 0) return (false, address(0));
+        IPositionHolderVault vault = IPositionHolderVault(v);
+        if (vault.vaultDiamond() != diamond || vault.vaultCreationOwner() != holder) return (false, address(0));
+        (,,, address owner, bool isRetired) = vault.protectionCore();
+        if (!isRetired || owner == address(0) || owner == holder) return (false, address(0));
+        return (true, owner);
     }
 
     /// @notice How many holders have an unlock pending.
@@ -332,8 +400,12 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
     }
 
     /// @notice Ask to unlock the caller's tokens. Waits the caller's lock
-    ///         delay; immediate when the delay is 0.
+    ///         delay; immediate when the delay is 0. Refused for a holder a
+    ///         primary replacement retired (#3526): that wallet has lost every
+    ///         right over the account, and its tokens leave only by {recover}.
     function requestUnlock() external {
+        (bool retired,) = retiredRecordOf(msg.sender);
+        if (retired) revert HolderRetired(msg.sender);
         HolderLock storage l = _locks[msg.sender];
         if (!l.locked) revert HolderNotLocked(msg.sender);
         if (l.unlockAt != 0) revert UnlockPending(msg.sender);
@@ -388,6 +460,29 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
         uint256 newDelay = l.lowerDelay;
         _setLowering(holder, 0, 0);
         _setDelay(holder, l.delay, newDelay);
+    }
+
+    // ─── Recovery of a retired holder's tokens (#3526) ───────────────────
+
+    /// @notice Move each of `tokenIds` from its holder to the wallet that
+    ///         holder's vault names as its replacement. Anyone may call it:
+    ///         the destination is fixed by the vault's record, never by the
+    ///         caller. Allowed while the holder lock is on (a replacement
+    ///         locks the old wallet's tokens), and shown to the transfer check
+    ///         like any move, which may refuse it (a token cooling down after
+    ///         value left its position, a sanctioned wallet). Reverts
+    ///         {HolderNotRetired} for a token whose holder is not retired.
+    function recover(uint256[] calldata tokenIds) external {
+        for (uint256 i; i < tokenIds.length; ++i) {
+            uint256 tokenId = tokenIds[i];
+            address holder = _requireOwned(tokenId);
+            (bool retired, address replacement) = retiredRecordOf(holder);
+            if (!retired) revert HolderNotRetired(holder);
+            _recovering = true;
+            _update(replacement, tokenId, address(0));
+            _recovering = false;
+            emit PositionRecovered(holder, replacement, tokenId, msg.sender);
+        }
     }
 
     /// @notice Lock `holder`'s tokens. The Diamond only (protected mode).
@@ -458,6 +553,22 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
         emit ComponentProposalCancelled(kind, p.target, msg.sender);
     }
 
+    /// @notice Record the vault beacon every user vault is created through
+    ///         (#3526). The Diamond only, once: it calls this from the step
+    ///         that records the same beacon in its own storage, which is
+    ///         write-once too, so the two records cannot differ and no account
+    ///         chooses the address. The beacon must name this contract's
+    ///         Diamond.
+    function adoptVaultBeacon(address beacon) external {
+        if (msg.sender != diamond) revert NotDiamond(msg.sender);
+        if (vaultBeacon != address(0)) revert VaultBeaconAlreadySet(vaultBeacon);
+        if (beacon.code.length == 0) revert NoCode(beacon);
+        if (IPositionVaultBeacon(beacon).diamond() != diamond) revert VaultBeaconNotForDiamond(beacon);
+        vaultBeacon = beacon;
+        _vaultInitCodeHash = keccak256(abi.encodePacked(type(BeaconProxy).creationCode, abi.encode(beacon, bytes(""))));
+        emit VaultBeaconSet(beacon);
+    }
+
     /// @notice Set the guardian. The Timelock only.
     function setGuardian(address newGuardian) external onlyOwner {
         if (newGuardian == address(0)) revert ZeroAddress();
@@ -474,12 +585,13 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
     // ─── ERC-721 hooks ───────────────────────────────────────────────────
 
     /// @dev Every move passes here. A transfer (not a mint) is refused out of
-    ///      a locked holder, counts one move, and is then shown to the
-    ///      transfer check, which may refuse it. Burning has no entry.
+    ///      a locked holder (except a {recover} move), counts one move, and is
+    ///      then shown to the transfer check, which may refuse it. Burning has
+    ///      no entry.
     function _update(address to, uint256 tokenId, address auth) internal override returns (address from) {
         from = super._update(to, tokenId, auth);
         if (from != address(0)) {
-            if (_locks[from].locked) revert HolderIsLocked(from);
+            if (_locks[from].locked && !_recovering) revert HolderIsLocked(from);
             unchecked {
                 ++transferCount[tokenId];
             }

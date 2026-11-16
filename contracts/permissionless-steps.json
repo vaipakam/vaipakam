@@ -263,6 +263,10 @@
       "class": "user",
       "why": "the holder locks its own tokens; it only tightens"
     },
+    "PositionNFT.recover(uint256[])": {
+      "class": "user",
+      "why": "moves a replaced (retired) account's position NFTs to the wallet its vault names as the replacement (#3526); the replacement wallet calls it for its own account. Anyone may, because the destination is the vault's record, not the caller's choice. Nothing waits on it: the replacement wallet already acts on the positions where they are, and payouts follow the account"
+    },
     "PositionNFT.requestUnlock()": {
       "class": "user",
       "why": "the holder asks to unlock its own tokens; it waits the holder's own lock delay"
@@ -310,10 +314,6 @@
     "PrepayListingFacet.executorOpenListingGrant(uint256,uint96,address)": {
       "class": "gated",
       "gate": "the collateral-listing executor or the offer's pinned executor (`_listingGrantSubject` refuses any other msg.sender); the vault then refuses a conduit outside the registry's CONDUITS set"
-    },
-    "PriceGuard.executeChange(enum:PriceGuard.Kind,bytes32)": {
-      "class": "user",
-      "why": "governance applies a config change it proposed through the Timelock once the guard's own delay has passed; a change nobody executes leaves the current entry in place"
     },
     "ProfileFacet.approveKeeper(address,uint16)": {
       "class": "user",

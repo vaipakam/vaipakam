@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibTreasury} from "../libraries/LibTreasury.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
@@ -379,7 +380,7 @@ contract BackstopFacet is
         LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage o = s.offers[offerId];
-        if (o.creator != msg.sender) revert NotOfferCreator();
+        LibAuth.requireOfferCreator(o);
         if (o.offerType != LibVaipakam.OfferType.Borrower) {
             revert OfferNotBorrowerType();
         }

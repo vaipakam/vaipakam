@@ -1198,6 +1198,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
             abi.encode(admin, diamond, admin, vaultImpl)
         );
         VaultFactoryFacet(diamond).initializeVaultBeacon(vaultBeacon);
+        // #3526 — the same call hands the beacon to the PositionNFT core,
+        // which finds a retired holder's vault through it.
         console.log("Vault beacon:", vaultBeacon);
         require(
             AdminFacet(diamond).getTreasury() == treasury,

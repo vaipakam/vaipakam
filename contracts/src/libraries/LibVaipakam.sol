@@ -5000,9 +5000,11 @@ library LibVaipakam {
         // for the pair (no implicit capacity).
         mapping(address => mapping(address => uint256)) backstopAbsorbCap;
         // Per-loan lender opt-in to the Role B cash exit. Stores the AUTHORIZING
-        // lender-position-NFT owner (not a bare bool): `claimAsLenderViaBackstop`
-        // requires `lenderBackstopOptIn[loanId] == ownerOf(lenderTokenId)`, so a
-        // post-opt-in NFT transfer voids the authorization (the new owner must
+        // manager of the lender-position-NFT owner (not a bare bool; #3526: the
+        // owner itself, or its replacement wallet once retired):
+        // `claimAsLenderViaBackstop` requires it to equal the CURRENT owner's
+        // manager, so a post-opt-in NFT transfer, or a replacement of the
+        // owner's wallet, voids the authorization (the new manager must
         // re-opt-in). Cleared (→ address(0)) when a FallbackPending loan is CURED
         // back to Active (AddCollateralFacet / RepayFacet), so a stale opt-in can't
         // carry into a later, distinct fallback episode. Preserves the borrower

@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -369,9 +370,11 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
         address lenderHolder = LibPositionNFT.holderOrZero(loan.lenderTokenId);
         address borrowerHolder = LibPositionNFT.holderOrZero(loan.borrowerTokenId);
 
+        // #3526 — each holder's manager (its replacement wallet once retired;
+        // the retired wallet itself may not).
         if (
-            (lenderHolder == address(0) || msg.sender != lenderHolder) &&
-            (borrowerHolder == address(0) || msg.sender != borrowerHolder)
+            (lenderHolder == address(0) || msg.sender != LibProtectedAccount.manager(lenderHolder)) &&
+            (borrowerHolder == address(0) || msg.sender != LibProtectedAccount.manager(borrowerHolder))
         ) revert NotNFTOwner();
 
         s.loanKeeperEnabled[loanId][keeper] = enabled;
@@ -409,7 +412,8 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
         LibVaipakam.Offer storage offer = s.offers[offerId];
         if (offer.creator == address(0)) revert InvalidOffer();
         if (offer.accepted) revert OfferAlreadyAccepted();
-        if (msg.sender != offer.creator) revert NotNFTOwner();
+        // #3526 — refused to a creator a replacement retired.
+        if (msg.sender != offer.creator || LibProtectedAccount.manager(msg.sender) != msg.sender) revert NotNFTOwner();
         s.offerKeeperEnabled[offerId][keeper] = enabled;
         emit OfferKeeperEnabled(offerId, keeper, enabled);
     }
@@ -464,7 +468,8 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
         LibVaipakam.Offer storage offer = s.offers[offerId];
         if (offer.creator == address(0)) revert InvalidOffer();
         if (offer.accepted) revert OfferAlreadyAccepted();
-        if (msg.sender != offer.creator) revert NotNFTOwner();
+        // #3526 — refused to a creator a replacement retired.
+        if (msg.sender != offer.creator || LibProtectedAccount.manager(msg.sender) != msg.sender) revert NotNFTOwner();
         if (creatorFull && maxCStar == 0) revert FullTariffMaxCStarRequired();
         offer.creatorFull = creatorFull;
         offer.creatorMaxCStar = maxCStar;

@@ -222,10 +222,7 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         LibAuth.requireBorrowerNftOwner(loan);
 
         // Block lender-side self-repay (mirrors RepayFacet:273-278).
-        if (msg.sender == loan.lender) revert LenderCannotRepayOwnLoan();
-        if (
-            LibPositionNFT.ownerOf(loan.lenderTokenId) == msg.sender
-        ) revert LenderCannotRepayOwnLoan();
+        LibAuth.requireNotLenderSide(loan);
 
         if (maxCollateralIn == 0 || maxCollateralIn > loan.collateralAmount)
             revert InvalidAmount();

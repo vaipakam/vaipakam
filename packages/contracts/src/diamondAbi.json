@@ -1418,6 +1418,7 @@
 {"type":"error","name":"PositionCoolingDown","inputs":[{"name":"tokenId","type":"uint256","internalType":"uint256"},{"name":"valueOutBlock","type":"uint64","internalType":"uint64"},{"name":"readyAt","type":"uint64","internalType":"uint64"}]},
 {"type":"error","name":"PositionNFTAlreadySet","inputs":[]},
 {"type":"error","name":"PositionNFTNotForThisDiamond","inputs":[{"name":"core","type":"address","internalType":"address"},{"name":"itsDiamond","type":"address","internalType":"address"}]},
+{"type":"error","name":"TransferFromRetiredAccount","inputs":[{"name":"from","type":"address","internalType":"address"},{"name":"to","type":"address","internalType":"address"}]},
 {"type":"function","name":"contractURI","inputs":[],"outputs":[{"name":"","type":"string","internalType":"string"}],"stateMutability":"view"},
 {"type":"function","name":"getImageURIFor","inputs":[{"name":"status","type":"uint8","internalType":"enum LibVaipakam.LoanPositionStatus"},{"name":"isLender","type":"bool","internalType":"bool"}],"outputs":[{"name":"","type":"string","internalType":"string"}],"stateMutability":"view"},
 {"type":"function","name":"setContractImageURI","inputs":[{"name":"uri","type":"string","internalType":"string"}],"outputs":[],"stateMutability":"nonpayable"},

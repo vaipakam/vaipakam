@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
@@ -299,8 +300,9 @@ contract ClaimFacet is
                 LibVaipakam.hasActiveFallbackTopUp(loanId)
             ) revert NotBackstopAbsorbable();
         }
-        // Store the AUTHORIZING owner (not a bare bool): the keeper buyout requires
-        // the authorizer to still be the current NFT owner, so a transfer voids it.
+        // Store the AUTHORIZING manager (not a bare bool): the keeper buyout
+        // requires the authorizer to still manage the current NFT owner, so a
+        // transfer, or a replacement of the owner's wallet, voids it (#3526).
         s.lenderBackstopOptIn[loanId] = optIn ? msg.sender : address(0);
         emit LenderBackstopOptInSet(loanId, msg.sender, optIn);
     }
@@ -361,7 +363,7 @@ contract ClaimFacet is
         if (
             loan.status != LibVaipakam.LoanStatus.FallbackPending ||
             !snap.active ||
-            s.lenderBackstopOptIn[loanId] != nftOwner ||
+            s.lenderBackstopOptIn[loanId] != LibProtectedAccount.manager(nftOwner) ||
             LibVaipakam.hasActiveFallbackTopUp(loanId)
         ) revert NotBackstopAbsorbable();
 

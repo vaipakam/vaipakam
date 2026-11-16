@@ -262,10 +262,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
         // there since rental fees are deducted from a borrower-funded
         // prepay vault regardless of caller.
         if (loan.assetType == LibVaipakam.AssetType.ERC20) {
-            if (msg.sender == loan.lender) revert LenderCannotRepayOwnLoan();
-            if (
-                LibPositionNFT.ownerOf(loan.lenderTokenId) == msg.sender
-            ) revert LenderCannotRepayOwnLoan();
+            LibAuth.requireNotLenderSide(loan);
         }
 
         uint256 graceEnd = LibLoanClock.graceEnd(loan);

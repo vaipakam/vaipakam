@@ -78,6 +78,19 @@
   },
   {
     "type": "function",
+    "name": "adoptVaultBeacon",
+    "inputs": [
+      {
+        "name": "beacon",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "approve",
     "inputs": [
       {
@@ -578,6 +591,19 @@
   },
   {
     "type": "function",
+    "name": "recover",
+    "inputs": [
+      {
+        "name": "tokenIds",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "renderer",
     "inputs": [],
     "outputs": [
@@ -602,6 +628,30 @@
     "inputs": [],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "retiredRecordOf",
+    "inputs": [
+      {
+        "name": "holder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "retired",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "replacement",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -901,6 +951,38 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "vaultBeacon",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "vaultOf",
+    "inputs": [
+      {
+        "name": "holder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -1244,6 +1326,37 @@
   },
   {
     "type": "event",
+    "name": "PositionRecovered",
+    "inputs": [
+      {
+        "name": "from",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "Transfer",
     "inputs": [
       {
@@ -1263,6 +1376,19 @@
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VaultBeaconSet",
+    "inputs": [
+      {
+        "name": "beacon",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -1463,6 +1589,28 @@
   },
   {
     "type": "error",
+    "name": "HolderNotRetired",
+    "inputs": [
+      {
+        "name": "holder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "HolderRetired",
+    "inputs": [
+      {
+        "name": "holder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "NoCode",
     "inputs": [
       {
@@ -1598,6 +1746,28 @@
     "inputs": [
       {
         "name": "holder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "VaultBeaconAlreadySet",
+    "inputs": [
+      {
+        "name": "beacon",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "VaultBeaconNotForDiamond",
+    "inputs": [
+      {
+        "name": "beacon",
         "type": "address",
         "internalType": "address"
       }

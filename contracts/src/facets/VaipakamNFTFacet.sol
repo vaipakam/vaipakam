@@ -6,6 +6,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibPositionNFT, IPositionNFTCore} from "../libraries/LibPositionNFT.sol";
 import {LibRevert} from "../libraries/LibRevert.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {VPFIDiscountAccumulatorFacet} from "./VPFIDiscountAccumulatorFacet.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
@@ -59,6 +60,9 @@ contract VaipakamNFTFacet is DiamondReentrancyGuard, DiamondAccessControl {
     // Custom errors for clarity and gas efficiency.
     error NotAuthorized();
     error PositionNFTNotForThisDiamond(address core, address itsDiamond);
+    /// @notice #3526 — a position may not leave an account a primary
+    ///         replacement retired, except to the wallet that replaced it.
+    error TransferFromRetiredAccount(address from, address to);
 
     /**
      * @notice Record the PositionNFT core and seed the default artwork. Once,
@@ -132,11 +136,12 @@ contract VaipakamNFTFacet is DiamondReentrancyGuard, DiamondAccessControl {
      * @notice The PositionNFT core's transfer check: called by the core on
      *         every transfer (never on a mint), after it recorded the move. A
      *         revert refuses the transfer; nothing here can move a token.
-     * @dev    Two rules, the ones the in-Diamond transfer applied before
-     *         #3205:
+     * @dev    The rules:
      *         - #821 / #1123 FREEZE-AT-SOURCE: no position moves into or out of
      *           a sanctions-flagged wallet (fail-closed through the
      *           confirmed-flagged registry, so not `view`).
+     *         - #3526: no position leaves an account a primary replacement
+     *           retired, except to the wallet that replaced it.
      *         - #2342: a terminal loan's fee-tier exclusion is re-derived for
      *           the new holder. This is the one-way transfer ping the owner
      *           allowed (2026-11-07) where a time-accrued record must follow
@@ -155,6 +160,12 @@ contract VaipakamNFTFacet is DiamondReentrancyGuard, DiamondAccessControl {
             revert PositionCoolingDown(tokenId, valueOutBlock, readyAt);
         }
         LibVaipakam.assertPositionMoveNotSanctioned(from, to);
+        // #3526 — the retired wallet has lost every right over the account:
+        // no transfer out of it, by the wallet or by any operator it approved,
+        // except the recovery move to the replacement wallet (the core's
+        // `recover`, which the core itself checks against the vault).
+        LibProtectedAccount.Core memory c = LibProtectedAccount.core(from);
+        if (c.retired && to != c.manager) revert TransferFromRetiredAccount(from, to);
         _syncTierExclusion(LibPositionNFT._storage().loanIds[tokenId]);
         _stampLenderEntry(tokenId, to, true);
     }
