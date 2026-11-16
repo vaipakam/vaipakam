@@ -9,6 +9,13 @@ import { autoLendState, readMyAutoLend, sortMyAutoLend } from './myAutoLend';
 
 type Hex = `0x${string}`;
 
+const POSTURE_TEXT = {
+  halted: 'autoLend.postureHalted',
+  off: 'autoLend.postureOff',
+  'service-paused': 'autoLend.postureServicePaused',
+  unknown: 'autoLend.postureUnknown',
+} as const;
+
 /**
  * #3624 — the wallet's Auto-lend on Positions: one card per pair, with where
  * it stands (lending, ended by its date, stopped), the money waiting to be
@@ -28,7 +35,8 @@ export function AutoLendSection() {
   if (read.data === null) {
     return read.state === 'failed' ? <p className="tier-a">{format('autoLend.sectionFailed', { reason: read.error ?? '' })}</p> : null;
   }
-  const { rows, total, at } = read.data;
+  const { rows, total, at, posture } = read.data;
+  const anyLending = rows.some((r) => autoLendState(r, at) === 'active');
   if (rows.length === 0) return null;
   const amt = (v: bigint, a: Hex) => tokenAmount(v, a, meta, format);
   return (
@@ -39,6 +47,11 @@ export function AutoLendSection() {
       {read.error !== null && (
         <p className="tier-a" data-testid="autolend-stale">
           {format('autoLend.sectionStale', { reason: read.error })}
+        </p>
+      )}
+      {anyLending && posture !== 'on' && (
+        <p className="tier-a" data-testid="autolend-posture" data-posture={posture}>
+          {text(POSTURE_TEXT[posture])}
         </p>
       )}
       <ul className="card-list">

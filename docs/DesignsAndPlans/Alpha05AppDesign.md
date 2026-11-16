@@ -1808,7 +1808,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   events and the token's move into the vault. Positions lists each intent
   with its waiting amount, the amount counted against its most at once (each
   loan counts in full until its repayment is claimed or lent again, so it is
-  never called "lent now"), and its state (lending, ended, stopped);
+  never called "lent now"), and its state; above the cards it reads the
+  same fill gates at the same block and says when the network does not fill
+  Auto-lend now (paused, switched off, the service paused, or unread) (lending, ended, stopped);
   changing, funding, withdrawing and stopping follow in the next part.
 - **RB-PRICE-GUARD** — the maker's price-move guard (#3358) is shown on the
   page of an open or ended loan offer of a token against token collateral.

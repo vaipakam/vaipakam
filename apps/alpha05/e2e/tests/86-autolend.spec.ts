@@ -146,6 +146,12 @@ test('a lender sets up Auto-lend: one choice, an exact approval, terms and fundi
   await expect(page.getByTestId('lend-choice')).toHaveAttribute('data-autolend', 'has', { timeout: 60_000 });
   await expect(page.getByTestId('lend-choice-has')).toContainText('It is shown on Positions');
   await expect(page.getByTestId('lend-choice-keep')).toBeDisabled();
+
+  // A switch turned off after setup stops every new loan; the card says so.
+  await sc.diamondWrite('admin', 'setLenderIntentEnabled', [false]);
+  await page.goto('/positions');
+  await expect(page.getByTestId('autolend-posture')).toHaveAttribute('data-posture', 'off', { timeout: 60_000 });
+  await expect(page.getByTestId('autolend-posture')).toContainText('switched off on this network now');
 });
 
 test('with Auto-lend switched off on the network, the option is closed and says why', async ({ launchWallet }) => {

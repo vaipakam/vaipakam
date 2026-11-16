@@ -6,8 +6,8 @@
  * with that block's time, so an end date is judged as of the read.
  */
 import type { PublicClient } from 'viem';
-import type { IntentSummary } from '../offers/intents';
-import { INTENT } from './autoLend';
+import { readIntentGates, type IntentSummary } from '../offers/intents';
+import { fillPosture, INTENT, type FillPosture } from './autoLend';
 
 type Hex = `0x${string}`;
 
@@ -23,18 +23,25 @@ export interface MyAutoLendRead {
   rows: MyAutoLend[];
   total: bigint;
   at: bigint;
+  /** Whether the network fills Auto-lend now, from the same gates a fill
+   *  passes, read at the same block: a switch turned off after setup stops
+   *  every new loan without changing any instruction. */
+  posture: FillPosture;
 }
 
 export async function readMyAutoLend(c: PublicClient, diamond: Hex, owner: Hex): Promise<MyAutoLendRead> {
   const block = await c.getBlock({ blockTag: 'latest' });
-  const [rows, total] = (await c.readContract({
-    address: diamond,
-    abi: INTENT,
-    functionName: 'getLenderIntentsByOwner',
-    args: [owner, 0n, BigInt(MY_AUTOLEND_LIMIT)],
-    blockNumber: block.number,
-  })) as readonly [readonly MyAutoLend[], bigint];
-  return { rows: rows.map((r) => ({ intent: r.intent, active: r.active })), total, at: block.timestamp };
+  const [[rows, total], gates] = await Promise.all([
+    c.readContract({
+      address: diamond,
+      abi: INTENT,
+      functionName: 'getLenderIntentsByOwner',
+      args: [owner, 0n, BigInt(MY_AUTOLEND_LIMIT)],
+      blockNumber: block.number,
+    }) as Promise<readonly [readonly MyAutoLend[], bigint]>,
+    readIntentGates(c, diamond, block.number),
+  ]);
+  return { rows: rows.map((r) => ({ intent: r.intent, active: r.active })), total, at: block.timestamp, posture: fillPosture(gates) };
 }
 
 /** Where one instruction stands: lending; ended (active, but its end date
