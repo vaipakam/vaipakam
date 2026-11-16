@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunctionData, type Abi, type Log } from 'viem';
 import { INTENT, type IntentRecord } from './autoLend';
 import { hasEnded, manageBlocks, manageCall, manageLogs, manageOffers, type ManageDraft, type ManageFacts } from './manage';
+import { manageReceipt, type ManageReview } from './manageReview';
 
 type Hex = `0x${string}`;
 const USDC = '0x1111111111111111111111111111111111111111' as Hex;
@@ -127,5 +128,26 @@ describe('manageOffers and hasEnded', () => {
     expect(hasEnded(intent(), NOW)).toBe(false);
     expect(hasEnded(intent({ lendUntil: NOW + DAY }), NOW)).toBe(false);
     expect(hasEnded(intent({ lendUntil: NOW + DAY - 1n }), NOW)).toBe(true);
+  });
+});
+
+describe('manageReceipt', () => {
+  const copy = { text: (k: string) => k, format: (k: string) => k } as never;
+  const review = (route: ManageReview['route']): ManageReview => ({
+    draft: draft('takeBack', 100n),
+    identity: 'x',
+    readAt: 0,
+    facts: facts(),
+    blocks: [],
+    approvalSteps: 0,
+    route,
+    verdict: { kind: 'ok' },
+  });
+  const to = (route: ManageReview['route']) => manageReceipt(review(route), null, copy).rows.find((r) => r.label === 'autoLend.mRowTo')?.value;
+
+  it('states the destination a take-back binds, and leaves an unread mode unknown', () => {
+    expect(to('wallet')).toEqual({ kind: 'text', text: 'autoLend.mToWallet' });
+    expect(to('unknown')).toEqual({ kind: 'unknown', why: 'receipt.unknown' });
+    expect(to('held')).toEqual({ kind: 'text', text: 'payout.toHeld' });
   });
 });

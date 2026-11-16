@@ -140,9 +140,15 @@ export function manageReceipt(r: ManageReview, meta: TokenMetaMap | null, copy: 
       consequences.push(text('autoLend.mLoseStopLoans'));
     }
     if (d.amount > 0n) {
-      const where = r.route === null ? null : routedDestination(r.route, f.protection, copy);
+      // The wallet route is the only one paid at once; an unread mode stays
+      // unknown, never "your wallet, at once".
+      const where = r.route === 'wallet' ? text('autoLend.mToWallet') : r.route === null ? null : routedDestination(r.route, f.protection, copy);
       rows.push({ label: text('autoLend.mRowTakeBack'), value: amount(d.amount), binding: true });
-      rows.push({ label: text('autoLend.mRowTo'), value: { kind: 'text', text: where ?? text('autoLend.mToWallet') }, binding: true });
+      rows.push({
+        label: text('autoLend.mRowTo'),
+        value: where === null ? { kind: 'unknown', why: text('receipt.unknown') } : { kind: 'text', text: where },
+        binding: true,
+      });
       rows.push({ label: text('autoLend.mRowUnlentAfter'), value: amount(f.unlent - (d.amount > f.unlent ? f.unlent : d.amount)), binding: false });
       if (r.route !== null) consequences.push(...routeNotes(r.route, f.protection, copy));
     } else if (d.kind === 'stop' && f.unlent > 0n) {
