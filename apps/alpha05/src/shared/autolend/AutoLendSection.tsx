@@ -9,6 +9,7 @@ import { OwnStamp } from '../ui/OwnStamp';
 import { autoLendState, readMyAutoLend, sortMyAutoLend, type MyAutoLend, type AutoLendState } from './myAutoLend';
 import { AutoLendManage, useManageOpen, useOpenManages, type OpenManage } from './AutoLendManage';
 import { manageOffers, type ManageKind } from './manage';
+import { AutoLendChange, useChangeOpen } from './AutoLendChange';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import type { TokenMetaMap } from '../reads/tokens';
@@ -93,7 +94,6 @@ export function AutoLendSection() {
               {state === 'ended' && <p className="tier-a">{text('autoLend.cardEndedNote')}</p>}
               {state === 'stopped' && <p className="tier-a">{text('autoLend.cardStoppedNote')}</p>}
               {chain !== null && own !== null && <ManageRow row={r} state={state} chain={chain} own={own} meta={meta ?? null} onDone={read.refetch} />}
-              <p className="tier-b">{text('autoLend.cardChangeSoon')}</p>
             </li>
           );
         })}
@@ -154,6 +154,21 @@ function ManageRow({
   const i = row.intent;
   const { kind, open } = useManageOpen(i.lendingAsset, i.collateralAsset, { who: `${own.chainId}:${own.account}`, unlent: i.availableCapital });
   const offers = manageOffers(row.active, state === 'ended', i.availableCapital);
+  const [changing, setChanging] = useChangeOpen(i.lendingAsset, i.collateralAsset);
+  if (changing && kind === null)
+    return (
+      <AutoLendChange
+        intent={i}
+        restart={state === 'stopped'}
+        chain={chain}
+        own={own}
+        meta={meta}
+        onClose={() => {
+          setChanging(false);
+          onDone();
+        }}
+      />
+    );
   if (kind !== null)
     return (
       <AutoLendManage
@@ -170,7 +185,6 @@ function ManageRow({
         }}
       />
     );
-  if (offers.length === 0) return null;
   return (
     <p className="actions" data-testid="autolend-manage">
       {offers.map((k) => (
@@ -178,6 +192,9 @@ function ManageRow({
           {text(MANAGE_BUTTON[k])}
         </button>
       ))}
+      <button type="button" className="btn" onClick={() => setChanging(true)} data-testid="autolend-change">
+        {text(state === 'stopped' ? 'autoLend.cStartLabel' : 'autoLend.cChangeLabel')}
+      </button>
     </p>
   );
 }

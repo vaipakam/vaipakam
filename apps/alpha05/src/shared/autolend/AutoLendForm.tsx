@@ -25,6 +25,11 @@ interface AutoLendFormProps {
   meta: TokenMetaMap | null;
   onReview: (draft: AutoLendDraft) => void;
   onCancel: () => void;
+  /** Where the typed form is kept (the Lend page's by default). */
+  flowKey?: string;
+  /** A change of the Auto-lend already on the pair: the form opens on its
+   *  recorded limits (`initial`), and adding money is optional. */
+  change?: { initial: AutoLendInput; restart: boolean };
 }
 
 /**
@@ -36,11 +41,12 @@ interface AutoLendFormProps {
  * is checked against the network's live maximum. The typed form is kept,
  * so a navigation away or a review closed to change a figure keeps it.
  */
-export function AutoLendForm({ chain, own, lending, collateral, meta, onReview, onCancel }: AutoLendFormProps) {
+export function AutoLendForm({ chain, own, lending, collateral, meta, onReview, onCancel, flowKey = AUTOLEND_KEY, change }: AutoLendFormProps) {
   const { text, format } = useCopy();
   const { isAdvanced } = useMode();
-  const [stored, setStored] = useStoredValue<AutoLendInput>(`${AUTOLEND_KEY}:input`);
-  const input = stored ?? DEFAULT_AUTOLEND_INPUT;
+  const [stored, setStored] = useStoredValue<AutoLendInput>(`${flowKey}:input`);
+  const input = stored ?? change?.initial ?? DEFAULT_AUTOLEND_INPUT;
+  const isChange = change !== undefined;
   const set = (patch: Partial<AutoLendInput>) => setStored({ ...input, ...patch });
   const [touched, setTouched] = useState<Partial<Record<AutoLendField, boolean>>>({});
   const [asked, setAsked] = useState(false);
@@ -56,7 +62,7 @@ export function AutoLendForm({ chain, own, lending, collateral, meta, onReview, 
   const symbol = assetName(lending, meta);
   const maxDays = reads.data?.maxDays ?? null;
   const today = localToday();
-  const parsed = decimals !== null && maxDays !== null ? parseAutoLend(input, decimals, maxDays, isAdvanced, today) : null;
+  const parsed = decimals !== null && maxDays !== null ? parseAutoLend(input, decimals, maxDays, isAdvanced, today, isChange) : null;
   const errors = parsed && !parsed.ok ? parsed.errors : {};
 
   const errorText = (field: AutoLendField, e: AutoLendError | undefined): string | null => {
@@ -85,7 +91,7 @@ export function AutoLendForm({ chain, own, lending, collateral, meta, onReview, 
   const confirm = () => {
     setAsked(true);
     if (!parsed || !parsed.ok) return;
-    onReview(autoLendDraft(lending, collateral, parsed.parsed));
+    onReview(autoLendDraft(lending, collateral, parsed.parsed, isChange));
   };
 
   const field = (f: AutoLendField, label: string, hint: string, value: string, onChange: (v: string) => void, mode: 'decimal' | 'numeric' = 'decimal') => (
@@ -116,11 +122,14 @@ export function AutoLendForm({ chain, own, lending, collateral, meta, onReview, 
         confirm();
       }}
     >
-      <h3 id="autolend-form-title">{text('autoLend.formTitle')}</h3>
+      <h3 id="autolend-form-title">{text(!isChange ? 'autoLend.formTitle' : change.restart ? 'autoLend.startTitle' : 'autoLend.changeTitle')}</h3>
+      {isChange && <p className="tier-b">{text('autoLend.changeLead')}</p>}
       {field(
         'amount',
-        format('autoLend.amountLabel', { symbol }),
-        reads.data ? format('autoLend.amountHint', { have: tokenAmount(reads.data.balance, lending, meta, format) }) : text('autoLend.amountHintPlain'),
+        format(isChange ? 'autoLend.addAmountLabel' : 'autoLend.amountLabel', { symbol }),
+        reads.data
+          ? format(isChange ? 'autoLend.addAmountHint' : 'autoLend.amountHint', { have: tokenAmount(reads.data.balance, lending, meta, format) })
+          : text(isChange ? 'autoLend.addAmountHintPlain' : 'autoLend.amountHintPlain'),
         input.amount,
         (v) => set({ amount: v }),
       )}
@@ -152,8 +161,12 @@ export function AutoLendForm({ chain, own, lending, collateral, meta, onReview, 
       {isAdvanced && (
         <fieldset className="advanced-set" data-testid="autolend-advanced">
           <legend>{text('autoLend.advancedTitle')}</legend>
-          {field('exposure', format('autoLend.exposureLabel', { symbol }), text('autoLend.exposureHint'), input.exposure, (v) => set({ exposure: v }))}
-          {field('minFill', format('autoLend.minFillLabel', { symbol }), text('autoLend.minFillHint'), input.minFill, (v) => set({ minFill: v }))}
+          {field('exposure', format('autoLend.exposureLabel', { symbol }), text(isChange ? 'autoLend.exposureHintChange' : 'autoLend.exposureHint'), input.exposure, (v) =>
+            set({ exposure: v }),
+          )}
+          {field('minFill', format('autoLend.minFillLabel', { symbol }), text(isChange ? 'autoLend.minFillHintChange' : 'autoLend.minFillHint'), input.minFill, (v) =>
+            set({ minFill: v }),
+          )}
         </fieldset>
       )}
       {reads.error !== null && reads.data === null && <p className="tier-a">{format('flow.unreadable', { reason: reads.error })}</p>}

@@ -5,7 +5,7 @@
 // up), and where the Auto-lend option is open fills the form with small
 // figures, opens the review and prints it: the protocol's own dry-run
 // verdict, every figure bound and every consequence. Nothing is confirmed.
-// Then prints the Auto-lend cards on Positions and the manage steps each offers. Checks that nothing scrolls
+// Then prints the Auto-lend cards on Positions, the manage steps each offers and the first card's change form. Checks that nothing scrolls
 // sideways and saves screenshots per device. A full setup is covered by the
 // CI-Anvil spec (86-autolend.spec.ts).
 // Usage: node e2e/live/autolend-watch.cjs <address>
@@ -68,6 +68,17 @@ async function session(b, opts, label) {
   for (let i = 0; i < (await manage.count()); i++) console.log(`--- manage ${i + 1}: ${await text(manage.nth(i))}`);
   console.log('scrollWidth/innerWidth', await width(p));
   await p.screenshot({ path: `${OUT}/autolend-${label}-positions.png`, fullPage: true });
+  // The first card's change form, opened on its recorded limits, then cancelled; nothing is reviewed or signed.
+  const change = p.getByTestId('autolend-change');
+  if (await change.count()) {
+    await change.first().click();
+    const form = p.getByTestId('autolend-form');
+    await form.waitFor({ timeout: 60000 }).catch(() => {});
+    console.log(`--- change form\n${(await form.count()) ? await text(form) : 'no change form'}`);
+    console.log('scrollWidth/innerWidth', await width(p));
+    await p.screenshot({ path: `${OUT}/autolend-${label}-change.png`, fullPage: true });
+    if (await form.count()) await form.getByRole('button', { name: 'Cancel' }).click().catch(() => {});
+  }
   console.log('errors:', errs);
   await ctx.close();
 }

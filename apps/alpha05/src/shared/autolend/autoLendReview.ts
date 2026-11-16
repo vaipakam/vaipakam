@@ -26,11 +26,13 @@ import {
   readLtvCap,
   readSetupFacts,
   resolvedMinFill,
+  setAsideAfter,
   setupBlocks,
   setupCall,
   wholeDays,
   type AutoLendDraft,
   type FillPosture,
+  type IntentRecord,
   type LtvCap,
   type SetupBlock,
   type SetupFacts,
@@ -45,6 +47,10 @@ export interface AutoLendReview {
   identity: string;
   readAt: number;
   facts: SetupFacts;
+  /** For a change, the record it replaces, as read with the facts: the most
+   *  at once and smallest loan kept when none is typed, and the fill
+   *  restriction kept as it is. null for a new setup. */
+  base: IntentRecord | null;
   /** The smallest loan the setup records; null when it cannot be sized. */
   minFill: bigint | null;
   blocks: SetupBlock[];
@@ -129,7 +135,8 @@ export async function readAutoLendReview(own: OwnStateClient, diamond: Hex, draf
             fund,
           )
         ).length;
-  const minFill = resolvedMinFill(draft.parsed, facts.floor);
+  const base = draft.change ? facts.record : null;
+  const minFill = resolvedMinFill(draft.parsed, facts.floor, base);
   const [risk, roll, ltvCap] = await Promise.all([
     readRiskNeed(own, diamond, draft.lending, draft.collateral),
     readRollPermission(own, diamond, draft.lending),
@@ -150,11 +157,11 @@ export async function readAutoLendReview(own: OwnStateClient, diamond: Hex, draf
     // alone: their verdict is known before any prompt, and the whole batch
     // is dry-run again with the approval in place before it is sent.
     const covers = approvalSteps === 0;
-    const dry = await askThrough(own, async (c) => c.simulateContract({ address: diamond, ...setupCall(draft, minFill, await chainValidUntil(c), !covers), account }));
+    const dry = await askThrough(own, async (c) => c.simulateContract({ address: diamond, ...setupCall(draft, minFill, await chainValidUntil(c), base, !covers), account }));
     const v = judgeDryRun(dry, true);
     verdict = v.kind === 'ok' && !covers ? { kind: 'needs-approval' } : v;
   }
-  return { draft, identity, readAt: Date.now(), facts, minFill, blocks, approvalSteps, posture: fillPosture(facts.gates), risk, roll, ltvCap, verdict };
+  return { draft, identity, readAt: Date.now(), facts, base, minFill, blocks, approvalSteps, posture: fillPosture(facts.gates), risk, roll, ltvCap, verdict };
 }
 
 /** What moved between a review and a re-read of it, as a key: a change in
@@ -172,6 +179,16 @@ export function reviewKey(r: AutoLendReview): string {
     r.blocks.map((b) => b.kind).join(','),
     r.facts.minTermsAgeSec,
     r.facts.floor ?? 'x',
+    // A change stands on the record it replaces and the money around it.
+    r.base === null
+      ? ''
+      : Object.entries(r.base)
+          .sort(([a], [b]) => (a < b ? -1 : 1))
+          .map(([k, v]) => `${k}=${String(v)}`)
+          .join(','),
+    r.facts.unlent,
+    r.facts.lent,
+    String(r.facts.priority),
   ].join('|');
 }
 
@@ -182,6 +199,10 @@ export function blockText(b: SetupBlock, r: AutoLendReview, meta: TokenMetaMap |
   switch (b.kind) {
     case 'exists':
       return text('autoLend.blockExists');
+    case 'missing':
+      return text('autoLend.blockMissing');
+    case 'minAboveExposure':
+      return format('autoLend.blockMinAboveExposure', { min: amt(b.minFill) });
     case 'lendUntil':
       return format('autoLend.blockUntil', { date: new Date(Number(b.earliest) * 1000).toLocaleString() });
     case 'floorUnread':
@@ -189,7 +210,7 @@ export function blockText(b: SetupBlock, r: AutoLendReview, meta: TokenMetaMap |
     case 'belowFloor':
       return format('autoLend.blockFloor', { floor: amt(b.floor) });
     case 'minAboveFund':
-      return format('autoLend.blockMinAboveFund', { min: amt(b.minFill), fund: amt(r.draft.parsed.fund) });
+      return format(r.draft.change ? 'autoLend.blockMinAboveWaiting' : 'autoLend.blockMinAboveFund', { min: amt(b.minFill), fund: amt(setAsideAfter(r.draft, r.facts)) });
     case 'balance':
       return format('autoLend.blockBalance', { have: amt(b.balance), need: amt(r.draft.parsed.fund) });
     case 'ltvCap':
@@ -220,11 +241,25 @@ export function autoLendReceipt(r: AutoLendReview, meta: TokenMetaMap | null, co
   const lend = assetName(d.lending, meta);
   const coll = assetName(d.collateral, meta);
   const amount = (v: bigint): ReceiptRow['value'] => ({ kind: 'amount', asset: d.lending, amount: v });
+  const base = r.base;
+  const exposure = exposureOf(p, base);
+  const fundRows: ReceiptRow[] = !d.change
+    ? [{ label: text('autoLend.rowFund'), value: amount(p.fund), binding: true, movesOut: true }]
+    : [
+        p.fund > 0n
+          ? { label: text('autoLend.rowAdd'), value: amount(p.fund), binding: true, movesOut: true }
+          : { label: text('autoLend.rowAdd'), value: { kind: 'text', text: text('autoLend.addNone') }, binding: true },
+        { label: text('autoLend.rowSetAside'), value: amount(setAsideAfter(d, r.facts)), binding: false },
+      ];
   const rows: ReceiptRow[] = [
     { label: text('autoLend.rowWhat'), value: { kind: 'text', text: format('autoLend.whatValue', { lend, coll }) }, binding: true },
-    { label: text('autoLend.rowFund'), value: amount(p.fund), binding: true, movesOut: true },
-    { label: text('autoLend.rowExposure'), value: amount(exposureOf(p)), binding: true },
-    { label: text('autoLend.rowRate'), value: { kind: 'text', text: format('autoLend.rateValue', { rate: bpsPercent(Number(p.minRateBps)) }) }, binding: true },
+    ...fundRows,
+    { label: text('autoLend.rowExposure'), value: amount(exposure), binding: true },
+    {
+      label: text('autoLend.rowRate'),
+      value: { kind: 'text', text: p.minRateBps === 0n ? text('autoLend.rateAny') : format('autoLend.rateValue', { rate: bpsPercent(Number(p.minRateBps)) }) },
+      binding: true,
+    },
     { label: text('autoLend.rowLtv'), value: { kind: 'text', text: format('autoLend.ltvValue', { ltv: bpsPercent(p.maxInitLtvBps) }) }, binding: true },
     { label: text('autoLend.rowDays'), value: { kind: 'text', text: format('autoLend.daysValue', { days: String(p.maxDurationDays) }) }, binding: true },
     {
@@ -238,7 +273,7 @@ export function autoLendReceipt(r: AutoLendReview, meta: TokenMetaMap | null, co
       binding: true,
     },
     { label: text('autoLend.rowInterest'), value: { kind: 'text', text: text(p.acceptsProRata ? 'autoLend.interestBoth' : 'autoLend.interestFull') }, binding: true },
-    { label: text('autoLend.rowFiller'), value: { kind: 'text', text: text('autoLend.fillerAny') }, binding: true },
+    { label: text('autoLend.rowFiller'), value: { kind: 'text', text: text(base?.requiresKeeperAuth === true ? 'autoLend.fillerAllowed' : 'autoLend.fillerAny') }, binding: true },
     { label: text('autoLend.rowFirstFill'), value: { kind: 'time', unixSeconds: Number(r.facts.chainNow + r.facts.minTermsAgeSec) }, binding: false },
   ];
   if (r.approvalSteps > 0) rows.push({ label: text('autoLend.rowApproval'), value: amount(p.fund), binding: true, movesOut: true });
@@ -264,10 +299,19 @@ export function autoLendReceipt(r: AutoLendReview, meta: TokenMetaMap | null, co
   const ageDays = wholeDays(r.facts.minTermsAgeSec);
   const wait =
     ageDays >= 1 ? format('autoLend.daysValue', { days: String(ageDays) }) : format('autoLend.minutesValue', { n: String(Math.ceil(Number(r.facts.minTermsAgeSec) / 60)) });
-  if (r.facts.minTermsAgeSec > 0n) consequences.push(format('autoLend.loseTermsAge', { wait }));
+  if (r.facts.minTermsAgeSec > 0n) consequences.push(format(d.change ? 'autoLend.loseTermsAgeRestart' : 'autoLend.loseTermsAge', { wait }));
+  if (base !== null) {
+    consequences.push(text('autoLend.loseChangeOpen'));
+    if (!base.active) consequences.push(text('autoLend.loseStartAgain'));
+    if (r.facts.lent > 0n && r.facts.lent >= exposure) consequences.push(format('autoLend.loseBelowLent', { lent: tokenAmount(r.facts.lent, d.lending, meta, format) }));
+    if (base.requiresKeeperAuth) consequences.push(text('autoLend.loseKeeperOnly'));
+    if (r.facts.priority === true) consequences.push(text('autoLend.losePriority'));
+    else if (r.facts.priority === null) consequences.push(text('autoLend.losePriorityUnknown'));
+  }
   if (r.posture === 'unknown') consequences.push(text('autoLend.losePostureUnknown'));
   if (r.posture === 'service-paused') consequences.push(text('autoLend.loseServicePaused'));
   else if (matcher === 'absent') consequences.push(text('autoLend.loseServiceOff'));
   else if (matcher === 'unknown') consequences.push(text('autoLend.loseServiceUnknown'));
-  return { title: text('autoLend.receiptTitle'), rows, consequences, prompts: r.approvalSteps + 1, readAt: r.readAt };
+  const title = base === null ? 'autoLend.receiptTitle' : base.active ? 'autoLend.changeTitle' : 'autoLend.startTitle';
+  return { title: text(title), rows, consequences, prompts: r.approvalSteps + 1, readAt: r.readAt };
 }

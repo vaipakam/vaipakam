@@ -26,7 +26,7 @@
  *
  * Everything here is pure or a read: the page's review and flow build on it.
  */
-import { erc20Abi, parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
+import { erc20Abi, formatUnits, parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
 import { LenderIntentFacetABI, NumeraireValueFacetABI } from '@vaipakam/contracts/abis';
 import { CONFIG, OFFER_PREVIEW } from '../offers/reads';
 import { readIntentGates, type IntentGate } from '../offers/intents';
@@ -39,6 +39,7 @@ export const INTENT = LenderIntentFacetABI as Abi;
 const NUMERAIRE = NumeraireValueFacetABI as Abi;
 
 const DAY = 86_400n;
+const ZERO = '0x0000000000000000000000000000000000000000' as Hex;
 /** The protocol's least window an end date must leave: one day-long loan
  *  after the terms age (`LibIntentTerms.MIN_LEND_WINDOW`). */
 export const MIN_LEND_WINDOW_SEC = DAY;
@@ -101,11 +102,17 @@ export function parseAutoLend(
   maxDays: number,
   advanced: boolean,
   today: string,
+  change = false,
 ): { ok: true; parsed: ParsedAutoLend } | { ok: false; errors: Partial<Record<AutoLendField, AutoLendError>> } {
   const errors: Partial<Record<AutoLendField, AutoLendError>> = {};
-  const amount = parseAmount(input.amount, decimals);
+  // A change of limits may add nothing: an empty or zero amount adds none.
+  const typed = parseAmount(input.amount, decimals);
+  const amount: typeof typed = change && !typed.ok && (typed.error === 'empty' || typed.error === 'zero') ? { ok: true, value: 0n } : typed;
   if (!amount.ok) errors.amount = amount.error;
-  const rate = parseRateBps(input.rate);
+  // The protocol takes a 0% lowest rate (any rate the borrower offers), so
+  // zero is a valid floor here, unlike the amount and the ceiling.
+  const typedRate = parseRateBps(input.rate);
+  const rate: typeof typedRate = !typedRate.ok && typedRate.error === 'zero' ? { ok: true, value: 0n } : typedRate;
   if (!rate.ok) errors.rate = rate.error;
   const ltv = parseRateBps(input.ltv);
   if (!ltv.ok) errors.ltv = ltv.error;
@@ -133,8 +140,9 @@ export function parseAutoLend(
     }
   }
   if (Object.keys(errors).length > 0 || !amount.ok || !rate.ok || !ltv.ok || !days.ok) return { ok: false, errors };
-  const cap = maxExposure ?? amount.value;
-  if (minFill !== null && minFill > cap) return { ok: false, errors: { minFill: 'aboveExposure' } };
+  // A change that keeps the recorded most at once compares it in the review.
+  const cap = maxExposure ?? (change ? null : amount.value);
+  if (minFill !== null && cap !== null && minFill > cap) return { ok: false, errors: { minFill: 'aboveExposure' } };
   return {
     ok: true,
     parsed: {
@@ -170,15 +178,20 @@ export interface AutoLendDraft {
   parsed: ParsedAutoLend;
   /** The end date in unix seconds, 0 for none. */
   lendUntil: bigint;
+  /** A change of the Auto-lend already on the pair (new limits, or starting
+   *  a stopped or ended one again) rather than a new setup: the protocol
+   *  replaces the recorded terms in place, and money may be added or not. */
+  change: boolean;
 }
 
-export function autoLendDraft(lending: Hex, collateral: Hex, parsed: ParsedAutoLend): AutoLendDraft {
-  return { lending, collateral, parsed, lendUntil: parsed.lendUntilDate === null ? 0n : lendUntilSeconds(parsed.lendUntilDate) };
+export function autoLendDraft(lending: Hex, collateral: Hex, parsed: ParsedAutoLend, change = false): AutoLendDraft {
+  return { lending, collateral, parsed, lendUntil: parsed.lendUntilDate === null ? 0n : lendUntilSeconds(parsed.lendUntilDate), change };
 }
 
-/** The exposure cap the protocol records: the typed cap, else the amount. */
-export function exposureOf(p: ParsedAutoLend): bigint {
-  return p.maxExposure ?? p.fund;
+/** The exposure cap the protocol records: the typed cap, else, for a change,
+ *  the recorded one (`base`), else the amount funded. */
+export function exposureOf(p: ParsedAutoLend, base: IntentRecord | null = null): bigint {
+  return p.maxExposure ?? base?.maxExposure ?? p.fund;
 }
 
 /**
@@ -190,8 +203,10 @@ export function exposureOf(p: ParsedAutoLend): bigint {
  * default is asked for and the network minimum could not be read: the review
  * then names that instead of guessing a figure.
  */
-export function resolvedMinFill(p: ParsedAutoLend, floor: bigint | null): bigint | null {
+export function resolvedMinFill(p: ParsedAutoLend, floor: bigint | null, base: IntentRecord | null = null): bigint | null {
   if (p.minFill !== null) return p.minFill;
+  // A change keeps the recorded smallest loan unless one is typed.
+  if (base !== null) return base.minFillAmount;
   if (floor === null) return null;
   const exposure = exposureOf(p);
   const cap = exposure < p.fund ? exposure : p.fund;
@@ -200,41 +215,44 @@ export function resolvedMinFill(p: ParsedAutoLend, floor: bigint | null): bigint
   return pick > cap ? cap : pick;
 }
 
-/** The setup's two steps, as sent: set the terms, then fund them. The
- *  terms carry the lender's consent (the review's checkbox, the same gate
- *  every offer posting carries) and the transaction deadline. */
-export function setupSteps(draft: AutoLendDraft, minFill: bigint, consent: boolean, validUntil: bigint): BatchStep[] {
+/** The setup's steps, as sent: set the terms, then fund them (a change that
+ *  adds nothing sends the terms alone). The terms carry the lender's consent
+ *  (the review's checkbox, the same gate every offer posting carries) and the
+ *  transaction deadline. A change keeps the recorded fill restriction
+ *  (`requiresKeeperAuth`, which this app never sets) as it is. */
+export function setupSteps(draft: AutoLendDraft, minFill: bigint, consent: boolean, validUntil: bigint, base: IntentRecord | null = null): BatchStep[] {
   const p = draft.parsed;
-  return [
+  const steps: BatchStep[] = [
     {
       abi: INTENT,
       functionName: 'setLenderIntent',
       args: [
         draft.lending,
         draft.collateral,
-        exposureOf(p),
+        exposureOf(p, base),
         p.minRateBps,
         p.maxInitLtvBps,
         p.maxDurationDays,
         minFill,
-        false,
+        base?.requiresKeeperAuth ?? false,
         draft.lendUntil,
         p.acceptsProRata,
         consent,
         validUntil,
       ],
     },
-    { abi: INTENT, functionName: 'fundLenderIntent', args: [draft.lending, draft.collateral, p.fund] },
   ];
+  if (p.fund > 0n) steps.push({ abi: INTENT, functionName: 'fundLenderIntent', args: [draft.lending, draft.collateral, p.fund] });
+  return steps;
 }
 
 /** The setup as one contract call (the batch), or the terms alone, which the
  *  review dry-runs while the wallet's approval does not yet cover the
  *  funding: the terms' verdict is known before any prompt, and the whole
  *  batch is dry-run again once the approval is in place. */
-export function setupCall(draft: AutoLendDraft, minFill: bigint, validUntil: bigint, termsOnly = false) {
-  const steps = setupSteps(draft, minFill, true, validUntil);
-  if (termsOnly) return { abi: INTENT, functionName: steps[0]!.functionName, args: steps[0]!.args };
+export function setupCall(draft: AutoLendDraft, minFill: bigint, validUntil: bigint, base: IntentRecord | null, termsOnly = false) {
+  const steps = setupSteps(draft, minFill, true, validUntil, base);
+  if (termsOnly || steps.length === 1) return { abi: INTENT, functionName: steps[0]!.functionName, args: steps[0]!.args };
   return batchCall(steps);
 }
 
@@ -274,6 +292,16 @@ export interface SetupFacts {
   chainNow: bigint;
   /** The instruction already on this pair, if one is active. */
   existing: IntentRecord | null;
+  /** The pair's record as stored, active or not (all zero when none was
+   *  ever set): what a change replaces. */
+  record: IntentRecord;
+  /** The money set aside and not lent, and the amount counted against the
+   *  most at once, for this pair. */
+  unlent: bigint;
+  lent: bigint;
+  /** Whether the record is opted into priority routing (#2550), which any
+   *  new terms switch off; null when it could not be read. */
+  priority: boolean | null;
   /** The network's minimum fill value (numeraire, 1e18), and what it is in
    *  the lending asset (rounded up); null when it could not be read. */
   minFillValue: bigint | null;
@@ -288,19 +316,39 @@ export async function readSetupFacts(c: PublicClient, diamond: Hex, account: Hex
   const block = await c.getBlock({ blockTag: 'latest' });
   const blockNumber = block.number;
   const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => c.readContract({ address: diamond, abi, functionName, args, blockNumber }) as Promise<T>;
-  const [existing, minFillValue, minTermsAgeSec, gates, balance, allowance] = await Promise.all([
+  const [existing, minFillValue, minTermsAgeSec, gates, balance, allowance, unlent, lent, priority] = await Promise.all([
     readIntent(c, diamond, account, lending, collateral, blockNumber),
     read<bigint>(INTENT, 'getMinIntentFillNumeraire').catch(() => null),
     read<bigint>(CONFIG, 'getMinTermsAgeSec'),
     readIntentGates(c, diamond, blockNumber),
     c.readContract({ address: lending, abi: erc20Abi, functionName: 'balanceOf', args: [account], blockNumber }),
     c.readContract({ address: lending, abi: erc20Abi, functionName: 'allowance', args: [account, diamond], blockNumber }),
+    read<bigint>(INTENT, 'getLenderIntentCapital', [account, lending, collateral]),
+    read<bigint>(INTENT, 'getLenderIntentLivePrincipal', [account, lending, collateral]),
+    read<readonly [boolean, bigint, boolean, boolean]>(INTENT, 'getLenderIntentPriority', [account, lending, collateral, ZERO, ZERO]).then(
+      (x) => x[0],
+      () => null,
+    ),
   ]);
   let floor: bigint | null = null;
   if (minFillValue !== null) {
     floor = minFillValue === 0n ? 0n : await read<bigint>(NUMERAIRE, 'getAmountForNumeraireValue', [lending, minFillValue, true]).catch(() => null);
   }
-  return { blockNumber, chainNow: block.timestamp, existing: existing.active ? existing : null, minFillValue, floor, minTermsAgeSec, gates, balance, allowance };
+  return {
+    blockNumber,
+    chainNow: block.timestamp,
+    existing: existing.active ? existing : null,
+    record: existing,
+    unlent,
+    lent,
+    priority,
+    minFillValue,
+    floor,
+    minTermsAgeSec,
+    gates,
+    balance,
+    allowance,
+  };
 }
 
 /** The earliest end date the protocol takes now: the terms age, then one
@@ -313,6 +361,8 @@ export function earliestLendUntil(chainNow: bigint, minTermsAgeSec: bigint): big
  *  fact the reader can act on. Ordered as the protocol checks them. */
 export type SetupBlock =
   | { kind: 'exists' }
+  /** A change, but the pair carries no Auto-lend to change. */
+  | { kind: 'missing' }
   | { kind: 'lendUntil'; earliest: bigint }
   | { kind: 'floorUnread' }
   | { kind: 'belowFloor'; floor: bigint }
@@ -322,20 +372,34 @@ export type SetupBlock =
    *  at today's prices, read by the review (`ltvCapBlock`). */
   | { kind: 'ltvCap'; capBps: number }
   /** The network opens no new loan against this collateral now. */
-  | { kind: 'ltvClosed' };
+  | { kind: 'ltvClosed' }
+  /** The smallest loan is above the most at once (a change that keeps the
+   *  recorded most at once). */
+  | { kind: 'minAboveExposure'; minFill: bigint };
+
+/** The money set aside and not lent once the step lands: what waits now
+ *  (for a change) plus what it adds. */
+export function setAsideAfter(draft: AutoLendDraft, f: SetupFacts): bigint {
+  return (draft.change ? f.unlent : 0n) + draft.parsed.fund;
+}
 
 export function setupBlocks(draft: AutoLendDraft, f: SetupFacts): SetupBlock[] {
   const out: SetupBlock[] = [];
-  if (f.existing !== null) out.push({ kind: 'exists' });
+  const base = draft.change ? f.record : null;
+  if (!draft.change && f.existing !== null) out.push({ kind: 'exists' });
+  if (draft.change && f.record.maxExposure === 0n) out.push({ kind: 'missing' });
   if (draft.lendUntil !== 0n && draft.lendUntil < earliestLendUntil(f.chainNow, f.minTermsAgeSec))
     out.push({ kind: 'lendUntil', earliest: earliestLendUntil(f.chainNow, f.minTermsAgeSec) });
-  const minFill = resolvedMinFill(draft.parsed, f.floor);
+  const minFill = resolvedMinFill(draft.parsed, f.floor, base);
   if (minFill === null) out.push({ kind: 'floorUnread' });
   else if (f.floor !== null && minFill < f.floor) out.push({ kind: 'belowFloor', floor: f.floor });
   // Every fill must be at least the smallest loan and at most the money set
   // aside, so a smallest loan above the funding could never be made (an
   // Advanced most-at-once above the funding lets the floor reach past it).
-  if (minFill !== null && minFill > draft.parsed.fund) out.push({ kind: 'minAboveFund', minFill });
+  // A change counts the money already waiting too.
+  if (minFill !== null && minFill > setAsideAfter(draft, f)) out.push({ kind: 'minAboveFund', minFill });
+  // The protocol refuses a smallest loan above the most at once.
+  else if (minFill !== null && minFill > exposureOf(draft.parsed, base)) out.push({ kind: 'minAboveExposure', minFill });
   if (f.balance < draft.parsed.fund) out.push({ kind: 'balance', balance: f.balance });
   return out;
 }
@@ -426,4 +490,31 @@ export const SETUP_GATE_ORDER: readonly IntentGate[] = ['protocolPaused', 'match
 /** The day count of a span, for copy: whole days, rounded down. */
 export function wholeDays(seconds: bigint): number {
   return Number(seconds / DAY);
+}
+
+/** A basis-point figure as the form types it (`550` → `5.5`). */
+export function bpsText(bps: bigint): string {
+  const whole = bps / 100n;
+  const frac = bps % 100n;
+  return frac === 0n ? whole.toString() : `${whole}.${frac.toString().padStart(2, '0').replace(/0$/, '')}`;
+}
+
+/** The form a change opens on: the Auto-lend's recorded limits, exactly, and
+ *  nothing added. A recorded end date is kept as its day where the reader
+ *  is, even when it has passed, so the form asks for a new one rather than
+ *  silently dropping it. */
+export function inputFromIntent(
+  i: { minRateBps: bigint; maxInitLtvBps: number; maxDurationDays: number; lendUntil: bigint; acceptsProRata: boolean; maxExposure: bigint; minFillAmount: bigint },
+  decimals: number,
+): AutoLendInput {
+  return {
+    amount: '',
+    rate: bpsText(i.minRateBps),
+    ltv: bpsText(BigInt(i.maxInitLtvBps)),
+    days: String(i.maxDurationDays),
+    lendUntil: i.lendUntil === 0n ? '' : localToday(new Date(Number(i.lendUntil) * 1000)),
+    proRata: i.acceptsProRata,
+    exposure: formatUnits(i.maxExposure, decimals),
+    minFill: formatUnits(i.minFillAmount, decimals),
+  };
 }

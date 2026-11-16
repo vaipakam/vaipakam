@@ -39,6 +39,8 @@ interface AutoLendSetupProps {
   own: OwnStateClient;
   meta: TokenMetaMap | null;
   terms: TermsState | null;
+  /** Where the flow is kept (the Lend page's by default). */
+  flowKey?: string;
   /** Back to the form to change a figure (the typed form is kept). */
   onEdit: () => void;
   /** Finished or abandoned; `done` when Auto-lend was recorded, so the
@@ -59,7 +61,7 @@ interface AutoLendSetupProps {
  * terms recorded, the amount set aside, and the amount that moved into the
  * vault.
  */
-export function AutoLendSetup({ draft, chain, own, meta, terms, onEdit, onClose }: AutoLendSetupProps) {
+export function AutoLendSetup({ draft, chain, own, meta, terms, onEdit, onClose, flowKey = AUTOLEND_KEY }: AutoLendSetupProps) {
   const copy = useCopy();
   const { text, format } = copy;
   const config = useConfig();
@@ -69,12 +71,12 @@ export function AutoLendSetup({ draft, chain, own, meta, terms, onEdit, onClose 
   const identity = reviewIdentity(own);
   const { caps } = useCapabilities();
   const matcher = caps?.keeper.find((k) => k.pass === 'matcher')?.armed ?? 'unknown';
-  const [review, setReview] = useStoredValue<AutoLendReview>(`${AUTOLEND_KEY}:review`);
-  const [consentFor, setConsentFor] = useStoredValue<number>(`${AUTOLEND_KEY}:consent`);
-  const [done, setDone] = useStoredValue<boolean>(`${AUTOLEND_KEY}:done`);
-  const [riskOpen, setRiskOpen] = useStoredValue<RiskNeed>(`${AUTOLEND_KEY}:risk`);
+  const [review, setReview] = useStoredValue<AutoLendReview>(`${flowKey}:review`);
+  const [consentFor, setConsentFor] = useStoredValue<number>(`${flowKey}:consent`);
+  const [done, setDone] = useStoredValue<boolean>(`${flowKey}:done`);
+  const [riskOpen, setRiskOpen] = useStoredValue<RiskNeed>(`${flowKey}:risk`);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const setStep = useTxNote(AUTOLEND_KEY);
+  const setStep = useTxNote(flowKey);
   /** The approval this flow made and has not yet seen used or put back. */
   const approvalLeft = useRef<{ token: Hex; prior: bigint; amount: bigint; since: bigint | null } | null>(null);
   const counter = useRef<{ n: number; total: number }>({ n: 0, total: 0 });
@@ -83,7 +85,7 @@ export function AutoLendSetup({ draft, chain, own, meta, terms, onEdit, onClose 
   const { readAllowance, allowanceIo, approveExactly, putBack } = approvalFlow({ own, config, chainId: chain.chainId, diamond, copy, exactAmount: exact, setStep });
 
   const tx = useTrackedTx({
-    key: AUTOLEND_KEY,
+    key: flowKey,
     chainId: chain.chainId,
     account,
     sources: own.sources,
@@ -124,7 +126,7 @@ export function AutoLendSetup({ draft, chain, own, meta, terms, onEdit, onClose 
       let dry: Awaited<ReturnType<typeof askThrough>>;
       try {
         const deadline = await readValidUntil(own);
-        call = setupCall(r.draft, minFill, deadline);
+        call = setupCall(r.draft, minFill, deadline, r.base);
         dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, ...call, account }));
       } catch (e) {
         return stop(format('flow.unreadable', { reason: refusalFromError(e).reason }));
@@ -133,7 +135,7 @@ export function AutoLendSetup({ draft, chain, own, meta, terms, onEdit, onClose 
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
 
       // 3. The setup, one transaction.
-      say(text('autoLend.stepSend'));
+      say(text(r.draft.change ? 'autoLend.stepSendChange' : 'autoLend.stepSend'));
       try {
         return await sendWrite(config, { address: diamond, ...call, chainId: chain.chainId, account });
       } catch (e) {
@@ -154,11 +156,13 @@ export function AutoLendSetup({ draft, chain, own, meta, terms, onEdit, onClose 
       const logs = setupLogs(receipt.logs, diamond, account, d.lending, d.collateral);
       if (logs.set) {
         setDone(true);
-        legs.push({ status: 'done', label: text('autoLend.legSet') });
+        legs.push({ status: 'done', label: text(d.change ? 'autoLend.legChanged' : 'autoLend.legSet') });
       } else {
-        legs.push({ status: 'not-done', label: text('autoLend.legNotSet'), reason: text('autoLend.notSet') });
+        legs.push({ status: 'not-done', label: text(d.change ? 'autoLend.legChanged' : 'autoLend.legNotSet'), reason: text('autoLend.notSet') });
       }
       const fund = d.parsed.fund;
+      // A change that adds nothing moves nothing.
+      if (fund === 0n) return legs;
       const label = format('autoLend.legFunded', { amount: tokenAmount(fund, d.lending, meta, format) });
       let vault: Hex | null = null;
       try {
@@ -357,7 +361,7 @@ export function AutoLendSetup({ draft, chain, own, meta, terms, onEdit, onClose 
           need={riskOpen}
           source={{ kind: 'pair', pair: riskPair }}
           pairLabel={pairLabel}
-          flowKey={AUTOLEND_KEY}
+          flowKey={flowKey}
           onBack={() => {
             setRiskOpen(null);
             void load();
@@ -373,7 +377,7 @@ export function AutoLendSetup({ draft, chain, own, meta, terms, onEdit, onClose 
           describeAsset={describeAsset}
           explorer={chain.blockExplorer}
           next={
-            done !== true || positions.kind === 'none'
+            done !== true || draft.change || positions.kind === 'none'
               ? null
               : positions.kind === 'here'
                 ? { label: text('autoLend.openPositions'), to: positions.to }
