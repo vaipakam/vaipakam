@@ -46,6 +46,10 @@
       "types": "./src/loanClock.ts",
       "default": "./src/loanClock.ts"
     },
+    "./collateralSet": {
+      "types": "./src/collateralSet.ts",
+      "default": "./src/collateralSet.ts"
+    },
     "./signedOfferSet": {
       "types": "./src/signedOfferSet.ts",
       "default": "./src/signedOfferSet.ts"
