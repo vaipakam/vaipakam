@@ -79,7 +79,8 @@ const copy = {
 };
 const words = (asset: Hex, v: bigint, exact = false) => `${v}${exact ? '!' : ''}@${asset.slice(0, 6)}`;
 
-const SETTINGS: MatchSettings = { switchOn: true, lifBps: 20n, matcherBps: 100n, capacityLimited: false };
+const LIF = { baseBps: 20n, baseTermDays: 30n, yearlyBps: 50n, yearDays: 365n };
+const SETTINGS: MatchSettings = { switchOn: true, lif: LIF, matcherBps: 100n, capacityLimited: false };
 const OK = { code: MATCH_OK, amount: 1000n, rateBps: 450n, collateral: 5000n };
 
 describe('the overlapping pairs', () => {
@@ -177,10 +178,12 @@ describe('what the band shows', () => {
 describe('the share and the capacity', () => {
   it('is at most the matcher’s part of the full fee, rounded down as the protocol rounds it', () => {
     // 0.2% of 1e18 is 2e15; 1% of that is 2e13.
-    expect(shareAtMost(10n ** 18n, 20n, 100n)).toBe(2n * 10n ** 13n);
-    expect(shareAtMost(999n, 20n, 100n)).toBe(0n);
-    expect(shareText(10n ** 18n, WETH, SETTINGS, words, copy)).toBe('matchBand.shareAtMost(20000000000000@0x4200,1)');
-    expect(shareText(10n ** 18n, WETH, { ...SETTINGS, matcherBps: null }, words, copy)).toBe('matchBand.shareUnread');
+    expect(shareAtMost(10n ** 18n, LIF, 30n, 100n)).toBe(2n * 10n ** 13n);
+    expect(shareAtMost(999n, LIF, 30n, 100n)).toBe(0n);
+    // #3649 — the fee is term-scaled: at a year it is 0.5%, so 1% of it is 5e13.
+    expect(shareAtMost(10n ** 18n, LIF, 365n, 100n)).toBe(5n * 10n ** 13n);
+    expect(shareText(10n ** 18n, 30n, WETH, SETTINGS, words, copy)).toBe('matchBand.shareAtMost(20000000000000@0x4200,1)');
+    expect(shareText(10n ** 18n, 30n, WETH, { ...SETTINGS, matcherBps: null }, words, copy)).toBe('matchBand.shareUnread');
   });
 
   it('names whose capacity a match counts against, or that no limit is in force', () => {

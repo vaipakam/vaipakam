@@ -355,14 +355,6 @@ export async function readGraceSeconds(client: PublicClient, diamond: Hex, durat
   })) as bigint;
 }
 
-export async function readLifBps(client: PublicClient, diamond: Hex): Promise<bigint> {
-  return (await client.readContract({
-    address: diamond,
-    abi: CONFIG,
-    functionName: 'getLoanInitiationFeeBps',
-  })) as bigint;
-}
-
 /** The protocol's share of the interest a lender earns, in basis points,
  *  under today's setting: each loan fixes the figure in force when it opens. */
 export async function readTreasuryFeeBps(client: PublicClient, diamond: Hex): Promise<bigint> {

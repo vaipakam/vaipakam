@@ -6,6 +6,7 @@
  */
 import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import { lifFeeOf, type LifTerms } from '../lib/initiationFee';
 import {
   interestTermEnd,
   pausedSecondsBetween,
@@ -173,7 +174,8 @@ export function refinancePayoffOf(live: LoanLive, asOf: bigint): bigint {
  *  so this is still the wallet's net cost and the spare balance it needs.
  *  The permit route reads the contract's own figure instead.
  *
- *  The fee is taken at the LIVE `loanInitiationFeeBps` with no discount,
+ *  The fee is taken under the LIVE initiation-fee term rule at the
+ *  request's own term (#3649), with no discount,
  *  so this is the MOST the accept can pull: a borrower hold-tier discount
  *  only lowers the fee, which raises the net principal and lowers the
  *  pull. A governance raise of the fee rate after posting raises the
@@ -181,10 +183,10 @@ export function refinancePayoffOf(live: LoanLive, asOf: bigint): bigint {
  *  this with the live rate and asks for a fresh approval. */
 export function refinanceWalletPullOf(
   live: LoanLive,
-  opts: { requestAmount: bigint; loanInitiationFeeBps: number },
+  opts: { requestAmount: bigint; lifTerms: LifTerms; termDays: number },
   asOf: bigint,
 ): bigint {
-  const fee = (opts.requestAmount * BigInt(opts.loanInitiationFeeBps)) / 10_000n;
+  const fee = lifFeeOf(opts.requestAmount, opts.lifTerms, opts.termDays);
   const netPrincipal = opts.requestAmount - fee;
   const payoff = refinancePayoffOf(live, asOf);
   // The contract refuses a net principal above the old lender's due, and

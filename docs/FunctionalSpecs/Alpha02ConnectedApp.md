@@ -5331,7 +5331,13 @@ Its intended behaviour, as the test oracle for this surface:
   a gasless order, movement at fill) alongside the protocol fee that
   applies to the user's side: a lender's yield after the fee on interest,
   a borrower's one-time initiation fee on the principal, quoted from the
-  live deployed fee values. The user's own
+  live deployed fee values. The initiation fee is term-based, so every
+  surface quotes it at the rate for that order's or loan's own term, never
+  at one flat rate, and a signed order's initiation-fee cap is that term's
+  rate rounded up, the figure the protocol compares it with. Until the
+  live fee settings are read, the fee shows as not yet known rather than
+  as a default figure; the help page's fee answer states the rule with
+  the live settings. The user's own
   open offers can be repriced or resized in place in one transaction —
   only by their creator; a bought offer position is view-only — and an
   amend that increases the locked amount asks for the token approval

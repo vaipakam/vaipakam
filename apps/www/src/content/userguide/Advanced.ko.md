@@ -141,7 +141,7 @@ rebate도 없습니다.
 
 > **Network gas는 별개입니다.** 위의 discount는 Vaipakam의
 > **protocol fees**(yield fee `{liveValue:treasuryFeeBps}`%,
-> Loan Initiation Fee `{liveValue:loanInitiationFeeBps}`%)에
+> Loan Initiation Fee)에
 > 적용됩니다. 모든 on-chain action에 필요한 **blockchain network
 > gas fee**(Base / Sepolia / Arbitrum 등에서 offer create / accept
 > / repay / claim / withdraw 등을 할 때 validators에게 pay하는
@@ -1983,13 +1983,13 @@ Borrow는 ERC-20 담보에 대한 ERC-20 대출자 오퍼(`offerType` 0)를 `acc
 
 ### Borrow: 검토와 서명
 
-검토는 오퍼, 그 상태, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, 두 분류, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, 지갑의 볼트·잔액·승인액, `previewOfferAcceptBlock`, 할인 동의를 읽고, 지갑이 열리기 직전에 다시 읽습니다. 지갑은 저장된 오퍼로 만든 EIP-712 `AcceptTerms`(도메인 `Vaipakam AcceptOffer`, 버전 1)에 새 128비트 nonce와 30분 기한으로 서명합니다. 비유동 확인은 검토가 비유동으로 보여 준 측만 지정합니다. 승인액이 부족할 때만 담보 금액만큼 정확히 승인하고, 서명과 함께 `acceptOffer`를 모의 실행한 뒤 보냅니다. 승인 뒤에 멈추면 다른 변경이 없는 한 앱은 승인액을 이전 값으로 되돌립니다. 결과는 이 오퍼와 지갑의 `LoanInitiated`와 영수증의 `Transfer` 로그에서 읽습니다. 허용량은 첫 지갑 요청 직전에 다시 읽으며, 재설정은 그 값으로 되돌립니다. 전송된 수락이 revert되거나 지갑이 취소 또는 대체하면 거래 추적기가 같은 재설정을 합니다. 검토 화면은 `allowsPartialRepay`, `allowsPrepayListing`, `parallelSaleOrderHash`와 함께 `allowsParallelSale`, `refinanceTargetLoanId`, 연결된 대출을 표시하고, 갚을 금액을 일시 중지가 없는 경우로 표시합니다. 일시 중지 동안에도 이자는 붙고 만기일만 늦춰지기 때문입니다. 각 승인 단계는 영수증이 포함된 블록에서 다시 읽은 허용량으로 판단하며, 영수증 상태로는 판단하지 않습니다. 0이 아닌 허용량을 다른 0이 아닌 값으로 바꾸는 것을 거부하는 토큰(`approve` 시험 실행으로 확인)에는 먼저 0으로 가는 단계가 들어가며, 검토 화면은 이를 추가 프롬프트로 셉니다. 약관 동의는 지갑이 열리기 직전에 다시 읽습니다. 두 판매 경로 모두 담보를 NFT로 등록하므로, 토큰 담보에서는 부여된 등록·판매 허가가 이 대출이 쓸 수 없는 것으로 표시됩니다. 검토는 미리보기 금액에서 원금과 담보의 `getNumeraireValue`를 아무것도 구속하지 않는 행으로 추가합니다.
+검토는 오퍼, 그 상태, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, 두 분류, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeTerms`, 지갑의 볼트·잔액·승인액, `previewOfferAcceptBlock`, 할인 동의를 읽고, 지갑이 열리기 직전에 다시 읽습니다. 지갑은 저장된 오퍼로 만든 EIP-712 `AcceptTerms`(도메인 `Vaipakam AcceptOffer`, 버전 1)에 새 128비트 nonce와 30분 기한으로 서명합니다. 비유동 확인은 검토가 비유동으로 보여 준 측만 지정합니다. 승인액이 부족할 때만 담보 금액만큼 정확히 승인하고, 서명과 함께 `acceptOffer`를 모의 실행한 뒤 보냅니다. 승인 뒤에 멈추면 다른 변경이 없는 한 앱은 승인액을 이전 값으로 되돌립니다. 결과는 이 오퍼와 지갑의 `LoanInitiated`와 영수증의 `Transfer` 로그에서 읽습니다. 허용량은 첫 지갑 요청 직전에 다시 읽으며, 재설정은 그 값으로 되돌립니다. 전송된 수락이 revert되거나 지갑이 취소 또는 대체하면 거래 추적기가 같은 재설정을 합니다. 검토 화면은 `allowsPartialRepay`, `allowsPrepayListing`, `parallelSaleOrderHash`와 함께 `allowsParallelSale`, `refinanceTargetLoanId`, 연결된 대출을 표시하고, 갚을 금액을 일시 중지가 없는 경우로 표시합니다. 일시 중지 동안에도 이자는 붙고 만기일만 늦춰지기 때문입니다. 각 승인 단계는 영수증이 포함된 블록에서 다시 읽은 허용량으로 판단하며, 영수증 상태로는 판단하지 않습니다. 0이 아닌 허용량을 다른 0이 아닌 값으로 바꾸는 것을 거부하는 토큰(`approve` 시험 실행으로 확인)에는 먼저 0으로 가는 단계가 들어가며, 검토 화면은 이를 추가 프롬프트로 셉니다. 약관 동의는 지갑이 열리기 직전에 다시 읽습니다. 두 판매 경로 모두 담보를 NFT로 등록하므로, 토큰 담보에서는 부여된 등록·판매 허가가 이 대출이 쓸 수 없는 것으로 표시됩니다. 검토는 미리보기 금액에서 원금과 담보의 `getNumeraireValue`를 아무것도 구속하지 않는 행으로 추가합니다.
 
 <a id="borrow-fee"></a>
 
 ### Borrow: 개시 수수료
 
-수수료는 `previewAccept`의 `lifEstimate`입니다. 원금에 대한 `getLoanInitiationFeeBps`를 빌리는 토큰으로 받아 전달액에서 차감하며, 동의가 켜져 있고 빌리는 토큰이 유동이면 보유 티어 할인으로 낮아지고, 티어는 수락 시점에 고정됩니다. 이 페이지는 Full 요금제를 선택하지 않습니다. 수수료를 위해 VPFI를 징수하거나 환불하지 않습니다. 제출자 몫(수수료의 `getLifMatcherFeeBps`)은 보낸 사람에게 지급되며, 직접 수락에서는 차입자이므로 지갑은 수수료를 뺀 원금에 그 몫을 더해 받습니다.
+수수료는 `previewAccept`의 `lifEstimate`입니다. 원금에 대한 `getLoanInitiationFeeTerms`(오퍼 기간에 대한 요율)를 빌리는 토큰으로 받아 전달액에서 차감하며, 동의가 켜져 있고 빌리는 토큰이 유동이면 보유 티어 할인으로 낮아지고, 티어는 수락 시점에 고정됩니다. 이 페이지는 Full 요금제를 선택하지 않습니다. 수수료를 위해 VPFI를 징수하거나 환불하지 않습니다. 제출자 몫(수수료의 `getLifMatcherFeeBps`)은 보낸 사람에게 지급되며, 직접 수락에서는 차입자이므로 지갑은 수수료를 뺀 원금에 그 몫을 더해 받습니다.
 
 <a id="borrow-risks"></a>
 
@@ -2013,7 +2013,7 @@ Basic은 단일 값 요청을 올립니다: `amount` = `amountMax`, `interestRat
 
 ### Borrow: 요청 검토와 게시
 
-검토 화면은 지갑에서 `createOffer`를 시뮬레이션하고 양쪽 분류, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, 최장 기간, 지갑의 볼트·잔액·승인액, 양쪽이 유동적이면 `calculateLTV`를 읽으며, 매 블록과 지갑이 열리기 직전에 다시 읽습니다. 승인액이 부족한 동안 시뮬레이션은 담보 인출까지만 갈 수 있으므로, 토큰의 인출 오류나 프로토콜 오류 이름이 없는 revert는 해결할 승인으로 표시하고, 이름이 있는 프로토콜 오류는 거절로 봅니다. 정확한 금액을 승인한 뒤 `createOffer`를 다시 시뮬레이션하고 보냅니다. 승인 뒤 멈추면, 다른 변경이 없을 때 승인액을 이전 값으로 되돌립니다. 결과는 이 지갑의 `OfferCreated`와 볼트로의 담보 `Transfer`에서 읽습니다.
+검토 화면은 지갑에서 `createOffer`를 시뮬레이션하고 양쪽 분류, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeTerms`, 최장 기간, 지갑의 볼트·잔액·승인액, 양쪽이 유동적이면 `calculateLTV`를 읽으며, 매 블록과 지갑이 열리기 직전에 다시 읽습니다. 승인액이 부족한 동안 시뮬레이션은 담보 인출까지만 갈 수 있으므로, 토큰의 인출 오류나 프로토콜 오류 이름이 없는 revert는 해결할 승인으로 표시하고, 이름이 있는 프로토콜 오류는 거절로 봅니다. 정확한 금액을 승인한 뒤 `createOffer`를 다시 시뮬레이션하고 보냅니다. 승인 뒤 멈추면, 다른 변경이 없을 때 승인액을 이전 값으로 되돌립니다. 결과는 이 지갑의 `OfferCreated`와 볼트로의 담보 `Transfer`에서 읽습니다.
 
 <a id="borrow-nft-collateral"></a>
 
@@ -2061,13 +2061,13 @@ Lend는 ERC-20 담보에 대한 ERC-20 차입 요청(`offerType` 1)을 대출자
 
 ### Lend: 검토와 서명
 
-검토 화면은 Borrow와 같은 것(오퍼, 그 상태, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, 두 분류, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, `getLifMatcherFeeBps`, 지갑의 볼트, `previewOfferAcceptBlock`, 수수료 할인 동의)에 더해 `getTreasuryFeeBps`를 읽고, 잔액과 승인액은 대출자가 내는 쪽인 대출 자산에서 측정합니다. 그 자산이 부족하면 서명이 막히며, 대출자 포지션 매각 수단도 마찬가지입니다. 지갑은 EIP-712 `AcceptTerms`(도메인 `Vaipakam AcceptOffer`, 버전 1)에 서명하고, 승인액이 모자랄 때만 원금만큼 정확히 승인하며(0이 아닌 값끼리의 변경을 거부하는 토큰은 먼저 0으로 바꾸는 단계를 둡니다), `acceptOffer`를 시뮬레이션한 뒤 보냅니다. 중간에 멈춘 흐름이 남긴 승인은 Borrow와 같이 재설정됩니다. 결과로 이 오퍼의 `LoanInitiated`, 지갑에서 나간 원금의 `Transfer`, 매처 몫이 돌아오는 `Transfer`를 읽습니다.
+검토 화면은 Borrow와 같은 것(오퍼, 그 상태, `previewAccept`, `getOfferLinkedLoanId`, `getCurrentRiskTermsHash`, 두 분류, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeTerms`, `getLifMatcherFeeBps`, 지갑의 볼트, `previewOfferAcceptBlock`, 수수료 할인 동의)에 더해 `getTreasuryFeeBps`를 읽고, 잔액과 승인액은 대출자가 내는 쪽인 대출 자산에서 측정합니다. 그 자산이 부족하면 서명이 막히며, 대출자 포지션 매각 수단도 마찬가지입니다. 지갑은 EIP-712 `AcceptTerms`(도메인 `Vaipakam AcceptOffer`, 버전 1)에 서명하고, 승인액이 모자랄 때만 원금만큼 정확히 승인하며(0이 아닌 값끼리의 변경을 거부하는 토큰은 먼저 0으로 바꾸는 단계를 둡니다), `acceptOffer`를 시뮬레이션한 뒤 보냅니다. 중간에 멈춘 흐름이 남긴 승인은 Borrow와 같이 재설정됩니다. 결과로 이 오퍼의 `LoanInitiated`, 지갑에서 나간 원금의 `Transfer`, 매처 몫이 돌아오는 `Transfer`를 읽습니다.
 
 <a id="lend-fee"></a>
 
 ### Lend: 수수료와 프로토콜의 몫
 
-수수료는 `previewAccept`의 `lifEstimate`이며 차입자가 부담합니다. 대출 자산으로 원금의 `getLoanInitiationFeeBps`이고, 차입자에게 전달되는 금액에서 빠지며, 수락 시 차입자의 보유 등급 할인으로, 그리고 `creatorFull`이 설정되고 부과가 성공하면 Full 요율 보너스로 낮아집니다. 제출자의 몫(수수료의 `getLifMatcherFeeBps`)은 보낸 사람, 여기서는 대출자에게 지급됩니다. 이자에 대한 프로토콜의 몫은 `getTreasuryFeeBps`로, 대출이 열릴 때 대출별로 고정됩니다(`treasuryFeeBpsAtInit`). 동의가 켜져 있으면 대출자의 보유 등급 할인이 이자 정산 시 이를 낮춥니다. 검토 화면은 오늘의 요율과, 그 요율에서의 몫을 상한으로 보여 줍니다.
+수수료는 `previewAccept`의 `lifEstimate`이며 차입자가 부담합니다. 대출 자산으로 원금의 `getLoanInitiationFeeTerms`(오퍼 기간에 대한 요율)이고, 차입자에게 전달되는 금액에서 빠지며, 수락 시 차입자의 보유 등급 할인으로, 그리고 `creatorFull`이 설정되고 부과가 성공하면 Full 요율 보너스로 낮아집니다. 제출자의 몫(수수료의 `getLifMatcherFeeBps`)은 보낸 사람, 여기서는 대출자에게 지급됩니다. 이자에 대한 프로토콜의 몫은 `getTreasuryFeeBps`로, 대출이 열릴 때 대출별로 고정됩니다(`treasuryFeeBpsAtInit`). 동의가 켜져 있으면 대출자의 보유 등급 할인이 이자 정산 시 이를 낮춥니다. 검토 화면은 오늘의 요율과, 그 요율에서의 몫을 상한으로 보여 줍니다.
 
 <a id="lend-risks"></a>
 
@@ -2121,13 +2121,13 @@ Ethereum, BNB Chain, Polygon(및 BNB Testnet과 Polygon Amoy)에서는 보낸 �
 
 ### Lend: 오퍼 검토와 게시
 
-검토 화면은 지갑에서 `createOffer`를 시뮬레이션하고, 두 자산의 분류, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeBps`, `getTreasuryFeeBps`, 최장 기간, 지갑의 볼트, 대출 자산(대출자가 잠그는 쪽)의 잔액과 승인액, 양쪽이 유동적일 때의 `calculateLTV`를 읽습니다. 매 블록과 지갑이 열리기 직전에 다시 읽습니다. 승인액이 부족한 동안 시뮬레이션은 금액 인출까지만 닿으므로, 토큰의 인출 오류, `VaultDepositFailed`(데이터 없이 되돌려진 인출을 프로토콜이 감싼 것으로, WETH가 승인 부족일 때 그렇습니다), 또는 프로토콜 오류 이름이 없는 되돌림은 해결할 승인으로 표시됩니다. 요청 검토와 같은 규칙이며, 그 밖의 이름 있는 프로토콜 오류는 거부입니다. 정확한 승인 뒤 `createOffer`를 다시 시뮬레이션하고 보냅니다. 승인 뒤에 멈추면, 다른 변경이 없을 때 승인액을 이전 값으로 되돌립니다. 결과로 이 지갑의 `offerType` 0 `OfferCreated`와 금액이 볼트로 들어간 `Transfer`를 읽습니다.
+검토 화면은 지갑에서 `createOffer`를 시뮬레이션하고, 두 자산의 분류, `getEffectiveGraceSeconds(durationDays)`, `getLoanInitiationFeeTerms`, `getTreasuryFeeBps`, 최장 기간, 지갑의 볼트, 대출 자산(대출자가 잠그는 쪽)의 잔액과 승인액, 양쪽이 유동적일 때의 `calculateLTV`를 읽습니다. 매 블록과 지갑이 열리기 직전에 다시 읽습니다. 승인액이 부족한 동안 시뮬레이션은 금액 인출까지만 닿으므로, 토큰의 인출 오류, `VaultDepositFailed`(데이터 없이 되돌려진 인출을 프로토콜이 감싼 것으로, WETH가 승인 부족일 때 그렇습니다), 또는 프로토콜 오류 이름이 없는 되돌림은 해결할 승인으로 표시됩니다. 요청 검토와 같은 규칙이며, 그 밖의 이름 있는 프로토콜 오류는 거부입니다. 정확한 승인 뒤 `createOffer`를 다시 시뮬레이션하고 보냅니다. 승인 뒤에 멈추면, 다른 변경이 없을 때 승인액을 이전 값으로 되돌립니다. 결과로 이 지갑의 `offerType` 0 `OfferCreated`와 금액이 볼트로 들어간 `Transfer`를 읽습니다.
 
 <a id="lend-offer-fee"></a>
 
 ### Lend: 오퍼에 붙는 수수료
 
-`createOffer`는 대출자에게 아무것도 부과하지 않습니다. 표시되는 수수료는 차입자의 것으로, 대출 자산 기준 금액의 `getLoanInitiationFeeBps`입니다. `acceptOffer`가 실행될 때 적용되는 요율로 계산되고, 그때 차입자의 보유 등급 할인만큼 낮아지며, 차입자에게 보내는 금액에서 빠집니다. 표시된 금액은 오늘의 요율 기준입니다. 이자 중 프로토콜의 몫은 `getTreasuryFeeBps`이며, 대출이 열릴 때 대출별로 고정됩니다(`treasuryFeeBpsAtInit`). 동의가 켜져 있으면 이자 정산 때 대출자의 보유 등급 할인이 이를 낮춥니다. 검토 화면은 오늘의 요율과 그 요율에서의 몫을 상한으로 보여 줍니다. `getTreasuryFeeBps`를 읽지 못하면 그렇다고 밝히고, 몫이나 돌아올 금액은 표시하지 않습니다.
+`createOffer`는 대출자에게 아무것도 부과하지 않습니다. 표시되는 수수료는 차입자의 것으로, 대출 자산 기준 금액의 `getLoanInitiationFeeTerms`(오퍼 기간에 대한 요율)입니다. `acceptOffer`가 실행될 때 적용되는 요율로 계산되고, 그때 차입자의 보유 등급 할인만큼 낮아지며, 차입자에게 보내는 금액에서 빠집니다. 표시된 금액은 오늘의 요율 기준입니다. 이자 중 프로토콜의 몫은 `getTreasuryFeeBps`이며, 대출이 열릴 때 대출별로 고정됩니다(`treasuryFeeBpsAtInit`). 동의가 켜져 있으면 이자 정산 때 대출자의 보유 등급 할인이 이를 낮춥니다. 검토 화면은 오늘의 요율과 그 요율에서의 몫을 상한으로 보여 줍니다. `getTreasuryFeeBps`를 읽지 못하면 그렇다고 밝히고, 몫이나 돌아올 금액은 표시하지 않습니다.
 
 <a id="positions"></a>
 
@@ -2441,7 +2441,7 @@ NFT는 대여 기간 내내 내 볼트에 머물며, 대여가 열려 있는 동
 
 ### 리워드: 수수료 할인 등급
 
-카드는 한 블록에서 `getVPFIDiscountConsent`, `isCanonicalVpfiChain`, `getEffectiveDiscount`를 읽습니다. `getEffectiveDiscount`는 수수료 경로가 적용하는 등급과 할인을 돌려줍니다: 동의가 꺼져 있으면 0, 최대 50%, 다른 네트워크에서는 홈 네트워크에서 보낸 사본입니다. 같은 블록에서 `explainTier`와 `getTwaConfig`도 읽습니다. `explainTier`는 동의 여부와 관계없이 집계된 VPFI만으로 얻는 등급, 각 보유 규칙의 수치, 유효 등급을 그보다 낮게 두는 규칙을 돌려줍니다. 카드는 설명이 수수료 경로가 적용하는 것과 같은 등급일 때만 그 규칙을 알려 주며, 동의가 꺼져 있으면 켰을 때 어떤 등급이 적용될지 알려 줍니다. Advanced에서는 각 규칙의 수치와 `getTwaConfig`가 돌려주는 설정을 보여 주며, 평균 기간과 되돌아보는 기간을 서로 다른 두 길이로 표시합니다. 표는 한 블록에서 `getVpfiTierThresholds`, `getVpfiTierDiscountBps`, `getFeesConfig`를 읽습니다. 등급 1~3은 해당 기준값에서, 등급 4는 자신의 기준값을 넘어서부터 시작합니다. 각 수수료는 기본 수수료 × (1 − 상한 적용 할인)이며 정확하게 계산됩니다. 표는 등급이 정해지는 홈 네트워크에서만 표시됩니다.
+카드는 한 블록에서 `getVPFIDiscountConsent`, `isCanonicalVpfiChain`, `getEffectiveDiscount`를 읽습니다. `getEffectiveDiscount`는 수수료 경로가 적용하는 등급과 할인을 돌려줍니다: 동의가 꺼져 있으면 0, 최대 50%, 다른 네트워크에서는 홈 네트워크에서 보낸 사본입니다. 같은 블록에서 `explainTier`와 `getTwaConfig`도 읽습니다. `explainTier`는 동의 여부와 관계없이 집계된 VPFI만으로 얻는 등급, 각 보유 규칙의 수치, 유효 등급을 그보다 낮게 두는 규칙을 돌려줍니다. 카드는 설명이 수수료 경로가 적용하는 것과 같은 등급일 때만 그 규칙을 알려 주며, 동의가 꺼져 있으면 켰을 때 어떤 등급이 적용될지 알려 줍니다. Advanced에서는 각 규칙의 수치와 `getTwaConfig`가 돌려주는 설정을 보여 주며, 평균 기간과 되돌아보는 기간을 서로 다른 두 길이로 표시합니다. 표는 한 블록에서 `getVpfiTierThresholds`, `getVpfiTierDiscountBps`, `getLoanInitiationFeeTerms`, `getFeesConfig`를 읽습니다. 등급 1~3은 해당 기준값에서, 등급 4는 자신의 기준값을 넘어서부터 시작합니다. 각 수수료는 기본 수수료 × (1 − 상한 적용 할인)이며 정확하게 계산됩니다. 표는 등급이 정해지는 홈 네트워크에서만 표시됩니다.
 
 <a id="rewards-tier-elsewhere"></a>
 
@@ -2471,7 +2471,7 @@ NFT는 대여 기간 내내 내 볼트에 머물며, 대여가 열려 있는 동
 
 ### Rate desk: 겹침 매칭
 
-밴드는 래더의 겹치는 단을 짝짓습니다. 최고 매수 호가 이하의 대출자 오퍼를 최고 매도 호가 이상의 차입자 요청과 짝지으며, 같은 지갑의 쌍과 금리 범위가 만나지 않는 쌍은 뺍니다. 프로토콜은 두 하한 중 높은 쪽이 두 상한 중 낮은 쪽 이하일 때만 매칭합니다. 양쪽이 겹치지만 만나는 범위가 없으면 밴드는 매칭할 것이 없다고 알립니다. 한 블록에서 `getPartialFillEnabled`, `getLoanInitiationFeeBps`, `getLifMatcherFeeBps`, `getCapacityCurve(0)`를 읽고, 스위치가 켜져 있을 때만 여러분의 지갑을 matcher와 initiator로 하여 `previewMatch(lenderOfferId, borrowerOfferId, matcher, initiator)`를 가격이 좋은 순으로 최대 12쌍 읽습니다. 미리보기에서 오류가 없는 첫 쌍이 미리보기의 금액, 금리(양쪽이 받아들이는 범위의 중간), 필요 담보와 함께 제시되고, 없으면 가격이 가장 좋은 쌍의 거절 사유가 표시됩니다. 몫은 상한으로 표시되며, 금액 × 개설 수수료율 × 매처 비율입니다. 수수료는 미리보기가 알려 주지 않는 차입자 할인 뒤에 부과되기 때문입니다. 커브의 무료 구간이 0보다 크면 용량 한도가 적용 중이라는 뜻이고, 매칭은 보낸 사람에게 체결 한 번으로 계산됩니다. 검토 화면은 블록마다 설정, 미리보기, 여러분의 볼트를 다시 읽고 지갑을 열기 전에 `matchOffers`를 모의 실행합니다. 수치가 바뀌면 다시 확인해야 합니다. 이후 앱은 여러분의 지갑이 matcher인 해당 쌍의 `OfferMatched`를 찾고, 대출자 볼트의 `VaultOutflow` 기록 중 인센티브 구분으로 대출 자산을 여러분의 지갑이나 볼트에 지급한 것으로 몫을 측정합니다. 오퍼 환불이나 대출 금액은 다른 구분이라 절대 세지 않습니다. 먼저 성사된 경쟁 매칭이 오퍼를 덜 남기면 성사되는 대출과 몫은 검토 때보다 작을 수 있으며, 완료 카드가 실제 결과를 알려 줍니다. 래더는 인덱스를 읽으므로, 매칭된 쌍은 체인이 처리한 뒤에도 몇 분간 남아 있을 수 있습니다. 연결된 지갑의 오퍼가 포함된 쌍도 제외되며, 밴드가 이를 알려 줍니다. 그런 쌍을 매칭하면 그 지갑이 자신의 자금으로 대출의 대출자 또는 차입자가 되기 때문입니다.
+밴드는 래더의 겹치는 단을 짝짓습니다. 최고 매수 호가 이하의 대출자 오퍼를 최고 매도 호가 이상의 차입자 요청과 짝지으며, 같은 지갑의 쌍과 금리 범위가 만나지 않는 쌍은 뺍니다. 프로토콜은 두 하한 중 높은 쪽이 두 상한 중 낮은 쪽 이하일 때만 매칭합니다. 양쪽이 겹치지만 만나는 범위가 없으면 밴드는 매칭할 것이 없다고 알립니다. 한 블록에서 `getPartialFillEnabled`, `getLoanInitiationFeeTerms`, `getLifMatcherFeeBps`, `getCapacityCurve(0)`를 읽고, 스위치가 켜져 있을 때만 여러분의 지갑을 matcher와 initiator로 하여 `previewMatch(lenderOfferId, borrowerOfferId, matcher, initiator)`를 가격이 좋은 순으로 최대 12쌍 읽습니다. 미리보기에서 오류가 없는 첫 쌍이 미리보기의 금액, 금리(양쪽이 받아들이는 범위의 중간), 필요 담보와 함께 제시되고, 없으면 가격이 가장 좋은 쌍의 거절 사유가 표시됩니다. 몫은 상한으로 표시되며, 금액 × 개설 수수료율 × 매처 비율입니다. 수수료는 미리보기가 알려 주지 않는 차입자 할인 뒤에 부과되기 때문입니다. 커브의 무료 구간이 0보다 크면 용량 한도가 적용 중이라는 뜻이고, 매칭은 보낸 사람에게 체결 한 번으로 계산됩니다. 검토 화면은 블록마다 설정, 미리보기, 여러분의 볼트를 다시 읽고 지갑을 열기 전에 `matchOffers`를 모의 실행합니다. 수치가 바뀌면 다시 확인해야 합니다. 이후 앱은 여러분의 지갑이 matcher인 해당 쌍의 `OfferMatched`를 찾고, 대출자 볼트의 `VaultOutflow` 기록 중 인센티브 구분으로 대출 자산을 여러분의 지갑이나 볼트에 지급한 것으로 몫을 측정합니다. 오퍼 환불이나 대출 금액은 다른 구분이라 절대 세지 않습니다. 먼저 성사된 경쟁 매칭이 오퍼를 덜 남기면 성사되는 대출과 몫은 검토 때보다 작을 수 있으며, 완료 카드가 실제 결과를 알려 줍니다. 래더는 인덱스를 읽으므로, 매칭된 쌍은 체인이 처리한 뒤에도 몇 분간 남아 있을 수 있습니다. 연결된 지갑의 오퍼가 포함된 쌍도 제외되며, 밴드가 이를 알려 줍니다. 그런 쌍을 매칭하면 그 지갑이 자신의 자금으로 대출의 대출자 또는 차입자가 되기 때문입니다.
 
 <a id="offer-terms-wait"></a>
 
@@ -2543,7 +2543,7 @@ NFT는 대여 기간 내내 내 볼트에 머물며, 대여가 열려 있는 동
 
 ### 분석: 수수료와 보관을 읽는 방법
 
-수수료율은 `getTreasuryFeeBps`와 `getLoanInitiationFeeBps`입니다. 수수료 수치는 `getTreasuryMetrics`이며, 시작 이후 합계는 `feeLedgerTotal`이고, 하루와 한 주 수치는 수수료 원장을 끝에서부터 최대 `MAX_FEE_EVENTS_ITER`(10,000)개 항목까지 훑으므로 그 이상이면 하한입니다. 각 원장 항목은 최선 노력 규칙에 따른 발생 시점의 기준 통화 가치를 담고, 평가할 수 없었으면 0입니다. 표시되는 트레저리는 `getTreasury`, 현재 볼트 코드가 지정하는 주소입니다. 볼트에서 징수한 수수료는 그 볼트 자체의 코드가 지정한 트레저리로 가고, `recordTreasuryAccrual`은 수수료가 Diamond에 도착할 때마다 `treasuryBalances`에 적립하므로, 이전 코드에 고정된 볼트나 이전 설정 때문에 `getTreasury`가 무엇을 가리키든 그곳에 수수료가 보유될 수 있습니다. 그래서 페이지는 언제나 `getTreasuryMetrics`의 보유 수치를 진행 중인 대출의 자산에 대해서만 합산해 보여 주며, `getTreasuryConvertConfig`의 마지막 전환과 목표도 함께 보여 줍니다. 배포 기록과 다른 트레저리는 표시됩니다.
+수수료율은 `getTreasuryFeeBps`와 `getLoanInitiationFeeTerms`입니다. 수수료 수치는 `getTreasuryMetrics`이며, 시작 이후 합계는 `feeLedgerTotal`이고, 하루와 한 주 수치는 수수료 원장을 끝에서부터 최대 `MAX_FEE_EVENTS_ITER`(10,000)개 항목까지 훑으므로 그 이상이면 하한입니다. 각 원장 항목은 최선 노력 규칙에 따른 발생 시점의 기준 통화 가치를 담고, 평가할 수 없었으면 0입니다. 표시되는 트레저리는 `getTreasury`, 현재 볼트 코드가 지정하는 주소입니다. 볼트에서 징수한 수수료는 그 볼트 자체의 코드가 지정한 트레저리로 가고, `recordTreasuryAccrual`은 수수료가 Diamond에 도착할 때마다 `treasuryBalances`에 적립하므로, 이전 코드에 고정된 볼트나 이전 설정 때문에 `getTreasury`가 무엇을 가리키든 그곳에 수수료가 보유될 수 있습니다. 그래서 페이지는 언제나 `getTreasuryMetrics`의 보유 수치를 진행 중인 대출의 자산에 대해서만 합산해 보여 주며, `getTreasuryConvertConfig`의 마지막 전환과 목표도 함께 보여 줍니다. 배포 기록과 다른 트레저리는 표시됩니다.
 
 <a id="analytics-vpfi"></a>
 

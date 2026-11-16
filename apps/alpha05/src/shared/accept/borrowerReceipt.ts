@@ -6,6 +6,7 @@
  */
 import type { CopyAccess, CopyKey } from '../copy/useCopy';
 import { ASSET_ERC20 } from '../offers/acceptTerms';
+import { lifRateText } from '../offers/initiationFee';
 import { acceptFigures, listFee } from '../offers/model';
 import type { Receipt } from '../receipt/types';
 import { exactTokenAmount, type TokenMetaMap } from '../reads/tokens';
@@ -30,7 +31,8 @@ export function borrowerReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy
     amount: value,
   });
   const cadence = cadenceText(o.periodicInterestCadence, copy);
-  const discounted = f.fee < listFee(f.principal, r.lifBps);
+  // #3649 — the list fee at THIS loan's term; the rate shown is that term's.
+  const discounted = f.fee < listFee(f.principal, r.lif, o.durationDays);
   const textRow = (label: CopyKey, value: string, binding: boolean) => ({
     label: text(label),
     value: { kind: 'text' as const, text: value },
@@ -62,7 +64,7 @@ export function borrowerReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy
       value: {
         kind: 'text',
         text: format(discounted ? 'accept.feeDiscounted' : 'accept.feeRule', {
-          rate: formatBps(r.lifBps),
+          rate: lifRateText(r.lif, o.durationDays),
         }),
       },
       binding: false,

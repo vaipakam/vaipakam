@@ -2432,8 +2432,8 @@
       "lenderRentalFee": "Vaipakam はあなたが得るレンタル手数料の {{pct}} を保持します。",
       "lateFee": "遅延返済では、1 日目以降に未払い額の 1% が追加され、1 日あたり 0.5% 増加し、上限は 5% です。",
       "faqQuestion": "Vaipakam はどのような手数料を取りますか？",
-      "faqAnswer": "Vaipakam は借入額に対して {{lifPct}} のローン開始手数料を請求します。Vaipakam はあなたが得る利息の {{yieldPct}} を保持します。返済遅延では 1 日目以降に未払い額の 1% が加算され、1 日あたり 0.5% ずつ増え、上限は 5% です。ネットワーク gas は別で、Vaipakam ではなくブロックチェーンへ支払われます。",
-      "faqAnswerGeneric": "Vaipakam は借入額に対してローン開始手数料を取り、貸し手が得る利息の一部を保持します。遅延返済では、1 日目以降に未払い額の 1% が追加され、1 日あたり 0.5% 増加し、上限は 5% です。ネットワーク gas は別で、Vaipakam ではなくブロックチェーンへ行きます。正確な現在レートを見るにはウォレットを接続してください。"
+      "faqAnswer": "Vaipakam は借入額に対して、ローンの期間に応じたローン開始手数料を請求します。期間 {{baseDays}} 日までは {{basePct}}、そこから {{yearDays}} 日で {{yearPct}} まで均等に上がり、{{yearDays}} 日を超えると期間 {{yearDays}} 日ごとに {{yearPct}} が日割りで適用されます。Vaipakam はあなたが得る利息の {{yieldPct}} を保持します。返済遅延では 1 日目以降に未払い額の 1% が加算され、1 日あたり 0.5% ずつ増え、上限は 5% です。ネットワーク gas は別で、Vaipakam ではなくブロックチェーンへ支払われます。",
+      "faqAnswerGeneric": "Vaipakam は借入額に対して、ローンの期間とともに上がるローン開始手数料を取り、貸し手が得る利息の一部を保持します。遅延返済では、1 日目以降に未払い額の 1% が追加され、1 日あたり 0.5% 増加し、上限は 5% です。ネットワーク gas は別で、Vaipakam ではなくブロックチェーンへ行きます。正確な現在レートを見るにはウォレットを接続してください。"
     },
     "faucet": {
       "title": "テスト資産を取得",
@@ -3235,8 +3235,8 @@
       "feesHeading": "手数料",
       "treasuryFee": "トレジャリー手数料",
       "treasuryFeeHint": "決済時に利息から差し引かれる分。",
-      "loanInitiationFee": "ローン開始手数料",
-      "loanInitiationFeeHint": "受諾時に一度だけ発生します。",
+      "loanInitiationFee": "ローン開始手数料（基本料率）",
+      "loanInitiationFeeHint": "受諾時に一度だけ、最も短い期間に適用されます。期間が長いほど料率は上がります。",
       "liquidationHandlingFee": "清算処理手数料",
       "matcherFee": "マッチャー手数料",
       "riskHeading": "リスク",

@@ -2432,8 +2432,8 @@
       "lenderRentalFee": "Vaipakam 保留你赚取租赁费的 {{pct}}。",
       "lateFee": "逾期还款会在第一天后增加未偿金额的 1%，每天增加 0.5%，上限 5%。",
       "faqQuestion": "Vaipakam 收取哪些费用？",
-      "faqAnswer": "Vaipakam 对借款金额收取 {{lifPct}} 的贷款发起费。Vaipakam 保留你赚取利息的 {{yieldPct}}。逾期还款在第一天后增加未偿金额的 1%，之后每天增加 0.5%，上限 5%。网络 gas 单独支付给区块链，不支付给 Vaipakam。",
-      "faqAnswerGeneric": "Vaipakam 会按借入金额收取贷款发起费，并保留出借人赚取利息的一部分。逾期还款会在第一天后增加未偿金额的 1%，每天增加 0.5%，上限 5%。网络 gas 是独立的，会支付给区块链，不支付给 Vaipakam。连接钱包以查看精确当前费率。"
+      "faqAnswer": "Vaipakam 对借款金额收取贷款发起费，费率取决于贷款期限：期限不超过 {{baseDays}} 天为 {{basePct}}，之后均匀上升，至 {{yearDays}} 天时为 {{yearPct}}；超过 {{yearDays}} 天后，按期限每 {{yearDays}} 天 {{yearPct}} 按比例计算。Vaipakam 保留你赚取利息的 {{yieldPct}}。逾期还款在第一天后增加未偿金额的 1%，之后每天增加 0.5%，上限 5%。网络 gas 单独支付给区块链，不支付给 Vaipakam。",
+      "faqAnswerGeneric": "Vaipakam 会按借入金额收取随贷款期限增加的贷款发起费，并保留出借人赚取利息的一部分。逾期还款会在第一天后增加未偿金额的 1%，每天增加 0.5%，上限 5%。网络 gas 是独立的，会支付给区块链，不支付给 Vaipakam。连接钱包以查看精确当前费率。"
     },
     "faucet": {
       "title": "获取测试资产",
@@ -3235,8 +3235,8 @@
       "feesHeading": "费用",
       "treasuryFee": "国库费用",
       "treasuryFeeHint": "结算时从利息中抽取的部分。",
-      "loanInitiationFee": "借贷开立费",
-      "loanInitiationFeeHint": "接受时一次性收取。",
+      "loanInitiationFee": "借贷开立费（基础费率）",
+      "loanInitiationFeeHint": "接受时一次性收取，适用于最短的期限；期限越长，费率越高。",
       "liquidationHandlingFee": "清算处理费",
       "matcherFee": "撮合费",
       "riskHeading": "风险",

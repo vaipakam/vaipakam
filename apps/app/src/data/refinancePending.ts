@@ -327,6 +327,7 @@ export function useRefinancePending(
             createdAt: bigint;
             expiresAt: bigint;
             amount: bigint;
+            durationDays: bigint;
           }>,
           readLoanLive(readClient!, diamond, loanId),
           readLiveProtocolFees(readClient!, diamond),
@@ -398,11 +399,13 @@ export function useRefinancePending(
           expiresAt: offer.expiresAt,
           graceSeconds: graceSec,
           route,
-          // #3042 — the request's OWN amount, less its initiation fee at
-          // the LIVE rate, is the net principal the wallet's share is
-          // measured against (the approval route's spare balance).
+          // #3042 — the request's OWN amount, less its initiation fee
+          // under the LIVE term rule at the request's own term (#3649), is
+          // the net principal the wallet's share is measured against (the
+          // approval route's spare balance).
           requestAmount: offer.amount,
-          loanInitiationFeeBps: fees.loanInitiationFeeBps,
+          lifTerms: fees.lifTerms,
+          termDays: Number(offer.durationDays),
         }),
         // The approval the payoff is pulled through: of Permit2 on the
         // permit route, of the Diamond on the approval route.

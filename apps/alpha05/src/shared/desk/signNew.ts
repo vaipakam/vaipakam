@@ -22,7 +22,8 @@
 import type { Abi, PublicClient } from 'viem';
 import { SignedOfferFacetABI, VaultDepositoryFacetABI } from '@vaipakam/contracts/abis';
 import { refusalFromError } from '../eligibility/refusal';
-import { readLifBps, readTreasuryFeeBps } from '../offers/reads';
+import { readTreasuryFeeBps } from '../offers/reads';
+import { lifRateBpsUp, readLifTerms, type LifTerms } from '../offers/initiationFee';
 import { isContractAnswer } from '../reads/answer';
 import { formatBps } from '../ui/format';
 import type { CopyAccess } from '../copy/useCopy';
@@ -52,14 +53,16 @@ const ZERO = '0x0000000000000000000000000000000000000000';
  */
 export interface SignTerms {
   treasuryFeeBps: bigint;
-  lifBps: bigint;
+  /** The initiation fee's term rule (#3649): the signed cap is its rate at
+   *  the order's term, rounded up, as the protocol compares it. */
+  lif: LifTerms;
   cancelFloor: bigint;
 }
 
 export async function readSignTerms(c: PublicClient, diamond: Hex, account: Hex): Promise<SignTerms> {
-  const [treasuryFeeBps, lifBps, cancelFloor] = await Promise.all([
+  const [treasuryFeeBps, lif, cancelFloor] = await Promise.all([
     readTreasuryFeeBps(c, diamond),
-    readLifBps(c, diamond),
+    readLifTerms(c, diamond),
     (c.readContract({ address: diamond, abi: SIGNED_OFFER, functionName: 'signedOfferCancelFloor', args: [account] }) as Promise<bigint>).catch(
       (e: unknown) => {
         // A deployment that predates the floor has none; any other failure
@@ -69,7 +72,7 @@ export async function readSignTerms(c: PublicClient, diamond: Hex, account: Hex)
       },
     ),
   ]);
-  return { treasuryFeeBps, lifBps, cancelFloor };
+  return { treasuryFeeBps, lif, cancelFloor };
 }
 
 /** The order under review: built once, with its nonce, for one wallet on
@@ -152,7 +155,10 @@ export function signedOrderFrom(draft: PostDraft, signer: Hex, nonce: bigint, te
     creatorMaxCStar: '0',
     creatorAllowFullDowngrade: false,
     maxTreasuryFeeBps: String(terms.treasuryFeeBps),
-    maxLoanInitiationFeeBps: String(terms.lifBps),
+    // #3649 — the rate at this order's term, rounded up: the protocol
+    // compares the cap with exactly that, so the base rate would refuse
+    // every fill of a term past the base term.
+    maxLoanInitiationFeeBps: String(lifRateBpsUp(terms.lif, p.durationDays)),
     // This app names no taker and no co-signer (#3327 follow-ups).
     allowedTaker: ZERO,
     coSigner: ZERO,

@@ -19,12 +19,19 @@ export default function FeeFaqCard() {
   // the exact percentages would reintroduce the stale-rate copy this
   // whole path avoids (Codex #1200 r3). Show the non-committal text
   // until the live values are confirmed, then the exact percentages.
-  const answer = fees.ready
-    ? copy.fees.faqAnswer(
-        formatBpsAsPercent(fees.loanInitiationFeeBps),
-        formatBpsAsPercent(fees.treasuryFeeBps),
-      )
-    : copy.fees.faqAnswerGeneric;
+  // #3649 — the initiation fee is term-scaled: the answer states its rule
+  // from the four live settings, and stays generic until they are read.
+  const lif = fees.lifTerms;
+  const answer =
+    fees.ready && lif
+      ? copy.fees.faqAnswer(
+          formatBpsAsPercent(lif.baseBps),
+          String(lif.baseTermDays),
+          formatBpsAsPercent(lif.yearlyBps),
+          String(lif.yearDays),
+          formatBpsAsPercent(fees.treasuryFeeBps),
+        )
+      : copy.fees.faqAnswerGeneric;
   return (
     <section className="card">
       <h3>{copy.fees.faqQuestion}</h3>

@@ -54,6 +54,7 @@ import {
 } from '../contracts/erc20';
 import { useActiveOffers, useOffer } from '../data/hooks';
 import { useProtocolFees, readLiveProtocolFees } from '../data/fees';
+import { formatLifRate, sameLifTerms } from '../lib/initiationFee';
 import { useOfferBookFloor, useOpenOfferCount } from '../data/offerFloor';
 import { useGraceLabel } from '../data/protocol';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
@@ -1121,7 +1122,10 @@ export function OfferFlow({ side, initialMarket, createOnly = false }: {
   // the corrected term: the label is part of what the consent is keyed on.
   const grace = useGraceLabel(activeDurationDays);
 
-  const lifPct = formatBpsAsPercent(fees.loanInitiationFeeBps);
+  // #3649 — the initiation fee's rate depends on the agreed term, so it is
+  // the rate for THIS offer's term, from the live terms; '…' until they are
+  // read (the receipt is not signable before then, `fees.ready`).
+  const lifPct = fees.lifTerms ? formatLifRate(fees.lifTerms, activeDurationDays) : '…';
   const yieldPct = formatBpsAsPercent(fees.treasuryFeeBps);
 
   // #1028 item 2 — advisory pre-sign dry run of the EXACT calldata
@@ -1550,7 +1554,7 @@ export function OfferFlow({ side, initialMarket, createOnly = false }: {
       fees.ready
         ? side === 'lender'
           ? `y${fees.treasuryFeeBps}`
-          : `l${fees.loanInitiationFeeBps}`
+          : `l${lifPct}`
         : 'pending'
     }`,
     `grace:${grace.ready ? grace.label : 'pending'}`,
@@ -1807,7 +1811,7 @@ export function OfferFlow({ side, initialMarket, createOnly = false }: {
     );
     if (
       liveFees.treasuryFeeBps !== fees.treasuryFeeBps ||
-      liveFees.loanInitiationFeeBps !== fees.loanInitiationFeeBps ||
+      !sameLifTerms(liveFees.lifTerms, fees.lifTerms) ||
       liveFees.maxOfferDurationDays !== fees.maxOfferDurationDays
     ) {
       void queryClient.invalidateQueries({ queryKey: ['protocolFees'] });
@@ -2013,7 +2017,7 @@ export function OfferFlow({ side, initialMarket, createOnly = false }: {
     );
     if (
       liveFees.treasuryFeeBps !== fees.treasuryFeeBps ||
-      liveFees.loanInitiationFeeBps !== fees.loanInitiationFeeBps
+      !sameLifTerms(liveFees.lifTerms, fees.lifTerms)
     ) {
       void queryClient.invalidateQueries({ queryKey: ['protocolFees'] });
       throw new Error(copy.match.termsChanged);

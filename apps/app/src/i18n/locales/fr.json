@@ -2432,8 +2432,8 @@
       "lenderRentalFee": "Vaipakam conserve {{pct}} des frais de location que vous gagnez.",
       "lateFee": "Un remboursement en retard ajoute 1% du montant restant dû après le premier jour, augmente de 0.5% par jour, avec un plafond à 5%.",
       "faqQuestion": "Quels frais Vaipakam facture-t-il ?",
-      "faqAnswer": "Vaipakam facture des frais d’initialisation de prêt de {{lifPct}} sur le montant emprunté. Vaipakam conserve {{yieldPct}} des intérêts que vous gagnez. Un remboursement en retard ajoute 1 % du montant restant dû après le premier jour, puis 0,5 % par jour, plafonné à 5 %. Le gas réseau est séparé et va à la blockchain, pas à Vaipakam.",
-      "faqAnswerGeneric": "Vaipakam facture des frais d'ouverture de prêt sur le montant emprunté et conserve une part de l'intérêt gagné par le prêteur. Un remboursement en retard ajoute 1% du montant restant dû après le premier jour, augmente de 0.5% par jour, avec un plafond à 5%. Le gas réseau est séparé et va à la blockchain, pas à Vaipakam. Connectez votre portefeuille pour voir les taux actuels exacts."
+      "faqAnswer": "Vaipakam facture des frais d’initialisation de prêt sur le montant emprunté, qui dépendent de la durée du prêt : {{basePct}} pour une durée jusqu’à {{baseDays}} jours, en hausse régulière jusqu’à {{yearPct}} à {{yearDays}} jours, puis, au-delà de {{yearDays}} jours, {{yearPct}} par tranche de {{yearDays}} jours de durée, au prorata. Vaipakam conserve {{yieldPct}} des intérêts que vous gagnez. Un remboursement en retard ajoute 1 % du montant restant dû après le premier jour, puis 0,5 % par jour, plafonné à 5 %. Le gas réseau est séparé et va à la blockchain, pas à Vaipakam.",
+      "faqAnswerGeneric": "Vaipakam facture des frais d'ouverture de prêt sur le montant emprunté, qui augmentent avec la durée du prêt, et conserve une part de l'intérêt gagné par le prêteur. Un remboursement en retard ajoute 1% du montant restant dû après le premier jour, augmente de 0.5% par jour, avec un plafond à 5%. Le gas réseau est séparé et va à la blockchain, pas à Vaipakam. Connectez votre portefeuille pour voir les taux actuels exacts."
     },
     "faucet": {
       "title": "Obtenir des actifs de test",
@@ -3235,8 +3235,8 @@
       "feesHeading": "Frais",
       "treasuryFee": "Frais de trésorerie",
       "treasuryFeeHint": "Part des intérêts prélevée au dénouement.",
-      "loanInitiationFee": "Frais d'ouverture de prêt",
-      "loanInitiationFeeHint": "Prélevés une fois, à l'acceptation.",
+      "loanInitiationFee": "Frais d'ouverture de prêt, taux de base",
+      "loanInitiationFeeHint": "Prélevés une fois, à l'acceptation, pour les durées les plus courtes ; le taux augmente avec une durée plus longue.",
       "liquidationHandlingFee": "Frais de gestion de liquidation",
       "matcherFee": "Frais du moteur de correspondance",
       "riskHeading": "Risque",

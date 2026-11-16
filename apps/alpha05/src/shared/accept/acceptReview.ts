@@ -18,11 +18,11 @@ import { readSignedPreview, readSignedRiskBlocks, storedOfferFromSigned, type Si
 import type { RiskPair } from '../risk/riskAccess';
 import { sourceKey, type AcceptSource } from './acceptSource';
 import { acceptorRole, gateBlock, payLeg, shortfall, type AcceptRole, type GateBlock } from '../offers/model';
+import { readLifTerms, sameLifTerms, type LifTerms } from '../offers/initiationFee';
 import {
   readAcceptGate,
   readCreatorGate,
   readGraceSeconds,
-  readLifBps,
   readLifMatcherBps,
   readLinkedLoanId,
   readOffer,
@@ -85,7 +85,8 @@ export interface AcceptReview {
   lendingClass: AssetClass;
   collateralClass: AssetClass;
   graceSeconds: bigint;
-  lifBps: bigint;
+  /** The initiation fee's term rule (#3649). */
+  lif: LifTerms;
   /** The share of the fee paid back to the submitter (bps of the fee). */
   matcherBps: bigint;
   /** The protocol's share of the lender's interest under today's setting
@@ -167,7 +168,7 @@ export async function readAcceptReview(
   // otherwise (used, lapsed, cancelled) and it is bound to no loan. Its
   // risk-access gate has its own preview (#3577); a read that fails leaves
   // the gate to the dry run, which the review then says.
-  const [state, { preview, signed }, linkedLoanId, riskTermsHash, lendingClass, collateralClass, graceSeconds, lifBps, matcherBps, protocolShareBps, vault, funds, gates, consent, positionFlow] =
+  const [state, { preview, signed }, linkedLoanId, riskTermsHash, lendingClass, collateralClass, graceSeconds, lif, matcherBps, protocolShareBps, vault, funds, gates, consent, positionFlow] =
     await Promise.all([
       stored ? r<OfferState>((c) => readOfferState(c, diamond, id)) : Promise.resolve<OfferState>('open'),
       readFillPreview(),
@@ -176,7 +177,7 @@ export async function readAcceptReview(
       r<AssetClass>((c) => readAssetClass(c, diamond, offer.lendingAsset)),
       r<AssetClass>((c) => readAssetClass(c, diamond, offer.collateralAsset)),
       r<bigint>((c) => readGraceSeconds(c, diamond, offer.durationDays)),
-      r<bigint>((c) => readLifBps(c, diamond)),
+      r<LifTerms>((c) => readLifTerms(c, diamond)),
       r<bigint>((c) => readLifMatcherBps(c, diamond)),
       role === 'lender' ? r<bigint>((c) => readTreasuryFeeBps(c, diamond)) : Promise.resolve(null),
       r<Hex>((c) => readVault(c, diamond, account)),
@@ -211,7 +212,7 @@ export async function readAcceptReview(
     lendingClass,
     collateralClass,
     graceSeconds,
-    lifBps,
+    lif,
     matcherBps,
     protocolShareBps,
     vault,
@@ -416,7 +417,7 @@ export function changedBetween(a: AcceptReview, b: AcceptReview, copy: Pick<Copy
     a.gate !== b.gate ||
     a.creatorGate !== b.creatorGate ||
     a.graceSeconds !== b.graceSeconds ||
-    a.lifBps !== b.lifBps ||
+    !sameLifTerms(a.lif, b.lif) ||
     a.matcherBps !== b.matcherBps ||
     a.protocolShareBps !== b.protocolShareBps
   )

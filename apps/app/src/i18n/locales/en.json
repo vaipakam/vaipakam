@@ -2998,8 +2998,8 @@
       "lenderRentalFee": "Vaipakam keeps {{pct}} of the rental fees you earn.",
       "lateFee": "Late repayment adds 1% of the outstanding amount after day one, growing 0.5% per day, capped at 5%.",
       "faqQuestion": "What fees does Vaipakam charge?",
-      "faqAnswer": "Vaipakam charges a {{lifPct}} loan initiation fee on the borrowed amount. Vaipakam keeps {{yieldPct}} of the interest you earn. Late repayment adds 1% of the outstanding amount after day one, growing 0.5% per day, capped at 5%. Network gas is separate and goes to the blockchain, not to Vaipakam.",
-      "faqAnswerGeneric": "Vaipakam charges a loan initiation fee on the amount borrowed and keeps a share of the interest a lender earns. Late repayment adds 1% of the outstanding amount after day one, growing 0.5% per day, capped at 5%. Network gas is separate and goes to the blockchain, not to Vaipakam. Connect your wallet to see the exact current rates."
+      "faqAnswer": "Vaipakam charges a loan initiation fee on the borrowed amount that depends on the loan’s term: {{basePct}} for a term of up to {{baseDays}} days, rising evenly to {{yearPct}} at {{yearDays}} days, and past {{yearDays}} days {{yearPct}} for every {{yearDays}} days of the term, pro rata. Vaipakam keeps {{yieldPct}} of the interest you earn. Late repayment adds 1% of the outstanding amount after day one, growing 0.5% per day, capped at 5%. Network gas is separate and goes to the blockchain, not to Vaipakam.",
+      "faqAnswerGeneric": "Vaipakam charges a loan initiation fee on the amount borrowed, which grows with the loan’s term, and keeps a share of the interest a lender earns. Late repayment adds 1% of the outstanding amount after day one, growing 0.5% per day, capped at 5%. Network gas is separate and goes to the blockchain, not to Vaipakam. Connect your wallet to see the exact current rates."
     },
     "faucet": {
       "title": "Get test assets",
@@ -3912,8 +3912,8 @@
       "feesHeading": "Fees",
       "treasuryFee": "Treasury fee",
       "treasuryFeeHint": "Cut of interest at settlement.",
-      "loanInitiationFee": "Loan initiation fee",
-      "loanInitiationFeeHint": "Charged once, at accept.",
+      "loanInitiationFee": "Loan initiation fee, base rate",
+      "loanInitiationFeeHint": "Charged once, at accept, for the shortest terms; the rate rises with a longer term.",
       "liquidationHandlingFee": "Liquidation handling fee",
       "matcherFee": "Matcher fee",
       "notificationFee": "Notification fee (per loan side)",

@@ -131,7 +131,7 @@ describe('the acceptance figures', () => {
     expect(g.feeBack).toBe(4n * 10n ** 13n);
     expect(g.received).toBe(2n * E18 - 4n * 10n ** 15n + 4n * 10n ** 13n);
     expect(f.owedAtDue).toBe(2n * E18 + interestAtDue(2n * E18, 500n, 30n));
-    expect(listFee(2n * E18, 20n)).toBe(4n * 10n ** 15n);
+    expect(listFee(2n * E18, { baseBps: 20n, baseTermDays: 30n, yearlyBps: 50n, yearDays: 365n }, 30)).toBe(4n * 10n ** 15n);
     expect(shortfall(10n, 4n)).toBe(0n);
     expect(shortfall(3n, 4n)).toBe(1n);
   });

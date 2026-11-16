@@ -2432,8 +2432,8 @@
       "lenderRentalFee": "Vaipakam behält {{pct}} der von Ihnen verdienten Mietgebühren.",
       "lateFee": "Bei verspäteter Rückzahlung kommen nach dem ersten Tag 1% des ausstehenden Betrags hinzu; der Aufschlag wächst um 0.5% pro Tag und ist bei 5% gedeckelt.",
       "faqQuestion": "Welche Gebühren erhebt Vaipakam?",
-      "faqAnswer": "Vaipakam berechnet eine Kreditinitialisierungsgebühr von {{lifPct}} auf den geliehenen Betrag. Vaipakam behält {{yieldPct}} der von Ihnen verdienten Zinsen. Verspätete Rückzahlung fügt nach dem ersten Tag 1 % des ausstehenden Betrags hinzu, danach 0,5 % pro Tag, gedeckelt bei 5 %. Netzwerk-Gas ist separat und geht an die Blockchain, nicht an Vaipakam.",
-      "faqAnswerGeneric": "Vaipakam erhebt eine Kreditinitiierungsgebühr auf den geliehenen Betrag und behält einen Anteil der Zinsen, die ein Kreditgeber verdient. Bei verspäteter Rückzahlung kommen nach dem ersten Tag 1% des ausstehenden Betrags hinzu; der Aufschlag wächst um 0.5% pro Tag und ist bei 5% gedeckelt. Netzwerk-Gas ist separat und geht an die Blockchain, nicht an Vaipakam. Verbinden Sie Ihre Wallet, um die genauen aktuellen Sätze zu sehen."
+      "faqAnswer": "Vaipakam berechnet auf den geliehenen Betrag eine Kreditinitialisierungsgebühr, die von der Laufzeit des Kredits abhängt: {{basePct}} für eine Laufzeit bis {{baseDays}} Tage, gleichmäßig steigend auf {{yearPct}} bei {{yearDays}} Tagen, und über {{yearDays}} Tage hinaus {{yearPct}} je {{yearDays}} Tage Laufzeit, anteilig. Vaipakam behält {{yieldPct}} der von Ihnen verdienten Zinsen. Verspätete Rückzahlung fügt nach dem ersten Tag 1 % des ausstehenden Betrags hinzu, danach 0,5 % pro Tag, gedeckelt bei 5 %. Netzwerk-Gas ist separat und geht an die Blockchain, nicht an Vaipakam.",
+      "faqAnswerGeneric": "Vaipakam erhebt eine Kreditinitiierungsgebühr auf den geliehenen Betrag, die mit der Laufzeit des Kredits steigt, und behält einen Anteil der Zinsen, die ein Kreditgeber verdient. Bei verspäteter Rückzahlung kommen nach dem ersten Tag 1% des ausstehenden Betrags hinzu; der Aufschlag wächst um 0.5% pro Tag und ist bei 5% gedeckelt. Netzwerk-Gas ist separat und geht an die Blockchain, nicht an Vaipakam. Verbinden Sie Ihre Wallet, um die genauen aktuellen Sätze zu sehen."
     },
     "faucet": {
       "title": "Test-Assets erhalten",
@@ -3235,8 +3235,8 @@
       "feesHeading": "Gebühren",
       "treasuryFee": "Treasury-Gebühr",
       "treasuryFeeHint": "Anteil an den Zinsen bei der Abwicklung.",
-      "loanInitiationFee": "Darlehenseröffnungsgebühr",
-      "loanInitiationFeeHint": "Einmalig bei Annahme fällig.",
+      "loanInitiationFee": "Darlehenseröffnungsgebühr, Basissatz",
+      "loanInitiationFeeHint": "Einmalig bei Annahme fällig, für die kürzesten Laufzeiten; bei längerer Laufzeit steigt der Satz.",
       "liquidationHandlingFee": "Bearbeitungsgebühr für Liquidation",
       "matcherFee": "Matcher-Gebühr",
       "riskHeading": "Risiko",

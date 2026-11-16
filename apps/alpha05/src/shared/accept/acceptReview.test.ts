@@ -36,7 +36,7 @@ function review(over: Partial<AcceptReview> = {}): AcceptReview {
     lendingClass: 'liquid',
     collateralClass: 'liquid',
     graceSeconds: 86_400n,
-    lifBps: 20n,
+    lif: { baseBps: 20n, baseTermDays: 30n, yearlyBps: 50n, yearDays: 365n },
     matcherBps: 100n,
     protocolShareBps: null,
     vault: '0x0000000000000000000000000000000000000000',

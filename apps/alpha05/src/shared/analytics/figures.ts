@@ -11,16 +11,18 @@
  * the sum of the parts it lists plus the assets the rule could not value.
  */
 import { hexToString, type Abi, type PublicClient } from 'viem';
-import { AdminFacetABI, ConfigFacetABI, MetricsFacetABI, NumeraireConfigFacetABI, NumeraireValueFacetABI, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
+import { AdminFacetABI, ConfigFacetABI, FeeLevelsFacetABI, MetricsFacetABI, NumeraireConfigFacetABI, NumeraireValueFacetABI, VaultPayoutFacetABI } from '@vaipakam/contracts/abis';
 import type { SupportedChain } from '../../chain/chains';
 import { isContractAnswer } from '../reads/answer';
 import { readTokenMeta, type TokenMetaMap } from '../reads/tokens';
 import { readVpfiToken, type VpfiRead } from './vpfiToken';
+import type { LifTerms } from '../offers/initiationFee';
 
 type Hex = `0x${string}`;
 
 const METRICS = MetricsFacetABI as Abi;
 const CONFIG = ConfigFacetABI as Abi;
+const FEE_LEVELS = FeeLevelsFacetABI as Abi;
 const ADMIN = AdminFacetABI as Abi;
 const NUMERAIRE = NumeraireConfigFacetABI as Abi;
 const VALUE = NumeraireValueFacetABI as Abi;
@@ -107,7 +109,9 @@ export interface ProtocolFigures {
   offersPosted: Figure<bigint>;
   assets: Figure<{ rows: AssetLifetime[]; meta: TokenMetaMap }>;
   custody: Figure<Custody>;
-  feeRates: Figure<{ treasuryShareBps: bigint; loanStartFeeBps: bigint }>;
+  /** The treasury share, and the initiation fee's term rule (#3649: the
+   *  fee is term-scaled, so it has no single rate). */
+  feeRates: Figure<{ treasuryShareBps: bigint; loanStartFee: LifTerms }>;
   treasury: Figure<TreasuryFigures>;
   convert: Figure<ConvertConfig>;
   /** RW-60: the VPFI token's own facts, from the token contract. */
@@ -206,9 +210,12 @@ export async function readProtocolFigures(c: PublicClient, chain: SupportedChain
     read<readonly [bigint, bigint]>(METRICS, 'getGlobalCounts').then(([, offers]) => offers),
     assets(),
     read<Hex>(ADMIN, 'getTreasury').then((t) => custodyOf(t, diamond)),
-    Promise.all([read<bigint>(CONFIG, 'getTreasuryFeeBps'), read<bigint>(CONFIG, 'getLoanInitiationFeeBps')]).then(([treasuryShareBps, loanStartFeeBps]) => ({
+    Promise.all([
+      read<bigint>(CONFIG, 'getTreasuryFeeBps'),
+      read<readonly [bigint, bigint, bigint, bigint]>(FEE_LEVELS, 'getLoanInitiationFeeTerms'),
+    ]).then(([treasuryShareBps, [baseBps, baseTermDays, yearlyBps, yearDays]]) => ({
       treasuryShareBps,
-      loanStartFeeBps,
+      loanStartFee: { baseBps, baseTermDays, yearlyBps, yearDays },
     })),
     read<readonly bigint[]>(METRICS, 'getTreasuryMetrics').then(([held, total, day, week]) => ({
       heldOnOpenLoanAssets: held!,

@@ -71,7 +71,7 @@ The instant they accept:
   - interest"; theirs says "I'm owed my WETH back when I repay"
 - The loan clock starts ticking
 
-A small **Loan Initiation Fee (`{liveValue:loanInitiationFeeBps}`%)** is taken from the loaned
+A small **Loan Initiation Fee** (set by the loan's term; see the fees below) is taken from the loaned
 amount and routed to the protocol treasury. So the borrower receives
 `{liveValue:exampleBorrowerReceives}` USDC, not 1,000. (Holding **VPFI** reduces this fee — provided
 the borrower has turned on the fee-discount setting and the lent asset is
@@ -204,9 +204,12 @@ Two fees, both tiny:
   are lender yield, so both are in the fee base). On a 30-day 8% APR
   loan of 1,000 USDC, the lender earns ~6.58 USDC of interest, of
   which ~0.132 USDC is the Yield Fee at the default rate.
-- **Loan Initiation Fee — `{liveValue:loanInitiationFeeBps}`%** of
-  the lending amount, paid by the borrower at origination. On a
-  1,000 USDC loan, that's 2 USDC at the default rate.
+- **Loan Initiation Fee** — a share of the lending amount set by
+  the loan's term, paid by the borrower at origination:
+  `{liveValue:loanInitiationFeeBps}`% for a term of up to `{liveValue:lifBaseTermDays}` days, rising
+  evenly to `{liveValue:lifYearlyBps}`% at `{liveValue:lifYearDays}` days, and beyond that
+  `{liveValue:lifYearlyBps}`% for every `{liveValue:lifYearDays}` days of term, pro rata.
+  On the 30-day 1,000 USDC loan above, that's `{liveValue:exampleInitiationFee}` USDC.
 
 Both fees can be **discounted up to `{liveValue:tier4DiscountBps}`%** by holding VPFI in the vault
 (see below). On default or liquidation, recovered funds go toward
@@ -233,8 +236,8 @@ a forced collateral sale after a default or liquidation.
 > network, **not to Vaipakam** — it's the same fee you'd pay sending
 > any token on the same chain. The amount depends on the chain and
 > on network congestion at the moment, not on the size of your loan.
-> The platform fees above (Yield Fee `{liveValue:treasuryFeeBps}`%,
-> Loan Initiation Fee `{liveValue:loanInitiationFeeBps}`%) are
+> The platform fees above (Yield Fee `{liveValue:treasuryFeeBps}`%
+> and the Loan Initiation Fee) are
 > entirely separate from network gas and are the only charges the
 > protocol itself collects.
 
@@ -325,7 +328,7 @@ If you want to **borrow**:
 2. Browse the **Offer Book** for an offer that matches your
    collateral and the APR you can pay.
 3. Click **Accept**, sign two transactions, and you receive the loan
-   amount in your wallet (minus the `{liveValue:loanInitiationFeeBps}`% Loan Initiation Fee).
+   amount in your wallet (minus the Loan Initiation Fee).
 4. Repay before the due date plus grace period. Your collateral
    unlocks back to your wallet.
 

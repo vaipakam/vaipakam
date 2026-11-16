@@ -518,9 +518,17 @@ describe('maker protections (#3327)', () => {
     const w = wire();
     expect(signedOrderTakerRefusal(w, OTHER, { cancelFloor: 42n })).toBeNull();
     expect(signedOrderTakerRefusal(w, OTHER, { cancelFloor: 43n })).toBe('cancelled');
-    expect(signedOrderTakerRefusal(w, OTHER, { fees: { treasuryFeeBps: 200, loanInitiationFeeBps: 20 } })).toBeNull();
-    expect(signedOrderTakerRefusal(w, OTHER, { fees: { treasuryFeeBps: 201, loanInitiationFeeBps: 20 } })).toBe('feeAboveCap');
-    expect(signedOrderTakerRefusal(w, OTHER, { fees: { treasuryFeeBps: 200, loanInitiationFeeBps: 21 } })).toBe('feeAboveCap');
+    const terms = (baseBps: number) => ({ baseBps, baseTermDays: 30, yearlyBps: 50, yearDays: 365 });
+    expect(signedOrderTakerRefusal(w, OTHER, { fees: { treasuryFeeBps: 200, lifTerms: terms(20) } })).toBeNull();
+    expect(signedOrderTakerRefusal(w, OTHER, { fees: { treasuryFeeBps: 201, lifTerms: terms(20) } })).toBe('feeAboveCap');
+    expect(signedOrderTakerRefusal(w, OTHER, { fees: { treasuryFeeBps: 200, lifTerms: terms(21) } })).toBe('feeAboveCap');
+    // #3649 — the cap is judged at the ORDER's term: a 31-day order's rate
+    // (20.08 bps, rounded up to 21) is above a 20 bps cap.
+    expect(
+      signedOrderTakerRefusal({ ...w, durationDays: '31' }, OTHER, {
+        fees: { treasuryFeeBps: 200, lifTerms: terms(20) },
+      }),
+    ).toBe('feeAboveCap');
   });
 
   it('draws a nonce at or above the cancel floor', () => {

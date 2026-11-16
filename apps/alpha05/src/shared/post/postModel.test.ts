@@ -140,11 +140,14 @@ describe('createParams for a lending offer', () => {
   });
 });
 
+const LIF = { baseBps: 20n, baseTermDays: 30n, yearlyBps: 50n, yearDays: 365n };
+
 describe('lenderPostFigures', () => {
   it("takes the borrower's fee from what they receive, never from the amount lent, and keeps at most today's share of the interest", () => {
-    const f = lenderPostFigures(365_000n, 1_000n, 365, 20n, 200n);
-    expect(f.fee).toBe(730n);
-    expect(f.borrowerGets).toBe(365_000n - 730n);
+    // #3649 — at a one-year term the initiation fee is the yearly rate, 0.5%.
+    const f = lenderPostFigures(365_000n, 1_000n, 365, LIF, 200n);
+    expect(f.fee).toBe(1_825n);
+    expect(f.borrowerGets).toBe(365_000n - 1_825n);
     expect(f.interest).toBe(36_500n);
     expect(f.protocolShare).toBe(730n);
     expect(f.backAtDue).toBe(365_000n + 36_500n - 730n);
@@ -181,9 +184,9 @@ describe('createParams for an NFT', () => {
 
 describe('postFigures', () => {
   it('takes the list fee from the amount and adds the term interest to what is owed', () => {
-    const f = postFigures(1_000_000n, 1_000n, 365, 20n);
-    expect(f.fee).toBe(2_000n);
-    expect(f.received).toBe(998_000n);
+    const f = postFigures(1_000_000n, 1_000n, 365, LIF);
+    expect(f.fee).toBe(5_000n);
+    expect(f.received).toBe(995_000n);
     expect(f.interest).toBe(100_000n);
     expect(f.owedAtDue).toBe(1_100_000n);
   });

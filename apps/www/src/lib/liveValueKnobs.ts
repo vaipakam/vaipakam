@@ -24,6 +24,9 @@
 export type KnobName =
   | 'treasuryFeeBps'
   | 'loanInitiationFeeBps'
+  | 'lifBaseTermDays'
+  | 'lifYearlyBps'
+  | 'lifYearDays'
   | 'tier1Min'
   | 'tier2Min'
   | 'tier3Min'
@@ -58,7 +61,19 @@ export const KNOB_DEFAULTS: Record<KnobName, KnobDefault> = {
   // 2% under the #1352 freeze before that).
   treasuryFeeBps: { defaultValue: 500, format: 'percent' },
   // 0.2% since the #1352 fee freeze (LibVaipakam.LOAN_INITIATION_FEE_BPS).
+  // Since #3649 this is the BASE rate of a term-scaled fee: it applies to
+  // terms up to `lifBaseTermDays`, rises in a straight line to
+  // `lifYearlyBps` at `lifYearDays`, and a longer term pays `lifYearlyBps`
+  // a year, pro rata (LibInitiationFee). Copy must never state it as the
+  // fee for every term.
   loanInitiationFeeBps: { defaultValue: 20, format: 'percent' },
+  // The term rule's other three settings (LIF_BASE_TERM_DAYS_DEFAULT,
+  // LIF_YEARLY_BPS_DEFAULT, LIF_YEAR_DAYS_DEFAULT). Not in the config
+  // snapshot this site reads, so they always render as the bundled default
+  // and say so — see KNOB_READS.
+  lifBaseTermDays: { defaultValue: 30, format: 'count' },
+  lifYearlyBps: { defaultValue: 50, format: 'percent' },
+  lifYearDays: { defaultValue: 365, format: 'count' },
   tier1Min: { defaultValue: 100, format: 'count' },
   tier2Min: { defaultValue: 1_000, format: 'count' },
   tier3Min: { defaultValue: 5_000, format: 'count' },
@@ -110,8 +125,41 @@ const exampleInterestMicro = () =>
       (DAYS_PER_YEAR * BPS)
   );
 
+/**
+ * The initiation fee on `principalMicro` for an agreed term of `termDays`,
+ * mirroring `LibInitiationFee.rateFraction` + `feeWith` (#3649): the base
+ * rate up to the base term, a straight line to the yearly rate at the
+ * one-year point, and the yearly rate pro rata beyond it; rounded down.
+ * Integer arithmetic on purpose (the products stay far below 2^53 for the
+ * example's figures).
+ */
+function initiationFeeMicro(
+  principalMicro: number,
+  termDays: number,
+  k: Record<KnobName, number>
+): number {
+  const b = k.loanInitiationFeeBps;
+  const t0 = k.lifBaseTermDays;
+  const y = k.lifYearlyBps;
+  const d = k.lifYearDays;
+  let num: number;
+  let den: number;
+  if (termDays <= t0) {
+    num = b;
+    den = 1;
+  } else if (termDays <= d) {
+    num = b * (d - termDays) + y * (termDays - t0);
+    den = d - t0;
+  } else {
+    num = y * termDays;
+    den = d;
+  }
+  return Math.floor((principalMicro * num) / (den * BPS));
+}
+
 export type DerivedName =
   | 'exampleBorrowerReceives'
+  | 'exampleInitiationFee'
   | 'exampleLenderNet'
   | 'exampleTreasuryYieldFee'
   | 'exampleTreasuryYieldFeeExact';
@@ -145,14 +193,23 @@ export interface DerivedFigure {
  */
 export const DERIVED_FIGURES: Record<DerivedName, DerivedFigure> = {
   // Principal minus the initiation fee — what actually reaches the
-  // borrower.
+  // borrower. The fee is TERM-SCALED (#3649), so it is the fee at the
+  // example's term under all four settings, exactly as
+  // `LibInitiationFee.feeWith` computes it; it depends on every one of
+  // them, so it is `published` only when all four were read live.
   exampleBorrowerReceives: {
-    dependsOn: ['loanInitiationFeeBps'],
+    dependsOn: ['loanInitiationFeeBps', 'lifBaseTermDays', 'lifYearlyBps', 'lifYearDays'],
     compute: (k) => {
       const principal = EXAMPLE.principal * USDC;
-      const fee = Math.floor((principal * k.loanInitiationFeeBps) / BPS);
+      const fee = initiationFeeMicro(principal, EXAMPLE.days, k);
       return (principal - fee) / USDC;
     },
+    format: 'currency2',
+  },
+  // The initiation fee itself on the example loan, by the same rule.
+  exampleInitiationFee: {
+    dependsOn: ['loanInitiationFeeBps', 'lifBaseTermDays', 'lifYearlyBps', 'lifYearDays'],
+    compute: (k) => initiationFeeMicro(EXAMPLE.principal * USDC, EXAMPLE.days, k) / USDC,
     format: 'currency2',
   },
   // Principal + interest, less the treasury's cut of the INTEREST only.
@@ -275,6 +332,12 @@ const KNOB_READS: Record<
 > = {
   treasuryFeeBps: (c) => (c ? c.treasuryFeeBps : null),
   loanInitiationFeeBps: (c) => (c ? c.loanInitiationFeeBps : null),
+  // The snapshot this site reads carries no term settings, so these never
+  // read live: they render as the bundled default and are badged as such,
+  // rather than borrowing the base rate's `published` status.
+  lifBaseTermDays: () => null,
+  lifYearlyBps: () => null,
+  lifYearDays: () => null,
   tier1Min: (c) => (c ? c.tierThresholdsTokens[0] : null),
   tier2Min: (c) => (c ? c.tierThresholdsTokens[1] : null),
   tier3Min: (c) => (c ? c.tierThresholdsTokens[2] : null),

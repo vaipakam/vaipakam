@@ -5,6 +5,7 @@
  * state decide that, and these functions only carry their answer to the
  * page, in order.
  */
+import { lifFeeOf, type LifTerms } from './initiationFee';
 import { ASSET_ERC20, OFFER_LENDER, roleTerms, type StoredOffer } from './acceptTerms';
 import type { AcceptErrorName, AcceptPreview, OfferState } from './reads';
 
@@ -216,10 +217,11 @@ export function lenderFigures(preview: AcceptPreview, durationDays: bigint, matc
   };
 }
 
-/** The fee the list rate gives before any discount (for the "list 0.2 %"
- *  line), rounded down like every protocol fee. */
-export function listFee(principal: bigint, feeBps: bigint): bigint {
-  return (principal * feeBps) / BPS;
+/** The fee the list rule gives before any discount, at the loan's term
+ *  (#3649: the initiation fee is term-scaled), rounded down like every
+ *  protocol fee. */
+export function listFee(principal: bigint, lif: LifTerms, termDays: number | bigint): bigint {
+  return lifFeeOf(principal, lif, termDays);
 }
 
 /** Which figure moved between two previews of the same offer, by the

@@ -2109,7 +2109,7 @@ export const copy = {
     tableTitle: B('Tiers on this network'),
     tableLead: B('Each tier’s discount and your fees with it, from this network’s live settings.'),
     tableWhy: C(
-      'Each tier starts at its VPFI figure, except the top tier, which starts above its figure; so holding exactly the top figure gives the tier below it. The figures are VPFI counted in your vault. The discount is never more than half a fee, whatever a tier’s setting. The loan initiation fee is charged once, in the lending asset, when an offer is accepted; a borrower’s discount is fixed then, and nothing is refunded later. A loan in an illiquid lending asset pays the full fee. The fee on interest is taken from the interest a lender earns, each time interest is settled, with the discount of the lender’s tier at that moment; how that discount is delivered on this network is described with the fee-discount setting below. The figures are read from the protocol on this network and change only when its settings change.',
+      'Each tier starts at its VPFI figure, except the top tier, which starts above its figure; so holding exactly the top figure gives the tier below it. The figures are VPFI counted in your vault. The discount is never more than half a fee, whatever a tier’s setting. The loan initiation fee is charged once, in the lending asset, when an offer is accepted; a borrower’s discount is fixed then, and nothing is refunded later. The fee grows with the loan’s term: the first of its two columns applies to terms up to that column’s days, the rate rises evenly to the second at that column’s days, and longer terms pay the second rate for each such period, pro rata. A loan in an illiquid lending asset pays the full fee. The fee on interest is taken from the interest a lender earns, each time interest is settled, with the discount of the lender’s tier at that moment; how that discount is delivered on this network is described with the fee-discount setting below. The figures are read from the protocol on this network and change only when its settings change.',
       'rewards-tier',
     ),
     tableFailed: A('This network’s tier settings could not be read ({{reason}}).'),
@@ -2118,7 +2118,8 @@ export const copy = {
     rowTitle: B('Tier {{tier}}'),
     colVpfi: B('VPFI counted'),
     colDiscount: B('Discount'),
-    colLif: B('Loan initiation fee'),
+    colLif: B('Loan initiation fee, terms up to {{days}} days'),
+    colLifYear: B('Loan initiation fee at {{days}} days, then that much a year'),
     colYield: B('Fee on interest earned'),
     bandBelow: B('Below {{to}}'),
     bandBefore: B('{{from}} up to, not including, {{to}}'),
@@ -6275,6 +6276,10 @@ export const copy = {
     feesTitle: B('Fees and treasury'),
     treasuryShare: B('Treasury share of interest'),
     loanStartFee: B('Loan start fee, of the amount lent'),
+    // #3649 — the fee is term-scaled: its rule, from the four live settings.
+    loanStartFeeRule: A(
+      '{{base}}% for a term up to {{baseDays}} days, rising evenly to {{year}}% at {{yearDays}} days, then {{year}}% for every {{yearDays}} days of term, pro rata',
+    ),
     feesValued: A('Each fee is valued in {{unit}} when it was collected. A fee the protocol could not value then counts as nothing here.'),
     feesSince: B('Fees collected since the start'),
     feesDay: B('In the last 24 hours'),

@@ -23,6 +23,7 @@
 import { hashStruct, type Hex } from 'viem';
 import type { IndexedOffer, IndexedSignedOffer } from '../data/indexer';
 import type { CreateOfferPayload } from './offerSchema';
+import { lifRateBpsUp, type LifTerms } from './initiationFee';
 import {
   SIGNED_OFFER_FIELDS,
   SIGNED_OFFER_FIELD_NAMES as SIGNED_OFFER_WIRE_FIELD_NAMES,
@@ -302,7 +303,9 @@ export function collapseForSignedPost(
  *   - `coSigner`: the order needs a fresh co-signature per fill, which this
  *     app cannot request yet (the fill would be refused without it);
  *   - `feeAboveCap`: a live protocol fee is above the maker's cap (only
- *     judged when `fees` is given);
+ *     judged when `fees` is given). The initiation fee is term-scaled
+ *     (#3649): its cap is compared, as the contract does, with the rate at
+ *     the order's term rounded up;
  *   - `cancelled`: the nonce is below the signer's cancel floor (only
  *     judged when `cancelFloor` is given). */
 export type SignedTakerRefusal = 'taker' | 'coSigner' | 'feeAboveCap' | 'cancelled';
@@ -311,7 +314,7 @@ export function signedOrderTakerRefusal(
   order: SignedOrderWire,
   taker: string | undefined,
   live?: {
-    fees?: { treasuryFeeBps: number; loanInitiationFeeBps: number };
+    fees?: { treasuryFeeBps: number; lifTerms: LifTerms };
     cancelFloor?: bigint;
   },
 ): SignedTakerRefusal | null {
@@ -323,7 +326,8 @@ export function signedOrderTakerRefusal(
   if (
     live?.fees !== undefined &&
     (live.fees.treasuryFeeBps > Number(order.maxTreasuryFeeBps) ||
-      live.fees.loanInitiationFeeBps > Number(order.maxLoanInitiationFeeBps))
+      lifRateBpsUp(live.fees.lifTerms, Number(order.durationDays)) >
+        Number(order.maxLoanInitiationFeeBps))
   ) {
     return 'feeAboveCap';
   }

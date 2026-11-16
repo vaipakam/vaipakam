@@ -171,8 +171,8 @@ describe('readPayoffQuote — permit route (#1558, #3042)', () => {
     });
   });
 
-  it('refuses the approval route without the request amount and fee rate', async () => {
-    await expect(quote(0n, { route: 'approval' }).q).rejects.toThrow(/request amount and fee rate/);
+  it('refuses the approval route without the request amount, fee rule and term', async () => {
+    await expect(quote(0n, { route: 'approval' }).q).rejects.toThrow(/request amount, fee rule and term/);
   });
 });
 

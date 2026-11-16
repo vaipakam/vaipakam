@@ -2432,8 +2432,8 @@
       "lenderRentalFee": "Vaipakam conserva {{pct}} de las comisiones de alquiler que ganas.",
       "lateFee": "El pago atrasado añade 1% del monto pendiente después del primer día, crece 0.5% por día y tiene tope de 5%.",
       "faqQuestion": "¿Qué comisiones cobra Vaipakam?",
-      "faqAnswer": "Vaipakam cobra una comisión de iniciación de préstamo de {{lifPct}} sobre el importe prestado. Vaipakam conserva {{yieldPct}} de los intereses que ganas. El reembolso tardío añade 1% del importe pendiente después del primer día, creciendo 0.5% por día, con tope de 5%. El gas de red es separado y va a la blockchain, no a Vaipakam.",
-      "faqAnswerGeneric": "Vaipakam cobra una comisión de inicio de préstamo sobre el monto pedido y retiene una parte del interés que gana un prestamista. El pago atrasado añade 1% del monto pendiente después del primer día, crece 0.5% por día y tiene tope de 5%. El gas de red es independiente y va a la blockchain, no a Vaipakam. Conecta tu billetera para ver las tasas actuales exactas."
+      "faqAnswer": "Vaipakam cobra una comisión de iniciación de préstamo sobre el importe prestado que depende del plazo del préstamo: {{basePct}} para un plazo de hasta {{baseDays}} días, subiendo de forma uniforme hasta {{yearPct}} a los {{yearDays}} días y, pasados los {{yearDays}} días, {{yearPct}} por cada {{yearDays}} días del plazo, de forma proporcional. Vaipakam conserva {{yieldPct}} de los intereses que ganas. El reembolso tardío añade 1% del importe pendiente después del primer día, creciendo 0.5% por día, con tope de 5%. El gas de red es separado y va a la blockchain, no a Vaipakam.",
+      "faqAnswerGeneric": "Vaipakam cobra una comisión de inicio de préstamo sobre el monto pedido, que crece con el plazo del préstamo, y retiene una parte del interés que gana un prestamista. El pago atrasado añade 1% del monto pendiente después del primer día, crece 0.5% por día y tiene tope de 5%. El gas de red es independiente y va a la blockchain, no a Vaipakam. Conecta tu billetera para ver las tasas actuales exactas."
     },
     "faucet": {
       "title": "Obtener activos de prueba",
@@ -3235,8 +3235,8 @@
       "feesHeading": "Comisiones",
       "treasuryFee": "Comisión de tesorería",
       "treasuryFeeHint": "Parte del interés al liquidar.",
-      "loanInitiationFee": "Comisión de apertura",
-      "loanInitiationFeeHint": "Se cobra una vez, al aceptar.",
+      "loanInitiationFee": "Comisión de apertura, tasa base",
+      "loanInitiationFeeHint": "Se cobra una vez, al aceptar, para los plazos más cortos; la tasa sube con un plazo más largo.",
       "liquidationHandlingFee": "Comisión de gestión de liquidación",
       "matcherFee": "Comisión del emparejador",
       "riskHeading": "Riesgo",

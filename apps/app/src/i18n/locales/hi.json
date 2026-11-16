@@ -2432,8 +2432,8 @@
       "lenderRentalFee": "Vaipakam आपके earned rental fees का {{pct}} रखता है।",
       "lateFee": "Late repayment day one के बाद outstanding amount का 1% जोड़ता है, 0.5% per day बढ़ता है, 5% cap के साथ।",
       "faqQuestion": "Vaipakam कौन सी fees charge करता है?",
-      "faqAnswer": "Vaipakam borrowed amount पर {{lifPct}} loan initiation fee charge करता है। Vaipakam आपके earned interest का {{yieldPct}} रखता है। Late repayment day one के बाद outstanding amount का 1% जोड़ता है, फिर 0.5% per day बढ़ता है, cap 5% है। Network gas अलग है और blockchain को जाता है, Vaipakam को नहीं।",
-      "faqAnswerGeneric": "Vaipakam borrowed amount पर loan initiation fee charge करता है और lender के earned interest का share रखता है। Late repayment day one के बाद outstanding amount का 1% जोड़ता है, 0.5% per day बढ़ता है, 5% cap के साथ। Network gas अलग है और blockchain को जाता है, Vaipakam को नहीं। Exact current rates देखने के लिए wallet connect करें।"
+      "faqAnswer": "Vaipakam borrowed amount पर loan initiation fee charge करता है, जो loan की अवधि पर निर्भर है: {{baseDays}} दिन तक की अवधि के लिए {{basePct}}, फिर {{yearDays}} दिन पर {{yearPct}} तक समान रूप से बढ़ती है, और {{yearDays}} दिन के बाद अवधि के हर {{yearDays}} दिन के लिए {{yearPct}}, अनुपात में। Vaipakam आपके earned interest का {{yieldPct}} रखता है। Late repayment day one के बाद outstanding amount का 1% जोड़ता है, फिर 0.5% per day बढ़ता है, cap 5% है। Network gas अलग है और blockchain को जाता है, Vaipakam को नहीं।",
+      "faqAnswerGeneric": "Vaipakam borrowed amount पर loan initiation fee charge करता है, जो loan की अवधि के साथ बढ़ती है, और lender के earned interest का share रखता है। Late repayment day one के बाद outstanding amount का 1% जोड़ता है, 0.5% per day बढ़ता है, 5% cap के साथ। Network gas अलग है और blockchain को जाता है, Vaipakam को नहीं। Exact current rates देखने के लिए wallet connect करें।"
     },
     "faucet": {
       "title": "Test assets लें",
@@ -3235,8 +3235,8 @@
       "feesHeading": "शुल्क",
       "treasuryFee": "ट्रेज़री शुल्क",
       "treasuryFeeHint": "निपटान पर ब्याज में से लिया गया हिस्सा।",
-      "loanInitiationFee": "ऋण आरंभ शुल्क",
-      "loanInitiationFeeHint": "स्वीकृति पर एक बार लिया जाता है।",
+      "loanInitiationFee": "ऋण आरंभ शुल्क, आधार दर",
+      "loanInitiationFeeHint": "स्वीकृति पर एक बार, सबसे छोटी अवधियों के लिए; लंबी अवधि पर दर बढ़ती है।",
       "liquidationHandlingFee": "परिसमापन प्रबंधन शुल्क",
       "matcherFee": "मैचर शुल्क",
       "riskHeading": "जोखिम",

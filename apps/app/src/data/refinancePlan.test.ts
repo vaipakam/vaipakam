@@ -11,6 +11,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PublicClient } from 'viem';
 import { copy } from '../content/copy';
+import { lifFeeOf, type LifTerms } from '../lib/initiationFee';
 import { AssetType, LoanStatus } from '../lib/types';
 
 const DAY = 86_400n;
@@ -18,7 +19,11 @@ const reads = vi.hoisted(() => ({
   live: {} as Record<string, unknown>,
   now: 0n,
   caps: { enabled: false, maxRateBps: 0, maxNewExpiry: 0n },
-  fees: { treasuryFeeBps: 200, loanInitiationFeeBps: 20, maxOfferDurationDays: 365 },
+  fees: {
+    treasuryFeeBps: 200,
+    lifTerms: { baseBps: 20, baseTermDays: 30, yearlyBps: 50, yearDays: 365 },
+    maxOfferDurationDays: 365,
+  },
   grace: 0n,
   payoff: 0n,
   bound: 0n,
@@ -55,7 +60,7 @@ vi.mock('../contracts/refinancePayoffPermit', () => ({
       topUp:
         reads.payoff -
         ((a.requestAmount as bigint) -
-          ((a.requestAmount as bigint) * BigInt(a.loanInitiationFeeBps as number)) / 10_000n),
+          lifFeeOf(a.requestAmount as bigint, a.lifTerms as LifTerms, a.termDays as number)),
       growth: bound > reads.payoff ? bound - reads.payoff : 0n,
       lastFillable: (a.expiresAt as bigint) - 1n,
       permit: null,
@@ -125,7 +130,11 @@ const LOAN = {
   collateralAsset: '0x00000000000000000000000000000000000000a2',
 } as unknown as RefinanceLoan;
 const TERMS = { rateBps: 900, durationDays: 30 };
-const FEES = { treasuryFeeBps: 200, loanInitiationFeeBps: 20, maxOfferDurationDays: 365 };
+const FEES = {
+  treasuryFeeBps: 200,
+  lifTerms: { baseBps: 20, baseTermDays: 30, yearlyBps: 50, yearDays: 365 },
+  maxOfferDurationDays: 365,
+};
 
 type Ready = Extract<RefinanceBatchPlan, { kind: 'ready' }>;
 
@@ -195,9 +204,10 @@ describe('checkRefinanceRequest', () => {
       graceSeconds: 3n * DAY,
       route: 'permit',
       // #3042 — what sizes the wallet's share: the request asks for the
-      // old principal, at the live fee rate.
+      // old principal, at the live fee rule and the request's term (#3649).
       requestAmount: reads.live.principal,
-      loanInitiationFeeBps: FEES.loanInitiationFeeBps,
+      lifTerms: FEES.lifTerms,
+      termDays: TERMS.durationDays,
     });
     reads.route = 'approval';
     const bridge = (await checkRefinanceRequest(ctx, LOAN, TERMS, FEES)) as RefinanceRequestReady;
@@ -256,7 +266,7 @@ describe('checkRefinanceRequest', () => {
   });
 
   it('marks a fee config that moved since the review', async () => {
-    reads.fees = { ...FEES, loanInitiationFeeBps: 30 };
+    reads.fees = { ...FEES, lifTerms: { ...FEES.lifTerms, yearlyBps: 60 } };
     expect(await checkRefinanceRequest(ctx, LOAN, TERMS, FEES)).toMatchObject({
       kind: 'refused',
       reason: copy.match.termsChanged,

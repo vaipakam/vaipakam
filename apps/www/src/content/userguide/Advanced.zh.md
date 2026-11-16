@@ -121,7 +121,7 @@ Loan Initiation Fee——就后者而言，它是**对您以 lending asset 支�
 
 > **如果您在等待 Loan Initiation Fee 的 rebate，请读这一段。** 早期模型会预先以 VPFI 收取全额费用，在 loan 存续期间托管，并在您 claim 时退回其中一部分。**该路径已被移除。** 从未有任何 loan 在这条路径上开立，因此没有任何 loan 为其 initiation fee 托管 VPFI，也没有待领的 rebate——等待它等于等待一笔不可能到账的钱。
 
-> **Network gas 与协议费用是分开的。** 上面的 discount 适用于 Vaipakam 的 **protocol fees**（yield fee `{liveValue:treasuryFeeBps}`%、Loan Initiation Fee `{liveValue:loanInitiationFeeBps}`%）。每次 on-chain action 都需要的 **blockchain 网络 gas 费**（在 Base / Sepolia / Arbitrum 等链上 create offer / accept / repay / claim / withdraw 等操作时支付给 validators）不是协议费用。Vaipakam 从不收取，由网络收取。它无法按 tier 处理或 rebate，并且取决于 submission 时该链的拥堵情况，与 loan 大小或您的 VPFI tier 无关。
+> **Network gas 与协议费用是分开的。** 上面的 discount 适用于 Vaipakam 的 **protocol fees**（yield fee `{liveValue:treasuryFeeBps}`%、Loan Initiation Fee）。每次 on-chain action 都需要的 **blockchain 网络 gas 费**（在 Base / Sepolia / Arbitrum 等链上 create offer / accept / repay / claim / withdraw 等操作时支付给 validators）不是协议费用。Vaipakam 从不收取，由网络收取。它无法按 tier 处理或 rebate，并且取决于 submission 时该链的拥堵情况，与 loan 大小或您的 VPFI tier 无关。
 
 <a id="dashboard.rewards-summary"></a>
 
@@ -1824,13 +1824,13 @@ Borrow 通过 `acceptOffer(offerId, terms, signature)` 直接接受以 ERC-20 �
 
 ### Borrow: 审核与签名
 
-审核读取报价、其状态、`previewAccept`、`getOfferLinkedLoanId`、`getCurrentRiskTermsHash`、两种类别、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、钱包的金库、余额和授权额度、`previewOfferAcceptBlock` 以及折扣同意，并在钱包打开前再读一次。钱包签署由已存储报价构建的 EIP-712 `AcceptTerms`（域 `Vaipakam AcceptOffer`，版本 1），附带新的 128 位 nonce 和 30 分钟期限；无流动性确认只指明审核中显示为无流动性的一侧。仅当授权额度不足时才批准与抵押品完全相同的额度，然后用签名模拟 `acceptOffer` 再发送。若在批准后中止，且额度未被其他操作改变，应用会把它恢复为原值。结果从该报价和钱包的 `LoanInitiated` 以及收据中的 `Transfer` 日志读取。授权额度会在第一次钱包请求之前重新读取，重置时恢复的就是这个值；已发送但回滚（revert）的接受交易，或被钱包取消或替换的接受交易，也会由交易跟踪器做同样的重置。审核页列出 `allowsPartialRepay`、`allowsPrepayListing`、带 `parallelSaleOrderHash` 的 `allowsParallelSale`、`refinanceTargetLoanId` 以及关联贷款，并将应还金额标注为无暂停情形，因为暂停期间利息照常累计，只是到期日后移。 每个授权步骤都以在其回执所在区块读回的授权额度来判断，从不依据回执状态。对于拒绝把一个非零授权额度改为另一个非零值的代币（通过 `approve` 的试运行判断），会先加一步归零，审核界面将其计为一次额外提示。条款接受情况会在钱包打开前再次读取。 两种出售途径都以 NFT 形式挂出抵押品，因此在代币抵押品上，已授予的挂单或出售许可会被说明为该贷款无法使用。审核会按预览金额加入本金和抵押品的 `getNumeraireValue`，作为不具约束力的行。
+审核读取报价、其状态、`previewAccept`、`getOfferLinkedLoanId`、`getCurrentRiskTermsHash`、两种类别、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeTerms`、钱包的金库、余额和授权额度、`previewOfferAcceptBlock` 以及折扣同意，并在钱包打开前再读一次。钱包签署由已存储报价构建的 EIP-712 `AcceptTerms`（域 `Vaipakam AcceptOffer`，版本 1），附带新的 128 位 nonce 和 30 分钟期限；无流动性确认只指明审核中显示为无流动性的一侧。仅当授权额度不足时才批准与抵押品完全相同的额度，然后用签名模拟 `acceptOffer` 再发送。若在批准后中止，且额度未被其他操作改变，应用会把它恢复为原值。结果从该报价和钱包的 `LoanInitiated` 以及收据中的 `Transfer` 日志读取。授权额度会在第一次钱包请求之前重新读取，重置时恢复的就是这个值；已发送但回滚（revert）的接受交易，或被钱包取消或替换的接受交易，也会由交易跟踪器做同样的重置。审核页列出 `allowsPartialRepay`、`allowsPrepayListing`、带 `parallelSaleOrderHash` 的 `allowsParallelSale`、`refinanceTargetLoanId` 以及关联贷款，并将应还金额标注为无暂停情形，因为暂停期间利息照常累计，只是到期日后移。 每个授权步骤都以在其回执所在区块读回的授权额度来判断，从不依据回执状态。对于拒绝把一个非零授权额度改为另一个非零值的代币（通过 `approve` 的试运行判断），会先加一步归零，审核界面将其计为一次额外提示。条款接受情况会在钱包打开前再次读取。 两种出售途径都以 NFT 形式挂出抵押品，因此在代币抵押品上，已授予的挂单或出售许可会被说明为该贷款无法使用。审核会按预览金额加入本金和抵押品的 `getNumeraireValue`，作为不具约束力的行。
 
 <a id="borrow-fee"></a>
 
 ### Borrow: 发起费
 
-费用为 `previewAccept` 的 `lifEstimate`：本金乘以 `getLoanInitiationFeeBps`，以所借代币收取，从交付金额中扣除；同意开启且所借代币有流动性时按持有等级折扣降低，等级在接受时确定。本页从不选择 Full 费率。该费用不收取 VPFI，也不返还。 提交者份额（费用的 `getLifMatcherFeeBps`）支付给发送交易的一方，在直接接受中即借款人，因此钱包收到扣除费用后的本金再加上这部分份额。
+费用为 `previewAccept` 的 `lifEstimate`：本金乘以 `getLoanInitiationFeeTerms`（按 offer 期限的费率），以所借代币收取，从交付金额中扣除；同意开启且所借代币有流动性时按持有等级折扣降低，等级在接受时确定。本页从不选择 Full 费率。该费用不收取 VPFI，也不返还。 提交者份额（费用的 `getLifMatcherFeeBps`）支付给发送交易的一方，在直接接受中即借款人，因此钱包收到扣除费用后的本金再加上这部分份额。
 
 <a id="borrow-risks"></a>
 
@@ -1854,7 +1854,7 @@ Basic 发布单一数值的请求：`amount` = `amountMax`，`interestRateBps` =
 
 ### Borrow：审核并发布请求
 
-审核从钱包模拟 `createOffer`，并读取两侧的类别、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、最长期限、钱包的金库、余额和授权额度，两侧均为流动资产时还读取 `calculateLTV`；每个区块以及钱包打开前都会重新读取。授权额度不足时，模拟只能走到划转抵押品这一步，因此代币的划转错误或没有协议错误名的回滚会显示为待完成的批准，而有名称的协议错误则视为拒绝。完成精确批准后，再次模拟 `createOffer` 并发送；批准后若中止，且没有其他改动，授权额度会恢复为原值。结果读取此钱包的 `OfferCreated` 以及抵押品转入金库的 `Transfer`。
+审核从钱包模拟 `createOffer`，并读取两侧的类别、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeTerms`、最长期限、钱包的金库、余额和授权额度，两侧均为流动资产时还读取 `calculateLTV`；每个区块以及钱包打开前都会重新读取。授权额度不足时，模拟只能走到划转抵押品这一步，因此代币的划转错误或没有协议错误名的回滚会显示为待完成的批准，而有名称的协议错误则视为拒绝。完成精确批准后，再次模拟 `createOffer` 并发送；批准后若中止，且没有其他改动，授权额度会恢复为原值。结果读取此钱包的 `OfferCreated` 以及抵押品转入金库的 `Transfer`。
 
 <a id="borrow-nft-collateral"></a>
 
@@ -1902,13 +1902,13 @@ Lend 通过出借人发送的 `acceptOffer(offerId, terms, signature)`，直接�
 
 ### Lend: 审核与签名
 
-审核读取与 Borrow 相同的内容（报价、其状态、`previewAccept`、`getOfferLinkedLoanId`、`getCurrentRiskTermsHash`、两种类别、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、`getLifMatcherFeeBps`、钱包的金库、`previewOfferAcceptBlock` 和费用折扣同意），外加 `getTreasuryFeeBps`，并在出借资产（出借人支付的一方）上测量余额和授权额度。该资产不足会阻止签名，出借人仓位出售载体同样如此。钱包签署 EIP-712 `AcceptTerms`（域 `Vaipakam AcceptOffer`，版本 1），仅在授权额度不足时精确批准本金（对拒绝在非零值之间变更的代币，先加一步归零），然后模拟并发送 `acceptOffer`；中止的流程留下的授权会像 Borrow 那样被重置。结果读取此报价的 `LoanInitiated`、本金从钱包转出的 `Transfer`，以及撮合份额返还的 `Transfer`。
+审核读取与 Borrow 相同的内容（报价、其状态、`previewAccept`、`getOfferLinkedLoanId`、`getCurrentRiskTermsHash`、两种类别、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeTerms`、`getLifMatcherFeeBps`、钱包的金库、`previewOfferAcceptBlock` 和费用折扣同意），外加 `getTreasuryFeeBps`，并在出借资产（出借人支付的一方）上测量余额和授权额度。该资产不足会阻止签名，出借人仓位出售载体同样如此。钱包签署 EIP-712 `AcceptTerms`（域 `Vaipakam AcceptOffer`，版本 1），仅在授权额度不足时精确批准本金（对拒绝在非零值之间变更的代币，先加一步归零），然后模拟并发送 `acceptOffer`；中止的流程留下的授权会像 Borrow 那样被重置。结果读取此报价的 `LoanInitiated`、本金从钱包转出的 `Transfer`，以及撮合份额返还的 `Transfer`。
 
 <a id="lend-fee"></a>
 
 ### Lend: 费用与协议份额
 
-费用即 `previewAccept` 的 `lifEstimate`，由借款人承担：以出借资产计的本金的 `getLoanInitiationFeeBps`，从交付给借款人的金额中扣除，在接受时因借款人的持有等级折扣而降低，并在设置了 `creatorFull` 且收费成功时因全额费用档奖励而降低。提交者份额，即费用的 `getLifMatcherFeeBps`，支付给发送者，此处为出借人。协议在利息中的份额为 `getTreasuryFeeBps`，在每笔贷款开立时固定（`treasuryFeeBpsAtInit`）；同意开启时，出借人的持有等级折扣会在利息结算时降低它。审核显示今日费率，并以该费率下的份额作为上限。
+费用即 `previewAccept` 的 `lifEstimate`，由借款人承担：以出借资产计的本金的 `getLoanInitiationFeeTerms`（按 offer 期限的费率），从交付给借款人的金额中扣除，在接受时因借款人的持有等级折扣而降低，并在设置了 `creatorFull` 且收费成功时因全额费用档奖励而降低。提交者份额，即费用的 `getLifMatcherFeeBps`，支付给发送者，此处为出借人。协议在利息中的份额为 `getTreasuryFeeBps`，在每笔贷款开立时固定（`treasuryFeeBpsAtInit`）；同意开启时，出借人的持有等级折扣会在利息结算时降低它。审核显示今日费率，并以该费率下的份额作为上限。
 
 <a id="lend-risks"></a>
 
@@ -1962,13 +1962,13 @@ Lend 通过出借人发送的 `acceptOffer(offerId, terms, signature)`，直接�
 
 ### Lend：审核并发布报价
 
-审核从钱包模拟 `createOffer`，并读取两种资产的类别、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、`getTreasuryFeeBps`、最长期限、钱包的金库、钱包在出借资产（出借人锁定的一侧）上的余额和授权，以及两侧均为流动资产时的 `calculateLTV`；每个区块以及钱包打开前都会重新读取。授权不足时，模拟只能到达金额的转入，因此代币的转入错误、`VaultDepositFailed`（协议对无数据回退的转入的包装，WETH 在授权不足时就是这样）或没有协议错误名的回退，都显示为需要清除的批准，与请求的审核规则相同；其他任何具名协议错误都是拒绝。精确批准后再次模拟 `createOffer` 并发送；批准后中止时，若授权未被其他操作改变，则把授权恢复为之前的值。结果读取该钱包 `offerType` 为 0 的 `OfferCreated`，以及金额转入金库的 `Transfer`。
+审核从钱包模拟 `createOffer`，并读取两种资产的类别、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeTerms`、`getTreasuryFeeBps`、最长期限、钱包的金库、钱包在出借资产（出借人锁定的一侧）上的余额和授权，以及两侧均为流动资产时的 `calculateLTV`；每个区块以及钱包打开前都会重新读取。授权不足时，模拟只能到达金额的转入，因此代币的转入错误、`VaultDepositFailed`（协议对无数据回退的转入的包装，WETH 在授权不足时就是这样）或没有协议错误名的回退，都显示为需要清除的批准，与请求的审核规则相同；其他任何具名协议错误都是拒绝。精确批准后再次模拟 `createOffer` 并发送；批准后中止时，若授权未被其他操作改变，则把授权恢复为之前的值。结果读取该钱包 `offerType` 为 0 的 `OfferCreated`，以及金额转入金库的 `Transfer`。
 
 <a id="lend-offer-fee"></a>
 
 ### Lend：您报价的费用
 
-`createOffer` 不向出借人收取任何费用。显示的费用由借款人承担：出借资产金额的 `getLoanInitiationFeeBps`，按 `acceptOffer` 执行时生效的费率计算，届时由借款人的持有等级折扣降低，并从其到账金额中扣除；显示的数字按今天的费率计算。协议在利息中的份额为 `getTreasuryFeeBps`，在每笔贷款开立时固定（`treasuryFeeBpsAtInit`）；在同意开启时，出借人的持有等级折扣会在结算利息时降低该份额。审核显示今天的费率，以及按该费率计算的份额作为上限；`getTreasuryFeeBps` 读取失败时会说明，且不显示份额或返还金额。
+`createOffer` 不向出借人收取任何费用。显示的费用由借款人承担：出借资产金额的 `getLoanInitiationFeeTerms`（按 offer 期限的费率），按 `acceptOffer` 执行时生效的费率计算，届时由借款人的持有等级折扣降低，并从其到账金额中扣除；显示的数字按今天的费率计算。协议在利息中的份额为 `getTreasuryFeeBps`，在每笔贷款开立时固定（`treasuryFeeBpsAtInit`）；在同意开启时，出借人的持有等级折扣会在结算利息时降低该份额。审核显示今天的费率，以及按该费率计算的份额作为上限；`getTreasuryFeeBps` 读取失败时会说明，且不显示份额或返还金额。
 
 <a id="positions"></a>
 
@@ -2282,7 +2282,7 @@ Keeper 部分在同一个区块读取 `getKeeperAccess`、`getApprovedKeepers`�
 
 ### 奖励：手续费折扣等级
 
-卡片在同一区块读取 `getVPFIDiscountConsent`、`isCanonicalVpfiChain` 和 `getEffectiveDiscount`；后者返回手续费路径适用的等级和折扣：同意关闭时为零，上限 50%，在其他网络上为主网络发送来的副本。它还在同一区块读取 `explainTier` 和 `getTwaConfig`。无论是否同意，`explainTier` 都返回仅凭已计入 VPFI 得到的等级、每条持有规则的数值，以及把有效等级压在其下的规则；只有当该解释得出与手续费路径相同的等级时，卡片才会指出这条规则；同意关闭时，卡片会说明开启后将适用哪个等级。Advanced 列出每条规则的数值和 `getTwaConfig` 返回的设置，平均值的时间窗口与回看期作为两个不同的长度分别显示。该表在同一区块读取 `getVpfiTierThresholds`、`getVpfiTierDiscountBps` 和 `getFeesConfig`。等级 1 至 3 从其门槛开始，等级 4 从高于其门槛处开始。每项费用等于标价费用乘以（1 − 封顶后的折扣），精确计算。该表只在确定等级的主网络上显示。
+卡片在同一区块读取 `getVPFIDiscountConsent`、`isCanonicalVpfiChain` 和 `getEffectiveDiscount`；后者返回手续费路径适用的等级和折扣：同意关闭时为零，上限 50%，在其他网络上为主网络发送来的副本。它还在同一区块读取 `explainTier` 和 `getTwaConfig`。无论是否同意，`explainTier` 都返回仅凭已计入 VPFI 得到的等级、每条持有规则的数值，以及把有效等级压在其下的规则；只有当该解释得出与手续费路径相同的等级时，卡片才会指出这条规则；同意关闭时，卡片会说明开启后将适用哪个等级。Advanced 列出每条规则的数值和 `getTwaConfig` 返回的设置，平均值的时间窗口与回看期作为两个不同的长度分别显示。该表在同一区块读取 `getVpfiTierThresholds`、`getVpfiTierDiscountBps`、`getLoanInitiationFeeTerms` 和 `getFeesConfig`。等级 1 至 3 从其门槛开始，等级 4 从高于其门槛处开始。每项费用等于标价费用乘以（1 − 封顶后的折扣），精确计算。该表只在确定等级的主网络上显示。
 
 <a id="rewards-tier-elsewhere"></a>
 
@@ -2312,7 +2312,7 @@ Keeper 部分在同一个区块读取 `getKeeperAccess`、`getApprovedKeepers`�
 
 ### Rate desk：撮合重叠的报价
 
-撮合栏将阶梯上重叠的档位配对：最优买价及以下的出借报价，与最优卖价及以上的借款请求配对，并排除来自同一钱包的配对，以及利率区间不相交的配对：协议只在两个下限中较高者不高于两个上限中较低者时才撮合。若两侧重叠但没有区间相交，撮合栏会说明无法撮合。它在同一区块读取 `getPartialFillEnabled`、`getLoanInitiationFeeBps`、`getLifMatcherFeeBps` 和 `getCapacityCurve(0)`，仅当开关为开启时，才以你的钱包同时作为 matcher 和 initiator，按价格从优到次读取最多 12 对的 `previewMatch(lenderOfferId, borrowerOfferId, matcher, initiator)`。第一对预览无错误的报价会连同预览给出的金额、利率（双方都接受的区间的中点）和所需抵押品一起提供；否则会说明价格最优一对的拒绝原因。分成以上限表示，即金额 × 发起费率 × 撮合者费率，因为费用在借款人折扣之后收取，而预览不报告该折扣。若曲线的免费档位大于零，表示容量限制生效，一次撮合会计为发送者的一次成交。审核每个区块重新读取设置、预览和你的金库，并在打开钱包前对 `matchOffers` 进行试运行；任何数字变化都需要重新确认。之后，应用会查找以你的钱包为 matcher 的该对报价的 `OfferMatched`，并根据出借人金库中激励类别、以借出资产支付给你的钱包或金库的 `VaultOutflow` 记录来计量分成；报价退款或贷款金额属于其他类别，绝不会被计入。先成交的竞争撮合可能让某个报价剩余更少，因此实际开立的贷款和分成可能小于审核时的数字；完成卡片会说明实际结果。阶梯读取的是索引，因此链上已撮合的一对报价可能仍会在阶梯上停留几分钟。包含已连接钱包所发布报价的配对也会被排除，横栏会说明这一点：撮合这样的配对会让该钱包成为出借人或借款人，并把它自己的资金投入贷款。
+撮合栏将阶梯上重叠的档位配对：最优买价及以下的出借报价，与最优卖价及以上的借款请求配对，并排除来自同一钱包的配对，以及利率区间不相交的配对：协议只在两个下限中较高者不高于两个上限中较低者时才撮合。若两侧重叠但没有区间相交，撮合栏会说明无法撮合。它在同一区块读取 `getPartialFillEnabled`、`getLoanInitiationFeeTerms`、`getLifMatcherFeeBps` 和 `getCapacityCurve(0)`，仅当开关为开启时，才以你的钱包同时作为 matcher 和 initiator，按价格从优到次读取最多 12 对的 `previewMatch(lenderOfferId, borrowerOfferId, matcher, initiator)`。第一对预览无错误的报价会连同预览给出的金额、利率（双方都接受的区间的中点）和所需抵押品一起提供；否则会说明价格最优一对的拒绝原因。分成以上限表示，即金额 × 发起费率 × 撮合者费率，因为费用在借款人折扣之后收取，而预览不报告该折扣。若曲线的免费档位大于零，表示容量限制生效，一次撮合会计为发送者的一次成交。审核每个区块重新读取设置、预览和你的金库，并在打开钱包前对 `matchOffers` 进行试运行；任何数字变化都需要重新确认。之后，应用会查找以你的钱包为 matcher 的该对报价的 `OfferMatched`，并根据出借人金库中激励类别、以借出资产支付给你的钱包或金库的 `VaultOutflow` 记录来计量分成；报价退款或贷款金额属于其他类别，绝不会被计入。先成交的竞争撮合可能让某个报价剩余更少，因此实际开立的贷款和分成可能小于审核时的数字；完成卡片会说明实际结果。阶梯读取的是索引，因此链上已撮合的一对报价可能仍会在阶梯上停留几分钟。包含已连接钱包所发布报价的配对也会被排除，横栏会说明这一点：撮合这样的配对会让该钱包成为出借人或借款人，并把它自己的资金投入贷款。
 
 <a id="offer-terms-wait"></a>
 
@@ -2384,7 +2384,7 @@ Keeper 部分在同一个区块读取 `getKeeperAccess`、`getApprovedKeepers`�
 
 ### 数据分析：费用与托管如何读取
 
-费率为 `getTreasuryFeeBps` 和 `getLoanInitiationFeeBps`。费用数据为 `getTreasuryMetrics`：自开始以来的总额是 `feeLedgerTotal`，一天和一周的数据从费用账本末尾最多扫描 `MAX_FEE_EVENTS_ITER`（10,000）条记录，超过后即为下限。每条账本记录按尽力而为规则记载费用计提时的参考货币价值，无法估值时为 0。所显示的国库为 `getTreasury`，即当前金库代码指定的地址。从金库收取的费用会付给该金库自身代码指定的国库，而每当有费用到达 Diamond，`recordTreasuryAccrual` 都会记入 `treasuryBalances`，因此固定在旧代码上的金库或早先的配置，无论 `getTreasury` 显示什么，都可能在那里留下持有的费用。所以页面始终显示 `getTreasuryMetrics` 的持有数额，仅对未结贷款的资产求和，并附上 `getTreasuryConvertConfig` 的最近一次兑换和目标。与部署记录不一致的国库会被标出。
+费率为 `getTreasuryFeeBps` 和 `getLoanInitiationFeeTerms`。费用数据为 `getTreasuryMetrics`：自开始以来的总额是 `feeLedgerTotal`，一天和一周的数据从费用账本末尾最多扫描 `MAX_FEE_EVENTS_ITER`（10,000）条记录，超过后即为下限。每条账本记录按尽力而为规则记载费用计提时的参考货币价值，无法估值时为 0。所显示的国库为 `getTreasury`，即当前金库代码指定的地址。从金库收取的费用会付给该金库自身代码指定的国库，而每当有费用到达 Diamond，`recordTreasuryAccrual` 都会记入 `treasuryBalances`，因此固定在旧代码上的金库或早先的配置，无论 `getTreasury` 显示什么，都可能在那里留下持有的费用。所以页面始终显示 `getTreasuryMetrics` 的持有数额，仅对未结贷款的资产求和，并附上 `getTreasuryConvertConfig` 的最近一次兑换和目标。与部署记录不一致的国库会被标出。
 
 <a id="analytics-vpfi"></a>
 

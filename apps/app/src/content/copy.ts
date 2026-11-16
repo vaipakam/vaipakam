@@ -6354,9 +6354,11 @@ const copySource = {
     // lives in a lazy chunk with a default-value fallback; these strings
     // are ABI-free and shared by both).
     faqQuestion: 'What fees does Vaipakam charge?',
+    // #3649 — the initiation fee is TERM-SCALED, so the answer states the
+    // rule with its four live settings, never one flat rate.
     faqAnswer: tmpl(
-      `Vaipakam charges a {{lifPct}} loan initiation fee on the borrowed amount. Vaipakam keeps {{yieldPct}} of the interest you earn. Late repayment adds 1% of the outstanding amount after day one, growing 0.5% per day, capped at 5%. Network gas is separate and goes to the blockchain, not to Vaipakam.`,
-      ['lifPct', 'yieldPct'],
+      `Vaipakam charges a loan initiation fee on the borrowed amount that depends on the loan’s term: {{basePct}} for a term of up to {{baseDays}} days, rising evenly to {{yearPct}} at {{yearDays}} days, and past {{yearDays}} days {{yearPct}} for every {{yearDays}} days of the term, pro rata. Vaipakam keeps {{yieldPct}} of the interest you earn. Late repayment adds 1% of the outstanding amount after day one, growing 0.5% per day, capped at 5%. Network gas is separate and goes to the blockchain, not to Vaipakam.`,
+      ['basePct', 'baseDays', 'yearPct', 'yearDays', 'yieldPct'],
     ),
     // Non-committal variant for the disconnected /help fallback — the
     // exact loan-initiation and yield-fee percentages are live,
@@ -6366,7 +6368,7 @@ const copySource = {
     // has retuned it (Codex #1200 r2), so this states the fee STRUCTURE
     // and directs the user to connect for the exact current numbers.
     faqAnswerGeneric:
-      'Vaipakam charges a loan initiation fee on the amount borrowed and keeps a share of the interest a lender earns. Late repayment adds 1% of the outstanding amount after day one, growing 0.5% per day, capped at 5%. Network gas is separate and goes to the blockchain, not to Vaipakam. Connect your wallet to see the exact current rates.',
+      'Vaipakam charges a loan initiation fee on the amount borrowed, which grows with the loan’s term, and keeps a share of the interest a lender earns. Late repayment adds 1% of the outstanding amount after day one, growing 0.5% per day, capped at 5%. Network gas is separate and goes to the blockchain, not to Vaipakam. Connect your wallet to see the exact current rates.',
   },
 
   faucet: {
@@ -7876,8 +7878,9 @@ const copySource = {
     feesHeading: 'Fees',
     treasuryFee: 'Treasury fee',
     treasuryFeeHint: 'Cut of interest at settlement.',
-    loanInitiationFee: 'Loan initiation fee',
-    loanInitiationFeeHint: 'Charged once, at accept.',
+    // #3649 — the bundle carries the BASE rate of a term-scaled fee.
+    loanInitiationFee: 'Loan initiation fee, base rate',
+    loanInitiationFeeHint: 'Charged once, at accept, for the shortest terms; the rate rises with a longer term.',
     liquidationHandlingFee: 'Liquidation handling fee',
     matcherFee: 'Matcher fee',
     notificationFee: 'Notification fee (per loan side)',

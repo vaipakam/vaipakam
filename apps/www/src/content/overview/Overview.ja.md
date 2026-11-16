@@ -75,7 +75,7 @@ Acceptされた瞬間に:
   戻す権利」を表します
 - Loan clockが動き始めます
 
-Loaned amountから小さな**Loan Initiation Fee (`{liveValue:loanInitiationFeeBps}`%)**が差し引かれ、
+Loaned amountから小さな**Loan Initiation Fee**（loanの期間で決まります。下のfeesを参照）が差し引かれ、
 protocol treasuryへ送られます。そのためborrowerが受け取るのは
 1,000 USDCではなく`{liveValue:exampleBorrowerReceives}` USDCです。（**VPFI**を保有していると
 このfeeが下がり、borrowerは1,000 USDCのうちより多くを受け取れます。ただし
@@ -206,9 +206,11 @@ Feesは2つだけで、どちらも小さいものです。
   **interest**の割合です（principalの割合ではありません）。1,000 USDC、
   30-day、8% APRのloanでは、lenderは約6.58 USDCのinterestを得て、
   そのうちdefault rateで約0.132 USDCがYield Feeになります。
-- **Loan Initiation Fee — `{liveValue:loanInitiationFeeBps}`%**
-  lending amountの割合で、origination時にborrowerが支払います。
-  1,000 USDC loanならdefault rateで2 USDCです。
+- **Loan Initiation Fee** — loanの期間で決まるlending amountの割合で、
+  origination時にborrowerが支払います。期間 `{liveValue:lifBaseTermDays}` 日までは
+  `{liveValue:loanInitiationFeeBps}`%、`{liveValue:lifYearDays}` 日で `{liveValue:lifYearlyBps}`% まで均等に上がり、
+  それを超えると期間 `{liveValue:lifYearDays}` 日ごとに `{liveValue:lifYearlyBps}`% が日割りで
+  かかります。上の30日・1,000 USDC loanなら `{liveValue:exampleInitiationFee}` USDCです。
 
 どちらのfeeも、vaultにVPFIをholdすることで**最大
 `{liveValue:tier4DiscountBps}`% discount**を受けられます（下記参照）。
@@ -227,7 +229,7 @@ Withdrawal fees、idle fees、streaming fees、principalへの
 > 同じchain上で他のtokenを送るときに支払うfeeと同じものです。金額は
 > chainとその時点のnetwork混雑度に依存し、loanのsizeには依存しません。
 > 上記のprotocol fees（Yield Fee `{liveValue:treasuryFeeBps}`%、
-> Loan Initiation Fee `{liveValue:loanInitiationFeeBps}`%）は
+> Loan Initiation Fee）は
 > network gasとは完全に別物で、protocol自身が徴収するのはこの2つ
 > だけです。
 
@@ -316,7 +318,7 @@ chainsの間でrewardsをfairにするため）。
 2. **Offer Book**で、自分のcollateralと支払えるAPRに合うofferを
    browseします。
 3. **Accept**をclickし、2つのtransactionsにsignすると、loan amount
-   がwalletに入ります（`{liveValue:loanInitiationFeeBps}`% Loan Initiation Feeを差し引いた額）。
+   がwalletに入ります（Loan Initiation Feeを差し引いた額）。
 4. due date plus grace periodまでにrepayします。collateralはunlock
    され、walletに戻ります。
 
