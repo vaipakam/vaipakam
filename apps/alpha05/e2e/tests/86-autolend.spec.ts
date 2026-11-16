@@ -97,7 +97,10 @@ test('a lender sets up Auto-lend: one choice, an exact approval, terms and fundi
   await expect(receipt).toContainText('Lets the protocol take from your wallet');
   // What it does not promise, and what it does with repaid money.
   await expect(receipt).toContainText('nothing promises a fill');
-  await expect(receipt).toContainText('Repaid money is put back behind it and lent again');
+  // Relending repaid money needs the protocol's keeper allowed to roll it;
+  // this wallet has not allowed it, so the review says the money comes back
+  // as a claim instead.
+  await expect(receipt).toContainText('comes back to you as a claim instead of being lent again');
   await expect(receipt).toContainText('take back money that is not lent at any time');
   await expect(receipt).toContainText('Wallet prompts: 2');
   await fitsWidth(page);

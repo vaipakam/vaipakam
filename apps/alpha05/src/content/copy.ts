@@ -4740,7 +4740,9 @@ export const copy = {
     rowApproval: B('Lets the protocol take from your wallet'),
     loseNoDirect: A("No borrower accepts it directly: a matching service fills a borrower's request that fits your limits, and nothing promises a fill."),
     loseSizing: A("Each loan's collateral is sized from your ceiling at the prices when it is filled. If the collateral's value falls, the loan can be liquidated, and a sale can return less than you lent."),
-    loseRelend: A('Repaid money is put back behind it and lent again, until you stop it or its end date passes.'),
+    loseRelend: A('You allow the protocol’s keeper to re-lend for you, so repaid money is put back behind it and lent again, until you stop it or its end date passes.'),
+    loseRelendOff: A("You have not allowed the protocol's keeper to re-lend repaid money for you, so each repaid loan's money comes back to you as a claim instead of being lent again. Allowing it is a setting on the Keepers page that covers your whole account."),
+    loseRelendUnknown: A("Whether the protocol's keeper may re-lend repaid money for you could not be read. If it may not, each repaid loan's money comes back to you as a claim instead of being lent again."),
     loseVault: A('The money stays in your own vault, set aside for Auto-lend. The protocol lets you take back money that is not lent at any time.'),
     loseUntil: A(
       "No new loan will be agreed to run past {{date}}. It does not promise your money is back by then: a late repayment inside the grace period, a default or a pause can end a loan after it.",
@@ -4776,6 +4778,7 @@ export const copy = {
     sectionLead: B('Your standing lending instructions on this network.'),
     sectionReading: B('Reading your Auto-lend…'),
     sectionFailed: A('Your Auto-lend could not be read ({{reason}}).'),
+    sectionStale: A('These figures are as last read: the latest read failed ({{reason}}), so they may be out of date.'),
     sectionMore: B('Showing {{shown}} of {{total}}.'),
     cardTitle: B('{{lend}} against {{coll}}'),
     stateActive: B('Lending'),

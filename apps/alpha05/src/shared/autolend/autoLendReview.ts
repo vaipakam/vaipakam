@@ -15,6 +15,7 @@ import type { Receipt, ReceiptRow, ReceiptText } from '../receipt/types';
 import { allowanceSteps } from '../tx/approval';
 import { chainValidUntil } from '../tx/deadline';
 import { askThrough } from '../tx/simulate';
+import { networkKeeper, readKeeperSettings } from '../keepers/keepers';
 import type { Posture } from '../capability/types';
 import {
   exposureOf,
@@ -49,17 +50,49 @@ export interface AutoLendReview {
    *  checks it when each loan is made, not when the setup is sent, so the
    *  review reads it now rather than let every fill fail. */
   risk: RiskNeed | null;
+  /** Whether the protocol's keeper may put repaid money back behind the
+   *  setup (`KEEPER_ACTION_AUTO_ROLL`): the protocol refuses that roll from
+   *  a keeper the wallet has not allowed, and the money then comes back as
+   *  a claim instead of being lent again. */
+  roll: RollPermission;
   verdict: CreateVerdict;
 }
 
-/** The first risk-access step this wallet lacks for the pair, read through
- *  the same rule the risk step applies; null when none is needed. */
+export type RollPermission = 'allowed' | 'not-allowed' | 'unknown';
+
+/** The protocol's `KEEPER_ACTION_AUTO_ROLL` bit. */
+const AUTO_ROLL = 1 << 7;
+
+/** Whether this network's keeper may roll repaid loans for the wallet:
+ *  keeper access on, and the keeper approved with the auto-roll action. */
+async function readRollPermission(own: OwnStateClient, diamond: Hex): Promise<RollPermission> {
+  const keeper = networkKeeper(own.chainId);
+  if (keeper === null) return 'unknown';
+  try {
+    const s = (await own.read((c) => readKeeperSettings(c, diamond, own.account))).value;
+    const grant = s.keepers.find((k) => k.keeper.toLowerCase() === keeper.toLowerCase());
+    return s.access && grant !== undefined && (grant.actions & AUTO_ROLL) !== 0 ? 'allowed' : 'not-allowed';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/** The protocol's `RiskAccessLevel.IlliquidCustom`. */
+const ILLIQUID_LEVEL = 2;
+
+/** The first risk-access step this wallet lacks for the pair, in the order
+ *  the protocol checks them at a fill (level, illiquid pair consent, strict
+ *  acknowledgement), read through the same rule the risk step applies; null
+ *  when none is needed. */
 async function readRiskNeed(own: OwnStateClient, diamond: Hex, lending: Hex, collateral: Hex): Promise<RiskNeed | null> {
   const pair = erc20Pair(lending, collateral);
-  for (const need of ['tier', 'mid-tier-ack'] as const) {
-    const status = (await own.read((c) => readRiskStatus(c, diamond, own.account, need, { kind: 'pair', pair }))).value;
-    if (riskPlan(status).kind !== 'met') return need;
-  }
+  const status = (need: RiskNeed) => own.read((c) => readRiskStatus(c, diamond, own.account, need, { kind: 'pair', pair })).then((x) => x.value);
+  const tier = await status('tier');
+  if (riskPlan(tier).kind !== 'met') return 'tier';
+  // Only the illiquid boundary carries a per-pair consent, checked at every
+  // fill like the level.
+  if (tier.gateOn && tier.required === ILLIQUID_LEVEL && riskPlan(await status('pair-consent')).kind !== 'met') return 'pair-consent';
+  if (riskPlan(await status('mid-tier-ack')).kind !== 'met') return 'mid-tier-ack';
   return null;
 }
 
@@ -79,7 +112,7 @@ export async function readAutoLendReview(own: OwnStateClient, diamond: Hex, draf
         ).length;
   const minFill = resolvedMinFill(draft.parsed, facts.floor);
   const blocks = setupBlocks(draft, facts);
-  const risk = await readRiskNeed(own, diamond, draft.lending, draft.collateral);
+  const [risk, roll] = await Promise.all([readRiskNeed(own, diamond, draft.lending, draft.collateral), readRollPermission(own, diamond)]);
   let verdict: CreateVerdict;
   if (minFill === null) {
     verdict = { kind: 'unreadable', reason: 'minimum loan unread' };
@@ -92,7 +125,7 @@ export async function readAutoLendReview(own: OwnStateClient, diamond: Hex, draf
     const v = judgeDryRun(dry, true);
     verdict = v.kind === 'ok' && !covers ? { kind: 'needs-approval' } : v;
   }
-  return { draft, identity, readAt: Date.now(), facts, minFill, blocks, approvalSteps, posture: fillPosture(facts.gates), risk, verdict };
+  return { draft, identity, readAt: Date.now(), facts, minFill, blocks, approvalSteps, posture: fillPosture(facts.gates), risk, roll, verdict };
 }
 
 /** What moved between a review and a re-read of it, as a key: a change in
@@ -105,6 +138,7 @@ export function reviewKey(r: AutoLendReview): string {
     r.approvalSteps,
     r.posture,
     r.risk ?? '',
+    r.roll,
     r.blocks.map((b) => b.kind).join(','),
     r.facts.minTermsAgeSec,
     r.facts.floor ?? 'x',
@@ -173,7 +207,12 @@ export function autoLendReceipt(r: AutoLendReview, meta: TokenMetaMap | null, co
   ];
   if (r.approvalSteps > 0) rows.push({ label: text('autoLend.rowApproval'), value: amount(p.fund), binding: true, movesOut: true });
 
-  const consequences: ReceiptText[] = [text('autoLend.loseNoDirect'), text('autoLend.loseSizing'), text('autoLend.loseRelend'), text('autoLend.loseVault')];
+  const consequences: ReceiptText[] = [
+    text('autoLend.loseNoDirect'),
+    text('autoLend.loseSizing'),
+    text(r.roll === 'allowed' ? 'autoLend.loseRelend' : r.roll === 'not-allowed' ? 'autoLend.loseRelendOff' : 'autoLend.loseRelendUnknown'),
+    text('autoLend.loseVault'),
+  ];
   if (d.lendUntil !== 0n) consequences.push(format('autoLend.loseUntil', { date: new Date(Number(d.lendUntil) * 1000).toLocaleString() }));
   if (p.acceptsProRata) consequences.push(text('autoLend.loseProRata'));
   const ageDays = wholeDays(r.facts.minTermsAgeSec);

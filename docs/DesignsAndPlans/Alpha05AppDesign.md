@@ -1786,8 +1786,13 @@ above. Each resolves here, so a route reviewer needs no private file:
   until stopped or the end date, the money stays in the wallet's own vault,
   the end-date copy follows AutoLendLendUntilDesign §3 ("no new loan will be
   agreed to run past" it, never a return date), and pro-rata follows §9. The
-  matcher pass's state is disclosed. A risk-access step a fill would need is
-  offered before the setup, since the protocol checks it at each fill. The
+  matcher pass's state is disclosed, and so is whether the protocol's keeper
+  may roll repaid loans for the wallet (keeper access and the auto-roll
+  action): without it repaid money comes back as a claim, and the review says
+  so instead of promising relending. A risk-access step a fill would need
+  (the level, the illiquid pair consent, the strict acknowledgement) is
+  offered before the setup, since the protocol checks it at each fill. A
+  failed re-read on Positions is stated beside the figures it kept. The
   terms and the money go in one transaction, so neither lands alone; an
   unused approval is put back. The finish card measures the set and funded
   events and the token's move into the vault. Positions lists each intent

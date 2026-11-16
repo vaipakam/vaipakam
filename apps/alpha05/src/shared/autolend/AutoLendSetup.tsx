@@ -119,8 +119,16 @@ export function AutoLendSetup({ draft, chain, own, meta, terms, onEdit, onClose 
 
       // 2. The dry run of the whole setup with the approval in place, with
       //    the deadline the write carries.
-      const call = setupCall(r.draft, minFill, await readValidUntil(own));
-      const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, ...call, account }));
+      //    A read that fails here still puts the approval back.
+      let call: ReturnType<typeof setupCall>;
+      let dry: Awaited<ReturnType<typeof askThrough>>;
+      try {
+        const deadline = await readValidUntil(own);
+        call = setupCall(r.draft, minFill, deadline);
+        dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, ...call, account }));
+      } catch (e) {
+        return stop(format('flow.unreadable', { reason: refusalFromError(e).reason }));
+      }
       if (dry.kind === 'reverted') return stop(format('autoLend.dryRunRefused', { reason: refusalFromError(dry.error).reason }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
 

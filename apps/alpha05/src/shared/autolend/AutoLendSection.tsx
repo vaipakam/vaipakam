@@ -4,6 +4,7 @@ import { assetName, tokenAmount, useTokenMeta } from '../reads/tokens';
 import { useOwnRead } from '../reads/useOwnRead';
 import { useOwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
+import { OwnStamp } from '../ui/OwnStamp';
 import { autoLendState, readMyAutoLend, sortMyAutoLend } from './myAutoLend';
 
 type Hex = `0x${string}`;
@@ -34,6 +35,12 @@ export function AutoLendSection() {
     <section className="positions-section autolend-section" aria-labelledby="autolend-section-title" data-testid="autolend-section">
       <h2 id="autolend-section-title">{text('autoLend.sectionTitle')}</h2>
       <p className="tier-b">{text('autoLend.sectionLead')}</p>
+      <OwnStamp reads={[read]} />
+      {read.error !== null && (
+        <p className="tier-a" data-testid="autolend-stale">
+          {format('autoLend.sectionStale', { reason: read.error })}
+        </p>
+      )}
       <ul className="card-list">
         {sortMyAutoLend(rows, at).map((r) => {
           const i = r.intent;
