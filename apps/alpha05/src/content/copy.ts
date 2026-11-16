@@ -6128,7 +6128,11 @@ export const copy = {
     ),
     setting: {
       treasuryFeeBps: B('Treasury share of interest'),
-      loanInitiationFeeBps: B('Loan initiation fee'),
+      // #3649 — the base rate of a term-scaled fee, never the fee for every term.
+      loanInitiationFeeBps: B('Loan initiation fee, base rate'),
+      lifBaseTermDays: B('Loan initiation fee, longest term at the base rate'),
+      lifYearlyBps: B('Loan initiation fee, yearly rate (a longer term pays it pro rata)'),
+      lifYearDays: B('Loan initiation fee, term at which the yearly rate applies'),
       lifMatcherFeeBps: B('Matcher share of the initiation fee'),
       liquidationHandlingFeeBps: B('Liquidation handling fee'),
       maxLiquidationSlippageBps: B('Largest liquidation slippage'),

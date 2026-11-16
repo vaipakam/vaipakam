@@ -5337,7 +5337,10 @@ Its intended behaviour, as the test oracle for this surface:
   rate rounded up, the figure the protocol compares it with. Until the
   live fee settings are read, the fee shows as not yet known rather than
   as a default figure; the help page's fee answer states the rule with
-  the live settings. The user's own
+  the live settings, and the protocol console lists all four settings
+  (the base rate labelled as the base rate, never as the fee). The
+  operator's live review drives judge a review's initiation fee by the
+  same rule at the new loan's term, read from the protocol. The user's own
   open offers can be repriced or resized in place in one transaction —
   only by their creator; a bought offer position is view-only — and an
   amend that increases the locked amount asks for the token approval

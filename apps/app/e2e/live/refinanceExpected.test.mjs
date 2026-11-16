@@ -350,11 +350,14 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
 // payoff view), never from the loan's original durationDays.
 describe('refinanceExpected — the borrower reserve', () => {
   const DAY = 86_400n;
+  // The live term-rule settings (#3649); a 30-day new term is charged the
+  // base rate, 20 bps.
+  const LIF_TERMS = { baseBps: 20n, baseTermDays: 30n, yearlyBps: 50n, yearDays: 365n };
   const HORIZON = 2n * 3_600n;
 
   it('loan 22: the reserve is exactly what the real accept took from the borrower wallet', () => {
     // calculateRepaymentAmount(22) at the pinned block, LIF 20 bps live.
-    const r = borrowerReserve({ loan: LOAN, viewDue: 5_039_726_027_397_260n, asOf: NOW, horizonSec: HORIZON, lifBps: 20n });
+    const r = borrowerReserve({ loan: LOAN, viewDue: 5_039_726_027_397_260n, asOf: NOW, horizonSec: HORIZON, lifTerms: LIF_TERMS, termDays: 30n });
     expect(r.payoff).toBe(5_039_726_027_397_260n);
     expect(r.lif).toBe(10_000_000_000_000n);
     // The borrower wallet's real delta across the accept was −49726027397260.
@@ -378,7 +381,7 @@ describe('refinanceExpected — the borrower reserve', () => {
       viewDue: 10n ** 18n + tenDays,
       asOf: t0 + 50n * DAY + 3_600n,
       horizonSec: HORIZON,
-      lifBps: 20n,
+      lifTerms: LIF_TERMS, termDays: 30n,
     });
     expect(r.interestShare).toBe(tenDays);
     expect(r.reserve).toBe(tenDays + 2_000_000_000_000_000n);
@@ -387,8 +390,15 @@ describe('refinanceExpected — the borrower reserve', () => {
   });
 
   it('takes the contract view when it is the larger figure', () => {
-    const r = borrowerReserve({ loan: LOAN, viewDue: 5_100_000_000_000_000n, asOf: NOW, horizonSec: HORIZON, lifBps: 20n });
+    const r = borrowerReserve({ loan: LOAN, viewDue: 5_100_000_000_000_000n, asOf: NOW, horizonSec: HORIZON, lifTerms: LIF_TERMS, termDays: 30n });
     expect(r.payoff).toBe(5_100_000_000_000_000n);
+  });
+
+  it('charges the new loan the rate AT ITS TERM, not the base rate (#3649)', () => {
+    const at = (termDays) => borrowerReserve({ loan: LOAN, viewDue: 0n, asOf: NOW, horizonSec: 0n, lifTerms: LIF_TERMS, termDays }).lif;
+    expect(at(30n)).toBe((LOAN.principal * 20n) / 10_000n);
+    expect(at(365n)).toBe((LOAN.principal * 50n) / 10_000n);
+    expect(at(180n)).toBeGreaterThan(at(30n));
   });
 
   it('reserves for the per-second accrual inside the horizon (#3169)', () => {
@@ -398,8 +408,8 @@ describe('refinanceExpected — the borrower reserve', () => {
     const start = 1_700_000_000n;
     const l = { ...LOAN, interestAccrualStart: start, startTime: start, durationDays: 3n };
     const asOf = start + 4n * DAY - 60n;
-    const now = borrowerReserve({ loan: l, viewDue: 0n, asOf, horizonSec: 0n, lifBps: 0n });
-    const later = borrowerReserve({ loan: l, viewDue: 0n, asOf, horizonSec: HORIZON, lifBps: 0n });
+    const now = borrowerReserve({ loan: l, viewDue: 0n, asOf, horizonSec: 0n, lifTerms: { ...LIF_TERMS, baseBps: 0n, yearlyBps: 0n }, termDays: 30n });
+    const later = borrowerReserve({ loan: l, viewDue: 0n, asOf, horizonSec: HORIZON, lifTerms: { ...LIF_TERMS, baseBps: 0n, yearlyBps: 0n }, termDays: 30n });
     const interestFor = (secs) => (l.principal * l.interestRateBps * secs) / (365n * DAY * 10_000n);
     expect(now.interestShare).toBe(interestFor(4n * DAY - 60n) + lateFeeAt(l, asOf));
     expect(later.interestShare).toBe(interestFor(4n * DAY - 60n + HORIZON) + lateFeeAt(l, asOf + HORIZON));

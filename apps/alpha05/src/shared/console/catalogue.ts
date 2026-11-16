@@ -83,6 +83,10 @@ export const SETTINGS: Readonly<Record<SettingKey, SettingSpec>> = {
   // The settings bundle.
   treasuryFeeBps: s('fees', 'bps'),
   loanInitiationFeeBps: s('fees', 'bps'),
+  // #3649 — the initiation fee's term rule beyond the base rate.
+  lifBaseTermDays: s('fees', 'days'),
+  lifYearlyBps: s('fees', 'bps'),
+  lifYearDays: s('fees', 'days'),
   lifMatcherFeeBps: s('fees', 'bps'),
   liquidationHandlingFeeBps: s('liquidation', 'bps'),
   maxLiquidationSlippageBps: s('liquidation', 'bps'),

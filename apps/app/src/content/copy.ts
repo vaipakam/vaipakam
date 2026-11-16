@@ -7881,6 +7881,12 @@ const copySource = {
     // #3649 — the bundle carries the BASE rate of a term-scaled fee.
     loanInitiationFee: 'Loan initiation fee, base rate',
     loanInitiationFeeHint: 'Charged once, at accept, for the shortest terms; the rate rises with a longer term.',
+    lifBaseTerm: 'Loan initiation fee, base term',
+    lifBaseTermHint: 'The longest term charged the base rate.',
+    lifYearlyRate: 'Loan initiation fee, yearly rate',
+    lifYearlyRateHint: 'The rate at the one-year point; a longer term pays this rate a year, pro rata. Between the base term and the one-year point the rate rises in a straight line.',
+    lifYearPoint: 'Loan initiation fee, one-year point',
+    lifYearPointHint: 'The term at which the yearly rate is reached.',
     liquidationHandlingFee: 'Liquidation handling fee',
     matcherFee: 'Matcher fee',
     notificationFee: 'Notification fee (per loan side)',

@@ -68,9 +68,9 @@ export const KNOB_DEFAULTS: Record<KnobName, KnobDefault> = {
   // fee for every term.
   loanInitiationFeeBps: { defaultValue: 20, format: 'percent' },
   // The term rule's other three settings (LIF_BASE_TERM_DAYS_DEFAULT,
-  // LIF_YEARLY_BPS_DEFAULT, LIF_YEAR_DAYS_DEFAULT). Not in the config
-  // snapshot this site reads, so they always render as the bundled default
-  // and say so — see KNOB_READS.
+  // LIF_YEARLY_BPS_DEFAULT, LIF_YEAR_DAYS_DEFAULT). Read live from the
+  // snapshot's labelled values when it carries all three; otherwise the
+  // bundled default, badged as such — see KNOB_READS.
   lifBaseTermDays: { defaultValue: 30, format: 'count' },
   lifYearlyBps: { defaultValue: 50, format: 'percent' },
   lifYearDays: { defaultValue: 365, format: 'count' },
@@ -315,6 +315,9 @@ export interface KnobConfigSource {
   loanInitiationFeeBps: number;
   tierThresholdsTokens: readonly number[];
   tierDiscountBps: readonly number[];
+  /** #3649 — the term rule's other three settings, or `null` when the
+   *  snapshot does not carry all three. */
+  lifTerms: { baseTermDays: number; yearlyBps: number; yearDays: number } | null;
 }
 
 /**
@@ -332,12 +335,12 @@ const KNOB_READS: Record<
 > = {
   treasuryFeeBps: (c) => (c ? c.treasuryFeeBps : null),
   loanInitiationFeeBps: (c) => (c ? c.loanInitiationFeeBps : null),
-  // The snapshot this site reads carries no term settings, so these never
-  // read live: they render as the bundled default and are badged as such,
-  // rather than borrowing the base rate's `published` status.
-  lifBaseTermDays: () => null,
-  lifYearlyBps: () => null,
-  lifYearDays: () => null,
+  // Live only when the snapshot carried all three (the indexer publishes
+  // them under a facet binding); otherwise the bundled default, badged as
+  // such, never borrowing the base rate's `published` status.
+  lifBaseTermDays: (c) => c?.lifTerms?.baseTermDays ?? null,
+  lifYearlyBps: (c) => c?.lifTerms?.yearlyBps ?? null,
+  lifYearDays: (c) => c?.lifTerms?.yearDays ?? null,
   tier1Min: (c) => (c ? c.tierThresholdsTokens[0] : null),
   tier2Min: (c) => (c ? c.tierThresholdsTokens[1] : null),
   tier3Min: (c) => (c ? c.tierThresholdsTokens[2] : null),
