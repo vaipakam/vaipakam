@@ -10,10 +10,8 @@
 // an order rotated one place a run (`stepOrder`):
 //
 //   1. RELEASE — pay each queued payout whose delay has passed
-//      (`VaultPayoutFacet.releasePayout`) and move each queued position-NFT
-//      transfer whose delay has passed (`VaipakamNFTFacet.
-//      releasePositionTransfer`). A row is sent only when the chain's own
-//      record says it can go: still queued, past its release time by the
+//      (`VaultPayoutFacet.releasePayout`). A row is sent only when the
+//      chain's own record says it can go: still queued, past its release time by the
 //      block's clock, its account not locked and with no open Telegram LOCK
 //      request, and, while the account requires a co-sign, co-signed. A payout whose destination has left the account's
 //      allowlist is cancelled by the release itself (the asset stays in the
@@ -43,12 +41,12 @@
 //      events below, which the indexer's ledger does not carry: until it
 //      does (B4), only the Diamond's co-sign switch-off is nominated.
 //
-// The work is nominated by the indexer's event ledger: `PayoutQueued` and
-// `PositionTransferQueued` for step 1, the `*Requested` / `Scheduled` events
+// The work is nominated by the indexer's event ledger: `PayoutQueued` for
+// step 1, the `*Requested` / `Scheduled` events
 // for step 2. Each step reads its own page a run, from where the last run
 // stopped and wrapping round, above a floor every row before which is
 // finished (`ledgerRotation.ts`). A row is finished only when the chain shows
-// it so at the finalized block: a payout or transfer no longer queued, a
+// it so at the finalized block: a payout no longer queued, a
 // change whose pending time no longer equals the one its event announced
 // (applied, cancelled or replaced by a newer request). Every decision is the
 // chain's own record against the chain's own clock; a row only nominates.
@@ -89,7 +87,6 @@ import { d1ScanCursors, type FinalBlock, type ScanCursors } from './scanCursors'
 import { boundedCall, PassReader, type ReadCall } from './passReader';
 import { StepSender } from './stepSender';
 import { leadStageCutoffMs, runIndex } from './runWindow';
-import { LEGACY_DIAMOND_NFT_ABI, positionNftForDiamond } from './positionNft';
 import { protectionCall, VAULT_PROTECTION_VIEWS_ABI } from '@vaipakam/lib/protectedAccountView';
 import type { DiamondProtection, VaultProtectionPending, VaultProtectionState, VaultReplacementTally } from '@vaipakam/lib/protectedAccountView';
 import { accountFrom, noVault, protectionRead, vaultReads, type ProtectedAccount } from './protectedVault';
@@ -101,8 +98,6 @@ const PICK: ReadonlySet<string> = new Set([
   'requestCode',
   'getPendingPayout',
   'payoutNeedsCosign',
-  'getPendingPositionTransfer',
-  'releasePositionTransfer',
   // #3379 B2: the Diamond names the account's vault and keeps the co-sign
   // setting; the vault holds the rest of the record and its finalizers.
   'getProtection',
@@ -130,10 +125,6 @@ const pick = (abi: unknown) => (abi as Abi).filter((x) => x.type === 'error' || 
 export const ABI = dedupe([
   ...pick(VaultPayoutFacetABI),
   ...pick(VaipakamNFTFacetABI),
-  // #3205: the position-NFT queue reads and release exist only on a
-  // legacy-mode Diamond, named in the frozen fragment.
-  // TODO(#3321 positionNft-legacy-removal): drop with the legacy mode.
-  ...pick(LEGACY_DIAMOND_NFT_ABI),
   ...pick(ProtectedAccountFacetABI),
   ...pick(VaultDepositoryFacetABI),
   ...pick(VaipakamVaultImplementationABI),
@@ -164,20 +155,20 @@ export const PASS_CADENCE_SEC = 60;
  *  long payout queue cannot leave an unlock, a replacement or a signer
  *  addition (which expires) unsent run after run, and a burst of Telegram
  *  LOCK requests cannot hold back the rest (`StepSender.stepBudgets`). */
-export const STEP_SENDS: Readonly<Record<string, number>> = { lock: 4, release: 4, transfer: 4, finalize: 4 };
-/** The three steps, in the order of the run whose index is 0. */
-export const STEP_NAMES = ['release', 'transfer', 'finalize'] as const;
+export const STEP_SENDS: Readonly<Record<string, number>> = { lock: 4, release: 4, finalize: 4 };
+/** The two steps, in the order of the run whose index is 0. */
+export const STEP_NAMES = ['release', 'finalize'] as const;
 export type StepName = (typeof STEP_NAMES)[number];
 
 /**
  * The order the steps run in on run `visit`: rotated one place a run, so
- * each step goes first one run in three. A share of sends (`STEP_SENDS`)
+ * each step goes first every other run. A share of sends (`STEP_SENDS`)
  * bounds how many calls a step makes; it does not bound how long they take,
  * since every send waits for its receipt. On a chain with slow blocks a step
  * that always ran first could use the whole read window run after run and
  * leave the later steps unread. Rotated, every step starts a run with the
- * whole window at least every third run, so a due unlock, replacement or
- * signer addition waits at most two runs behind a payout queue.
+ * whole window at least every second run, so a due unlock, replacement or
+ * signer addition waits at most one run behind a payout queue.
  */
 export function stepOrder(visit: number): readonly StepName[] {
   const k = ((Math.trunc(visit) % STEP_NAMES.length) + STEP_NAMES.length) % STEP_NAMES.length;
@@ -202,8 +193,6 @@ export const RECEIPT_TIMEOUT_MS = 30_000;
 export const PAGE = 200;
 export const PAYOUT_FLOOR_ITEM = 'payout-floor';
 export const PAYOUT_NEXT_ITEM = 'payout-next';
-export const TRANSFER_FLOOR_ITEM = 'transfer-floor';
-export const TRANSFER_NEXT_ITEM = 'transfer-next';
 export const CHANGE_FLOOR_ITEM = 'change-floor';
 export const CHANGE_NEXT_ITEM = 'change-next';
 
@@ -219,7 +208,8 @@ const ROW_NONE = 0;
 export const SETTING_FIELD: Readonly<Record<number, keyof ProtectedAccount>> = {
   1: 'pendingDisableAt',
   2: 'pendingDelayAt',
-  3: 'pendingNftOffAt',
+  // 3 (NFT protection off) retired by #3205: NFT protection is the
+  // PositionNFT's holder lock.
   4: 'pendingCosignOffAt',
   5: 'pendingUnlockAt',
   // 6 (unpin) retired by #3204: a pin change waits at the VaultBeacon, and
@@ -232,7 +222,6 @@ const CHANGE_COSIGN_OFF = 4;
 const SETTING_NAME: Readonly<Record<number, string>> = {
   1: 'switch-off',
   2: 'lower-delay',
-  3: 'nft-protection-off',
   4: 'cosign-off',
   5: 'unlock',
 };
@@ -240,7 +229,6 @@ const SETTING_NAME: Readonly<Record<number, string>> = {
 const CHANGE_DISABLE = 1;
 
 export const PAYOUT_EVENT = 'PayoutQueued';
-export const TRANSFER_EVENT = 'PositionTransferQueued';
 export const CHANGE_EVENTS = [
   'SettingChangeRequested',
   'AllowlistAddRequested',
@@ -270,14 +258,6 @@ interface PendingPayout {
   tokenId: bigint;
   amount: bigint;
   delivered: bigint;
-}
-
-interface PendingTransfer {
-  from: Address;
-  state: number;
-  releaseAt: bigint;
-  to: Address;
-  tokenId: bigint;
 }
 
 /** `vault.signerEntry(who)`. */
@@ -343,10 +323,6 @@ export interface ProtectedReport {
   released: { id: bigint; delivered: bigint }[];
   /** Payout ids the release cancelled (destination no longer allowed). */
   cancelled: bigint[];
-  /** Position-transfer ids moved this run. */
-  transferred: bigint[];
-  /** Why the transfer step did not run on this chain, or null (#3205). */
-  transferSkipped: string | null;
   /** Changes applied this run, as `kind:account[:other]`. */
   finalized: string[];
   /** Rows not sent this run for a reason the chain states, by reason. */
@@ -421,9 +397,6 @@ export function describeReport(r: ProtectedReport): string {
     `[keeper] protectedAccount chain=${r.chainId}`,
     `payouts-released=${r.released.map((x) => `${x.id}(delivered ${x.delivered})`).join(',') || 'none'}`,
     ...(r.cancelled.length > 0 ? [`payouts-cancelled-by-release=${r.cancelled.join(',')} (destination no longer allowed; the asset stays in the vault)`] : []),
-    r.transferSkipped
-      ? `transfers=skipped (${r.transferSkipped})`
-      : `transfers-released=${r.transferred.join(',') || 'none'}`,
     `changes-finalized=${r.finalized.join(',') || 'none'}`,
     ...(r.locks === null
       ? []
@@ -473,8 +446,6 @@ export async function protectedOnce(chainId: number, diamond: Address, deps: Pro
     chainId,
     released: [],
     cancelled: [],
-    transferred: [],
-    transferSkipped: null,
     finalized: [],
     waiting: new Map(),
     locks: deps.telegram?.lock === true ? [] : null,
@@ -539,7 +510,6 @@ export async function protectedOnce(chainId: number, diamond: Address, deps: Pro
     }
     const work: Record<StepName, () => Promise<void>> = {
       release: () => step.releasePayouts(),
-      transfer: () => step.releaseTransfers(),
       finalize: () => step.finalizeChanges(),
     };
     // eslint-disable-next-line no-await-in-loop
@@ -570,7 +540,7 @@ const uint = (v: unknown): bigint | null => {
   return /^\d+$/.test(s) ? BigInt(s) : null;
 };
 
-/** The row id a `PayoutQueued` / `PositionTransferQueued` row names. */
+/** The row id a `PayoutQueued` row names. */
 export const rowId = (row: LedgerRow): bigint | null => uint(row.args.id);
 
 /** The pending change a step-2 row announces; null when it names none. */
@@ -630,7 +600,7 @@ class Step {
 
   /**
    * Read the wallets whose LOCK request is still open and young enough to be
-   * acted on, and hold their payouts and position transfers until the LOCK
+   * acted on, and hold their payouts until the LOCK
    * step reaches them. When the read fails, hold every release this run: a
    * release cannot be undone, and an owner who sent LOCK sent it to stop one.
    */
@@ -642,7 +612,7 @@ class Step {
     } catch (err) {
       if (err instanceof PastRunDeadline) throw err;
       this.lockRequested = null;
-      this.sender.noteUnread('release', `the open LOCK requests (${shortErr(err)}); no payout or transfer is released this run`);
+      this.sender.noteUnread('release', `the open LOCK requests (${shortErr(err)}); no payout is released this run`);
     }
   }
 
@@ -837,90 +807,6 @@ class Step {
     // leaves its row above the floor, to be sent again.
     await page.liftFloor(this.r.finalized, (id) => settled.has(id), async (xs, block: FinalBlock) => {
       const at = (await read(xs, 'payouts-final', block.number)) as (PendingPayout | undefined)[];
-      const done = new Set(xs.filter((_, j) => at[j] !== undefined && ![ROW_NONE, ROW_QUEUED].includes(Number(at[j]!.state))));
-      return (id) => done.has(id);
-    });
-  }
-
-  // 1b. Position transfers.
-  async releaseTransfers(): Promise<void> {
-    // #3205: a chain whose position NFTs live in the standalone PositionNFT
-    // has no queued NFT transfer to release; its holder lock's matured
-    // unlocks are not executed by this pass.
-    if (positionNftForDiamond(this.r.diamond).mode === 'standalone') {
-      this.report.transferSkipped =
-        'position NFTs live in the standalone PositionNFT: there is no queued transfer, and matured holder unlocks are not sent by this pass';
-      return;
-    }
-    if (this.lockRequested === null) return;
-    const page = await readLedgerRotation<bigint>({
-      ledger: this.deps.ledger,
-      cursors: this.deps.cursors,
-      chainId: this.chainId,
-      kinds: [TRANSFER_EVENT],
-      floorItem: TRANSFER_FLOOR_ITEM,
-      nextItem: TRANSFER_NEXT_ITEM,
-      limit: PAGE,
-      cutoff: this.r.cutoff,
-      nominee: rowId,
-      id: (id) => String(id),
-    });
-    if (page === null) {
-      this.sender.noteUnread('transfer', 'the event ledger of queued position transfers');
-      return;
-    }
-    const ids = page.nominees;
-    const read = (xs: readonly bigint[], label: string, block?: bigint) =>
-      this.r.many(xs.map((id) => ({ functionName: 'getPendingPositionTransfer', args: [id] })), label, block);
-    const settled = new Set<bigint>();
-    if (ids.length > 0) {
-      const now = await this.clock('transfer');
-      if (now === null) return;
-      const named = accountsNamed(page);
-      const rows = (await this.readWithAccounts(
-        ids.map((id) => ({ functionName: 'getPendingPositionTransfer', args: [id], account: named.get(id) ?? null })),
-        'transfers',
-      )) as (PendingTransfer | undefined)[];
-      // A record naming an account its event did not (none should) has that
-      // account read now.
-      await this.readAccounts(rows.flatMap((x) => (x && Number(x.state) === ROW_QUEUED ? [lower(x.from)!] : [])));
-      for (const i of this.order(ids.length)) {
-        const id = ids[i];
-        const t = rows[i];
-        if (t === undefined) {
-          this.sender.noteUnread(`transfer:${id}`, 'its pending position-transfer record');
-          continue;
-        }
-        if (Number(t.state) !== ROW_QUEUED) {
-          if (Number(t.state) !== ROW_NONE) settled.add(id);
-          continue;
-        }
-        if (t.releaseAt > now) {
-          this.wait('transfer-not-due');
-          continue;
-        }
-        const a = this.accounts.get(lower(t.from)!);
-        if (a === undefined) {
-          this.sender.noteUnread(`transfer:${id}`, "its account's settings");
-          continue;
-        }
-        if (a.locked) {
-          this.wait('transfer-account-locked');
-          continue;
-        }
-        if (this.lockRequested.has(lower(t.from)!)) {
-          this.wait('transfer-lock-requested');
-          continue;
-        }
-        // eslint-disable-next-line no-await-in-loop
-        const res = await this.sender.call('transfer', String(id), 'releasePositionTransfer', [id]);
-        if (res !== 'landed') continue;
-        settled.add(id);
-        this.report.transferred.push(id);
-      }
-    }
-    await page.liftFloor(this.r.finalized, (id) => settled.has(id), async (xs, block: FinalBlock) => {
-      const at = (await read(xs, 'transfers-final', block.number)) as (PendingTransfer | undefined)[];
       const done = new Set(xs.filter((_, j) => at[j] !== undefined && ![ROW_NONE, ROW_QUEUED].includes(Number(at[j]!.state))));
       return (id) => done.has(id);
     });
@@ -1180,9 +1066,8 @@ function changeCalls(c: Change, a: ProtectedAccount | undefined): ReadCall[] | n
   }
 }
 
-/** The accounts the page's events name (`PayoutQueued` and
- *  `PositionTransferQueued` both carry it), so their settings are read with
- *  the rows' own records. */
+/** The accounts the page's events name (`PayoutQueued` carries it), so
+ *  their settings are read with the rows' own records. */
 /** A read and the account whose settings go with it (null: none named). */
 type AccountCall = { functionName: string; args: readonly unknown[]; account: Address | null };
 

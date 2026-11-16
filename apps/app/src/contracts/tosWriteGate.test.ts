@@ -9,7 +9,6 @@
 import { describe, expect, it } from 'vitest';
 import { encodeFunctionData } from 'viem';
 import { DIAMOND_ABI_VIEM, PositionNFTABI, VaipakamVaultImplementationABI } from '@vaipakam/contracts/abis';
-import { LEGACY_DIAMOND_NFT_ABI } from '@vaipakam/lib/positionNft';
 import { directAuth, protectionCall } from '@vaipakam/lib/protectedAccountView';
 import { EXIT_WRITES, isExitWrite } from './tosWriteGate';
 
@@ -103,9 +102,7 @@ describe('isExitWrite', () => {
       'escapeWithdraw',
       'disownUntracked',
       'releasePayout',
-      'releasePositionTransfer',
       'cancelPayout',
-      'cancelPositionTransfer',
       'cosignPayout',
       'requestUnlock',
       'cancelSettingChange',
@@ -283,31 +280,17 @@ describe('isExitWrite', () => {
   it('names only writes the ABI actually has', () => {
     // A typo here fails open in the worst way: the intended write stops
     // being exempt, and nothing says so. A name resolves against the
-    // generated Diamond ABI, the frozen pre-#3205 Diamond fragment (the
-    // legacy NFT queue), or the PositionNFT (its holder lock).
+    // generated Diamond ABI, the PositionNFT (its holder lock) or the vault.
     const names = (abi: unknown) =>
       (abi as readonly { type?: string; name?: string }[]).filter((i) => i.type === 'function').map((i) => i.name);
     const abiNames = new Set([
       ...names(DIAMOND_ABI_VIEM),
-      ...names(LEGACY_DIAMOND_NFT_ABI),
       ...names(PositionNFTABI),
       // #3379 B2 — the vault's `protect(bytes)`.
       ...names(VaipakamVaultImplementationABI),
     ]);
     for (const fn of EXIT_WRITES) {
       expect(abiNames.has(fn), fn).toBe(true);
-    }
-  });
-
-  it('keeps the legacy queue names in the frozen fragment, not the generated ABI (#3205)', () => {
-    const names = (abi: unknown) =>
-      new Set((abi as readonly { type?: string; name?: string }[]).filter((i) => i.type === 'function').map((i) => i.name));
-    const legacy = names(LEGACY_DIAMOND_NFT_ABI);
-    const diamond = names(DIAMOND_ABI_VIEM);
-    for (const fn of ['queuePositionTransfer', 'cancelPositionTransfer', 'releasePositionTransfer', 'cosignPositionTransfer']) {
-      expect(EXIT_WRITES.has(fn), fn).toBe(true);
-      expect(legacy.has(fn), fn).toBe(true);
-      expect(diamond.has(fn), fn).toBe(false);
     }
   });
 

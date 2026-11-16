@@ -47,10 +47,14 @@ const E2E_DEPLOYMENT = JSON.parse(
   fs.readFileSync(path.resolve(HERE, '..', '.state', 'deployments.json'), 'utf8'),
 )[String(CHAIN_ID)];
 const DIAMOND = E2E_DEPLOYMENT.diamond;
-/** #3205 — the fixture deploys the standalone PositionNFT, so holders are
- *  read there; a retired (closed) token keeps its owner, so the Diamond's
- *  `isPositionRetired` answers "nobody holds it" as a burn used to. */
-const POSITION_NFT = E2E_DEPLOYMENT.positionNFT ?? DIAMOND;
+/** #3205 — holders are read at the fixture's PositionNFT; a retired (closed)
+ *  token keeps its owner, so the Diamond's `isPositionRetired` answers
+ *  "nobody holds it". A fixture record without `positionNFT` is refused
+ *  (#3321): the Diamond is never read as the NFT. */
+const POSITION_NFT = E2E_DEPLOYMENT.positionNFT;
+if (!POSITION_NFT) {
+  throw new Error(`e2e fixture deployment (chain ${CHAIN_ID}, Diamond ${DIAMOND}) names no positionNFT (#3321)`);
+}
 /** The block the fixture Diamond was deployed at — where a log scan starts. */
 const DEPLOY_BLOCK = BigInt(E2E_DEPLOYMENT.deployBlock ?? 0);
 const pub = createPublicClient({

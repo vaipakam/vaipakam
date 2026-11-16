@@ -33,10 +33,13 @@ export const CHAIN_ID = 84532;
 const deployment = loadDeployment(CHAIN_ID);
 
 export const DIAMOND = deployment.diamond;
-/** #3205 — where the position NFTs live: the fixture deploys the current
- *  contracts, so this is the standalone PositionNFT (owners, approvals,
- *  transfers, the holder lock). Never the Diamond on this tier. */
-export const POSITION_NFT = (deployment.positionNFT ?? deployment.diamond) as `0x${string}`;
+/** #3205 — the fixture's PositionNFT (owners, approvals, transfers, the
+ *  holder lock). A fixture record without it is refused (#3321): the
+ *  Diamond is never read as the NFT. */
+if (!deployment.positionNFT) {
+  throw new Error(`e2e fixture deployment (chain ${CHAIN_ID}, Diamond ${deployment.diamond}) names no positionNFT (#3321)`);
+}
+export const POSITION_NFT = deployment.positionNFT as `0x${string}`;
 /** The fixture Diamond's admin — it holds ADMIN_ROLE and ownership, so
  *  specs that flip config impersonate it (#1355 flips the
  *  fee-entitlement kill-switch through it). */

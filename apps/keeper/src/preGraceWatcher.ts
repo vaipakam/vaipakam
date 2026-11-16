@@ -324,23 +324,22 @@ async function watchChain(env: Env, chain: ChainConfig, alerts: AlertDelivery): 
   if (due.length === 0) return;
 
   // Resolve the LIVE borrower-position holders on the chain's position-NFT
-  // surface (#3205): the owner and, on a standalone chain, whether the token
-  // was retired, both in the same batch. The shared rule
-  // (`positionHolderCalls` + `positionHolderFrom`) decides; a retired token
-  // has no holder (#3318 r2).
+  // surface (#3205): the owner and whether the token was retired, both in the
+  // same batch. The shared rule (`positionHolderCalls` + `positionHolderFrom`)
+  // decides; a retired token has no holder (#3318 r2).
   const surface = positionNftForDiamond(diamond);
   const holderCalls = due.map((d) => positionHolderCalls(surface, d.loan.borrowerTokenId));
-  const flat = holderCalls.flatMap((c) => (c.retired ? [c.owner, c.retired] : [c.owner]));
+  const flat = holderCalls.flatMap((c) => [c.owner, c.retired]);
   const flatResults = await chunkedRead(publicClient, flat, (call) => call, `${chain.id} holder`);
   const ownerResults: { status: 'success' | 'failure'; result?: unknown; error?: unknown }[] = [];
-  for (let i = 0, k = 0; i < holderCalls.length; i += 1) {
-    const owner = flatResults[k++];
-    const retired = holderCalls[i].retired ? flatResults[k++] : undefined;
-    if (!owner || owner.status !== 'success' || (retired && retired.status !== 'success')) {
+  for (let i = 0; i < holderCalls.length; i += 1) {
+    const owner = flatResults[2 * i];
+    const retired = flatResults[2 * i + 1];
+    if (!owner || owner.status !== 'success' || !retired || retired.status !== 'success') {
       ownerResults.push({ status: 'failure', error: owner?.status !== 'success' ? owner?.error : retired?.error });
       continue;
     }
-    const holder = positionHolderFrom(owner.result as Address, retired?.result as boolean | undefined);
+    const holder = positionHolderFrom(owner.result as Address, retired.result as boolean);
     ownerResults.push(
       holder === 'gone' ? { status: 'failure', error: 'position retired: no live holder' } : { status: 'success', result: holder },
     );

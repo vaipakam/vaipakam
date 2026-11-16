@@ -36,7 +36,7 @@ export interface AddCollateralInputs {
   assetType: number;
   /** Who holds the borrower position now; null when unread. */
   borrowerHolder: Hex | null;
-  /** The borrower position's lock (`positionLock`); null when unread. */
+  /** The borrower position's lock (`positionRoute`); null when unread. */
   borrowerLock: number | null;
   /** Whether governance has paused the collateral asset; null when unread. */
   assetPaused: boolean | null;

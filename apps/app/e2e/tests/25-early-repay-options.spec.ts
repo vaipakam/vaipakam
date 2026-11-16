@@ -43,12 +43,12 @@ async function loanDetails(loanId: bigint): Promise<{
   return { ...loan, status: Number(loan.status) };
 }
 
-async function positionLockOf(tokenId: bigint): Promise<number> {
+async function positionRouteOf(tokenId: bigint): Promise<number> {
   return Number(
     await pub.readContract({
       address: DIAMOND,
       abi: DIAMOND_ABI_VIEM,
-      functionName: 'positionRoute', // #3205: the open route (formerly positionLock)
+      functionName: 'positionRoute', // #3205: the open route
       args: [tokenId],
     }),
   );
@@ -159,9 +159,8 @@ test('offset posts, locks the position, and cancel releases it (Option 3)', asyn
     .locator('section.card')
     .filter({ hasText: 'Exit by becoming a lender (offset)' });
   await expect(offsetCard).toBeVisible({ timeout: 60_000 });
-  // The MUST-SURFACE route disclosure renders before review. #3205: this
-  // tier runs the standalone PositionNFT, where moving the NFT stops the
-  // offset completing instead of being refused.
+  // The MUST-SURFACE route disclosure renders before review. #3205: moving
+  // the NFT stops the offset completing instead of being refused.
   await expect(offsetCard.getByText(/moving it means the offset can no longer complete/i)).toBeVisible();
   const review = offsetCard.getByRole('button', {
     name: /review offset offer/i,
@@ -181,7 +180,7 @@ test('offset posts, locks the position, and cancel releases it (Option 3)', asyn
     page.getByText(/offset in progress/i).first(),
   ).toBeVisible({ timeout: 120_000 });
   await expect
-    .poll(() => positionLockOf(loan.borrowerTokenId), { timeout: 30_000 })
+    .poll(() => positionRouteOf(loan.borrowerTokenId), { timeout: 30_000 })
     .toBe(1); // LibERC721.LockReason.PrecloseOffset
 
   // Past the protocol-wide cancel cooldown (300 s), cancel unwinds:
@@ -194,7 +193,7 @@ test('offset posts, locks the position, and cancel releases it (Option 3)', asyn
     timeout: 120_000,
   });
   await expect
-    .poll(() => positionLockOf(loan.borrowerTokenId), { timeout: 30_000 })
+    .poll(() => positionRouteOf(loan.borrowerTokenId), { timeout: 30_000 })
     .toBe(0);
   await adv.ctx.close();
 });

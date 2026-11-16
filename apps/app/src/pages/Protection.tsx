@@ -32,7 +32,7 @@ import {
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
-import { LEGACY_DIAMOND_NFT_ABI, POSITION_NFT_ABI } from '../contracts/positionNft';
+import { POSITION_NFT_ABI } from '../contracts/positionNft';
 import { DepositoryCard } from '../components/DepositoryCard';
 import { useTokenMeta } from '../contracts/erc20';
 import { captureTxError } from '../lib/errors';
@@ -194,60 +194,6 @@ function AddressAction({
 }
 
 /**
- * Queue a position-NFT transfer out of a protected account. The contract
- * accepts it only from the account's manager, and for a replaced account
- * only to that manager (the controller), so the destination is fixed to the
- * connected wallet there.
- */
-function QueueTransferAction({
-  fixedTo,
-  disabled,
-  onSubmit,
-}: {
-  fixedTo: `0x${string}` | null;
-  disabled: boolean;
-  onSubmit: (tokenId: bigint, to: `0x${string}`) => void;
-}) {
-  const p = copy.protection;
-  const [tokenId, setTokenId] = useState('');
-  const [to, setTo] = useState('');
-  const idOk = /^[0-9]+$/.test(tokenId.trim());
-  const dest = fixedTo ?? (isAddress(to.trim()) ? (to.trim() as `0x${string}`) : null);
-  return (
-    <form
-      className="cluster"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (idOk && dest) onSubmit(BigInt(tokenId.trim()), dest);
-      }}
-    >
-      <input
-        className="input"
-        inputMode="numeric"
-        value={tokenId}
-        placeholder={p.transferTokenId}
-        aria-label={p.transferTokenId}
-        onChange={(e) => setTokenId(e.target.value)}
-        aria-invalid={tokenId !== '' && !idOk}
-      />
-      {fixedTo ? null : (
-        <input
-          className="input"
-          value={to}
-          placeholder={p.addressPlaceholder}
-          aria-label={p.addressPlaceholder}
-          onChange={(e) => setTo(e.target.value)}
-          aria-invalid={to !== '' && !isAddress(to.trim())}
-        />
-      )}
-      <button type="submit" className="btn btn-secondary" disabled={disabled || !idOk || !dest}>
-        {p.transferQueue}
-      </button>
-    </form>
-  );
-}
-
-/**
  * The account view. `asSigner` renders the signer's actions only; the owner
  * (or the controller of a retired account) gets the manager's.
  */
@@ -319,15 +265,12 @@ function AccountView({
   snap: ProtectedAccountSnapshot;
   asSigner: boolean;
 }) {
-  const { address, walletChain } = useActiveChain();
+  const { address } = useActiveChain();
   const { protect, write } = useProtectionWrites(snap.vault);
   const { busy, error, done, run } = useRunner();
   const nowSec = useNowSec();
   const p = copy.protection;
   const record = snap.record!;
-  // #3205: the position-NFT queue exists only on a legacy-mode chain; a
-  // standalone chain protects the NFTs with the PositionNFT holder lock.
-  const legacyNfts = snap.nftMode === 'legacy';
   const now = chainNowOf(snap, nowSec);
   const manager = isManager(account, record, address);
   // A new primary's cool-down: no loosening change (an unlock included) can
@@ -378,12 +321,6 @@ function AccountView({
       // switch-off in its own transaction (Codex #3489 r12).
       if (due.some((c) => c.kind === 4)) await write('finalizeSettingChanges', [account]);
     });
-  // TODO(#3321 positionNft-legacy-removal): the legacy queue writes, sent
-  // through the frozen pre-#3205 fragment.
-  const txLegacyNft = (fn: string, args: readonly unknown[]) =>
-    run(() =>
-      write(fn, args, { target: { address: walletChain!.diamondAddress, abi: LEGACY_DIAMOND_NFT_ABI } }),
-    );
 
   // `kind` is the contract's CHANGE_* constant {cancelSettingChange} takes.
   const pending: Array<{ key: string; label: string; at: bigint; kind: number }> = [];
@@ -393,17 +330,14 @@ function AccountView({
     pending.push({ key: 'disable', label: p.changeDisable, at: record.pendingDisableAt, kind: 1 });
   if (record.pendingUnlockAt > 0n)
     pending.push({ key: 'unlock', label: p.changeUnlock, at: record.pendingUnlockAt, kind: 5 });
-  if (record.pendingNftOffAt > 0n)
-    pending.push({ key: 'nfts', label: p.changeNftsOff, at: record.pendingNftOffAt, kind: 3 });
   if (record.pendingCosignOffAt > 0n)
     pending.push({ key: 'cosign', label: p.changeCosignOff, at: record.pendingCosignOffAt, kind: 4 });
-  // Switching protection off completes only once no payout or position
-  // transfer is open (the contract's finalize applies every other due change
-  // and leaves the switch-off waiting, or refuses when it is the only one).
-  // So a due switch-off counts as ready only when both queues are read and
-  // empty; otherwise its row says what it waits for.
-  const openRows =
-    snap.payouts === null || snap.transfers === null ? null : snap.payouts.length + snap.transfers.length;
+  // Switching protection off completes only once no payout is open (the
+  // contract's finalize applies every other due change and leaves the
+  // switch-off waiting, or refuses when it is the only one). So a due
+  // switch-off counts as ready only when the queue is read and empty;
+  // otherwise its row says what it waits for.
+  const openRows = snap.payouts === null ? null : snap.payouts.length;
   const disableWaits = (c: { key: string; at: bigint }) =>
     c.key === 'disable' && isDue(c.at, now) && openRows !== 0;
   const anyDue = pending.some((c) => isDue(c.at, now) && !disableWaits(c));
@@ -422,17 +356,11 @@ function AccountView({
         </h2>
         <p>
           {p.summaryDelay(days(record.delaySeconds))}{' '}
-          {!legacyNfts
-            ? snap.holderLock === null
-              ? p.nftLockUnknown
-              : snap.holderLock.locked
-                ? p.summaryNftLockOn
-                : p.summaryNftLockOff
-            : record.retired && !record.protectNfts
-              ? p.summaryNftsRetired
-              : record.protectNfts
-                ? p.summaryNftsOn
-                : p.summaryNftsOff}{' '}
+          {snap.holderLock === null
+            ? p.nftLockUnknown
+            : snap.holderLock.locked
+              ? p.summaryNftLockOn
+              : p.summaryNftLockOff}{' '}
           {record.requireCosign ? p.summaryCosignOn : ''}
         </p>
         {record.retired ? <p className="muted">{p.retiredNote(shortAddress(record.controller))}</p> : null}
@@ -590,83 +518,6 @@ function AccountView({
         <p className="muted">{p.codeHint}</p>
       </section>
 
-      {legacyNfts &&
-      (record.protectNfts || record.retired || (snap.transfers?.length ?? 0) > 0 || snap.transfers === null) ? (
-        <section className="card">
-          <h2 className="card-title">{p.transfersTitle}</h2>
-          {snap.transfers === null ? (
-            <p className="banner banner-warn">{p.transfersUnknown}</p>
-          ) : snap.transfers.length === 0 ? (
-            <p className="muted">{p.transfersEmpty}</p>
-          ) : (
-            snap.transfers.map((t) => (
-              <div key={t.id.toString()} className="item-row">
-                <span className="row-main">
-                  <span className="row-title">{p.transferLine(t.tokenId.toString(), shortAddress(t.to))}</span>
-                  <br />
-                  <span className="row-sub">
-                    <strong>{t.code ? p.requestCode(t.code) : p.requestCodeUnknown}</strong> ·{' '}
-                    {(() => {
-                      // The same order the contract checks a release in.
-                      const st = payoutStatus(t, record, now);
-                      return st === 'locked'
-                        ? p.statusLockedRow
-                        : st === 'waiting'
-                          ? p.statusWaiting(when(t.releaseAt))
-                          : st === 'needsCosign'
-                            ? p.statusNeedsCosign
-                            : p.statusDue;
-                    })()}
-                  </span>
-                </span>
-                <span className="cluster">
-                  {payoutStatus(t, record, now) === 'due' ? (
-                    <button
-                      type="button"
-                      className="btn btn-primary"
-                      disabled={busy}
-                      onClick={() => txLegacyNft('releasePositionTransfer', [t.id])}
-                    >
-                      {p.release}
-                    </button>
-                  ) : null}
-                  {signer && record.requireCosign && !t.cosigned ? (
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      disabled={busy}
-                      onClick={() => txLegacyNft('cosignPositionTransfer', [t.id])}
-                    >
-                      {p.cosign}
-                    </button>
-                  ) : null}
-                  {canGuard ? (
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      disabled={busy}
-                      onClick={() => txLegacyNft('cancelPositionTransfer', [t.id])}
-                    >
-                      {p.cancel}
-                    </button>
-                  ) : null}
-                </span>
-              </div>
-            ))
-          )}
-          {manager && !record.locked && address && (record.protectNfts || record.retired) ? (
-            <>
-              <p>{record.retired ? p.transferQueueRetired : p.transferQueueOwner}</p>
-              <QueueTransferAction
-                fixedTo={record.retired ? address : null}
-                disabled={busy}
-                onSubmit={(id, to) => txLegacyNft('queuePositionTransfer', [id, to])}
-              />
-            </>
-          ) : null}
-        </section>
-      ) : null}
-
       {manager ? (
         <section className="card">
           <h2 className="card-title">{p.settingsTitle}</h2>
@@ -698,24 +549,9 @@ function AccountView({
             </button>
           </div>
           <div className="cluster">
-            {record.retired ? null : legacyNfts ? (
-              // A replaced account delays position NFT transfers whatever the
-              // setting says, so the toggle is not offered there.
-              <button
-                type="button"
-                className="btn btn-secondary"
-                disabled={busy || (loosenBlocked && record.protectNfts)}
-                onClick={() =>
-                  // #3379 B2: the Diamond's NFT setting is retired; switching
-                  // on is `lockPositionNfts`. There is no Diamond switch-off.
-                  record.protectNfts ? undefined : tx('lockPositionNfts', [account])
-                }
-              >
-                {record.protectNfts ? p.nftsOff : p.nftsOn}
-              </button>
-            ) : snap.holderLock?.locked ? null : (
-              // Standalone: protection can only switch the holder lock ON;
-              // unlocking is the holder's own, at the PositionNFT.
+            {record.retired || snap.holderLock?.locked ? null : (
+              // Protection can only switch the holder lock ON; unlocking is
+              // the holder's own, at the PositionNFT.
               <button
                 type="button"
                 className="btn btn-secondary"
@@ -942,18 +778,15 @@ function AccountView({
 }
 
 /**
- * #3205 — the PositionNFT holder lock on the connected wallet's own tokens
- * (standalone mode). Lock, ask to unlock and cancel act on the caller; the
+ * #3205 — the PositionNFT holder lock on the connected wallet's own tokens. Lock, ask to unlock and cancel act on the caller; the
  * unlock, once its delay has passed, can be applied by anyone.
  */
-/** #3205 — the connected wallet's own PositionNFT holder lock, on a standalone
- *  chain. Rendered at the page root, not inside the protected-account view:
+/** #3205 — the connected wallet's own PositionNFT holder lock. Rendered at the page root, not inside the protected-account view:
  *  the lock outlives protected mode (switching protection off cannot unlock
  *  the holder), so its state and unlock controls must show whether or not
  *  protected mode is on (#3318 Codex r3). */
 function OwnHolderLock({ snap, holder }: { snap: ProtectedAccountSnapshot; holder: `0x${string}` }) {
   const nowSec = useNowSec();
-  if (snap.nftMode !== 'standalone') return null;
   return <HolderLockCard lock={snap.holderLock} holder={holder} now={chainNowOf(snap, nowSec)} />;
 }
 
@@ -1076,7 +909,7 @@ function EnableForm({ snap }: { snap: ProtectedAccountSnapshot }) {
       </div>
       <label className="cluster">
         <input type="checkbox" checked={nfts} onChange={(e) => setNfts(e.target.checked)} />{' '}
-        {snap.nftMode === 'legacy' ? p.protectNftsLabel : p.protectNftsLockLabel}
+        {p.protectNftsLockLabel}
       </label>
       <button
         type="button"

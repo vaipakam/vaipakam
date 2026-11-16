@@ -169,7 +169,7 @@ import {
   type ParticipantRow,
 } from './walletActivity';
 import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
-import { LEGACY_POSITION_EVENTS, POSITION_TRANSFER_EVENT, positionNftForDiamond, readPositionHolder, scannedAddresses } from './positionNft';
+import { POSITION_NFT_EVENTS, positionNftForDiamond, readPositionHolder, scannedAddresses } from './positionNft';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -204,10 +204,9 @@ function getDeployBlock(chainId: number): number | undefined {
 const EVENT_ABI: readonly AbiEvent[] = (() => {
   const seen = new Set<string>();
   const out: AbiEvent[] = [];
-  // #3205 — the ERC-721 `Transfer` the generated Diamond ABI no longer
-  // carries: emitted by the PositionNFT (standalone) or a legacy Diamond.
-  // The legacy Diamond's NFT-queue events too (TODO(#3321 positionNft-legacy-removal)).
-  for (const item of [...(DIAMOND_ABI_VIEM as Abi), POSITION_TRANSFER_EVENT as AbiEvent, ...LEGACY_POSITION_EVENTS]) {
+  // #3205 — the PositionNFT's ERC-721 events (`Transfer`, `Approval`,
+  // `ApprovalForAll`), which the generated Diamond ABI does not carry.
+  for (const item of [...(DIAMOND_ABI_VIEM as Abi), ...(POSITION_NFT_EVENTS as Abi)]) {
     if (item.type !== 'event') continue;
     const ev = item as AbiEvent;
     let sig: string;
@@ -1187,8 +1186,8 @@ async function resolveCurrentHolders(
     // '0' is the stub-row sentinel, never a real ERC721 id.
     if (!tokenId || tokenId === '0') return null;
     try {
-      // #3318 r2 — a retired receipt (standalone) or a burned token
-      // (legacy) has no live holder: 'gone' at this same pinned head.
+      // #3318 r2 — a retired receipt has no live holder: 'gone' at this
+      // same pinned head.
       const holder = await readPositionHolder(client, positionNftForDiamond(diamond), BigInt(tokenId), head);
       return holder === 'gone' ? null : holder.toLowerCase();
     } catch {
@@ -2691,8 +2690,8 @@ async function runChainPass(
       // (config-facet events, ERC-721 Approval, etc.) throw on decode
       // and are skipped.
       const rawLogs = await client.getLogs({
-        // #3205: plus the PositionNFT on a standalone-mode chain, whose
-        // `Transfer` events keep the holder columns current.
+        // #3205: plus the chain's PositionNFT, whose `Transfer` events
+        // keep the holder columns current.
         address: scannedAddresses(diamond),
         fromBlock: cursor,
         toBlock: chunkEnd,
@@ -5550,8 +5549,8 @@ export async function processLoanLogs(
   // order of the two events within the tx.
   const loanDetailsByLoanId = new Map<number, Record<string, unknown>>();
   // #3205 (#3318 Codex r4) — who each position token minted in this batch was
-  // minted to, from the Diamond's own `NFTMinted` (emitted on both legacy and
-  // standalone chains, in the loan's own transaction). The loan seeding reads
+  // minted to, from the Diamond's own `NFTMinted` (emitted in the loan's own
+  // transaction). The loan seeding reads
   // it first, so a fresh token's holder comes from the mint, never from
   // token-id reuse.
   const mintedTo = new Map<string, string>();
@@ -7207,7 +7206,7 @@ export async function processLoanLogs(
     // transitions to a loan's lender/borrower-tokenId at offer
     // accept). We fire all 3 UPDATEs blindly; only the matching
     // row gets touched, the others no-op.
-    // #3205 — standalone mode retires a closed position's token instead of
+    // #3205 — the PositionNFT retires a closed position's token instead of
     // burning it (no `Transfer` to 0x0), so the retirement clears the holder
     // exactly as a burn did (#749): the position drops out of the
     // by-holder routes and the claimables.

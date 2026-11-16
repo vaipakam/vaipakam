@@ -1294,16 +1294,15 @@ backup, not a second keeper:
 
 ## Releasing protected payouts and applying matured protected-mode changes
 
-- When an account runs in protected account mode, a payout from its vault and
-  a transfer of one of its position NFTs are held back for the delay the owner
-  chose, and the settings that loosen protection take effect only after that
-  delay. Releasing a held item and applying a matured change are open to
+- When an account runs in protected account mode, a payout from its vault is
+  held back for the delay the owner chose, and the settings that loosen
+  protection take effect only after that delay. Releasing a held item and applying a matured change are open to
   anyone. Without a keeper nobody makes those calls on time, so a payout the
   owner waited out stays in the vault until someone makes the call by hand.
   The keeper makes them.
 - It checks every minute, on every chain it serves, because each item is due
   the second its delay ends.
-- A held payout or position transfer is released only when the protocol's
+- A held payout is released only when the protocol's
   own record says it can go: still held, past its release time by the chain's
   clock, the account not locked, and co-signed while the account requires a
   co-sign. A payout whose destination has since left the account's allowed
@@ -1315,10 +1314,10 @@ backup, not a second keeper:
 - A matured change is applied only when the protocol's own record still holds
   the change its announcement named, at the time it named: a change that was
   cancelled or asked again with a later time is not applied early. Settings
-  changes (a lowered delay, NFT protection or the co-sign requirement switched
-  off, an unlock, an unpin, switching the mode off) are applied together, one
+  changes (a lowered delay, the co-sign requirement switched off, an unlock,
+  an unpin, switching the mode off) are applied together, one
   call per account. Switching the mode off waits while the account still has
-  open payouts or transfers; the keeper reports it as waiting, applies the
+  open payouts; the keeper reports it as waiting, applies the
   account's other due settings meanwhile, and never reports the switch-off
   as applied until the protocol shows it so. More generally, a change is
   reported as applied only when the transaction's own record shows it
@@ -1331,11 +1330,10 @@ backup, not a second keeper:
   does not try an expired one and reports it as expired. A scheduled replacement of the
   primary wallet is applied only while it still has the approvals it needs.
   Every change left waiting is reported with the protocol's reason.
-- Each kind of work (Telegram locks, releases, position transfers, applied
-  changes) has its own share of the calls the keeper makes in a run, so a long queue of one
+- Each kind of work (Telegram locks, releases, applied changes) has its own share of the calls the keeper makes in a run, so a long queue of one
   kind never holds back another: an unlock, a replacement or a signer
   addition that would expire is not left waiting behind payouts. The kinds
-  also take turns going first, one run in three each, because each call
+  also take turns going first, every other run each, because each call
   waits to be confirmed: on a chain with slow blocks the kind that always
   went first could use the whole run's time, so a due item waits at most a
   couple of runs, never indefinitely. Within one kind, each run starts at a

@@ -1,44 +1,10 @@
 /**
- * #3205 — `ProtectedAccountFacet.getProtectedAccount`, as consumers index it.
- *
- * #3318 retired protected mode's NFT queue and renamed its two struct fields
- * in place (`protectNfts` → `retiredProtectNfts`, `pendingNftOffAt` →
- * `retiredPendingNftOffAt`), so the generated ABI decodes them under the new
- * names. A pre-#3205 Diamond still sets them; a standalone one never does
- * (they read false / 0). Every reader passes the decoded record through
- * {@link protectedAccountFromView} ONCE, at the point it is read, and indexes
- * the old names, so a consumer can never read `undefined` for them (#3318
- * Codex r2: a keeper `BigInt(undefined)` aborted its whole pass).
- *
- * TODO(#3321 positionNft-legacy-removal): once every chain is standalone the
- * two fields carry nothing; drop them from consumers with the legacy mode.
+ * Protected mode's record as consumers index it, rebuilt from the account's
+ * vault and the Diamond's platform side (#3379 Stage B2).
  */
 
 import { encodeFunctionData, type Abi, type Address, type Hex } from 'viem';
 import { VaultProtectionABI, VaipakamVaultImplementationABI } from '@vaipakam/contracts/abis';
-
-/** The two fields under the names consumers use. */
-export interface ProtectedAccountNftFields {
-  protectNfts: boolean;
-  pendingNftOffAt: bigint;
-}
-
-/** `raw` with the two NFT-queue fields under their consumer names. Accepts
- *  either decoding (new `retired*` names or the old ones). Other fields are
- *  passed through unchanged. */
-export function protectedAccountFromView<T extends object>(
-  raw: T,
-): Omit<T, 'retiredProtectNfts' | 'retiredPendingNftOffAt'> & ProtectedAccountNftFields {
-  const r = raw as Record<string, unknown>;
-  const { retiredProtectNfts, retiredPendingNftOffAt, ...rest } = r;
-  const protectNfts = 'retiredProtectNfts' in r ? retiredProtectNfts : r.protectNfts;
-  const pending = 'retiredPendingNftOffAt' in r ? retiredPendingNftOffAt : r.pendingNftOffAt;
-  return {
-    ...(rest as Omit<T, 'retiredProtectNfts' | 'retiredPendingNftOffAt'>),
-    protectNfts: Boolean(protectNfts),
-    pendingNftOffAt: BigInt((pending as bigint | number | string | undefined) ?? 0),
-  };
-}
 
 // ─── #3379 Stage B2 — protected mode lives in the account's vault ──────────
 //
@@ -107,7 +73,7 @@ export type DiamondProtection = readonly [vault: Address, requireCosign: boolean
 
 /** The record consumers indexed from the retired `getProtectedAccount`,
  *  rebuilt from the vault and the Diamond. */
-export interface ProtectedAccountRecordFromVault extends ProtectedAccountNftFields {
+export interface ProtectedAccountRecordFromVault {
   enabled: boolean;
   locked: boolean;
   requireCosign: boolean;
@@ -134,7 +100,7 @@ export interface ProtectedAccountRecordFromVault extends ProtectedAccountNftFiel
  *
  * The pending setting changes (a lowered delay, a switch-off, an unlock)
  * and the lock time come from `pending` (`vault.protectionPending()`; 0 =
- * none). NFT protection's queue was retired by #3318 and reads off.
+ * none).
  */
 export function protectedAccountFromVault(
   account: Address,
@@ -150,8 +116,6 @@ export function protectedAccountFromVault(
   return {
     enabled,
     locked,
-    protectNfts: false,
-    pendingNftOffAt: 0n,
     requireCosign,
     retired,
     delaySeconds: Number(delay),

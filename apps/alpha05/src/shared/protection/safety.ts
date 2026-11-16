@@ -68,8 +68,9 @@ export const SAFETY_FUNCTION = {
   finalize: 'finalizeSettings',
 } as const satisfies Record<SafetyAction, string>;
 
-/** `ProtectedAccountFacet.CHANGE_*`. */
-export const CHANGE_KIND = { disable: 1, lowerDelay: 2, nftOff: 3, cosignOff: 4, unlock: 5 } as const;
+/** `ProtectedAccountFacet.CHANGE_*` (3, NFT protection off, retired with
+ *  #3205: NFT protection is the PositionNFT holder lock). */
+export const CHANGE_KIND = { disable: 1, lowerDelay: 2, cosignOff: 4, unlock: 5 } as const;
 export type PendingChange = keyof typeof CHANGE_KIND;
 
 /** The account's protected mode as `getProtectedAccount` returns it (times
@@ -77,10 +78,9 @@ export type PendingChange = keyof typeof CHANGE_KIND;
 export interface SafetyMode {
   enabled: boolean;
   locked: boolean;
-  /** Whether the account's position NFTs are protected: on a chain with the
-   *  standalone PositionNFT (#3205), its holder lock, read at the token
-   *  contract; on a pre-#3205 Diamond, the mode's own NFT flag. Null when
-   *  the token contract gave no answer. */
+  /** Whether the account's position NFTs are protected: the PositionNFT
+   *  holder lock (#3205), read at the token contract. Null when the token
+   *  contract gave no answer. */
   nftLock: boolean | null;
   /** When a requested holder unlock at the PositionNFT can be applied (0 =
    *  none). Applied at the token contract after the lock's delay, never by
@@ -93,10 +93,6 @@ export interface SafetyMode {
   pendingDelayAt: number;
   pendingDisableAt: number;
   pendingUnlockAt: number;
-  /** A pre-#3205 Diamond's pending NFT-protection switch-off, which
-   *  `finalizeSettingChanges` applies (0 = none, and always 0 where the
-   *  PositionNFT's holder lock protects the NFTs). */
-  pendingNftOffAt: number;
   pendingCosignOffAt: number;
   cooldownUntil: number;
   lockedAt: number;
@@ -124,23 +120,19 @@ export interface SafetyFacts {
   readAt: number;
 }
 
-/** The account's protected record (`protectedAccountFromVault`). On a
- *  pre-#3205 Diamond the NFT flag was `retiredProtectNfts` /
- *  `protectNfts`. */
+/** The account's protected record (`protectedAccountFromVault`). */
 type RawMode = Record<string, boolean | number | bigint | string>;
 
-/** The PositionNFT holder lock's answer, or null when unread; 'legacy' on a
- *  pre-#3205 Diamond, whose mode carries the flag itself. */
-type NftLockRead = { locked: boolean; unlockAt: number } | 'legacy' | null;
+/** The PositionNFT holder lock's answer, or null when unread. */
+type NftLockRead = { locked: boolean; unlockAt: number } | null;
 
 export function toMode(r: RawMode, lock: NftLockRead): SafetyMode {
   const n = (v: unknown) => Number(v as number | bigint);
-  const legacy = lock === 'legacy';
   return {
     enabled: r.enabled === true,
     locked: r.locked === true,
-    nftLock: legacy ? (r.retiredProtectNfts ?? r.protectNfts) === true : lock === null ? null : lock.locked,
-    nftUnlockAt: legacy || lock === null ? 0 : lock.unlockAt,
+    nftLock: lock === null ? null : lock.locked,
+    nftUnlockAt: lock === null ? 0 : lock.unlockAt,
     requireCosign: r.requireCosign === true,
     retired: r.retired === true,
     delaySeconds: n(r.delaySeconds),
@@ -148,7 +140,6 @@ export function toMode(r: RawMode, lock: NftLockRead): SafetyMode {
     pendingDelayAt: n(r.pendingDelayAt),
     pendingDisableAt: n(r.pendingDisableAt),
     pendingUnlockAt: n(r.pendingUnlockAt),
-    pendingNftOffAt: legacy ? n(r.retiredPendingNftOffAt ?? r.pendingNftOffAt) : 0,
     pendingCosignOffAt: n(r.pendingCosignOffAt),
     cooldownUntil: n(r.cooldownUntil),
     lockedAt: n(r.lockedAt),
@@ -171,11 +162,9 @@ async function readMode(c: PublicClient, diamond: Hex, account: Hex, blockNumber
 }
 
 /** The account's position NFT protection: the PositionNFT's holder lock
- *  where the chain has the standalone token (#3205), or 'legacy' where the
- *  pre-#3205 Diamond keeps it in the mode itself. */
+ *  (#3205). */
 async function readNftLock(c: PublicClient, diamond: Hex, account: Hex, blockNumber: bigint): Promise<NftLockRead> {
   const surface = positionNftForDiamond(diamond);
-  if (surface.mode === 'legacy') return 'legacy';
   const l = await answerOrNull(
     c.readContract({ address: surface.nft, abi: POSITION_NFT, functionName: 'lockOf', args: [account], blockNumber }) as Promise<
       readonly [boolean, bigint, bigint, bigint, bigint]
@@ -218,7 +207,6 @@ export function safetyClock(f: Pick<SafetyFacts, 'chainNow' | 'readAt'>, nowMs: 
 export function pendingChanges(m: SafetyMode): { change: PendingChange; at: number }[] {
   const all: { change: PendingChange; at: number }[] = [
     { change: 'lowerDelay', at: m.pendingDelayAt },
-    { change: 'nftOff', at: m.pendingNftOffAt },
     { change: 'cosignOff', at: m.pendingCosignOffAt },
     { change: 'unlock', at: m.pendingUnlockAt },
     { change: 'disable', at: m.pendingDisableAt },
@@ -365,7 +353,6 @@ type Args = Record<string, unknown>;
 /** The words for each change, as the card and the finish card name it. */
 export const CHANGE_WORDS = {
   lowerDelay: 'safety.changeLowerDelay',
-  nftOff: 'safety.changeNftOff',
   cosignOff: 'safety.changeCosignOff',
   unlock: 'safety.changeUnlock',
   disable: 'safety.changeDisable',

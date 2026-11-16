@@ -31,7 +31,6 @@ const OFF: SafetyMode = {
   pendingDelayAt: 0,
   pendingDisableAt: 0,
   pendingUnlockAt: 0,
-  pendingNftOffAt: 0,
   pendingCosignOffAt: 0,
   cooldownUntil: 0,
   lockedAt: 0,

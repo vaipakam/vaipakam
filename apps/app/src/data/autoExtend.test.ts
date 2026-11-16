@@ -44,7 +44,7 @@ import {
   type ExtendCaps,
 } from './autoExtend';
 
-const DIAMOND = DEPLOYMENTS[84532]!.diamond as Address; // a legacy-mode record (#3205)
+const DIAMOND = DEPLOYMENTS[84532]!.diamond as Address; // a recorded Diamond (#3205)
 const ME = '0x00000000000000000000000000000000000000aA' as Address;
 const OTHER = '0x00000000000000000000000000000000000000bb' as Address;
 const USDC = '0x0000000000000000000000000000000000000001' as Address;
@@ -215,6 +215,8 @@ function clientFor(over: {
         case 'ownerOf':
           if (over.owner instanceof Error) throw over.owner;
           return over.owner ?? ME;
+        case 'isPositionRetired':
+          return false;
       }
       throw new Error(`unexpected ${functionName}`);
     }),

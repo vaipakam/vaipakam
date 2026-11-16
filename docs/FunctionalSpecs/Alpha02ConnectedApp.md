@@ -5200,7 +5200,7 @@ Its intended behaviour, as the test oracle for this surface:
   "protection off". When the account's settings cannot be read the page
   shows no controls at all, because "off" drawn over a failed read would
   invite turning protection on twice or hide a lock. When the payout
-  queue, the transfer queue, the payout addresses or the signers cannot
+  queue, the payout addresses or the signers cannot
   be read, each says so and says not to assume it is empty; a partly read
   list counts as unread, since the one missing row could be the one an
   attacker queued. Each queued payout shows its request code (the same

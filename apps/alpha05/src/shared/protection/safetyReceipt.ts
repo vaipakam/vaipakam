@@ -86,7 +86,7 @@ export function safetyReceipt(r: SafetyReview, copy: Copy): Receipt {
     consequences.push(text('safety.finalizeAll'));
     if (r.due.includes('unlock')) consequences.push(text('safety.finalizeUnlock'));
     if (r.due.includes('disable')) consequences.push(text('safety.finalizeDisable'), text('safety.finalizeDisableClears'));
-    if (r.due.includes('lowerDelay') || r.due.includes('nftOff') || r.due.includes('cosignOff')) consequences.push(text('safety.finalizeLoosens'));
+    if (r.due.includes('lowerDelay') || r.due.includes('cosignOff')) consequences.push(text('safety.finalizeLoosens'));
   }
   consequences.push(...unread, text('vaultWithdraw.noApproval'));
   const title = text(

@@ -41,12 +41,12 @@ async function loanOf(loanId: bigint): Promise<{
   return { ...loan, status: Number(loan.status) };
 }
 
-async function positionLockOf(tokenId: bigint): Promise<number> {
+async function positionRouteOf(tokenId: bigint): Promise<number> {
   return Number(
     await pub.readContract({
       address: DIAMOND,
       abi: DIAMOND_ABI_VIEM,
-      functionName: "positionRoute", // #3205: the open route (formerly positionLock)
+      functionName: "positionRoute", // #3205: the open route
       args: [tokenId],
     }),
   );
@@ -107,7 +107,7 @@ test("a third wallet takes an offset offer; the earlier loan closes in the same 
     linked,
     "the borrower’s newest offer should be the offset vehicle",
   ).toBe(loanId);
-  expect(await positionLockOf(earlier.borrowerTokenId)).toBe(1); // PrecloseOffset
+  expect(await positionRouteOf(earlier.borrowerTokenId)).toBe(1); // PrecloseOffset
 
   // The taker's review discloses the close-out, then signs.
   const taker = await launchWallet("newBorrower");
@@ -128,7 +128,7 @@ test("a third wallet takes an offset offer; the earlier loan closes in the same 
   expect(after.status, "the earlier loan should no longer be Active").not.toBe(
     0,
   );
-  expect(await positionLockOf(earlier.borrowerTokenId)).toBe(0);
+  expect(await positionRouteOf(earlier.borrowerTokenId)).toBe(0);
   const newLoanId = await newestLoanIdFor(taker.account.address, "borrower");
   const fresh = await loanOf(newLoanId);
   expect(fresh.status).toBe(0);

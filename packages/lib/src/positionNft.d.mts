@@ -3,14 +3,10 @@ import type { Abi } from 'viem';
 
 type Hex = `0x${string}`;
 
-export type PositionNftMode = 'standalone' | 'legacy';
-
 export interface PositionNftSurface {
-  readonly mode: PositionNftMode;
-  /** Where owners, approvals, transfers and enumeration are read and sent:
-   *  the PositionNFT (standalone) or the Diamond (legacy). */
+  /** The PositionNFT: owners, approvals, transfers and enumeration. */
   readonly nft: Hex;
-  /** The Diamond: the open route, retirement and (legacy) the NFT queue. */
+  /** The Diamond: the open route and retirement. */
   readonly diamond: Hex;
 }
 
@@ -27,22 +23,29 @@ export const POSITION_ROUTE: Readonly<{
   EarlyWithdrawalSale: 2;
   PrepayCollateralListing: 3;
   SwapToRepayIntent: 4;
-  LegacyProtectedOwner: 5;
 }>;
 
 export const POSITION_ERC721_ABI: Abi;
-/** FROZEN pre-#3205 Diamond fragment; legacy mode only. */
-export const LEGACY_DIAMOND_NFT_ABI: Abi;
 export const POSITION_ROUTE_ABI: Abi;
-/** Position-NFT events decoded outside the generated Diamond ABI (#3205). */
+/** The PositionNFT's ERC-721 events, decoded outside the generated Diamond ABI. */
 export const POSITION_NFT_INDEXED_EVENTS: Abi;
 
-export function positionNftSurface(deployment: { diamond: string; positionNFT?: string | undefined }): PositionNftSurface;
+export class PositionNftMissingError extends Error {
+  constructor(deployment: unknown);
+}
+
+/** Throws {@link PositionNftMissingError} when the record names no PositionNFT. */
+export function positionNftSurface(deployment: {
+  diamond: string;
+  positionNFT?: string | undefined;
+  chainId?: number | undefined;
+}): PositionNftSurface;
 export function positionNftSurfaceForDiamond(
   diamond: string,
-  deployments: Readonly<Record<string | number, { diamond: string; positionNFT?: string | undefined } | undefined>>,
+  deployments: Readonly<
+    Record<string | number, { diamond: string; positionNFT?: string | undefined; chainId?: number | undefined } | undefined>
+  >,
 ): PositionNftSurface | null;
-export function routeBlocksTransfer(surface: PositionNftSurface): boolean;
 export class PositionRetiredError extends Error {
   readonly tokenId: bigint;
   constructor(tokenId: bigint | number | string);
@@ -50,8 +53,8 @@ export class PositionRetiredError extends Error {
 export function positionHolderCalls(
   surface: PositionNftSurface,
   tokenId: bigint | number | string,
-): { owner: PositionContractCall; retired: PositionContractCall | null };
-export function positionHolderFrom(owner: Hex, retired: boolean | undefined): Hex | 'gone';
+): { owner: PositionContractCall; retired: PositionContractCall };
+export function positionHolderFrom(owner: Hex, retired: boolean): Hex | 'gone';
 export function readPositionOwner(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   client: { readContract: (args: any) => Promise<unknown> },
@@ -60,7 +63,4 @@ export function readPositionOwner(
   blockNumber?: bigint,
 ): Promise<Hex>;
 export function positionRouteCall(surface: PositionNftSurface, tokenId: bigint | number | string): PositionContractCall;
-export function positionRetiredCall(
-  surface: PositionNftSurface,
-  tokenId: bigint | number | string,
-): PositionContractCall | null;
+export function positionRetiredCall(surface: PositionNftSurface, tokenId: bigint | number | string): PositionContractCall;

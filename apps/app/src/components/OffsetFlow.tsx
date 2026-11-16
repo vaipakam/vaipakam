@@ -57,7 +57,6 @@ import { ConfirmReceipt } from './ConfirmReceipt';
 import { useReviewConsent } from '../hooks/useReviewConsent';
 import type { TokenMeta } from '../contracts/erc20';
 import { readPositionRouteOn } from '../contracts/positionNft';
-import { useRouteBlocksTransfer } from '../contracts/positionNft';
 
 /** Headroom reserved between the offset's replacement maturity and the
  *  original loan's maturity when sizing the DEFAULT/max term. The
@@ -113,7 +112,6 @@ export function OffsetFlow({
    *  null to proceed. */
   preSubmitBlock?: () => Promise<string | null>;
 }) {
-  const routeBlocks = useRouteBlocksTransfer();
   const { address, walletChain, onSupportedChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
@@ -520,7 +518,7 @@ export function OffsetFlow({
       <p className="muted">{copy.offset.blurb}</p>
 
       <div className="banner banner-warn" role="note" style={{ marginBottom: 12 }}>
-        <span className="banner-body">{routeBlocks ? copy.offset.lockWarn : copy.offset.lockWarnRoute}</span>
+        <span className="banner-body">{copy.offset.lockWarn}</span>
       </div>
 
       <div className="cluster">
@@ -642,7 +640,7 @@ export function OffsetFlow({
             }}
           >
             <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
-              <span className="banner-body">{routeBlocks ? copy.offset.lockWarn : copy.offset.lockWarnRoute}</span>
+              <span className="banner-body">{copy.offset.lockWarn}</span>
             </div>
           </ConfirmReceipt>
         </div>

@@ -148,10 +148,6 @@ export interface LenderExitRow {
 }
 
 export interface LenderExitInput {
-  /** #3205 — false on a standalone PositionNFT chain, where a listing does
-   *  not lock the position NFT (moving it cancels the listing instead).
-   *  Omitted reads as the legacy rule. */
-  routeBlocksTransfer?: boolean;
   /** 0 = no periodic schedule; `undefined` = the read has not answered.
    *  Pair with `cadenceReadFailed` to tell a failure from a wait. */
   periodicInterestCadence: number | undefined;
@@ -453,7 +449,7 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
       desc: o.listDesc,
       cost: o.listCost,
       costExtra: input.lenderFeeModeFull ? o.costFullTariff : undefined,
-      note: input.routeBlocksTransfer === false ? o.listStructuralRoute : o.listStructural,
+      note: o.listStructural,
       // A live listing is a sale in flight, not a declined option.
       costStillApplies: input.listingMayStand,
       unavailable: listUnavailable,

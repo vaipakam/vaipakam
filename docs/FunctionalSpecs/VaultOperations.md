@@ -82,12 +82,10 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   A lock or full queue cannot produce a successful voluntary withdrawal that
   silently pays and queues nothing. A settlement may retain value safely;
   the app distinguishes that hold from a payment or queued withdrawal.
-- When the owner enables the separate NFT-protection setting, position NFTs
-  cannot be transferred or approved directly. They move only through queued,
-  cancellable transfers under the payout destination and co-sign rules, and
-  lender positions cannot be sold directly or by listing. The owner may
-  switch NFT protection off after the delay to transfer or sell without
-  disabling the account's other protection. A lock still applies its own
+- NFT protection is the position-NFT contract's holder lock (#3205). While it
+  is on, the holder's position NFTs cannot be transferred or approved; there
+  is no queue of NFT transfers. The owner may ask to unlock, which waits the
+  delay, without disabling the account's other protection. A lock still applies its own
   payout and new-position restrictions regardless of that setting.
 - A protected account's collateral or parallel-sale listing may pay
   marketplace fees only to its owner or allowed destinations. A locked or
@@ -212,7 +210,7 @@ remain governed by [Keeper Operations](KeeperOperations.md).
 
 ## App disclosures and keeper service
 
-- The protection page shows settings, payout and NFT-transfer queues, request
+- The protection page shows settings, the payout queue, the holder lock, request
   codes, pending changes, destinations, and signers at one block. Failed or
   partly read lists are unknown, never empty. Unreadable settings expose no
   write controls; an unsupported deployment is unavailable, not protection off.

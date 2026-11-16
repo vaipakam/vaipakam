@@ -421,8 +421,7 @@
   //     keeper. Ships unset. Needs no on-chain role. Arming it is an owner
   //     decision.
   //   - PROTECTED_ACCOUNT_ENABLED — 'true' arms the #3088 protected account
-  //     pass: releasePayout / releasePositionTransfer for queued rows past
-  //     their delay, and the finalize calls of matured protected-mode
+  //     pass: releasePayout for queued rows past their delay, and the finalize calls of matured protected-mode
   //     changes, every minute. Permissionless; it pays only gas and moves
   //     nothing to the keeper. Ships unset. Needs no on-chain role. Arming it
   //     is an owner decision.

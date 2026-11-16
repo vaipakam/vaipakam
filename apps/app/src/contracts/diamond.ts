@@ -148,9 +148,8 @@ export function useDiamondWrite() {
        *  is worse than leaving it (#1529 review round 8). */
       opts?: {
         onSubmitted?: (hash: `0x${string}`) => void;
-        /** #3205 — send to another contract than the Diamond with the
-         *  generated ABI: the PositionNFT (its holder lock), or the Diamond
-         *  through the frozen legacy NFT fragment. Resolved by
+        /** #3205 — send to another contract than the Diamond: the
+         *  PositionNFT (its holder lock). Resolved by
          *  `contracts/positionNft`; the Terms gate applies the same way. */
         target?: { address: `0x${string}`; abi: Abi };
       },
