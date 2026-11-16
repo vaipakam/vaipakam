@@ -586,8 +586,9 @@ handover). Order matters: §5.1–§5.4 before launch; §5.5 governs launch timi
   (`LibAccessControl.KEEPER_ROLE = keccak256("KEEPER_ROLE")`). Gates the mirror
   commitment report, the asset-tier relay and a `ClaimFacet` keeper path.
 - `WATCHER_ROLE` (gates `AdminFacet.autoPause`) and `NOTIF_BILLER_ROLE`
-  (`markNotifBilled`) to their bot keys if those services are expected to run
-  — whether the precedent granted them: **UNVERIFIED**.
+  (`markNotifBilled`) to their bot keys — **granted on this deploy** (owner
+  decision, §12 item 6), the same `grantRole` call with
+  `$(cast keccak WATCHER_ROLE)` / `$(cast keccak NOTIF_BILLER_ROLE)`.
 - Base: the remittance keeper = keeper wallet (precedent; setter name
   **UNVERIFIED** — see AdminConfigurableKnobsAndSwitches.md reward sections).
 - **`keeperAddress`** in each `contracts/deployments/<slug>/addresses.json`
@@ -604,7 +605,8 @@ it, publish version N in `apps/www/src/pages/terms/versions.ts` (latest entry
 today: version 2), deploy `apps/www` first, then
 `setCurrentTos(N, <keccak hash from versions.ts>)` (ADMIN_ROLE; version must
 strictly increase; hash non-zero) (GovernanceRunbook "Bumping the Terms of
-Service"). Whether to arm it on this deploy: **owner decision**.
+Service"). **On this deploy: arm it with version 2 on all three chains**
+(owner decision, §12 item 5).
 
 ### 5.4 Reward-custody activation (every chain, after configure, before launch)
 
@@ -648,7 +650,8 @@ Order:
    (ADMIN; after activation; works while paused; pulls VPFI from the caller, so
    `approve(diamond, amount)` on the VPFI token first). Amount is the
    operator's decision (DeploymentRunbook "3b", "Fund Base's reward pool before
-   Base's anchor"). `SetInteractionLaunch` refuses Base's anchor while
+   Base's anchor"); **on this deploy: 100,000 VPFI, sourced from the treasury
+   wallet through the admin** (§12 item 3). `SetInteractionLaunch` refuses Base's anchor while
    `getDeliveredFreshBound()` shows no headroom.
 2. **Anchor, Base first, then mirrors, SAME value** (one-shot; a mirror on a
    different value has every day zeroed on Base):
@@ -1012,15 +1015,52 @@ markers (lines 333–416) — read both halves.
     which `DeployVPFIToken` does not read (it reads `ADMIN_ADDRESS`,
     `TREASURY_ADDRESS`).
 
-## 12. Open questions for the owner
+## 12. Owner decisions for this deploy (2026-11-16)
 
-1. Orphan the live offers/loans on the current Diamonds (`--confirm-orphans-prior-onchain-state`)?
-2. Handover on testnet: skip (precedent) or rehearse?
-3. Reward-pool funding amount on Base and the VPFI source (treasury transfer
-   or `mintVPFI`)?
-4. Interaction anchor timestamp and D* day; accept a 1–2 day staggered launch
-   for the mirrors?
-5. Arm the ToS gate on this deploy?
-6. Which keeper flags to arm, and grant WATCHER/NOTIF_BILLER roles?
-7. Rewire the sanctions delisting/clearance route and re-record the standalone
-   sanctions contracts?
+The owner answered the open questions on 2026-11-16, for testnet and testing
+purposes. They are the inputs for the next fresh testnet deploy; the deploy
+itself had not been started when they were recorded.
+
+1. **Abandon the live offers and loans on the current Diamonds: yes.** They
+   exist only for testing. Pass `--confirm-orphans-prior-onchain-state` to the
+   `contracts --fresh` phase on each chain (§2.4 item 2). The remittance drain
+   (§2.4 item 1) still runs first.
+2. **Role handover: skip it.** The testnets stay admin-owned; do not run the
+   `handover` or `handover-gate` phases (§6). §11 item 2 is settled by this.
+3. **Base reward pool: 100,000 VPFI, from the treasury wallet**
+   (`TREASURY_ADDRESS` in `contracts/.env`). `fundRewardPool` is ADMIN-only
+   and pulls from its caller, and the treasury wallet is not the admin, so:
+   first check the treasury holds at least 100,000 VPFI on Base Sepolia
+   (`balanceOf`), then transfer 100,000 VPFI from the treasury wallet to the
+   admin wallet (signed with the treasury wallet's own key; it is not in
+   `contracts/.env`), then, as admin, `approve(diamond, 100000e18)` and
+   `fundRewardPool(100000e18)` (§5.5 step 1). Read `getDeliveredFreshBound()`
+   afterwards. The pool's funding then records the admin as payer; the
+   treasury-to-admin transfer is the visible first leg.
+4. **Rewards start: as soon as all three chains are deployed; Arbitrum
+   Sepolia and BNB testnet may launch after Base Sepolia.** Concretely:
+   once `contracts`, `ccip-wire`, `testnet-mocks`, `configure` and custody
+   activation have landed on all three chains, set the anchor to 00:00 UTC
+   of that day (the same value on all three, Base first, §5.5 step 2), and
+   arm D\* to the EARLIEST day the contract accepts, which is the next reward
+   day (`dayId` must be greater than today's, §5.5 step 3). So rewards start
+   at the next 00:00 UTC: Base launches then, and the mirrors follow once
+   Base's day broadcast reaches them (§5.5 steps 4–5).
+5. **Terms of Service gate: on, version 2, on all three chains.** After the
+   contracts exist, set `setCurrentTos(2, <hash>)` on each Diamond (§5.3).
+   The hash is the keccak256 of `docs/Terms/TermsOfService.md`; on
+   2026-11-15 it was
+   `0xecbdf420b0b626087e8549f00c68c663ebac79c220eb1f65c55f11b4b3c2605e`.
+   Recompute it at deploy time; if the file changed, stop and ask. Read
+   `getCurrentTos()` before (expect 0) and after (expect 2 and the hash).
+6. **Keeper: arm the same passes as are armed now, plus the hourly price
+   checkpoint (`PRICE_CHECKPOINT_ENABLED`); grant `WATCHER_ROLE` and
+   `NOTIF_BILLER_ROLE`.** Before the deploy, record the flags currently set
+   in the keeper machine's `/etc/vaipakam/keeper.env` (KeeperMachine.md), so
+   the same set is re-armed one at a time afterwards (§7.5). Grant the two
+   roles on every chain to the bot keys that run those services (§5.2); if
+   either service has no key of its own yet, ask which wallet before
+   granting.
+7. **Sanctions delisting route: rewire it after all three chains exist, as
+   last time** (§5.1), and re-record the standalone sanctions contracts in
+   each `addresses.json`.
