@@ -91,7 +91,7 @@ What this design needs from #3337's index, to be built with it:
 | Views | Offer and intent views return the effective bound now and whether the reference is available. |
 | Storage-layout guard | `write`, commit the golden file. |
 
-The match hosts sit close to the size limit (`OfferMatchIntentFacet`, `SignedOfferMatchFacet`, `RiskPreviewFacet`). Check with the deploy-sanity size test; if the bound computation does not fit inline, host it once and self-call it, as the risk bounds are (`OfferPreviewFacet.initRiskBounds`). Do not trim.
+The match hosts sit close to the size limit (`OfferMatchIntentFacet`, `SignedOfferMatchFacet`, `RiskPreviewFacet`). Check with the deploy-sanity size test; if the bound computation does not fit inline, host it once and self-call it, as the risk bounds are (`RiskPreviewFacet.initRiskBounds`). Do not trim.
 
 Reaches a chain by fresh deploy.
 

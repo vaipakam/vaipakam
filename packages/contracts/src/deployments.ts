@@ -248,6 +248,10 @@ export interface DeploymentFacets {
   instantFillFacet?: HexAddress;
   /** #3656 §7 — a lender's takeover at face value into another slot. */
   instantTakeoverFacet?: HexAddress;
+  /** #3328 — signed-offer / intent-slice materialization (Diamond-internal). */
+  offerMaterializeFacet?: HexAddress;
+  /** #3328 — NFT collection offers. */
+  collectionOfferFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */

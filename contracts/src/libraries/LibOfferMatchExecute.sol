@@ -18,6 +18,7 @@ import {EncumbranceMutateFacet} from "../facets/EncumbranceMutateFacet.sol";
 import {OfferCreateFacet} from "../facets/OfferCreateFacet.sol";
 import {RiskPreviewFacet} from "../facets/RiskPreviewFacet.sol";
 import {LibRefinanceNetting} from "./LibRefinanceNetting.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
  * @title  LibOfferMatchExecute — the match-execution core every match host shares.
@@ -222,6 +223,11 @@ library LibOfferMatchExecute {
         // a full-principal transfer, not a range/partial order.
         if (s.offsetOfferToLoanId[lenderOfferId] != 0) {
             revert OffsetVehicleNotMatchable();
+        }
+        // #3328 — a collection offer fills only through its own entry, which
+        // matches a one-token slice of it, never the offer itself.
+        if (s.collectionOffer[lenderOfferId].set.kind != LibVaipakam.CollateralSetKind.None) {
+            revert IVaipakamErrors.CollectionParentNotFillable(lenderOfferId);
         }
         {
             uint256 bRefiTarget =

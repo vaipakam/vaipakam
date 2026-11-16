@@ -12,7 +12,7 @@ import {LibMarketLedger} from "./LibMarketLedger.sol";
 import {LibIntentTerms} from "./LibIntentTerms.sol";
 import {LibSignedOffer} from "./LibSignedOffer.sol";
 import {LibOfferMatchExecute} from "./LibOfferMatchExecute.sol";
-import {OfferCreateFacet} from "../facets/OfferCreateFacet.sol";
+import {OfferMaterializeFacet} from "../facets/OfferMaterializeFacet.sol";
 import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
 
 /**
@@ -192,7 +192,7 @@ library LibIntentFill {
         // slither-disable-next-line low-level-calls
         (bool ok, bytes memory res) = address(this).call(
             abi.encodeWithSelector(
-                OfferCreateFacet.createSignedOfferVault.selector, creator, params,
+                OfferMaterializeFacet.createSignedOfferVault.selector, creator, params,
                 LibSignedOffer.MakerFull(false, 0, false) // #1949 — a slice carries no maker Full
             )
         );

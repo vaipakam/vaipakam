@@ -55,6 +55,19 @@
       "class": "init",
       "why": "the deployment, or the Diamond's factory, initializes each proxy once in the transaction that creates it"
     },
+    "CollectionOfferFacet.createCollectionOffer(struct:LibVaipakam.CreateOfferParams,struct:LibCollateralSet.SetInput,uint16,uint256[],uint64)": {
+      "class": "user",
+      "why": "the lender posts its own collection offer, funded from its own wallet"
+    },
+    "CollectionOfferFacet.fillCollectionOffer(uint256,uint256,bytes32[],struct:LibAcceptTerms.AcceptTerms,bytes)": {
+      "class": "user",
+      "why": "the borrower opens its own loan against its own token, under its own signed acceptance"
+    },
+    "CollectionOfferFacet.matchCollectionOffer(uint256,uint256,bytes32[])": {
+      "class": "gap",
+      "issue": "#3688",
+      "why": "pairs a collection offer with a posted borrower offer whose token is in the set, for the usual match share; the keeper matcher does not index collection offers yet"
+    },
     "ConsolidationFacet.consolidateCollateralToHolder(uint256)": {
       "class": "user",
       "why": "the current position holder's own consolidation of its collateral claims; only that holder may call it, and nothing waits on it but the holder (owner decision 2026-11-04, #3097)"

@@ -8,6 +8,7 @@ import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 
 import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
+import {OfferMaterializeFacet} from "../src/facets/OfferMaterializeFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
@@ -708,7 +709,7 @@ contract SignedOfferBookTest is SetupTest {
             _borrowerAcceptTerms(o);
 
         vm.prank(borrower);
-        vm.expectRevert(OfferCreateFacet.SignedOfferUnsupportedShape.selector);
+        vm.expectRevert(OfferMaterializeFacet.SignedOfferUnsupportedShape.selector);
         SignedOfferFacet(address(diamond)).acceptSignedOffer(
             o, sig, _alone(), terms, acceptSig, _noAuth()
         );

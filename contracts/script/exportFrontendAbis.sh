@@ -315,6 +315,10 @@ FACETS=(
   "InstantMarketFacet"
   "InstantFillFacet"
   "InstantTakeoverFacet"
+  # #3328: the signed-offer / intent-slice materialize entries.
+  "OfferMaterializeFacet"
+  # #3328: NFT collection offers.
+  "CollectionOfferFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"

@@ -472,6 +472,11 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         if (offer.creator == address(0)) revert InvalidOffer();
         LibAuth.requireOfferCreator(offer);
         if (offer.accepted) revert OfferAlreadyAccepted();
+        // #3328 — a collection offer's terms are fixed; it changes only by
+        // lowering its loans (`reduceCollectionLoans`) or by cancel.
+        if (LibVaipakam.storageSlot().collectionOffer[offer.id].set.kind != LibVaipakam.CollateralSetKind.None) {
+            revert CollectionParentNotFillable(offer.id);
+        }
         // Per-asset pause: a paused leg blocks every mutation including
         // pure-storage rate changes, because resuming after a pause
         // should never surface an offer the operator wouldn't have

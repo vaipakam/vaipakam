@@ -6,7 +6,7 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
-import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
+import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
@@ -882,10 +882,10 @@ contract BorrowerPartialFillTest is SetupTest {
     ///         so every collateral level that covers the minimum matches —
     ///         where an uncapped pick was refused for HF.
     function test_3326_largestAmountAlsoPassesTheInitRiskGate() public {
-        (uint256 reqAtMax,,) = OfferPreviewFacet(address(diamond)).initRiskBounds(
+        (uint256 reqAtMax,,) = RiskPreviewFacet(address(diamond)).initRiskBounds(
             mockERC20, mockCollateralERC20, 10_000, 0
         );
-        (uint256 reqAtMin,,) = OfferPreviewFacet(address(diamond)).initRiskBounds(
+        (uint256 reqAtMin,,) = RiskPreviewFacet(address(diamond)).initRiskBounds(
             mockERC20, mockCollateralERC20, 1_000, 0
         );
         assertGt(reqAtMax, 2 * reqAtMin, "room for two fills");
@@ -911,7 +911,7 @@ contract BorrowerPartialFillTest is SetupTest {
 
             LibOfferMatch.MatchResult memory r = _preview(lo, bo);
             assertEq(uint8(r.errorCode), uint8(LibOfferMatch.MatchError.Ok), "every covering collateral level matches");
-            (uint256 floorAt,,) = OfferPreviewFacet(address(diamond)).initRiskBounds(
+            (uint256 floorAt,,) = RiskPreviewFacet(address(diamond)).initRiskBounds(
                 mockERC20, mockCollateralERC20, r.matchAmount, 0
             );
             assertGe(r.reqCollateral, floorAt, "locks at least the gate's floor");

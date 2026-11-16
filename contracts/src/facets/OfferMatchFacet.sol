@@ -177,4 +177,28 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // as its last check.
         LibServiceCapacity.chargeSolver();
     }
+
+    /// @notice The match core run for another facet of this Diamond, with the
+    ///         matcher named by that facet's entry. #3328: the collection offer's
+    ///         `matchCollectionOffer` pairs a one-token lender slice through the
+    ///         same core every other match uses; hosting the core here keeps one
+    ///         runtime copy instead of a fourth inlined one in a facet near
+    ///         EIP-170. The calling entry holds the Diamond's reentrancy guard and
+    ///         applies its own gates (sanctions, the match switch, the solver
+    ///         charge); this entry adds none, so it is callable only by the
+    ///         Diamond itself.
+    /// @param lenderOfferId   The lender offer (the collection slice).
+    /// @param borrowerOfferId The borrower offer it is paired with.
+    /// @param matcher         The match-share recipient: the outer entry's caller.
+    /// @return loanId         The newly initiated loan.
+    function matchCoreInternal(uint256 lenderOfferId, uint256 borrowerOfferId, address matcher)
+        external
+        returns (uint256 loanId)
+    {
+        if (msg.sender != address(this)) revert MatchCoreOnlyDiamondInternal(msg.sender);
+        loanId = LibOfferMatchExecute.executeMatchFor(lenderOfferId, borrowerOfferId, 0, matcher);
+    }
+
+    /// @notice {matchCoreInternal} was called by anyone but the Diamond itself.
+    error MatchCoreOnlyDiamondInternal(address caller);
 }

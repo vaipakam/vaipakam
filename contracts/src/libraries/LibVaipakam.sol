@@ -1587,6 +1587,56 @@ library LibVaipakam {
         uint64 setAt;
     }
 
+    /// @dev #3328 — the kind of collateral set a collection offer names.
+    ///      `None` marks an offer that is not a collection offer.
+    enum CollateralSetKind {
+        None,
+        Collection,
+        Range,
+        Listed
+    }
+
+    /// @dev #3328 — a collection offer's collateral set. `Collection`: any
+    ///      token of the collateral contract. `Range`: any id from `low` to
+    ///      `high`, inclusive. `Listed`: any id under `root`, proven by a
+    ///      Merkle proof of at most `LibCollateralSet.MAX_PROOF_DEPTH` steps.
+    ///      `listCount`, `listHash` and `label` are stored as the lender gave
+    ///      them and are NOT checked on-chain: the app and the indexer check
+    ///      the published list against them. `exclusions` (Collection and
+    ///      Range only, at most `LibCollateralSet.MAX_EXCLUSIONS`) win over
+    ///      inclusion. Written only by `LibCollateralSet.write`.
+    struct CollateralSet {
+        CollateralSetKind kind;
+        uint32 listCount;
+        uint256 low;
+        uint256 high;
+        bytes32 root;
+        bytes32 listHash;
+        string label;
+        uint256[] exclusions;
+    }
+
+    /// @dev #3328 — the side record of a collection offer: a lender offer
+    ///      whose principal is reserved for `loans` loans of `perLoan` each,
+    ///      filled one loan (one token of `set`) at a time through
+    ///      `CollectionOfferFacet`. `loans` is the number the offer funds
+    ///      now (lowered by a reduction); `filled` counts loans opened.
+    ///      Loans left = `loans - filled`. Keyed by the parent offer id.
+    struct CollectionOffer {
+        CollateralSet set;
+        uint256 perLoan;
+        uint16 loans;
+        uint16 filled;
+    }
+
+    /// @dev #3328 — collection-offer limits (0 = the default): the most
+    ///      loans one offer funds (default 50) and the longest time from
+    ///      creation to expiry (default 30 days).
+    struct CollectionOfferConfig {
+        uint16 maxLoans;
+        uint32 maxExpirySecs;
+    }
+
     /// @dev Instant market (#3656) — the master switch (off by default) and
     ///      the most fills one instant borrow opens (0 = the default, 8).
     struct InstantMarketConfig {
@@ -8497,6 +8547,13 @@ library LibVaipakam {
         ///      A label only: each loan keeps its own collateral, health
         ///      factor and liquidation.
         mapping(uint256 => uint256) instantGroupOf;
+        /// @dev #3328 — per parent offer id, its collection-offer record
+        ///      (`set.kind == None` for every other offer). Written only by
+        ///      `CollectionOfferFacet`; it stays after the offer closes, as
+        ///      the record of its loans. Appended — append-only.
+        mapping(uint256 => CollectionOffer) collectionOffer;
+        /// @dev #3328 — collection-offer limits. Appended — append-only.
+        CollectionOfferConfig collectionCfg;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.

@@ -54,6 +54,8 @@ const DELIBERATELY_NOT_HANDLED = {
     '#1566 slice 2 — custody provenance for liquidation-fallback collateral held in the borrower vault under a lien: one event per row move (entry, each settlement slice, retry pull and restore, match legs, return to the pledge) with its amount and the amount still held. Loan status still derives from the status events (LoanFallbackPending, LoanCuredFromFallback and the terminal events), so no loans-row field changes; indexer surfacing of the custody trail is deferred',
   HeldRecommittedToIntent:
     '#3629 — held payments of an OPEN intent loan moved back behind the owner\'s standing intent. The loan stays Active with the same principal and collateral, so no loans-row field changes; the intent\'s capital is read live (getLenderIntentCapital), and the event is surfaced through activity_events',
+  CollectionOfferCreated:
+    '#3328 — the parent offer\'s row comes from its OfferCreated; the set (kind, range or list root, exclusions, published ids) and the loan count are read live through getCollectionOffer and surfaced through activity_events. A typed collection table, which the keeper matcher (#3688) and the app need to list sets, is deferred to that work',
   LoanKeeperEnabled: 'per-loan keeper authorization — not modelled in the indexer schema',
   OfferKeeperEnabled: 'per-offer keeper authorization — not modelled',
   OfferPriceGuardSet:

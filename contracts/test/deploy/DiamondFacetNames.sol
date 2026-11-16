@@ -131,9 +131,12 @@ abstract contract DiamondFacetNames {
     ///      common ledger).
     ///      119 → 121 with `InstantMarketFacet` and `InstantFillFacet` (#3656
     ///      — the instant borrow and its one-fill executor).
+    ///      123 → 124 with `CollectionOfferFacet` (#3328 — NFT collection offers).
+    ///      122 → 123 with `OfferMaterializeFacet` (#3328 — the signed-offer
+    ///      and intent-slice materialize entries, split off `OfferCreateFacet`).
     ///      121 → 122 with `InstantTakeoverFacet` (#3656 §7 — the takeover
     ///      at face value).
-    function cutFacetNames() internal pure returns (string[122] memory) {
+    function cutFacetNames() internal pure returns (string[124] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -304,6 +307,10 @@ abstract contract DiamondFacetNames {
             "InstantMarketFacet",
             "InstantFillFacet",
             "InstantTakeoverFacet",
+            // Signed-offer and intent-slice materialization (#3328).
+            "OfferMaterializeFacet",
+            // NFT collection offers (#3328).
+            "CollectionOfferFacet",
             "SwapToRepayFacet",
             "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",

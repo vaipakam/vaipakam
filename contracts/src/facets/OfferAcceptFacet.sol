@@ -800,6 +800,10 @@ contract OfferAcceptFacet is
         // originate a loan. Covers every cancellation path, not just sale
         // teardown.
         if (s.offerCancelled[offerId]) revert OfferCancelled(uint96(offerId));
+        // #3328 — a collection offer fills only through its own entry.
+        if (s.collectionOffer[offerId].set.kind != LibVaipakam.CollateralSetKind.None) {
+            revert CollectionParentNotFillable(offerId);
+        }
         // T-407-C (#566) Codex P1 — a partially-filled offer (amountFilled
         // > 0 but not yet dust-closed, so accepted == false) is a
         // matchOffers-managed entity: the matcher consumes its remaining
@@ -1996,7 +2000,10 @@ contract OfferAcceptFacet is
         SignedOfferTakerNotAllowed,
         // The order names a co-signer, and the fill carries no live
         // co-signature from it.
-        SignedOfferCoSignatureInvalid
+        SignedOfferCoSignatureInvalid,
+        // #3328 — the offer is a collection offer, which fills only through
+        // `CollectionOfferFacet` (`CollectionParentNotFillable`). APPENDED.
+        CollectionParent
     }
 
     /// @notice Projection of the loan that would land if the supplied

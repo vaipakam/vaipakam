@@ -121,6 +121,8 @@ import {MarketLedgerFacet} from "../src/facets/MarketLedgerFacet.sol";
 import {InstantMarketFacet} from "../src/facets/InstantMarketFacet.sol";
 import {InstantFillFacet} from "../src/facets/InstantFillFacet.sol";
 import {InstantTakeoverFacet} from "../src/facets/InstantTakeoverFacet.sol";
+import {OfferMaterializeFacet} from "../src/facets/OfferMaterializeFacet.sol";
+import {CollectionOfferFacet} from "../src/facets/CollectionOfferFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -593,7 +595,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](6);
+        selectors = new bytes4[](5);
         selectors[0] = OfferCreateFacet.createOffer.selector;
         selectors[1] = OfferCreateFacet.getUserVault.selector;
         // Phase 8b.1 Permit2 addition.
@@ -601,12 +603,31 @@ contract HelperTest {
         // Cross-facet entry consumed by PrecloseOffsetFacet.offsetWithNewOffer
         // (Option 3 offset flow) — address(this)-only gating.
         selectors[3] = OfferCreateFacet.createOfferInternal.selector;
-        // #396 v0.5 — cross-facet materialize entries used by
-        // `SignedOfferFacet` to mint a normal on-chain offer from a
-        // signed off-chain offer (vault-backed + wallet-backed Permit2).
-        selectors[4] = OfferCreateFacet.createSignedOfferVault.selector;
-        selectors[5] = OfferCreateFacet.createSignedOfferWallet.selector;
+        selectors[4] = OfferCreateFacet.createCollectionParent.selector;
         return selectors;
+    }
+
+    /// @dev #3328 — mirrors `DeployDiamond._getOfferMaterializeSelectors`.
+    function getOfferMaterializeFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](3);
+        selectors[0] = OfferMaterializeFacet.createSignedOfferVault.selector;
+        selectors[1] = OfferMaterializeFacet.createSignedOfferWallet.selector;
+        selectors[2] = OfferMaterializeFacet.createCollectionSlice.selector;
+    }
+
+    /// @dev #3328 — mirrors `DeployDiamond._getCollectionOfferSelectors`.
+    function getCollectionOfferFacetSelectors() public pure returns (bytes4[] memory s) {
+        s = new bytes4[](10);
+        s[0] = CollectionOfferFacet.createCollectionOffer.selector;
+        s[1] = CollectionOfferFacet.reduceCollectionLoans.selector;
+        s[2] = CollectionOfferFacet.fillCollectionOffer.selector;
+        s[3] = CollectionOfferFacet.matchCollectionOffer.selector;
+        s[4] = CollectionOfferFacet.fillKey.selector;
+        s[5] = CollectionOfferFacet.wouldTake.selector;
+        s[6] = CollectionOfferFacet.getCollectionOffer.selector;
+        s[7] = CollectionOfferFacet.takeFailure.selector;
+        s[8] = CollectionOfferFacet.setCollectionOfferLimits.selector;
+        s[9] = CollectionOfferFacet.getCollectionOfferLimits.selector;
     }
 
     /// @dev T-086 Round-8 (#358) — the two parallel-sale selectors live
@@ -680,14 +701,13 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](6);
         selectors[0] = OfferPreviewFacet.previewAccept.selector;
         selectors[1] = OfferPreviewFacet.requireCadenceAdmitted.selector;
         selectors[2] = OfferPreviewFacet.previewCadenceAdmission.selector;
         selectors[3] = OfferPreviewFacet.requireOriginationCadenceAdmitted.selector;
         selectors[4] = OfferPreviewFacet.previewOriginationRefusal.selector;
         selectors[5] = OfferPreviewFacet.previewSignedOfferAccept.selector;
-        selectors[6] = OfferPreviewFacet.initRiskBounds.selector;
         return selectors;
     }
 
@@ -723,9 +743,10 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](3);
         selectors[0] = OfferMatchFacet.matchOffers.selector;
         selectors[1] = OfferMatchFacet.previewMatch.selector;
+        selectors[2] = OfferMatchFacet.matchCoreInternal.selector;
         return selectors;
     }
 
@@ -1298,7 +1319,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](11);
+        selectors = new bytes4[](12);
         selectors[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         selectors[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         selectors[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -1315,6 +1336,9 @@ contract HelperTest {
         selectors[9] = RiskPreviewFacet.getSaleListingBounds.selector;
         // #3577 — the risk gate a fill of a not-yet-stored signed order faces.
         selectors[10] = RiskPreviewFacet.previewSignedOfferRiskBlocks.selector;
+        // #3326 — the initiation risk bounds the match core reads by self-call
+        // (moved here from OfferPreviewFacet in #3328).
+        selectors[11] = RiskPreviewFacet.initRiskBounds.selector;
     }
 
     /// @dev #1212 (E-10 Claim-All) — the single generic batching entry point.

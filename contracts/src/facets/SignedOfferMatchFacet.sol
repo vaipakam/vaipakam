@@ -7,7 +7,7 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
-import {OfferCreateFacet} from "./OfferCreateFacet.sol";
+import {OfferMaterializeFacet} from "./OfferMaterializeFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 import {LibOfferMatchExecute} from "../libraries/LibOfferMatchExecute.sol";
@@ -235,7 +235,7 @@ contract SignedOfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     }
 
     /// @dev Materialize the signed-offer SLICE (size `fillAmount`) as an
-    ///      on-chain offer via the self-gated `OfferCreateFacet.createSigned
+    ///      on-chain offer via the self-gated `OfferMaterializeFacet.createSigned
     ///      OfferVault` (vault-backed). Built params + low-level
     ///      `abi.encodeWithSelector` + `.call` keep the 26-field struct encode
     ///      under viaIR's stack ceiling (the v0.5 pattern). Bubbles the inner
@@ -250,7 +250,7 @@ contract SignedOfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // slither-disable-next-line low-level-calls
         (bool ok, bytes memory res) = address(this).call(
             abi.encodeWithSelector(
-                OfferCreateFacet.createSignedOfferVault.selector, o.signer, params,
+                OfferMaterializeFacet.createSignedOfferVault.selector, o.signer, params,
                 LibSignedOffer.makerFullFor(o, filledBefore, fillAmount) // #1949 — the slice's cumulative share
             )
         );

@@ -3333,6 +3333,13 @@ async function processOfferLogs(
         borrowerOfferId: bigint;
         // #760 — block of the OfferMatched log, for the block-pinned
         // absolute `amountFilled` read in the apply loop below.
+        blockNumber: bigint; }
+    // #3328 — a collection offer's parent moved: one loan was filled from
+    // it (its `amountFilled` grew by the per-loan amount) or its lender
+    // lowered the loans left (its `amount` / `amountMax` shrank). Both are
+    // re-read block-pinned, like a match, so a re-scan writes the same row.
+    | { kind: 'collection';
+        offerId: bigint;
         blockNumber: bigint; };
   const orderedMatchAndModify: ModifiedOrMatched[] = [];
   for (const log of logs) {
@@ -3373,6 +3380,14 @@ async function processOfferLogs(
         borrowerOfferId: a.borrowerOfferId as bigint,
         // #760 — carried so the matched apply can read the absolute
         // `amountFilled` block-pinned to THIS event (idempotent re-scan).
+        blockNumber: log.blockNumber,
+      });
+    } else if (log.eventName === 'CollectionOfferFilled' || log.eventName === 'CollectionOfferReduced') {
+      // #3328 — the parent's amounts moved; re-read them in log order with
+      // the matches and modifications.
+      orderedMatchAndModify.push({
+        kind: 'collection',
+        offerId: a.offerId as bigint,
         blockNumber: log.blockNumber,
       });
     } else if (log.eventName === 'OfferClosed') {
@@ -3722,6 +3737,48 @@ async function processOfferLogs(
       // #2382 r2 — the borrower offer's fills are re-read by the refresh
       // lane (see `borrowerFillsStale`), not here.
       borrowerFillsStale.add(Number(ev.borrowerOfferId));
+    } else if (ev.kind === 'collection') {
+      // #3328 — the parent's post-image, block-pinned (idempotent re-scan).
+      // FAIL-CLOSED like the match read above: a failed read aborts the scan
+      // before the cursor advances.
+      let od: { amount?: bigint; amountMax?: bigint; amountFilled?: bigint };
+      try {
+        od = (await client.readContract({
+          address: diamond,
+          abi: DIAMOND_OFFER_DETAILS_ABI,
+          functionName: 'getOfferDetails',
+          args: [ev.offerId],
+          blockNumber: ev.blockNumber,
+        })) as { amount?: bigint; amountMax?: bigint; amountFilled?: bigint };
+        if (od.amount === undefined || od.amountMax === undefined || od.amountFilled === undefined) {
+          throw new Error('getOfferDetails returned no amounts');
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[chainIndexer] #3328 getOfferDetails(${Number(ev.offerId)}) for a collection offer failed; aborting scan so the cursor doesn't advance`,
+          redactedError(err),
+        );
+        throw err;
+      }
+      const r = await env.DB.prepare(
+        `UPDATE offers
+         SET amount = ?,
+             amount_max = ?,
+             amount_filled = ?,
+             updated_at = ?
+         WHERE chain_id = ? AND offer_id = ?`,
+      )
+        .bind(
+          BigInt(od.amount).toString(),
+          BigInt(od.amountMax).toString(),
+          BigInt(od.amountFilled).toString(),
+          now,
+          chainId,
+          Number(ev.offerId),
+        )
+        .run();
+      if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
     } else {
       // OfferModified — full post-image. Status stays 'active'
       // (modifications are only allowed on unaccepted offers;
@@ -6304,7 +6361,10 @@ export async function processLoanLogs(
         'lender',
         chainTimeOf(blockTimestamps, log.blockNumber),
       );
-    } else if (log.eventName === 'LoanSaleCompleted') {
+    } else if (log.eventName === 'LoanSaleCompleted' || log.eventName === 'InstantTakenOver') {
+      // #3656 — an instant-market takeover moves the lender position the same
+      // way (`LibLoan.migrateLenderPosition`, burn + fresh mint) and its event
+      // carries no new token id either, so it shares this block-pinned read.
       // EarlyWithdrawal TWO-STEP sale-offer flow (`completeLoanSale`): like the
       // direct `sellLoanViaBuyOffer`→`LoanSold` path, it migrates the ORIGINAL
       // loan's lender position (LibLoan.migrateLenderPosition burns the old token
@@ -6329,7 +6389,7 @@ export async function processLoanLogs(
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error(
-          `[chainIndexer] #749 getLoanDetails(${loanId}) for LoanSaleCompleted failed; aborting scan so the cursor doesn't advance`,
+          `[chainIndexer] #749 getLoanDetails(${loanId}) for ${log.eventName} failed; aborting scan so the cursor doesn't advance`,
           redactedError(err),
         );
         throw err;

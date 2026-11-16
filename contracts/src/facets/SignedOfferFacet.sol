@@ -7,7 +7,7 @@ import {LibAcceptTerms} from "../libraries/LibAcceptTerms.sol";
 import {LibPermit2, ISignatureTransfer} from "../libraries/LibPermit2.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
-import {OfferCreateFacet} from "./OfferCreateFacet.sol";
+import {OfferMaterializeFacet} from "./OfferMaterializeFacet.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 
 /**
@@ -17,7 +17,7 @@ import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
  *         signs the economically-binding offer terms ONCE off-chain (no tx,
  *         no gas); a counterparty fills it on-chain here. At the instant of
  *         fill the signed offer is materialized into a normal on-chain offer
- *         (`OfferCreateFacet`) and immediately accepted
+ *         (`OfferMaterializeFacet`) and immediately accepted
  *         (`OfferAcceptFacet.acceptOfferInternal`), so every downstream
  *         lifecycle (loan init, NFTs, claims, VPFI, sanctions, range
  *         accounting) is the existing, audited path — unchanged.
@@ -287,7 +287,7 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
     }
 
 
-    /// @dev Materialize the vault-backed offer via `OfferCreateFacet`. Built
+    /// @dev Materialize the vault-backed offer via `OfferMaterializeFacet`. Built
     ///      params + low-level `abi.encodeWithSelector` + `.call` (the typed
     ///      cross-facet call's ABI encode of the 26-field struct trips viaIR's
     ///      stack ceiling — see `reference_viair_stack_too_deep_lever`).
@@ -298,7 +298,7 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.CreateOfferParams memory params = _paramsFromSigned(o);
         bytes memory res = _selfCall(
             abi.encodeWithSelector(
-                OfferCreateFacet.createSignedOfferVault.selector,
+                OfferMaterializeFacet.createSignedOfferVault.selector,
                 o.signer,
                 params,
                 LibSignedOffer.makerFullFor(o, 0, LibSignedOffer.ceilingOf(o)) // #1949 — the whole order
@@ -308,7 +308,7 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
     }
 
     /// @dev Materialize the wallet-backed offer (Permit2-witness) via
-    ///      `OfferCreateFacet`.
+    ///      `OfferMaterializeFacet`.
     function _materializeWallet(
         LibSignedOffer.SignedOffer calldata o,
         ISignatureTransfer.PermitTransferFrom calldata permit,
@@ -318,7 +318,7 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.CreateOfferParams memory params = _paramsFromSigned(o);
         bytes memory res = _selfCall(
             abi.encodeWithSelector(
-                OfferCreateFacet.createSignedOfferWallet.selector,
+                OfferMaterializeFacet.createSignedOfferWallet.selector,
                 o.signer,
                 params,
                 permit,

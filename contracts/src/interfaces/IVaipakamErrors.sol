@@ -1847,4 +1847,9 @@ interface IVaipakamErrors {
     error DayDeliverySkipSideNotHeld(uint256 dayId, uint8 side);
     /// @notice Day `dayId` has not been skipped, so its landed value is not free to recycle.
     error DayDeliveryNotSkipped(uint256 dayId);
+    /// @notice #3328 — `offerId` is a collection offer. It fills only through
+    ///         `CollectionOfferFacet` (`fillCollectionOffer` /
+    ///         `matchCollectionOffer`), one token at a time; it cannot be
+    ///         accepted, matched, edited or sold into directly.
+    error CollectionParentNotFillable(uint256 offerId);
 }

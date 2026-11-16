@@ -400,6 +400,10 @@ contract EarlyWithdrawalDirectFacet is
         // direct `acceptOffer` path; reject it as a sale vehicle here, same as the
         // matcher rejects it (`OffsetVehicleNotMatchable`).
         if (s.offsetOfferToLoanId[buyOfferId] != 0) revert InvalidSaleOffer();
+        // #3328 — a collection offer is not a standing buy offer.
+        if (s.collectionOffer[buyOfferId].set.kind != LibVaipakam.CollateralSetKind.None) {
+            revert IVaipakamErrors.CollectionParentNotFillable(buyOfferId);
+        }
         // #1503 design item 21 — and note this is a DIFFERENT question from the
         // line above, which is why the gap survived review: that one asks "is the
         // OFFER I am consuming an offset vehicle" (`offsetOfferToLoanId[offerId]`),

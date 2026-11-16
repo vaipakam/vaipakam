@@ -88,6 +88,8 @@ import MarketLedgerFacetABI from './MarketLedgerFacet.json';
 import InstantMarketFacetABI from './InstantMarketFacet.json';
 import InstantFillFacetABI from './InstantFillFacet.json';
 import InstantTakeoverFacetABI from './InstantTakeoverFacet.json';
+import OfferMaterializeFacetABI from './OfferMaterializeFacet.json';
+import CollectionOfferFacetABI from './CollectionOfferFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
 import OracleAdminFacetABI from './OracleAdminFacet.json';
@@ -283,6 +285,8 @@ export {
   InstantMarketFacetABI,
   InstantFillFacetABI,
   InstantTakeoverFacetABI,
+  OfferMaterializeFacetABI,
+  CollectionOfferFacetABI,
   ClaimFacetABI,
   OracleFacetABI,
   OracleAdminFacetABI,

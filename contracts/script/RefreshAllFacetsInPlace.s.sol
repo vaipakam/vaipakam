@@ -93,6 +93,8 @@ import {MarketLedgerFacet} from "../src/facets/MarketLedgerFacet.sol";
 import {InstantMarketFacet} from "../src/facets/InstantMarketFacet.sol";
 import {InstantFillFacet} from "../src/facets/InstantFillFacet.sol";
 import {InstantTakeoverFacet} from "../src/facets/InstantTakeoverFacet.sol";
+import {OfferMaterializeFacet} from "../src/facets/OfferMaterializeFacet.sol";
+import {CollectionOfferFacet} from "../src/facets/CollectionOfferFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
@@ -331,7 +333,12 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // borrow and its one-fill executor; every selector is new (an Add).
     // 121 -> 122: InstantTakeoverFacet (#3656 §7) - a lender's takeover at
     // face value into another lender's slot; its selector is new (an Add).
-    uint256 public constant EXPECTED_FACETS = 122;
+    // 122 -> 123: OfferMaterializeFacet (#3328) - the signed-offer and
+    // intent-slice materialize entries, split off OfferCreateFacet; their
+    // selectors move between facets (a Replace onto the new address).
+    // 123 -> 124: CollectionOfferFacet (#3328) - NFT collection offers; its
+    // selectors are new (an Add).
+    uint256 public constant EXPECTED_FACETS = 124;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1394,6 +1401,16 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             "instantTakeoverFacet",
             ArtifactDeploy.deploy(type(InstantTakeoverFacet).name),
             _getInstantTakeoverSelectors()
+        );
+        items[122] = Item(
+            "offerMaterializeFacet",
+            ArtifactDeploy.deploy(type(OfferMaterializeFacet).name),
+            _getOfferMaterializeSelectors()
+        );
+        items[123] = Item(
+            "collectionOfferFacet",
+            ArtifactDeploy.deploy(type(CollectionOfferFacet).name),
+            _getCollectionOfferSelectors()
         );
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /

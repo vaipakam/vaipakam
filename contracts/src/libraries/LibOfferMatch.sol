@@ -11,7 +11,7 @@ import {LibAutoRefinanceCheck} from "./LibAutoRefinanceCheck.sol";
 import {LibAuth} from "./LibAuth.sol";
 import {LibPausable} from "./LibPausable.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
-import {OfferPreviewFacet} from "../facets/OfferPreviewFacet.sol";
+import {RiskPreviewFacet} from "../facets/RiskPreviewFacet.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {LibIntentTerms} from "./LibIntentTerms.sol";
 
@@ -106,7 +106,11 @@ library LibOfferMatch {
         // reverts `LibTiming.OfferTermsTooFresh(offerId, readyAt)`. Transient:
         // the pair becomes matchable on its own a few seconds later. Appended
         // last to keep every prior ordinal ABI-stable.
-        TermsTooFresh
+        TermsTooFresh,
+        // #3328 — the lender offer is a collection offer, which fills only
+        // through `CollectionOfferFacet`. `matchOffers` reverts
+        // `CollectionParentNotFillable(lenderOfferId)`. Appended last.
+        CollectionParent
     }
 
     /// @notice Structured return from `previewMatch`. Bots check
@@ -371,6 +375,10 @@ library LibOfferMatch {
         // mirror it here so a bot doesn't see an `Ok` for a pair that can't match.
         if (s.offsetOfferToLoanId[lenderOfferId] != 0) {
             r.errorCode = MatchError.OffsetVehicleTagged;
+            return r;
+        }
+        if (s.collectionOffer[lenderOfferId].set.kind != LibVaipakam.CollateralSetKind.None) {
+            r.errorCode = MatchError.CollectionParent;
             return r;
         }
         // Delegate to the struct-based core so the identical match-admission
@@ -759,7 +767,7 @@ library LibOfferMatch {
         // liquidity reads: a pair with an illiquid leg (a rental among them,
         // #2949) carries no init-LTV check, so a consented illiquid pair is
         // matchable whichever regime is on. The floor comes from
-        // {OfferPreviewFacet.initRiskBounds}: under depth-tiered LTV the
+        // {RiskPreviewFacet.initRiskBounds}: under depth-tiered LTV the
         // effective init-LTV cap = min(per-asset ceiling,
         // tierMaxInitLtvBps[effectiveTier(collateral)]) read from the
         // autonomous tier-LTV cache, as `LoanFacet._checkInitialLtvAndHf`
@@ -788,7 +796,7 @@ library LibOfferMatch {
     }
 
     /// @dev #3326 — the initiation risk gate's bounds for this pair, from
-    ///      its one host ({OfferPreviewFacet.initRiskBounds}): the collateral
+    ///      its one host ({RiskPreviewFacet.initRiskBounds}): the collateral
     ///      floor for `amount`, whether the depth-tiered regime set it, and
     ///      the largest amount `collateral` supports. Only an ERC-20 loan
     ///      carries the gate (an NFT rental does not, #2949).
@@ -798,7 +806,7 @@ library LibOfferMatch {
         returns (uint256 floor, bool tiered, uint256 amountCap)
     {
         if (L.assetType != LibVaipakam.AssetType.ERC20) return (0, false, type(uint256).max);
-        return OfferPreviewFacet(address(this)).initRiskBounds(L.lendingAsset, L.collateralAsset, amount, collateral);
+        return RiskPreviewFacet(address(this)).initRiskBounds(L.lendingAsset, L.collateralAsset, amount, collateral);
     }
 
     /// @dev #2727 — whether the two offers agree on every term the loan
