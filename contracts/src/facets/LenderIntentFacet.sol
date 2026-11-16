@@ -482,9 +482,12 @@ contract LenderIntentFacet is
         // #393 v1-d.1 (Codex P2) — respect the per-asset pause on this on-ramp:
         // a paused asset must take no NEW custody commitment (mirrors
         // `createOffer`, which pauses-checks both legs). The exit
-        // (`withdrawLenderIntentCapital`) stays open during a pause so a lender
-        // can always wind down — same "block new, allow exit" posture as the
-        // sanctions Tier-1/Tier-2 split.
+        // (`withdrawLenderIntentCapital`) takes no asset-pause check, so it
+        // stays open while an ASSET is paused and a lender can always wind
+        // down — same "block new, allow exit" posture as the sanctions
+        // Tier-1/Tier-2 split. The whole-protocol pause (`whenNotPaused`, the
+        // emergency stop) does close the withdrawal, like every vault outflow;
+        // cancelling the intent moves no money and stays open under both.
         LibFacet.requireAssetNotPaused(lendingAsset);
         LibFacet.requireAssetNotPaused(collateralAsset);
         // Pull wallet → vault via the protocol chokepoint (records the tracked

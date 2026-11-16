@@ -503,6 +503,25 @@ library LibVPFIDiscount {
         bool isLiquid,
         bool fullMode
     ) internal view returns (uint256 lifAsset) {
+        // baseLifAsset = the fee for the loan's agreed term (#3649,
+        // `LibInitiationFee`), replacing the flat `principal × LIF_BPS / BPS`;
+        // discounted = baseLifAsset × (BPS − d_borrower) / BPS.
+        lifAsset = borrowerLifDiscounted(
+            borrower, LibInitiationFee.feeOf(principal, termDays), isLiquid, fullMode
+        );
+    }
+
+    /// @notice `baseFee` (an initiation fee in the lending asset) after the
+    ///         borrower's discount: the hold-tier discount with consent,
+    ///         plus the Full bonus when `fullMode`, liquid only, capped at
+    ///         `MAX_FEE_DISCOUNT_BPS`. The acceptance charge and an
+    ///         extension's added fee (#3649) both take it.
+    function borrowerLifDiscounted(
+        address borrower,
+        uint256 baseFee,
+        bool isLiquid,
+        bool fullMode
+    ) internal view returns (uint256 lifAsset) {
         uint256 dBorrower;
         if (isLiquid && LibVaipakam.storageSlot().vpfiDiscountConsent[borrower]) {
             ( , uint16 effBps) = effectiveTierAndBps(borrower);
@@ -524,11 +543,7 @@ library LibVPFIDiscount {
                 dBorrower = LibVaipakam.MAX_FEE_DISCOUNT_BPS;
             }
         }
-        // baseLifAsset = the fee for the loan's agreed term (#3649,
-        // `LibInitiationFee`), replacing the flat `principal × LIF_BPS / BPS`.
-        lifAsset = LibInitiationFee.feeOf(principal, termDays);
-        // discounted = baseLifAsset × (BPS − d_borrower) / BPS
-        lifAsset = (lifAsset * (LibVaipakam.BASIS_POINTS - dBorrower)) /
+        lifAsset = (baseFee * (LibVaipakam.BASIS_POINTS - dBorrower)) /
             LibVaipakam.BASIS_POINTS;
     }
 

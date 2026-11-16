@@ -592,7 +592,7 @@ contract LenderIntentLendUntilTest is SetupTest {
 
         uint64 farExpiry = uint64(vm.getBlockTimestamp() + 400 days);
         vm.prank(b);
-        AutoLifecycleSettingsFacet(address(diamond)).setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry);
+        AutoLifecycleSettingsFacet(address(diamond)).setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry, type(uint256).max);
         vm.prank(lender);
         AutoLifecycleSettingsFacet(address(diamond)).setAutoExtendLenderCaps(loanId, true, 0, 1000, farExpiry);
 

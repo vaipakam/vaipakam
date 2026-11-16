@@ -117,7 +117,7 @@ contract ProtectedLoanAuthorityTest is SetupTest {
         uint256 loanId = _openLoan(false);
         uint64 farExpiry = uint64(block.timestamp + 400 days);
         vm.prank(borrower);
-        _s().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry);
+        _s().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry, type(uint256).max);
         vm.prank(lender);
         _s().setAutoExtendLenderCaps(loanId, true, 0, 1000, farExpiry);
         ERC20Mock(mockERC20).mint(borrower, 10 ether);
@@ -139,12 +139,12 @@ contract ProtectedLoanAuthorityTest is SetupTest {
         _f().extendLoanInPlace(loanId, 500, 30);
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
-        _s().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry);
+        _s().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry, type(uint256).max);
 
         // The controller consents and extends; the charge comes from the
         // account's reserve.
         vm.prank(nominee);
-        _s().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry);
+        _s().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry, type(uint256).max);
         assertTrue(_s().getAutoExtendBorrowerCaps(loanId).enabled, "controller consent counts");
         uint256 startBefore = LoanFacet(address(diamond)).getLoanDetails(loanId).startTime;
         vm.prank(nominee);

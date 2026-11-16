@@ -1003,6 +1003,9 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             loan.loanInitiationFeeBpsAtInit = uint16(
                 LibInitiationFee.rateBpsDown(loan.durationDays)
             );
+            // The term the fee pays for, counted from this start (#3649).
+            loan.lifTermOrigin = loan.startTime;
+            loan.lifPaidDays = uint32(loan.durationDays);
         }
     }
 

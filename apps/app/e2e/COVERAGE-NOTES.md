@@ -1908,6 +1908,8 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 
 ## Automatic extension on the loan page and extension reserves on Claims (#2814 app half)
 
+**The added initiation fee (#3649).** The borrower's editor quotes the fee an extension to the chosen latest end adds (`quoteExtensionFee`, after the holder's discount), states it (or that none is added, or that it could not be read), and saves it as the limit's largest fee; review is held until the quote is read. The unit test pins the borrower setter's sixth argument. Not yet driven live: it needs the next fresh deploy.
+
 **What the page states.** The protocol's switch and pause, the loan's extension window (before, open, closed), the refusals for an open refinance request or a swap-to-repay order, both sides' limits as their getters return them (an earlier holder's limits are not in force, and the page says so), and the terms both leave open, or that they admit no rate, or that a side is missing.
 
 **Who edits what.** The page passes which positions the wallet holds from a fresh ownership read, so a wallet holding both positions sets each side's limits separately. Each editor is keyed by chain, wallet and side, so a draft never becomes another wallet's or side's consent. Turning a side off is a Terms-gate exit.

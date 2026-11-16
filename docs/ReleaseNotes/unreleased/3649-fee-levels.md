@@ -8,6 +8,8 @@ Every figure derived from the fee reads the same term rate: the acceptance charg
 
 A new settings facet holds the base term, the yearly rate and the one-year point, all bounded: the base term is 1 to 90 days, the one-year point 180 to 730 days, the yearly rate may not be below the base rate, and the fee at the longest term the platform admits may not exceed the 50% fee ceiling. The base-rate setter now refuses a base rate above the yearly rate. The facet also quotes the fee and rate for any principal and term, which the app's term picker can read.
 
-Still to come in this issue: an extension, and an obligation handover that lengthens the term, pay the fee for the added time only; and the treasury floor split from `ShortfallReserveDesign.md`. Design: `docs/DesignsAndPlans/FeeLevelsDesign.md` section 11.
+An extension now pays the initiation fee for the term it adds: the fee at the new total term less the fee already paid for, on the principal outstanding, drawn from the borrower holder's vault after their hold-tier discount. Any chain of extensions pays what one loan of the same total term would. The borrower's automatic-extension limits gain the largest added fee they allow, and the app's auto-extend card quotes the fee for the chosen latest end date and saves it as that limit. An obligation handover cannot end a loan later than it ends now, so it never adds term and never pays.
 
-> Caveat: until the extension stage lands, an extension or a lengthening handover charges no added fee.
+Still to come in this issue: the treasury floor split from `ShortfallReserveDesign.md`. Design: `docs/DesignsAndPlans/FeeLevelsDesign.md` section 11.
+
+> Caveat: the keeper's funding check does not yet add the extension's fee to the interest charge, so an automatic extension with funds for the interest alone is refused when it lands rather than skipped beforehand.

@@ -3,6 +3,8 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibInitiationFee} from "../libraries/LibInitiationFee.sol";
+import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 
 /**
@@ -94,5 +96,36 @@ contract FeeLevelsFacet is DiamondAccessControl {
         fee = LibInitiationFee.feeOf(principal, termDays);
         rateBpsDown = LibInitiationFee.rateBpsDown(termDays);
         rateBpsUp = LibInitiationFee.rateBpsUp(termDays);
+    }
+
+    /**
+     * @notice What extending loan `loanId` now, to end at `newEndTime`,
+     *         would add to its initiation fee (#3649).
+     * @return gross       The added fee before any discount.
+     * @return fee         After the current borrower-position holder's
+     *                     hold-tier discount: what the extension charges, and
+     *                     what the borrower's extension limit is checked
+     *                     against.
+     * @return paidDays    The term the fee is paid for now.
+     * @return newPaidDays The term it would be paid for after.
+     * @dev    The figure holds for an extension made now; the settings, the
+     *         principal outstanding, the holder's tier and paused time can
+     *         move it before one lands.
+     */
+    function quoteExtensionFee(uint256 loanId, uint256 newEndTime)
+        external
+        view
+        returns (uint256 gross, uint256 fee, uint256 paidDays, uint256 newPaidDays)
+    {
+        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
+        (gross, paidDays, newPaidDays) = LibInitiationFee.extensionFee(loan, newEndTime);
+        if (gross > 0) {
+            fee = LibVPFIDiscount.borrowerLifDiscounted(
+                LibPositionNFT.ownerOf(loan.borrowerTokenId),
+                gross,
+                loan.principalLiquidity == LibVaipakam.LiquidityStatus.Liquid,
+                false
+            );
+        }
     }
 }

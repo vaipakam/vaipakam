@@ -21,6 +21,7 @@ import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibKeeperReward} from "../libraries/LibKeeperReward.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
+import {LibInitiationFee} from "../libraries/LibInitiationFee.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -111,7 +112,27 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         uint256 reserved
     );
 
+    /// @notice #3649 — an extension added to the term the initiation fee is
+    ///         paid for, and the borrower-position holder paid the added fee
+    ///         to the treasury out of their vault.
+    /// @param fee         The added fee, after the holder's discount.
+    /// @param paidDays    The term paid for before the extension.
+    /// @param newPaidDays The term paid for after it.
+    /// @custom:event-category state-change/loan-mutation
+    event ExtensionFeeCharged(
+        uint256 indexed loanId,
+        address indexed payer,
+        address asset,
+        uint256 fee,
+        uint256 paidDays,
+        uint256 newPaidDays
+    );
+
     // ─── Errors ──────────────────────────────────────────────────────
+
+    /// @notice #3649 — the extension's added initiation fee is above the
+    ///         largest the borrower's extension limits allow.
+    error ExtensionFeeAboveCap(uint256 fee, uint256 cap);
 
     /// @notice Returned when the caller is not the borrower-NFT owner.
     error NotBorrowerNftOwner();
@@ -734,6 +755,9 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
                 treasuryShare
             );
         }
+        // #3649 — the initiation fee for the added term, from the same vault,
+        // within the borrower's limit. Priced before the row changes.
+        _chargeExtensionFee(loan, borrowerNftOwner, newEndTimeUint, borrowerCaps.maxExtensionFee);
         // Codex round-2 P1 — clear any active prepay-collateral
         // Seaport listing BEFORE the loan row is mutated. Mirrors
         // RefinanceFacet's `LibPrepayCleanup.clearActiveListing` call
@@ -927,19 +951,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         //    split. #2440 — a consented extension, not a forced close-out:
         //    refused unless all of it arrived, so the lender and the treasury
         //    are never paid out of the Diamond's other balance.
-        uint256 charge = lenderShare + treasuryShare;
-        {
-            uint256 reserved = s.extendReserve[loan.id][borrowerNftOwner];
-            uint256 fromReserve = reserved < charge ? reserved : charge;
-            LibEncumbrance.unlienExtendReserve(loan.id, borrowerNftOwner, principalAsset, fromReserve);
-            // The rest is the holder's other free vault balance: the depository
-            // ledger (what of it they may withdraw) pays first.
-            LibDepositoryLedger.spend(borrowerNftOwner, principalAsset, 0, charge - fromReserve);
-            emit ExtendChargeDrawn(
-                loan.id, borrowerNftOwner, principalAsset, fromReserve, charge - fromReserve, reserved - fromReserve
-            );
-        }
-        LibVaultOutflow.toDiamondExact(borrowerNftOwner, principalAsset, charge, loan.id, OutflowReason.INTEREST);
+        _drawFromHolder(loan, borrowerNftOwner, lenderShare + treasuryShare, OutflowReason.INTEREST);
         // 2. Forward treasury share + record accrual. #2440 — measured,
         //    accrued as it arrived (TreasuryFeeFacet).
         LibFacet.transferToTreasury(principalAsset, treasuryShare);
@@ -962,4 +974,54 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         LibInterestLedger.holderPaid(s, loan, interestGross - sellersGross);
     }
 
+
+    /// @dev #2814 — the one way an extension takes money from the
+    ///      borrower-position holder: their reserve for this loan first
+    ///      (released here so the vault guard sees it free), then their other
+    ///      free balance of the asset, the depository ledger's withdrawable
+    ///      part first. Refused unless all of it arrives at the Diamond: an
+    ///      extension is consented, not forced, so nobody is ever paid out of
+    ///      the Diamond's other balance. The event states the split.
+    function _drawFromHolder(
+        LibVaipakam.Loan storage loan,
+        address holder,
+        uint256 amount,
+        uint8 reason
+    ) private {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address asset = loan.principalAsset;
+        uint256 reserved = s.extendReserve[loan.id][holder];
+        uint256 fromReserve = reserved < amount ? reserved : amount;
+        LibEncumbrance.unlienExtendReserve(loan.id, holder, asset, fromReserve);
+        LibDepositoryLedger.spend(holder, asset, 0, amount - fromReserve);
+        emit ExtendChargeDrawn(loan.id, holder, asset, fromReserve, amount - fromReserve, reserved - fromReserve);
+        LibVaultOutflow.toDiamondExact(holder, asset, amount, loan.id, reason);
+    }
+
+    /// @dev #3649 — charge the initiation fee for the term the extension
+    ///      adds ({LibInitiationFee.extensionFee}), after the holder's
+    ///      discount. The hold-tier discount applies as at acceptance; the
+    ///      Full bonus does not, since an extension pays no fresh tariff.
+    ///      Refused above the borrower's limit. The fee goes to the treasury
+    ///      whole: an extension's added fee carries no matcher share.
+    function _chargeExtensionFee(
+        LibVaipakam.Loan storage loan,
+        address holder,
+        uint256 newEndTime,
+        uint256 cap
+    ) private {
+        (uint256 gross, uint256 paidDays, uint256 newPaidDays) =
+            LibInitiationFee.extensionFee(loan, newEndTime);
+        if (newPaidDays == paidDays) return;
+        uint256 fee = LibVPFIDiscount.borrowerLifDiscounted(
+            holder, gross, loan.principalLiquidity == LibVaipakam.LiquidityStatus.Liquid, false
+        );
+        if (fee > cap) revert ExtensionFeeAboveCap(fee, cap);
+        loan.lifPaidDays = uint32(newPaidDays);
+        if (fee > 0) {
+            _drawFromHolder(loan, holder, fee, OutflowReason.FEE);
+            LibFacet.transferToTreasury(loan.principalAsset, fee);
+        }
+        emit ExtensionFeeCharged(loan.id, holder, loan.principalAsset, fee, paidDays, newPaidDays);
+    }
 }

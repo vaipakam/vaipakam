@@ -2432,6 +2432,16 @@ library LibVaipakam {
         // the slot above.
         uint8 liqDiscountTierAtInit;
         uint16 liqDiscountBpsAtInit;
+        // #3649 — the term the initiation fee has been paid for. The fee
+        // depends only on a loan's total term, so an extension pays the fee
+        // at the new total term less the fee at `lifPaidDays`.
+        // `lifTermOrigin` is the start the total term is counted from (the
+        // origination start, never moved by an extension or a handover);
+        // the count excludes paused time, as the loan clock does. Both are 0
+        // on a loan that paid no initiation fee (a rental, a sale vehicle),
+        // and such a loan pays none on extension either.
+        uint64 lifTermOrigin;
+        uint32 lifPaidDays;
     }
 
     /**
@@ -9874,6 +9884,11 @@ library LibVaipakam {
         uint16 maxRateBps;   //
         uint64 maxNewExpiry; // both sides store an outer bound; executor picks min(both)
         address setter;      // same NFT-transfer-staleness fence as AutoRefinanceCaps
+        // #3649 — borrower side only: the largest added initiation fee an
+        // extension may charge the borrower-position holder, in the lending
+        // asset. 0 admits only an extension that adds no fee. The lender
+        // side stores 0 and it is not read.
+        uint256 maxExtensionFee;
     }
 
     /// @notice #407 (2026-06-12) — vault encumbrance record. One row per

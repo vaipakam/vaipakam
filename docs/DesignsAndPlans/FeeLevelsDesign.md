@@ -115,4 +115,14 @@ Built in stage 1 (term rate):
 - The loan stamps its term rate (rounded down) as its initiation fee rate when it opens.
 - The interest share default is 5%.
 
-Stages 2 (extension and handover difference) and 3 (the floor split) follow in the same batch.
+Built in stage 2 (extension):
+
+- The loan records the start its total term is counted from and the term the fee is paid for. An extension pays the fee at the new total term less the fee at the term paid for, on the principal outstanding, under the settings in force when it takes effect. The total term is counted in whole days, rounded up, from the origination start to the new end, without paused time, so any sequence of extensions pays in sum what one loan of the same total term pays.
+- The hold-tier discount applies to the added fee as at acceptance. The Full bonus does not, because an extension pays no fresh tariff and the extension already downgrades the lender's Full stamp.
+- The fee is drawn from the borrower-position holder's vault the same way as the extension's interest charge: their extension reserve for the loan first, then their other free balance. It goes to the treasury whole, with no matcher share. Stage 3 marks it as an extension fee so that no floor is taken from it.
+- The borrower's extension limits gain the largest added fee they allow. An extension whose fee is above it is refused, and nothing changes. The settings facet quotes the added fee for an extension made now to a given end, after the holder's discount, and the app's auto-extend card shows that figure and saves it as the limit.
+- A loan that paid no initiation fee (a rental, a sale vehicle) records no term and pays none on extension.
+- **An obligation handover never lengthens the term.** Its replacement maturity may not fall after the loan's current maturity (an existing lender-protection rule), so the total term counted from the origination start cannot grow, and the handover charges nothing. If that rule is ever relaxed, the handover would charge through the same computation.
+- Not yet done: the keeper's funding check reads the extension's interest charge only. It should add the quoted fee before it sends an extension, or the extension is refused for want of funds. That change belongs to the keeper app.
+
+Stage 3 (the floor split) follows in the same batch.
