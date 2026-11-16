@@ -197,7 +197,9 @@ is described — less tidily — across the release notes and the
 
 <a id="release-note-consolidation-august-13-through-november-4-2026"></a>
 
-## Release-note consolidation: August 13 through November 11, 2026
+<a id="release-note-consolidation-august-13-through-november-11-2026"></a>
+
+## Release-note consolidation: August 13 through November 15, 2026
 
 The following source map accounts for every dated file present in the inclusive
 range. It identifies where functional decisions belong, rather than copying
@@ -248,6 +250,18 @@ and mirrors carry the fee-linked cap. Deployment and activation caveats remain
 explicit. Later intent already present, including tier-LTV defaults and ceilings,
 is retained. Build commands, code layout, and test scripts are not copied into
 functional requirements.
+
+The November 11–15 continuation uses the November 11 overlap and the
+November 12 and 15 files present on main; there are no dated November 13 or
+14 files. It reconciles vault-owned protection, permanent replacement,
+request-bound signatures, treasury ownership by vault code, fixed gas budgets,
+signed-offer protections and sets, cross-term pro-rata matches, fresh-offer
+priority, Auto-lend windows, and alpha05's new read and transaction flows.
+Earlier same-day gaps are superseded where later entries complete them:
+alpha05 edits offers in place, the keeper considers cross-term pairs, and
+all positive-flow modules are staged. Rehearsal scripts and code layout are
+not copied into the requirements. Later recorded Auto-lend intent already
+present on main remains in force.
 
 In this table, Platform means [ProjectDetailsREADME.md](ProjectDetailsREADME.md),
 App means [Alpha02ConnectedApp.md](Alpha02ConnectedApp.md), Website means
@@ -333,6 +347,8 @@ verification or tooling history, not additional product requirements.
 | [2026-11-09](../ReleaseNotes/ReleaseNotes-2026-11-09.md) | Platform; vault; keeper; website; alpha05 | Classified outflows, own-vault credits, independent price guard, backup automation, snapshotted discount liquidation, alerts and user controls, wallet-gated books |
 | [2026-11-10](../ReleaseNotes/ReleaseNotes-2026-11-10.md) | Platform; vault; tokenomics; keeper; alpha05 | Bounded claim work and windows, guarded offers, Base cap, deadlines and seasoning, NFT cooldowns, fixed vault endpoints, seven-day pricing, treasury room and keeper pause |
 | [2026-11-11](../ReleaseNotes/ReleaseNotes-2026-11-11.md) | Platform; vault; tokenomics; keeper; website; alpha05 | Budget-paid tier drops, private lease and Telegram state, signed-order previews and desk, largest matches, mirror caps and returns, private fallback, outage clocks, reorg coverage, treasury floors and entry-capped discounts |
+| [2026-11-12](../ReleaseNotes/ReleaseNotes-2026-11-12.md) | Vault; platform; tokenomics; alpha05 | Seven-day code governance, stop-only source muting, tier defaults and ceilings, reward venues, waiting reasons and paid history |
+| [2026-11-15](../ReleaseNotes/ReleaseNotes-2026-11-15.md) | Vault; platform; tokenomics; keeper; app; website; alpha05 | Vault-held protection and replacement, sole treasury source, bounded price reads, signed protections and sets, cross-term matches, fresh priority, Auto-lend bounds, public transparency, claims, activity, recovery and risk disclosure |
 
 A source release is not a live-deployment guarantee. The October 27–28 caveat
 that the contract wave had not reached testnets was superseded by the November

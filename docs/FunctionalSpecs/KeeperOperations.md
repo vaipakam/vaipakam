@@ -2,7 +2,7 @@
 
 This document describes the intended behavior of the protocol-operated keeper.
 It consolidates the operational decisions in the release notes from August 13
-through November 11, 2026, while retaining later recorded intent decisions.
+through November 15, 2026, while retaining later recorded intent decisions.
 The deployment destination incorporates the owner's
 October 27 direction: a dedicated Cloudflare database and a separate always-on
 keeper VM in Oracle Cloud. This is the required deployment arrangement, not
@@ -345,6 +345,30 @@ evidence that the migration has completed.
   Own-funds full and partial repayments remain possible during the recovery
   hour; price-dependent sales wait, and the keeper does not invent an earlier
   grace end from the original term alone.
+
+### Matching across terms and prioritizing changed offers
+
+- Ordinary matching groups by asset pair, not exact term. Equal terms are
+  eligible; different terms are previewed only when both offers chose pro-rata
+  and the borrower requested the shorter term. The loan runs that borrower
+  term. The live contract preview remains binding, so older deployments may
+  refuse these candidates without any match being sent.
+- A fresh-offer lane considers offers created or repriced in the last ten
+  minutes once terms seasoning has passed. It receives at most a configured
+  share of preview, match, and time budgets: one quarter by default, zero
+  disables it, and one half is the maximum. The ordinary rotating walk keeps
+  its reserved remainder even if the fresh lane leaves some unused, and does
+  not preview a pair twice in the same run.
+- Creation earns one priority turn. Repricing earns another only an hour
+  after its previous turn; both lanes keep creator-pair fairness. This memory
+  is process-local, so restart may grant one additional recent turn, bounded
+  by the same share. No strict chain-level price/time priority is promised.
+  On a large book the ordinary walk may take more runs because it retains
+  at least one minus that share, not its former entire budget.
+- Intent candidates apply their lend-until and pro-rata choices before
+  preview. Expiring intent capital is never silently withdrawn or rolled
+  past its permissible one-day-loan window. Partial principal payments do
+  not recommit working capital or free the original exposure cap early.
 
 ### Periodic settlement and in-place extension
 
@@ -849,7 +873,7 @@ evidence that the migration has completed.
   An intent that is still live, filled or already expired is left alone.
 - The per-tier loan-to-value cache is refreshed from the peer protocols
   before it can lapse; a cached tier stops counting after fourteen days and
-  the governance tier cap applies instead. The keeper first previews the
+  the tier's default, clipped to its governance ceiling, applies instead. The keeper first previews the
   refresh and sends it only when it would write a tier whose value changes,
   or one cached long enough ago to need renewing, so a chain whose peers give
   no reading costs nothing. Each tier the refresh rejects is reported with
@@ -1370,8 +1394,10 @@ backup, not a second keeper:
   the second its delay ends.
 - A held payout is released only when the protocol's
   own record says it can go: still held, past its release time by the chain's
-  clock, the account not locked, and co-signed while the account requires a
-  co-sign. A payout whose destination has since left the account's allowed
+  clock, the vault account not locked, and co-signed whenever the protocol
+  reports that this individual payout needs it. That includes unverified
+  destinations while signers exist; the account-level switch alone is not
+  sufficient to decide it. A co-signer cannot be the payee. A payout whose destination has since left the account's allowed
   destinations is cancelled by the release itself, and the asset stays in the
   vault; the report names it apart from a paid one. A payout to a recipient
   the sanctions screen flags is refused by the protocol and stays held; the
@@ -1602,6 +1628,22 @@ it. Reports retain
 unknowns and partial coverage. An unreadable
 dependency is never turned into an empty queue or a successful run.
 
+## Vault-held protection coverage at Stage B2
+
+- Protection state is read from the vault, not a second platform record.
+  Locks and the required platform effects are applied atomically, and payout
+  release observes the vault lock even before a row's cancellation is recorded.
+  A replaced account routes only to its latest manager and stays protected.
+- The keeper's linked-chat lock goes through the vault. General relay support
+  in the contract is not support for arbitrary user-signed lock delivery in
+  this keeper; that surface awaits Stage B4 along with the app's relayed forms.
+- Until vault events are indexed, only matured vault changes named by a ledger
+  row can be discovered for finalization. Owner alerts for a lock or a proposed
+  replacement do not fire in that interval. These limits override descriptions
+  of the fully available alert service elsewhere in this document.
+- The agent owns the user bot and its links; the keeper has no user-bot handle
+  or token role. The keeper's operator-alert bot remains an independent route.
+
 ## Sources
 
 - [August 23](../ReleaseNotes/ReleaseNotes-2026-08-23.md) and
@@ -1655,3 +1697,8 @@ dependency is never turned into an empty queue or a successful run.
 - [November 11](../ReleaseNotes/ReleaseNotes-2026-11-11.md): private leases,
   agent-owned Telegram state, fee and chain checks, private fallback timing,
   sequencer recovery, budget-paid tier reductions, and closed-day returns.
+- [November 12](../ReleaseNotes/ReleaseNotes-2026-11-12.md): tier defaults
+  clipped to ceilings and fixed seven-day vault-code changes.
+- [November 15](../ReleaseNotes/ReleaseNotes-2026-11-15.md): cross-term
+  pro-rata candidates, bounded fresh-offer priority, intent end dates, and
+  vault-owned protection with explicit discovery and alert limitations.

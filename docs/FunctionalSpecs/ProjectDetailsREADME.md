@@ -6,9 +6,11 @@ Vaipakam is a decentralized, non-custodial, vault-to-vault lending and borrowing
 
 <a id="current-functional-consolidation-through-2026-11-04"></a>
 
-## Current Functional Consolidation Through 2026-11-11
+<a id="current-functional-consolidation-through-2026-11-11"></a>
 
-The dated release notes from 2026-08-13 through 2026-11-11, inclusive,
+## Current Functional Consolidation Through 2026-11-15
+
+The dated release notes from 2026-08-13 through 2026-11-15, inclusive,
 are consolidated into the relevant sections below. Later recorded intent
 decisions already present in this specification remain in force. The following
 platform-wide rules apply across the lifecycle:
@@ -234,11 +236,29 @@ platform-wide rules apply across the lifecycle:
   specification. Its feature coverage does not constitute a cutover of the
   existing app or evidence that a new contract capability is live.
 
+- Protected settings are held and enforced by each vault, with action-bound
+  one-use signatures and permanent replacement of owner authority. Queued
+  payout storage and vault-event indexing retain the Stage B3/B4 limits in
+  [Vault Operations](VaultOperations.md#vault-owned-authority-and-signed-changes).
+- New vault code and revocations wait seven days, exceeding every protected
+  payout delay. Guardian source muting cannot turn a rejected price into an
+  accepted one; removing a source waits forty-eight hours. Price reads have
+  a fixed gas budget and insufficient caller gas is not missing-price evidence.
+- Signed offers bind reviewed fee caps and optional taker and co-signer
+  restrictions, support a rising cancellation floor, and may be signed in
+  sets of up to thirty-two. Each offer retains its individual lifecycle.
+- Pro-rata matches permit a shorter borrower term within the lender's maximum.
+  Auto-lend may carry a lend-until bound and pro-rata opt-in. Its end date
+  limits agreed maturity rather than guaranteeing the money's return date.
+- A treasury destination is read only from vault code. Pinned vaults retain
+  their version's treasury; moving it requires code governance, with the
+  stated emergency path to previously registered code while paused.
+
 ## Table of Contents
 
 - [Vaipakam DeFi | Decentralized Vault-to-Vault Lending, Borrowing and NFT Rental Platform (Phase 1)](#vaipakam-defi--decentralized-vault-to-vault-lending-borrowing-and-nft-rental-platform-phase-1)
   - [Platform Functional Overview](#platform-functional-overview)
-  - [Current Functional Consolidation Through 2026-11-04](#current-functional-consolidation-through-2026-11-11)
+  - [Current Functional Consolidation Through 2026-11-04](#current-functional-consolidation-through-2026-11-15)
   - [Table of Contents](#table-of-contents)
   - [1. Supported Assets and Networks (Phase 1)](#1-supported-assets-and-networks-phase-1)
     - [Lending and Collateral Assets](#lending-and-collateral-assets)
@@ -579,8 +599,8 @@ and the loan or offer it belongs to.
   conduit) and the 1inch order protocol** are fixed in the vault code itself
   (#3431). A vault reads them from no registry and from no platform setting,
   so changing one means new vault code, which waits the vault-code delay.
-  A launch is refused until the vault code's endpoints match the platform's
-  own settings, so a mismatch can never silently refuse every fee or fill.
+  A launch is refused until independently configured endpoints agree; the
+  treasury alone is read directly from current vault code, so a mismatch can never silently refuse every fee or fill.
   The treasury is outside that comparison because the platform keeps no
   second copy of it: the vault code is the only place it is held (#3569).
 - **A vault signs only its own orders, and only for the marketplace that
@@ -1044,8 +1064,8 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   because a partial repayment pays only the interest accrued on the repaid
   slice. A partial repayment takes the route it takes on any loan: it is paid to
   the current holder of the lender position (held locked for them instead if
-  they are sanctions-frozen, sold-interest claims first). It does not pass
-  through the lender's vault and is not re-committed behind the intent, so that
+  they are sanctions-frozen, sold-interest claims first). It credits the current holder's own vault under the ordinary payout rule
+  and is not re-committed behind the intent, so that
   slice leaves auto-lend, which the app states at setup. The intent's exposure
   cap keeps counting the original fill until the loan closes, so a partial
   repayment never frees cap early. When such a loan is finally repaid, a roll
@@ -3560,7 +3580,7 @@ or the public address through which users access the protocol.
     - COLLATERAL AND PARALLEL-SALE LISTINGS: a marketplace listing the account posts may carry fee payments the marketplace makes straight from the sale, outside the payout queue. While protected mode is on, such a listing may pay only the account's own wallet or an allowlisted address, and a locked or replaced account cannot post one. The same rule is read again at every fill, so a lock, a replacement or an allowlist removal after posting stops the sale rather than paying the fee; a listing posted before protection was switched on fills only if its fee recipients pass the rule then. What the protection does not cover is stated rather than implied: before the owner or a signer locks the account, a thief holding the key may still list the collateral at any price that covers the lender and the treasury, and the buyer, not the account, chooses where the sold collateral goes; only the remainder owed to the borrower position stays with the protocol's own payout routes.
     - Each queued request carries a short code shown in the app and in every alert, so the owner can match a message to a request. Alerts never ask the owner to sign anything.
   - **Escape Route During a Long Pause:** If an admin pause lasts its escape period without a break, every user may take what is theirs (bounded exactly as a depository withdrawal) out of their own vault to their own wallet, and a protected account's queued payouts keep releasing. Nothing a loan, offer or claim holds can leave this way, and a sanctioned wallet cannot use it. An automatic pause window does not open it, and one fired during an admin pause does not restart the period: it runs from the start of the admin pause. The escape period is three days by default. The admin may set it between 49 hours and seven days; the lower bound keeps it longer than the governance timelock's 48-hour delay, so a slow-moving governance fix can land before the escape opens. A change applies only to pauses that start afterwards: each admin pause keeps the period in force when it began, so a change made during a pause neither opens the escape early nor closes one users were promised, and a repeated pause call during the same pause keeps it too. Anyone can read the period the next pause will use, the period of the pause now running, and the moment the running pause's escape opens.
-  - **Vault Version Pin (#3204):** A vault owner may pin their vault to any registered, non-revoked version; the vault runs it until the owner changes the pin or governance revokes that version, in which case it runs the current version. Every pin, re-pin and unpin carries the owner's own signature, checked by the registry against the owner wallet the vault recorded at creation, and waits the vault's pin delay. Protected mode raises that delay (from the protection settings, at most two days, so a pin always lands before a proposed code change; only the owner's signature may raise it further), lets a pending pin change be cancelled, and refuses new ones while the account is locked; lowering the pin delay waits the current delay. After a replacement, the pin signatures are checked against the new wallet, because the vault's own owner record follows the replacement (#3379).
+  - **Vault Version Pin (#3204):** A vault owner may pin their vault to any registered, non-revoked version; the vault runs it until the owner changes the pin or governance revokes that version, in which case it runs the current version. Every pin, re-pin and unpin carries the owner's own signature, checked by the registry against the vault's current owner, and waits the vault's pin delay. Protected mode raises that delay (from the protection settings, at most two days, so a pin always lands before a proposed code change; only the owner's signature may raise it further), lets a pending pin change be cancelled, and refuses new ones while the account is locked; lowering the pin delay waits the current delay. After a replacement, the pin signatures are checked against the new wallet, because the vault's own owner record follows the replacement (#3379).
   - **Direct Transfer Custody Policy:** Principal, repayment, refinance, preclose, and lender-sale settlement flows should avoid transient `wallet -> Diamond -> vault` or `vault -> Diamond -> vault` hops when the same result can be achieved with a direct `transferFrom` or vault withdrawal to the final recipient. Within one transaction the Diamond may route user assets — for example a liquidation's swap output on its way to the lender's vault and the treasury — but it must not still hold them when the transaction ends (see the custody rule below); ordinary repayment / settlement assets should move directly to the counterparty vault or treasury with accounting updated alongside the direct transfer.
   - **No User Asset Rests In Protocol Custody (owner rule, #2141):** A user-owned asset may pass through the Diamond inside one transaction, but any user asset still in the Diamond's balance when that transaction ends must instead be in its owner's vault under a lock, so the Diamond's balance of every asset is fully explained by what the protocol itself owns. Two applications are named explicitly. Liquidation-fallback collateral goes back to the borrower's own vault, locked for the fallback settlement, in the same transaction in which the liquidation swap failed, and every way the fallback resolves moves its share out of that vault or returns it to the ordinary collateral lock. A swap-to-repay intent's lot leaves the borrower's vault only inside its own fill, straight to the resolver. The retired up-front borrower VPFI fee custody, held only for loans opened on that retired path, is the one other kind of user value the protocol has held across transactions; no new loan creates it and a fresh deployment has none. Balances the protocol itself owns are outside this rule. A deployment that runs under this rule is deployed fresh: a fallback row recorded under the old custody is never migrated, and every path that would settle one refuses it rather than paying it out of the Diamond's balance. The same holds for an auction commit recorded under the old custody, whose lot is in the Diamond: its fill and every cancellation refuse it.
     - Recovery for the lender never depends on the borrower's status: the lender's and treasury's fallback shares leave the borrower's vault through the protocol's forced move-out path even if the borrower has been sanctioned since the fallback began; only what the borrower would keep stays frozen or screened.

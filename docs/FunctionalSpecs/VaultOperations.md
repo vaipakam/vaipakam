@@ -1,6 +1,6 @@
 # Vault and Protected Account Functional Specification
 
-This document consolidates the vault decisions in the November 2–11, 2026
+This document consolidates the vault decisions in the November 2–15, 2026
 release notes, while retaining later recorded intent. It defines intended
 behavior; a dated release or a deployed contract does not establish that a keeper duty is armed or an app capability
 is available. The keeper's dedicated Cloudflare database and Oracle Cloud VM
@@ -32,8 +32,9 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   destination, reason, and associated position. The vault checks the outcome
   independently. Treasury, backstop, marketplace, listing conduit, order
   protocol, and price-guard addresses are fixed in its code; changing one
-  requires delayed vault code. Launch checks refuse mismatches with platform
-  configuration, including a conduit key resolving to a different conduit.
+  requires delayed vault code. Launch checks refuse endpoint mismatches, including a conduit key resolving
+  to a different conduit. The treasury has one source: the vault code, not a
+  second platform setting or registry entry.
 - The vault hashes only orders whose terms name itself, or its own listing
   escrow, as seller and its own conduit. It answers signature checks only
   from the named marketplace or order protocol. Teardown withdraws the order.
@@ -82,6 +83,29 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   adoption is unavailable. Its result comes from transaction evidence; an
   unknown outcome stays unconfirmed with its transaction link.
 
+## Vault-owned authority and signed changes
+
+- Each vault alone records its protection delay, lock, signers, destinations,
+  owner, and pending replacement. The platform reads that record and cannot
+  rewrite it. Owner and signer changes require the right key's direct call
+  or signature; ordinary and contract wallets are supported by the contract.
+  A relayed signature binds network, vault, exact action, and request, works
+  once, expires, and can be voided. Request, approval, cancellation, and removal
+  signatures cannot substitute for each other or for a later proposal round.
+- The vault enforces its destinations and lock independently. Its address is
+  derived from its original owner, so a forged owner record in an unrelated
+  look-alike vault cannot qualify that vault as a protocol payee.
+- Enabling protection, raising delay, locking, unlocking, switching off, and
+  replacing the owner apply the platform's corresponding NFT-lock and payout
+  effects in the same transaction. A failed platform action or insufficient
+  gas refuses the change; it cannot report success with only half applied.
+  Each lock cancels the work pending at that lock. A later unlock cannot
+  revive it, and late application of an old lock cannot cancel requests made
+  after that unlock. Anyone may request reconciliation of the platform side.
+- Queued payout rows still belong to the platform until Stage B3. Release
+  reads the vault's lock even before a cancelled row is reconciled, so a
+  waiting cancellation cannot make the payout releasable.
+
 ## Optional account protection
 
 - The owner may enable protected mode and choose a delay of two to five days.
@@ -93,7 +117,21 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   An account's protection never delays payments it owes to counterparties.
 - Payout destinations are the owner or up to five allowlisted addresses.
   Up to five secondary signers must each accept the role with their own key;
-  they may cancel payouts, co-sign them, and lock the account.
+  they may cancel payouts, co-sign them, and lock the account. A nominee may
+  withdraw its nomination; an active signer cannot cancel its own removal.
+  Neither the original account wallet nor its current manager can be a signer.
+- An allowlisted destination may verify itself by its own call or signature
+  bound to this account, platform, and addition request. Cancelling or voiding
+  the request clears verification; a later request needs its own proof.
+  While signers exist, an unverified destination needs a signer's co-signature.
+  The owner's own address needs no such destination proof. A signer cannot
+  co-sign a payout to itself; another signer must do so. Removing the last
+  signer clears co-signing permanently until the owner enables it again;
+  adding a later signer cannot revive an old requirement. All surfaces and
+  keeper releases use the protocol's verdict for the individual payout.
+- A destination that is itself protected receives its payment in its own
+  vault. Verification and destination names saved in a browser are distinct
+  from on-chain destination authorization.
 - A lock cancels queued payouts, applies the position-NFT holder lock, and
   blocks new payouts and positions, including taking a lender position by sale or a borrower
   obligation by handover. It does not block loan servicing. A settlement to
@@ -132,15 +170,20 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   From completion, only the new wallet manages the account; the old wallet
   and its keepers lose their rights, including control of offers, intent
   capital, extension reserves, vault VPFI, locks, and implementation pinning.
-- The replacement manager acts as holder for the account's existing
-  positions. The standalone NFT may still sit at the retired wallet under its
-  holder lock until the vault-verified migration follow-up; the old wallet
-  can request its delayed unlock, so that interval is not described as an
-  irreversible NFT recovery guarantee. Both stages are required before deploy.
-  Old extension consent stops counting, and managing one's own
-  recovered position earns no keeper reward. An owner-proposed replacement
-  is cancelled by a lock. While a signer holds a lock, only a signer can
-  cancel the replacement; the owner alert states that restriction.
+- Replacement permanently moves the vault's owner record to the new wallet,
+  which signs and receives for the account, including code-pin signatures.
+  The original wallet and the current manager cannot be proposed again.
+  Retirement never clears, protection cannot be switched off, and the replaced
+  account clears its destinations and admits no new ones. All payouts,
+  deliveries, and reward claims go through its vault and the delay to the
+  latest manager, or to that manager's own vault if protected there too.
+- One wallet may manage several replaced accounts; the app lists each.
+  Old extension consent stops counting, and managing one's own recovered
+  position earns no keeper reward. An owner-proposed replacement is cancelled
+  by a lock; while a signer holds a lock, only a signer may cancel replacement.
+  Physical position NFTs may still remain at the retired address under their
+  holder lock pending the separate vault-verified NFT movement follow-up;
+  replacement of vault authority does not claim that movement is complete.
 - Contract authority and app coverage remain distinct: the extension-reserve
   card currently offers only the connected wallet's own reserves, so it does
   not yet expose withdrawing a replaced account's reserve for its controller.
@@ -172,17 +215,20 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   until governance revokes N. A revoke moves a pinned vault to the current
   version without its owner's consent. A revoked version is never restored.
 - Pinning, re-pinning and unpinning need the vault owner's own signature,
-  checked against the owner wallet the vault recorded when it was created,
+  checked against the vault's current owner, including a replacement manager,
   and the vault's pin delay. With protected mode on, that delay is raised (by
   the protection settings, to at most two days, so a pin requested as soon as
   a code change is proposed still lands first; only the owner's own signature
   may raise it further), a pending pin change can be cancelled, and none is
   accepted while the account is locked. Lowering the pin delay waits the
   current delay.
-- Stated residual until #3205: an account whose primary wallet was replaced
-  cannot change its pin, because the vault still records the original wallet.
-- Every vault still accepts calls only from the Diamond, on every version, and
-  every version keeps the vault's storage layout append-only.
+- Asset movements retain the platform-only entry boundary; vault protection
+  controls additionally accept the authorized owner or signer directly or by
+  a valid relay. Every code version preserves the append-only vault layout.
+- The seven-day code wait is fixed and must exceed the longest protected
+  payout delay, currently five days. Raising that protected maximum requires
+  a new version registry with a longer wait. The NFT renderer and transfer
+  check retain their separate three-day wait because they cannot move assets.
 
 ## App disclosures and keeper service
 
@@ -218,6 +264,12 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   (owner decision #3177, 2026-11-05). Lock, payout, and replacement alerts disclose the request code
   and route to the current manager. Detailed limits and retry rules are in
   [Keeper Operations](KeeperOperations.md#locking-a-protected-vault-from-telegram-and-owner-alerts).
+- At the Stage B2 boundary, app, alpha site, and keeper protection actions
+  use direct vault transactions. Contract support for relayed changes does
+  not imply those surfaces offer it. Until Stage B4 indexes vault events,
+  the keeper finalizes only changes with discoverable ledger rows, and owner
+  alerts for locks and proposed replacements do not fire. Other alert channels
+  and payout processing are not described as a substitute for those alerts.
 - Protected-mode contracts and the all-asset tracked ledger require a fresh
   deployment; old tracked ERC-20 balances are not migrated. Testnet deployment
   is distinct from arming any keeper protection, lock, or alert duty.
@@ -241,3 +293,8 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   independent outflow checks, and fixed vault endpoints.
 - [November 11](../ReleaseNotes/ReleaseNotes-2026-11-11.md): verified NFT
   arrival, swap-route caveats, and isolated agent LOCK state.
+- [November 12](../ReleaseNotes/ReleaseNotes-2026-11-12.md): fixed seven-day
+  code delay longer than any protected payout delay.
+- [November 15](../ReleaseNotes/ReleaseNotes-2026-11-15.md): vault-held
+  protection, request-bound verification and signatures, permanent replacement,
+  current-manager pin authority, and Stage B3/B4 coverage limits.

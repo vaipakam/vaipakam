@@ -1,7 +1,7 @@
 # Alpha05 Connected App Functional Specification
 
 This document defines the intended experience of the new app in `apps/alpha05`,
-consolidating the November 5–11, 2026 release decisions. It supplements the
+consolidating the November 5–15, 2026 release decisions. It supplements the
 [platform](ProjectDetailsREADME.md), [tokenomics](TokenomicsTechSpec.md),
 [vault](VaultOperations.md), and [keeper](KeeperOperations.md) specifications.
 The [existing app](Alpha02ConnectedApp.md) remains the production entry at
@@ -146,8 +146,10 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   own intents and paused aggregator lenders. Likely matching is conditional
   on protocol, matching, intent, and keeper switches and compatible terms.
   Restricted-filler intents are separate; an unread switch stays unknown.
-  No guaranteed or immediate fill is promised. Full-term interest, no partial
-  repayment, and no schedule are disclosed as standing-lender requirements.
+  No guaranteed or immediate fill is promised. The default requires full-term interest and no partial repayment; a lender
+  opted into pro-rata may also fill pro-rata requests allowing partial payment.
+  Counts and availability apply each intent's lend-until bound and opt-in, and
+  disclose incompatible schedules rather than promising a fill.
 - Posting uses exact asset precision, live term bounds, a rate no higher than
   100% with two decimal places, and disclosed collateral. Every supported
   lifecycle field is retained in Basic mode with guidance rather than hidden
@@ -269,6 +271,50 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   are disclosed; the result measures the actual loan and incentive separately
   from principal or refunds. A residual ranged fill can be smaller than reviewed.
 
+## Offer changes, matching guidance, and signed protections
+
+- Before a post, an already-takeable opposite offer is presented only if it
+  fits every typed limit: term, interest mode, partial repayment, schedule,
+  amount range, rate, and collateral for that amount. Taking opens the normal
+  review at that offer's terms; posting remains an explicit alternative.
+  Drafts with Full tariff or a price guard are not offered this shortcut.
+  An old book is labelled stale, and nothing is automatically taken or posted.
+- A pro-rata lender's term is its maximum exposure term. A pro-rata borrower
+  may match a same-term or longer lender but always receives the requested
+  borrower term. A direct taker receives the offer's full term. Full-term
+  interest still needs matching terms. Setup and review state that shorter
+  pro-rata loans earn interest only over that shorter period.
+- An open own offer explains its closest opposite candidates using live
+  protocol previews. It distinguishes no counterparties, matching off, a
+  currently matchable pair, and a confirmed rate, term, or lifecycle gap.
+  Unread candidates are unknown. A rate gap links to the in-place rate edit,
+  prefilled to close it, without promising a match or taking another offer.
+- Eligible open loan offers edit their rate and amount ranges and token
+  collateral without cancel/repost. Refinance requests edit only rate; terms
+  and repayment options require reposting. Rentals, sale and early-close
+  vehicles, expired or ended offers, and other owners' offers are excluded.
+  Pause and standing sale-order refusals are named.
+- Edit review states old and new figures, checks live shape and filled amount,
+  pulls only extra required capital with exact approval, and returns a decrease
+  through the payout rules. Rate-only changes move nothing. Terms seasoning
+  restarts and backstop opt-in ends. Pre-send simulation runs after approval
+  where needed, unused approval is restored, and receipt evidence verifies
+  both the new figures and actual funds movement.
+- New signed orders cap both protocol fees at the rates reviewed. Changed
+  fees refuse posting; fee rises above a signed cap hold fills only while
+  above it and do not cancel the order. Nonces meet the maker's cancellation
+  floor, which can only rise. Old signed shapes are not fillable after the
+  contract transition and the book removes them.
+- Contracts also permit a named taker, a fresh per-fill co-signer approval
+  expiring within fifteen minutes, and up to 32 independently lived offers
+  under one readable set signature. The apps currently sign single orders
+  without taker or co-signer restrictions. Restricted depth has no Fill action
+  when this interface cannot satisfy the restriction. Set placements accompany
+  all supported fills and previews; malformed placements are unfillable.
+  A set-signing screen, co-sign service, taker choice, and cancel-all control
+  remain follow-ups. Contracts and book support alone do not offer those UI
+  controls, and signed fills need compatible freshly deployed contracts.
+
 ## Rentals
 
 - Owners list an exact NFT and quantity; renters may post a request naming
@@ -320,8 +366,8 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   most 32. Waiting outside reachable work never advances expiry. The earliest
   removal date is conditional on claimability and includes the full ninety-day
   final notice; it is not presented as a guaranteed expiry date. Rewards can
-  use an existing receiving vault or the permitted wallet route, never open
-  a vault just to claim, and do not promise yield.
+  follow the delivery choice below and do not promise yield. An unavailable
+  receiving vault is not silently presented as a successful vault credit.
 - Rewards states this network's programme role, start time, delivered funds,
   recycled funds net of reservations, custody, detachment, and claim-removal
   posture at one block. It says running only with evidence, states a future
@@ -354,6 +400,55 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   at the receipt block. The app discloses that the table version is not readable,
   so a version-only stale record cannot be conclusively detected.
 
+### Reward delivery, waiting reasons, and paid history
+
+- Default reward delivery follows account kind: an ordinary wallet, including
+  delegated EIP-7702 accounts, chooses its vault; a contract wallet chooses
+  its wallet. Advanced offers both venues with the actual fee-tier effect:
+  counted home-network vault VPFI affects the tier, wallet VPFI does not, and
+  mirror balances do not determine the home tier. The review binds the choice,
+  the simulation checks it, and the outcome names the actual arrival.
+- Protected mode forces reward delivery to the vault, states the withdrawal
+  delay, and removes the wallet option. An unread mode chooses the vault and
+  is rechecked before signing. Claim everything keeps its rewards at the vault.
+- The claim card explains the exact blocking day at the claim's read block:
+  reporting or finalization waits on the home network, broadcast or each
+  funding component on a mirror, or mismatched declared wholes that require
+  a possible unpaid close. It names the permissionless clearing step, says
+  later days wait behind it, and never suggests the wallet's own setting fixes
+  it. Detached networks offer no fictitious remedy; unconfigured reward roles
+  say no day can yet be finalized or claimed there.
+- Funding refusals separate exhausted fresh allocation, live reservations,
+  insufficient recycled backing, and insufficient local holdings, using the
+  protocol's needed and free figures. Unread facts stay unread. Recycled VPFI
+  can pay later claims even after fresh allocation is exhausted.
+- Lifetime claimed totals come from indexed payment records on this network,
+  with the paid UTC day and coverage timestamp. They include released held
+  rewards and show the vault-delivered subset separately. A fallback wallet
+  payment counts only in the overall total. Incomplete or unread history is
+  unknown, never zero; a confirmed claim refreshes the total.
+
+### Claim and withdraw
+
+- Every loan-claim entry offers Claim and withdraw as the lead and Claim to
+  my vault as the alternative, including Claims, loan details, and Claim
+  everything. The review explains that the claim credits the vault and each
+  asset withdrawal is a separate reviewed transaction and wallet confirmation.
+  Single-confirmation batching is not yet available.
+- After confirmation, withdrawals use only the exact assets and credits in
+  that claim's events, including an asset received by a claim-time match.
+  A changed review quote is never used as the credited amount. Protected
+  withdrawals queue under the vault's delay. A refused, failed, or abandoned
+  withdrawal leaves the successful claim's funds in the vault and offers retry;
+  a completed withdrawal is not offered again. Pending follow-ups retain their
+  state, keep the finish card open, and run only on the same account and chain.
+- Claim everything withdraws only its loan-payout legs; other rows keep their
+  disclosed venues. Open-loan receipts require their separate claim-routing
+  change before this flow is represented as covering them.
+- Home and Claims total Ready to claim per asset using the same eligibility
+  verdict as each row. Waiting, unread, and fallback-variable amounts are
+  counted separately, never added as fixed receivables or described as received.
+
 ## Vault and protection
 
 - The vault is opened only when a deposit or offer needs it. Asset reads
@@ -373,7 +468,10 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   release times, application windows, and lapses by chain time. Cancels,
   applications, removals, locking, and unlock requests each have their own
   review and measured outcome; removing a destination names cancelled payouts.
-  NFT protection is a holder lock, not an NFT-transfer queue.
+  NFT protection is a holder lock, not an NFT-transfer queue. Protection
+  changes read and write the vault directly. Contract relays await the Stage B4
+  app surface; owner lock and proposed-replacement alerts await vault-event
+  indexing, and only ledger-discovered matured changes are keeper-finalized.
 - Every address receiving value or control is shown in full, checked for a
   valid checksum, and refused without override if its first and last three
   characters match a known address but its middle differs. A new address
@@ -395,6 +493,89 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   fallback, and the app's withdrawal to a saved destination remain separate
   follow-ups at this source cutoff. Displaying an allowlist does not imply
   those withdrawal controls are available.
+
+### Recovering an uncounted asset
+
+- Recover discovers the token kind from the asset, reads the exact uncounted
+  amount and identifier, and accepts the Vault page's asset identity link.
+  Unknown standard or unread balance prevents a guessed adoption.
+- Adoption names the source, displays the exact declaration, requires typing
+  CONFIRM, then a declaration signature and a transaction. It credits ownership
+  without movement; later withdrawal retains protection. Replaced wallets,
+  unsupported contract-account declarations, existing bans, sanctions, absent
+  sanctions service, pause, or a mismatched declaration are named in protocol
+  order. Unknown checks prevent signing.
+- The source is screened before signature and again immediately before send.
+  A flagged or unread source is not sent even when simulation would succeed:
+  the contract deliberately records a ban without credit rather than reverting.
+  A later source flag is still possible and disclosed. Delisting the recorded
+  source lifts the ban and permits a new adoption without erasing its history.
+- Disowning records non-ownership publicly and credits or moves nothing. It
+  needs no declaration, message signature, or sanctions screen, and remains
+  available during pause, a ban, or account retirement. Pause escape links to
+  the Vault page rather than suggesting adoption releases funds by itself.
+
+## Public transparency, activity, and risk disclosure
+
+- Analytics and Protocol Console open without a wallet on one named served
+  network, selected explicitly or from wallet/default context. Analytics reads
+  contract figures at one block, with deployment start, age, and per-field
+  unknowns; it does not describe index figures as contract measurements.
+  A future block time means unknown age; a failed refresh retains the last
+  block with a stale label. A rate without a denominator is absent, never zero.
+- Analytics shows open and total loans and offers, participants, and agreed
+  rates. It withholds a default-rate calculation while the protocol's closing
+  counter also counts ordinary repayment. Current loan valuation and historic
+  lending totals are valued now; unpriced assets count as nothing and are
+  individually listed as omissions. NFT collateral is counted, not valued.
+  Interest includes borrower payments, not collateral recovered after default.
+- Fee history states collection-time valuation, omitted unpriced fees, and
+  bounded-scan day/week lower bounds. The treasury is named from current vault
+  code; pinned vaults can pay an older treasury. Earlier Diamond treasury
+  holdings remain visible within their stated open-loan asset discovery limit.
+- Token facts use reported name, symbol, decimals, and supply. Unread decimals
+  show base units, never an assumed precision. The home network reports cap,
+  initial mint, remaining headroom, minter, and owner; a governance wait is
+  claimed only when actual ownership supports it. Mirrors report local supply
+  and the home cap, not a zero cap. Deployment-record discrepancies are flagged.
+  Published allocations are maximum mint headroom, including the undecided
+  24% reserve, not already-issued balances or a promise of price or return.
+- Protocol Console accepts a named, dated index snapshot younger than one day
+  only if not behind an observed governance change. Otherwise it reads the
+  chain at one block and explains why. An older chain answer cannot replace
+  a newer snapshot. Missing, future-dated, stale, or incompatible-code evidence
+  is labelled rather than interpreted as unset. Zero is called unset only
+  where that setting's meaning supports it.
+- Console names switch classes, affected actions, live global pause, and rescue
+  paths; unimplemented reads remain listed as not read. It describes a subset,
+  separates totals from settings, and does not invent keeper posture. A config
+  change is not said to reprice existing loans.
+- Activity queries the wallet's own full indexed history, including events
+  on every position it held and events directly concerning it. Transactions
+  group their events, retain the recorded wallet, identifiers, explorer link,
+  known amounts, and boolean outcomes. No recorded amount means no amount
+  recorded. Pending events are first, not final, without an invented time;
+  inferred loan endings say what was and was not seen. Incomplete historical
+  backfill, unread rows, and service failure are disclosed instead of an empty
+  or complete-history claim.
+- Before connection, Home and the wallet picker state that users bring a
+  self-custody wallet, control and protect their own keys, and lose access if
+  keys are lost. Brand-neutral guidance explains recovery phrases and phone
+  and desktop connection. Dismissing the picker leaves Connect usable; only
+  session restoration is labelled Connecting.
+- Terms prompts show the approved key risks: irreversible uninsured loss,
+  borrower collateral loss, lender recovery shortfall, software/oracle/token/
+  network failure, wallet responsibility, and no financial advice. Loan and
+  rental reviews include the side-specific downside; future fills explain
+  both liquid and illiquid outcomes because liquidity is checked at fill.
+  The public Key risks page also covers depegs, delayed or wrong prices, local
+  tax and law responsibility, and third-party wallets and networks.
+- Published Terms version 2 takes effect for acceptance only after configured
+  on the network. Earlier frozen versions remain unchanged. The approved
+  clauses describe the interface's non-party role, non-custody, eligibility,
+  as-is service, indemnity, and a liability ceiling of the prior twelve months'
+  fees bounded between $10 and $1,000; governing law and dispute handling are
+  not invented where the approved version omits them.
 
 ## Alerts, settings, and user controls
 
@@ -454,3 +635,8 @@ The dated reference set is [November 5](../ReleaseNotes/ReleaseNotes-2026-11-05.
 [November 11](../ReleaseNotes/ReleaseNotes-2026-11-11.md).
 The [alpha05 design](../DesignsAndPlans/Alpha05AppDesign.md) supplies the shared
 experience rules; dated later decisions govern capabilities and supersession.
+
+Additional dated sources: [November 12](../ReleaseNotes/ReleaseNotes-2026-11-12.md)
+and [November 15](../ReleaseNotes/ReleaseNotes-2026-11-15.md). No November 13
+or 14 dated release exists in this range. Later intent already present in the
+platform specification remains governing, including newer Auto-lend controls.

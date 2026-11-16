@@ -17,9 +17,9 @@ The goal of this file is to guide the design and development of:
 - basic and advanced product interaction modes
 - visual design system decisions
 
-## Functional consolidation through November 11, 2026
+## Functional consolidation through November 15, 2026
 
-This website spec includes the November 4–11 release decisions. The
+This website spec includes the November 4–15 release decisions. The
 [alpha05 spec](Alpha05ConnectedApp.md) defines the new connected app, including
 its own Home, Rewards, Rate Desk, rental, and Protection pages. Existing-app
 route descriptions below retain that scope until parity and explicit cutover;
@@ -29,8 +29,9 @@ a new app feature is not evidence that the current app was replaced.
   logo, with readable controls and text at a 4.5:1 contrast ratio.
 - Public copy explains fixed agreed rates, own-vault credits, withdrawal
   protection, and the extension and handover exceptions. It offers no bounty
-  programme or promised yield. Existing frozen Terms are not rewritten;
-  changed legal wording needs its own future Terms version.
+  programme or promised yield. Existing frozen Terms are not rewritten. The published version 2 contains
+  the approved new risk and legal clauses; wallets accept it only once that
+  version is configured on their network.
 - Position verification distinguishes live rights, retired receipt tokens,
   and never-minted identifiers. Retired tokens remain visible as receipts
   with their final position record, and convey no right to claim again.
@@ -74,7 +75,26 @@ The website, the connected app and the whitepaper describe the product as **non-
 - **"Vault" is always non-custodial.** Wherever the word could suggest that Vaipakam holds people's assets, it is paired with "non-custodial", "your own vault" or an equivalent, because custody is a regulated activity and Vaipakam does not perform it.
 - **The rate is fixed, and the copy says who fixes it.** The rate and term are agreed by the lender and borrower when the loan opens and hold for the whole loan; no pool or utilization curve moves them. The copy must not say that every rate change needs both parties' agreement. Two things can change it: an extension near maturity, which both position holders agree to within limits each sets; and a handover to a replacement borrower, which the borrower starts alone and which needs no lender consent, the lender instead being paid any interest the new terms would cost them. A refinance replaces the loan rather than changing its rate.
 - **No promised return.** Copy never says "earn a fixed yield", "start earning" or anything implying that Vaipakam promises or pays a return. Interest is what a borrower agreed to pay a lender; the protocol neither sets it nor lends its own money.
-- The frozen Terms of Service versions are not rewritten to apply this wording; a future Terms version adopts it.
+- Frozen Terms versions are not rewritten. Published version 2 adopts the approved new clauses and becomes current only when configured on each network.
+
+### Wallet and key-risk disclosure
+
+- Before connection, explain that the user supplies a self-custody wallet,
+  controls its keys, and loses access if those keys are lost. Brand-neutral
+  wallet guidance is linked from connection, FAQ, guide, and footer.
+- The public Key risks page and Terms prompt state uninsured irreversible
+  loss, collateral loss, lender recovery risk, software, oracle, token and
+  network failure, depegs, third-party transfers, and user responsibility for
+  tax and local rules. Loan and rental reviews retain their side-specific
+  consequence without requiring an extra signature.
+- Approved Terms version 2 identifies the interface's non-party role and
+  non-custody, eligibility, as-is service, indemnity, and the liability ceiling
+  based on twelve months' fees bounded from $10 to $1,000. No governing law or
+  dispute clause is invented. Publication and on-chain version activation
+  are separate, and existing-loan rescue actions retain their Terms exemptions.
+- Public Analytics and Console follow the alpha05 specification's source,
+  coverage, stale-data, current-code treasury, token-supply, and unknown-value
+  rules. Their wallet-free availability does not open wallet-gated offer books.
 
 ## Search And AI Discoverability
 

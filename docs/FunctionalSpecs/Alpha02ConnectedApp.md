@@ -7,7 +7,7 @@ destinations and flipped the cutover switch; the `/recover` guide links
 alone stay on the legacy host, held by same-origin recovery state rather
 than by any missing route). It is the app-specific functional
 spec consolidated against the release notes from 2026-08-13 through
-2026-11-11, inclusive, while retaining later recorded intent decisions. It is intentionally
+2026-11-15, inclusive, while retaining later recorded intent decisions. It is intentionally
 written without implementation snippets. (The app was called `alpha02` and
 served `alpha02.vaipakam.com` until #1854 renamed it; this file keeps the old
 name only in its filename.)
@@ -17,7 +17,7 @@ app's presentation and implemented feature slices. This document continues
 to govern the existing app until explicit parity and cutover. Shared funds,
 ownership, and safety rules follow the platform and vault specifications.
 
-## Consolidated shared behavior through November 11
+## Consolidated shared behavior through November 15
 
 - Net principal and ordinary claims credit the payee's own vault; reviews
   distinguish credit from a subsequent wallet withdrawal and its protection.
@@ -43,6 +43,17 @@ ownership, and safety rules follow the platform and vault specifications.
   reorganisation. Missing or stale recent coverage is unknown. Signed orders
   held during replay are excluded from shared-book completeness claims, while
   a maker retains cancellation after fresh chain standing.
+
+- Signed orders bind the two reviewed protocol fee caps, use nonces at or
+  above the maker's cancellation floor, and carry validated set placement
+  where applicable. Unsupported taker or co-signer restrictions disable Fill
+  while retaining the order as labelled depth. The apps do not offer a set-
+  signing screen or co-signing service merely because contracts support them.
+- Protection screens read and write the vault's record directly, show each
+  step, and use the per-payout co-sign verdict. Replaced accounts remain
+  protected and the latest manager signs for their vault, including code pins.
+  General relayed protection controls and vault-event owner alerts retain the
+  Stage B4 limitations described in [Vault Operations](VaultOperations.md).
 
 ## Purpose
 

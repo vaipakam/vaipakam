@@ -15,7 +15,7 @@
 > and overridden by this banner.
 
 This specification consolidates the dated release notes from 2026-08-13
-through 2026-11-11, inclusive, and retains later recorded intent decisions.
+through 2026-11-15, inclusive, and retains later recorded intent decisions.
 Formulas are explained as financial rules; implementation evidence belongs
 in the [audit](../procedures/FunctionalSpecsCodeVsDocsAudit.md).
 
@@ -148,9 +148,9 @@ and the rest is genuinely earmarked for others.
 
 ---
 
-## Functional consolidation through November 11, 2026
+## Functional consolidation through November 15, 2026
 
-The [corpus source map](README.md#release-note-consolidation-august-13-through-november-11-2026)
+The [corpus source map](README.md#release-note-consolidation-august-13-through-november-15-2026)
 accounts for the dated references. Later recorded owner decisions remain in
 force. The rules below complement the detailed economics and transport rules.
 
@@ -186,6 +186,15 @@ force. The rules below complement the detailed economics and transport rules.
   raised, or new-table discounts require caller-paid transport; neither daily
   spacing nor toggling consent creates another protocol-paid raise. Mirror
   copies stay at their last valid value until delivery or expiry.
+
+- Reward delivery defaults to a normal or EIP-7702-delegated account's vault
+  and a contract wallet's wallet, subject to the chosen supported venue.
+  Protected mode always routes through the vault and its withdrawal delay.
+  A claim's destination and actual arrival are disclosed separately from a
+  later withdrawal; counted home-vault VPFI, not a mirror balance, sets tiers.
+- Cumulative claimed totals are payment history, counted on the UTC day paid,
+  with indexed completeness stated. The vault-delivered subset excludes wallet
+  fallbacks. Incomplete or unread history cannot establish a zero total.
 
 ## 4. Platform Interaction Rewards
 
@@ -1553,6 +1562,22 @@ Founder and contributor compensation:
 - salary streams must not be automatic percentages of protocol fees and must not be funded implicitly when fees accrue
 - genesis founder, team, early-contributor, and ecosystem grants should use per-grantee vesting wallets with the approved cliff and linear-release terms
 - real genesis funding actions, including founder grants and salary-stream activation, should remain gated on legal sign-off before token generation
+
+### Treasury destination follows the paying vault's code
+
+- The current vault code is the sole treasury source. A fee sent by the
+  platform uses that current destination; a fee paid from a pinned vault uses
+  its pinned code's destination. A vault-code replacement waits seven days
+  and remains vetoable. While paused, the guardian may use the emergency
+  route to already registered code, which can change treasury immediately.
+- Revoking an old version moves its pinned vaults to the current version;
+  unpinning has the same destination consequence for that vault. No separate
+  treasury setter or protocol-registry entry bypasses this authority.
+- The platform's treasury ledger counts only assets actually received there.
+  Its conversion, payroll, and backstop funding or withdrawal routes require
+  the current code's treasury to be the platform itself. Earlier treasury
+  assets do not disappear merely because a later version names another payee.
+  An unset destination refuses fees; it never pays an empty address.
 
 ### Buyback capacity and treasury conversion protection
 
