@@ -37,6 +37,7 @@ import RepayPeriodicFacetABI from './RepayPeriodicFacet.json';
 // loan repay in one transaction.
 import SwapToRepayFacetABI from './SwapToRepayFacet.json';
 // #2416 — the partial swap-to-repay route, split off SwapToRepayFacet.
+import StandingInstructionFacetABI from './StandingInstructionFacet.json';
 import SwapToRepayPartialFacetABI from './SwapToRepayPartialFacet.json';
 // T-090 v1.1 (#389) — intent-based swap-to-repay sibling facet.
 import SwapToRepayIntentFacetABI from './SwapToRepayIntentFacet.json';
@@ -249,6 +250,7 @@ export {
   RepayFacetABI,
   RepayPeriodicFacetABI,
   SwapToRepayFacetABI,
+  StandingInstructionFacetABI,
   SwapToRepayPartialFacetABI,
   SwapToRepayIntentFacetABI,
   IntentDispatchFacetABI,
