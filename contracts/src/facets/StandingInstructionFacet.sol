@@ -123,6 +123,18 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
         uint256 interestNow;
         uint256 repayDue;
         uint256 repayShortBy;
+        /// @dev The SKIP_* reason a collateral top-up would be skipped for
+        ///      right now on the loan- and account-level checks every run
+        ///      makes (holder, pause, account lock, loan busy); 0 = none.
+        ///      The reserve and price checks are the fields above.
+        uint8 topUpSkipNow;
+        /// @dev The same for the interest payment and the due repayment
+        ///      (both pay in the loan's principal asset, so one reason).
+        uint8 paymentSkipNow;
+        /// @dev True when the borrower position has moved and a top-up must
+        ///      first consolidate it into the holder's vault; a top-up run
+        ///      tries that and is skipped (NOT_CONSOLIDATED) if it cannot.
+        bool consolidationPending;
     }
 
     // ─── Events ──────────────────────────────────────────────────────
@@ -601,8 +613,13 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
         v.collateralReserve = s.collateralReserve[loanId][holder];
         v.instructions = s.standingInstructions[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active) return v;
-        v.ownerHoldsPosition = v.instructions.owner != address(0) &&
-            LibPositionNFT.ownerOf(loan.borrowerTokenId) == v.instructions.owner;
+        address holderNow = LibPositionNFT.ownerOf(loan.borrowerTokenId);
+        v.ownerHoldsPosition = v.instructions.owner != address(0) && holderNow == v.instructions.owner;
+        v.consolidationPending = loan.borrower != holderNow;
+        if (v.instructions.owner != address(0)) {
+            v.topUpSkipNow = _commonSkip(s, loanId, loan, v.instructions.owner, loan.collateralAsset);
+            v.paymentSkipNow = _commonSkip(s, loanId, loan, v.instructions.owner, loan.principalAsset);
+        }
         uint256 hf;
         (v.priceKnown, hf) = _healthFactor(loanId);
         if (v.priceKnown && v.instructions.topUpTriggerHf != 0 && hf < v.instructions.topUpTriggerHf) {

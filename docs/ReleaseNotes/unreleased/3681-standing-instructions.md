@@ -12,3 +12,5 @@ Each executor needs a keeper pass; those passes ship unarmed and come with the k
 
 > Caveat: funding a reserve from an existing protected-mode balance (which would wait the account's delay) is not built; funding is from the wallet only.
 > Caveat: the app and indexer still show the former extension-reserve names until their consumer update lands.
+
+The loan's reserve view also states, per instruction, the reason a run would be skipped right now (holder changed, paused, account locked, loan busy) and whether the position must first be consolidated, so the keeper never pays gas for a run that would only be skipped and the app can show the reason in advance.

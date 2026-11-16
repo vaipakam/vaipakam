@@ -395,12 +395,21 @@ contract StandingInstructionTest is SetupTest {
     function test_transfer_oldHoldersInstructionIsSkipped() public {
         _fund(borrower, PAYMENT, 50 ether);
         _set(0, 0, true, false, 0);
+        StandingInstructionFacet.ReserveView memory v0 = _view();
+        assertEq(v0.paymentSkipNow, 0, "nothing stands in the way yet");
+        assertEq(v0.topUpSkipNow, 0);
+        assertFalse(v0.consolidationPending);
         address newHolder = makeAddr("newHolder");
         uint256 tokenId = _loan().borrowerTokenId;
         LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
         vm.prank(borrower);
         LibTestPositionNFT.core(address(diamond)).transferFrom(borrower, newHolder, tokenId);
         vm.warp(startTs + 30 days);
+        // The view names the skip before anyone pays for a run.
+        StandingInstructionFacet.ReserveView memory v1 = _view();
+        assertEq(v1.paymentSkipNow, 1, "holder changed, seen from the view");
+        assertEq(v1.topUpSkipNow, 1);
+        assertTrue(v1.consolidationPending);
         vm.expectEmit(true, true, false, true, address(diamond));
         emit StandingInstructionFacet.StandingInstructionSkipped(LOAN, 2, 1, 0, runner);
         vm.prank(runner);
