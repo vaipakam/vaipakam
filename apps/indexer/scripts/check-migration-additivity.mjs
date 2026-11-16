@@ -87,6 +87,17 @@ const CONTRACT_STEPS = new Map([
       statements: ['DROP TABLE IF EXISTS RECYCLE_DAY_BACKFILL'],
     },
   ],
+  [
+    'apps/indexer/migrations/0096_drop_shared_keeper_runner_lease.sql',
+    {
+      issue: '#3550',
+      why:
+        "Drops the shared copy of the keeper's one-runner lease after #1722 moved it to " +
+        "the keeper's private database; the serving keeper claims only there and nothing " +
+        'else reads the copy.',
+      statements: ['DROP TABLE IF EXISTS KEEPER_RUNNER_LEASE'],
+    },
+  ],
 ]);
 
 const problems = [];
