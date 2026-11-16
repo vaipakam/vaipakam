@@ -309,9 +309,12 @@ evidence that the migration has completed.
   assets and token quantity, comes from another wallet, admits the offer's
   term and rate, and wants exactly one loan of the offer's amount. An
   excluded token never qualifies. A listed set is matched only from a list
-  the keeper holds and has checked against the offer: no id twice, the number
-  of ids the offer states, and the offer's root. An offer whose list is not
-  held, or does not check out, is left alone and the run log says why. Each
+  the keeper holds and has checked against the offer: the canonical file
+  form, its hash, no id twice, the number of ids the offer states, and the
+  offer's root. The list comes from the offer's creation or, for a longer
+  one, from the file the indexer serves by its hash, which the keeper checks
+  the same way rather than trusting. An offer whose list is not held, or
+  does not check out, is left alone and the run log says why. Each
   pair is simulated before it is sent. Offers take turns, one borrower each,
   with a cap per offer per run, so one offer cannot use the budget the others
   need. It runs after ordinary matching and before standing-intent fills, on

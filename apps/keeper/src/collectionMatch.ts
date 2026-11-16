@@ -21,7 +21,10 @@
 //   - whether the borrower's token is in the set: by the set's own rule for a
 //     whole collection or a range (exclusions win), and by a proof for a
 //     listed set. A listed set's ids come from its creation event, which
-//     carries them in full for up to 256 ids. The step checks the list against
+//     carries them in full for up to 256 ids, or, for a longer list, from
+//     the file the indexer serves by the offer's list hash
+//     (`GET /collection-lists/<hash>`). The keeper trusts neither source:
+//     the step checks the list against
 //     the offer (no id twice, the stated count, the stated list hash and
 //     root, by the one canonical file and tree, `@vaipakam/lib/collateralSet`) before it
 //     proves anything, and leaves alone a listed set whose list it does not
@@ -44,6 +47,7 @@ import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
   CollateralSetKind,
   checkPublishedList,
+  parseListFile,
   setTakesWithoutProof,
   treeProof,
   type CollateralSetView,
@@ -379,14 +383,47 @@ export function publishedIdsFromArgs(args: Record<string, unknown>): bigint[] | 
   }
 }
 
+/** Reads a list file by its hash; null when it is not available. */
+export type ListFileReader = (listHash: Hex) => Promise<string | null>;
+
+/** The most bytes the keeper reads of one list file: the indexer's own cap. */
+const MAX_LIST_FILE_BYTES = 8 * 1024 * 1024;
+
+/**
+ * A reader of the indexer's public list store (`GET /collection-lists/<hash>`),
+ * or null when no indexer origin is configured. The file is checked against
+ * the offer before it is used (`checkedTree`), so nothing here is trusted.
+ */
+export function indexerListFileReader(indexerOrigin: string | undefined): ListFileReader | null {
+  const origin = indexerOrigin?.trim().replace(/\/+$/, '');
+  // https only, http on localhost, as for `AGENT_ORIGIN`.
+  if (!origin || !/^(https:\/\/|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$))/.test(origin)) return null;
+  return async (listHash) => {
+    try {
+      const res = await fetch(`${origin}/collection-lists/${listHash.toLowerCase()}`, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) return null;
+      const declared = Number(res.headers.get('Content-Length') ?? '0');
+      if (declared > MAX_LIST_FILE_BYTES) return null;
+      const text = await res.text();
+      return text.length > MAX_LIST_FILE_BYTES ? null : text;
+    } catch {
+      return null;
+    }
+  };
+}
+
 /** The listed parents' published ids, read from the shared indexer's event
  *  ledger (each parent's `CollectionOfferCreated`). A list too large for the
- *  event is kept as a file under the hash the offer carries; the keeper does
- *  not read those yet, and says so. */
+ *  event is a file kept under the hash the offer carries, read through
+ *  `readFile` when one is given; without it, or when the file is not there,
+ *  the parent is left alone and the run log says why. */
 export async function readPublishedLists(
   ledger: EventLedger,
   chainId: number,
   parents: readonly CollectionParent[],
+  readFile: ListFileReader | null = null,
 ): Promise<Map<bigint, ListState>> {
   const out = new Map<bigint, ListState>();
   const rows = await ledger.matching(
@@ -399,16 +436,28 @@ export async function readPublishedLists(
     for (const p of parents) out.set(p.offer.id, { missing: 'the event ledger could not be read' });
     return out;
   }
+  const byId = new Map(parents.map((p) => [p.offer.id, p] as const));
   for (const row of rows) {
     const id = row.args['offerId'];
     if (id === undefined) continue;
     const ids = publishedIdsFromArgs(row.args);
     const offerId = BigInt(id as string);
+    if (ids && ids.length > 0) {
+      out.set(offerId, { ids });
+      continue;
+    }
+    const parent = byId.get(offerId);
+    if (!readFile || !parent) {
+      out.set(offerId, { missing: 'its list is kept as a file and no indexer origin is configured' });
+      continue;
+    }
+    const file = await readFile(parent.set.listHash);
+    const fromFile = file === null ? null : parseListFile(file);
     out.set(
       offerId,
-      ids && ids.length > 0
-        ? { ids }
-        : { missing: 'its list is kept as a file, which the keeper does not read yet' },
+      fromFile === null
+        ? { missing: file === null ? 'its list file is not published yet' : 'its list file is not a canonical list file' }
+        : { ids: fromFile },
     );
   }
   for (const p of parents) {
@@ -491,10 +540,20 @@ export async function submitCollectionMatch(
   return true;
 }
 
+/** Where the step reads a listed set's ids: the shared event ledger, and the
+ *  indexer's list store for a list kept as a file. */
+export interface CollectionSources {
+  ledger: EventLedger;
+  readFile: ListFileReader | null;
+}
+
 /** The step's chain calls for one chain. */
-export function collectionMatchIO(ctx: KeeperContext, ledger: EventLedger): CollectionMatchIO {
+export function collectionMatchIO(
+  ctx: KeeperContext,
+  sources: CollectionSources,
+): CollectionMatchIO {
   return {
-    lists: (parents) => readPublishedLists(ledger, ctx.chainId, parents),
+    lists: (parents) => readPublishedLists(sources.ledger, ctx.chainId, parents, sources.readFile),
     simulate: (p, b, proof, deadlineMs) => simulateCollectionMatch(ctx, p, b, proof, deadlineMs),
     submit: (p, b, proof, deadlineMs) => submitCollectionMatch(ctx, p, b, proof, deadlineMs),
   };

@@ -305,6 +305,10 @@ a commit. The template documents each line. In short:
 - **Arming:** leave `KEEPER_ENABLED=false` and every per-pass flag empty.
 - **Secrets:** `KEEPER_PRIVATE_KEY`, each served chain's `RPC_*`,
   `KEEPER_AGENT_TOKEN`, `PUSH_CHANNEL_PK` and the aggregator keys.
+- **Collection lists (#3688):** `INDEXER_ORIGIN` (the indexer's https
+  origin), where the collection-offer matcher reads a listed set kept as a
+  file. The keeper checks each file against the offer itself. Unset, those
+  offers are not matched and every run says so.
 - **Owner Telegram (#1722):** `AGENT_ORIGIN` (the agent's https origin) and
   `KEEPER_AGENT_TOKEN`, the bearer of the agent's keeper routes. The keeper
   holds no user bot token and no chat id: every owner Telegram alert and

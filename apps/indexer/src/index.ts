@@ -146,6 +146,11 @@ import {
   handleSignedOffersPreflight,
 } from './signedOfferRoutes';
 import {
+  handleCollectionListGet,
+  handleCollectionListPost,
+  handleCollectionListsPreflight,
+} from './collectionOffers';
+import {
   handleLoansActive,
   handleLoansRecent,
   handleLoansStats,
@@ -651,6 +656,20 @@ export default {
       if (req.method === 'OPTIONS') return handleSignedOffersPreflight();
       if (req.method === 'POST') return handleSignedOfferPost(req, resolved);
       if (req.method === 'GET') return handleSignedOffersGet(req, resolved);
+      return new Response('Not found', { status: 404 });
+    }
+
+    // ─── /collection-lists ──────────────────────────────────────
+    // #3688 — the published list of a listed NFT collection offer. POST
+    // takes a canonical list file and stores it only when an indexed offer
+    // carries its hash and it checks out; GET serves a stored file by hash.
+    if (url.pathname === '/collection-lists' || url.pathname.startsWith('/collection-lists/')) {
+      if (req.method === 'OPTIONS') return handleCollectionListsPreflight();
+      if (url.pathname === '/collection-lists' && req.method === 'POST') {
+        return handleCollectionListPost(req, resolved);
+      }
+      const byHash = /^\/collection-lists\/([^/]+)$/.exec(url.pathname);
+      if (byHash && req.method === 'GET') return handleCollectionListGet(resolved, byHash[1]);
       return new Response('Not found', { status: 404 });
     }
 

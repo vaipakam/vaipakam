@@ -40,6 +40,7 @@ const API_INDEX = {
     { method: 'GET', path: '/offers/by-current-holder/{address}', description: 'Open offers whose position NFT a wallet currently holds.' },
     { method: 'GET', path: '/offers/{id}', description: 'One offer by id.' },
     { method: 'GET', path: '/signed-offers', description: "One (pair, tenor) market's active gasless signed-offer book. `awaitingReplay` counts the market's orders whose fills and cancels a reorg rebuild is re-reading from the chain: left out of the shared book until it has, and listed with `replayPending: true` in a signer-scoped read so the maker can still cancel them." },
+    { method: 'GET', path: '/collection-lists/{listHash}', description: "The published token-id list of a listed NFT collection offer, by the keccak256 of its canonical file: a JSON array of decimal id strings, strictly ascending. Anyone can recompute the offer's root from it. Immutable." },
     { method: 'GET', path: '/loans/stats', description: 'Loan counts by status.' },
     { method: 'GET', path: '/loans/active', description: 'Active loans (paginated).' },
     { method: 'GET', path: '/loans/recent', description: 'Recently initiated loans.' },

@@ -245,8 +245,26 @@
         "namespace_id": "2003",
         "simple": { "limit": 30, "period": 60 },
       },
+      // #3688 — per-IP cap on `POST /collection-lists` (published lists
+      // for NFT collection offers). Same 60/min shape as the signed-offer
+      // book. Fails closed like every limiter here.
+      {
+        "name": "COLLECTION_LISTS_RATELIMIT",
+        "type": "ratelimit",
+        "namespace_id": "2004",
+        "simple": { "limit": 60, "period": 60 },
+      },
     ],
   },
+
+  // #3688 — published collection-offer lists, keyed `lists/<listHash>`
+  // (the keccak256 of the canonical file). Content-addressed and
+  // immutable: an object is written once, after the indexer checked it
+  // against a known offer's hash, root and count. The bucket is created
+  // by the operator before the first deploy that carries this binding.
+  "r2_buckets": [
+    { "binding": "COLLECTION_LISTS", "bucket_name": "vaipakam-collection-lists" },
+  ],
 
   "version_metadata": {
     // Deploy provenance at runtime (id + timestamp per deployed

@@ -1661,6 +1661,7 @@ DELETE FROM position_side_moves; \
 DELETE FROM loan_reconcile_quarantine; \
 DELETE FROM loans; \
 DELETE FROM offers; \
+DELETE FROM collection_offer_set; \
 DELETE FROM oracle_snapshot_state; \
 DELETE FROM liquidity_confidence; \
 DELETE FROM recycle_day_pool; \

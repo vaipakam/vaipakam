@@ -674,6 +674,37 @@ and a wallet can read the floor, the cap and its own open count before it
 signs. Both bounds are bounded governance knobs, so a chain where a
 keeper's work costs more can raise the floor.
 
+### Published lists of NFT collection offers (#3328, #3688)
+
+A lender's NFT collection offer that takes a listed set of tokens names them
+on-chain only by a root, with the number of ids and the hash of the list
+file the lender states. The contract does not check the count or the hash,
+so the platform checks them wherever the list is shown or used:
+
+- **One file form.** The list is a JSON array of the ids as decimal strings,
+  strictly ascending, with no id twice, no leading zeros, no whitespace, no
+  byte-order mark and no trailing newline. Its hash is the keccak256 of the
+  file's exact bytes. A file in any other form is refused, never repaired.
+- **The check.** A list matches its offer only when the hash of its file is
+  the offer's list hash, it names exactly the offer's number of ids, and
+  the tree over its ids has the offer's root. A list that fails any of
+  these is reported as not matching, naming which.
+- **Where a list comes from.** A short list arrives with the offer's
+  creation. A longer one is posted as a file after the creation, by anyone
+  and without authentication; it is kept only when a known offer carries
+  its hash and it matches that offer. Every list that matches is served
+  publicly by its hash, so anyone can recompute the root, and is kept in
+  the platform's backups.
+- **The default book.** A listed collection offer whose list is not
+  published, or does not match, is kept out of the default offer book. A
+  reader that asks for such offers gets them with the list's state
+  stated. Every collection offer in the book states its set (whole
+  collection, id range or list), the loans it funds and, for a list, its
+  state and where to read it.
+- **Matching.** The keeper matches a listed offer only from a list it has
+  checked against the offer itself, from either source, and never trusts
+  the platform's own check.
+
 ### The maker's price-move guard (owner decision 2026-11-08, #3358)
 
 An offer waits on the book while the market moves, and a taker can fill it

@@ -34,6 +34,7 @@ import { chainNotServed, requestedChainId } from './servedChain';
 import { EXPECTED_SCAN_CADENCE_SEC } from './chainIngestDO';
 import { redactedError } from '@vaipakam/lib/errorDescription';
 import { offerPositionFlows, type PositionFlowJson } from './positionFlowMoves';
+import { bookFilterSql, collectionSets, isMissingSetTable } from './collectionOfferSets';
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
@@ -142,10 +143,16 @@ async function toJsonRows(
   rows: readonly OfferRow[],
 ): Promise<Record<string, unknown>[]> {
   const flows = await offerPositionFlows(env, chainId, rows);
-  return rows.map((r) => toJson(r, flows.get(r.offer_id) ?? null));
+  // #3688 — a collection offer's set, in one batched read.
+  const sets = await collectionSets(env, chainId, rows.map((r) => r.offer_id));
+  return rows.map((r) => toJson(r, flows.get(r.offer_id) ?? null, sets.get(r.offer_id) ?? null));
 }
 
-function toJson(row: OfferRow, positionFlow: PositionFlowJson | null): Record<string, unknown> {
+function toJson(
+  row: OfferRow,
+  positionFlow: PositionFlowJson | null,
+  collectionSet: Record<string, unknown> | null,
+): Record<string, unknown> {
   return {
     chainId: row.chain_id,
     offerId: row.offer_id,
@@ -191,6 +198,13 @@ function toJson(row: OfferRow, positionFlow: PositionFlowJson | null): Record<st
     // tell. `positionFlow: null` = bound to no position (or a refinance
     // target not read yet, which `refinanceTargetLoanId: null` states).
     positionFlow,
+    // #3688 — for an NFT collection offer (#3328): the set of tokens it
+    // takes (whole collection, an id range or a published list), the loans
+    // it funds and, for a list, whether the list is published and checks
+    // out (`listCheck`) and where to read it (`listFile`). null = any other
+    // offer. The offer row's own token and collateral amounts describe ONE
+    // loan; `loans` says how many.
+    collectionSet,
     firstSeenBlock: row.first_seen_block,
     firstSeenAt: row.first_seen_at,
     updatedAt: row.updated_at,
@@ -530,6 +544,11 @@ export async function handleOffersActive(req: Request, env: Env): Promise<Respon
   const excludeSaleVehicles = url.searchParams.get('excludeSaleVehicles') === '1';
   const excludeOffsetVehicles =
     url.searchParams.get('excludeOffsetVehicles') === '1';
+  // #3688 — a listed collection offer whose list is not published, or does
+  // not check out against the offer, is out of the default book. A reader
+  // that states it wants them (a Console, the lender's own view) asks with
+  // `includeUnverifiedLists=1`, and each carries `collectionSet.listCheck`.
+  const includeUnverifiedLists = url.searchParams.get('includeUnverifiedLists') === '1';
   const notServed = chainNotServed(env, chainId);
   if (notServed) return notServed;
   try {
@@ -562,12 +581,22 @@ export async function handleOffersActive(req: Request, env: Env): Promise<Respon
     if (excludeOffsetVehicles) {
       conds.push('is_offset_vehicle = 0');
     }
-    const stmt = env.DB.prepare(
-      `SELECT * FROM offers
-       WHERE ${conds.join(' AND ')}
-       ORDER BY offer_id DESC LIMIT ?`,
-    ).bind(...binds, limit);
-    const rows = await stmt.all<OfferRow>();
+    const select = (where: string[]) =>
+      env.DB.prepare(
+        `SELECT * FROM offers
+         WHERE ${where.join(' AND ')}
+         ORDER BY offer_id DESC LIMIT ?`,
+      )
+        .bind(...binds, limit)
+        .all<OfferRow>();
+    let rows;
+    try {
+      rows = await select(includeUnverifiedLists ? conds : [...conds, bookFilterSql]);
+    } catch (err) {
+      // Before migration 0097 there is no collection offer to filter out.
+      if (!isMissingSetTable(err)) throw err;
+      rows = await select(conds);
+    }
     const offers = await toJsonRows(env, chainId, rows.results ?? []);
     const next =
       offers.length === limit && offers.length > 0

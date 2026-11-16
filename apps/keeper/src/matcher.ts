@@ -85,8 +85,14 @@ import {
   type KeeperContext,
 } from './keeper';
 import { reportSendError } from './submissionQueue';
-import { collectionMatchIO, readCollectionParents, runCollectionMatches } from './collectionMatch';
-import { d1EventLedger, type EventLedger } from './eventLedger';
+import {
+  collectionMatchIO,
+  indexerListFileReader,
+  readCollectionParents,
+  runCollectionMatches,
+  type CollectionSources,
+} from './collectionMatch';
+import { d1EventLedger } from './eventLedger';
 import { summarizeFailure, redactedError } from '@vaipakam/lib/errorDescription';
 import { revertErrorName } from '@vaipakam/lib/contractRevert';
 import { ROLL_MIN_VALUE_TO_GAS, judgeRollValue } from './rollGasFloor';
@@ -1945,7 +1951,7 @@ async function runOfferMatcherTickForChain(
   ctx: KeeperContext,
   run: number,
   share: number,
-  collectionLedger: EventLedger | null,
+  collection: CollectionSources | null,
 ): Promise<void> {
   // Codex #176 round-2 P2 — bound the chain's wall-time so a congested
   // chain can't starve later chains in the same cron tick. Each call
@@ -2036,7 +2042,7 @@ async function runOfferMatcherTickForChain(
   // walk left of the pass's caps: after the walk, so a lender offer naming
   // the token is preferred, and before the Auto-lend fills, since a
   // collection offer is a lender's explicit offer too.
-  if (collectionLedger && parents.length > 0 && !capacitySpent && !overBudget() && borrowers.size > 0) {
+  if (collection && parents.length > 0 && !capacitySpent && !overBudget() && borrowers.size > 0) {
     const allBorrowers = [...borrowers.values()].flat();
     const c = await runCollectionMatches({
       parents,
@@ -2046,7 +2052,7 @@ async function runOfferMatcherTickForChain(
       maxSubmits: MAX_SUBMITS_PER_TICK - submits,
       passEndMs: passEnd,
       uncertainBorrowers,
-      io: collectionMatchIO(ctx, collectionLedger),
+      io: collectionMatchIO(ctx, collection),
       log: (line) => console.log(`[matcher] chain=${ctx.chainId} ${line}`),
     });
     previewCalls += c.sims;
@@ -2115,8 +2121,11 @@ export async function runMatcher(env: Env, tick: PassTick): Promise<void> {
   const run = runIndex(tick, 60_000);
   const share = freshLaneShare(env.MATCHER_FRESH_LANE_SHARE);
   // #3688 — the collection-offer step, its own sub-flag (ships disarmed).
-  const collectionLedger = subStepArmed(env, 'matcher', 'collection offers', 'COLLECTION_MATCH_ENABLED')
-    ? d1EventLedger(env.DB)
+  // A listed set kept as a file is read from the indexer's public list
+  // store (`INDEXER_ORIGIN`); unset, those offers are left alone and the run
+  // log says why.
+  const collection: CollectionSources | null = subStepArmed(env, 'matcher', 'collection offers', 'COLLECTION_MATCH_ENABLED')
+    ? { ledger: d1EventLedger(env.DB), readFile: indexerListFileReader(env.INDEXER_ORIGIN) }
     : null;
   // Chains side by side (#2572 r5, `runWindow.ts` rule 1): one deadline covers
   // the pass, so in series a slow chain would spend every later chain's window.
@@ -2126,7 +2135,7 @@ export async function runMatcher(env: Env, tick: PassTick): Promise<void> {
         const publicClient = createPublicClient({ transport: http(chain.rpc) });
         const ctx = buildKeeperContext(env, chain, publicClient, { notAfterMs: tick.deadlineMs });
         if (!ctx) return;
-        await runOfferMatcherTickForChain(ctx, run, share, collectionLedger);
+        await runOfferMatcherTickForChain(ctx, run, share, collection);
       } catch (err) {
         console.error(
           `[matcher] chain=${chain.id} (${chain.name}) tick failed: ${summarizeFailure(err, 250)}`,

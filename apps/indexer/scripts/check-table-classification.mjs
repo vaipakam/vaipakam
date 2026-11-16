@@ -183,6 +183,13 @@ const CLASSIFICATION = {
   },
 
   // replay-derived, settled by #1481's audit.
+  collection_offer_set: {
+    class: 'replay-derived',
+    reason:
+      "#3688 — chainIndexer writes each collection offer's set from its CollectionOfferCreated; the " +
+      "list check of a file-backed list is redone from the list store (object storage keyed by the " +
+      "list hash) whenever the row is written, so the replay writes the same row once the store is back",
+  },
   prepay_listing_match_breadcrumbs: {
     class: 'replay-derived',
     reason:

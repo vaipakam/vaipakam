@@ -169,6 +169,7 @@ import {
   type ParticipantRow,
 } from './walletActivity';
 import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
+import { liftCollectionOfferCreated, recordCollectionOfferCreated, type CollectionOfferCreated } from './collectionOffers';
 import { LEGACY_POSITION_EVENTS, POSITION_TRANSFER_EVENT, positionNftForDiamond, readPositionHolder, scannedAddresses } from './positionNft';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
@@ -3353,9 +3354,13 @@ async function processOfferLogs(
         offerId: bigint;
         blockNumber: bigint; };
   const orderedMatchAndModify: ModifiedOrMatched[] = [];
+  // #3688 — each new collection offer's set and the check of its list.
+  const collectionCreated: { ev: CollectionOfferCreated; blockNumber: bigint }[] = [];
   for (const log of logs) {
     const a = log.args;
-    if (log.eventName === 'OfferCreated') {
+    if (log.eventName === 'CollectionOfferCreated') {
+      collectionCreated.push({ ev: liftCollectionOfferCreated(a as Record<string, unknown>), blockNumber: log.blockNumber });
+    } else if (log.eventName === 'OfferCreated') {
       created.push({
         offerId: a.offerId as bigint,
         creator: a.creator as Address,
@@ -3877,6 +3882,13 @@ async function processOfferLogs(
   // (an insert's '0', a modify) — those predate the match. The refresh lane
   // selects active rows with a NULL here and writes what the chain holds.
   await markBorrowerFillsUnread(env, chainId, [...borrowerFillsStale]);
+
+  // #3688 — record each collection offer's set (`collection_offer_set`) and
+  // whether its list is published and checks out. Independent of the offer
+  // row's writes above; idempotent, so a re-scan writes the same row.
+  for (const c of collectionCreated) {
+    await recordCollectionOfferCreated(env, chainId, c.ev, c.blockNumber, now);
+  }
 
   return { newOffers, statusUpdates };
 }

@@ -14,6 +14,7 @@ import {
   collectionProof,
   liftCollectionOffer,
   publishedIdsFromArgs,
+  indexerListFileReader,
   readPublishedLists,
   runCollectionMatches,
   type CollectionMatchIO,
@@ -308,6 +309,43 @@ describe('reading collection offers', () => {
     expect(lists.get(3n)).toEqual({ missing: expect.stringContaining('not in the ledger') });
     const unread = await readPublishedLists({ matching: async () => null, page: async () => null }, 1, ps);
     expect(unread.get(1n)).toEqual({ missing: expect.stringContaining('could not be read') });
+  });
+
+  it('reads a list kept as a file through the reader, and refuses a non-canonical one', async () => {
+    const ledger: EventLedger = {
+      matching: async () => [
+        { kind: 'CollectionOfferCreated', args: { offerId: '1', publishedIds: [] }, blockAt: 0, block: 1, log: 0, tx: '0x' },
+        { kind: 'CollectionOfferCreated', args: { offerId: '2', publishedIds: [] }, blockAt: 0, block: 1, log: 1, tx: '0x' },
+        { kind: 'CollectionOfferCreated', args: { offerId: '3', publishedIds: [] }, blockAt: 0, block: 1, log: 2, tx: '0x' },
+      ],
+      page: async () => null,
+    };
+    const h = (n: number) => `0x${n.toString(16).padStart(64, '0')}` as Hex;
+    const ps = [1, 2, 3].map((n) => parent(n, { kind: CollateralSetKind.Listed, listHash: h(n) }));
+    const asked: Hex[] = [];
+    const files = new Map<bigint, string | null>([
+      [1n, canonicalListFile([5n, 3n])],
+      [2n, '["5","3"]'],
+      [3n, null],
+    ]);
+    const byHash = new Map(ps.map((p) => [p.set.listHash, p.offer.id] as const));
+    const lists = await readPublishedLists(ledger, 1, ps, async (hash) => {
+      asked.push(hash);
+      return files.get(byHash.get(hash)!) ?? null;
+    });
+    expect(asked).toHaveLength(3);
+    expect(lists.get(1n)).toEqual({ ids: [3n, 5n] });
+    expect(lists.get(2n)).toEqual({ missing: expect.stringContaining('not a canonical') });
+    expect(lists.get(3n)).toEqual({ missing: expect.stringContaining('not published yet') });
+  });
+
+  it('builds a list-file reader only for an http(s) origin', () => {
+    expect(indexerListFileReader(undefined)).toBeNull();
+    expect(indexerListFileReader('  ')).toBeNull();
+    expect(indexerListFileReader('indexer.example')).toBeNull();
+    expect(indexerListFileReader('http://indexer.example')).toBeNull();
+    expect(indexerListFileReader('http://localhost:8787')).not.toBeNull();
+    expect(indexerListFileReader('https://indexer.example/')).not.toBeNull();
   });
 });
 

@@ -25,7 +25,11 @@
       "path": "oldLoanId",
       "why": "#3042: the settlement statement of the old loan's payoff (what the new lender's net principal and the borrower's wallet each paid the old lender, and the borrower's treasury fee). It belongs on the old loan's timeline beside LoanRefinanced; newLoanId stays in args_json."
     },
-    "IntentMatched.offerId": {
+    "CollectionOfferFilled.offerId": {
+    "path": "offerId",
+    "why": "#3688: one loan filled from an NFT collection offer. The parent is the offer its lender posted and follows by id; the slice (sliceOfferId) is a one-loan vehicle the protocol creates inside this same transaction, and its own acceptance files the loan. sliceOfferId and tokenId stay in args_json."
+  },
+  "IntentMatched.offerId": {
       "path": "counterpartyOfferId",
       "why": "The counterparty is the standing on-chain offer a person created and follows by offer id. The slice is a vehicle the protocol synthesizes inside this same transaction; its owner follows the intent by lender and asset pair, both in args_json."
     },

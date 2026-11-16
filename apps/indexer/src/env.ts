@@ -110,6 +110,11 @@ export interface WorkerEnv {
   // (the signed-offer book ingest), under the one fail-closed rule in
   // `@vaipakam/lib/rateLimit` (#2756): a missing binding refuses the post.
   SIGNED_OFFERS_RATELIMIT?: RateLimitBinding;
+  // #3688 — the published-list store for NFT collection offers (design
+  // NftCollectionOffersDesign.md s5): canonical list files keyed by their
+  // keccak256 hash, and the per-IP cap on `POST /collection-lists`.
+  COLLECTION_LISTS?: R2Bucket;
+  COLLECTION_LISTS_RATELIMIT?: RateLimitBinding;
   // #757 Phase A — Alchemy webhook HMAC signing key. Read DIRECTLY from this
   // raw `WorkerEnv` in the `/hooks/chain-event` route (which is dispatched
   // BEFORE the global `resolveEnv`, so an unauthenticated POST never triggers
@@ -292,6 +297,13 @@ export interface Env {
   // (`@vaipakam/lib/rateLimit`, #2756): a deployment without it refuses
   // every post, so `wrangler.jsonc` declares it.
   SIGNED_OFFERS_RATELIMIT?: RateLimitBinding;
+
+  // #3688 — published collection-offer lists. The store holds each
+  // canonical list file under `lists/<listHash>`; without it the POST route
+  // answers 503 and every listed offer stays "list not published" unless
+  // its ids arrived in the creation event. The limiter fails closed.
+  COLLECTION_LISTS?: R2Bucket;
+  COLLECTION_LISTS_RATELIMIT?: RateLimitBinding;
 }
 
 /**
@@ -357,6 +369,9 @@ export async function resolveEnv(
     OPENSEA_API_KEY: secrets.OPENSEA_API_KEY,
     // #1131 — pass through the signed-offer book rate-limit binding.
     SIGNED_OFFERS_RATELIMIT: raw.SIGNED_OFFERS_RATELIMIT,
+    // #3688 — the published-list store and its POST limiter.
+    COLLECTION_LISTS: raw.COLLECTION_LISTS,
+    COLLECTION_LISTS_RATELIMIT: raw.COLLECTION_LISTS_RATELIMIT,
     RPC_BASE: secrets.RPC_BASE,
     RPC_ETH: secrets.RPC_ETH,
     RPC_ARB: secrets.RPC_ARB,

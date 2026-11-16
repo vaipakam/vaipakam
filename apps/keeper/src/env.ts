@@ -101,6 +101,12 @@ interface BaseEnv {
   // sent and the LOCK step reads no requests; each run says so.
   AGENT_ORIGIN?: string;
 
+  // #3688 — the indexer's origin (`https://…`), where the matcher's
+  // collection-offer step reads a listed set kept as a file
+  // (`GET /collection-lists/<hash>`); the keeper checks the file against the
+  // offer itself. Unset, such offers are not matched and each run says so.
+  INDEXER_ORIGIN?: string;
+
   // The Push channel the alerts post as (#1456). A plain var, OPTIONAL:
   // unset or empty, the channel is the `PUSH_CHANNEL_PK` signer's own
   // address, as it always was. Set to another address, the signer posts as a
@@ -574,6 +580,7 @@ export const SECRET_BINDING_KEYS = [
 export const PLAIN_VAR_KEYS = [
   'FRONTEND_ORIGIN',
   'AGENT_ORIGIN',
+  'INDEXER_ORIGIN',
   'PUSH_CHANNEL_ADDRESS',
   'KEEPER_ENABLED',
   'KEEPER_RUNNER_ID',
@@ -781,6 +788,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     KEEPER_DB: resolveD1Binding(raw.KEEPER_DB, WORKER_NAME) as KeeperD1,
     FRONTEND_ORIGIN: raw.FRONTEND_ORIGIN,
     AGENT_ORIGIN: raw.AGENT_ORIGIN,
+    INDEXER_ORIGIN: raw.INDEXER_ORIGIN,
     PUSH_CHANNEL_ADDRESS: raw.PUSH_CHANNEL_ADDRESS,
     KEEPER_ENABLED: raw.KEEPER_ENABLED,
     KEEPER_RUNNER_ID: raw.KEEPER_RUNNER_ID,
