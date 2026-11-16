@@ -5091,6 +5091,11 @@
   },
   {
     "type": "error",
+    "name": "VaultMoveOutsideGuard",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "VaultOutflowFailed",
     "inputs": []
   },
