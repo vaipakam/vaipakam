@@ -22,7 +22,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
-import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
+import {CollateralLienFacet} from "./CollateralLienFacet.sol";
 
 /**
  * @title PartialWithdrawalFacet
@@ -174,7 +174,7 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         // withdraw failure rolls back the decrement.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.decrementCollateralLien.selector,
+                CollateralLienFacet.decrementCollateralLien.selector,
                 loanId,
                 amount
             ),

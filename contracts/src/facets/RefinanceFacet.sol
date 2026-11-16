@@ -14,6 +14,7 @@ import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
+import {CollateralLienFacet} from "./CollateralLienFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibInitRiskGate} from "../libraries/LibInitRiskGate.sol";
@@ -884,7 +885,7 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
     function _releaseOldLienAtRefinance(uint256 oldLoanId) private {
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.releaseCollateralLien.selector,
+                CollateralLienFacet.releaseCollateralLien.selector,
                 oldLoanId
             ),
             bytes4(0)

@@ -114,6 +114,8 @@ Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))` — this
 | **AdminFacet**         | Treasury, 0x proxy, allowance target config                                 |
 | **OfferBookFacet** | The step where a new offer enters the book (#3242): `openOfferOnBook`, the `address(this)`-gated self-call every `OfferCreateFacet` creation ends with, applies the two book bounds (the $10 value floor on a liquid priced principal, the per-wallet open-offer cap), records the offer in the active index and emits `OfferCreated` + `OfferCreatedDetails` (still `OfferCreateFacet`'s declarations, emitted by name, so topic hashes are unchanged). Also `requireOfferValueAdmitted` (OfferMutateFacet's amount re-check) and `getOfferBookBounds(wallet)`. Split off `OfferCreateFacet`, which had about 100 bytes of EIP-170 headroom. **`OfferCreatedDetails` is no longer emitted from OfferCreateFacet's code.** Refreshed together with OfferCreateFacet and OfferMutateFacet |
 | **SaleFloorFacet** | The one rule for a forced sale's slippage floor (#3359): `saleFloorBps` returns the per-tier figure (2.5% / 3.5% / 4.5% by OracleFacet's `getCloseOutLiquidityTier`) when the pair is calm against both of the last two hourly checkpoints and the collateral covers 110% of the debt, else the full `cfgMaxLiquidationSlippageBps`. ForcedSaleFacet (sizing and minimum output, reported as `ForcedSalePlan.floorBps`) and RiskFacet's partial liquidation self-call it. Also the permissionless hourly checkpoint writer `checkpointHourlyPrices` and the bounded settings. Its own facet because ForcedSaleFacet had about 300 bytes of EIP-170 headroom. **Refreshed together with ForcedSaleFacet, RiskFacet and OracleFacet**; `RedeployFacets` refuses a Diamond that does not already route `saleFloorBps` (`PredatesSaleFloorRule`) |
+| **CollateralConcentrationFacet** | The ONE host of the new-loan init-LTV cap and of collateral concentration (#3685): `newLoanInitLtvCapBps` (LoanFacet's admission gate and its snapshot, OfferPreviewFacet's match bounds, LibRiskMath's offer bounds and the offer book's logical ceiling all self-call it), the per-asset view `getConcentration`, the per-loan record `loanConcentrationAtInit`, and the bounded ADMIN settings. Concentration = value of the asset pledged under live collateral liens / the sale size its liquidity tier is measured at; at High the cap is the next lower tier's (lowest tier: its cap less a step), in both LTV regimes, and the views say whether that actually binds. **The cap is no longer computed inline anywhere**; read it here |
+| **CollateralLienFacet** | The four collateral-lien entries (`releaseCollateralLien`, `decrementCollateralLien`, `incrementCollateralLien`, `recreateCollateralLien`), split off `EncumbranceMutateFacet` in #3685 when the per-asset pledged total joined every lien change and that facet went over EIP-170. **They are NOT on EncumbranceMutateFacet any more.** LibEncumbrance stays the one writer of liens and of the pledged total |
 | **NotificationFeeFacet** | The paid-notification fee: `markNotifBilled` (`NOTIF_BILLER_ROLE`) and the wallet's own consent to it (`setNotificationFeeConsent` / `getNotificationFeeConsent`). Split off `LoanFacet` and `ProfileFacet` in #2769, when screening the payer pushed `LoanFacet` over EIP-170. **`markNotifBilled` is NOT on LoanFacet any more** |
 
 **Refresh-together families (#1566 slices 2–3, #2472, #2440).** Each facet set
@@ -475,6 +477,19 @@ runs half of it on old code:
   or a fresh deploy. The app keeps the old approval route only where the
   Diamond lacks the route, a temporary bridge #3074 removes after the
   all-waves fresh deploy.
+
+- **The collateral pledged total (#3685).** Every collateral lien change
+  moves `collateralPledged[asset]` inside `LibEncumbrance`, which is inlined
+  in many facets (find them with a grep for `CollateralLien(`), and the four
+  lien entries live on `CollateralLienFacet`. Loan creation, the previews and
+  the offer book read their cap from `CollateralConcentrationFacet`. A lien a
+  pre-#3685 Diamond created is not in the total, so releasing it afterwards
+  underflows and reverts. Cross it by fresh deploy:
+  `RefreshAllFacetsInPlace` / `RefreshChangedFacetsInPlace` refuse the
+  crossing while any ERC-20 loan is open (`OpenLoanAcrossCollateralPledge`)
+  and need the manual pause, and `RedeployFacets` / `ReplaceStaleFacets`
+  refuse a Diamond that does not already route `newLoanInitLtvCapBps`
+  (`PredatesCollateralConcentration`).
 
 How the #1566 slices reach a chain is settled (owner, 2026-10-07, decision O1 = A): **every
 chain that runs slices 2–3 gets a fresh deploy.** Nothing is upgraded in place

@@ -160,6 +160,25 @@ library LibVaipakam {
     uint256 constant MIN_TWAP_WINDOW_SEC = 5 minutes; // too short ⇒ trivially flash-manipulable
     uint256 constant MAX_TWAP_WINDOW_SEC = 1 days; // too long ⇒ stale, blocks legit fast moves
     // Simulated-swap test sizes for the floor + the three graded tiers.
+    // ─── #3685 — collateral concentration ────────────────────────────
+    // The pledged amount of a collateral asset, valued at the oracle, over
+    // the sale size its effective liquidity tier is measured at. Defaults
+    // and bounds (hundredths of a multiple; the step in bps). Changed only
+    // by ADMIN_ROLE, the Timelock after handover.
+    uint16 constant CONCENTRATION_CAUTION_X100_DEFAULT = 500;
+    uint16 constant CONCENTRATION_CAUTION_X100_MIN = 200;
+    uint16 constant CONCENTRATION_CAUTION_X100_MAX = 2000;
+    uint16 constant CONCENTRATION_HIGH_X100_DEFAULT = 1000;
+    uint16 constant CONCENTRATION_HIGH_X100_MAX = 5000;
+    uint16 constant CONCENTRATION_STEP_BPS_DEFAULT = 1000;
+    uint16 constant CONCENTRATION_STEP_BPS_MIN = 500;
+    uint16 constant CONCENTRATION_STEP_BPS_MAX = 2500;
+    /// @dev Concentration levels, as `Storage.loanConcentrationAtInit` and
+    ///      the views report them.
+    uint8 constant CONCENTRATION_NORMAL = 0;
+    uint8 constant CONCENTRATION_CAUTION = 1;
+    uint8 constant CONCENTRATION_HIGH = 2;
+
     uint256 constant FLOOR_SIZE_PAD_DEFAULT = 5_000 * 1e6; // clear ⇒ `Liquid`; fail ⇒ `Illiquid`
     uint256 constant TIER1_SIZE_PAD_DEFAULT = 50_000 * 1e6; // → Tier 1 (50% init-LTV)
     uint256 constant TIER2_SIZE_PAD_DEFAULT = 500_000 * 1e6; // → Tier 2 (60% init-LTV)
@@ -8373,6 +8392,39 @@ library LibVaipakam {
         ///      the retired one-account `protectedRetiredAccountOf`.
         ///      Appended — append-only.
         mapping(address => EnumerableSet.AddressSet) protectedManagedAccounts;
+        /// @dev #3685 — per ERC-20 collateral asset, the amount pledged under
+        ///      live collateral liens (open loans and fallback custody).
+        ///      Written only by `LibEncumbrance` alongside every collateral
+        ///      lien change; read by `CollateralConcentrationFacet`.
+        ///      Appended — append-only.
+        mapping(address => uint256) collateralPledged;
+        /// @dev #3685 — the platform's concentration thresholds. Zero fields
+        ///      read as their defaults; written only by
+        ///      `CollateralConcentrationFacet.setConcentrationConfig`.
+        ///      Appended — append-only.
+        ConcentrationConfig concentrationCfg;
+        /// @dev #3685 — per collateral asset, tighter thresholds than the
+        ///      platform's (zero fields = the platform value). Written only by
+        ///      `CollateralConcentrationFacet.setAssetConcentrationConfig`.
+        ///      Appended — append-only.
+        mapping(address => ConcentrationConfig) concentrationAssetCfg;
+        /// @dev #3685 — per loan, its collateral's concentration level when
+        ///      it opened (`LibVaipakam.CONCENTRATION_*`). Written once, by
+        ///      `LoanFacet` at origination; a loan opened at Caution or above
+        ///      is not eligible for the shortfall reserve. Appended —
+        ///      append-only.
+        mapping(uint256 => uint8) loanConcentrationAtInit;
+    }
+
+    /// @notice #3685 — collateral concentration thresholds. The two
+    ///         multiples are in hundredths (500 = 5 times the depth
+    ///         reference); `lowestTierStepBps` is the cut to the lowest
+    ///         liquid tier's loan-opening cap at the High level. Every field
+    ///         reads 0 as its default.
+    struct ConcentrationConfig {
+        uint16 cautionMultipleX100;
+        uint16 highMultipleX100;
+        uint16 lowestTierStepBps;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.

@@ -49,6 +49,8 @@ import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
+import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
+import {CollateralLienFacet} from "../src/facets/CollateralLienFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {TestOfferFloor} from "./helpers/TestOfferFloor.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -432,6 +434,8 @@ contract SetupTest is Test {
     OfferPriceGuardFacet offerPriceGuardFacet;
     SignedOfferMatchFacet signedOfferMatchFacet;
     LoanClockFacet loanClockFacet;
+    CollateralConcentrationFacet collateralConcentrationFacet;
+    CollateralLienFacet collateralLienFacet;
     SaleExitVerdictFacet saleExitVerdictFacet;
     SellerClaimFacet sellerClaimFacet;
     RefinancePayoffFacet refinancePayoffFacet;
@@ -612,6 +616,9 @@ contract SetupTest is Test {
         offerPriceGuardFacet = OfferPriceGuardFacet(ArtifactDeploy.deploy(type(OfferPriceGuardFacet).name));
         signedOfferMatchFacet = SignedOfferMatchFacet(ArtifactDeploy.deploy(type(SignedOfferMatchFacet).name));
         loanClockFacet = LoanClockFacet(ArtifactDeploy.deploy(type(LoanClockFacet).name));
+        collateralConcentrationFacet =
+            CollateralConcentrationFacet(ArtifactDeploy.deploy(type(CollateralConcentrationFacet).name));
+        collateralLienFacet = CollateralLienFacet(ArtifactDeploy.deploy(type(CollateralLienFacet).name));
         saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
         sellerClaimFacet = SellerClaimFacet(ArtifactDeploy.deploy(type(SellerClaimFacet).name));
         refinancePayoffFacet = RefinancePayoffFacet(ArtifactDeploy.deploy(type(RefinancePayoffFacet).name));
@@ -649,7 +656,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](119);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](121);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1162,6 +1169,18 @@ contract SetupTest is Test {
             facetAddress: address(loanClockFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getLoanClockFacetSelectors()
+        });
+        // #3685 — the new-loan cap host, which loan creation self-calls.
+        cuts[119] = IDiamondCut.FacetCut({
+            facetAddress: address(collateralConcentrationFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getCollateralConcentrationFacetSelectors()
+        });
+        // #3685 — the collateral-lien entries, split off EncumbranceMutateFacet.
+        cuts[120] = IDiamondCut.FacetCut({
+            facetAddress: address(collateralLienFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getCollateralLienFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).
@@ -1743,7 +1762,7 @@ contract SetupTest is Test {
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
         uint256 diamond0 = ERC20(l.collateralAsset).balanceOf(address(diamond));
         vm.startPrank(address(diamond));
-        EncumbranceMutateFacet(address(diamond)).releaseCollateralLien(loanId);
+        CollateralLienFacet(address(diamond)).releaseCollateralLien(loanId);
         LibTestOutflow.withdrawERC20(address(diamond), l.borrower, l.collateralAsset, address(diamond), l.collateralAmount);
         FallbackCustodyFacet(address(diamond)).enterFallback(loanId);
         vm.stopPrank();

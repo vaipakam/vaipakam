@@ -141,6 +141,7 @@ library LibEncumbrance {
             released: false
         });
         s.encumbered[loan.borrower][asset][tokenId] += amount;
+        _pledge(asset, loan.collateralAssetType, amount);
     }
 
     /// @notice Release a collateral lien in full. Idempotent — already-
@@ -152,6 +153,7 @@ library LibEncumbrance {
         LibVaipakam.Encumbrance storage lien = s.loanCollateralLien[loanId];
         if (lien.released || lien.user == address(0)) return;
         _decrementAggregate(lien.user, lien.asset, lien.tokenId, lien.amount);
+        _unpledge(lien.asset, lien.assetType, lien.amount);
         lien.released = true;
         // #569 round-7 P1 — zero the per-loan amount on release so a
         // released tombstone can never be mis-read as a live lien. The
@@ -192,6 +194,7 @@ library LibEncumbrance {
             );
         }
         _decrementAggregate(lien.user, lien.asset, lien.tokenId, consumed);
+        _unpledge(lien.asset, lien.assetType, consumed);
         unchecked {
             lien.amount -= consumed;
         }
@@ -239,9 +242,11 @@ library LibEncumbrance {
                 released: false
             });
             s.encumbered[loan.borrower][asset][tokenId] += added;
+            _pledge(asset, loan.collateralAssetType, added);
         } else {
             s.encumbered[lien.user][lien.asset][lien.tokenId] += added;
             lien.amount += added;
+            _pledge(lien.asset, lien.assetType, added);
         }
         notifyTierExclusion(loanId, false);
     }
@@ -725,6 +730,7 @@ library LibEncumbrance {
             released: false
         });
         s.encumbered[loan.borrower][asset][tokenId] += amount;
+        _pledge(asset, loan.collateralAssetType, amount);
         notifyTierExclusion(loanId, false);
     }
 
@@ -978,6 +984,29 @@ library LibEncumbrance {
             tokenId = loan.collateralTokenId;
             amount = loan.collateralQuantity;
         }
+    }
+
+    /// @dev #3685 — add `amount` to the platform-wide total of ERC-20
+    ///      `asset` pledged under open loans' collateral liens
+    ///      (`Storage.collateralPledged`). Every collateral lien change in this
+    ///      library moves the total by the same amount, so it always equals the
+    ///      sum of the live ERC-20 collateral liens of that asset: open loans,
+    ///      and fallback custody, which sits under a live lien until it is
+    ///      claimed or sold. A re-key that keeps the collateral in place (a
+    ///      refinance carry-over, a consolidation) moves nothing. NFT
+    ///      collateral is not counted: it has no liquidity tier, so no
+    ///      concentration ratio.
+    function _pledge(address asset, LibVaipakam.AssetType assetType, uint256 amount) private {
+        if (assetType != LibVaipakam.AssetType.ERC20 || amount == 0) return;
+        LibVaipakam.storageSlot().collateralPledged[asset] += amount;
+    }
+
+    /// @dev #3685 — take `amount` off `asset`'s pledged total; the mirror of
+    ///      {_pledge}. Checked: a total that would go below zero means the
+    ///      bookkeeping has drifted, and the lien change reverts with it.
+    function _unpledge(address asset, LibVaipakam.AssetType assetType, uint256 amount) private {
+        if (assetType != LibVaipakam.AssetType.ERC20 || amount == 0) return;
+        LibVaipakam.storageSlot().collateralPledged[asset] -= amount;
     }
 
     function _decrementAggregate(

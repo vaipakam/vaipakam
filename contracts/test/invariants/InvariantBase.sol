@@ -49,6 +49,8 @@ import {TestOfferFloor} from "../helpers/TestOfferFloor.sol";
 import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
 import {RepayPeriodicFacet} from "../../src/facets/RepayPeriodicFacet.sol";
 import {NumeraireConfigFacet} from "../../src/facets/NumeraireConfigFacet.sol";
+import {CollateralConcentrationFacet} from "../../src/facets/CollateralConcentrationFacet.sol";
+import {CollateralLienFacet} from "../../src/facets/CollateralLienFacet.sol";
 import {SaleFloorFacet} from "../../src/facets/SaleFloorFacet.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {MockSwapAdapter} from "../mocks/MockSwapAdapter.sol";
@@ -209,7 +211,7 @@ contract InvariantBase is Test {
         TestMutatorFacet mutatorFacet = new TestMutatorFacet();
         MetricsFacet metricsFacet = MetricsFacet(ArtifactDeploy.deploy(type(MetricsFacet).name));
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](46);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](48);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -439,6 +441,18 @@ contract InvariantBase is Test {
             facetAddress: ArtifactDeploy.deploy(type(VPFIDiscountAccumulatorFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
+        });
+        // #3685 — loan creation reads its init-LTV cap from this host.
+        cuts[46] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(CollateralConcentrationFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getCollateralConcentrationFacetSelectors()
+        });
+        // #3685 — the collateral-lien entries, split off EncumbranceMutateFacet.
+        cuts[47] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(CollateralLienFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getCollateralLienFacetSelectors()
         });
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         LibTestForcedSalePreview.install(address(diamond));

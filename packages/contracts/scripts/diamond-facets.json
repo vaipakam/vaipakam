@@ -52,6 +52,8 @@
     "OfferPriceGuardFacet",
     "SignedOfferMatchFacet",
     "LoanClockFacet",
+    "CollateralConcentrationFacet",
+    "CollateralLienFacet",
     "ClaimFacet",
     "OracleFacet",
     "OracleAdminFacet",

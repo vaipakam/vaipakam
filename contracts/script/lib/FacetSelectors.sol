@@ -252,7 +252,7 @@ library FacetSelectors {
         s[3] = RepayPeriodicFacet.settlePeriodicInterest.selector;
     }
 
-    /// @notice Full external selector surface of {EncumbranceMutateFacet} (24).
+    /// @notice Full external selector surface of {EncumbranceMutateFacet} (21).
     ///
     /// @dev    The other half of {repayPeriodic}: this facet hosts the
     ///         pay-or-freeze entries every open-loan interest payout goes
@@ -267,32 +267,28 @@ library FacetSelectors {
     ///         (`PredatesInterestLedger`), so on every Diamond they cut the
     ///         #1209 selectors are already routed.
     function encumbranceMutate() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](25);
+        s = new bytes4[](21);
         s[0] = EncumbranceMutateFacet.assertNotFrozenParty.selector;
         s[1] = EncumbranceMutateFacet.createOfferPrincipalLien.selector;
-        s[2] = EncumbranceMutateFacet.decrementCollateralLien.selector;
-        s[3] = EncumbranceMutateFacet.decrementOfferPrincipalLien.selector;
-        s[4] = EncumbranceMutateFacet.freezeLenderProceeds.selector;
-        s[5] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromPayer.selector;
-        s[6] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector;
-        s[7] = EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector;
-        s[8] = EncumbranceMutateFacet.freezeOrPayBorrowerSurplus.selector;
-        s[9] = EncumbranceMutateFacet.getTierExclusion.selector;
-        s[10] = EncumbranceMutateFacet.getVpfiOwedToOthers.selector;
-        s[11] = EncumbranceMutateFacet.incrementCollateralLien.selector;
-        s[12] = EncumbranceMutateFacet.incrementOfferPrincipalLien.selector;
-        s[13] = EncumbranceMutateFacet.parkLenderPayoffAndFreeze.selector;
-        s[14] = EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector;
-        s[15] = EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector;
-        s[16] = EncumbranceMutateFacet.recreateCollateralLien.selector;
-        s[17] = EncumbranceMutateFacet.refreshTierExclusion.selector;
-        s[18] = EncumbranceMutateFacet.releaseCollateralLien.selector;
-        s[19] = EncumbranceMutateFacet.releaseOfferPrincipalLien.selector;
-        s[20] = EncumbranceMutateFacet.syncTierExclusion.selector;
-        s[21] = EncumbranceMutateFacet.terminalize.selector;
-        s[22] = EncumbranceMutateFacet.terminalizeFromAny.selector;
-        s[23] = EncumbranceMutateFacet.payHeldBorrowerExtra.selector;
-        s[24] = EncumbranceMutateFacet.settleRentalPrecloseShares.selector;
+        s[2] = EncumbranceMutateFacet.decrementOfferPrincipalLien.selector;
+        s[3] = EncumbranceMutateFacet.freezeLenderProceeds.selector;
+        s[4] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromPayer.selector;
+        s[5] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector;
+        s[6] = EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector;
+        s[7] = EncumbranceMutateFacet.freezeOrPayBorrowerSurplus.selector;
+        s[8] = EncumbranceMutateFacet.getTierExclusion.selector;
+        s[9] = EncumbranceMutateFacet.getVpfiOwedToOthers.selector;
+        s[10] = EncumbranceMutateFacet.incrementOfferPrincipalLien.selector;
+        s[11] = EncumbranceMutateFacet.parkLenderPayoffAndFreeze.selector;
+        s[12] = EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector;
+        s[13] = EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector;
+        s[14] = EncumbranceMutateFacet.refreshTierExclusion.selector;
+        s[15] = EncumbranceMutateFacet.releaseOfferPrincipalLien.selector;
+        s[16] = EncumbranceMutateFacet.syncTierExclusion.selector;
+        s[17] = EncumbranceMutateFacet.terminalize.selector;
+        s[18] = EncumbranceMutateFacet.terminalizeFromAny.selector;
+        s[19] = EncumbranceMutateFacet.payHeldBorrowerExtra.selector;
+        s[20] = EncumbranceMutateFacet.settleRentalPrecloseShares.selector;
     }
 
     /// @notice #1503 item 28 — the RETIRED 3-argument

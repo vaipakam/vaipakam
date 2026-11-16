@@ -28,6 +28,12 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
  *         `PrecloseFacet.precloseDirect`, `RefinanceFacet`'s
  *         old-loan close, and `ClaimFacet`'s Settled transitions).
  *
+ *         #3685 — the four collateral-lien entries (release, decrement,
+ *         increment, re-create) moved to `CollateralLienFacet` when the
+ *         platform-wide pledged total joined every lien change and this
+ *         facet ran out of EIP-170 room. The offer-principal lock and the
+ *         close-out freeze surface stay here.
+ *
  * @dev    Every MUTATING selector is gated to `msg.sender == address(this)`
  *         so an external EOA cannot reach the lien mutate surface
  *         directly — only the diamond itself (via `crossFacetCall`)
@@ -50,19 +56,6 @@ contract EncumbranceMutateFacet is DiamondReentrancyGuard {
     modifier onlyDiamondInternal() {
         _checkDiamondInternal();
         _;
-    }
-
-    /// @notice Release a per-loan collateral lien in full. Idempotent
-    ///         (already-released or empty rows are no-ops). Callers
-    ///         (loan-lifecycle terminal facets) invoke this via
-    ///         `LibFacet.crossFacetCall` so the heavy lifting (the
-    ///         aggregate decrement + tombstone) lives in this facet's
-    ///         bytecode, not the caller's.
-    function releaseCollateralLien(uint256 loanId)
-        external
-        onlyDiamondInternal
-    {
-        LibEncumbrance.releaseCollateralLien(loanId);
     }
 
     /// @notice #954 (§1.1) — freeze a full swap-to-repay's LENDER proceeds into
@@ -100,44 +93,6 @@ contract EncumbranceMutateFacet is DiamondReentrancyGuard {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibCloseoutFreeze.freezeOrPayBorrowerSurplus(
             s, loanId, s.loans[loanId], currentHolder, surplus
-        );
-    }
-
-    /// @notice #407 PR 4 round-1 Codex P1 #1 (2026-06-12) — decrement
-    ///         an active lien by `consumed`. See
-    ///         {LibEncumbrance.decrementCollateralLien}.
-    function decrementCollateralLien(uint256 loanId, uint256 consumed)
-        external
-        onlyDiamondInternal
-    {
-        LibEncumbrance.decrementCollateralLien(loanId, consumed);
-    }
-
-    /// @notice #407 PR 4 round-1 Codex P2 #6 (2026-06-12) — increment
-    ///         an active lien by `added`. See
-    ///         {LibEncumbrance.incrementCollateralLien}.
-    function incrementCollateralLien(uint256 loanId, uint256 added)
-        external
-        onlyDiamondInternal
-    {
-        LibEncumbrance.incrementCollateralLien(loanId, added);
-    }
-
-    /// @notice #569 §4.4 (2026-06-13) — re-create the lien from the
-    ///         loan row's CURRENT `(borrower, collateralAsset, amount)`
-    ///         state. Used as the create-leg of an obligation-transfer
-    ///         rekey (`PrecloseFacet.transferObligationViaOffer`):
-    ///         after the old borrower's lien is released and the loan
-    ///         is rewritten to the new borrower, this locks the new
-    ///         borrower's collateral. No-op on NFT-rental loans (D-1).
-    ///         See {LibEncumbrance.recreateCollateralLien}.
-    function recreateCollateralLien(uint256 loanId)
-        external
-        onlyDiamondInternal
-    {
-        LibEncumbrance.recreateCollateralLien(
-            loanId,
-            LibVaipakam.storageSlot().loans[loanId]
         );
     }
 

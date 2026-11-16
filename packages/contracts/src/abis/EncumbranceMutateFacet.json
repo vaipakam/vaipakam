@@ -42,24 +42,6 @@
   },
   {
     "type": "function",
-    "name": "decrementCollateralLien",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "consumed",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "decrementOfferPrincipalLien",
     "inputs": [
       {
@@ -277,24 +259,6 @@
   },
   {
     "type": "function",
-    "name": "incrementCollateralLien",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "added",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "incrementOfferPrincipalLien",
     "inputs": [
       {
@@ -390,38 +354,12 @@
   },
   {
     "type": "function",
-    "name": "recreateCollateralLien",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "refreshTierExclusion",
     "inputs": [
       {
         "name": "loanIds",
         "type": "uint256[]",
         "internalType": "uint256[]"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "releaseCollateralLien",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "outputs": [],

@@ -63,6 +63,8 @@ import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
+import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
+import {CollateralLienFacet} from "../src/facets/CollateralLienFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {VaultProtection} from "../src/vault/VaultProtection.sol";
@@ -571,6 +573,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
             SignedOfferMatchFacet(ArtifactDeploy.deploy(type(SignedOfferMatchFacet).name));
         // #3410 — the loan clock's disclosure, split off LoanFacet (EIP-170).
         LoanClockFacet loanClockFacet = LoanClockFacet(ArtifactDeploy.deploy(type(LoanClockFacet).name));
+        CollateralConcentrationFacet collateralConcentrationFacet =
+            CollateralConcentrationFacet(ArtifactDeploy.deploy(type(CollateralConcentrationFacet).name));
+        CollateralLienFacet collateralLienFacet = CollateralLienFacet(ArtifactDeploy.deploy(type(CollateralLienFacet).name));
         // #1841 - the one sale-exit verdict: the lender exit chooser's view and
         // the guard both sale entries self-call.
         SaleExitVerdictFacet saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
@@ -619,7 +624,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](118);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](120);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -740,6 +745,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[115] = _buildCut(address(autoLifecycleSettingsFacet), _getAutoLifecycleSettingsSelectors());
         cuts[116] = _buildCut(address(precloseOffsetFacet), _getPrecloseOffsetSelectors());
         cuts[117] = _buildCut(address(loanClockFacet), _getLoanClockSelectors());
+        // #3685 — the new-loan cap host and collateral concentration.
+        cuts[118] = _buildCut(address(collateralConcentrationFacet), _getCollateralConcentrationSelectors());
+        // #3685 — the collateral-lien entries, split off EncumbranceMutateFacet.
+        cuts[119] = _buildCut(address(collateralLienFacet), _getCollateralLienSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1493,6 +1502,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("offerPriceGuardFacet", address(offerPriceGuardFacet));
         Deployments.writeFacet("signedOfferMatchFacet", address(signedOfferMatchFacet));
         Deployments.writeFacet("loanClockFacet", address(loanClockFacet));
+        Deployments.writeFacet("collateralConcentrationFacet", address(collateralConcentrationFacet));
+        Deployments.writeFacet("collateralLienFacet", address(collateralLienFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
         Deployments.writeFacet("refinancePayoffFacet", address(refinancePayoffFacet));
@@ -2160,6 +2171,30 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // `getLoanDeadlines` moved to LoanClockFacet in #3410.
     }
 
+    /// @dev Selectors for `CollateralConcentrationFacet` (#3685) — the
+    ///      one host of the new-loan init-LTV cap and the per-asset
+    ///      collateral concentration it steps down at the High level.
+    function _getCollateralConcentrationSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](7);
+        s[0] = CollateralConcentrationFacet.setConcentrationConfig.selector;
+        s[1] = CollateralConcentrationFacet.setAssetConcentrationConfig.selector;
+        s[2] = CollateralConcentrationFacet.getConcentrationConfig.selector;
+        s[3] = CollateralConcentrationFacet.getAssetConcentrationThresholds.selector;
+        s[4] = CollateralConcentrationFacet.getConcentration.selector;
+        s[5] = CollateralConcentrationFacet.newLoanInitLtvCapBps.selector;
+        s[6] = CollateralConcentrationFacet.loanConcentrationAtInit.selector;
+    }
+
+    /// @dev Selectors for `CollateralLienFacet` (#3685) — the collateral-lien
+    ///      entries, split off EncumbranceMutateFacet for EIP-170.
+    function _getCollateralLienSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](4);
+        s[0] = CollateralLienFacet.releaseCollateralLien.selector;
+        s[1] = CollateralLienFacet.decrementCollateralLien.selector;
+        s[2] = CollateralLienFacet.incrementCollateralLien.selector;
+        s[3] = CollateralLienFacet.recreateCollateralLien.selector;
+    }
+
     /// @dev Selectors for `LoanClockFacet` (#3410) — the loan clock's
     ///      disclosure: a loan's deadlines (#668 / #935, moved off LoanFacet)
     ///      and the sequencer outage that moves them.
@@ -2290,49 +2325,43 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         offer-principal-lock impl PR adds the lock create /
     ///         decrement / release surface.
     function _getEncumbranceMutateFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](25);
-        s[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
-        // #407 PR 4 round-1 (2026-06-12) — decrement/increment cross-
-        // facet entries used by active-loan slice flows + addCollateral.
-        s[1] = EncumbranceMutateFacet.decrementCollateralLien.selector;
-        s[2] = EncumbranceMutateFacet.incrementCollateralLien.selector;
-        // #569 §4.4 (2026-06-13) — rekey create-leg for obligation transfer.
-        s[3] = EncumbranceMutateFacet.recreateCollateralLien.selector;
+        s = new bytes4[](21);
+        // The collateral-lien entries moved to CollateralLienFacet (#3685).
         // T-407-C (#566, 2026-06-13) — offer-principal lock selectors.
-        s[4] = EncumbranceMutateFacet.createOfferPrincipalLien.selector;
-        s[5] = EncumbranceMutateFacet.decrementOfferPrincipalLien.selector;
-        s[6] = EncumbranceMutateFacet.releaseOfferPrincipalLien.selector;
-        s[7] = EncumbranceMutateFacet.incrementOfferPrincipalLien.selector;
+        s[0] = EncumbranceMutateFacet.createOfferPrincipalLien.selector;
+        s[1] = EncumbranceMutateFacet.decrementOfferPrincipalLien.selector;
+        s[2] = EncumbranceMutateFacet.releaseOfferPrincipalLien.selector;
+        s[3] = EncumbranceMutateFacet.incrementOfferPrincipalLien.selector;
         // #954 — swap-to-repay close-out freeze helpers hosted here (EIP-170).
-        s[8] = EncumbranceMutateFacet.freezeLenderProceeds.selector;
-        s[9] = EncumbranceMutateFacet.freezeOrPayBorrowerSurplus.selector;
+        s[4] = EncumbranceMutateFacet.freezeLenderProceeds.selector;
+        s[5] = EncumbranceMutateFacet.freezeOrPayBorrowerSurplus.selector;
         // #998 S10 (#1006) — fail-closed frozen-claimant markers (EIP-170 host).
-        s[10] = EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector;
-        s[11] = EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector;
+        s[6] = EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector;
+        s[7] = EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector;
         // #998 S10 (#1006) — one-call lender-payoff park+freeze (PrecloseFacet EIP-170).
-        s[12] = EncumbranceMutateFacet.parkLenderPayoffAndFreeze.selector;
+        s[8] = EncumbranceMutateFacet.parkLenderPayoffAndFreeze.selector;
         // #998 S10 (#1006, r4) — registry-aware fail-closed gate host (ClaimFacet backstop).
-        s[13] = EncumbranceMutateFacet.assertNotFrozenParty.selector;
+        s[9] = EncumbranceMutateFacet.assertNotFrozenParty.selector;
         // #998 S10 (#1006) Class B — Active-loan inline lender-share pay-or-freeze
         // hosts (RepayPeriodicFacet + RepayFacet servicing paths, EIP-170).
-        s[14] = EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector;
-        s[15] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromPayer.selector;
-        s[16] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector;
+        s[10] = EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector;
+        s[11] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromPayer.selector;
+        s[12] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector;
         // #1132 (S10 central enforcement) — terminal-transition + both-holder
         // frozen-claimant register host (hosted here, not a separate facet, so it
         // is cut into every diamond that already cuts this mutate host).
-        s[17] = EncumbranceMutateFacet.terminalize.selector;
-        s[18] = EncumbranceMutateFacet.terminalizeFromAny.selector;
+        s[13] = EncumbranceMutateFacet.terminalize.selector;
+        s[14] = EncumbranceMutateFacet.terminalizeFromAny.selector;
         // #2342 — ledger-anchored VPFI fee-tier exclusion host + its views.
-        s[19] = EncumbranceMutateFacet.syncTierExclusion.selector;
-        s[20] = EncumbranceMutateFacet.getTierExclusion.selector;
-        s[21] = EncumbranceMutateFacet.getVpfiOwedToOthers.selector;
+        s[15] = EncumbranceMutateFacet.syncTierExclusion.selector;
+        s[16] = EncumbranceMutateFacet.getTierExclusion.selector;
+        s[17] = EncumbranceMutateFacet.getVpfiOwedToOthers.selector;
         // #2342 r1 — permissionless backfill / re-derive entry.
-        s[22] = EncumbranceMutateFacet.refreshTierExclusion.selector;
+        s[18] = EncumbranceMutateFacet.refreshTierExclusion.selector;
         // #2795 — pay a held borrower extra out on an obligation handover
         // (PrecloseFacet EIP-170 host).
-        s[23] = EncumbranceMutateFacet.payHeldBorrowerExtra.selector;
-        s[24] = EncumbranceMutateFacet.settleRentalPrecloseShares.selector;
+        s[19] = EncumbranceMutateFacet.payHeldBorrowerExtra.selector;
+        s[20] = EncumbranceMutateFacet.settleRentalPrecloseShares.selector;
     }
 
     /// @notice #396 v0.5 — gasless signed off-chain offer book selectors.

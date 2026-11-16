@@ -21,6 +21,7 @@ import {LibInitRiskGate} from "../libraries/LibInitRiskGate.sol";
 import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {OfferPriceGuardFacet} from "./OfferPriceGuardFacet.sol";
+import {CollateralConcentrationFacet} from "./CollateralConcentrationFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 
@@ -825,11 +826,9 @@ contract OfferPreviewFacet {
         )) return (0, false, type(uint256).max);
         tiered = LibVaipakam.cfgDepthTieredLtvEnabled();
         if (tiered) {
-            uint256 capBps = LibVaipakam.assetInitLtvCeilingBps(collateralAsset);
-            uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(
-                OracleFacet(address(this)).getEffectiveLiquidityTier(collateralAsset)
-            ));
-            if (tierCap < capBps) capBps = tierCap;
+            // #3685 — the one host of the new-loan cap (tier, asset ceiling
+            // and the concentration step), as loan creation reads it.
+            (uint256 capBps,,,) = CollateralConcentrationFacet(address(this)).newLoanInitLtvCapBps(collateralAsset);
             floor = LibRiskMath.minCollateralForLtvCap(amount, lendingAsset, collateralAsset, capBps);
             amountCap = LibRiskMath.maxLendingForLtvCap(collateral, lendingAsset, collateralAsset, capBps);
         } else {

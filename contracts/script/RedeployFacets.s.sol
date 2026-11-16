@@ -28,6 +28,7 @@ import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
+import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
@@ -121,6 +122,9 @@ contract RedeployFacets is Script {
     /// @notice #3009 / #3025 - the target Diamond's OfferPreviewFacet predates
     ///         the cadence admission host; see {_requireCadenceAdmissionHost}.
     error PredatesCadenceAdmissionHost(address diamond);
+    /// @notice #3685 - the target Diamond predates the collateral pledged
+    ///         total; see {_requireCollateralConcentration}.
+    error PredatesCollateralConcentration(address diamond);
     /// @notice #1558 - the target Diamond predates the refinance payoff
     ///         permit; see {_requireRefinancePayoffPermit}.
     error PredatesRefinancePayoffPermit(address diamond);
@@ -211,6 +215,9 @@ contract RedeployFacets is Script {
         // #3009 / #3025 - and one whose OfferPreviewFacet cannot answer the
         // origination cadence check; see {_requireCadenceAdmissionHost}.
         _requireCadenceAdmissionHost(diamond);
+        // #3685 - and one from before the collateral pledged total; see
+        // {_requireCollateralConcentration}.
+        _requireCollateralConcentration(diamond);
         // #3326 - and one whose OfferPreviewFacet cannot answer the match
         // core's risk bounds; see {_requireMatchRiskBoundsHost}.
         _requireMatchRiskBoundsHost(diamond);
@@ -1114,6 +1121,25 @@ contract RedeployFacets is Script {
             IDiamondLoupe(diamond).facetAddress(VPFIDiscountAccumulatorFacet.syncTierRecord.selector)
                 == address(0)
         ) revert PredatesTierRecordSeam(diamond);
+    }
+
+    /// @dev #3685 - refuse a Diamond from before the collateral pledged
+    ///      total. Every collateral lien change now moves a per-asset pledged
+    ///      total (LibEncumbrance, inlined in many facets), the four lien
+    ///      entries moved from EncumbranceMutateFacet to CollateralLienFacet,
+    ///      and loan creation, the previews and the offer book read their
+    ///      init-LTV cap from CollateralConcentrationFacet. This curated set
+    ///      carries only some of those facets, so crossing here would leave
+    ///      lien entries on old code that moves no total, and a pre-#3685
+    ///      loan's release would underflow the total. Crossing the boundary is
+    ///      a fresh deploy, never this refresh. The marker is the routing of
+    ///      `CollateralConcentrationFacet.newLoanInitLtvCapBps`. Called before
+    ///      the broadcast starts, so a refused run sends nothing.
+    function _requireCollateralConcentration(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(CollateralConcentrationFacet.newLoanInitLtvCapBps.selector)
+                == address(0)
+        ) revert PredatesCollateralConcentration(diamond);
     }
 
     /// @dev #3009 / #3025 - refuse a Diamond whose OfferPreviewFacet predates

@@ -89,6 +89,8 @@ import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
+import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
+import {CollateralLienFacet} from "../src/facets/CollateralLienFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
@@ -321,7 +323,13 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // 117 -> 118: LoanClockFacet (#3410) - the loan clock's disclosure,
     // split off LoanFacet for EIP-170. `getLoanDeadlines` moves hosts (the
     // Replace cut repoints it); `getSequencerOutageWindow` is new (an Add).
-    uint256 public constant EXPECTED_FACETS = 118;
+    // 118 -> 119: CollateralConcentrationFacet (#3685) - the one host of
+    // the new-loan init-LTV cap, which loan creation, the previews and the
+    // offer book self-call. Its selectors are new (Adds).
+    // 119 -> 120: CollateralLienFacet (#3685) - the collateral-lien entries,
+    // split off EncumbranceMutateFacet for EIP-170. Their selectors move
+    // hosts, so the Replace cut repoints them.
+    uint256 public constant EXPECTED_FACETS = 120;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -464,6 +472,41 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         }
     }
 
+    /// @notice #3685 - the target Diamond predates the collateral pledged
+    ///         total and has an ERC-20 loan open; see
+    ///         {_requireNoOpenLoanAcrossCollateralPledge}.
+    error OpenLoanAcrossCollateralPledge(address diamond, uint256 loanId);
+
+    /// @notice #3685 - the target Diamond predates the collateral pledged
+    ///         total and is not under the manual pause.
+    error CollateralPledgeCrossingNeedsManualPause(address diamond);
+
+    /// @dev #3685 - every collateral lien change now moves a per-asset pledged
+    ///      total, which starts at zero. A lien a pre-#3685 Diamond created is
+    ///      not in it, so releasing or reducing that lien after the refresh
+    ///      would underflow the total and revert (a repay, a liquidation, a
+    ///      default stuck), and the concentration it reports would be short.
+    ///      So crossing the boundary in place is refused while any ERC-20 loan
+    ///      is open (`Active` or `FallbackPending`): close those loans, or
+    ///      cross by fresh deploy. A Diamond that already routes
+    ///      `newLoanInitLtvCapBps` is past the boundary and is not walked. The
+    ///      walk and the manual-pause requirement follow
+    ///      {_requireNoOpenLoanAcrossInterestLedger}, for the same reasons.
+    function _requireNoOpenLoanAcrossCollateralPledge(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(CollateralConcentrationFacet.newLoanInitLtvCapBps.selector)
+                != address(0)
+        ) return;
+        (bool manual,,,) = LibPausable.decodePausableSlot(vm.load(diamond, LibPausable.PAUSABLE_STORAGE_POSITION));
+        if (!manual) revert CollateralPledgeCrossingNeedsManualPause(diamond);
+        (uint256 highestLoanId,) = MetricsFacet(diamond).getGlobalCounts();
+        for (uint256 loanId = 1; loanId <= highestLoanId; ++loanId) {
+            if (_isOpenErc20Loan(diamond, loanId)) {
+                revert OpenLoanAcrossCollateralPledge(diamond, loanId);
+            }
+        }
+    }
+
     /// @dev Kept in its own frame, like {_isOpenErc1155Rental}.
     function _isOpenErc20Loan(address diamond, uint256 loanId) private view returns (bool) {
         LibVaipakam.Loan memory loan = LoanFacet(diamond).getLoanDetails(loanId);
@@ -543,6 +586,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         PriceGuardCrossing.requireRecorded(diamond);
         _requireNoOpenErc1155RentalAcross902(diamond);
         _requireNoOpenLoanAcrossInterestLedger(diamond);
+        _requireNoOpenLoanAcrossCollateralPledge(diamond);
         // The per-token tracked vault ledger is fresh-deploy only; see
         // TrackedHoldingRollout.
         TrackedHoldingRollout.assertInstalled(diamond);
@@ -1371,6 +1415,14 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             "precloseOffsetFacet", ArtifactDeploy.deploy(type(PrecloseOffsetFacet).name), _getPrecloseOffsetSelectors()
         );
         items[117] = Item("loanClockFacet", ArtifactDeploy.deploy(type(LoanClockFacet).name), _getLoanClockSelectors());
+        items[118] = Item(
+            "collateralConcentrationFacet",
+            ArtifactDeploy.deploy(type(CollateralConcentrationFacet).name),
+            _getCollateralConcentrationSelectors()
+        );
+        items[119] = Item(
+            "collateralLienFacet", ArtifactDeploy.deploy(type(CollateralLienFacet).name), _getCollateralLienSelectors()
+        );
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

@@ -16,7 +16,7 @@ import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
-import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
+import {CollateralLienFacet} from "./CollateralLienFacet.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
@@ -538,10 +538,10 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
     }
 
     function _decrementLienAtSwapToRepayPartial(uint256 loanId, uint256 consumed) private {
-        _callEncumb2(EncumbranceMutateFacet.decrementCollateralLien.selector, loanId, consumed);
+        _callEncumb2(CollateralLienFacet.decrementCollateralLien.selector, loanId, consumed);
     }
 
     function _incrementLienAtSwapToRepayPartial(uint256 loanId, uint256 added) private {
-        _callEncumb2(EncumbranceMutateFacet.incrementCollateralLien.selector, loanId, added);
+        _callEncumb2(CollateralLienFacet.incrementCollateralLien.selector, loanId, added);
     }
 }
