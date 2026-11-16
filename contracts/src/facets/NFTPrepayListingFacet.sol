@@ -517,7 +517,9 @@ contract NFTPrepayListingFacet is
 
         // Authority — must currently hold the borrower-position NFT.
         address holder = LibPositionNFT.ownerOf(loan.borrowerTokenId);
-        if (holder != msg.sender) {
+        // #3526 — a replaced (retired) holder may not open a listing; its
+        // replacement recovers the position first and lists as the holder.
+        if (holder != msg.sender || LibProtectedAccount.manager(holder) != msg.sender) {
             revert NotPositionHolder(loanId, msg.sender, holder);
         }
         // #818 Tier-1 sanctions — posting a collateral-sale listing creates
@@ -722,7 +724,9 @@ contract NFTPrepayListingFacet is
         }
 
         address holder = LibPositionNFT.ownerOf(loan.borrowerTokenId);
-        if (holder != msg.sender) {
+        // #3526 — a replaced (retired) holder may not open a listing; its
+        // replacement recovers the position first and lists as the holder.
+        if (holder != msg.sender || LibProtectedAccount.manager(holder) != msg.sender) {
             revert NotPositionHolder(loanId, msg.sender, holder);
         }
         // #818 Tier-1 sanctions — see `postPrepayListing`. `holder == msg.sender`.

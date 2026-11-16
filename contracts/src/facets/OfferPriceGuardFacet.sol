@@ -5,6 +5,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibOfferPriceGuard} from "../libraries/LibOfferPriceGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {LibAuth} from "../libraries/LibAuth.sol";
 
 /**
  * @title  OfferPriceGuardFacet
@@ -115,7 +116,7 @@ contract OfferPriceGuardFacet is DiamondPausable, IVaipakamErrors {
         LibVaipakam.Offer storage o = s.offers[offerId];
         if (o.creator == address(0)) revert InvalidOffer();
         if (o.accepted) revert OfferAlreadyAccepted();
-        if (msg.sender != o.creator) revert NotOfferCreator();
+        LibAuth.requireOfferCreator(o);
         if (maxMoveBps == 0) {
             LibOfferPriceGuard.clear(s, offerId);
             return;

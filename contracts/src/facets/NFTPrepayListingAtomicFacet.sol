@@ -42,6 +42,7 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {NFTPrepayListingFacet} from "./NFTPrepayListingFacet.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 
 /**
  * @title NFTPrepayListingAtomicFacet
@@ -427,7 +428,9 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
             revert PrepayGraceWindowClosed(loanId, block.timestamp, graceEnd);
         }
         address holder = LibPositionNFT.ownerOf(loan.borrowerTokenId);
-        if (holder != msg.sender) {
+        // #3526 — a replaced (retired) holder may not open a listing; its
+        // replacement recovers the position first and lists as the holder.
+        if (holder != msg.sender || LibProtectedAccount.manager(holder) != msg.sender) {
             revert NotPositionHolder(loanId, msg.sender, holder);
         }
         LibVaipakam._assertNotSanctioned(msg.sender);

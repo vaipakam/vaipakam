@@ -10,6 +10,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
@@ -300,5 +301,12 @@ contract RetiredAccountAuthorityTest is SetupTest {
         vm.prank(nominee);
         vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
         ProfileFacet(address(diamond)).setOfferKeeperEnabled(offerId, keeper, true);
+        // The maker's price-move guard follows the same rule.
+        vm.prank(lender);
+        vm.expectRevert(IVaipakamErrors.NotOfferCreator.selector);
+        OfferPriceGuardFacet(address(diamond)).setOfferPriceGuard(offerId, 500);
+        vm.prank(nominee);
+        vm.expectRevert(IVaipakamErrors.NotOfferCreator.selector);
+        OfferPriceGuardFacet(address(diamond)).setOfferPriceGuard(offerId, 500);
     }
 }
