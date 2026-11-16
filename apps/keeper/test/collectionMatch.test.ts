@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { Hex } from 'viem';
-import { CollateralSetKind, collateralSetLeaf, processProof } from '@vaipakam/lib/collateralSet';
+import { CollateralSetKind, canonicalListFile, collateralSetLeaf, listFileHash, processProof } from '@vaipakam/lib/collateralSet';
 import {
   MAX_TRIES_PER_PARENT,
   TakeFailure,
@@ -50,7 +50,7 @@ function parent(
 ): CollectionParent {
   return {
     offer: offer(id, LENDER, 0, { amount: 300n, amountMax: 300n, interestRateBpsMax: 500n, fillMode: 1, ...o.offer }),
-    set: { kind: CollateralSetKind.Collection, low: 0n, high: 0n, root: `0x${'00'.repeat(32)}`, listCount: 0, exclusions: [], ...set },
+    set: { kind: CollateralSetKind.Collection, low: 0n, high: 0n, root: `0x${'00'.repeat(32)}`, listCount: 0, listHash: `0x${'00'.repeat(32)}`, exclusions: [], ...set },
     perLoan: o.perLoan ?? 100n,
     loansLeft: o.loansLeft ?? 3,
   };
@@ -58,7 +58,7 @@ function parent(
 
 /** A listed set over `ids`, with the sorted standard tree's root. */
 function listedSet(ids: bigint[]): Partial<CollectionParent['set']> {
-  return { kind: CollateralSetKind.Listed, root: rootOf(ids), listCount: ids.length };
+  return { kind: CollateralSetKind.Listed, root: rootOf(ids), listCount: ids.length, listHash: listFileHash(canonicalListFile(ids)) };
 }
 
 /** The root of the sorted standard tree over `ids` (reimplemented here, so
@@ -160,7 +160,9 @@ describe('collectionProof', () => {
     expect(checkedTree(p, undefined)).toEqual({ missing: 'its list was not read' });
     expect(checkedTree(p, { missing: 'x' })).toEqual({ missing: 'x' });
     expect(checkedTree(p, { ids: [7n, 9n] })).toEqual({ missing: expect.stringContaining('number of ids') });
-    expect(checkedTree(p, { ids: [7n, 9n, 12n] })).toEqual({ missing: expect.stringContaining('root') });
+    expect(checkedTree(p, { ids: [7n, 9n, 12n] })).toEqual({ missing: expect.stringContaining('list hash') });
+    const wrongRoot = { ...p, set: { ...p.set, root: `0x${'11'.repeat(32)}` as Hex } };
+    expect(checkedTree(wrongRoot, { ids })).toEqual({ missing: expect.stringContaining('root') });
   });
 });
 
@@ -282,7 +284,7 @@ describe('reading collection offers', () => {
     const set = { kind: 2, listCount: 0, low: 5n, high: 9n, root: `0x${'00'.repeat(32)}`, listHash: `0x${'00'.repeat(32)}`, label: '', exclusions: [7n] };
     expect(liftCollectionOffer(o, [set, 100n, 5, 2])).toEqual({
       offer: o,
-      set: { kind: 2, low: 5n, high: 9n, root: set.root, listCount: 0, exclusions: [7n] },
+      set: { kind: 2, low: 5n, high: 9n, root: set.root, listCount: 0, listHash: set.listHash, exclusions: [7n] },
       perLoan: 100n,
       loansLeft: 3,
     });

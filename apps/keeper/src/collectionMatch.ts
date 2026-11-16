@@ -22,7 +22,8 @@
 //     whole collection or a range (exclusions win), and by a proof for a
 //     listed set. A listed set's ids come from its creation event, which
 //     carries them in full for up to 256 ids. The step checks the list against
-//     the offer (no id twice, the stated count, the stated root) before it
+//     the offer (no id twice, the stated count, the stated list hash and
+//     root, by the one canonical file and tree, `@vaipakam/lib/collateralSet`) before it
 //     proves anything, and leaves alone a listed set whose list it does not
 //     hold or that does not check out, saying why.
 //
@@ -134,7 +135,8 @@ const LIST_PROBLEM_WORDS: Record<ListProblem, string> = {
   empty: 'the published list is empty',
   duplicates: 'the published list names an id twice',
   count: 'the published list does not hold the number of ids the offer states',
-  root: 'no standard tree over the published list has the offer\'s root',
+  hash: "the offer's list hash is not the hash of the published list's canonical file",
+  root: "the standard tree over the published list does not have the offer's root",
 };
 
 /** A listed parent's checked tree, or why there is none. */
@@ -357,6 +359,7 @@ export function liftCollectionOffer(offer: OfferLite, raw: unknown): CollectionP
       low: BigInt(set['low'] as bigint),
       high: BigInt(set['high'] as bigint),
       root: set['root'] as Hex,
+      listHash: set['listHash'] as Hex,
       listCount: Number(set['listCount']),
       exclusions: ((set['exclusions'] as readonly bigint[] | undefined) ?? []).map((x) => BigInt(x)),
     },
