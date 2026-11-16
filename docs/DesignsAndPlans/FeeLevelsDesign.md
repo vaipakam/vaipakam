@@ -97,3 +97,22 @@ The levels in section 2 with the term rule in section 3.
 - Whether any charge derived from the initiation fee rate (a matcher's share, the paid tariff) should read the base rate or the loan's term rate.
 - Whether an obligation handover, which installs a new borrower's term, charges the difference as an extension does.
 - Confirm no path assumes the fee is one fixed rate, and that the bound on the fee setting still holds for the longest term the platform admits.
+
+## 11. Answers to section 10, and what is built (2026-11-16)
+
+The design thread answered section 10 on 2026-11-16:
+
+- **Everything priced from the initiation fee reads the loan's term rate**: the borrower charge at acceptance, every preview of it, the matcher's share (a cut of the amount charged, so it follows), the refinance payoff sizing, and the VPFI discount, which applies to the term-scaled fee. A signed offer's cap on the initiation fee is compared with the term rate for that offer's own term, rounded up, so a cap is never read as met by a rounded-down figure.
+- **One exception: the Full tariff's C\* keeps the base rate.** C\* already multiplies by the loan's term, so reading the term rate there would charge the term twice.
+- **An obligation handover that lengthens the agreed term** charges the incoming borrower the difference, as an extension does. A shorter or equal term charges nothing and refunds nothing.
+- **The bound on the fee settings** is checked against the longest term any path admits: the yearly rate times that longest term may not exceed the 50% fee ceiling times the one-year point.
+- **The treasury floor split is built now**, in the treasury fee host, because it ships in the audited code. Until a registry names a reserve, the reserve's part goes to the treasury, and this is stated: the fee event gives the floor part and the reserve part separately, and a per-asset counter records the reserve part the treasury holds. An extension's added fee takes no floor.
+
+Built in stage 1 (term rate):
+
+- One library computes the rate for a term and the fee for a principal and term. Every charger and preview reads it.
+- A small facet holds the three term settings (base term, yearly rate, one-year point; the base rate stays the existing initiation fee setting), their getter, and a quote of the fee and rate for a principal and term. The setter refuses a base term outside 1 to 90 days, a one-year point outside 180 to 730 days, a yearly rate below the base rate, and a yearly rate whose longest-term fee would pass the 50% ceiling. The base-rate setter now refuses a base rate above the yearly rate.
+- The loan stamps its term rate (rounded down) as its initiation fee rate when it opens.
+- The interest share default is 5%.
+
+Stages 2 (extension and handover difference) and 3 (the floor split) follow in the same batch.

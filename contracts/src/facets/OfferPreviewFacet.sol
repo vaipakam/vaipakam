@@ -210,6 +210,7 @@ contract OfferPreviewFacet {
             preview.lifEstimate = LibVPFIDiscount.holdOnlyBorrowerLif(
                 _borrower,
                 preview.effectivePrincipal,
+                offer.durationDays, // #3649 — the term rate the accept charges
                 OracleFacet(address(this)).checkLiquidity(offer.lendingAsset) ==
                     LibVaipakam.LiquidityStatus.Liquid,
                 // #1347 — the accept-time preview quotes the HoldOnly (non-Full)

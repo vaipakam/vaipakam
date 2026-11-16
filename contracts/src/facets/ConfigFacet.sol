@@ -6,6 +6,7 @@ import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
+import {LibInitiationFee} from "../libraries/LibInitiationFee.sol";
 
 /**
  * @title ConfigFacet
@@ -159,8 +160,10 @@ contract ConfigFacet is DiamondAccessControl {
 
     /**
      * @notice Update the two protocol fees in one atomic call.
-     * @param treasuryFeeBps       Fee on lender interest (defaults to 200 ≡ 2%; rev-8 fee freeze, #1352).
-     * @param loanInitiationFeeBps Fee on ERC-20 principal at initiation (defaults to 20 ≡ 0.2%; rev-8 fee freeze, #1352).
+     * @param treasuryFeeBps       Fee on lender interest (defaults to 500 ≡ 5%; #3649).
+     * @param loanInitiationFeeBps The initiation fee's BASE rate, for a loan up to the
+     *                             base term (defaults to 20 ≡ 0.2%); longer terms pay
+     *                             more ({LibInitiationFee}, #3649). At most the yearly rate.
      * @dev ADMIN_ROLE-only. Pass `0` for either field to reset it to the
      *      library default. Both values are capped at {MAX_FEE_BPS}.
      */
@@ -173,6 +176,10 @@ contract ConfigFacet is DiamondAccessControl {
         LibVaipakam.ProtocolConfig storage c = LibVaipakam.storageSlot().protocolCfg;
         c.treasuryFeeBps = treasuryFeeBps;
         c.loanInitiationFeeBps = loanInitiationFeeBps;
+        // #3649 — the base rate is the short-loan end of the term schedule; it
+        // may not exceed the yearly rate, or the fee would fall with the term.
+        (uint256 base, , uint256 yearly, ) = LibInitiationFee.terms();
+        if (base > yearly) revert InvalidFeeBps(base, yearly);
         emit FeesConfigSet(treasuryFeeBps, loanInitiationFeeBps);
     }
 

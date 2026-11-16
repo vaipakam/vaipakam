@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {SignatureChecker} from
     "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibInitiationFee} from "./LibInitiationFee.sol";
 import {LibTiming} from "./LibTiming.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
@@ -278,7 +279,8 @@ library LibSignedOffer {
         if (s.signedOfferNonceUsed[o.signer][o.nonce]) return VetFailure.NonceInvalidated;
         if (o.nonce < s.signedOfferNonceFloor[o.signer]) return VetFailure.BelowCancelFloor;
         if (LibVaipakam.cfgTreasuryFeeBps() > o.maxTreasuryFeeBps) return VetFailure.TreasuryFeeAboveCap;
-        if (LibVaipakam.cfgLoanInitiationFeeBps() > o.maxLoanInitiationFeeBps) {
+        // #3649 — the rate for the term the loan opens with (the order's own).
+        if (LibInitiationFee.rateBpsUp(o.durationDays) > o.maxLoanInitiationFeeBps) {
             return VetFailure.LoanInitiationFeeAboveCap;
         }
         if (o.allowedTaker != address(0) && taker != o.allowedTaker) return VetFailure.TakerNotAllowed;
@@ -328,7 +330,7 @@ library LibSignedOffer {
             revert SignedOfferTreasuryFeeAboveCap(LibVaipakam.cfgTreasuryFeeBps(), o.maxTreasuryFeeBps);
         }
         if (f == VetFailure.LoanInitiationFeeAboveCap) {
-            revert SignedOfferLoanInitiationFeeAboveCap(LibVaipakam.cfgLoanInitiationFeeBps(), o.maxLoanInitiationFeeBps);
+            revert SignedOfferLoanInitiationFeeAboveCap(LibInitiationFee.rateBpsUp(o.durationDays), o.maxLoanInitiationFeeBps);
         }
         if (f == VetFailure.TakerNotAllowed) revert SignedOfferTakerNotAllowed(taker, o.allowedTaker);
         if (f == VetFailure.CoSignatureInvalid) revert SignedOfferCoSignatureInvalid();

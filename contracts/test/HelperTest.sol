@@ -117,6 +117,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
+import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -980,6 +981,15 @@ contract HelperTest {
         selectors = new bytes4[](2);
         selectors[0] = LoanClockFacet.getLoanDeadlines.selector;
         selectors[1] = LoanClockFacet.getSequencerOutageWindow.selector;
+    }
+
+    /// @dev #3649 — the initiation fee's term schedule.
+    ///      Mirrors `DeployDiamond._getFeeLevelsSelectors`.
+    function getFeeLevelsFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](3);
+        selectors[0] = FeeLevelsFacet.setLoanInitiationFeeTerms.selector;
+        selectors[1] = FeeLevelsFacet.getLoanInitiationFeeTerms.selector;
+        selectors[2] = FeeLevelsFacet.quoteLoanInitiationFee.selector;
     }
 
     function getRepayFacetSelectors()

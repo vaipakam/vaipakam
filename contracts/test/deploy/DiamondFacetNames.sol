@@ -127,7 +127,9 @@ abstract contract DiamondFacetNames {
     ///      and PrecloseFacet for EIP-170).
     ///      117 → 118 with `LoanClockFacet` (#3410 — the loan clock's
     ///      disclosure, split off LoanFacet).
-    function cutFacetNames() internal pure returns (string[118] memory) {
+    ///      118 → 119 with `FeeLevelsFacet` (#3649 — the initiation fee's
+    ///      term schedule).
+    function cutFacetNames() internal pure returns (string[119] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -292,6 +294,8 @@ abstract contract DiamondFacetNames {
             "PrecloseOffsetFacet",
             // The loan clock's disclosure (#3410, split off LoanFacet).
             "LoanClockFacet",
+            // The initiation fee's term schedule (#3649).
+            "FeeLevelsFacet",
             "SwapToRepayFacet",
             "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",

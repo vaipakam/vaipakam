@@ -81,7 +81,7 @@ library LibVaipakam {
     ///      `MIN_HEALTH_FACTOR` (1.5e18) sits inside the band as the default.
     uint256 constant MIN_ADMISSION_HEALTH_FACTOR = 120 * 1e16; // 1.2e18
     uint256 constant MAX_ADMISSION_HEALTH_FACTOR = 200 * 1e16; // 2.0e18
-    uint256 constant TREASURY_FEE_BPS = 200; // 2% of interest (rev-8 fee freeze, #1352; was 100 = 1%)
+    uint256 constant TREASURY_FEE_BPS = 500; // 5% of interest (#3649 fee levels; was 200 = 2% under the #1352 freeze)
     /// @dev Pre-freeze 1% yield fee. The FROZEN grandfather fallback for a
     ///      snapshot-0 (pre-#957) open loan in {effectiveTreasuryFeeBps} — a
     ///      snapshot-0 loan resolves to this, NOT the live 200-bps default, so
@@ -457,6 +457,17 @@ library LibVaipakam {
     uint256 constant MAX_OPEN_OFFERS_PER_WALLET_FLOOR = 5;
     uint256 constant MAX_OPEN_OFFERS_PER_WALLET_CEIL = 1_000;
     uint256 constant LOAN_INITIATION_FEE_BPS = 20; // 0.2% fee deducted from ERC-20 principal at loan initiation (rev-8 fee freeze, #1352; was 10 = 0.1%). Charged once at accept — no post-init reader, so the bump affects new originations only (open loans already paid their LIF)
+    /// @dev #3649 — the loan initiation fee by term (`FeeLevelsDesign.md` §3).
+    ///      A loan of up to {LIF_BASE_TERM_DAYS_DEFAULT} days pays the base
+    ///      rate ({LOAN_INITIATION_FEE_BPS}); from there the rate rises in a
+    ///      straight line to {LIF_YEARLY_BPS_DEFAULT} at {LIF_YEAR_DAYS_DEFAULT}
+    ///      days; a longer loan pays {LIF_YEARLY_BPS_DEFAULT} per year of term,
+    ///      in proportion to its days. Each is a bounded setting
+    ///      (`FeeLevelsFacet.setLoanInitiationFeeTerms`); the rate is read only
+    ///      through `LibInitiationFee`.
+    uint256 constant LIF_BASE_TERM_DAYS_DEFAULT = 30;
+    uint256 constant LIF_YEARLY_BPS_DEFAULT = 50;
+    uint256 constant LIF_YEAR_DAYS_DEFAULT = 365;
     // Fallback-path split (README §7): lender gets principal + accrued
     // interest + {FALLBACK_LENDER_BONUS_BPS} of principal; treasury gets
     // {FALLBACK_TREASURY_BPS} of principal; borrower gets the remainder.
@@ -1182,7 +1193,7 @@ library LibVaipakam {
      */
     struct ProtocolConfig {
         // ── Packed BPS slot (14 × uint16 = 224 bits; 32 bits of headroom) ──
-        uint16 treasuryFeeBps; // 0 ⇒ TREASURY_FEE_BPS (200)
+        uint16 treasuryFeeBps; // 0 ⇒ TREASURY_FEE_BPS (500)
         uint16 loanInitiationFeeBps; // 0 ⇒ LOAN_INITIATION_FEE_BPS (20)
         uint16 liquidationHandlingFeeBps; // 0 ⇒ LIQUIDATION_HANDLING_FEE_BPS (200)
         uint16 maxLiquidationSlippageBps; // 0 ⇒ MAX_LIQUIDATION_SLIPPAGE_BPS (600)
@@ -2375,7 +2386,7 @@ library LibVaipakam {
         // pre-#957 rate — NOT the live knob. That distinction is the whole
         // point of the field. The live knob is `cfgTreasuryFeeBps()`, which
         // returns the governance override in `protocolCfg.treasuryFeeBps`
-        // when set and otherwise `TREASURY_FEE_BPS` (200, the rev-8 freeze
+        // when set and otherwise `TREASURY_FEE_BPS` (500 since #3649; 200 under the rev-8 freeze
         // default, #1352) — so resolving a grandfathered loan against it
         // would reprice it at repay from 1% to WHATEVER IS LIVE THEN, in
         // EITHER DIRECTION. `setFeesConfig` bounds the override only from
@@ -3189,6 +3200,16 @@ library LibVaipakam {
         uint64 setAt;
         uint256 refCollateralPrice1e18;
         uint256 refPrincipalPrice1e18;
+    }
+
+    /// @dev #3649 — the initiation fee's term settings (`FeeLevelsDesign.md`
+    ///      §3). Zero in a field ⇒ its default: `baseTermDays` ⇒
+    ///      {LIF_BASE_TERM_DAYS_DEFAULT}, `yearlyBps` ⇒
+    ///      {LIF_YEARLY_BPS_DEFAULT}, `yearDays` ⇒ {LIF_YEAR_DAYS_DEFAULT}.
+    struct LifTermConfig {
+        uint16 baseTermDays;
+        uint16 yearlyBps;
+        uint16 yearDays;
     }
 
     struct Storage {
@@ -8403,6 +8424,12 @@ library LibVaipakam {
         ///      `SignedOfferFacet.cancelSignedOffersBelow`; read by
         ///      `LibSignedOffer.fillFailure`. Appended — append-only.
         mapping(address => uint256) signedOfferNonceFloor;
+        /// @dev #3649 — the initiation fee's term settings beside the base
+        ///      rate (`protocolCfg.loanInitiationFeeBps`). Zero in a field ⇒
+        ///      its default. Written only by
+        ///      `FeeLevelsFacet.setLoanInitiationFeeTerms`; read only through
+        ///      `LibInitiationFee`. Appended — append-only.
+        LifTermConfig lifTermCfg;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.
