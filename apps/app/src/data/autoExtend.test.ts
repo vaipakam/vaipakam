@@ -56,6 +56,7 @@ const on = (over: Partial<ExtendCaps> = {}): ExtendCaps => ({
   maxRateBps: 10_000,
   maxNewExpiry: 2_000_000_000,
   setter: ME,
+  maxExtensionFee: 0n,
   ...over,
 });
 const off = (over: Partial<ExtendCaps> = {}): ExtendCaps => ({ ...on(over), enabled: false });
@@ -127,7 +128,8 @@ describe('windowPhase', () => {
 
 describe('capsArgs', () => {
   it('bounds the borrower’s rate from above and the lender’s from below', () => {
-    expect(capsArgs('borrower', 7, { enabled: true, rateBps: 900, latestEnd: 123 }, 10_000)).toEqual([7n, true, 0, 900, 123n]);
+    expect(capsArgs('borrower', 7, { enabled: true, rateBps: 900, latestEnd: 123 }, 10_000)).toEqual([7n, true, 0, 900, 123n, 0n]);
+    expect(capsArgs('borrower', 7, { enabled: true, rateBps: 900, latestEnd: 123, maxExtensionFee: 55n }, 10_000)).toEqual([7n, true, 0, 900, 123n, 55n]);
     expect(capsArgs('lender', 7, { enabled: true, rateBps: 500, latestEnd: 123 }, 10_000)).toEqual([7n, true, 500, 10_000, 123n]);
   });
   it('turns a side off with nothing else set', () => {

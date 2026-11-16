@@ -39,6 +39,11 @@
             "name": "setter",
             "type": "address",
             "internalType": "address"
+          },
+          {
+            "name": "maxExtensionFee",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
@@ -85,6 +90,11 @@
             "name": "setter",
             "type": "address",
             "internalType": "address"
+          },
+          {
+            "name": "maxExtensionFee",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
@@ -239,6 +249,11 @@
         "name": "maxNewExpiry",
         "type": "uint64",
         "internalType": "uint64"
+      },
+      {
+        "name": "maxExtensionFee",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -393,6 +408,12 @@
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
+      },
+      {
+        "name": "maxExtensionFee",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false

@@ -17,6 +17,7 @@ import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {CollateralLienFacet} from "./CollateralLienFacet.sol";
+import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
@@ -323,48 +324,35 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
         LibFacet.transferToTreasury(loan.principalAsset, treasuryShare);
 
-        // Codex round-3 P1 #1 + round-4 P1 #3 — pay the lender directly
-        // on the partial path, but route to the CURRENT lender-side NFT
-        // owner (not the stale `loan.lender` field). Lender rights
-        // travel with the NFT just like borrower rights; without this
-        // resolution, a plain ERC-721 transfer of the lender NFT
-        // would leave the borrower's partial payment routing to the
-        // original lender (who no longer owns the loan). The loan
-        // stays Active so the lender has no claim slot, and
-        // `vaultWithdrawERC20` is `onlyDiamondInternal` — direct EOA
-        // transfer is the only path to actually realize the funds.
-        address currentLenderHolder = LibPositionNFT.ownerOf(loan.lenderTokenId);
-        // #954 (§1.3) — `swapToRepayPartial` is a DISCRETIONARY, loan-stays-
-        // Active path (the analogue of `repayPartial`), so it hard-SCREENS the
-        // direct EOA payee rather than freezing: a flagged party's must-complete
-        // escape hatch is `swapToRepayFull` (which freezes). Mirror
-        // `repayPartial`'s Tier-1 screen on the discretionary payout.
-        LibVaipakam._assertNotSanctioned(currentLenderHolder);
-        uint256 lenderTotal = lenderShare + partialPrincipal;
+        // #3629 — the lender side's part is held for the lender position:
+        // open seller claims first, out of the interest, then the rest into
+        // the STORED `loan.lender`'s vault on the loan's held ledger, reserved,
+        // for whoever holds the lender token to claim. Nothing is paid to a
+        // wallet, so a stale `loan.lender` (this path does not consolidate)
+        // only names the custody vault, and a flagged holder no longer blocks
+        // the borrower's own repayment: the claim is fail-closed instead.
         // #2440 — the loan is booked below as repaid by `partialPrincipal` and
         // paid through now, and this is the borrower's own choice, so the
-        // payout must reach the lender in full; a short arrival is refused, as
-        // `repayPartial`'s lender payout is.
-        // #1209 / #1808 — open seller claims are paid first, out of the interest.
-        _payLenderSide(s, loan, currentLenderHolder, accrued, lenderShare, lenderTotal);
+        // payout must arrive in full; a short arrival is refused.
+        uint256 lenderTotal = lenderShare + partialPrincipal;
+        LibDelivery.requireFull(
+            loan.principalAsset,
+            lenderTotal,
+            LibCloseoutFreeze.holdActiveLenderResident(
+                s, loanId, loan, loan.principalAsset, lenderTotal, accrued, lenderShare
+            )
+        );
 
-        // Any leftover principal (above accrued + partialPrincipal) →
-        // current borrower-NFT holder's EOA directly (Codex round-4
-        // P1 #2 / round-2 P1 #1). Same rationale as the full-path
-        // surplus: Active partial-repay loans have no claim slot for
-        // principal and vault withdraw is internal-only.
+        // Any leftover principal (above accrued + partialPrincipal) is the
+        // borrower's: #3629 — held on the loan's surplus row in the stored
+        // borrower's vault, for the borrower-position holder's claim
+        // (`ClaimFacet.claimHeldForBorrower` while the loan is open, or the
+        // borrower claim at loan end), never paid to a wallet. Refused unless
+        // it all arrived (a voluntary flow).
         uint256 surplus = outputAmount - treasuryShare - lenderTotal;
-        if (surplus > 0) {
-            address currentBorrowerHolder = LibPositionNFT.ownerOf(loan.borrowerTokenId);
-            // #954 (§1.3) — same Tier-1 discretionary screen on the borrower
-            // surplus payee; the must-complete escape is `swapToRepayFull`.
-            LibVaipakam._assertNotSanctioned(currentBorrowerHolder);
-            // #2440 — a payment to a wallet that books the surplus as paid: a
-            // reading at a wallet is trusted only to refuse (LibDelivery,
-            // WHERE A READING CAN BE TRUSTED), so a short arrival is refused,
-            // as the full route's surplus payout is.
-            LibDelivery.pushExact(loan.principalAsset, currentBorrowerHolder, surplus);
-        }
+        LibCloseoutFreeze.holdBorrowerSurplus(
+            s, loanId, loan, LibPositionNFT.ownerOf(loan.borrowerTokenId), surplus
+        );
 
         // ── Loan state updates ───────────────────────────────────────
         // #1808 — through the ledger's single writer (checkpoint first).
@@ -450,8 +438,8 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
             )
         ) revert LTVExceeded();
 
-        // #3413 — the lender holder was paid and collateral left the
-        // borrower side: the loan's tokens cool down.
+        // #3413 — collateral left the borrower side: the loan's tokens cool
+        // down.
         LibPositionNFT.markLoanValueOut(loanId);
 
         // Codex round-3 P2 #1 + round-4 P2 #1 — emit `msg.sender`
@@ -470,26 +458,6 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
     /// @dev #407 PR 4 round-1 Codex P1 #3 (2026-06-12) — consolidated
     ///      cross-facet helpers. One per arg-shape; each call site
     ///      picks the selector.
-    /// @dev #1209 / #1808 — the lender side's payout on this path, which pays
-    ///      a screened holder directly from the Diamond: the open seller claims
-    ///      take their part of the interest first ({LibInterestLedger.paySellersFirst}),
-    ///      the holder is paid the rest of `lenderTotal`, and the holder's part
-    ///      of the interest is recorded as paid.
-    function _payLenderSide(
-        LibVaipakam.Storage storage s,
-        LibVaipakam.Loan storage loan,
-        address holder,
-        uint256 interestGross,
-        uint256 interestNet,
-        uint256 lenderTotal
-    ) private {
-        (uint256 sellersGross, uint256 sellersNet) = LibInterestLedger.paySellersFirst(
-            s, loan, address(0), loan.principalAsset, interestGross, interestNet
-        );
-        LibDelivery.pushExact(loan.principalAsset, holder, lenderTotal - sellersNet);
-        LibInterestLedger.holderPaid(s, loan, interestGross - sellersGross);
-    }
-
     function _callEncumb2(bytes4 selector, uint256 loanId, uint256 arg2) private {
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(selector, loanId, arg2),

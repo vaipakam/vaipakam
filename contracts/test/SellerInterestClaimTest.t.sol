@@ -51,6 +51,7 @@ contract SellerInterestClaimTest is SetupTest {
         returns (LibVaipakam.CreateOfferParams memory)
     {
         return LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: kind,
             lendingAsset: mockERC20,
             amount: PRINCIPAL,
@@ -148,9 +149,9 @@ contract SellerInterestClaimTest is SetupTest {
     // ─── Ledger (#1808) ──────────────────────────────────────────────────────
 
     /// @dev Each stretch is priced at the principal in force over it: a
-    ///      partial repayment pays the holder the first stretch (so nothing is
-    ///      left owed for it) and the next stretch accrues on the smaller
-    ///      principal.
+    ///      partial repayment holds the first stretch for the holder (#3629),
+    ///      the holder's claim of it leaves nothing owed for it, and the next
+    ///      stretch accrues on the smaller principal.
     function test_ledger_eachStretchAtItsOwnPrincipal() public {
         uint256 loanId = _openLoan();
         _skip(10 days);
@@ -159,8 +160,12 @@ contract SellerInterestClaimTest is SetupTest {
 
         vm.prank(borrower);
         RepayFacet(address(diamond)).repayPartial(loanId, PRINCIPAL / 2);
+        (uint256 held,,) = _ledger(loanId);
+        assertEq(held, earned, "the stretch is held for the holder, not yet paid");
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimHeldForLender(loanId);
         (uint256 afterPay, uint256 owed,) = _ledger(loanId);
-        assertEq(afterPay, 0, "the partial repayment paid the holder that stretch");
+        assertEq(afterPay, 0, "the holder's claim paid that stretch");
         assertEq(owed, PRINCIPAL / 2, "the principal owed fell by the principal repaid");
 
         _skip(10 days);
@@ -177,9 +182,10 @@ contract SellerInterestClaimTest is SetupTest {
         _skip(10 days);
         uint256 earned = _accrual(PRINCIPAL, 10 days);
 
-        uint256 sellerBefore = ERC20(mockERC20).balanceOf(lender);
+        uint256 sellerBefore = _owned(lender, mockERC20);
         address buyer = _sell(loanId, lender, "buyer1");
-        assertEq(ERC20(mockERC20).balanceOf(lender) - sellerBefore, PRINCIPAL, "the seller is paid the whole principal");
+        // #3629 — into the seller's own vault, never the wallet.
+        assertEq(_owned(lender, mockERC20) - sellerBefore, PRINCIPAL, "the seller is paid the whole principal");
         assertEq(LoanFacet(address(diamond)).getLoanDetails(loanId).lender, buyer, "the buyer holds the position");
 
         (uint256 holderEarned,, LibVaipakam.SellerInterestClaim[] memory claims) = _ledger(loanId);
@@ -195,7 +201,7 @@ contract SellerInterestClaimTest is SetupTest {
         uint256 loanId = _openLoan();
         _skip(10 days);
         uint256 sellerGross = _accrual(PRINCIPAL, 10 days);
-        _sell(loanId, lender, "buyer1");
+        address buyer = _sell(loanId, lender, "buyer1");
         _skip(5 days);
 
         vm.prank(borrower);
@@ -203,7 +209,11 @@ contract SellerInterestClaimTest is SetupTest {
 
         (uint256 holderEarned,, LibVaipakam.SellerInterestClaim[] memory claims) = _ledger(loanId);
         assertEq(claims.length, 0, "the seller's claim was paid in full and closed");
-        assertEq(holderEarned, 0, "the holder was paid their own stretch");
+        assertEq(holderEarned, _accrual(PRINCIPAL, 5 days), "the holder's own stretch is held for them");
+        vm.prank(buyer);
+        ClaimFacet(address(diamond)).claimHeldForLender(loanId);
+        (holderEarned,,) = _ledger(loanId);
+        assertEq(holderEarned, 0, "the holder's claim paid their own stretch");
         uint256 held = SellerClaimFacet(address(diamond)).getSellerInterestHeld(loanId, lender, mockERC20);
         assertApproxEqAbs(held, _net(loanId, sellerGross), 2, "the seller's share, net of the fee, waits in their vault");
 
@@ -458,9 +468,11 @@ contract SellerInterestClaimTest is SetupTest {
         assertGt(bps, 0, "the holder's discount is live");
 
         uint256 holderGross = _accrual(PRINCIPAL, 5 days);
-        uint256 buyerBefore = ERC20(mockERC20).balanceOf(buyer);
+        uint256 buyerBefore = _owned(buyer, mockERC20);
         vm.prank(borrower);
         RepayFacet(address(diamond)).repayPartial(loanId, PRINCIPAL / 2);
+        vm.prank(buyer);
+        ClaimFacet(address(diamond)).claimHeldForLender(loanId);
 
         assertApproxEqAbs(
             SellerClaimFacet(address(diamond)).getSellerInterestHeld(loanId, lender, mockERC20),
@@ -468,7 +480,7 @@ contract SellerInterestClaimTest is SetupTest {
             2,
             "the seller pays the loan's own fee, undiscounted"
         );
-        uint256 holderInterest = ERC20(mockERC20).balanceOf(buyer) - buyerBefore - PRINCIPAL / 2;
+        uint256 holderInterest = _owned(buyer, mockERC20) - buyerBefore - PRINCIPAL / 2;
         assertGt(holderInterest, _net(loanId, holderGross) + 2, "the holder's discount reaches the holder");
         assertLe(holderInterest, holderGross + 2, "and only on the holder's own part");
     }

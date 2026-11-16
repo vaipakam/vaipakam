@@ -545,7 +545,7 @@ contract MeasuredDeliveryTest is SetupTest {
             "the default completed"
         );
         assertEq(_bal(mockERC20, address(diamond)), diamond0, "the Diamond's other holdings paid nothing");
-        uint256 treasuryFee = (l.prepayAmount * 200) / 10_000;
+        uint256 treasuryFee = (l.prepayAmount * 500) / 10_000;
         uint256 shortfall = l.prepayAmount - _less(l.prepayAmount);
         assertLt(shortfall, treasuryFee, "fixture: the treasury fee covers the shortfall");
         (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
@@ -577,28 +577,24 @@ contract MeasuredDeliveryTest is SetupTest {
         RepayPeriodicFacet(address(diamond)).autoDeductDaily(loanId);
     }
 
-    /// @notice #2440 (Codex r3) — the clean branch pays the lender-position
-    ///         holder's WALLET, and a reading at a wallet is trusted only to
-    ///         refuse: its owner can lower it mid-transfer (a receiving hook
-    ///         forwarding the tokens on) and would be paid again if the short
-    ///         figure were booked. So a short arrival is refused there, in the
-    ///         forced auto-liquidation too. Kills: reporting what arrived and
-    ///         leaving the rest owed to the same wallet.
-    function test_ResidentLenderPayout_WalletShortRefused() public {
+    /// @notice #3629 — every open-loan lender share is held in the stored
+    ///         lender's vault (custody), clean holder or flagged, so there is no
+    ///         wallet payout left to refuse. A charged token holds less than was
+    ///         sent, and the step reports exactly what arrived; the caller
+    ///         decides what a short return means (the partial liquidation
+    ///         refuses it, the periodic sale leaves the rest owed).
+    ///         Kills: holding the requested figure instead of what arrived.
+    function test_ResidentLenderPayout_CleanShortReportsWhatArrived() public {
         _scaffold(true);
         uint256 amount = 100 ether;
         ERC20Mock(mockERC20).mint(address(diamond), amount);
         _chargesFee(mockERC20, address(diamond));
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.TokenDeliveryShort.selector, mockERC20, amount, _less(amount)
-            )
-        );
         vm.prank(address(diamond));
-        EncumbranceMutateFacet(address(diamond)).freezeOrPayActiveLenderResident(
+        uint256 delivered = EncumbranceMutateFacet(address(diamond)).holdActiveLenderResident(
             LOAN, mockERC20, amount, amount, amount
         );
+        assertEq(delivered, _less(amount), "reports what arrived");
     }
 
     /// @notice The control for the cell above: a payout that arrives in full
@@ -611,7 +607,7 @@ contract MeasuredDeliveryTest is SetupTest {
         vm.warp(block.timestamp + 1 days);
 
         vm.prank(address(diamond));
-        uint256 delivered = EncumbranceMutateFacet(address(diamond)).freezeOrPayActiveLenderResident(
+        uint256 delivered = EncumbranceMutateFacet(address(diamond)).holdActiveLenderResident(
             LOAN, mockERC20, amount, amount, amount
         );
 
@@ -637,7 +633,7 @@ contract MeasuredDeliveryTest is SetupTest {
         _chargesFee(mockERC20, address(diamond));
 
         vm.prank(address(diamond));
-        uint256 delivered = EncumbranceMutateFacet(address(diamond)).freezeOrPayActiveLenderResident(
+        uint256 delivered = EncumbranceMutateFacet(address(diamond)).holdActiveLenderResident(
             LOAN, mockERC20, amount, amount, amount
         );
 
@@ -657,7 +653,7 @@ contract MeasuredDeliveryTest is SetupTest {
         ERC20Mock(mockERC20).mint(address(diamond), amount);
 
         vm.prank(address(diamond));
-        uint256 delivered = EncumbranceMutateFacet(address(diamond)).freezeOrPayActiveLenderResident(
+        uint256 delivered = EncumbranceMutateFacet(address(diamond)).holdActiveLenderResident(
             LOAN, mockERC20, amount, amount, amount
         );
 
@@ -726,7 +722,7 @@ contract MeasuredDeliveryTest is SetupTest {
             )
         );
         vm.prank(address(diamond));
-        EncumbranceMutateFacet(address(diamond)).freezeOrPayBorrowerSurplus(LOAN, borrower, surplus);
+        EncumbranceMutateFacet(address(diamond)).holdBorrowerSurplus(LOAN, borrower, surplus);
     }
 
     // -- The treasury fee host ----------------------------------------------
@@ -946,6 +942,7 @@ contract MeasuredDeliveryTest is SetupTest {
 
     function _lenderErc20Offer() internal view returns (LibVaipakam.CreateOfferParams memory) {
         return LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: mockERC20,
             amount: PRINCIPAL,
@@ -983,6 +980,7 @@ contract MeasuredDeliveryTest is SetupTest {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNft721,
                 amount: DAILY_FEE,

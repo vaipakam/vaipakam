@@ -150,6 +150,9 @@ contract OfferCreateFacet is
         //    Borrower offer from a standard one without a follow-up
         //    `getOffer` read (Codex round-1 P2).
         uint256 refinanceTargetLoanId;
+        // ── #3621 — the lender's "either" marks ({LibVaipakam.Offer.lifecycleFlex}),
+        //    so a cache can show which borrower settings the offer also takes.
+        uint8 lifecycleFlex;
     }
 
     /// @notice Companion to {OfferCreated} — full self-sufficient
@@ -1550,6 +1553,9 @@ contract OfferCreateFacet is
         // settlementInterest` reads to apply the full-term FLOOR
         // (when `true`) or pure pro-rata-elapsed (when `false`).
         offer.useFullTermInterest = params.useFullTermInterest;
+        // #3621 — the lender's "either" marks; `OfferBookFacet.openOfferOnBook`
+        // refuses them on an offer that cannot carry them.
+        offer.lifecycleFlex = params.lifecycleFlex;
         // #1347 — the creator's Full VPFI tariff opt-in (`Offer.creatorFull` /
         // `creatorMaxCStar` / `creatorAllowFullDowngrade`) is NOT a
         // `CreateOfferParams` field: it is authorized post-create by the creator

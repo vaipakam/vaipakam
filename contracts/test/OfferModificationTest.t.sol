@@ -44,6 +44,7 @@ contract OfferModificationTest is SetupTest {
         returns (LibVaipakam.CreateOfferParams memory)
     {
         return LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: mockERC20,
             amount: 1000 ether,
@@ -79,6 +80,7 @@ contract OfferModificationTest is SetupTest {
         returns (LibVaipakam.CreateOfferParams memory)
     {
         return LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Borrower,
             lendingAsset: mockERC20,
             amount: 1000 ether,
@@ -501,6 +503,7 @@ contract OfferModificationTest is SetupTest {
         vm.prank(borrower);
         uint256 id = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockNft721,
                 amount: 10 ether,         // daily fee
@@ -562,6 +565,7 @@ contract OfferModificationTest is SetupTest {
         vm.prank(borrower);
         uint256 id = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockNft721,
                 amount: 10 ether,
@@ -664,6 +668,7 @@ contract OfferModificationTest is SetupTest {
         returns (LibVaipakam.CreateOfferParams memory)
     {
         return LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Borrower,
             lendingAsset: mockNft721,
             amount: amount,

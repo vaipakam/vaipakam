@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {SignatureChecker} from
     "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibInitiationFee} from "./LibInitiationFee.sol";
 import {LibTiming} from "./LibTiming.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
@@ -64,6 +65,9 @@ library LibSignedOffer {
         uint8 periodicInterestCadence; // LibVaipakam.PeriodicInterestCadence
         uint256 refinanceTargetLoanId;
         bool useFullTermInterest;
+        // #3621 — the lender's "either" marks ({LibVaipakam.Offer.lifecycleFlex}),
+        // signed so a match cannot widen what the maker agreed to take.
+        uint8 lifecycleFlex;
         // #1949 — the MAKER's Full tariff opt-in, carried on the artifact they
         // sign: a signed offer is materialized and accepted in one transaction,
         // so the post-create setter (`ProfileFacet.setOfferCreatorFullTariff`)
@@ -125,6 +129,7 @@ library LibSignedOffer {
         "uint8 periodicInterestCadence,"
         "uint256 refinanceTargetLoanId,"
         "bool useFullTermInterest,"
+        "uint8 lifecycleFlex,"
         "bool creatorFull,"
         "uint256 creatorMaxCStar,"
         "bool creatorAllowFullDowngrade,"
@@ -224,7 +229,7 @@ library LibSignedOffer {
         "uint256 collateralTokenId,uint256 collateralQuantity,address prepayAsset,"
         "bool allowsPartialRepay,bool allowsPrepayListing,bool allowsParallelSale,"
         "uint64 expiresAt,uint8 fillMode,uint8 periodicInterestCadence,"
-        "uint256 refinanceTargetLoanId,bool useFullTermInterest,bool creatorFull,"
+        "uint256 refinanceTargetLoanId,bool useFullTermInterest,uint8 lifecycleFlex,bool creatorFull,"
         "uint256 creatorMaxCStar,bool creatorAllowFullDowngrade,uint16 maxTreasuryFeeBps,"
         "uint16 maxLoanInitiationFeeBps,address allowedTaker,address coSigner,address signer,"
         "uint256 nonce,uint256 deadline)"
@@ -339,7 +344,8 @@ library LibSignedOffer {
         if (s.signedOfferNonceUsed[o.signer][o.nonce]) return VetFailure.NonceInvalidated;
         if (o.nonce < s.signedOfferNonceFloor[o.signer]) return VetFailure.BelowCancelFloor;
         if (LibVaipakam.cfgTreasuryFeeBps() > o.maxTreasuryFeeBps) return VetFailure.TreasuryFeeAboveCap;
-        if (LibVaipakam.cfgLoanInitiationFeeBps() > o.maxLoanInitiationFeeBps) {
+        // #3649 — the rate for the term the loan opens with (the order's own).
+        if (LibInitiationFee.rateBpsUp(o.durationDays) > o.maxLoanInitiationFeeBps) {
             return VetFailure.LoanInitiationFeeAboveCap;
         }
         if (o.allowedTaker != address(0) && taker != o.allowedTaker) return VetFailure.TakerNotAllowed;
@@ -389,7 +395,7 @@ library LibSignedOffer {
             revert SignedOfferTreasuryFeeAboveCap(LibVaipakam.cfgTreasuryFeeBps(), o.maxTreasuryFeeBps);
         }
         if (f == VetFailure.LoanInitiationFeeAboveCap) {
-            revert SignedOfferLoanInitiationFeeAboveCap(LibVaipakam.cfgLoanInitiationFeeBps(), o.maxLoanInitiationFeeBps);
+            revert SignedOfferLoanInitiationFeeAboveCap(LibInitiationFee.rateBpsUp(o.durationDays), o.maxLoanInitiationFeeBps);
         }
         if (f == VetFailure.TakerNotAllowed) revert SignedOfferTakerNotAllowed(taker, o.allowedTaker);
         if (f == VetFailure.CoSignatureInvalid) revert SignedOfferCoSignatureInvalid();
@@ -512,7 +518,7 @@ library LibSignedOffer {
     ///         `SignedOffer` field is a STATIC EIP-712 type (uint/address/bool/
     ///         bytes32), so `abi.encode` is plain 32-byte-word concatenation and
     ///         the three chunks concatenated are byte-identical to the single
-    ///         36-arg encode. Keep chunk widths ≤10 if fields are added.
+    ///         37-arg encode. Keep chunk widths ≤10 if fields are added.
     function hashStruct(SignedOffer memory o) internal pure returns (bytes32) {
         return keccak256(
             bytes.concat(
@@ -547,11 +553,12 @@ library LibSignedOffer {
                     o.periodicInterestCadence,
                     o.refinanceTargetLoanId,
                     o.useFullTermInterest,
+                    o.lifecycleFlex,
                     o.creatorFull,
-                    o.creatorMaxCStar,
-                    o.creatorAllowFullDowngrade
+                    o.creatorMaxCStar
                 ),
                 abi.encode(
+                    o.creatorAllowFullDowngrade,
                     o.maxTreasuryFeeBps,
                     o.maxLoanInitiationFeeBps,
                     o.allowedTaker,
@@ -679,6 +686,7 @@ library LibSignedOffer {
         p.allowsParallelSale = o.allowsParallelSale;
         p.refinanceTargetLoanId = o.refinanceTargetLoanId;
         p.useFullTermInterest = o.useFullTermInterest;
+        p.lifecycleFlex = o.lifecycleFlex;
     }
 
     /// @notice Map a `SignedOffer` to a SLICE of it sized `fillAmount` — used

@@ -136,6 +136,11 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   // #2795 — a borrower extra held on an open loan, paid out when the
   // obligation was handed over to a replacement borrower.
   BorrowerHeldExtraPaid: { label: 'Held sale extra paid out', category: 'collateral', priority: 50 },
+  // #3629 — every lender payment on an open loan is held for the position;
+  // the holder claims it while the loan runs, or Auto-lend re-commits it.
+  LenderPaymentHeld: { label: 'Payment held for the lender', category: 'loan-repay', priority: 30 },
+  HeldForLenderClaimed: { label: 'Held payment claimed', category: 'loan-modify', priority: 72 },
+  HeldRecommittedToIntent: { label: 'Held payment lent again', category: 'loan-modify', priority: 72 },
   // #1209 — a lender sale's seller keeps a claim on the interest they earned.
   // Recorded rides the sale (below LoanSold's 80); a payment rides the
   // repayment that funded it; the withdrawal is the seller's own transaction;
@@ -610,16 +615,16 @@ export function rowValue(row: Pick<ActivityRowView, 'related'>): RowValue {
 export interface SaleShare {
   role: 'lender' | 'borrower';
   leg: Extract<ValueLeg, { kind: 'token' }>;
-  /** Held for the party's claim rather than paid to their wallet. The
-   *  lender's part always is: it waits for the lender's claim. */
+  /** Held for the party's claim rather than paid to their wallet. Since
+   *  #3629 every part is: no sale pays a wallet. */
   held: boolean;
 }
 
 /**
  * #2876 — the viewer's own part of a collateral sale's proceeds. The split
- * event names each party and the amount owed to them, and says whether the
- * borrower's remainder was paid or held, so this reads those named fields of
- * that one event and nothing else. A part is stated only when the indexer
+ * event names each party and the amount owed to them, both held for that
+ * party's claim (#3629: no sale pays a wallet), so this reads those named
+ * fields of that one event and nothing else. A part is stated only when the indexer
  * established the proceeds as an ERC-20 amount (`assetType` 0 on the same
  * event), so an amount is never shown in units the row could not name. A zero
  * part is not a share.
@@ -642,9 +647,7 @@ export function saleProceedsShares(
       out.push({ role, leg: { kind: 'token', asset, amount: BigInt(amount), amountMax: null }, held });
     };
     part(a.lender, a.lenderAmount, 'lender', true);
-    if (typeof a.borrowerHeld === 'boolean') {
-      part(a.borrower, a.borrowerAmount, 'borrower', a.borrowerHeld);
-    }
+    part(a.borrower, a.borrowerAmount, 'borrower', true);
   }
   return out;
 }

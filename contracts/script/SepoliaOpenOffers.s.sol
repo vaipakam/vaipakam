@@ -185,6 +185,7 @@ contract SepoliaOpenOffers is Script {
         // needed for the offer to be acceptable later.
         usdc.approve(diamond, t.principal);
         offerId = OfferCreateFacet(diamond).createOffer(LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: address(usdc),
             amount: t.principal,
@@ -223,6 +224,7 @@ contract SepoliaOpenOffers is Script {
         // is real by the time a lender browses the book.
         weth.approve(diamond, t.collateral);
         offerId = OfferCreateFacet(diamond).createOffer(LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Borrower,
             lendingAsset: address(usdc),
             amount: t.principal,

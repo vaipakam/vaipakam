@@ -5,7 +5,7 @@
  * Mirrors the indexer's `apps/indexer/src/signedOfferEip712.ts` (which in
  * turn mirrors `contracts/src/libraries/LibSignedOffer.sol`):
  *
- *  - `SIGNED_OFFER_TYPES.SignedOffer` lists the 35 fields in the SAME
+ *  - `SIGNED_OFFER_TYPES.SignedOffer` lists the 36 fields in the SAME
  *    order as the Solidity struct / `SIGNED_OFFER_TYPEHASH` type string.
  *    Field order is load-bearing — any drift silently changes every hash
  *    and breaks both the maker's signature and the taker's replay.
@@ -70,6 +70,8 @@ export interface SignedOrderWire {
   periodicInterestCadence: string;
   refinanceTargetLoanId: string;
   useFullTermInterest: boolean;
+  /** #3621 — the lender's "either" marks (bit 0 partial repay, bit 1 prepay listing); decimal string. */
+  lifecycleFlex: string;
   /** #1949 — the maker's Full tariff opt-in, carried on the signed artifact. */
   creatorFull: boolean;
   creatorMaxCStar: string;
@@ -115,6 +117,7 @@ export function signedOfferTypedMessage(order: SignedOrderWire) {
     periodicInterestCadence: Number(order.periodicInterestCadence),
     refinanceTargetLoanId: BigInt(order.refinanceTargetLoanId),
     useFullTermInterest: order.useFullTermInterest,
+    lifecycleFlex: Number(order.lifecycleFlex),
     creatorFull: order.creatorFull,
     creatorMaxCStar: BigInt(order.creatorMaxCStar),
     creatorAllowFullDowngrade: order.creatorAllowFullDowngrade,
@@ -298,6 +301,7 @@ export function wireFromCreatePayload(
     periodicInterestCadence: String(payload.periodicInterestCadence),
     refinanceTargetLoanId: payload.refinanceTargetLoanId.toString(),
     useFullTermInterest: payload.useFullTermInterest,
+    lifecycleFlex: '0',
     creatorFull: makerFull?.full ?? false,
     creatorMaxCStar: (makerFull?.maxCStar ?? 0n).toString(),
     creatorAllowFullDowngrade: makerFull?.allowDowngrade ?? false,

@@ -727,6 +727,7 @@ contract DefaultedFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: lendingAsset,
                 amount: amount,

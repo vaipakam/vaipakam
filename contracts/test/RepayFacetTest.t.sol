@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibTestCollateralCut} from "./helpers/LibTestCollateralCut.sol";
 import {LibTestProtectedCut} from "./helpers/LibTestProtectedCut.sol";
+import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultEndpoints} from "./helpers/LibTestVaultEndpoints.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
@@ -170,7 +171,7 @@ contract RepayFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation(address(0), LibTestVaultEndpoints.none());
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](26);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](27);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -338,6 +339,13 @@ contract RepayFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
+        // #3629 — a periodic payment is held for the lender position and paid
+        // by the holder's claim, so the suite routes the claim entries.
+        cuts[26] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(ClaimFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getClaimFacetSelectors()
+        });
         cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
@@ -471,6 +479,7 @@ contract RepayFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -514,6 +523,7 @@ contract RepayFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNft721,
                 amount: dailyFee,
@@ -575,8 +585,8 @@ contract RepayFacetTest is Test {
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(1);
         assertEq(
             loan.treasuryFeeBpsAtInit,
-            200,
-            "treasury fee snapshotted at the 2% default at init (rev-8 freeze #1352)"
+            500,
+            "treasury fee snapshotted at the 5% default at init (#3649)"
         );
         assertEq(
             loan.loanInitiationFeeBpsAtInit,
@@ -595,8 +605,8 @@ contract RepayFacetTest is Test {
         );
         assertEq(
             rental.treasuryFeeBpsAtInit,
-            200,
-            "treasury fee still snapshotted on the NFT rental (rev-8 freeze #1352)"
+            500,
+            "treasury fee still snapshotted on the NFT rental (#3649 default)"
         );
     }
 
@@ -687,11 +697,10 @@ contract RepayFacetTest is Test {
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid), "closed in-term");
     }
 
-    /// @dev #654 — the permissionless daily rental deduction must pay the
-    ///      CURRENT lender-position holder, not the stored `loan.lender`, after
-    ///      a lender-NFT transfer. (Unlike repayLoan/markDefaulted, this path is
-    ///      a DIRECT payout with no `lenderClaims` indirection, so it would
-    ///      otherwise keep paying the departed lender every day.)
+    /// @dev #654 / #3629 — the permissionless daily rental deduction holds the
+    ///      fee for the lender POSITION, and only the CURRENT holder can take
+    ///      it, after a lender-NFT transfer; nothing reaches a wallet and the
+    ///      departed lender cannot claim it.
     function test_654_autoDeductDaily_paysCurrentHolderAfterLenderTransfer() public {
         helperOfferLoan(); // loanId 2 = NFT rental, daily fee 10, prepayAsset = mockERC20
         uint256 lenderTokenId = LoanFacet(address(diamond))
@@ -708,26 +717,25 @@ contract RepayFacetTest is Test {
         vm.warp(block.timestamp + 1 days);
         RepayPeriodicFacet(address(diamond)).autoDeductDaily(2);
 
-        // The daily rental fee follows the CURRENT holder, into the holder's
-        // vault (#3205 part 2); the departed lender receives nothing.
+        (, , , , , , uint256 held, ) = ClaimFacet(address(diamond)).getClaimable(2, true);
+        assertGt(held, 0, "the daily fee is held for the position");
+        assertEq(ERC20Mock(mockERC20).balanceOf(newHolder), newHolderBefore, "nothing reaches the holder's wallet");
+        assertEq(ERC20Mock(mockERC20).balanceOf(lender), storedLenderBefore, "nothing reaches the departed lender's wallet");
+
+        vm.prank(lender);
+        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
+        ClaimFacet(address(diamond)).claimHeldForLender(2);
+
+        vm.prank(newHolder);
+        ClaimFacet(address(diamond)).claimHeldForLender(2);
+        // The vault's balance stands in for the depository holding.
         address holderVault = VaultFactoryFacet(address(diamond)).getUserVaultAddress(newHolder);
-        assertTrue(holderVault != address(0), "the holder's vault was created for the payout");
-        assertGt(
-            ERC20Mock(mockERC20).balanceOf(holderVault),
-            0,
-            "current holder's vault receives the daily rental fee"
-        );
-        assertEq(ERC20Mock(mockERC20).balanceOf(newHolder), newHolderBefore, "nothing reaches the holder's wallet directly");
-        assertGt(
-            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(newHolder, mockERC20, 0),
-            0,
-            "the fee is the holder's free money in its vault"
-        );
         assertEq(
-            ERC20Mock(mockERC20).balanceOf(lender),
-            storedLenderBefore,
-            "departed lender is not paid"
+            ERC20Mock(mockERC20).balanceOf(holderVault),
+            held,
+            "the current holder's claim pays its vault"
         );
+        assertEq(ERC20Mock(mockERC20).balanceOf(newHolder), newHolderBefore, "still nothing in the wallet");
     }
 
     function testFuzzPartialAmount(uint256 partial1) public {
@@ -901,6 +909,7 @@ contract RepayFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -961,6 +970,7 @@ contract RepayFacetTest is Test {
         vm.prank(borrower);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -2016,6 +2026,7 @@ contract RepayFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -2255,6 +2266,7 @@ contract RepayFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,

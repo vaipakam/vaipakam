@@ -40,6 +40,9 @@ export interface ExtendCaps {
   maxNewExpiry: number;
   /** Who set these limits (zero when never set). */
   setter: Address;
+  /** #3649 — borrower side only: the largest added initiation fee an
+   *  extension may charge, in the loan's asset (0 on the lender side). */
+  maxExtensionFee: bigint;
 }
 
 export interface AutoExtendState {
@@ -185,12 +188,14 @@ export function fundingCover(
 export function capsArgs(
   side: 'borrower' | 'lender',
   loanId: number,
-  next: { enabled: boolean; rateBps: number; latestEnd: number },
+  next: { enabled: boolean; rateBps: number; latestEnd: number; maxExtensionFee?: bigint },
   maxInterestBps: number,
-): readonly [bigint, boolean, number, number, bigint] {
-  if (!next.enabled) return [BigInt(loanId), false, 0, 0, 0n];
+): readonly [bigint, boolean, number, number, bigint] | readonly [bigint, boolean, number, number, bigint, bigint] {
+  // #3649 — the borrower's setter also takes the largest added initiation
+  // fee an extension may charge; the lender's does not.
+  if (!next.enabled) return side === 'borrower' ? [BigInt(loanId), false, 0, 0, 0n, 0n] : [BigInt(loanId), false, 0, 0, 0n];
   return side === 'borrower'
-    ? [BigInt(loanId), true, 0, next.rateBps, BigInt(next.latestEnd)]
+    ? [BigInt(loanId), true, 0, next.rateBps, BigInt(next.latestEnd), next.maxExtensionFee ?? 0n]
     : [BigInt(loanId), true, next.rateBps, maxInterestBps, BigInt(next.latestEnd)];
 }
 
@@ -203,6 +208,7 @@ function caps(raw: unknown): ExtendCaps {
     maxRateBps: number | bigint;
     maxNewExpiry: number | bigint;
     setter: Address;
+    maxExtensionFee?: bigint;
   };
   return {
     enabled: Boolean(c.enabled),
@@ -210,6 +216,7 @@ function caps(raw: unknown): ExtendCaps {
     maxRateBps: Number(c.maxRateBps),
     maxNewExpiry: Number(c.maxNewExpiry),
     setter: c.setter,
+    maxExtensionFee: c.maxExtensionFee ?? 0n,
   };
 }
 
@@ -269,6 +276,36 @@ export async function readExtendFunding(
     ...(blockNumber !== undefined ? { blockNumber } : {}),
   })) as readonly [Address, bigint, bigint, bigint, bigint];
   return { asset, reserved, otherFree, chargeNow, chargeAtGraceEnd };
+}
+
+/** #3649 — what an extension made now to end at `newEnd` would add to the
+ *  loan's initiation fee, after the borrower holder's discount
+ *  (`FeeLevelsFacet.quoteExtensionFee`). */
+export async function readExtensionFeeQuote(ctx: Ctx, loanId: number, newEnd: number): Promise<bigint> {
+  const out = (await ctx.client.readContract({
+    address: ctx.diamond,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'quoteExtensionFee',
+    args: [BigInt(loanId), BigInt(newEnd)],
+  })) as readonly [bigint, bigint, bigint, bigint];
+  return out[1];
+}
+
+/** The added fee for a latest end the borrower is choosing; idle without one. */
+export function useExtensionFeeQuote(loanId: number, newEnd: number | null) {
+  const { readChain } = useActiveChain();
+  const client = usePublicClient({ chainId: readChain.chainId });
+  const q = useQuery({
+    queryKey: ['extensionFee', readChain.chainId, loanId, newEnd],
+    enabled: newEnd !== null && Boolean(client),
+    queryFn: () =>
+      readExtensionFeeQuote(
+        { client: client as PublicClient, diamond: readChain.diamondAddress as Address },
+        loanId,
+        newEnd as number,
+      ),
+  });
+  return { ...q, data: freshData(q) };
 }
 
 /** The loan's auto-extend posture. Polled while mounted: governance flips

@@ -173,6 +173,7 @@ contract AggregatorAdapterTest is SetupTest {
         vm.prank(b);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: principal,
@@ -232,7 +233,7 @@ contract AggregatorAdapterTest is SetupTest {
         assertEq(adapter.haircutBps(), HAIRCUT_BPS, "haircut");
         // The adapter registered its standing intent (keeper-gated) as itself.
         LibVaipakam.LenderIntent memory it = LenderIntentFacet(address(diamond))
-            .getLenderIntent(address(adapter), mockERC20, mockCollateralERC20);
+            .getLenderIntent(address(adapter), mockERC20, mockCollateralERC20, 0);
         assertTrue(it.active, "intent active");
         assertTrue(it.requiresKeeperAuth, "keeper-gated");
         assertEq(it.maxExposure, MAX_EXPOSURE, "bounds");
@@ -308,7 +309,7 @@ contract AggregatorAdapterTest is SetupTest {
         assertApproxEqAbs(idle, DEPOSIT - fill, 0.01 ether, "idle ~ deposit - fill + kickback");
         uint256 live = LenderIntentFacet(address(diamond))
             .getLenderIntentLivePrincipal(
-                address(adapter), mockERC20, mockCollateralERC20
+                address(adapter), mockERC20, mockCollateralERC20, 0
             );
         // totalAssets = idle + risk-adjusted live (exact, from live state).
         assertEq(
@@ -379,7 +380,7 @@ contract AggregatorAdapterTest is SetupTest {
         adapter.windDownIntent();
         assertFalse(
             LenderIntentFacet(address(diamond))
-                .getLenderIntent(address(adapter), mockERC20, mockCollateralERC20)
+                .getLenderIntent(address(adapter), mockERC20, mockCollateralERC20, 0)
                 .active,
             "intent cancelled"
         );
@@ -512,7 +513,7 @@ contract AggregatorAdapterTest is SetupTest {
         uint256 idle = _idle();
         uint256 live = LenderIntentFacet(address(diamond))
             .getLenderIntentLivePrincipal(
-                address(adapter), mockERC20, mockCollateralERC20
+                address(adapter), mockERC20, mockCollateralERC20, 0
             );
         assertEq(
             adapter.totalAssets(),
@@ -624,6 +625,7 @@ contract AggregatorAdapterTest is SetupTest {
         vm.prank(aggregator);
         uint256 selfOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: fill,

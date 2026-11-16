@@ -797,34 +797,17 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             if (partialAmount >= loan.principal)
                 revert PartialWouldRetireFullPrincipal();
 
-            // Pay accrued + partial to the CURRENT lender-position holder.
-            //
-            // Codex #659 P2 — the both-side consolidation hook above re-anchors
-            // `loan.lender` to `ownerOf(lenderTokenId)` in the common case, but
-            // it is deliberately SKIPPED when the lender side carries unreserved
-            // `heldForLender` VPFI (`_isExcludedLive`, #597 dependency). In that
-            // narrow case `loan.lender` can still be stale, and unlike the full
-            // repay path (vault deposit + claim + #592 encumbrance) this partial
-            // pays the lender DIRECTLY, so a stale anchor would hand the departed
-            // lender the principal+interest while the current NFT holder's owed
-            // principal is reduced. Resolve the recipient from NFT ownership —
-            // the canonical authority (see the self-repay guard's rationale in
-            // `repayLoan`) — so the payout is correct regardless of whether the
-            // consolidation ran or was skipped. The loan is Active here, so the
-            // lender NFT is live (never burned pre-terminal) and `ownerOf` holds.
-            // #998 S10 (#1006) Class B — this is a DIRECT inline payout (no
-            // vault+claim deferral like full repay). Pay the CURRENT lender-position
-            // holder inline when clean, or FREEZE fail-closed (park payer → stored
-            // lender vault + `heldForLender` + encumber + marker) when the holder is
-            // registry-flagged. Replaces the prior fail-open `_assertNotSanctioned`,
-            // which would pay a previously-confirmed-flagged holder during an oracle
-            // outage. Hosted on `EncumbranceMutateFacet`: the host resolves
-            // `ownerOf(lenderTokenId)` and, on the clean path, pays the combined
-            // principal-repayment + interest share via `safeTransferFrom(msg.sender)`
-            // exactly as before.
+            // #3629 — hold accrued + partial for the lender position: from the
+            // payer into the STORED `loan.lender`'s vault, on the loan's held
+            // ledger, reserved, for the position holder's claim
+            // (`ClaimFacet.claimHeldForLender`, or the final lender claim).
+            // Nothing is paid to a wallet. The held balance follows the
+            // position, so a stale `loan.lender` (consolidation skipped, #659)
+            // only names the custody vault: the claim pays whoever holds the
+            // lender token then. Hosted on `EncumbranceMutateFacet` for size.
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EncumbranceMutateFacet.freezeOrPayActiveLenderFromPayer.selector,
+                    EncumbranceMutateFacet.holdActiveLenderFromPayer.selector,
                     loan.id,
                     msg.sender,
                     loan.principalAsset,
@@ -951,19 +934,14 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // lien (the prepay pool is drained by this very mechanism,
             // not protected by a lien), so no decrement here.
 
-            // #998 S10 (#1006) Class B — the lender's prepay share is pulled from
-            // the payer's (`msg.sender`) own rental prepay vault. NFT-rental loans
-            // skip the eager consolidation at this function's start, so `loan.lender`
-            // can be stale; the host resolves the LIVE `ownerOf(lenderTokenId)`.
-            // Pay that current holder inline when clean, or FREEZE fail-closed (park
-            // payer-vault → stored-lender vault + `heldForLender` + encumber +
-            // marker) when they are registry-flagged, replacing the fail-open
-            // `_assertNotSanctioned`. The host arms the from-side move-out exemption
-            // around the withdraw so a borrower flagged after init can still service
-            // the partial rental (Tier-2 stays open) — the payer loses custody.
+            // #3629 — the lender's prepay share moves from the payer's own
+            // rental prepay vault into the STORED `loan.lender`'s vault, held
+            // for the lender position's claim. The host arms the from-side
+            // move-out exemption so a borrower flagged after init can still
+            // service the partial rental (Tier-2 stays open).
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector,
+                    EncumbranceMutateFacet.holdActiveLenderFromVault.selector,
                     loan.id,
                     msg.sender,
                     loan.prepayAsset,

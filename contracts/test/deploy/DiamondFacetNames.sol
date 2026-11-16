@@ -127,11 +127,13 @@ abstract contract DiamondFacetNames {
     ///      and PrecloseFacet for EIP-170).
     ///      117 → 118 with `LoanClockFacet` (#3410 — the loan clock's
     ///      disclosure, split off LoanFacet).
-    ///      118 → 119 with `CollateralConcentrationFacet` (#3685 — the
+    ///      118 → 119 with `FeeLevelsFacet` (#3649 — the initiation fee's
+    ///      term schedule).
+    ///      119 → 120 with `CollateralConcentrationFacet` (#3685 — the
     ///      new-loan init-LTV cap host and collateral concentration).
-    ///      119 → 120 with `CollateralLienFacet` (#3685 — the collateral-lien
+    ///      120 → 121 with `CollateralLienFacet` (#3685 — the collateral-lien
     ///      entries, split off EncumbranceMutateFacet).
-    function cutFacetNames() internal pure returns (string[120] memory) {
+    function cutFacetNames() internal pure returns (string[121] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -296,6 +298,8 @@ abstract contract DiamondFacetNames {
             "PrecloseOffsetFacet",
             // The loan clock's disclosure (#3410, split off LoanFacet).
             "LoanClockFacet",
+            // The initiation fee's term schedule (#3649).
+            "FeeLevelsFacet",
             // The new-loan cap host and collateral concentration (#3685).
             "CollateralConcentrationFacet",
             // The collateral-lien entries (#3685, split off EncumbranceMutateFacet).

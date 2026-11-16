@@ -240,6 +240,11 @@
             "name": "refinanceTargetLoanId",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "lifecycleFlex",
+            "type": "uint8",
+            "internalType": "uint8"
           }
         ]
       }
@@ -1871,6 +1876,22 @@
     "type": "error",
     "name": "LenderResolutionFailed",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LifecycleFlexNotAllowed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LifecycleFlexUnknownBits",
+    "inputs": [
+      {
+        "name": "flex",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
   },
   {
     "type": "error",

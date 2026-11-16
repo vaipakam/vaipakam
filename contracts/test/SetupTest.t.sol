@@ -49,6 +49,7 @@ import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
+import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
 import {CollateralLienFacet} from "../src/facets/CollateralLienFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
@@ -434,6 +435,7 @@ contract SetupTest is Test {
     OfferPriceGuardFacet offerPriceGuardFacet;
     SignedOfferMatchFacet signedOfferMatchFacet;
     LoanClockFacet loanClockFacet;
+    FeeLevelsFacet feeLevelsFacet;
     CollateralConcentrationFacet collateralConcentrationFacet;
     CollateralLienFacet collateralLienFacet;
     SaleExitVerdictFacet saleExitVerdictFacet;
@@ -616,6 +618,7 @@ contract SetupTest is Test {
         offerPriceGuardFacet = OfferPriceGuardFacet(ArtifactDeploy.deploy(type(OfferPriceGuardFacet).name));
         signedOfferMatchFacet = SignedOfferMatchFacet(ArtifactDeploy.deploy(type(SignedOfferMatchFacet).name));
         loanClockFacet = LoanClockFacet(ArtifactDeploy.deploy(type(LoanClockFacet).name));
+        feeLevelsFacet = FeeLevelsFacet(ArtifactDeploy.deploy(type(FeeLevelsFacet).name));
         collateralConcentrationFacet =
             CollateralConcentrationFacet(ArtifactDeploy.deploy(type(CollateralConcentrationFacet).name));
         collateralLienFacet = CollateralLienFacet(ArtifactDeploy.deploy(type(CollateralLienFacet).name));
@@ -656,7 +659,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](121);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](122);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1170,14 +1173,20 @@ contract SetupTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getLoanClockFacetSelectors()
         });
-        // #3685 — the new-loan cap host, which loan creation self-calls.
+        // #3649 — the initiation fee's term schedule.
         cuts[119] = IDiamondCut.FacetCut({
+            facetAddress: address(feeLevelsFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getFeeLevelsFacetSelectors()
+        });
+        // #3685 — the new-loan cap host, which loan creation self-calls.
+        cuts[120] = IDiamondCut.FacetCut({
             facetAddress: address(collateralConcentrationFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getCollateralConcentrationFacetSelectors()
         });
         // #3685 — the collateral-lien entries, split off EncumbranceMutateFacet.
-        cuts[120] = IDiamondCut.FacetCut({
+        cuts[121] = IDiamondCut.FacetCut({
             facetAddress: address(collateralLienFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getCollateralLienFacetSelectors()

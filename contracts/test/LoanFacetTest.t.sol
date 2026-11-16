@@ -552,6 +552,7 @@ contract LoanFacetTest is Test {
         vm.prank(lender);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: lendingAsset,
                 amount: amount,
@@ -818,6 +819,7 @@ contract LoanFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockIlliquidERC20,
                 amount: 1000 ether,
@@ -966,6 +968,7 @@ contract LoanFacetTest is Test {
         vm.prank(borrower);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: 1000 ether,
@@ -1015,6 +1018,7 @@ contract LoanFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000 ether,
@@ -1068,6 +1072,7 @@ contract LoanFacetTest is Test {
         vm.prank(borrower);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockNft721,
                 amount: 10 ether, // daily rental fee
@@ -1185,7 +1190,7 @@ contract LoanFacetTest is Test {
         );
         assertEq(
             loan.treasuryFeeBpsAtInit,
-            200,
+            500, // #3649 5% default
             "treasury fee is still snapshotted on the sale vehicle"
         );
     }
@@ -1245,6 +1250,7 @@ contract LoanFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000 ether,
@@ -1292,6 +1298,7 @@ contract LoanFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockIlliquidERC20,
                 amount: 1000 ether,
@@ -1347,6 +1354,7 @@ contract LoanFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000 ether,

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibInitiationFee} from "./LibInitiationFee.sol";
 import {LibTiming} from "./LibTiming.sol";
 import {LibOfferMatch} from "./LibOfferMatch.sol";
 import {LibAutoRefinanceCheck} from "./LibAutoRefinanceCheck.sol";
@@ -703,9 +704,9 @@ library LibOfferMatchExecute {
             // hold-tier discount into this facet inlines the discount resolver
             // and pushes OfferMatchFacet past the EIP-170 runtime-size limit,
             // and this is a convenience estimate, not the authoritative amount.
-            (mr.matchAmount * LibVaipakam.cfgLoanInitiationFeeBps()
-                * LibVaipakam.cfgLifMatcherFeeBps())
-                / (LibVaipakam.BASIS_POINTS * LibVaipakam.BASIS_POINTS),
+            // #3649 — the fee for the borrower offer's term (the loan's).
+            (LibInitiationFee.feeOf(mr.matchAmount, bm.durationDays)
+                * LibVaipakam.cfgLifMatcherFeeBps()) / LibVaipakam.BASIS_POINTS,
             borrowerEffFilled,
             bm.accepted
         );

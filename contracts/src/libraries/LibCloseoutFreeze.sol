@@ -11,17 +11,6 @@ import {LibDelivery} from "./LibDelivery.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {LibInterestLedger} from "./LibInterestLedger.sol";
 import {LibTierRecord} from "./LibTierRecord.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-
-/// @dev The wallet payment {LibCloseoutFreeze.payOrHoldBorrowerExtra} makes,
-///      hosted by `ForcedSaleFacet` and reached by a self-call so a refusal
-///      unwinds that payment alone. Declared here, not imported, so the
-///      library does not depend on the facet.
-interface IBorrowerWalletPush {
-    function payBorrowerWallet(address asset, address to, uint256 amount) external;
-}
 
 /**
  * @title  LibCloseoutFreeze
@@ -49,8 +38,6 @@ interface IBorrowerWalletPush {
  *         See docs/DesignsAndPlans/SanctionsCloseoutSweepAndSaleVehicleFixes.md.
  */
 library LibCloseoutFreeze {
-    using SafeERC20 for IERC20;
-
     /**
      * @notice Deposit a full swap-to-repay's lender proceeds into the STORED
      *         `loan.lender`'s vault behind the receive-side sanctions exemption,
@@ -110,29 +97,21 @@ library LibCloseoutFreeze {
     }
 
     /**
-     * @notice Route a full swap-to-repay's borrower principal SURPLUS to the
-     *         current borrower-position holder — paying a clean holder directly,
-     *         or FREEZING a sanctioned holder's surplus into the stored
-     *         `loan.borrower`'s vault behind the claim gate.
-     *
-     * @dev    Clean holder → direct EOA transfer (a vault deposit would be
-     *         unclaimable: `claimAsBorrower` releases only the collateral asset
-     *         recorded in `borrowerClaims`, and `vaultWithdrawERC20` is
-     *         diamond-internal).
-     *
-     *         Sanctioned holder → `depositLocked` into `loan.borrower`'s
-     *         always-existing vault (the holder may be a fresh transferee with
-     *         no vault, and the receive exemption refuses to mint for a flagged
-     *         wallet), plus a `borrowerSurplusClaims` row so the holder can
-     *         withdraw it via `claimAsBorrower` once delisted.
-     *
-     *         §2.1 encumber-all — reserve for EVERY ERC20 against the stored
-     *         borrower's signed-offer spend path. §2.2 tier-exclude — #2342:
-     *         derived from that reservation by `LibTierExclusion` for a
-     *         surplus owed to a TRANSFERRED holder; a self-holder's surplus
-     *         stays in their tier.
+     * @notice Hold a full swap-to-repay's borrower principal SURPLUS for the
+     *         borrower position: into the stored `loan.borrower`'s vault, on
+     *         the loan's surplus claim row, reserved against the stored
+     *         borrower's spending, for `ClaimFacet.claimAsBorrower`.
+     * @dev    #3629 (owner decision 2026-11-15) — no loan step pays a
+     *         borrower's wallet; before it a clean holder was paid directly
+     *         and only a sanctions-frozen one was held. The deposit is the
+     *         sanctions-lock deposit (the holder may be a fresh transferee with
+     *         no vault, and a flagged stored borrower must not block the
+     *         close-out). Encumber-all (§2.1): reserved for every ERC-20.
+     *         #2342: a surplus owed to a transferred holder leaves the stored
+     *         borrower's fee tier through `LibTierExclusion`, derived from the
+     *         reservation.
      */
-    function freezeOrPayBorrowerSurplus(
+    function holdBorrowerSurplus(
         LibVaipakam.Storage storage s,
         uint256 loanId,
         LibVaipakam.Loan storage loan,
@@ -140,28 +119,14 @@ library LibCloseoutFreeze {
         uint256 surplus
     ) internal {
         if (surplus == 0) return;
-        // Codex #1122-rework r1 P1 — FAIL-CLOSED freeze decision. The bare fail-open
-        // `isSanctionedAddress` would take the direct-transfer branch for a
-        // previously-confirmed-flagged `currentHolder` during an oracle outage,
-        // paying the surplus straight to their EOA and bypassing the claim-side
-        // fail-closed gate entirely. `mustFreezeParty` stays frozen on a prior
-        // confirmation while the oracle is down.
         // #2440 — every caller is a VOLUNTARY swap-to-repay (the full route and
-        // a filled intent), so the surplus is refused unless it all arrived, on
-        // either branch: the claim and the reservation below name `surplus`.
-        if (!LibSanctionedLock.mustFreezeParty(s, currentHolder)) {
-            LibDelivery.pushExact(loan.principalAsset, currentHolder, surplus);
-            // #3413 — paid to the holder: the loan's tokens cool down.
-            LibPositionNFT.markLoanValueOut(loanId);
-            return;
-        }
+        // a filled intent), so the surplus is refused unless it all arrived:
+        // the row and the reservation below name `surplus`.
         LibSanctionedLock.depositLockedInFull(
             s, loan.borrower, loanId, loan.principalAsset, surplus
         );
-        // #998 S10 (#1006) — the surplus is frozen precisely because
-        // `currentHolder` is flagged (we are past the clean-holder early return);
-        // the row writer records that address as the frozen claimant for a
-        // fail-closed release.
+        // The row writer records `currentHolder` as the fail-closed claimant
+        // when flagged, and does nothing for a clean holder.
         addBorrowerSurplus(s, loanId, currentHolder, loan.principalAsset, surplus);
         LibEncumbrance.encumberBorrowerProceeds(
             loanId, loan.borrower, loan.principalAsset, surplus
@@ -339,19 +304,19 @@ library LibCloseoutFreeze {
     /**
      * @notice #2795 / #2796 — hold a borrower's extra from a forced sale in
      *         the stored borrower's vault for the claim. The tokens are on the
-     *         Diamond. Two callers, both in `ForcedSaleFacet`:
-     *         - an OPEN loan (the periodic-interest settlement), when the
-     *           extra cannot be paid to the holder's wallet: the holder is
-     *           flagged ({LibSanctionedLock.mustFreezeParty}), or the wallet
-     *           payment was refused;
-     *         - a TERMINAL sale (Health-Factor liquidation, time-based
-     *           default), where the extra always waits for
-     *           `ClaimFacet.claimAsBorrower` beside the unsold collateral.
+     *         Diamond. #3629 — the only route for a borrower's extra: no loan
+     *         step pays it to a wallet. Callers:
+     *         - an OPEN loan (the periodic-interest forced sale), claimable
+     *           while the loan is open (`ClaimFacet.claimHeldForBorrower`) or
+     *           with the borrower claim at loan end;
+     *         - a TERMINAL sale (Health-Factor liquidation, time-based default,
+     *           the collateral sale's settlement in `PrepayListingFacet`),
+     *           where the extra waits for `ClaimFacet.claimAsBorrower`.
      * @dev    Credited into the STORED borrower's vault (it always exists),
      *         added to the surplus row (whose writer records a flagged holder
      *         as the fail-closed claimant), and reserved against the stored
-     *         borrower's spend paths. Paid with the claim at loan end. While the
-     *         loan stays open the row follows the borrower position:
+     *         borrower's spend paths. While the loan stays open the row follows
+     *         the borrower position:
      *         consolidation moves it with the collateral
      *         ({LibConsolidation}), and an obligation handover pays it to the
      *         exiting holder (`PrecloseFacet.transferObligationViaOffer`).
@@ -373,56 +338,22 @@ library LibCloseoutFreeze {
         LibEncumbrance.encumberBorrowerProceeds(loanId, loan.borrower, asset, credited);
     }
 
-    /**
-     * @notice #2795 / #2876 — pay a borrower's extra to the current
-     *         borrower-position holder's wallet, or hold it for their claim
-     *         when it cannot be paid. The one rule for an extra that must
-     *         never stop the settlement that produced it: the periodic
-     *         forced sale (the loan stays open) and the collateral sale
-     *         (the loan closes as repaid).
-     * @dev    An unflagged `holder` is paid through
-     *         {IBorrowerWalletPush.payBorrowerWallet}, a self-call hosted by
-     *         `ForcedSaleFacet`, so a refusal (a token that blocks the
-     *         address, a short reading, a receiving hook that reverts)
-     *         unwinds that payment alone. A flagged holder
-     *         ({LibSanctionedLock.mustFreezeParty}, fail-closed), or a refused
-     *         payment, has the extra held through {holdBorrowerExtra}: in the
-     *         stored borrower's vault, on the surplus row, for
-     *         `ClaimFacet.claimAsBorrower`. Neither route depends on anything
-     *         but the holder's own state, so the other side's payout never
-     *         waits on it. A Diamond that does not route the push (a facet
-     *         refreshed without `ForcedSaleFacet`) holds every extra rather
-     *         than paying it: the funds stay claimable, never lost.
-     * @param  holder The current borrower-position holder the extra is owed to.
-     * @return held   True when the extra was held rather than paid out.
-     * @return amount What the borrower got: all of `extra` when paid to the
-     *                wallet (a short arrival there is refused), or what the
-     *                stored borrower's vault received when held.
-     */
-    function payOrHoldBorrowerExtra(
-        LibVaipakam.Storage storage s,
-        uint256 loanId,
-        LibVaipakam.Loan storage loan,
-        address holder,
-        uint256 extra
-    ) internal returns (bool held, uint256 amount) {
-        if (extra == 0) return (false, 0);
-        if (!LibSanctionedLock.mustFreezeParty(s, holder)) {
-            // slither-disable-next-line low-level-calls
-            (bool paid, ) = address(this).call(
-                abi.encodeCall(
-                    IBorrowerWalletPush.payBorrowerWallet,
-                    (loan.principalAsset, holder, extra)
-                )
-            );
-            if (paid) {
-                LibPositionNFT.markLoanValueOut(loanId); // #3413
-                return (false, extra);
-            }
-        }
-        amount = holdBorrowerExtra(s, loanId, loan, holder, loan.principalAsset, extra);
-        held = true;
-    }
+    /// @notice #3629 — a payment on an open loan was held for the lender
+    ///         position: `amount` (what arrived) now sits in `custody`'s vault
+    ///         (the stored lender), reserved, for the position holder's claim.
+    ///         The sellers' part of the same payment, if any, is stated by
+    ///         `SellerInterestPaid`.
+    /// @param loanId  The loan the payment was made on.
+    /// @param custody The stored lender whose vault holds it.
+    /// @param asset   The asset held.
+    /// @param amount  What the vault received.
+    /// @custom:event-category informational/settlement
+    event LenderPaymentHeld(
+        uint256 indexed loanId,
+        address indexed custody,
+        address asset,
+        uint256 amount
+    );
 
     /// @notice #2795 — a borrower extra held on an open loan was paid out
     ///         before the loan ended, because the borrower position was handed
@@ -485,109 +416,79 @@ library LibCloseoutFreeze {
         emit BorrowerHeldExtraPaid(loanId, to, asset, paid);
     }
 
-    // ─── #998 S10 (#1006) Class B — ACTIVE-loan inline lender-share freeze ─────
+    // ─── #3629 — every open-loan lender payment is held for the position ───
     //
-    // The servicing / interim close-out paths (periodic-interest auto-liquidate,
-    // NFT-rental daily fee, ERC-20 partial repay) pay the CURRENT lender-position
-    // holder INLINE while the loan is still Active, historically gated only by the
-    // FAIL-OPEN `_assertNotSanctioned`. Per SanctionsTerminalizationRegister.md §1
-    // (Class B) that is unsound: a previously-confirmed-flagged holder is paid
-    // during an oracle outage because the fail-open screen waves them through, and
-    // the deferred terminalization register can't help since the value has already
-    // left. These helpers replace the fail-open decision with the registry-aware
-    // `mustFreezeParty`: pay a clean/never-confirmed holder inline exactly as
-    // before, or PARK a frozen holder's share into the STORED `loan.lender`'s
-    // always-existing vault (never the current holder's, which a flagged
-    // secondary-market transferee cannot have minted) + the mid-loan
-    // `heldForLender[loanId]` accumulator (folded by the eventual `claimAsLender`)
-    // + an encumbrance reservation (so the stored lender can't spend it as
-    // offer/intent capital ahead of the frozen holder's claim) + the fail-closed
-    // frozen-claimant marker. The loan stays Active — this is NOT a terminal, so
-    // the park uses `heldForLender`, not a terminal `lenderClaims` row (§3.2).
+    // A payment made while the loan stays open (a partial repayment, a rental
+    // day, a periodic forced sale, a partial liquidation) is never paid to a
+    // wallet. Open seller claims are paid first, as before; the rest is
+    // deposited into the STORED `loan.lender`'s always-existing vault (never the
+    // current holder's, which a holder who is not the stored lender may not
+    // have), credited to `heldForLender[loanId]`, and reserved against the
+    // stored lender's spending. The position holder takes it with
+    // `ClaimFacet.claimHeldForLender` while the loan is open, or with the final
+    // lender claim, which folds what is still held. So every lender payout
+    // leaves through the vault outflow policy, where a protected account's
+    // delay applies (owner decision 2026-11-15, LenderPayoutsThroughClaimDesign.md).
+    //
+    // Before #3629 these helpers paid a clean holder's wallet directly and held
+    // only a sanctions-frozen holder's share. The deposit is the sanctions-lock
+    // deposit for every holder: it differs from an ordinary vault deposit only
+    // by pinning the receive-side exemption while the stored lender's EXISTING
+    // vault is resolved, so a flagged stored lender never blocks a borrower or
+    // renter from servicing the loan, and it leaves the same balance and
+    // tracked-holding record either way.
 
-    /// @dev Shared post-deposit bookkeeping for an Active-loan lender-share park:
-    ///      the funds are ALREADY sitting in `loan.lender`'s vault (deposited by
-    ///      the caller's funds-flow-specific step). Credits the mid-loan held
-    ///      accumulator, records the fail-closed marker for `frozenHolder`,
-    ///      reserves the amount against the stored lender's spend paths, and —
-    ///      for a VPFI share owed to a TRANSFERRED (not self) holder — accumulates
-    ///      the per-loan tier exclusion so the VPFI is kept out of `loan.lender`'s
-    ///      fee tier until released at claim. Uses `+=` on the per-loan tier
-    ///      record because an Active loan can freeze MULTIPLE inline shares over
-    ///      its life (unlike the once-at-terminal `freezeLenderProceeds`).
-    function _parkActiveLenderShare(
+    /// @dev Shared post-deposit bookkeeping for a held open-loan lender share:
+    ///      the funds already sit in `loan.lender`'s vault. Credits the held
+    ///      ledger, records the fail-closed frozen-claimant marker for the
+    ///      current position holder (a no-op for a clean holder, and a
+    ///      self-heal of a stale marker), and reserves the amount through the
+    ///      dedicated active-held ledger.
+    /// @dev The active-held ledger, not the single-terminal
+    ///      `encumberLenderProceeds` ledger: that one records ONE asset per
+    ///      loan and asserts every later reservation matches it, so a held
+    ///      payment in the payment asset would brick a later in-kind default
+    ///      reserving the collateral asset (Codex #1122-rework). The dedicated
+    ///      ledger migrates with the held balance on consolidation and sale.
+    ///      No VPFI fee-tier exclusion while the loan is open (the position
+    ///      can move before the claim); once the loan is terminal,
+    ///      `LibTierExclusion` excludes this reservation like any other (#2342).
+    function _holdActiveLenderShare(
         LibVaipakam.Storage storage s,
         uint256 loanId,
         LibVaipakam.Loan storage loan,
-        address frozenHolder,
         address asset,
         uint256 amount
     ) private {
+        if (amount == 0) return;
         s.heldForLender[loanId] += amount;
-        // #1808 — a parked share is NOT reported to the interest ledger as paid
-        // (`LibInterestLedger.holderPaid` runs on the clean branches only), so
-        // the holder's earned figure keeps it. The callers record its interest
-        // part (`LibInterestLedger.holderParked`), and a sale pays that part to
-        // the seller out of the held balance before the rest moves on.
-        LibSanctionedLock.recordFrozenClaimant(s, loanId, true, frozenHolder);
-        // #998 S10 Class B — reserve through the DEDICATED active-held ledger, NOT
-        // the single-terminal `encumberLenderProceeds` ledger. That ledger records
-        // ONE asset per loan and asserts every later reservation matches it, so an
-        // active park in the payment asset would brick a subsequent in-kind default
-        // reserving the collateral asset on the same loan (Codex #1122-rework
-        // fresh-round P1). The dedicated ledger reserves against the same
-        // asset-keyed aggregate under its own per-loan record and MIGRATES with the
-        // held on consolidation/sale, so the reservation always follows the funds.
-        //
-        // No VPFI fee-tier exclusion while the loan is ACTIVE: an active park can
-        // be consolidated/sold before claim, and a `frozenVpfiOwedByVault` charge
-        // keyed to the stored lender would go STALE when those migrations
-        // re-point the funds — stranding a permanent over-exclusion on the old
-        // vault (fresh-round P2). The reservation below already blocks the stored
-        // lender from spending the parked VPFI. #2342 — once the loan goes
-        // terminal the stored party can no longer change (consolidation is a
-        // no-op on terminal loans), so `LibTierExclusion` then excludes this
-        // reservation, like every other one, while the position is held by
-        // someone else.
+        LibSanctionedLock.recordFrozenClaimant(s, loanId, true, LibPositionNFT.ownerOf(loan.lenderTokenId));
         LibEncumbrance.encumberActiveHeld(loanId, loan.lender, asset, amount);
+        emit LenderPaymentHeld(loanId, loan.lender, asset, amount);
     }
 
-    /// @notice Class B — pay-or-freeze an Active-loan lender share whose funds are
-    ///         sitting in the DIAMOND (e.g. periodic-interest auto-liquidation
-    ///         proceeds, freshly swapped into the Diamond). Clean/never-confirmed
-    ///         holder → direct transfer. Frozen holder → `depositLocked` (Diamond
-    ///         → stored lender vault) + the shared park.
+    /// @notice #3629 — hold an open-loan lender share whose funds sit in the
+    ///         DIAMOND (the periodic forced sale's proceeds, a partial
+    ///         liquidation's proceeds) for the lender position: open seller
+    ///         claims first, then the rest into the stored `loan.lender`'s vault
+    ///         under the active-held reservation, for the position holder's claim.
     /// @dev    #1209 / #1808 — `amount` is the lender side's whole payout
-    ///         (principal and net interest); `interestGross` / `interestNet` name
-    ///         the interest in it. The open seller claims are paid first, out of
-    ///         the interest ({LibInterestLedger.paySellersFirst}), and the holder
-    ///         is paid the rest. The holder's part of the interest is reported to
-    ///         the ledger as paid only on the clean branch.
+    ///         (principal and net interest); `interestGross` / `interestNet`
+    ///         name the interest in it. The sellers are paid out of the
+    ///         interest ({LibInterestLedger.paySellersFirst}); the holder's
+    ///         part of the interest is recorded as held
+    ///         ({LibInterestLedger.holderParked}), and reported paid only when
+    ///         the holder claims it.
     ///
-    ///         #2440 — the two branches read a delivery in different places,
-    ///         and only one of them is a place a reading can be trusted
-    ///         (LibDelivery, WHERE A READING CAN BE TRUSTED):
-    ///         - CLEAN: the payout goes to the holder's WALLET, whose owner can
-    ///           lower the reading while the transfer runs (a receiving hook
-    ///           can forward the tokens on). Booking such a reading would leave
-    ///           the rest owed to that owner, who could then be paid again. So
-    ///           a short arrival is REFUSED here, in every flow (the periodic
-    ///           auto-liquidation included), and a full payout returns
-    ///           `amount`.
-    ///         - FROZEN: the payout is credited to the stored lender's VAULT,
-    ///           which is custody. That branch acts on what arrived and returns
-    ///           it; the CALLER decides what a short return means. The periodic
-    ///           auto-liquidation credits the loan by the returned figure, so
-    ///           the difference stays owed on the loan; a partial HF
-    ///           liquidation refuses it, since it books the payout as received
-    ///           in full on a loan that stays open.
-    ///         The sellers' part is counted as delivered in full: it left the
-    ///         Diamond for their vaults, and each seller's credit is recorded
-    ///         as it arrived ({SellerClaimFacet.paySellersFirst}).
-    /// @return delivered `amount` on the clean branch (anything less was
-    ///         refused); the sellers' part plus what the stored lender's vault
-    ///         received on the frozen branch, never more than `amount`.
-    function freezeOrPayActiveLenderResident(
+    ///         #2440 — the stored lender's vault is custody, so this acts on
+    ///         what arrived and returns it; the CALLER decides what a short
+    ///         return means. The periodic forced sale credits the loan by the
+    ///         returned figure, so the difference stays owed; a partial HF
+    ///         liquidation refuses it, since it books the payout as received in
+    ///         full on a loan that stays open.
+    /// @return delivered The sellers' part plus what the stored lender's vault
+    ///         received, never more than `amount`.
+    function holdActiveLenderResident(
         LibVaipakam.Storage storage s,
         uint256 loanId,
         LibVaipakam.Loan storage loan,
@@ -600,41 +501,23 @@ library LibCloseoutFreeze {
         (uint256 sellersGross, uint256 sellersNet) =
             LibInterestLedger.paySellersFirst(s, loan, address(0), asset, interestGross, interestNet);
         uint256 holderAmount = amount - sellersNet;
-        // Resolve the CURRENT lender-position holder here (the loan is Active, so
-        // the lender NFT is live and `ownerOf` holds) — the intended payee AND the
-        // party the fail-closed marker keys on. Resolving inside the helper keeps
-        // the `ownerOf` + `IERC721` weight out of the EIP-170-tight caller facets.
-        address lenderRecipient = LibPositionNFT.ownerOf(loan.lenderTokenId);
-        if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
-            // #2440 — a wallet reading is trusted only to refuse (see @dev).
-            if (holderAmount > 0) {
-                LibDelivery.pushExact(asset, lenderRecipient, holderAmount);
-                LibPositionNFT.markLoanValueOut(loanId); // #3413
-            }
-            LibInterestLedger.holderPaid(s, loan, interestGross - sellersGross);
-            return amount;
-        }
-        // #2440 — park what the vault received.
         if (holderAmount == 0) return sellersNet;
-        uint256 parked = LibSanctionedLock.depositLocked(s, loan.lender, loanId, asset, holderAmount);
-        _parkActiveLenderShare(s, loanId, loan, lenderRecipient, asset, parked);
+        uint256 held = LibSanctionedLock.depositLocked(s, loan.lender, loanId, asset, holderAmount);
+        _holdActiveLenderShare(s, loanId, loan, asset, held);
         LibInterestLedger.holderParked(
-            s, loan, interestGross - sellersGross, interestNet - sellersNet, parked, true
+            s, loan, interestGross - sellersGross, interestNet - sellersNet, held, true
         );
-        delivered = sellersNet + parked;
+        delivered = sellersNet + held;
     }
 
-    /// @notice Class B — pay-or-freeze an Active-loan lender share funded by a
-    ///         `payer` via `approve` (the ERC-20 partial-repay case: the repaying
-    ///         borrower pays principal+interest straight to the lender). Clean
-    ///         holder → direct `safeTransferFrom(payer → holder)` (unchanged).
-    ///         Frozen holder → `depositLockedFrom` (payer → stored lender vault) +
-    ///         the shared park.
-    /// @dev    #1209 / #1808 — as {freezeOrPayActiveLenderResident}: the open
-    ///         seller claims are paid first out of the interest in `amount`,
-    ///         straight from `payer` into each seller's vault, and the holder's
-    ///         part is reported to the ledger as paid only on the clean branch.
-    function freezeOrPayActiveLenderFromPayer(
+    /// @notice #3629 — hold an open-loan lender share a `payer` funds through
+    ///         an approval (the ERC-20 partial repayment): open seller claims
+    ///         first, straight from `payer` into each seller's vault, then the
+    ///         rest from `payer` into the stored lender's vault, held for the
+    ///         position holder's claim.
+    /// @dev    A voluntary payment: the deposit is refused unless it arrived in
+    ///         full (#1281-011), so the loan is credited with `amount`.
+    function holdActiveLenderFromPayer(
         LibVaipakam.Storage storage s,
         uint256 loanId,
         LibVaipakam.Loan storage loan,
@@ -648,41 +531,26 @@ library LibCloseoutFreeze {
         (uint256 sellersGross, uint256 sellersNet) =
             LibInterestLedger.paySellersFirst(s, loan, payer, asset, interestGross, interestNet);
         uint256 holderAmount = amount - sellersNet;
-        address lenderRecipient = LibPositionNFT.ownerOf(loan.lenderTokenId);
-        if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
-            // #1281-011 — the holder is booked as paid, so the payment must have
-            // arrived in full; a short arrival is refused.
-            if (holderAmount > 0) {
-                LibDelivery.pullExact(asset, payer, lenderRecipient, holderAmount);
-                LibPositionNFT.markLoanValueOut(loanId); // #3413
-            }
-            LibInterestLedger.holderPaid(s, loan, interestGross - sellersGross);
-            return;
-        }
         if (holderAmount == 0) return;
         LibSanctionedLock.depositLockedFrom(s, payer, loan.lender, loanId, asset, holderAmount);
-        _parkActiveLenderShare(s, loanId, loan, lenderRecipient, asset, holderAmount);
+        _holdActiveLenderShare(s, loanId, loan, asset, holderAmount);
         LibInterestLedger.holderParked(
             s, loan, interestGross - sellersGross, interestNet - sellersNet, holderAmount, true
         );
     }
 
-    /// @notice Class B — pay-or-freeze an Active-loan lender share funded from a
-    ///         loan party's VAULT (the NFT-rental prepay pool). Clean holder →
-    ///         withdraw `fromUser`'s vault → holder EOA (unchanged), arming the
-    ///         move-out exemption so a flagged `fromUser` can still be serviced.
-    ///         Frozen holder → `depositLockedFromVault` (fromUser vault → stored
-    ///         lender vault) + the shared park.
-    /// @dev    Both branches arm the move-out exemption around the withdraw (the
-    ///         payer LOSES custody either way) — Tier-2 servicing must not brick a
-    ///         `fromUser` flagged after init.
-    ///         #2440 — every caller books this share as paid in full (a rental
-    ///         day by `autoDeductDaily`, the lender's share of a rental repay or
-    ///         preclose), so both branches refuse a delivery that fell short
-    ///         ({LibDelivery.requireFull}). A rental whose prepay token starts
-    ///         charging on transfer therefore stops being serviced and settles
-    ///         through the time-based default, which acts on what arrives.
-    function freezeOrPayActiveLenderFromVault(
+    /// @notice #3629 — hold an open-loan lender share funded from a loan
+    ///         party's VAULT (the NFT rental's prepay pool): moved from
+    ///         `fromUser`'s vault into the stored lender's vault, held for the
+    ///         position holder's claim.
+    /// @dev    The move arms the from-side move-out exemption, so a payer
+    ///         flagged after the loan opened is still serviced. Every caller
+    ///         books this share as paid in full (a rental day, the lender's
+    ///         share of a rental repayment or preclose), so a short delivery is
+    ///         refused ({LibDelivery.requireFull}); a rental whose prepay token
+    ///         starts charging on transfer settles through the time-based
+    ///         default instead.
+    function holdActiveLenderFromVault(
         LibVaipakam.Storage storage s,
         uint256 loanId,
         LibVaipakam.Loan storage loan,
@@ -691,29 +559,12 @@ library LibCloseoutFreeze {
         uint256 amount
     ) internal {
         if (amount == 0) return;
-        address lenderRecipient = LibPositionNFT.ownerOf(loan.lenderTokenId);
-        if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
-            // #3205 part 2 — to the current lender-position holder's VAULT,
-            // the counterparty of the paying side.
-            LibSanctionedLock.beginMoveOut(s, fromUser);
-            LibDelivery.requireFull(
-                asset,
-                amount,
-                LibVaultOutflow.toCounterparty(
-                    fromUser, LibVaultOutflow.ERC20, asset, 0, amount, loanId, loan.lenderTokenId, OutflowReason.REPAYMENT
-                )
-            );
-            LibSanctionedLock.endMoveOut(s);
-            return;
-        }
         LibDelivery.requireFull(
             asset,
             amount,
-            LibSanctionedLock.depositLockedFromVault(
-                s, fromUser, loan.lender, loanId, asset, amount
-            )
+            LibSanctionedLock.depositLockedFromVault(s, fromUser, loan.lender, loanId, asset, amount)
         );
-        _parkActiveLenderShare(s, loanId, loan, lenderRecipient, asset, amount);
+        _holdActiveLenderShare(s, loanId, loan, asset, amount);
     }
 
     /**

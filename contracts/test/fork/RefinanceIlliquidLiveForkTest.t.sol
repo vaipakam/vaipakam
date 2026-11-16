@@ -151,6 +151,7 @@ contract RefinanceIlliquidLiveForkTest is Test {
 
     function _request(uint256 refinanceTarget) internal view returns (LibVaipakam.CreateOfferParams memory) {
         return LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Borrower,
             lendingAsset: weth,
             amount: PRINCIPAL,

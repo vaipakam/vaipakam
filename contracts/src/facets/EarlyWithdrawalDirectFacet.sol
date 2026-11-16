@@ -732,11 +732,13 @@ contract EarlyWithdrawalDirectFacet is
 
 
         uint256 toLiam = loan.principal - shortfall;
-        if (toLiam > 0) {
-            // #2440 — a voluntary sale: the seller's net is refused unless it
-            // all arrived, so the `minSellerNet` the seller set is what they
-            // actually receive, never a figure a token shrank on the way.
-            LibDelivery.pushExact(loan.principalAsset, msg.sender, toLiam);
+        // #3629 — the seller's net is credited to the seller's OWN vault as
+        // free balance, never paid to a wallet. #2440 — measured there: the
+        // `minSellerNet` the seller reviewed is checked against what actually
+        // arrived, never a figure a token shrank on the way.
+        {
+            uint256 credited = LibFacet.creditOwnVault(loan.principalAsset, msg.sender, toLiam);
+            if (credited < b.minSellerNet) revert SaleNetBelowReviewed(credited, b.minSellerNet);
         }
         LibFacet.depositForNewLender(
             loan.principalAsset,

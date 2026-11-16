@@ -52,6 +52,7 @@
     "OfferPriceGuardFacet",
     "SignedOfferMatchFacet",
     "LoanClockFacet",
+    "FeeLevelsFacet",
     "CollateralConcentrationFacet",
     "CollateralLienFacet",
     "ClaimFacet",

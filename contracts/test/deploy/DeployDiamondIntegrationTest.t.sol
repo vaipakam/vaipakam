@@ -198,7 +198,7 @@ contract DeployDiamondIntegrationTest is Test, DiamondFacetNames {
     ///         is observable from outside the deploy script.
     function test_DeployedDiamond_HasExactCutFacetCount() public {
         (address diamond,,) = _deploy(true);
-        string[120] memory names = cutFacetNames();
+        string[121] memory names = cutFacetNames();
         uint256 observed = DiamondLoupeFacet(diamond).facetAddresses().length;
         assertEq(
             observed,
@@ -545,8 +545,8 @@ contract DeployDiamondIntegrationTest is Test, DiamondFacetNames {
         );
         assertEq(
             ConfigFacet(diamond).getTreasuryFeeBps(),
-            200,
-            "yield-fee default must resolve to 200 bps (rev-8 fee freeze)"
+            500,
+            "yield-fee default must resolve to 500 bps (#3649)"
         );
 
         // Codex #1411 r1 — the effective getter is

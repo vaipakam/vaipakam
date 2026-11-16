@@ -89,6 +89,7 @@ import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
+import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
 import {CollateralLienFacet} from "../src/facets/CollateralLienFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
@@ -323,13 +324,15 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // 117 -> 118: LoanClockFacet (#3410) - the loan clock's disclosure,
     // split off LoanFacet for EIP-170. `getLoanDeadlines` moves hosts (the
     // Replace cut repoints it); `getSequencerOutageWindow` is new (an Add).
-    // 118 -> 119: CollateralConcentrationFacet (#3685) - the one host of
+    // 118 -> 119: FeeLevelsFacet (#3649) - the initiation fee's term
+    // schedule; all three selectors are new (an Add).
+    // 119 -> 120: CollateralConcentrationFacet (#3685) - the one host of
     // the new-loan init-LTV cap, which loan creation, the previews and the
     // offer book self-call. Its selectors are new (Adds).
-    // 119 -> 120: CollateralLienFacet (#3685) - the collateral-lien entries,
+    // 120 -> 121: CollateralLienFacet (#3685) - the collateral-lien entries,
     // split off EncumbranceMutateFacet for EIP-170. Their selectors move
     // hosts, so the Replace cut repoints them.
-    uint256 public constant EXPECTED_FACETS = 120;
+    uint256 public constant EXPECTED_FACETS = 121;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1415,12 +1418,13 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             "precloseOffsetFacet", ArtifactDeploy.deploy(type(PrecloseOffsetFacet).name), _getPrecloseOffsetSelectors()
         );
         items[117] = Item("loanClockFacet", ArtifactDeploy.deploy(type(LoanClockFacet).name), _getLoanClockSelectors());
-        items[118] = Item(
+        items[118] = Item("feeLevelsFacet", ArtifactDeploy.deploy(type(FeeLevelsFacet).name), _getFeeLevelsSelectors());
+        items[119] = Item(
             "collateralConcentrationFacet",
             ArtifactDeploy.deploy(type(CollateralConcentrationFacet).name),
             _getCollateralConcentrationSelectors()
         );
-        items[119] = Item(
+        items[120] = Item(
             "collateralLienFacet", ArtifactDeploy.deploy(type(CollateralLienFacet).name), _getCollateralLienSelectors()
         );
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());

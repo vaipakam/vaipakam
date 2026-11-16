@@ -6,6 +6,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
@@ -110,25 +111,36 @@ contract SanctionsActiveLenderFreezeTest is SetupTest {
         );
     }
 
-    // ─── Resident variant (Diamond-held proceeds; periodic auto-liquidate) ────
-
-    function test_resident_cleanHolder_paidInline() public {
-        _installOracle(); // oracle set but holder never flagged
-        _scaffoldActiveLoan();
-        ERC20Mock(mockERC20).mint(address(diamond), AMOUNT);
-
-        TestMutatorFacet(address(diamond)).callFreezeOrPayActiveLenderResident(
-            LOAN_ID, mockERC20, AMOUNT, 0, 0
+    /// @dev #3629 — a clean holder's share is held exactly like a frozen
+    ///      one's, minus the fail-closed marker: nothing reaches a wallet.
+    function _assertHeldClean() internal view {
+        assertEq(ERC20Mock(mockERC20).balanceOf(holder), 0, "no wallet payment");
+        assertEq(_lenderVaultBal(), AMOUNT, "held in the stored lender's vault");
+        assertEq(TestMutatorFacet(address(diamond)).getHeldForLenderRaw(LOAN_ID), AMOUNT, "heldForLender credited");
+        assertEq(
+            TestMutatorFacet(address(diamond)).getHeldForLenderEncumberedRaw(LOAN_ID),
+            AMOUNT,
+            "reserved via the active-held ledger"
         );
-
-        assertEq(ERC20Mock(mockERC20).balanceOf(holder), AMOUNT, "clean holder paid inline");
-        assertEq(_lenderVaultBal(), 0, "nothing parked");
-        assertEq(TestMutatorFacet(address(diamond)).getHeldForLenderRaw(LOAN_ID), 0, "no held");
         assertEq(
             TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(LOAN_ID, true),
             address(0),
             "no marker for a clean holder"
         );
+    }
+
+    // ─── Resident variant (Diamond-held proceeds; periodic auto-liquidate) ────
+
+    function test_resident_cleanHolder_held() public {
+        _installOracle(); // oracle set but holder never flagged
+        _scaffoldActiveLoan();
+        ERC20Mock(mockERC20).mint(address(diamond), AMOUNT);
+
+        TestMutatorFacet(address(diamond)).callHoldActiveLenderResident(
+            LOAN_ID, mockERC20, AMOUNT, 0, 0
+        );
+
+        _assertHeldClean();
     }
 
     function test_resident_firstObservationFlagged_frozenAndRegistered() public {
@@ -141,7 +153,7 @@ contract SanctionsActiveLenderFreezeTest is SetupTest {
         );
         ERC20Mock(mockERC20).mint(address(diamond), AMOUNT);
 
-        TestMutatorFacet(address(diamond)).callFreezeOrPayActiveLenderResident(
+        TestMutatorFacet(address(diamond)).callHoldActiveLenderResident(
             LOAN_ID, mockERC20, AMOUNT, 0, 0
         );
 
@@ -156,7 +168,7 @@ contract SanctionsActiveLenderFreezeTest is SetupTest {
         m.setRevertOnRead(true); // now an outage — fail-open screen would pay
         ERC20Mock(mockERC20).mint(address(diamond), AMOUNT);
 
-        TestMutatorFacet(address(diamond)).callFreezeOrPayActiveLenderResident(
+        TestMutatorFacet(address(diamond)).callHoldActiveLenderResident(
             LOAN_ID, mockERC20, AMOUNT, 0, 0
         );
 
@@ -165,19 +177,19 @@ contract SanctionsActiveLenderFreezeTest is SetupTest {
 
     // ─── FromPayer variant (payer `approve`; ERC-20 partial repay) ────────────
 
-    function test_fromPayer_cleanHolder_paidInline() public {
+    function test_fromPayer_cleanHolder_held() public {
         _installOracle();
         _scaffoldActiveLoan();
         ERC20Mock(mockERC20).mint(payer, AMOUNT);
         vm.prank(payer);
         ERC20Mock(mockERC20).approve(address(diamond), AMOUNT);
 
-        TestMutatorFacet(address(diamond)).callFreezeOrPayActiveLenderFromPayer(
+        TestMutatorFacet(address(diamond)).callHoldActiveLenderFromPayer(
             LOAN_ID, payer, mockERC20, AMOUNT, 0, 0
         );
 
-        assertEq(ERC20Mock(mockERC20).balanceOf(holder), AMOUNT, "clean holder paid from payer");
-        assertEq(_lenderVaultBal(), 0, "nothing parked");
+        assertEq(ERC20Mock(mockERC20).balanceOf(payer), 0, "payer funded the hold");
+        _assertHeldClean();
     }
 
     function test_fromPayer_firstObservationFlagged_frozen() public {
@@ -188,7 +200,7 @@ contract SanctionsActiveLenderFreezeTest is SetupTest {
         vm.prank(payer);
         ERC20Mock(mockERC20).approve(address(diamond), AMOUNT);
 
-        TestMutatorFacet(address(diamond)).callFreezeOrPayActiveLenderFromPayer(
+        TestMutatorFacet(address(diamond)).callHoldActiveLenderFromPayer(
             LOAN_ID, payer, mockERC20, AMOUNT, 0, 0
         );
 
@@ -198,19 +210,16 @@ contract SanctionsActiveLenderFreezeTest is SetupTest {
 
     // ─── FromVault variant (party vault; NFT-rental prepay) ───────────────────
 
-    function test_fromVault_cleanHolder_paidInline() public {
+    function test_fromVault_cleanHolder_held() public {
         _installOracle();
         _scaffoldActiveLoan();
         _fundActorVault(borrower, mockERC20, AMOUNT);
-        // #3387: the lender share of an open loan's payment credits the holder's vault.
-        uint256 owned0 = _owned(holder, mockERC20);
 
-        TestMutatorFacet(address(diamond)).callFreezeOrPayActiveLenderFromVault(
+        TestMutatorFacet(address(diamond)).callHoldActiveLenderFromVault(
             LOAN_ID, borrower, mockERC20, AMOUNT
         );
 
-        assertEq(_owned(holder, mockERC20) - owned0, AMOUNT, "clean holder paid from vault");
-        assertEq(_lenderVaultBal(), 0, "nothing parked");
+        _assertHeldClean();
     }
 
     function test_fromVault_firstObservationFlagged_frozen() public {
@@ -219,7 +228,7 @@ contract SanctionsActiveLenderFreezeTest is SetupTest {
         m.setFlagged(holder, true);
         _fundActorVault(borrower, mockERC20, AMOUNT);
 
-        TestMutatorFacet(address(diamond)).callFreezeOrPayActiveLenderFromVault(
+        TestMutatorFacet(address(diamond)).callHoldActiveLenderFromVault(
             LOAN_ID, borrower, mockERC20, AMOUNT
         );
 
@@ -235,7 +244,7 @@ contract SanctionsActiveLenderFreezeTest is SetupTest {
         m.setFlagged(holder, true);
         ERC20Mock(mockERC20).mint(address(diamond), AMOUNT);
 
-        TestMutatorFacet(address(diamond)).callFreezeOrPayActiveLenderResident(
+        TestMutatorFacet(address(diamond)).callHoldActiveLenderResident(
             LOAN_ID, mockERC20, AMOUNT, 0, 0
         );
 
@@ -243,6 +252,34 @@ contract SanctionsActiveLenderFreezeTest is SetupTest {
             TestMutatorFacet(address(diamond)).getUserVaipakamVaultRaw(holder),
             address(0),
             "no vault minted for the flagged holder"
+        );
+    }
+
+    /// #3629 — a payment held while the holder was flagged is claimable mid-loan
+    ///         only once the holder reads clean; it then reaches the holder's
+    ///         vault and the reservation and marker are gone.
+    function test_claimHeldForLender_frozenHolder_paidOnceClear() public {
+        MockSanctionsList m = _installOracle();
+        _scaffoldActiveLoan();
+        m.setFlagged(holder, true);
+        ERC20Mock(mockERC20).mint(address(diamond), AMOUNT);
+        TestMutatorFacet(address(diamond)).callHoldActiveLenderResident(LOAN_ID, mockERC20, AMOUNT, 0, 0);
+
+        vm.prank(holder);
+        vm.expectRevert(abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, holder));
+        ClaimFacet(address(diamond)).claimHeldForLender(LOAN_ID);
+
+        m.setFlagged(holder, false);
+        uint256 owned0 = _owned(holder, mockERC20);
+        vm.prank(holder);
+        ClaimFacet(address(diamond)).claimHeldForLender(LOAN_ID);
+        assertEq(_owned(holder, mockERC20) - owned0, AMOUNT, "paid into the holder's vault");
+        assertEq(TestMutatorFacet(address(diamond)).getHeldForLenderRaw(LOAN_ID), 0, "nothing held");
+        assertEq(TestMutatorFacet(address(diamond)).getHeldForLenderEncumberedRaw(LOAN_ID), 0, "reservation released");
+        assertEq(
+            TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(LOAN_ID, true),
+            address(0),
+            "marker cleared"
         );
     }
 
@@ -261,7 +298,7 @@ contract SanctionsActiveLenderFreezeTest is SetupTest {
         ERC20Mock(mockERC20).mint(address(diamond), AMOUNT);
 
         // Class B park reserves the PAYMENT asset via the dedicated ledger.
-        TestMutatorFacet(address(diamond)).callFreezeOrPayActiveLenderResident(
+        TestMutatorFacet(address(diamond)).callHoldActiveLenderResident(
             LOAN_ID, mockERC20, AMOUNT, 0, 0
         );
 
@@ -305,7 +342,7 @@ contract SanctionsActiveLenderFreezeTest is SetupTest {
         _scaffoldActiveLoan();
         m.setFlagged(holder, true);
         ERC20Mock(mockERC20).mint(address(diamond), AMOUNT);
-        TestMutatorFacet(address(diamond)).callFreezeOrPayActiveLenderResident(
+        TestMutatorFacet(address(diamond)).callHoldActiveLenderResident(
             LOAN_ID, mockERC20, AMOUNT, 0, 0
         );
         assertEq(
@@ -349,7 +386,7 @@ contract SanctionsActiveLenderFreezeTest is SetupTest {
         _scaffoldActiveLoan();
         m.setFlagged(holder, true);
         ERC20Mock(mockERC20).mint(address(diamond), AMOUNT);
-        TestMutatorFacet(address(diamond)).callFreezeOrPayActiveLenderResident(
+        TestMutatorFacet(address(diamond)).callHoldActiveLenderResident(
             LOAN_ID, mockERC20, AMOUNT, 0, 0
         );
         assertEq(

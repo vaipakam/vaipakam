@@ -167,6 +167,7 @@ contract SeedAnvilOffers is Script {
         returns (LibVaipakam.CreateOfferParams memory)
     {
         return LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: mUsdc,
             amount: LENDER_AMOUNT_MIN,
@@ -204,6 +205,7 @@ contract SeedAnvilOffers is Script {
         // Borrower is single-fill in Phase 1 — `amountMax == amount`
         // (auto-collapse via 0 also works; spelled out here for clarity).
         return LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Borrower,
             lendingAsset: mUsdc,
             amount: BORROWER_AMOUNT,

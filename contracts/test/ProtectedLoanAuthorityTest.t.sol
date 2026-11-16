@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
@@ -66,6 +67,7 @@ contract ProtectedLoanAuthorityTest is SetupTest {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -114,7 +116,7 @@ contract ProtectedLoanAuthorityTest is SetupTest {
         uint256 loanId = _openLoan(false);
         uint64 farExpiry = uint64(block.timestamp + 400 days);
         vm.prank(borrower);
-        _s().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry);
+        _s().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry, type(uint256).max);
         vm.prank(lender);
         _s().setAutoExtendLenderCaps(loanId, true, 0, 1000, farExpiry);
         ERC20Mock(mockERC20).mint(borrower, 10 ether);
@@ -136,12 +138,12 @@ contract ProtectedLoanAuthorityTest is SetupTest {
         _f().extendLoanInPlace(loanId, 500, 30);
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
-        _s().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry);
+        _s().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry, type(uint256).max);
 
         // The controller consents and extends; the charge comes from the
         // account's reserve.
         vm.prank(nominee);
-        _s().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry);
+        _s().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry, type(uint256).max);
         assertTrue(_s().getAutoExtendBorrowerCaps(loanId).enabled, "controller consent counts");
         uint256 startBefore = LoanFacet(address(diamond)).getLoanDetails(loanId).startTime;
         vm.prank(nominee);
@@ -170,6 +172,11 @@ contract ProtectedLoanAuthorityTest is SetupTest {
         uint256 arrived = ERC20(mockERC20).balanceOf(lenderVault) - vaultBefore;
         assertGt(arrived, PRINCIPAL / 2 - 1, "principal and interest reached the vault");
         assertEq(ERC20(mockERC20).balanceOf(lender), walletBefore, "nothing paid to the wallet");
+        // #3629 — the payment is held for the lender position; the holder's
+        // claim makes it the lender's own holding.
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimHeldForLender(loanId);
+        assertEq(ERC20(mockERC20).balanceOf(lender), walletBefore, "the claim pays no wallet either");
         assertEq(
             VaultDepositoryFacet(address(diamond)).getDepositoryHolding(lender, mockERC20, 0) - heldBefore,
             arrived,

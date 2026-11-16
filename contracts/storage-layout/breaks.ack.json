@@ -1,4 +1,25 @@
 {
   "_readme": "Acknowledged storage-layout breaks (#1274 / #2092). An entry { baseSha256, lines, reason } accepts exactly the listed ledger lines, and only when compared against the base golden file whose sha256 it names, so it goes inert once that base changes; delete inert entries. Only CI honours an acknowledgement: it records that NO chain may be upgraded in place across the change, and the deploy-time check never reads this file. See docs/DesignsAndPlans/StorageLayoutGuardDesign.md.",
-  "acks": []
+  "acks": [
+    {
+      "baseSha256": "ff862b716fcf751592ee6cb6b864d4b3b37a4189bde2fbb53125fc44a381972e",
+      "lines": [
+        "C|vaipakam@257[address]@0[address]@0[address]|0|0|lenderIntent[][][]",
+        "L|vaipakam@257[address]@0[address]@0[address]|0|0|bool|lenderIntent[][][].active",
+        "L|vaipakam@257[address]@0[address]@0[address]|1|0|uint256|lenderIntent[][][].maxExposure",
+        "L|vaipakam@257[address]@0[address]@0[address]|2|0|uint256|lenderIntent[][][].minRateBps",
+        "L|vaipakam@257[address]@0[address]@0[address]|3|0|uint16|lenderIntent[][][].maxInitLtvBps",
+        "L|vaipakam@257[address]@0[address]@0[address]|3|2|uint32|lenderIntent[][][].maxDurationDays",
+        "L|vaipakam@257[address]@0[address]@0[address]|4|0|uint256|lenderIntent[][][].minFillAmount",
+        "L|vaipakam@257[address]@0[address]@0[address]|5|0|bool|lenderIntent[][][].requiresKeeperAuth",
+        "L|vaipakam@257[address]@0[address]@0[address]|5|17|bool|lenderIntent[][][].acceptsProRata",
+        "L|vaipakam@257[address]@0[address]@0[address]|5|1|uint64|lenderIntent[][][].termsSetAt",
+        "L|vaipakam@257[address]@0[address]@0[address]|5|9|uint64|lenderIntent[][][].lendUntil",
+        "L|vaipakam@258[address]@0[address]@0[address]|0|0|uint256|lenderIntentLivePrincipal[][][]",
+        "L|vaipakam@260[address]@0[address]@0[address]|0|0|uint256|lenderIntentCapital[][][]",
+        "L|vaipakam@632[address]@0[address]@0[address]|0|0|bool|lenderIntentPriority[][][]"
+      ],
+      "reason": "#3626: the four per-pair lender-intent mappings gain an innermost slot key (up to eight intents per pair). Prelive; reaches a chain by fresh deploy only, no chain is upgraded in place across it."
+    }
+  ]
 }

@@ -137,6 +137,7 @@ contract Handler is Test {
         if (ERC20Mock(usdc).balanceOf(lender) < amount) return;
 
         LibVaipakam.CreateOfferParams memory p = LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: usdc,
             amount: amount,
@@ -191,6 +192,7 @@ contract Handler is Test {
         if (ERC20Mock(weth).balanceOf(borrower) < collateralAmount) return;
 
         LibVaipakam.CreateOfferParams memory p = LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Borrower,
             lendingAsset: usdc,
             amount: amount,
@@ -384,6 +386,7 @@ contract Handler is Test {
         durationDays = bound(durationDays, 1, 365);
 
         LibVaipakam.CreateOfferParams memory p = LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Borrower,
             lendingAsset: L.principalAsset,
             amount: L.principal,
@@ -442,6 +445,7 @@ contract Handler is Test {
         durationDays = bound(durationDays, 1, 60);
 
         LibVaipakam.CreateOfferParams memory p = LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: nft,
             amount: dailyFee,

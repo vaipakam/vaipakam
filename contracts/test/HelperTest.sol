@@ -118,6 +118,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
+import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
 import {CollateralLienFacet} from "../src/facets/CollateralLienFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
@@ -401,9 +402,9 @@ contract HelperTest {
         // #1006 (S10) Class B — Active-loan inline lender-share freeze harness.
         selectors[n++] = TestMutatorFacet.getHeldForLenderRaw.selector;
         selectors[n++] = TestMutatorFacet.getLenderProceedsEncumberedRaw.selector;
-        selectors[n++] = TestMutatorFacet.callFreezeOrPayActiveLenderResident.selector;
-        selectors[n++] = TestMutatorFacet.callFreezeOrPayActiveLenderFromPayer.selector;
-        selectors[n++] = TestMutatorFacet.callFreezeOrPayActiveLenderFromVault.selector;
+        selectors[n++] = TestMutatorFacet.callHoldActiveLenderResident.selector;
+        selectors[n++] = TestMutatorFacet.callHoldActiveLenderFromPayer.selector;
+        selectors[n++] = TestMutatorFacet.callHoldActiveLenderFromVault.selector;
         // #1006 (S10) Class B — dedicated active-held reservation harness.
         selectors[n++] = TestMutatorFacet.getHeldForLenderEncumberedRaw.selector;
         selectors[n++] = TestMutatorFacet.callEncumberLenderProceeds.selector;
@@ -985,6 +986,16 @@ contract HelperTest {
         selectors[1] = LoanClockFacet.getSequencerOutageWindow.selector;
     }
 
+    /// @dev #3649 — the initiation fee's term schedule.
+    ///      Mirrors `DeployDiamond._getFeeLevelsSelectors`.
+    function getFeeLevelsFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](4);
+        selectors[0] = FeeLevelsFacet.setLoanInitiationFeeTerms.selector;
+        selectors[1] = FeeLevelsFacet.getLoanInitiationFeeTerms.selector;
+        selectors[2] = FeeLevelsFacet.quoteLoanInitiationFee.selector;
+        selectors[3] = FeeLevelsFacet.quoteExtensionFee.selector;
+    }
+
     /// @dev #3685 — the new-loan cap host and collateral concentration.
     ///      Mirrors `DeployDiamond._getCollateralConcentrationSelectors`.
     function getCollateralConcentrationFacetSelectors() public pure returns (bytes4[] memory selectors) {
@@ -1109,7 +1120,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](6);
         // T-092 Phase 3 (#503) — extendLoanInPlace executor.
         selectors[0] = AutoLifecycleFacet.extendLoanInPlace.selector;
         // #2738 — when a loan may be extended (the keeper reads it).
@@ -1118,6 +1129,8 @@ contract HelperTest {
         selectors[2] = AutoLifecycleFacet.fundExtendReserve.selector;
         selectors[3] = AutoLifecycleFacet.withdrawExtendReserve.selector;
         selectors[4] = AutoLifecycleFacet.getExtendFunding.selector;
+        // #3618 follow-up — the intent lend-until bound on an extension.
+        selectors[5] = AutoLifecycleFacet.getAutoExtendLendUntil.selector;
     }
 
     /// @notice T-092 Phase 1 (#499) — the auto-lifecycle consent surface,
@@ -1160,7 +1173,7 @@ contract HelperTest {
         selectors[3] = EncumbranceMutateFacet.incrementOfferPrincipalLien.selector;
         // #954 — swap-to-repay close-out freeze helpers hosted here (EIP-170).
         selectors[4] = EncumbranceMutateFacet.freezeLenderProceeds.selector;
-        selectors[5] = EncumbranceMutateFacet.freezeOrPayBorrowerSurplus.selector;
+        selectors[5] = EncumbranceMutateFacet.holdBorrowerSurplus.selector;
         // #998 S10 (#1006) — fail-closed frozen-claimant markers (EIP-170 host).
         selectors[6] = EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector;
         selectors[7] = EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector;
@@ -1169,9 +1182,9 @@ contract HelperTest {
         // #998 S10 (#1006, r4) — registry-aware fail-closed gate host (ClaimFacet backstop).
         selectors[9] = EncumbranceMutateFacet.assertNotFrozenParty.selector;
         // #998 S10 (#1006) Class B — Active-loan inline lender-share pay-or-freeze hosts.
-        selectors[10] = EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector;
-        selectors[11] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromPayer.selector;
-        selectors[12] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector;
+        selectors[10] = EncumbranceMutateFacet.holdActiveLenderResident.selector;
+        selectors[11] = EncumbranceMutateFacet.holdActiveLenderFromPayer.selector;
+        selectors[12] = EncumbranceMutateFacet.holdActiveLenderFromVault.selector;
         // #1132 (S10 central enforcement) — terminal-transition register host.
         selectors[13] = EncumbranceMutateFacet.terminalize.selector;
         selectors[14] = EncumbranceMutateFacet.terminalizeFromAny.selector;
@@ -1217,7 +1230,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](18);
+        selectors = new bytes4[](19);
         selectors[0] = LenderIntentFacet.setLenderIntent.selector;
         selectors[1] = LenderIntentFacet.cancelLenderIntent.selector;
         selectors[2] = LenderIntentFacet.setLenderIntentEnabled.selector;
@@ -1236,6 +1249,7 @@ contract HelperTest {
         selectors[15] = LenderIntentFacet.getMinIntentFillNumeraire.selector; // #2760
         selectors[16] = LenderIntentFacet.getActiveLenderIntents.selector; // #625 WI-2a, moved off MetricsFacet (#3618)
         selectors[17] = LenderIntentFacet.getRollableIntentLoans.selector; // #625 WI-2c, moved off MetricsFacet (#3618)
+        selectors[18] = LenderIntentFacet.recommitHeldToIntent.selector; // #3629
     }
 
     function getRiskAccessFacetSelectors()
@@ -1547,7 +1561,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](11);
+        selectors = new bytes4[](13);
         selectors[0] = ClaimFacet.claimAsLender.selector;
         selectors[1] = ClaimFacet.claimAsBorrower.selector;
         selectors[2] = ClaimFacet.getClaimableAmount.selector;
@@ -1560,6 +1574,8 @@ contract HelperTest {
         selectors[8] = ClaimFacet.getBorrowerSurplusClaim.selector;
         selectors[9] = ClaimFacet.getOwedAtDefault.selector; // #2374
         selectors[10] = ClaimFacet.getOwedAtInternalMatch.selector; // #2427
+        selectors[11] = ClaimFacet.claimHeldForLender.selector; // #3629
+        selectors[12] = ClaimFacet.claimHeldForBorrower.selector; // #3629
         return selectors;
     }
 

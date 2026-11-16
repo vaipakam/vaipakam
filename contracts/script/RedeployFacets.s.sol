@@ -1541,7 +1541,7 @@ contract RedeployFacets is Script {
     }
 
     function _claimSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](11);
+        s = new bytes4[](13);
         s[0] = ClaimFacet.claimAsLender.selector;
         s[1] = ClaimFacet.claimAsBorrower.selector;
         s[2] = ClaimFacet.getClaimableAmount.selector;
@@ -1553,6 +1553,9 @@ contract RedeployFacets is Script {
         s[8] = ClaimFacet.getBorrowerSurplusClaim.selector;
         s[9] = ClaimFacet.getOwedAtDefault.selector; // #2374
         s[10] = ClaimFacet.getOwedAtInternalMatch.selector; // #2427
+        // #3629 — the mid-loan claims of held payments.
+        s[11] = ClaimFacet.claimHeldForLender.selector;
+        s[12] = ClaimFacet.claimHeldForBorrower.selector;
     }
 
     /// @dev #779 — the prior hand-list carried only 15 of ProfileFacet's 25

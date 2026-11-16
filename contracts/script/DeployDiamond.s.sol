@@ -63,6 +63,7 @@ import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
+import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
 import {CollateralLienFacet} from "../src/facets/CollateralLienFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
@@ -573,6 +574,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
             SignedOfferMatchFacet(ArtifactDeploy.deploy(type(SignedOfferMatchFacet).name));
         // #3410 — the loan clock's disclosure, split off LoanFacet (EIP-170).
         LoanClockFacet loanClockFacet = LoanClockFacet(ArtifactDeploy.deploy(type(LoanClockFacet).name));
+        // #3649 — the initiation fee's term schedule.
+        FeeLevelsFacet feeLevelsFacet = FeeLevelsFacet(ArtifactDeploy.deploy(type(FeeLevelsFacet).name));
         CollateralConcentrationFacet collateralConcentrationFacet =
             CollateralConcentrationFacet(ArtifactDeploy.deploy(type(CollateralConcentrationFacet).name));
         CollateralLienFacet collateralLienFacet = CollateralLienFacet(ArtifactDeploy.deploy(type(CollateralLienFacet).name));
@@ -624,7 +627,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](120);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](121);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -745,10 +748,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[115] = _buildCut(address(autoLifecycleSettingsFacet), _getAutoLifecycleSettingsSelectors());
         cuts[116] = _buildCut(address(precloseOffsetFacet), _getPrecloseOffsetSelectors());
         cuts[117] = _buildCut(address(loanClockFacet), _getLoanClockSelectors());
+        cuts[118] = _buildCut(address(feeLevelsFacet), _getFeeLevelsSelectors());
         // #3685 — the new-loan cap host and collateral concentration.
-        cuts[118] = _buildCut(address(collateralConcentrationFacet), _getCollateralConcentrationSelectors());
+        cuts[119] = _buildCut(address(collateralConcentrationFacet), _getCollateralConcentrationSelectors());
         // #3685 — the collateral-lien entries, split off EncumbranceMutateFacet.
-        cuts[119] = _buildCut(address(collateralLienFacet), _getCollateralLienSelectors());
+        cuts[120] = _buildCut(address(collateralLienFacet), _getCollateralLienSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1502,6 +1506,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("offerPriceGuardFacet", address(offerPriceGuardFacet));
         Deployments.writeFacet("signedOfferMatchFacet", address(signedOfferMatchFacet));
         Deployments.writeFacet("loanClockFacet", address(loanClockFacet));
+        Deployments.writeFacet("feeLevelsFacet", address(feeLevelsFacet));
         Deployments.writeFacet("collateralConcentrationFacet", address(collateralConcentrationFacet));
         Deployments.writeFacet("collateralLienFacet", address(collateralLienFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
@@ -2204,6 +2209,16 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[1] = LoanClockFacet.getSequencerOutageWindow.selector;
     }
 
+    /// @dev Selectors for `FeeLevelsFacet` (#3649) — the initiation fee's
+    ///      term schedule: its bounded setter, its getter and the quote.
+    function _getFeeLevelsSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](4);
+        s[0] = FeeLevelsFacet.setLoanInitiationFeeTerms.selector;
+        s[1] = FeeLevelsFacet.getLoanInitiationFeeTerms.selector;
+        s[2] = FeeLevelsFacet.quoteLoanInitiationFee.selector;
+        s[3] = FeeLevelsFacet.quoteExtensionFee.selector;
+    }
+
     function _getRepaySelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](3);
         s[0] = RepayFacet.repayLoan.selector;
@@ -2289,7 +2304,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         extension reserve. The consent and caps setters and readers
     ///         moved to {AutoLifecycleSettingsFacet} in #3410.
     function _getAutoLifecycleFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](6);
         // T-092 Phase 3 (#503) — extendLoanInPlace executor.
         s[0] = AutoLifecycleFacet.extendLoanInPlace.selector;
         // #2738 — when a loan may be extended (the keeper reads it).
@@ -2298,6 +2313,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[2] = AutoLifecycleFacet.fundExtendReserve.selector;
         s[3] = AutoLifecycleFacet.withdrawExtendReserve.selector;
         s[4] = AutoLifecycleFacet.getExtendFunding.selector;
+        // #3618 follow-up — the intent lend-until bound on an extension.
+        s[5] = AutoLifecycleFacet.getAutoExtendLendUntil.selector;
     }
 
     /// @notice T-092 Phase 1 (#499) — the auto-lifecycle consent surface:
@@ -2334,7 +2351,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[3] = EncumbranceMutateFacet.incrementOfferPrincipalLien.selector;
         // #954 — swap-to-repay close-out freeze helpers hosted here (EIP-170).
         s[4] = EncumbranceMutateFacet.freezeLenderProceeds.selector;
-        s[5] = EncumbranceMutateFacet.freezeOrPayBorrowerSurplus.selector;
+        s[5] = EncumbranceMutateFacet.holdBorrowerSurplus.selector;
         // #998 S10 (#1006) — fail-closed frozen-claimant markers (EIP-170 host).
         s[6] = EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector;
         s[7] = EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector;
@@ -2344,9 +2361,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[9] = EncumbranceMutateFacet.assertNotFrozenParty.selector;
         // #998 S10 (#1006) Class B — Active-loan inline lender-share pay-or-freeze
         // hosts (RepayPeriodicFacet + RepayFacet servicing paths, EIP-170).
-        s[10] = EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector;
-        s[11] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromPayer.selector;
-        s[12] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector;
+        s[10] = EncumbranceMutateFacet.holdActiveLenderResident.selector;
+        s[11] = EncumbranceMutateFacet.holdActiveLenderFromPayer.selector;
+        s[12] = EncumbranceMutateFacet.holdActiveLenderFromVault.selector;
         // #1132 (S10 central enforcement) — terminal-transition + both-holder
         // frozen-claimant register host (hosted here, not a separate facet, so it
         // is cut into every diamond that already cuts this mutate host).
@@ -2387,7 +2404,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getLenderIntentFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](18);
+        s = new bytes4[](19);
         s[0] = LenderIntentFacet.setLenderIntent.selector;
         s[1] = LenderIntentFacet.cancelLenderIntent.selector;
         s[2] = LenderIntentFacet.setLenderIntentEnabled.selector;
@@ -2409,6 +2426,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #625 WI-2a / WI-2c — the keeper discovery feeds, moved off MetricsFacet (#3618).
         s[16] = LenderIntentFacet.getActiveLenderIntents.selector;
         s[17] = LenderIntentFacet.getRollableIntentLoans.selector;
+        // #3629 — re-commit an open intent loan's held payments.
+        s[18] = LenderIntentFacet.recommitHeldToIntent.selector;
     }
 
     function _getRiskAccessFacetSelectors() internal pure returns (bytes4[] memory s) {
@@ -2755,7 +2774,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](11);
+        s = new bytes4[](13);
         s[0] = ClaimFacet.claimAsLender.selector;
         s[1] = ClaimFacet.claimAsBorrower.selector;
         s[2] = ClaimFacet.getClaimableAmount.selector;
@@ -2768,6 +2787,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[8] = ClaimFacet.getBorrowerSurplusClaim.selector;
         s[9] = ClaimFacet.getOwedAtDefault.selector; // #2374
         s[10] = ClaimFacet.getOwedAtInternalMatch.selector; // #2427
+        // #3629 — the mid-loan claims of held payments.
+        s[11] = ClaimFacet.claimHeldForLender.selector;
+        s[12] = ClaimFacet.claimHeldForBorrower.selector;
     }
 
     function _getAddCollateralSelectors() internal pure returns (bytes4[] memory s) {

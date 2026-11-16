@@ -48,6 +48,7 @@ contract OfferFillModeTest is SetupTest {
         uint64 expiresAt
     ) internal view returns (LibVaipakam.CreateOfferParams memory) {
         return LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: mockERC20,
             amount: amount,
@@ -88,6 +89,7 @@ contract OfferFillModeTest is SetupTest {
         internal returns (uint256)
     {
         LibVaipakam.CreateOfferParams memory p = LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Borrower,
             lendingAsset: mockERC20,
             amount: amount,

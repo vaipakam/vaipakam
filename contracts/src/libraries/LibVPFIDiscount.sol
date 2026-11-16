@@ -5,6 +5,7 @@ import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibVaultOutflow} from "./LibVaultOutflow.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibInitiationFee} from "./LibInitiationFee.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {LibInterestLedger} from "./LibInterestLedger.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -491,11 +492,33 @@ library LibVPFIDiscount {
      *                   whenever the Full opt-in was not confirmed (the dark
      *                   default, and every non-Full accept), so behaviour is
      *                   byte-identical to the pre-#1347 path.
+     * @param termDays   The loan's agreed term in days (#3649): the fee is
+     *                   the term rate of `LibInitiationFee`.
      * @return lifAsset  The discounted LIF in lending-asset wei.
      */
     function holdOnlyBorrowerLif(
         address borrower,
         uint256 principal,
+        uint256 termDays,
+        bool isLiquid,
+        bool fullMode
+    ) internal view returns (uint256 lifAsset) {
+        // baseLifAsset = the fee for the loan's agreed term (#3649,
+        // `LibInitiationFee`), replacing the flat `principal × LIF_BPS / BPS`;
+        // discounted = baseLifAsset × (BPS − d_borrower) / BPS.
+        lifAsset = borrowerLifDiscounted(
+            borrower, LibInitiationFee.feeOf(principal, termDays), isLiquid, fullMode
+        );
+    }
+
+    /// @notice `baseFee` (an initiation fee in the lending asset) after the
+    ///         borrower's discount: the hold-tier discount with consent,
+    ///         plus the Full bonus when `fullMode`, liquid only, capped at
+    ///         `MAX_FEE_DISCOUNT_BPS`. The acceptance charge and an
+    ///         extension's added fee (#3649) both take it.
+    function borrowerLifDiscounted(
+        address borrower,
+        uint256 baseFee,
         bool isLiquid,
         bool fullMode
     ) internal view returns (uint256 lifAsset) {
@@ -520,11 +543,7 @@ library LibVPFIDiscount {
                 dBorrower = LibVaipakam.MAX_FEE_DISCOUNT_BPS;
             }
         }
-        // baseLifAsset = principal × LIF_BPS / BPS  (§F3)
-        lifAsset = (principal * LibVaipakam.cfgLoanInitiationFeeBps()) /
-            LibVaipakam.BASIS_POINTS;
-        // discounted = baseLifAsset × (BPS − d_borrower) / BPS
-        lifAsset = (lifAsset * (LibVaipakam.BASIS_POINTS - dBorrower)) /
+        lifAsset = (baseFee * (LibVaipakam.BASIS_POINTS - dBorrower)) /
             LibVaipakam.BASIS_POINTS;
     }
 

@@ -310,6 +310,7 @@ FACETS=(
   "SignedOfferMatchFacet"
   # The loan clock's disclosure, split off LoanFacet (#3410).
   "LoanClockFacet"
+  "FeeLevelsFacet"
   # The new-loan cap host and the collateral-lien entries (#3685).
   "CollateralConcentrationFacet"
   "CollateralLienFacet"

@@ -73,6 +73,7 @@ contract SequencerOutageLoanClockTest is SetupTest {
         returns (LibVaipakam.CreateOfferParams memory)
     {
         return LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: mockERC20,
             amount: PRINCIPAL,

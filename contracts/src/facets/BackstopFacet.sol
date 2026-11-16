@@ -279,7 +279,7 @@ contract BackstopFacet is
         address vault = s.backstopVault;
         if (vault == address(0)) revert BackstopNotProvisioned();
         _requireDiamondTreasury();
-        if (!s.lenderIntent[vault][lend][coll].active) {
+        if (!s.lenderIntent[vault][lend][coll][LibVaipakam.PROTOCOL_INTENT_SLOT].active) {
             revert BackstopIntentInactive();
         }
         // The backstop lends treasury-held capital, and lending the protocol's
@@ -303,11 +303,11 @@ contract BackstopFacet is
         // what the backstop vault received (the treasury gave up `amount`).
         amount = LibDelivery.pushMeasured(lend, proxy, amount);
         LibVaipakam.recordVaultDeposit(vault, lend, amount);
-        LibEncumbrance.lienIntentCapital(vault, lend, coll, amount);
+        LibEncumbrance.lienIntentCapital(vault, lend, coll, LibVaipakam.PROTOCOL_INTENT_SLOT, amount);
         // #625 WI-2a — the backstop seeds intent capital DIRECTLY (not via
         // `fundLenderIntent`), so sync the discovery registry here too — else the
         // backstop's funded intent would never appear in the keeper feed.
-        LibVaipakam.syncIntentRegistry(vault, lend, coll);
+        LibVaipakam.syncIntentRegistry(vault, lend, coll, LibVaipakam.PROTOCOL_INTENT_SLOT);
         emit BackstopSeeded(lend, coll, amount);
     }
 
@@ -408,7 +408,7 @@ contract BackstopFacet is
         // exposure state, not on stable opt-in-time facts.)
         address bv = s.backstopVault;
         if (bv == address(0)) revert BackstopNotProvisioned();
-        if (!s.lenderIntent[bv][o.lendingAsset][o.collateralAsset].active) {
+        if (!s.lenderIntent[bv][o.lendingAsset][o.collateralAsset][LibVaipakam.PROTOCOL_INTENT_SLOT].active) {
             revert BackstopIntentInactive();
         }
         // Future deadline past the mandatory floor, strictly before expiry

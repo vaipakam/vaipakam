@@ -16,6 +16,7 @@ function intent(over: Partial<IntentSummary> = {}): IntentSummary {
     owner: '0x1111111111111111111111111111111111111111',
     lendingAsset: WETH,
     collateralAsset: TLIQ,
+    slot: 0,
     maxExposure: 10n * E18,
     minRateBps: 500n,
     maxInitLtvBps: 7000,
@@ -35,7 +36,7 @@ describe('what lenders stand ready to lend on a pair', () => {
     const r = standingReady(
       [
         intent(),
-        intent({ maxExposure: 3n * E18, livePrincipal: 2n * E18, availableCapital: 5n * E18, minRateBps: 400n, maxDurationDays: 90, maxInitLtvBps: 6000 }),
+        intent({ owner: '0x3333333333333333333333333333333333333333', maxExposure: 3n * E18, livePrincipal: 2n * E18, availableCapital: 5n * E18, minRateBps: 400n, maxDurationDays: 90, maxInitLtvBps: 6000 }),
       ],
       WETH,
       TLIQ.toUpperCase().replace('0X', '0x') as Hex,
@@ -57,11 +58,15 @@ describe('what lenders stand ready to lend on a pair', () => {
     expect(standingReady([intent({ owner: me })], WETH, TLIQ, NOW, { exclude: me.toUpperCase().replace('0X', '0x') as Hex })).toBeNull();
     expect(standingReady([intent({ owner: me }), intent()], WETH, TLIQ, NOW, { exclude: me })?.lenders).toBe(1);
   });
+  it('counts a lender with several intents on the pair once, and reads each intent for the figures', () => {
+    const r = standingReady([intent(), intent({ slot: 1, minRateBps: 300n, availableCapital: 3n * E18 })], WETH, TLIQ, NOW);
+    expect(r).toEqual({ lenders: 1, largest: 3n * E18, minRateBps: 300n, maxDays: 30, maxLtvBps: 7000 });
+  });
 });
 
 describe('lenders that choose their fillers', () => {
   it('are kept apart from the lenders any filler may fill against', () => {
-    const rows = [intent(), intent({ requiresKeeperAuth: true, minRateBps: 100n })];
+    const rows = [intent(), intent({ owner: '0x3333333333333333333333333333333333333333', requiresKeeperAuth: true, minRateBps: 100n })];
     expect(standingReady(rows, WETH, TLIQ, NOW)?.lenders).toBe(2);
     expect(standingReady(rows, WETH, TLIQ, NOW, { limited: false })?.minRateBps).toBe(intent().minRateBps);
     expect(standingReady(rows, WETH, TLIQ, NOW, { limited: true })?.minRateBps).toBe(100n);
@@ -111,7 +116,7 @@ describe('lend-until and pro-rata (#3618, #3619)', () => {
     expect(standingReady([intent({ lendUntil: NOW + DAY - 1n })], WETH, TLIQ, NOW)).toBeNull();
   });
   it('counts only lenders who opted in for a pro-rata request', () => {
-    const rows = [intent(), intent({ acceptsProRata: true, minRateBps: 900n })];
+    const rows = [intent(), intent({ owner: '0x3333333333333333333333333333333333333333', acceptsProRata: true, minRateBps: 900n })];
     const proRata = { ...fits, useFullTermInterest: false };
     expect(standingReady(rows, WETH, TLIQ, NOW, { request: fits })?.lenders).toBe(2);
     expect(standingReady(rows, WETH, TLIQ, NOW, { request: proRata })?.lenders).toBe(1);
