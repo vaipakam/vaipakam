@@ -64,9 +64,10 @@
       "why": "the borrower opens its own loan against its own token, under its own signed acceptance"
     },
     "CollectionOfferFacet.matchCollectionOffer(uint256,uint256,bytes32[])": {
-      "class": "gap",
-      "issue": "#3688",
-      "why": "pairs a collection offer with a posted borrower offer whose token is in the set, for the usual match share; the keeper matcher does not index collection offers yet"
+      "class": "keeper",
+      "pass": "matcher",
+      "flag": "COLLECTION_MATCH_ENABLED",
+      "evidence": "apps/keeper/src/collectionMatch.ts"
     },
     "ConsolidationFacet.consolidateCollateralToHolder(uint256)": {
       "class": "user",

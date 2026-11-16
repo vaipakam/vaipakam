@@ -57,6 +57,7 @@ import {
   RiskPreviewFacetABI,
   AdminFacetABI,
   LenderIntentFacetABI,
+  CollectionOfferFacetABI,
   ClaimFacetABI,
   ConfigFacetABI,
   DIAMOND_ABI_VIEM,
@@ -80,9 +81,12 @@ import { getChainConfigs } from './env';
 import {
   buildKeeperContext,
   passIsArmed,
+  subStepArmed,
   type KeeperContext,
 } from './keeper';
 import { reportSendError } from './submissionQueue';
+import { collectionMatchIO, readCollectionParents, runCollectionMatches } from './collectionMatch';
+import { d1EventLedger, type EventLedger } from './eventLedger';
 import { summarizeFailure, redactedError } from '@vaipakam/lib/errorDescription';
 import { revertErrorName } from '@vaipakam/lib/contractRevert';
 import { ROLL_MIN_VALUE_TO_GAS, judgeRollValue } from './rollGasFloor';
@@ -109,6 +113,7 @@ const MATCHER_ABI: Abi = [
   ...(RiskPreviewFacetABI as Abi), // previewIntent — split off RiskAccessFacet (#1104)
   ...(AdminFacetABI as Abi), // keepersPaused() self-gate (Codex #748 r3)
   ...(LenderIntentFacetABI as Abi), // rollIntentLoan — #625 WI-2c part 2b
+  ...(CollectionOfferFacetABI as Abi), // getCollectionOffer / matchCollectionOffer — #3688
 ];
 
 /** Pagination size for `getActiveOffersPaginated`. */
@@ -172,6 +177,15 @@ export interface OfferLite {
   lendingAsset: Address;
   collateralAsset: Address;
   durationDays: bigint;
+  /** The offer's rate (a lender's fixed rate; a borrower's floor). */
+  interestRateBps: bigint;
+  // The NFT legs' token identity (#3328): the match core pairs an NFT leg only
+  // with an offer naming the same token id and quantity, so the walk buckets
+  // on them ({@link bucketKey}). Zero on an ERC-20 leg.
+  tokenId: bigint;
+  quantity: bigint;
+  collateralTokenId: bigint;
+  collateralQuantity: bigint;
   // #625 WI-2c — borrower-side fields the auto-lend intent-fill pass needs to
   // pre-size a fill + pre-filter on the WI-3 guards before paying for a
   // `previewIntent` eth_call. (Carried on every offer; only read for borrowers.)
@@ -431,13 +445,26 @@ interface RollableIntentLoan {
   amount: bigint;
 }
 
-function bucketKey(o: OfferLite): string {
+/** The asset pair and leg types an offer trades (#3688): what a collection
+ *  offer and a borrower offer must share, whatever token the borrower names. */
+export function assetPairKey(o: OfferLite): string {
   return [
     o.lendingAsset.toLowerCase(),
     o.collateralAsset.toLowerCase(),
     o.assetType,
     o.collateralAssetType,
   ].join('|');
+}
+
+/** The walk's bucket: the asset pair, and on an NFT leg the token id and
+ *  quantity, since the match core refuses two offers naming different tokens
+ *  (`AssetMismatch`, #3328). Pairs it would refuse never share a bucket, so
+ *  they never use a preview. */
+function bucketKey(o: OfferLite): string {
+  const parts = [assetPairKey(o)];
+  if (o.assetType !== 0) parts.push(`t${o.tokenId}x${o.quantity}`);
+  if (o.collateralAssetType !== 0) parts.push(`c${o.collateralTokenId}x${o.collateralQuantity}`);
+  return parts.join('|');
 }
 
 /**
@@ -464,6 +491,11 @@ function liftOffer(raw: Record<string, unknown>): OfferLite {
     lendingAsset: raw['lendingAsset'] as Address,
     collateralAsset: raw['collateralAsset'] as Address,
     durationDays: BigInt(raw['durationDays'] as bigint | number),
+    interestRateBps: BigInt((raw['interestRateBps'] as bigint | number | undefined) ?? 0),
+    tokenId: BigInt((raw['tokenId'] as bigint | number | undefined) ?? 0),
+    quantity: BigInt((raw['quantity'] as bigint | number | undefined) ?? 0),
+    collateralTokenId: BigInt((raw['collateralTokenId'] as bigint | number | undefined) ?? 0),
+    collateralQuantity: BigInt((raw['collateralQuantity'] as bigint | number | undefined) ?? 0),
     amount: BigInt(raw['amount'] as bigint | number),
     amountMax: BigInt(raw['amountMax'] as bigint | number),
     amountFilled: BigInt(raw['amountFilled'] as bigint | number),
@@ -763,7 +795,7 @@ export function matchReceiptTimeoutMs(deadlineMs: number, nowMs: number): number
 
 /** `p`, or `fallback` once `deadlineMs` passes, whichever comes first. The
  *  call itself is not cancelled; its answer is just no longer waited for. */
-async function beforeDeadline<T>(p: Promise<T>, deadlineMs: number, fallback: T): Promise<T> {
+export async function beforeDeadline<T>(p: Promise<T>, deadlineMs: number, fallback: T): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<T>((resolve) => {
     timer = setTimeout(() => resolve(fallback), Math.max(0, deadlineMs - Date.now()));
@@ -1909,7 +1941,12 @@ export async function runMatchWalks(args: MatchWalkArgs): Promise<MatchWalkResul
 }
 
 /** One pass over a chain's order book. */
-async function runOfferMatcherTickForChain(ctx: KeeperContext, run: number, share: number): Promise<void> {
+async function runOfferMatcherTickForChain(
+  ctx: KeeperContext,
+  run: number,
+  share: number,
+  collectionLedger: EventLedger | null,
+): Promise<void> {
   // Codex #176 round-2 P2 — bound the chain's wall-time so a congested
   // chain can't starve later chains in the same cron tick. Each call
   // site checks `overBudget()` before doing more work.
@@ -1930,7 +1967,15 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext, run: number, shar
     if (!overBudget()) await runIntentRollPass(ctx, overBudget, 0, run);
     return;
   }
-  const { lenders, borrowers } = partitionByBucket(offers);
+  // #3688 — collection offers fill only through their own route, so they
+  // leave the ordinary walk (its preview would only answer
+  // `CollectionParent`) whether or not the collection step is armed.
+  const parents = await readCollectionParents(
+    ctx,
+    offers.filter((o) => o.offerType === OFFER_TYPE_LENDER),
+  );
+  const parentIds = new Set(parents.map((p) => p.offer.id));
+  const { lenders, borrowers } = partitionByBucket(offers.filter((o) => !parentIds.has(o.id)));
 
   // #3622 B2 — the fresh lane's offers and caps for this pass.
   const nowSec = Math.floor(Date.now() / 1000);
@@ -1977,12 +2022,38 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext, run: number, shar
     },
     log: (line) => console.log(`[matcher] chain=${ctx.chainId} ${line}`),
   });
-  const previewCalls = walk.previews;
+  let previewCalls = walk.previews;
   let submits = walk.submits;
-  const { uncertainBorrowers, capacitySpent } = walk;
+  const { uncertainBorrowers } = walk;
+  let capacitySpent = walk.capacitySpent;
   if (walk.lanePreviews > 0) {
     console.log(
       `[matcher] chain=${ctx.chainId} fresh lane: ${fresh.size} new or re-priced offer(s), ${walk.lanePreviews} preview(s), ${walk.laneSubmits} match(es) of ${walk.laneAttempts} sent (caps ${lane.previews} / ${lane.submits})`,
+    );
+  }
+
+  // #3688 — collection offers against the posted borrower offers, on what the
+  // walk left of the pass's caps: after the walk, so a lender offer naming
+  // the token is preferred, and before the Auto-lend fills, since a
+  // collection offer is a lender's explicit offer too.
+  if (collectionLedger && parents.length > 0 && !capacitySpent && !overBudget() && borrowers.size > 0) {
+    const allBorrowers = [...borrowers.values()].flat();
+    const c = await runCollectionMatches({
+      parents,
+      borrowers: allBorrowers,
+      run,
+      maxSims: MAX_PREVIEW_CALLS_PER_TICK - previewCalls,
+      maxSubmits: MAX_SUBMITS_PER_TICK - submits,
+      passEndMs: passEnd,
+      uncertainBorrowers,
+      io: collectionMatchIO(ctx, collectionLedger),
+      log: (line) => console.log(`[matcher] chain=${ctx.chainId} ${line}`),
+    });
+    previewCalls += c.sims;
+    submits += c.submits;
+    capacitySpent = capacitySpent || c.capacitySpent;
+    console.log(
+      `[matcher] chain=${ctx.chainId} collection offers: ${parents.length} open, ${c.sims} simulated, ${c.submits} matched`,
     );
   }
 
@@ -2043,6 +2114,10 @@ export async function runMatcher(env: Env, tick: PassTick): Promise<void> {
   const chains: ChainConfig[] = getChainConfigs(env);
   const run = runIndex(tick, 60_000);
   const share = freshLaneShare(env.MATCHER_FRESH_LANE_SHARE);
+  // #3688 — the collection-offer step, its own sub-flag (ships disarmed).
+  const collectionLedger = subStepArmed(env, 'matcher', 'collection offers', 'COLLECTION_MATCH_ENABLED')
+    ? d1EventLedger(env.DB)
+    : null;
   // Chains side by side (#2572 r5, `runWindow.ts` rule 1): one deadline covers
   // the pass, so in series a slow chain would spend every later chain's window.
   await Promise.all(
@@ -2051,7 +2126,7 @@ export async function runMatcher(env: Env, tick: PassTick): Promise<void> {
         const publicClient = createPublicClient({ transport: http(chain.rpc) });
         const ctx = buildKeeperContext(env, chain, publicClient, { notAfterMs: tick.deadlineMs });
         if (!ctx) return;
-        await runOfferMatcherTickForChain(ctx, run, share);
+        await runOfferMatcherTickForChain(ctx, run, share, collectionLedger);
       } catch (err) {
         console.error(
           `[matcher] chain=${chain.id} (${chain.name}) tick failed: ${summarizeFailure(err, 250)}`,

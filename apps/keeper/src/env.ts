@@ -246,6 +246,12 @@ interface BaseEnv {
    *  own free-tier service capacity. Read only while POSITION_UPKEEP_ENABLED
    *  arms the pass. */
   BACKSTOP_FILL_ENABLED?: string;
+  /** #3688 — 'true' adds the collection-offer step to the armed match pass:
+   *  `matchCollectionOffer` pairs a lender's NFT collection offer with a
+   *  posted borrower offer whose token is in the offer's set, each pair
+   *  simulated first. Read only while KEEPER_ENABLED arms the matcher.
+   *  `secret_text` like the flags above. Ships unset. */
+  COLLECTION_MATCH_ENABLED?: string;
   // Reward staging upkeep pass (#3097). `secret_text` like the flags above.
   /** 'true' arms the reward staging upkeep pass (in addition to
    *  KEEPER_ENABLED): the permissionless staging steps that move a reward
@@ -602,6 +608,7 @@ export const PLAIN_VAR_KEYS = [
   'STANDIN_REFRESH_ENABLED',
   'POSITION_UPKEEP_ENABLED',
   'BACKSTOP_FILL_ENABLED',
+  'COLLECTION_MATCH_ENABLED',
   'REWARD_STAGING_UPKEEP_ENABLED',
   'REWARD_STAGING_UNWIND_ENABLED',
   'EXPIRED_TEARDOWN_ENABLED',
@@ -808,6 +815,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     STANDIN_REFRESH_ENABLED: raw.STANDIN_REFRESH_ENABLED,
     POSITION_UPKEEP_ENABLED: raw.POSITION_UPKEEP_ENABLED,
     BACKSTOP_FILL_ENABLED: raw.BACKSTOP_FILL_ENABLED,
+    COLLECTION_MATCH_ENABLED: raw.COLLECTION_MATCH_ENABLED,
     REWARD_STAGING_UPKEEP_ENABLED: raw.REWARD_STAGING_UPKEEP_ENABLED,
     REWARD_STAGING_UNWIND_ENABLED: raw.REWARD_STAGING_UNWIND_ENABLED,
     EXPIRED_TEARDOWN_ENABLED: raw.EXPIRED_TEARDOWN_ENABLED,

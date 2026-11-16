@@ -35,7 +35,8 @@ function offer(
 ): OfferLite {
   return {
     id: BigInt(id), creator, offerType, accepted: false, assetType: 0, collateralAssetType: 0,
-    lendingAsset: opts.asset ?? addr(0xa1), collateralAsset: COLL, durationDays: 30n, amount: 100n,
+    lendingAsset: opts.asset ?? addr(0xa1), collateralAsset: COLL, durationDays: 30n,
+    interestRateBps: 0n, tokenId: 0n, quantity: 0n, collateralTokenId: 0n, collateralQuantity: 0n, amount: 100n,
     amountMax: 100n, amountFilled: 0n, interestRateBpsMax: 1000n, fillMode: 0,
     useFullTermInterest: true, allowsPartialRepay: false,
     createdAt: BigInt(opts.createdAt ?? 0), termsSetAt: BigInt(opts.termsSetAt ?? opts.createdAt ?? 0),

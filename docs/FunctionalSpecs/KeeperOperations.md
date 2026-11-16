@@ -302,6 +302,21 @@ evidence that the migration has completed.
   priority once for its creation; re-pricing it earns it again only after an
   hour, so repeated re-pricing buys no standing priority. One wallet's burst
   of new offers counts as one counterparty, as in the walk.
+- A lender's NFT collection offer (one offer funding several loans, one per
+  token in a stated set: a whole collection, a range of ids, or a listed set
+  proven against a root) is matched with posted borrower offers whose token
+  is in the set. A borrower offer qualifies only when it names the same
+  assets and token quantity, comes from another wallet, admits the offer's
+  term and rate, and wants exactly one loan of the offer's amount. An
+  excluded token never qualifies. A listed set is matched only from a list
+  the keeper holds and has checked against the offer: no id twice, the number
+  of ids the offer states, and the offer's root. An offer whose list is not
+  held, or does not check out, is left alone and the run log says why. Each
+  pair is simulated before it is sent. Offers take turns, one borrower each,
+  with a cap per offer per run, so one offer cannot use the budget the others
+  need. It runs after ordinary matching and before standing-intent fills, on
+  what is left of the run's limits, and ships disabled behind its own
+  activation.
 - Auto-roll is reserved for proceeds worth at least one hundred times the
   complete transaction fee, using protocol prices and every fee component
   the chain charges. An unreadable fee component is not zero. VPFI-principal
@@ -1519,9 +1534,9 @@ The master keeper switch and each duty's own arming choice are separate.
 The periodic-interest settler and grace auto-list each have their own
 disabled-by-default activation.
 Late acknowledgements, sanctions observation, reward-day
-automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, protocol upkeep, its prepay-sale sanctions sync, its tier-push retry, its tier-exclusion refresh, its reward-entry index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, vault-beacon upkeep, the hourly price checkpoints and the daily asset rankings must each
+automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, protocol upkeep, its prepay-sale sanctions sync, its tier-push retry, its tier-exclusion refresh, its reward-entry index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, collection-offer matching, vault-beacon upkeep, the hourly price checkpoints and the daily asset rankings must each
 disclose whether they are armed on the selected deployment. Reward-day
-automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, protocol upkeep, its sanctions sync, its tier-push retry, its tier-exclusion refresh, its index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, vault-beacon upkeep, the hourly price checkpoints and the daily asset rankings ship disabled and require
+automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, protocol upkeep, its sanctions sync, its tier-push retry, its tier-exclusion refresh, its index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, collection-offer matching, vault-beacon upkeep, the hourly price checkpoints and the daily asset rankings ship disabled and require
 deliberate activation. Deploying their software does not prove they run, that rewards have launched, or that custody or the
 expiry horizon has been activated. The mirror's day-delivery protection is
 required by its reward role, as stated in the current tokenomics spec; it is

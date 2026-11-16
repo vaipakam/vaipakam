@@ -141,9 +141,18 @@ export function listedProof(
   tokenId: bigint,
 ): Hex[] | null {
   const checked = checkPublishedList(ids, set);
-  if (!checked.ok) return null;
-  const at = checked.tree.leafIndex.get(tokenId);
+  return checked.ok ? treeProof(checked.tree, tokenId) : null;
+}
+
+/**
+ * The proof that `tokenId` is in a tree {@link checkPublishedList} accepted,
+ * or `null` when the id is not in it or the proof would be longer than the
+ * contract accepts. A reader proving many ids against one list checks the
+ * list once and calls this per id.
+ */
+export function treeProof(tree: Tree, tokenId: bigint): Hex[] | null {
+  const at = tree.leafIndex.get(tokenId);
   if (at === undefined) return null;
-  const proof = proofAt(checked.tree, at);
+  const proof = proofAt(tree, at);
   return proof.length > MAX_PROOF_DEPTH ? null : proof;
 }

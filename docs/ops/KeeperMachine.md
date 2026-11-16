@@ -531,6 +531,9 @@ journalctl -u vaipakam-keeper -f
    NFT-rental deduction; its backstop fill step also needs
    `BACKSTOP_FILL_ENABLED`, which lends treasury capital from the backstop
    vault and is an owner decision of its own),
+   `COLLECTION_MATCH_ENABLED` (a step of the `matcher` pass, which
+   `KEEPER_ENABLED` arms: matches NFT collection offers with posted
+   borrower offers whose token is in the offer's set, #3688),
    `EXPIRED_TEARDOWN_ENABLED` (`expiredTeardown`, hourly at :06),
    `VAULT_BEACON_UPKEEP_ENABLED` (`vaultBeaconUpkeep`, hourly at :26:
    applies VaultBeacon proposals, pins and pin-delay lowerings once due),
