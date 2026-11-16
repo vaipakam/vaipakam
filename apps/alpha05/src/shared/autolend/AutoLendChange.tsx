@@ -2,7 +2,10 @@ import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import type { TokenMetaMap } from '../reads/tokens';
 import type { IntentSummary } from '../offers/intents';
+import { useCopy } from '../copy/useCopy';
+import { TermsPrompt } from '../terms/TermsPrompt';
 import { useTerms } from '../terms/useTerms';
+import { useTermsGate } from '../terms/useTermsGate';
 import { useStoredValue } from '../tx/txStore';
 import { inputFromIntent, type AutoLendDraft, type AutoLendInput } from './autoLend';
 import { AutoLendForm } from './AutoLendForm';
@@ -40,19 +43,53 @@ interface AutoLendChangeProps {
  * replaces the recorded terms in place (`setLenderIntent` on the same pair),
  * so the review says what that resets: the wait before the next loan starts
  * again, a priority-routing opt-in is switched off, and loans already made
- * keep their own terms. Money may be added in the same transaction.
+ * keep their own terms. Money may be added in the same transaction. Like a
+ * setup, it is new exposure (OFF-35): when newer Terms are in force they are
+ * accepted first, through the same prompt, before the review opens.
  */
 export function AutoLendChange({ intent, restart, chain, own, meta, onClose }: AutoLendChangeProps) {
   const key = changeKeyFor(intent.lendingAsset, intent.collateralAsset);
+  const { text } = useCopy();
   const terms = useTerms();
+  const termsGate = useTermsGate(`${key}.terms`, chain, own);
   const [draft, setDraft] = useStoredValue<AutoLendDraft>(`${key}:draft`);
+  const [pending, setPending] = useStoredValue<AutoLendDraft>(`${key}:pending`);
   const [, setTyped] = useStoredValue<AutoLendInput>(`${key}:input`);
   const decimals = meta?.[intent.lendingAsset.toLowerCase()]?.decimals ?? null;
   const finish = () => {
     setDraft(null);
+    setPending(null);
     setTyped(null);
     onClose();
   };
+  const review = (next: AutoLendDraft) => {
+    if (terms.data?.kind === 'needed') {
+      setPending(next);
+      termsGate.start(terms.data);
+      return;
+    }
+    setDraft(next);
+  };
+  if (termsGate.session !== null) {
+    return (
+      <TermsPrompt
+        asker={text(restart ? 'autoLend.askerStart' : 'autoLend.askerChange')}
+        gate={termsGate}
+        session={termsGate.session}
+        chain={chain}
+        own={own}
+        onAccepted={() => {
+          termsGate.end();
+          if (pending !== null) setDraft(pending);
+          setPending(null);
+        }}
+        onClose={() => {
+          setPending(null);
+          termsGate.end();
+        }}
+      />
+    );
+  }
   if (draft !== null) {
     return <AutoLendSetup draft={draft} chain={chain} own={own} meta={meta} terms={terms.data} flowKey={key} onEdit={() => setDraft(null)} onClose={finish} />;
   }
@@ -67,7 +104,7 @@ export function AutoLendChange({ intent, restart, chain, own, meta, onClose }: A
       meta={meta}
       flowKey={key}
       change={{ initial: inputFromIntent(intent, decimals), restart }}
-      onReview={setDraft}
+      onReview={review}
       onCancel={finish}
     />
   );

@@ -1839,7 +1839,8 @@ above. Each resolves here, so a route reviewer needs no private file:
   loans already made keep their own terms, and a most-at-once at or below
   the amount counted against it makes no new loan until enough loans end.
   A smallest loan above the most at once, or above the money that would
-  wait, is refused before the dry run.
+  wait, is refused before the dry run. Like a setup it is new exposure, so
+  newer Terms in force are accepted first, through the same prompt.
 - **RB-PRICE-GUARD** — the maker's price-move guard (#3358) is shown on the
   page of an open or ended loan offer of a token against token collateral.
   Read at the offer's own block, it states the limit, when it was set, and whether

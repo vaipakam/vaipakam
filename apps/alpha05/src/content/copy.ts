@@ -4838,6 +4838,8 @@ export const copy = {
     legChanged: B('New limits recorded on this pair'),
     cChangeLabel: B('Change limits'),
     cStartLabel: B('Start again'),
+    askerChange: B('Changing this Auto-lend'),
+    askerStart: B('Starting this Auto-lend again'),
     mAddLabel: B('Add money'),
     mTakeBackLabel: B('Take back money not lent'),
     mStopLabel: B('Stop Auto-lend'),
