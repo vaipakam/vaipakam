@@ -270,16 +270,6 @@
             "name": "delivered",
             "type": "uint256",
             "internalType": "uint256"
-          },
-          {
-            "name": "lockGen",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "destGen",
-            "type": "uint64",
-            "internalType": "uint64"
           }
         ]
       }
@@ -309,44 +299,6 @@
     "type": "function",
     "name": "isEscapeOpen",
     "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "payoutNeedsCosign",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "payoutReleaseCancels",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
     "outputs": [
       {
         "name": "",
@@ -652,17 +604,6 @@
       },
       {
         "name": "free",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "CannotCosignOwnPayout",
-    "inputs": [
-      {
-        "name": "id",
         "type": "uint256",
         "internalType": "uint256"
       }

@@ -132,6 +132,50 @@
   },
   {
     "type": "function",
+    "name": "initRiskBounds",
+    "inputs": [
+      {
+        "name": "lendingAsset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "collateralAsset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "collateral",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "floor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tiered",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "amountCap",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "previewCreatorBlock",
     "inputs": [
       {
@@ -177,6 +221,11 @@
         "name": "collateralAsset",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "slot",
+        "type": "uint8",
+        "internalType": "uint8"
       },
       {
         "name": "counterpartyOfferId",

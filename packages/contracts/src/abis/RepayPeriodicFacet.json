@@ -187,12 +187,6 @@
         "internalType": "uint256"
       },
       {
-        "name": "borrowerExtraHeld",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
-      },
-      {
         "name": "settler",
         "type": "address",
         "indexed": true,
@@ -628,6 +622,17 @@
         "name": "key",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CollectionParentNotFillable",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

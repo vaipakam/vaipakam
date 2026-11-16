@@ -84,6 +84,12 @@ import ForcedSalePreviewFacetABI from './ForcedSalePreviewFacet.json';
 import OfferPriceGuardFacetABI from './OfferPriceGuardFacet.json';
 import SignedOfferMatchFacetABI from './SignedOfferMatchFacet.json';
 import LoanClockFacetABI from './LoanClockFacet.json';
+import MarketLedgerFacetABI from './MarketLedgerFacet.json';
+import InstantMarketFacetABI from './InstantMarketFacet.json';
+import InstantFillFacetABI from './InstantFillFacet.json';
+import InstantTakeoverFacetABI from './InstantTakeoverFacet.json';
+import OfferMaterializeFacetABI from './OfferMaterializeFacet.json';
+import CollectionOfferFacetABI from './CollectionOfferFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
 import OracleAdminFacetABI from './OracleAdminFacet.json';
@@ -220,9 +226,6 @@ import VaultBeaconABI from './VaultBeacon.json';
 import PositionNFTABI from './PositionNFT.json';
 import ProtocolRegistryABI from './ProtocolRegistry.json';
 import PriceGuardABI from './PriceGuard.json';
-// #3379 B2 — the vault code and its protected-mode rules (standalone).
-import VaipakamVaultImplementationABI from './VaipakamVaultImplementation.json';
-import VaultProtectionABI from './VaultProtection.json';
 
 export {
   OfferCreateFacetABI,
@@ -278,6 +281,12 @@ export {
   OfferPriceGuardFacetABI,
   SignedOfferMatchFacetABI,
   LoanClockFacetABI,
+  MarketLedgerFacetABI,
+  InstantMarketFacetABI,
+  InstantFillFacetABI,
+  InstantTakeoverFacetABI,
+  OfferMaterializeFacetABI,
+  CollectionOfferFacetABI,
   ClaimFacetABI,
   OracleFacetABI,
   OracleAdminFacetABI,
@@ -365,8 +374,6 @@ export {
   PositionNFTABI,
   ProtocolRegistryABI,
   PriceGuardABI,
-  VaipakamVaultImplementationABI,
-  VaultProtectionABI,
 };
 
 import type { Abi } from 'viem';

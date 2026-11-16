@@ -42,6 +42,25 @@
   },
   {
     "type": "function",
+    "name": "getAutoExtendLendUntil",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "lendUntil",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getAutoExtendWindow",
     "inputs": [
       {
@@ -401,6 +420,22 @@
     "type": "error",
     "name": "AutoExtendExpiryExceedsCap",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AutoExtendPastLendUntil",
+    "inputs": [
+      {
+        "name": "newEnd",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lendUntil",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
   },
   {
     "type": "error",
