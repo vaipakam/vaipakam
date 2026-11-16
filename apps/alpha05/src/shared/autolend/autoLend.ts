@@ -109,7 +109,10 @@ export function parseAutoLend(
   const typed = parseAmount(input.amount, decimals);
   const amount: typeof typed = change && !typed.ok && (typed.error === 'empty' || typed.error === 'zero') ? { ok: true, value: 0n } : typed;
   if (!amount.ok) errors.amount = amount.error;
-  const rate = parseRateBps(input.rate);
+  // The protocol takes a 0% lowest rate (any rate the borrower offers), so
+  // zero is a valid floor here, unlike the amount and the ceiling.
+  const typedRate = parseRateBps(input.rate);
+  const rate: typeof typedRate = !typedRate.ok && typedRate.error === 'zero' ? { ok: true, value: 0n } : typedRate;
   if (!rate.ok) errors.rate = rate.error;
   const ltv = parseRateBps(input.ltv);
   if (!ltv.ok) errors.ltv = ltv.error;

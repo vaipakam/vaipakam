@@ -1841,6 +1841,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   A smallest loan above the most at once, or above the money that would
   wait, is refused before the dry run. Like a setup it is new exposure, so
   newer Terms in force are accepted first, through the same prompt.
+  A 0% lowest rate is taken, as the protocol takes it, and shown as any
+  rate. While the token's decimals are read, or when they cannot be, the
+  change says so and can be closed, which keeps the card's other steps.
 - **RB-PRICE-GUARD** — the maker's price-move guard (#3358) is shown on the
   page of an open or ended loan offer of a token against token collateral.
   Read at the offer's own block, it states the limit, when it was set, and whether

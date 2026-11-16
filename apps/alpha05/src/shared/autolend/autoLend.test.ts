@@ -90,10 +90,10 @@ describe('the Auto-lend form', () => {
     expect(p).toMatchObject({ fund: 1_000_500_000n, minRateBps: 725n, maxInitLtvBps: 6500, maxDurationDays: 90, acceptsProRata: true, maxExposure: null, minFill: null });
   });
 
-  it('refuses more decimals than the token has, a zero rate and a term past the network’s longest', () => {
+  it('refuses more decimals than the token has and a term past the network’s longest, and takes a 0% lowest rate', () => {
     const p = parse({ amount: '1.0000001', rate: '0', days: '400' });
     expect(p.ok).toBe(false);
-    if (!p.ok) expect(p.errors).toEqual({ amount: 'decimals', rate: 'zero', days: 'high' });
+    if (!p.ok) expect(p.errors).toEqual({ amount: 'decimals', days: 'high' });
   });
 
   it('refuses an end date that is not after today, and keeps an empty one as none', () => {
@@ -211,6 +211,14 @@ describe('a change of an Auto-lend', () => {
     if (!p.ok) throw new Error(JSON.stringify(p.errors));
     return autoLendDraft(USDC, WETH, p.parsed, true);
   };
+
+  it('keeps a recorded 0% lowest rate, which the protocol takes as any rate', () => {
+    expect(change({ rate: '0' }).parsed.minRateBps).toBe(0n);
+    const fresh = parseAutoLend(input({ rate: '0' }), 6, 365, false, '2027-01-10');
+    expect(fresh.ok && fresh.parsed.minRateBps).toBe(0n);
+    // A zero ceiling is still refused.
+    expect(parseAutoLend(input({ ltv: '0' }), 6, 365, false, '2027-01-10').ok).toBe(false);
+  });
 
   it('may add nothing: an empty or zero amount adds none, and sends the terms alone', () => {
     expect(change().parsed.fund).toBe(0n);

@@ -93,8 +93,20 @@ export function AutoLendChange({ intent, restart, chain, own, meta, onClose }: A
   if (draft !== null) {
     return <AutoLendSetup draft={draft} chain={chain} own={own} meta={meta} terms={terms.data} flowKey={key} onEdit={() => setDraft(null)} onClose={finish} />;
   }
-  // The form opens on exact figures, so it waits for the token's decimals.
-  if (decimals === null) return null;
+  // The form opens on exact figures, so it waits for the token's decimals;
+  // while they are read, or when they cannot be, it says so and can close.
+  if (decimals === null) {
+    return (
+      <div className="card" data-testid="autolend-change-unread">
+        <p className="tier-a">{text(meta === null ? 'autoLend.changeReading' : 'autoLend.changeDecimalsUnread')}</p>
+        <p className="actions">
+          <button type="button" className="btn" onClick={finish}>
+            {text('autoLend.cancel')}
+          </button>
+        </p>
+      </div>
+    );
+  }
   return (
     <AutoLendForm
       chain={chain}

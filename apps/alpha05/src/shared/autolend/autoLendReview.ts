@@ -255,7 +255,11 @@ export function autoLendReceipt(r: AutoLendReview, meta: TokenMetaMap | null, co
     { label: text('autoLend.rowWhat'), value: { kind: 'text', text: format('autoLend.whatValue', { lend, coll }) }, binding: true },
     ...fundRows,
     { label: text('autoLend.rowExposure'), value: amount(exposure), binding: true },
-    { label: text('autoLend.rowRate'), value: { kind: 'text', text: format('autoLend.rateValue', { rate: bpsPercent(Number(p.minRateBps)) }) }, binding: true },
+    {
+      label: text('autoLend.rowRate'),
+      value: { kind: 'text', text: p.minRateBps === 0n ? text('autoLend.rateAny') : format('autoLend.rateValue', { rate: bpsPercent(Number(p.minRateBps)) }) },
+      binding: true,
+    },
     { label: text('autoLend.rowLtv'), value: { kind: 'text', text: format('autoLend.ltvValue', { ltv: bpsPercent(p.maxInitLtvBps) }) }, binding: true },
     { label: text('autoLend.rowDays'), value: { kind: 'text', text: format('autoLend.daysValue', { days: String(p.maxDurationDays) }) }, binding: true },
     {
