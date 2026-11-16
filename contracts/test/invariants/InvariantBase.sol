@@ -51,6 +51,7 @@ import {RepayPeriodicFacet} from "../../src/facets/RepayPeriodicFacet.sol";
 import {NumeraireConfigFacet} from "../../src/facets/NumeraireConfigFacet.sol";
 import {CollateralConcentrationFacet} from "../../src/facets/CollateralConcentrationFacet.sol";
 import {CollateralLienFacet} from "../../src/facets/CollateralLienFacet.sol";
+import {StandingInstructionFacet} from "../../src/facets/StandingInstructionFacet.sol";
 import {SaleFloorFacet} from "../../src/facets/SaleFloorFacet.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {MockSwapAdapter} from "../mocks/MockSwapAdapter.sol";
@@ -211,7 +212,7 @@ contract InvariantBase is Test {
         TestMutatorFacet mutatorFacet = new TestMutatorFacet();
         MetricsFacet metricsFacet = MetricsFacet(ArtifactDeploy.deploy(type(MetricsFacet).name));
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](48);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](49);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -453,6 +454,12 @@ contract InvariantBase is Test {
             facetAddress: ArtifactDeploy.deploy(type(CollateralLienFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getCollateralLienFacetSelectors()
+        });
+        // #3681 — the loan reserve and the standing instructions.
+        cuts[48] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(StandingInstructionFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getStandingInstructionFacetSelectors()
         });
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         LibTestForcedSalePreview.install(address(diamond));

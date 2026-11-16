@@ -55,6 +55,7 @@
     "FeeLevelsFacet",
     "CollateralConcentrationFacet",
     "CollateralLienFacet",
+    "StandingInstructionFacet",
     "ClaimFacet",
     "OracleFacet",
     "OracleAdminFacet",

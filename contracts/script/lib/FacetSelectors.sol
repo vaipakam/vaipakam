@@ -245,11 +245,13 @@ library FacetSelectors {
     ///         Its selectors are UNCHANGED by that work; only its bytecode
     ///         moved. It is a plain Replace of the whole surface.
     function repayPeriodic() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](5);
         s[0] = RepayPeriodicFacet.autoDeductDaily.selector;
         s[1] = RepayPeriodicFacet.nextPeriodCheckpoint.selector;
         s[2] = RepayPeriodicFacet.previewPeriodicSettle.selector;
         s[3] = RepayPeriodicFacet.settlePeriodicInterest.selector;
+        // #3681 — the one interest booking.
+        s[4] = RepayPeriodicFacet.bookInterestPayment.selector;
     }
 
     /// @notice Full external selector surface of {EncumbranceMutateFacet} (21).

@@ -47,6 +47,8 @@ import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 contract ForcedSalePeriodicTest is SetupTest {
     uint256 internal constant LOAN = 1;
     uint256 internal constant ADAPTER_IDX = 1; // index 0 is SetupTest's legacy shim
+    /// @dev The loan's stamped treasury share of interest (#1352 default).
+    uint256 internal constant TREASURY_BPS = LibVaipakam.TREASURY_FEE_BPS;
 
     MockSwapAdapter internal adapter;
     address internal settler = makeAddr("periodic-settler");
@@ -228,6 +230,9 @@ contract ForcedSalePeriodicTest is SetupTest {
         uint256 bonus = (d * 300) / 10_000;
         uint256 fee = (d * 200) / 10_000;
         uint256 extra = p.sell - bonus - d - fee; // 1:1 at zero slippage
+        // #3681 — the recovered interest bears the treasury's share at the
+        // loan's stamped rate, as any interest payment does.
+        uint256 cut = (d * TREASURY_BPS) / 10_000;
 
         uint256 lender0 = _bal(lender);
         uint256 borrower0 = _bal(borrower);
@@ -237,20 +242,20 @@ contract ForcedSalePeriodicTest is SetupTest {
 
         vm.expectEmit(true, true, true, true, address(diamond));
         emit ForcedSaleFacet.ForcedSaleSettled(
-            LOAN, 0, d, p.need, p.sell, p.sell, d, fee, bonus, extra,
+            LOAN, 0, d, p.need, p.sell, p.sell, d - cut, fee, bonus, extra,
             collateral0 - p.sell, true, settler
         );
         _settle();
 
         assertEq(_bal(lender), lender0, "nothing paid to the lender's wallet or free balance");
-        assertEq(_lenderHeld(), d, "the debt is held for the lender position");
+        assertEq(_lenderHeld(), d - cut, "the debt less the treasury share is held for the lender position");
         assertEq(_bal(settler) - settler0, bonus, "bonus 3% of the debt");
-        assertEq(_bal(address(diamond)) - diamond0, fee, "fee 2% of the debt");
+        assertEq(_bal(address(diamond)) - diamond0, fee + cut, "fee 2% of the debt, and the treasury share");
         assertEq(_bal(borrower), borrower0, "nothing paid to the borrower's wallet");
         assertEq(_held(), extra, "the extra is held for the borrower position");
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(LOAN);
         assertEq(l.collateralAmount, collateral0 - p.sell, "only the slice left the loan");
-        assertEq(l.interestSettled, d, "interestSettled rises by what the lender got");
+        assertEq(l.interestSettled, d, "interestSettled rises by the gross interest recovered");
     }
 
     /// @notice #3629 — both held parts are claimable while the loan runs, into
@@ -311,7 +316,7 @@ contract ForcedSalePeriodicTest is SetupTest {
         uint256 settler0 = _bal(settler);
         _settle();
 
-        assertEq(_lenderHeld(), d, "lender still owed the debt in full, held");
+        assertEq(_lenderHeld(), d - (d * TREASURY_BPS) / 10_000, "lender's net interest in full, held");
         assertEq(_bal(settler) - settler0, 0, "no bonus at the slippage cap");
         uint256 extra = _held();
         assertEq(extra, proceeds - d - fee, "the rest is the borrower's");

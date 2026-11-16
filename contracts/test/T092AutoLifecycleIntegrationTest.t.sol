@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
 import {AutoLifecycleSettingsFacet} from "../src/facets/AutoLifecycleSettingsFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -79,6 +80,11 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
 
     function _f() internal view returns (AutoLifecycleFacet) {
         return AutoLifecycleFacet(address(diamond));
+    }
+
+    /// @dev #3681 — the loan reserve's fund / withdraw entries.
+    function _si() internal view returns (StandingInstructionFacet) {
+        return StandingInstructionFacet(address(diamond));
     }
 
     /// @dev The consent and caps surface (#3410: AutoLifecycleSettingsFacet).
@@ -549,7 +555,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         ERC20Mock(mockERC20).mint(who, amount);
         vm.startPrank(who);
         ERC20(mockERC20).approve(address(diamond), amount);
-        _f().fundExtendReserve(loanId, amount);
+        _si().fundLoanReserve(loanId, 0, amount);
         vm.stopPrank();
     }
 
@@ -1794,14 +1800,14 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.prank(borrower);
         vm.expectRevert(
             abi.encodeWithSelector(
-                LibEncumbrance.ExtendReserveInsufficient.selector, loanId, borrower, 4 ether, 3 ether
+                LibEncumbrance.LoanReserveInsufficient.selector, loanId, borrower, uint8(0), 4 ether, 3 ether
             )
         );
-        _f().withdrawExtendReserve(borrower, loanId, 4 ether);
+        _si().withdrawLoanReserve(borrower, loanId, 0, 4 ether);
         vm.expectEmit(true, true, false, true, address(diamond));
-        emit AutoLifecycleFacet.ExtendReserveWithdrawn(loanId, borrower, mockERC20, 3 ether, 0);
+        emit StandingInstructionFacet.LoanReserveWithdrawn(loanId, borrower, 0, mockERC20, 3 ether, 0);
         vm.prank(borrower);
-        _f().withdrawExtendReserve(borrower, loanId, 3 ether);
+        _si().withdrawLoanReserve(borrower, loanId, 0, 3 ether);
         assertEq(ERC20(mockERC20).balanceOf(borrower), walletBefore + 3 ether, "back in the wallet");
         (, uint256 reserved, , , ) = _f().getExtendFunding(loanId, borrower);
         assertEq(reserved, 0, "nothing left reserved");
@@ -1818,7 +1824,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.expectRevert(
             abi.encodeWithSelector(LibProtectedAccount.NotAccountManager.selector, borrower, stranger)
         );
-        _f().withdrawExtendReserve(borrower, loanId, 3 ether);
+        _si().withdrawLoanReserve(borrower, loanId, 0, 3 ether);
     }
 
     /// @notice #2814 — a repayment leaves the reserve alone, and the depositor
@@ -1837,7 +1843,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         assertEq(chargeNow, 0, "a closed loan cannot be extended");
         uint256 walletBefore = ERC20(mockERC20).balanceOf(borrower);
         vm.prank(borrower);
-        _f().withdrawExtendReserve(borrower, loanId, 2 ether);
+        _si().withdrawLoanReserve(borrower, loanId, 0, 2 ether);
         assertEq(ERC20(mockERC20).balanceOf(borrower), walletBefore + 2 ether, "withdrawn after the close");
     }
 
@@ -1850,12 +1856,12 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         ERC20Mock(mockERC20).mint(lender, 1 ether);
         vm.startPrank(lender);
         ERC20(mockERC20).approve(address(diamond), 1 ether);
-        vm.expectRevert(AutoLifecycleFacet.NotBorrowerNftOwner.selector);
-        _f().fundExtendReserve(loanId, 1 ether);
+        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
+        _si().fundLoanReserve(loanId, 0, 1 ether);
         vm.stopPrank();
         vm.prank(borrower);
-        vm.expectRevert(AutoLifecycleFacet.ExtendReserveZeroAmount.selector);
-        _f().fundExtendReserve(loanId, 0);
+        vm.expectRevert(StandingInstructionFacet.LoanReserveZeroAmount.selector);
+        _si().fundLoanReserve(loanId, 0, 0);
         _admin().setAutoExtendEnabled(false);
         _fundReserve(loanId, borrower, 1 ether);
         (, uint256 reserved, , , ) = _f().getExtendFunding(loanId, borrower);
@@ -1878,12 +1884,12 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.prank(newHolder);
         vm.expectRevert(
             abi.encodeWithSelector(
-                LibEncumbrance.ExtendReserveInsufficient.selector, loanId, newHolder, 1, 0
+                LibEncumbrance.LoanReserveInsufficient.selector, loanId, newHolder, uint8(0), 1, 0
             )
         );
-        _f().withdrawExtendReserve(newHolder, loanId, 1);
+        _si().withdrawLoanReserve(newHolder, loanId, 0, 1);
         vm.prank(borrower);
-        _f().withdrawExtendReserve(borrower, loanId, 2 ether);
+        _si().withdrawLoanReserve(borrower, loanId, 0, 2 ether);
     }
 
     /// @notice #2814 Codex r1 — a rental loan's principal is the NFT contract,
@@ -1900,8 +1906,10 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         assertEq(asset, l.principalAsset, "the asset is still stated");
         assertEq(reserved + otherFree + chargeNow + chargeEnd, 0, "nothing to fund or charge");
         vm.prank(borrower);
-        vm.expectRevert(AutoLifecycleFacet.UnsupportedAssetTypeForExtend.selector);
-        _f().fundExtendReserve(loanId, 1 ether);
+        vm.expectRevert(
+            abi.encodeWithSelector(StandingInstructionFacet.LoanReserveNotOffered.selector, loanId, uint8(0))
+        );
+        _si().fundLoanReserve(loanId, 0, 1 ether);
     }
 
     // ─── #3649 — an extension pays the initiation fee for the added term ──

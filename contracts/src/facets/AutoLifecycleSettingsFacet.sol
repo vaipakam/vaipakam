@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibStandingInstructions} from "../libraries/LibStandingInstructions.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
@@ -96,6 +97,10 @@ contract AutoLifecycleSettingsFacet is DiamondReentrancyGuard, DiamondPausable {
     // ─── Errors ──────────────────────────────────────────────────────
 
     /// @notice Returned when caps are nonsensical (min > max, expiry in past, etc.).
+    /// @notice #3681 — the loan's due date already has a plan: the
+    ///         holder's "repay at the due date" standing instruction. Clear it
+    ///         first (`StandingInstructionFacet.clearStandingInstructions`).
+    error DueDatePlanExists(uint256 loanId);
     error InvalidCaps();
     /// @notice Returned when the loan isn't Active.
     error LoanNotActive();
@@ -219,6 +224,9 @@ contract AutoLifecycleSettingsFacet is DiamondReentrancyGuard, DiamondPausable {
         LibAuth.requireBorrowerNftOwner(loan);
 
         if (enabled) {
+            // #3681 — one plan for the due date: refused while the holder's
+            // "repay at the due date" standing instruction stands.
+            if (LibStandingInstructions.repayAtDueLive(s, loan)) revert DueDatePlanExists(loanId);
             // maxRateBps == 0 permitted — borrower may consent only
             // to a 0% refinance. But values above MAX_INTEREST_BPS
             // make the cap meaningless; reject them.
@@ -283,6 +291,8 @@ contract AutoLifecycleSettingsFacet is DiamondReentrancyGuard, DiamondPausable {
         LibAuth.requirePositionManager(loan.borrowerTokenId);
 
         _validateExtendCaps(enabled, minRateBps, maxRateBps, maxNewExpiry);
+        // #3681 — one plan for the due date (see {setAutoRefinanceCaps}).
+        if (enabled && LibStandingInstructions.repayAtDueLive(s, loan)) revert DueDatePlanExists(loanId);
 
         s.autoExtendBorrowerCaps[loanId] = LibVaipakam.AutoExtendCaps({
             enabled: enabled,

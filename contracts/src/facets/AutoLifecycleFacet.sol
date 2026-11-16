@@ -73,30 +73,10 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     // The consent events (`AutoLendConsentChanged` and the five caps events)
     // moved with their setters to `AutoLifecycleSettingsFacet` in #3410.
 
-    /// @notice #2814 — the borrower-position holder deposited `amount` of
-    ///         the loan's principal asset into their own vault, reserved for
-    ///         the loan's auto-extensions.
-    /// @param reserved What the holder has reserved for the loan after it.
-    /// @custom:event-category state-change/vault-mutation
-    event ExtendReserveFunded(
-        uint256 indexed loanId,
-        address indexed holder,
-        address asset,
-        uint256 amount,
-        uint256 reserved
-    );
-
-    /// @notice #2814 — a depositor withdrew `amount` of their unused
-    ///         extension reserve for the loan to their wallet.
-    /// @param reserved What the depositor still has reserved for the loan.
-    /// @custom:event-category state-change/vault-mutation
-    event ExtendReserveWithdrawn(
-        uint256 indexed loanId,
-        address indexed holder,
-        address asset,
-        uint256 amount,
-        uint256 reserved
-    );
+    // #3681 — the reserve's funding and withdrawal (and their events) moved
+    // to `StandingInstructionFacet`, which owns the loan reserve now that it
+    // also pays the standing instructions. An extension still draws it here
+    // ({_drawFromHolder}) and states the draw in {ExtendChargeDrawn}.
 
     /// @notice #2814 — an extension charged the borrower-position holder's
     ///         vault: `fromReserve` out of their reserve for the loan, and
@@ -217,9 +197,6 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     /// @notice T-092 #508 — the admin auto-extend kill switch is off (the
     ///         auto-lend one moved to `AutoLifecycleSettingsFacet`, #3410).
     error AutoExtendDisabled();
-    /// @notice #2814 — a reserve deposit or withdrawal of zero.
-    error ExtendReserveZeroAmount();
-
     /// @notice #1384 — the fee-entitlement reprice cross-facet call on
     ///         extension reverted (should be unreachable: the target is a
     ///         diamond-internal storage write).
@@ -318,101 +295,11 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         closesAt = LibLoanClock.graceEnd(loan);
     }
 
-    // ─── Extension reserve — #2814 ────────────────────────────────────
-
-    /// @notice #2814 — deposit `amount` of `loanId`'s principal asset from the
-    ///         caller's wallet into their own vault, reserved for that loan's
-    ///         auto-extensions. An extension charges the current
-    ///         borrower-position holder's vault, and this is the route by
-    ///         which that holder puts the principal asset there. The reserve
-    ///         is not free balance: only an extension's charge and
-    ///         {withdrawExtendReserve} take it out.
-    /// @dev    Only the current borrower-position holder may fund, because an
-    ///         extension draws only on that holder's vault. The reserve stays
-    ///         the depositor's if the position later moves: a new holder funds
-    ///         their own, and the depositor can withdraw theirs. Refused while
-    ///         the loan could not be extended at all (the loan not Active, not
-    ///         an ERC-20 loan, or on a periodic cadence), so no deposit sits
-    ///         behind an extension that cannot run. The auto-extend switch
-    ///         does not refuse it: the borrower's own direct extension stays
-    ///         open while the switch is off, and draws on this reserve too
-    ///         (#3175). Tier-1 sanctions-gated and refused for a paused asset (new
-    ///         custody), like {LenderIntentFacet.fundLenderIntent}. The caller
-    ///         approves the Diamond for exactly `amount` first.
-    /// @param loanId The loan whose extensions the reserve pays.
-    /// @param amount The amount of the loan's principal asset to deposit.
-    function fundExtendReserve(uint256 loanId, uint256 amount)
-        external
-        nonReentrant
-        whenNotPaused
-    {
-        LibVaipakam._assertNotSanctioned(msg.sender);
-        LibProtectedAccount.requireManager(msg.sender); // a retired wallet funds nothing
-        if (amount == 0) revert ExtendReserveZeroAmount();
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.Loan storage loan = s.loans[loanId];
-        // #3175 — no auto-extend switch check: the switch stops only the
-        // keeper-driven extension, and the reserve is the borrower's own
-        // money for their own direct extension too (owner decision
-        // 2026-11-05, "Free borrower").
-        if (loan.startTime == 0 || loan.status != LibVaipakam.LoanStatus.Active) {
-            revert LoanNotActive();
-        }
-        if (loan.assetType != LibVaipakam.AssetType.ERC20) {
-            revert UnsupportedAssetTypeForExtend();
-        }
-        if (loan.periodicInterestCadence != LibVaipakam.PeriodicInterestCadence.None) {
-            revert PeriodicCadenceMustSettleFirst();
-        }
-        if (LibPositionNFT.ownerOf(loan.borrowerTokenId) != msg.sender) revert NotBorrowerNftOwner();
-        address asset = loan.principalAsset;
-        LibFacet.requireAssetNotPaused(asset);
-        // Wallet -> the caller's own vault through the protocol chokepoint,
-        // which records the tracked balance and refuses a short arrival, then
-        // reserved for this loan.
-        LibFacet.crossFacetCall(
-            abi.encodeCall(VaultFactoryFacet.vaultDepositERC20, (msg.sender, asset, amount)),
-            IVaipakamErrors.VaultDepositFailed.selector
-        );
-        LibEncumbrance.lienExtendReserve(loanId, msg.sender, asset, amount);
-        emit ExtendReserveFunded(loanId, msg.sender, asset, amount, s.extendReserve[loanId][msg.sender]);
-    }
-
-    /// @notice #2814 — withdraw `amount` of `account`'s unused extension
-    ///         reserve for `loanId` from its vault to the caller, who must be
-    ///         the account's manager (its own wallet, or its controller once
-    ///         a replacement retired it).
-    /// @dev    Open whatever the loan's state, and whether or not the caller
-    ///         still holds the borrower position: the reserve is the
-    ///         depositor's own money. Tier-1 sanctions-gated (funds leave to
-    ///         the caller), like {LenderIntentFacet.withdrawLenderIntentCapital}.
-    ///         Reverts {LibEncumbrance.ExtendReserveInsufficient} past what is
-    ///         reserved.
-    function withdrawExtendReserve(address account, uint256 loanId, uint256 amount)
-        external
-        nonReentrant
-        whenNotPaused
-    {
-        // The account's manager: its own wallet, or its controller once a
-        // replacement retired it, so a recovered account's reserve is never
-        // stranded behind the lost key. Paid to the manager (a protected
-        // account's payout queues behind the delay).
-        LibProtectedAccount.requireManager(account);
-        LibVaipakam._assertNotSanctioned(msg.sender);
-        if (amount == 0) revert ExtendReserveZeroAmount();
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address asset = s.loans[loanId].principalAsset;
-        // Released BEFORE the withdraw, so the chokepoint's guard sees it free.
-        LibEncumbrance.unlienExtendReserve(loanId, account, asset, amount);
-        // The reserve back to the account's own wallet, or to its controller
-        // once a replacement retired it (#3205 part 2: the owner classes).
-        if (msg.sender == account) {
-            LibVaultOutflow.toOwner(account, LibVaultOutflow.ERC20, asset, 0, amount, OutflowReason.WITHDRAW);
-        } else {
-            LibVaultOutflow.toAllowlisted(account, LibVaultOutflow.ERC20, asset, 0, amount, msg.sender, OutflowReason.WITHDRAW);
-        }
-        emit ExtendReserveWithdrawn(loanId, account, asset, amount, s.extendReserve[loanId][account]);
-    }
+    // ─── Extension funding view — #2814 ──────────────────────────────
+    //
+    // The payment reserve an extension draws first is funded and withdrawn
+    // through `StandingInstructionFacet.fundLoanReserve` /
+    // `withdrawLoanReserve` (kind 0) since #3681.
 
     /// @notice #2814 — what `holder` has ready for `loanId`'s next
     ///         auto-extension, and what that extension would charge.
@@ -448,7 +335,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         asset = loan.principalAsset;
-        reserved = s.extendReserve[loanId][holder];
+        reserved = s.paymentReserve[loanId][holder];
         // Only an ERC-20 principal has a fungible balance to read: a rental's
         // principal is the NFT contract, whose `balanceOf` takes a token id.
         bool erc20 = loan.assetType == LibVaipakam.AssetType.ERC20;
@@ -990,9 +877,9 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     ) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address asset = loan.principalAsset;
-        uint256 reserved = s.extendReserve[loan.id][holder];
+        uint256 reserved = s.paymentReserve[loan.id][holder];
         uint256 fromReserve = reserved < amount ? reserved : amount;
-        LibEncumbrance.unlienExtendReserve(loan.id, holder, asset, fromReserve);
+        LibEncumbrance.unlienLoanReserve(loan.id, holder, 0, asset, fromReserve);
         LibDepositoryLedger.spend(holder, asset, 0, amount - fromReserve);
         emit ExtendChargeDrawn(loan.id, holder, asset, fromReserve, amount - fromReserve, reserved - fromReserve);
         LibVaultOutflow.toDiamondExact(holder, asset, amount, loan.id, reason);

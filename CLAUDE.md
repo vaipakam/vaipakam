@@ -117,6 +117,7 @@ Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))` — this
 | **CollateralConcentrationFacet** | The ONE host of the new-loan init-LTV cap and of collateral concentration (#3685): `newLoanInitLtvCapBps` (LoanFacet's admission gate and its snapshot, OfferPreviewFacet's match bounds, LibRiskMath's offer bounds and the offer book's logical ceiling all self-call it), the per-asset view `getConcentration`, the per-loan record `loanConcentrationAtInit`, and the bounded ADMIN settings. Concentration = value of the asset pledged under live collateral liens / the sale size its liquidity tier is measured at; at High the cap is the next lower tier's (lowest tier: its cap less a step), in both LTV regimes, and the views say whether that actually binds. **The cap is no longer computed inline anywhere**; read it here |
 | **CollateralLienFacet** | The four collateral-lien entries (`releaseCollateralLien`, `decrementCollateralLien`, `incrementCollateralLien`, `recreateCollateralLien`), split off `EncumbranceMutateFacet` in #3685 when the per-asset pledged total joined every lien change and that facet went over EIP-170. **They are NOT on EncumbranceMutateFacet any more.** LibEncumbrance stays the one writer of liens and of the pledged total |
 | **NotificationFeeFacet** | The paid-notification fee: `markNotifBilled` (`NOTIF_BILLER_ROLE`) and the wallet's own consent to it (`setNotificationFeeConsent` / `getNotificationFeeConsent`). Split off `LoanFacet` and `ProfileFacet` in #2769, when screening the payer pushed `LoanFacet` over EIP-170. **`markNotifBilled` is NOT on LoanFacet any more** |
+| **StandingInstructionFacet** | The borrower's standing instructions on a loan (#3681): the two per-loan reserves (`fundLoanReserve` / `withdrawLoanReserve`, kind 0 = the payment reserve, which the auto-extension also draws, kind 1 = the collateral reserve), `setStandingInstructions` / `clearStandingInstructions`, and the three permissionless executors `runCollateralTopUp`, `runInterestPayment` and `runDueRepayment`, each of which emits `StandingInstructionSkipped` with a reason instead of reverting when a run cannot go ahead. **`fundExtendReserve` / `withdrawExtendReserve` are NOT on AutoLifecycleFacet any more.** A reserve is the holder's own vault balance under a per-loan lien, never collateral. The interest payment books through `RepayPeriodicFacet.bookInterestPayment` (`LibInterestPayment`), the same booking the periodic forced sale uses, and the due repayment through `RepayFacet.repayLoanFromReserve`; a due-date plan (auto-extend or auto-refinance) and repay-at-due are mutually exclusive |
 
 **Refresh-together families (#1566 slices 2–3, #2472, #2440).** Each facet set
 below carries one behaviour across a self-call or a fill, so refreshing a subset
@@ -477,6 +478,18 @@ runs half of it on old code:
   or a fresh deploy. The app keeps the old approval route only where the
   Diamond lacks the route, a temporary bridge #3074 removes after the
   all-waves fresh deploy.
+
+- **RepayPeriodicFacet + ForcedSaleFacet + StandingInstructionFacet + RepayFacet
+  + AutoLifecycleFacet + AutoLifecycleSettingsFacet — interest booking and the
+  loan reserves (#3681).** Mid-loan interest is booked in ONE place,
+  `LibInterestPayment`, reached through `RepayPeriodicFacet.bookInterestPayment`:
+  the periodic forced sale and the reserve's interest payment both self-call it,
+  and it takes the treasury share (lender first on a short recovery) through the
+  fee host. Each caller advances the period its own way, once. The due repayment
+  self-calls `RepayFacet.repayLoanFromReserve`, and the auto-extension draws the
+  same payment reserve (`LibEncumbrance.unlienLoanReserve`). A seller or executor
+  refreshed without the host reverts `FunctionDoesNotExist` (a hard revert, never
+  an unbooked payment). Cross it by fresh deploy or `RefreshAllFacetsInPlace`.
 
 - **The collateral pledged total (#3685).** Every collateral lien change
   moves `collateralPledged[asset]` inside `LibEncumbrance`, which is inlined

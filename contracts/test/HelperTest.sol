@@ -121,6 +121,7 @@ import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
 import {CollateralLienFacet} from "../src/facets/CollateralLienFacet.sol";
+import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -1011,6 +1012,20 @@ contract HelperTest {
 
     /// @dev #3685 — the collateral-lien entries, split off
     ///      EncumbranceMutateFacet. Mirrors `DeployDiamond._getCollateralLienSelectors`.
+    function getStandingInstructionFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](10);
+        selectors[0] = StandingInstructionFacet.fundLoanReserve.selector;
+        selectors[1] = StandingInstructionFacet.withdrawLoanReserve.selector;
+        selectors[2] = StandingInstructionFacet.setStandingInstructions.selector;
+        selectors[3] = StandingInstructionFacet.clearStandingInstructions.selector;
+        selectors[4] = StandingInstructionFacet.runCollateralTopUp.selector;
+        selectors[5] = StandingInstructionFacet.runInterestPayment.selector;
+        selectors[6] = StandingInstructionFacet.runDueRepayment.selector;
+        selectors[7] = StandingInstructionFacet.getLoanReserve.selector;
+        selectors[8] = StandingInstructionFacet.getStandingInstructionConfig.selector;
+        selectors[9] = StandingInstructionFacet.setStandingInstructionConfig.selector;
+    }
+
     function getCollateralLienFacetSelectors() public pure returns (bytes4[] memory selectors) {
         selectors = new bytes4[](4);
         selectors[0] = CollateralLienFacet.releaseCollateralLien.selector;
@@ -1024,10 +1039,11 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3); // Adjust count
+        selectors = new bytes4[](4);
         selectors[0] = RepayFacet.repayLoan.selector;
         selectors[1] = RepayFacet.repayPartial.selector;
         selectors[2] = RepayFacet.calculateRepaymentAmount.selector;
+        selectors[3] = RepayFacet.repayLoanFromReserve.selector;
     }
 
     /// Issue #66 — periodic-interest + NFT-rental daily-deduction
@@ -1038,11 +1054,12 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](5);
         selectors[0] = RepayPeriodicFacet.autoDeductDaily.selector;
         selectors[1] = RepayPeriodicFacet.previewPeriodicSettle.selector;
         selectors[2] = RepayPeriodicFacet.nextPeriodCheckpoint.selector;
         selectors[3] = RepayPeriodicFacet.settlePeriodicInterest.selector;
+        selectors[4] = RepayPeriodicFacet.bookInterestPayment.selector;
     }
 
     /// T-090 — Borrower-initiated swap-to-repay facet selectors.
@@ -1120,17 +1137,16 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](6);
+        selectors = new bytes4[](4);
         // T-092 Phase 3 (#503) — extendLoanInPlace executor.
         selectors[0] = AutoLifecycleFacet.extendLoanInPlace.selector;
         // #2738 — when a loan may be extended (the keeper reads it).
         selectors[1] = AutoLifecycleFacet.getAutoExtendWindow.selector;
-        // #2814 — the extension reserve: fund, withdraw, and what is ready.
-        selectors[2] = AutoLifecycleFacet.fundExtendReserve.selector;
-        selectors[3] = AutoLifecycleFacet.withdrawExtendReserve.selector;
-        selectors[4] = AutoLifecycleFacet.getExtendFunding.selector;
+        // #2814 — what an extension has ready (funded and withdrawn on
+        // StandingInstructionFacet since #3681).
+        selectors[2] = AutoLifecycleFacet.getExtendFunding.selector;
         // #3618 follow-up — the intent lend-until bound on an extension.
-        selectors[5] = AutoLifecycleFacet.getAutoExtendLendUntil.selector;
+        selectors[3] = AutoLifecycleFacet.getAutoExtendLendUntil.selector;
     }
 
     /// @notice T-092 Phase 1 (#499) — the auto-lifecycle consent surface,

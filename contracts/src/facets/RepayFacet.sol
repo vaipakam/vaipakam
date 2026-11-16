@@ -199,6 +199,29 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
      * @param loanId The loan ID to repay.
      */
     function repayLoan(uint256 loanId) external nonReentrant {
+        _repayLoan(loanId, address(0));
+    }
+
+    /// @notice #3681 — {repayLoan} paid from `holder`'s payment reserve for
+    ///         the loan instead of the caller's wallet: the "repay at the due
+    ///         date" standing instruction. Same amounts, splits and events as
+    ///         a manual repayment; the reserve is drawn for exactly what the
+    ///         repayment charges (refused, with nothing changed, if short).
+    /// @dev    Reached only by self-call from
+    ///         `StandingInstructionFacet.runDueRepayment`, which holds the
+    ///         Diamond's reentrancy guard and has checked that `holder` still
+    ///         holds the borrower position. ERC-20 loans only.
+    function repayLoanFromReserve(uint256 loanId, address holder) external {
+        if (msg.sender != address(this)) revert IVaipakamErrors.UnauthorizedCrossFacetCall();
+        _repayLoan(loanId, holder);
+    }
+
+    /// @dev The one repayment. `reserveHolder == address(0)`: the caller pays
+    ///      from their wallet. Otherwise `reserveHolder`'s payment reserve
+    ///      pays, and `reserveHolder` is the payer every check and event
+    ///      names.
+    function _repayLoan(uint256 loanId, address reserveHolder) private {
+        address payer = reserveHolder == address(0) ? msg.sender : reserveHolder;
         // T-090 v1.1 (#389) §5.8 — block voluntary close while an
         // intent-based swap-to-repay commit is live: its lot is promised
         // to a live LOP order that may still fill, so closing the loan
@@ -261,9 +284,9 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
         // there since rental fees are deducted from a borrower-funded
         // prepay vault regardless of caller.
         if (loan.assetType == LibVaipakam.AssetType.ERC20) {
-            if (msg.sender == loan.lender) revert LenderCannotRepayOwnLoan();
+            if (payer == loan.lender) revert LenderCannotRepayOwnLoan();
             if (
-                LibPositionNFT.ownerOf(loan.lenderTokenId) == msg.sender
+                LibPositionNFT.ownerOf(loan.lenderTokenId) == payer
             ) revert LenderCannotRepayOwnLoan();
         }
 
@@ -342,37 +365,41 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // Skipped entirely when the VPFI discount path satisfied it.
             // #1281-011 — through the one payer -> treasury pull, which
             // refuses a short arrival by name.
-            LibFacet.transferFromPayerToTreasury(msg.sender, loan.principalAsset, plan.treasuryShare);
+            if (reserveHolder == address(0)) {
+                LibFacet.transferFromPayerToTreasury(msg.sender, loan.principalAsset, plan.treasuryShare);
 
-            // T-037 — Lender's due: borrower → lender's vault in ONE
-            // transfer. The Diamond carries the borrower's allowance
-            // (granted by the prior `approve()`) so the chokepoint's
-            // cross-payer variant pushes the asset from the borrower's
-            // wallet into the lender's vault without ever residing
-            // on the Diamond. Routing through `vaultDepositERC20From`
-            // ensures the protocolTrackedVaultBalance counter ticks
-            // up under the LENDER (the owner of the receiving vault,
-            // not the borrower who's the payer).
-            // #821 — vault-lock: a flagged stored lender would otherwise brick
-            // this deposit (the receiving-vault screen reverts). Pin the
-            // receive-side exemption to `loan.lender` so the close-out completes
-            // and the borrower's debt clears; the proceeds land in the lender's
-            // OWN (protocol-tracked) vault, frozen behind the Tier-1 claim gate
-            // (the `claimAsLender` stored-owner screen) until the flag clears.
-            LibSanctionedLock.begin(s, loan.lender);
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultDepositERC20From.selector,
-                    msg.sender,        // payer — borrower
-                    loan.lender,       // user — lender, owns the receiving vault
-                    loan.principalAsset,
-                    plan.lenderDue
-                ),
-                VaultDepositFailed.selector
-            );
-            LibSanctionedLock.end(
-                s, loan.lender, loanId, loan.principalAsset, plan.lenderDue
-            );
+                // T-037 — Lender's due: borrower → lender's vault in ONE
+                // transfer. The Diamond carries the borrower's allowance
+                // (granted by the prior `approve()`) so the chokepoint's
+                // cross-payer variant pushes the asset from the borrower's
+                // wallet into the lender's vault without ever residing
+                // on the Diamond. Routing through `vaultDepositERC20From`
+                // ensures the protocolTrackedVaultBalance counter ticks
+                // up under the LENDER (the owner of the receiving vault,
+                // not the borrower who's the payer).
+                // #821 — vault-lock: a flagged stored lender would otherwise brick
+                // this deposit (the receiving-vault screen reverts). Pin the
+                // receive-side exemption to `loan.lender` so the close-out completes
+                // and the borrower's debt clears; the proceeds land in the lender's
+                // OWN (protocol-tracked) vault, frozen behind the Tier-1 claim gate
+                // (the `claimAsLender` stored-owner screen) until the flag clears.
+                LibSanctionedLock.begin(s, loan.lender);
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        VaultFactoryFacet.vaultDepositERC20From.selector,
+                        msg.sender,        // payer — borrower
+                        loan.lender,       // user — lender, owns the receiving vault
+                        loan.principalAsset,
+                        plan.lenderDue
+                    ),
+                    VaultDepositFailed.selector
+                );
+                LibSanctionedLock.end(
+                    s, loan.lender, loanId, loan.principalAsset, plan.lenderDue
+                );
+            } else {
+                _payFromReserve(loan, reserveHolder, plan.treasuryShare, plan.lenderDue);
+            }
             // #998 S10 (#1006 / #1132) — both holders' fail-closed markers are
             // recorded centrally at the `Repaid` transition (terminalizeFromAny).
 
@@ -653,7 +680,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
         // library just transitioned to (typically `Repaid`).
         emit LoanRepaid(
             loanId,
-            msg.sender,
+            payer,
             interest,
             lateFee,
             /* outstandingPrincipal */ 0,
@@ -1021,6 +1048,27 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             );
             if (hfAfter < hfBefore) revert PartialRepayWorsensHealthFactor(hfBefore, hfAfter);
         }
+    }
+
+    /// @dev #3681 — the reserve-paid legs of a full repayment: the holder's
+    ///      payment reserve is released and drawn into the Diamond for exactly
+    ///      the treasury share plus the lender's due (refused unless all of it
+    ///      arrives), then the treasury share goes through the fee host and
+    ///      the lender's due into the stored lender's vault, refused unless
+    ///      it all arrives (a voluntary repayment, as from the wallet).
+    function _payFromReserve(
+        LibVaipakam.Loan storage loan,
+        address holder,
+        uint256 treasuryShare,
+        uint256 lenderDue
+    ) private {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address asset = loan.principalAsset;
+        uint256 total = treasuryShare + lenderDue;
+        LibEncumbrance.unlienLoanReserve(loan.id, holder, 0, asset, total);
+        LibVaultOutflow.toDiamondExact(holder, asset, total, loan.id, OutflowReason.STANDING_INSTRUCTION);
+        LibFacet.transferToTreasury(asset, treasuryShare);
+        LibSanctionedLock.depositLockedInFull(s, loan.lender, loan.id, asset, lenderDue);
     }
 
     /**

@@ -235,5 +235,6 @@ library OutflowReason {
     uint8 internal constant LISTING_ESCROW = 20; // an ERC-1155 listing's lot into its escrow
     uint8 internal constant SANCTIONED_LOCK = 21; // a sanctioned party's share into its lock
     uint8 internal constant RENTAL = 22; // a rental settlement leg
+    uint8 internal constant STANDING_INSTRUCTION = 23; // #3681: a standing instruction's draw on a loan reserve
 
 }

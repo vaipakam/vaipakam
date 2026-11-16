@@ -92,6 +92,7 @@ import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
 import {CollateralLienFacet} from "../src/facets/CollateralLienFacet.sol";
+import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
@@ -332,7 +333,11 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // 120 -> 121: CollateralLienFacet (#3685) - the collateral-lien entries,
     // split off EncumbranceMutateFacet for EIP-170. Their selectors move
     // hosts, so the Replace cut repoints them.
-    uint256 public constant EXPECTED_FACETS = 121;
+    // 121 -> 122: StandingInstructionFacet (#3681) - the loan reserve and
+    // the standing instructions. Its selectors are new (Adds), and the
+    // reserve entries it takes over from AutoLifecycleFacet are retired
+    // (swept as stale routes).
+    uint256 public constant EXPECTED_FACETS = 122;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1426,6 +1431,11 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         );
         items[120] = Item(
             "collateralLienFacet", ArtifactDeploy.deploy(type(CollateralLienFacet).name), _getCollateralLienSelectors()
+        );
+        items[121] = Item(
+            "standingInstructionFacet",
+            ArtifactDeploy.deploy(type(StandingInstructionFacet).name),
+            _getStandingInstructionSelectors()
         );
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /

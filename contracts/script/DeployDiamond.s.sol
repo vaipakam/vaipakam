@@ -66,6 +66,7 @@ import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
 import {CollateralLienFacet} from "../src/facets/CollateralLienFacet.sol";
+import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {VaultProtection} from "../src/vault/VaultProtection.sol";
@@ -579,6 +580,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         CollateralConcentrationFacet collateralConcentrationFacet =
             CollateralConcentrationFacet(ArtifactDeploy.deploy(type(CollateralConcentrationFacet).name));
         CollateralLienFacet collateralLienFacet = CollateralLienFacet(ArtifactDeploy.deploy(type(CollateralLienFacet).name));
+        StandingInstructionFacet standingInstructionFacet =
+            StandingInstructionFacet(ArtifactDeploy.deploy(type(StandingInstructionFacet).name));
         // #1841 - the one sale-exit verdict: the lender exit chooser's view and
         // the guard both sale entries self-call.
         SaleExitVerdictFacet saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
@@ -627,7 +630,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](121);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](122);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -753,6 +756,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[119] = _buildCut(address(collateralConcentrationFacet), _getCollateralConcentrationSelectors());
         // #3685 — the collateral-lien entries, split off EncumbranceMutateFacet.
         cuts[120] = _buildCut(address(collateralLienFacet), _getCollateralLienSelectors());
+        // #3681 — standing instructions and the loan reserve.
+        cuts[121] = _buildCut(address(standingInstructionFacet), _getStandingInstructionSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1509,6 +1514,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("feeLevelsFacet", address(feeLevelsFacet));
         Deployments.writeFacet("collateralConcentrationFacet", address(collateralConcentrationFacet));
         Deployments.writeFacet("collateralLienFacet", address(collateralLienFacet));
+        Deployments.writeFacet("standingInstructionFacet", address(standingInstructionFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
         Deployments.writeFacet("refinancePayoffFacet", address(refinancePayoffFacet));
@@ -2200,6 +2206,22 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[3] = CollateralLienFacet.recreateCollateralLien.selector;
     }
 
+    /// @dev Selectors for `StandingInstructionFacet` (#3681) — the loan
+    ///      reserve, the standing instructions, their executors and views.
+    function _getStandingInstructionSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](10);
+        s[0] = StandingInstructionFacet.fundLoanReserve.selector;
+        s[1] = StandingInstructionFacet.withdrawLoanReserve.selector;
+        s[2] = StandingInstructionFacet.setStandingInstructions.selector;
+        s[3] = StandingInstructionFacet.clearStandingInstructions.selector;
+        s[4] = StandingInstructionFacet.runCollateralTopUp.selector;
+        s[5] = StandingInstructionFacet.runInterestPayment.selector;
+        s[6] = StandingInstructionFacet.runDueRepayment.selector;
+        s[7] = StandingInstructionFacet.getLoanReserve.selector;
+        s[8] = StandingInstructionFacet.getStandingInstructionConfig.selector;
+        s[9] = StandingInstructionFacet.setStandingInstructionConfig.selector;
+    }
+
     /// @dev Selectors for `LoanClockFacet` (#3410) — the loan clock's
     ///      disclosure: a loan's deadlines (#668 / #935, moved off LoanFacet)
     ///      and the sequencer outage that moves them.
@@ -2220,10 +2242,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getRepaySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = RepayFacet.repayLoan.selector;
         s[1] = RepayFacet.repayPartial.selector;
         s[2] = RepayFacet.calculateRepaymentAmount.selector;
+        // #3681 — the repayment paid from the holder's payment reserve.
+        s[3] = RepayFacet.repayLoanFromReserve.selector;
     }
 
     /// @dev Issue #66 — the NFT-rental daily-deduction loop and the
@@ -2236,11 +2260,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](4);
+        s = new bytes4[](5);
         s[0] = RepayPeriodicFacet.autoDeductDaily.selector;
         s[1] = RepayPeriodicFacet.previewPeriodicSettle.selector;
         s[2] = RepayPeriodicFacet.nextPeriodCheckpoint.selector;
         s[3] = RepayPeriodicFacet.settlePeriodicInterest.selector;
+        // #3681 — the one interest booking (sale and standing instruction).
+        s[4] = RepayPeriodicFacet.bookInterestPayment.selector;
     }
 
     /// T-090 — Borrower-initiated swap-to-repay facet selectors.
@@ -2304,17 +2330,16 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         extension reserve. The consent and caps setters and readers
     ///         moved to {AutoLifecycleSettingsFacet} in #3410.
     function _getAutoLifecycleFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](6);
+        s = new bytes4[](4);
         // T-092 Phase 3 (#503) — extendLoanInPlace executor.
         s[0] = AutoLifecycleFacet.extendLoanInPlace.selector;
         // #2738 — when a loan may be extended (the keeper reads it).
         s[1] = AutoLifecycleFacet.getAutoExtendWindow.selector;
-        // #2814 — the extension reserve: fund, withdraw, and what is ready.
-        s[2] = AutoLifecycleFacet.fundExtendReserve.selector;
-        s[3] = AutoLifecycleFacet.withdrawExtendReserve.selector;
-        s[4] = AutoLifecycleFacet.getExtendFunding.selector;
+        // #2814 — what an extension has ready (the payment reserve is funded
+        // and withdrawn on StandingInstructionFacet since #3681).
+        s[2] = AutoLifecycleFacet.getExtendFunding.selector;
         // #3618 follow-up — the intent lend-until bound on an extension.
-        s[5] = AutoLifecycleFacet.getAutoExtendLendUntil.selector;
+        s[3] = AutoLifecycleFacet.getAutoExtendLendUntil.selector;
     }
 
     /// @notice T-092 Phase 1 (#499) — the auto-lifecycle consent surface:

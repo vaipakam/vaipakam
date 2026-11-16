@@ -186,6 +186,26 @@ library LibVaipakam {
     uint8 constant CONCENTRATION_CAUTION = 1;
     uint8 constant CONCENTRATION_HIGH = 2;
 
+    // ─── #3681 — standing instructions ──────────────────────────────
+    // Defaults and outer bounds for the governed settings (health factors
+    // 1e18-scaled). Changed only by ADMIN_ROLE, the Timelock after handover.
+    uint64 constant STANDING_TRIGGER_MIN_HF_DEFAULT = 1.05e18;
+    uint64 constant STANDING_TRIGGER_MAX_HF_DEFAULT = 1.45e18;
+    uint64 constant STANDING_TARGET_MAX_HF_DEFAULT = 2e18;
+    uint64 constant STANDING_MIN_MARGIN_HF_DEFAULT = 0.05e18;
+    uint32 constant STANDING_TOPUP_INTERVAL_DEFAULT = 1 hours;
+    /// @dev No governed value may set a trigger at or below 1.0 (the
+    ///      liquidation line) or a target above 3.0.
+    uint64 constant STANDING_HF_FLOOR = 1e18;
+    uint64 constant STANDING_TARGET_CEILING = 3e18;
+    uint64 constant STANDING_MIN_MARGIN_FLOOR = 0.01e18;
+    uint64 constant STANDING_MIN_MARGIN_CEILING = 0.5e18;
+    uint32 constant STANDING_TOPUP_INTERVAL_MIN = 5 minutes;
+    uint32 constant STANDING_TOPUP_INTERVAL_MAX = 1 days;
+    /// @dev The due-date repayment may run at most this long before the due
+    ///      date (the holder's own setting, 0 = at the due date).
+    uint32 constant STANDING_REPAY_LEAD_MAX = 1 days;
+
     uint256 constant FLOOR_SIZE_PAD_DEFAULT = 5_000 * 1e6; // clear ⇒ `Liquid`; fail ⇒ `Illiquid`
     uint256 constant TIER1_SIZE_PAD_DEFAULT = 50_000 * 1e6; // → Tier 1 (50% init-LTV)
     uint256 constant TIER2_SIZE_PAD_DEFAULT = 500_000 * 1e6; // → Tier 2 (60% init-LTV)
@@ -8127,7 +8147,7 @@ library LibVaipakam {
         ///      extension draws it first, and the depositor may withdraw what is
         ///      left at any time. Written only by `LibEncumbrance`. Appended —
         ///      append-only.
-        mapping(uint256 => mapping(address => uint256)) extendReserve;
+        mapping(uint256 => mapping(address => uint256)) paymentReserve;
         /// @dev #1558 — per refinance request (a borrower offer, by id): the
         ///      borrower's single-use Permit2 authorisation to pay off the loan
         ///      that request refinances. Whoever completes the refinance uses
@@ -8488,6 +8508,51 @@ library LibVaipakam {
         ///      is not eligible for the shortfall reserve. Appended —
         ///      append-only.
         mapping(uint256 => uint8) loanConcentrationAtInit;
+        /// @dev #3681 — per loan and depositor, the collateral reserve: the
+        ///      loan's collateral asset the depositor placed in their own
+        ///      vault for the "keep my loan healthy" instruction. Not
+        ///      collateral until that instruction moves it into the lien, so
+        ///      no liquidation, default or health factor reads it. Encumbered
+        ///      like the payment reserve; written only by `LibEncumbrance`.
+        ///      Appended — append-only.
+        mapping(uint256 => mapping(address => uint256)) collateralReserve;
+        /// @dev #3681 — per loan, the borrower-position holder's standing
+        ///      instructions. Written only by `StandingInstructionFacet`.
+        ///      Appended — append-only.
+        mapping(uint256 => StandingInstructions) standingInstructions;
+        /// @dev #3681 — the platform's bounds for the instructions. Zero
+        ///      fields read as their defaults; written only by
+        ///      `StandingInstructionFacet.setStandingInstructionConfig`.
+        ///      Appended — append-only.
+        StandingInstructionConfig standingInstructionCfg;
+    }
+
+    /// @notice #3681 — one loan's standing instructions, set by the
+    ///         borrower-position holder `owner`. An instruction runs only
+    ///         while `owner` still holds the position and spends only
+    ///         `owner`'s reserves for the loan.
+    /// @dev    Health factors are 1e18-scaled. `topUpTriggerHf == 0` means
+    ///         the top-up is off. `lastTopUpAt` spaces two top-ups by the
+    ///         configured interval.
+    struct StandingInstructions {
+        address owner;
+        uint64 topUpTriggerHf;
+        uint64 topUpTargetHf;
+        uint64 lastTopUpAt;
+        bool payInterest;
+        bool repayAtDue;
+        uint32 repayLeadSeconds;
+    }
+
+    /// @notice #3681 — the governed bounds for the standing instructions.
+    ///         Every field reads 0 as its default (see the
+    ///         `STANDING_*` constants).
+    struct StandingInstructionConfig {
+        uint64 triggerMinHf;
+        uint64 triggerMaxHf;
+        uint64 targetMaxHf;
+        uint64 minMarginHf;
+        uint32 topUpIntervalSeconds;
     }
 
     /// @notice #3685 — collateral concentration thresholds. The two

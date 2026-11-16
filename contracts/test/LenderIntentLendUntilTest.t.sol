@@ -24,6 +24,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 import {LibTestPayout} from "./helpers/LibTestPayout.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
 import {AutoLifecycleSettingsFacet} from "../src/facets/AutoLifecycleSettingsFacet.sol";
 
@@ -599,7 +600,7 @@ contract LenderIntentLendUntilTest is SetupTest {
         ERC20Mock(mockERC20).mint(b, 50 ether);
         vm.startPrank(b);
         ERC20(mockERC20).approve(address(diamond), 50 ether);
-        AutoLifecycleFacet(address(diamond)).fundExtendReserve(loanId, 50 ether);
+        StandingInstructionFacet(address(diamond)).fundLoanReserve(loanId, 0, 50 ether);
         vm.stopPrank();
     }
 

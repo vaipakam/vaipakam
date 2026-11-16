@@ -133,7 +133,8 @@ abstract contract DiamondFacetNames {
     ///      new-loan init-LTV cap host and collateral concentration).
     ///      120 → 121 with `CollateralLienFacet` (#3685 — the collateral-lien
     ///      entries, split off EncumbranceMutateFacet).
-    function cutFacetNames() internal pure returns (string[121] memory) {
+    ///      121 → 122 with `StandingInstructionFacet` (#3681).
+    function cutFacetNames() internal pure returns (string[122] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -304,6 +305,8 @@ abstract contract DiamondFacetNames {
             "CollateralConcentrationFacet",
             // The collateral-lien entries (#3685, split off EncumbranceMutateFacet).
             "CollateralLienFacet",
+            // Standing instructions and the loan reserve (#3681).
+            "StandingInstructionFacet",
             "SwapToRepayFacet",
             "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",

@@ -87,6 +87,7 @@ import LoanClockFacetABI from './LoanClockFacet.json';
 import FeeLevelsFacetABI from './FeeLevelsFacet.json';
 import CollateralConcentrationFacetABI from './CollateralConcentrationFacet.json';
 import CollateralLienFacetABI from './CollateralLienFacet.json';
+import StandingInstructionFacetABI from './StandingInstructionFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
 import OracleAdminFacetABI from './OracleAdminFacet.json';
@@ -284,6 +285,7 @@ export {
   FeeLevelsFacetABI,
   CollateralConcentrationFacetABI,
   CollateralLienFacetABI,
+  StandingInstructionFacetABI,
   ClaimFacetABI,
   OracleFacetABI,
   OracleAdminFacetABI,

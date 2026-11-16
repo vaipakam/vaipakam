@@ -245,6 +245,8 @@ export interface DeploymentFacets {
   collateralConcentrationFacet?: HexAddress;
   /** #3685 — the collateral-lien entries, split off EncumbranceMutateFacet. */
   collateralLienFacet?: HexAddress;
+  /** #3681 — standing instructions and the loan reserve. */
+  standingInstructionFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */

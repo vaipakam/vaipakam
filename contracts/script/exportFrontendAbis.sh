@@ -314,6 +314,8 @@ FACETS=(
   # The new-loan cap host and the collateral-lien entries (#3685).
   "CollateralConcentrationFacet"
   "CollateralLienFacet"
+  # Standing instructions and the loan reserve (#3681).
+  "StandingInstructionFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"

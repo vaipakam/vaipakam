@@ -608,6 +608,14 @@
       "from": "treasury",
       "to": "retiredTreasury",
       "reason": "#3569 (owner decision 2026-11-12, \"Vault code only\"): the treasury is the vault code's immutable TREASURY, read through the vault beacon, so the Diamond-side copy and its setter are retired and the slot is no longer written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 655,
+      "offset": 0,
+      "from": "extendReserve",
+      "to": "paymentReserve",
+      "reason": "#3681 (design approved 2026-11-15): the auto-extension reserve became the loan's payment reserve. Same record, same depositor-and-loan keys, same writer (LibEncumbrance); an automatic extension still draws it first, and the standing instructions now also pay interest and the due-date repayment from it."
     }
   ]
 }
