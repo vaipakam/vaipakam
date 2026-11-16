@@ -356,16 +356,20 @@ const NO_LOANS = 2n ** 256n - 1n;
  *  ceiling rounded up, turned into collateral rounded up). Comparing the
  *  amounts, not a loan-to-value derived from a rounded amount, keeps a
  *  low-decimal collateral from understating the bound. The approximate
- *  figure is only for the sentence that names it. */
-export async function readLtvCap(c: PublicClient, diamond: Hex, lending: Hex, collateral: Hex, amount: bigint, ltvBps: number): Promise<LtvCap> {
-  const [floor] = (await c.readContract({ address: diamond, abi: OFFER_PREVIEW, functionName: 'initRiskBounds', args: [lending, collateral, amount, 0n] })) as readonly [
-    bigint,
-    boolean,
-    bigint,
-  ];
+ *  figure is only for the sentence that names it. Every read is at one
+ *  block (the review's), so the floor and the posted amount stand on the
+ *  same prices. */
+export async function readLtvCap(c: PublicClient, diamond: Hex, lending: Hex, collateral: Hex, amount: bigint, ltvBps: number, blockNumber: bigint): Promise<LtvCap> {
+  const [floor] = (await c.readContract({
+    address: diamond,
+    abi: OFFER_PREVIEW,
+    functionName: 'initRiskBounds',
+    args: [lending, collateral, amount, 0n],
+    blockNumber,
+  })) as readonly [bigint, boolean, bigint];
   if (floor === 0n) return { kind: 'none' };
   if (floor === NO_LOANS) return { kind: 'closed' };
-  const read = <T>(functionName: string, args: readonly unknown[]) => c.readContract({ address: diamond, abi: NUMERAIRE, functionName, args }) as Promise<T>;
+  const read = <T>(functionName: string, args: readonly unknown[]) => c.readContract({ address: diamond, abi: NUMERAIRE, functionName, args, blockNumber }) as Promise<T>;
   const [lend, coll] = await Promise.all([read<bigint>('getNumeraireValue', [lending, amount, true]), read<bigint>('getNumeraireValue', [collateral, floor, false])]);
   const ceil = (n: bigint, d: bigint) => (n + d - 1n) / d;
   const posted = ltvBps === 0 ? NO_LOANS : await read<bigint>('getAmountForNumeraireValue', [collateral, ceil(lend * 10_000n, BigInt(ltvBps)), true]);

@@ -136,7 +136,7 @@ export async function readAutoLendReview(own: OwnStateClient, diamond: Hex, draf
     minFill === null || minFill === 0n
       ? Promise.resolve(null)
       : own
-          .read((c) => readLtvCap(c, diamond, draft.lending, draft.collateral, minFill, draft.parsed.maxInitLtvBps))
+          .read((c) => readLtvCap(c, diamond, draft.lending, draft.collateral, minFill, draft.parsed.maxInitLtvBps, facts.blockNumber))
           .then((x) => x.value)
           .catch(() => null),
   ]);
