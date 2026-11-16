@@ -4,9 +4,19 @@ Researched 2026-11-16 against `main` at `866110925` ("indexer: drop the
 shared copy of the keeper runner lease (#3550)"). It describes the code as it
 stood then: before acting on a step, check the cited script or runbook section
 still says the same, and fix this guide in the same change when it does not.
-Every step cites the file and section it comes from. Where a doc and the
-code disagree, **the code is followed** and the disagreement is listed in
-§11. Anything not confirmed by reading code is marked **UNVERIFIED**.
+Every step cites the file and section it comes from. Anything not confirmed
+by reading code is marked **UNVERIFIED**.
+
+**Where a doc and the code disagree** (§11 lists every case found), the two
+kinds are handled differently, per AGENTS.md and
+`docs/FunctionalSpecs/_CodeVsDocsAudit.md`:
+- **Stale description** (a doc naming a script, key or count the code no
+  longer has): the step uses what the code does today.
+- **An intended requirement the code does not meet** (for example §11 item 6,
+  `cf-www` bypassing the package-script deploy that CLAUDE.md requires): do
+  not follow the code by default. Get an explicit owner decision, recorded in
+  the deploy's notes, or fix the code first. Each such item in §11 is marked
+  **NEEDS DECISION**.
 
 All paths are repo-root relative unless they start with `/`. All
 `bash contracts/script/...` commands are run from the repo root; all
@@ -188,9 +198,12 @@ Keys and accounts:
 - `INTERACTION_LAUNCH_TIMESTAMP` (+ optional `INTERACTION_CAP_VPFI_PER_ETH`) for
   `SetInteractionLaunch.s.sol` — the SAME value on every chain.
 - `REWARD_CUSTODY_PAUSE_EPOCH` (+ the `REWARD_CUSTODY_*` answers, all zero on a
-  fresh Diamond) for `ActivateRewardCustody.s.sol`; on a mirror also
-  `VPFI_TOKEN_ADDRESS` (or its prefixed form) = the mirror's `.vpfiMirror`
-  (hardening lesson 5; `Deployments.readVpfiToken()` reads only `.vpfiToken`).
+  fresh Diamond) for `ActivateRewardCustody.s.sol`; on a mirror also the
+  CHAIN-PREFIXED `<PREFIX>_VPFI_TOKEN_ADDRESS` (`ARB_SEPOLIA_VPFI_TOKEN_ADDRESS`,
+  `BNB_TESTNET_VPFI_TOKEN_ADDRESS`) = the mirror's `.vpfiMirror`. The bare
+  `VPFI_TOKEN_ADDRESS` is NOT read: `Deployments.readVpfiToken()` falls back
+  from `.vpfiToken` to `_legacyEnvAddress`, which reads only the prefixed name
+  (hardening lesson 5).
 - `REHEARSAL_ALLOW_CHAIN_ID` — ONLY for rehearsal flow scripts against a
   rehearsal Diamond (never the live one; §8).
 - `ETHERSCAN_API_KEY` — only if verifying sources.
@@ -302,9 +315,12 @@ its own record"). Commit both files with the deploy.
      `REWARD_REMIT_ACK_ENABLED` armed (needs owner OK for any flag change).
    - On the CURRENT Base Diamond read
      `cast call <old base diamond> 'getRemitReservationNonce()(uint256)' --rpc-url "$BASE_SEPOLIA_RPC_URL"`
-     and each reservation below it (`getRemitReservation(...)`,
-     `RewardRemittanceLensFacet`); wait until each is status 2 (acked) or 3
-     (released, stranded share resolved). Nonce 0 = nothing to drain.
+     and every reservation from 1 up to AND INCLUDING that nonce
+     (`getRemitReservation(...)`, `RewardRemittanceLensFacet`): the nonce is
+     the highest id issued (dispatch takes `++remitReservationNonce`), so the
+     latest reservation has exactly that id. Wait until each is status 2
+     (acked) or 3 (released, stranded share resolved). Nonce 0 = nothing to
+     drain.
    - Then disarm `REWARD_REMIT_ACK_ENABLED`. Record any reservation that will
      not settle, by id, in the deploy's release-note fragment.
 2. **Orphan check.** `phase_contracts` reads `getActiveOffersCount()` /
@@ -604,7 +620,10 @@ cd contracts
 # 1. read the live pause epoch (pauseTransitions from LibPausable's slot);
 #    the script's preflight refuses a mismatch and names it. Read method:
 #    UNVERIFIED — the refusal message is the practical check.
-REWARD_CUSTODY_PAUSE_EPOCH=<live epoch> [VPFI_TOKEN_ADDRESS=<.vpfiMirror on a mirror>] \
+# On a mirror, also export the CHAIN-PREFIXED token variable (the bare
+# VPFI_TOKEN_ADDRESS is not read), e.g. on Arbitrum Sepolia:
+#   ARB_SEPOLIA_VPFI_TOKEN_ADDRESS=$(jq -r .vpfiMirror deployments/arb-sepolia/addresses.json)
+REWARD_CUSTODY_PAUSE_EPOCH=<live epoch> \
   forge script script/ActivateRewardCustody.s.sol --rpc-url "$<RPC_VAR>" --broadcast --slow
 # 2. after the transactions confirm:
 forge script script/ActivateRewardCustody.s.sol --sig "record()" --rpc-url "$<RPC_VAR>"
@@ -665,8 +684,23 @@ keeper. Setter names: AdminConfigurableKnobsAndSwitches.md (sections "Full
 VPFI tariff kill switch", "Standing-intent fill switch", "T-092 auto-lifecycle
 kill switches", "Spend-gated perk configuration", "Reward grace seconds").
 Exact calls: **UNVERIFIED**. Leave every other dark knob dark (that doc's "Dark
-and dormant knobs are not 'unconfigured'"). Re-run `abi-sync` afterwards so the
-artifact (e.g. `rewardGraceSeconds`) matches the chain (hardening lesson 9).
+and dormant knobs are not 'unconfigured'").
+
+**Then reconcile the artifact by hand before exporting** (hardening lesson 9).
+`abi-sync` does NOT do this: `exportFrontendDeployments.sh` only copies each
+existing `addresses.json` into the bundle and never reads the chain. For each
+setting the artifact records, read it back from the new Diamond and write it
+into that chain's `contracts/deployments/<slug>/addresses.json`, for example
+the reward grace on Base:
+
+```bash
+g=$(cast call "$DIAMOND" 'getRewardGraceSeconds()(uint64)' --rpc-url "$BASE_SEPOLIA_RPC_URL")
+jq --argjson g "$g" '.rewardGraceSeconds = $g' deployments/base-sepolia/addresses.json > /tmp/a.json \
+  && mv /tmp/a.json deployments/base-sepolia/addresses.json
+```
+
+Only then run `abi-sync`, and check `git diff packages/contracts/src/deployments.json`
+shows the restored values.
 
 ### 5.7 Optional
 
@@ -779,7 +813,7 @@ bash contracts/script/deploy-testnet.sh base-sepolia --phase cf-indexer --fresh
 bash contracts/script/deploy-testnet.sh base-sepolia --phase cf-keeper
 bash contracts/script/deploy-testnet.sh base-sepolia --phase cf-agent
 bash contracts/script/deploy-testnet.sh base-sepolia --phase cf-app
-bash contracts/script/deploy-testnet.sh base-sepolia --phase cf-www
+bash contracts/script/deploy-testnet.sh base-sepolia --phase cf-www   # NEEDS DECISION first: §11 item 6
 ```
 
 (Each `cf-*` deploys the whole Worker once; the slug only selects which RPC
@@ -923,7 +957,7 @@ markers (lines 333–416) — read both halves.
    `.active-chains` is Base, Arb, **BNB**, and the tiered `deploy-testnet.sh`
    is the rehearsal script. `deploy-chain.sh` skips configure / mocks /
    sanctions / launch.
-2. **Handover on testnet.** CcipCutoverRunbook §4 ("no governance handover")
+2. **NEEDS DECISION.** **Handover on testnet.** CcipCutoverRunbook §4 ("no governance handover")
    vs GovernanceRunbook "Testnet rehearsal" and the `handover` phase. Precedent:
    none. `deploy-testnet.sh`'s own header ("What this script does NOT do: Role
    rotation") contradicts its `handover` phase.
@@ -933,7 +967,7 @@ markers (lines 333–416) — read both halves.
 5. **Keeper/agent with pending migrations**: `deploy-testnet.sh` comments
    (header for cf-indexer, `phase_cf_indexer`) say they "refuse to publish";
    CLAUDE.md and the runbook phase table say they publish anyway (#3115).
-6. **`cf-www`** runs `pnpm run build && pnpm exec wrangler deploy` — bypasses
+6. **NEEDS DECISION.** **`cf-www`** runs `pnpm run build && pnpm exec wrangler deploy` — bypasses
    the package script (no prerender, no commit stamp), against CLAUDE.md
    "Deploy through the package script, never a bare wrangler deploy".
 7. **`cf-keeper` comment** calls the Worker the "autonomous HF-liquidation
