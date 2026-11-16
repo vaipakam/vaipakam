@@ -4857,7 +4857,7 @@ export const copy = {
     mRowTo: B('Paid to'),
     mToWallet: B('Your wallet, at once'),
     mLoseStopKeeps: A('The {{amount}} not lent stays set aside in your vault. You can take it back later.'),
-    mLoseLent: A('{{amount}} is lent out now and stays lent. It comes back as each loan is repaid.'),
+    mLoseLent: A('{{amount}} is counted against your most at once, and this step does not reach it. Each loan counts in full until its repayment is claimed or lent again, even after part is repaid.'),
   },
   accept: {
     title: B('Take offer #{{id}}'),

@@ -190,11 +190,19 @@ export function AutoLendManage({ kind, lending, collateral, unlent, chain, own, 
             reason: format('autoLend.mReleasedOther', { amount: exact(lending, released), expected: exact(lending, d.amount) }),
           });
         }
+        const outcomes = payoutOutcomes(receipt.logs, diamond, account, lending);
+        const routed = outcomes.reduce((t, o) => t + o.amount, 0n);
+        // An unread vault leaves what reached the wallet unknown, never zero,
+        // unless the protocol's own routed payouts already account for it all.
+        if (vault === null && routed !== d.amount) {
+          legs.push({ status: 'unknown', label: format('autoLend.mLegReceived', { what: amt(d.amount) }), reason: text('accept.vaultUnknown') });
+          return legs;
+        }
         const wallet = vault === null ? 0n : moved(receipt.logs, lending, vault, account);
         legs.push(
           ...payoutLegs(
             {
-              outcomes: payoutOutcomes(receipt.logs, diamond, account, lending),
+              outcomes,
               wallet,
               expected: d.amount,
               protection: review.facts.protection,
