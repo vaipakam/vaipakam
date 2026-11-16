@@ -881,6 +881,24 @@
       "class": "user",
       "why": "the signer cancels its own signed offers below a floor"
     },
+    "StandingInstructionFacet.runCollateralTopUp(uint256)": {
+      "class": "keeper",
+      "pass": "standingInstructions",
+      "flag": "STANDING_TOPUP_ENABLED",
+      "evidence": "apps/keeper/src/standingInstructions.ts"
+    },
+    "StandingInstructionFacet.runDueRepayment(uint256)": {
+      "class": "keeper",
+      "pass": "standingInstructions",
+      "flag": "STANDING_REPAY_ENABLED",
+      "evidence": "apps/keeper/src/standingInstructions.ts"
+    },
+    "StandingInstructionFacet.runInterestPayment(uint256)": {
+      "class": "keeper",
+      "pass": "standingInstructions",
+      "flag": "STANDING_INTEREST_ENABLED",
+      "evidence": "apps/keeper/src/standingInstructions.ts"
+    },
     "SwapToRepayIntentFacet.cancelExpiredIntent(uint256)": {
       "class": "keeper",
       "pass": "expiredTeardown",

@@ -441,6 +441,12 @@
   //     opted into the backstop and is past its eligibility time. Lends
   //     treasury capital from the backstop vault, so its arming is an owner
   //     decision of its own. Pays only gas. Ships unset.
+  //   - STANDING_TOPUP_ENABLED / STANDING_REPAY_ENABLED /
+  //     STANDING_INTEREST_ENABLED — the #3681 standing-instructions pass, one
+  //     flag per instruction: the collateral top-up, the due repayment and
+  //     the interest payment a borrower set on a loan, each paid from the
+  //     borrower's own per-loan reserve. Every minute. Pays only gas. Ship
+  //     unset.
   //   - COLLECTION_MATCH_ENABLED — 'true' adds the #3688 collection-offer
   //     step to the armed match pass: matchCollectionOffer pairs a lender's
   //     NFT collection offer with a posted borrower offer whose token is in

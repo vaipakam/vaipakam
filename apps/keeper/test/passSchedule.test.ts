@@ -124,6 +124,7 @@ describe('the stagger reduces real dispatched work', () => {
         'matcher', // user-visible latency
         'prepayAutoList', // a one-hour grace window, every minute of it unlisted is lost
         'protectedAccount', // due the second a delay ends; no staggered minute is free
+        'standingInstructions', // a top-up answers a falling health factor; no staggered minute is free
         'remitAck', // first-receipt discovery is unbounded by the re-send backoff
         'watcher', // protocol safety
       ].sort(),

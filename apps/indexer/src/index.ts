@@ -75,6 +75,7 @@ import {
 import { handleApiIndex } from './apiIndex';
 import { handleIngestHealth } from './healthRoutes';
 import { handleAssetRankings } from './assetRankings';
+import { handleKeeperSteps } from './keeperSteps';
 import { handleConfigSnapshot } from './configSnapshot';
 import {
   resolveEnv,
@@ -575,6 +576,17 @@ export default {
     if (url.pathname === '/assets/rankings') {
       if (req.method === 'OPTIONS') return handleOffersPreflight();
       if (req.method === 'GET') return handleAssetRankings(req, earlyRouteEnv(env).DB);
+      return new Response('Not found', { status: 404 });
+    }
+
+    // ─── /keeper/steps ──────────────────────────────────────────
+    // #3681 — which keeper steps this deployment's keeper is running, as it
+    // last published them, so the app can say whether a standing
+    // instruction has an automatic runner. D1 only, dispatched before
+    // `resolveEnv` like /assets/rankings.
+    if (url.pathname === '/keeper/steps') {
+      if (req.method === 'OPTIONS') return handleOffersPreflight();
+      if (req.method === 'GET') return handleKeeperSteps(req, earlyRouteEnv(env).DB);
       return new Response('Not found', { status: 404 });
     }
 

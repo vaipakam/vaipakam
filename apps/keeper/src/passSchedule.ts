@@ -54,6 +54,7 @@ import { PASS_CADENCE_SEC as PREPAY_AUTO_LIST_CADENCE_SEC, runPrepayAutoList } f
 import { PASS_CADENCE_SEC as PROTECTED_ACCOUNT_CADENCE_SEC, runProtectedAccount } from './protectedAccount';
 import { PASS_CADENCE_SEC as STANDIN_REFRESH_CADENCE_SEC, runSanctionsStandInRefresh } from './sanctionsStandInRefresh';
 import { PASS_CADENCE_SEC as POSITION_UPKEEP_CADENCE_SEC, runPositionUpkeep } from './positionUpkeep';
+import { PASS_CADENCE_SEC as STANDING_INSTRUCTIONS_CADENCE_SEC, runStandingInstructions } from './standingInstructions';
 import { PASS_CADENCE_SEC as REWARD_STAGING_UPKEEP_CADENCE_SEC, runRewardStagingUpkeep } from './rewardStagingUpkeep';
 import { PASS_CADENCE_SEC as EXPIRED_TEARDOWN_CADENCE_SEC, runExpiredTeardown } from './expiredTeardown';
 import { PASS_CADENCE_SEC as VAULT_BEACON_UPKEEP_CADENCE_SEC, runVaultBeaconUpkeep } from './vaultBeaconUpkeep';
@@ -364,6 +365,12 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     offsetMinutes: 36,
     why: 'deducts each NFT rental\'s elapsed day and fills opted-in offers the backstop owes; a rental day is due once a day and a backstop deadline is days after opt-in, so an hour is not material (#3097)',
     run: runPositionUpkeep,
+  },
+  {
+    name: 'standingInstructions',
+    cadenceMinutes: STANDING_INSTRUCTIONS_CADENCE_SEC / 60,
+    why: 'runs the collateral top-ups, due repayments and interest payments borrowers set on their loans; a top-up answers a falling health factor, so every minute, and every staggered minute of the hour is already taken (#3681)',
+    run: runStandingInstructions,
   },
   {
     name: 'expiredTeardown',

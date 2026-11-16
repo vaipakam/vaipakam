@@ -252,6 +252,13 @@ interface BaseEnv {
    *  own free-tier service capacity. Read only while POSITION_UPKEEP_ENABLED
    *  arms the pass. */
   BACKSTOP_FILL_ENABLED?: string;
+  /** #3681 — the standing-instructions pass (`standingInstructions.ts`),
+   *  one flag per instruction: 'true' runs that instruction for loans whose
+   *  borrower set it, paid from the borrower's own per-loan reserve. The pass
+   *  does nothing while none is set. Each pays only gas. */
+  STANDING_TOPUP_ENABLED?: string;
+  STANDING_REPAY_ENABLED?: string;
+  STANDING_INTEREST_ENABLED?: string;
   /** #3688 — 'true' adds the collection-offer step to the armed match pass:
    *  `matchCollectionOffer` pairs a lender's NFT collection offer with a
    *  posted borrower offer whose token is in the offer's set, each pair
@@ -615,6 +622,9 @@ export const PLAIN_VAR_KEYS = [
   'STANDIN_REFRESH_ENABLED',
   'POSITION_UPKEEP_ENABLED',
   'BACKSTOP_FILL_ENABLED',
+  'STANDING_TOPUP_ENABLED',
+  'STANDING_REPAY_ENABLED',
+  'STANDING_INTEREST_ENABLED',
   'COLLECTION_MATCH_ENABLED',
   'REWARD_STAGING_UPKEEP_ENABLED',
   'REWARD_STAGING_UNWIND_ENABLED',
@@ -823,6 +833,9 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     STANDIN_REFRESH_ENABLED: raw.STANDIN_REFRESH_ENABLED,
     POSITION_UPKEEP_ENABLED: raw.POSITION_UPKEEP_ENABLED,
     BACKSTOP_FILL_ENABLED: raw.BACKSTOP_FILL_ENABLED,
+    STANDING_TOPUP_ENABLED: raw.STANDING_TOPUP_ENABLED,
+    STANDING_REPAY_ENABLED: raw.STANDING_REPAY_ENABLED,
+    STANDING_INTEREST_ENABLED: raw.STANDING_INTEREST_ENABLED,
     COLLECTION_MATCH_ENABLED: raw.COLLECTION_MATCH_ENABLED,
     REWARD_STAGING_UPKEEP_ENABLED: raw.REWARD_STAGING_UPKEEP_ENABLED,
     REWARD_STAGING_UNWIND_ENABLED: raw.REWARD_STAGING_UNWIND_ENABLED,

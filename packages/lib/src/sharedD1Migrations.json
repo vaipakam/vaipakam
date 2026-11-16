@@ -93,5 +93,6 @@
   "0094_signed_offer_set.sql",
   "0095_activity_participants.sql",
   "0096_drop_shared_keeper_runner_lease.sql",
-  "0097_collection_offer_set.sql"
+  "0097_collection_offer_set.sql",
+  "0098_keeper_step_status.sql"
 ]

@@ -227,6 +227,38 @@ export async function publishPushRailStatus(db: D1Database, row: PublishedRailRo
     .run();
 }
 
+// ─── #3681 — which keeper steps are armed, for the app to read ────────
+
+/** One step's armed state on one chain, as `keeper_step_status` holds it. */
+export interface KeeperStepStatusRow {
+  chain_id: number;
+  /** The Diamond served on the chain, lowercase. */
+  diamond: string;
+  pass: string;
+  step: string;
+  armed: 0 | 1;
+  /** Unix seconds, this keeper's clock. */
+  observed_at: number;
+}
+
+/**
+ * Publish whether each step of a pass is armed, one row per (chain, pass,
+ * step), replaced each time, in one batch. Shared database (migration 0098),
+ * unfenced: a row states the flags this keeper read and the Diamond it serves,
+ * so a reader can tell a row written for another deployment, and a fresh
+ * Diamond resets the chain's rows, which the next publish restores.
+ */
+export async function publishKeeperStepStatus(db: D1Database, rows: readonly KeeperStepStatusRow[]): Promise<void> {
+  if (rows.length === 0) return;
+  const stmt = db.prepare(
+    `INSERT INTO keeper_step_status (chain_id, diamond, pass, step, armed, observed_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+     ON CONFLICT(chain_id, pass, step) DO UPDATE SET
+       diamond = excluded.diamond, armed = excluded.armed, observed_at = excluded.observed_at`,
+  );
+  await db.batch(rows.map((r) => stmt.bind(r.chain_id, r.diamond.toLowerCase(), r.pass, r.step, r.armed, r.observed_at)));
+}
+
 // ─── Depth-tiered LTV — liquidity-confidence relay state ──────────────
 // One row per (chain, collateral asset). Tracks the off-chain
 // aggregator-confirmed tier and the consecutive-eligible-tick streak the

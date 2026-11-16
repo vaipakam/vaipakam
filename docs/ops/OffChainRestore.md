@@ -587,6 +587,9 @@ then deploy.
       | `STANDIN_REFRESH_ENABLED` | the sanctions stand-in refresh pass skips — the testnet stand-in the clearance attestor reads is not re-published, so once it is older than the delisting timelocks' `oracleMaxAge` (7 days) their automated delisting route closes, until the admin calls `markUpdated()` by hand | keeping the testnet sanctions stand-in fresh (#3113) |
       | `POSITION_UPKEEP_ENABLED` | the position upkeep pass skips — no NFT rental's elapsed day is deducted, so a lender is paid the rent only when the renter repays, and a rental whose agreed days are all used is not closed until someone calls `autoDeductDaily` by hand | the daily NFT-rental deduction (#3097) |
       | `BACKSTOP_FILL_ENABLED` | the position upkeep pass's backstop fill step skips — a borrower offer that opted into the backstop waits past its eligibility time with no fill until someone calls `backstopFill` by hand, and expires unfilled if nobody does | filling opted-in offers from the treasury-seeded backstop (#3097) |
+      | `STANDING_TOPUP_ENABLED` | the standing-instructions pass's collateral top-up skips — a borrower who set a top-up gets none when the health factor falls under their trigger, unless someone calls `runCollateralTopUp` by hand, and the loan can reach liquidation with collateral still in the reserve | the borrower's automatic collateral top-up (#3681) |
+      | `STANDING_REPAY_ENABLED` | the standing-instructions pass's due repayment skips — a borrower who asked to repay at the due date from the reserve is not repaid unless someone calls `runDueRepayment` by hand, and the loan can pass grace into default with the full amount in the reserve | the borrower's automatic repayment at the due date (#3681) |
+      | `STANDING_INTEREST_ENABLED` | the standing-instructions pass's interest payment skips — a period's interest is not paid from the reserve unless someone calls `runInterestPayment` by hand, so the periodic settlement sells collateral for it instead | the borrower's automatic periodic interest payment (#3681) |
       | `EXPIRED_TEARDOWN_ENABLED` | expired-teardown pass skips — a prepay listing past its loan's grace keeps the borrower position locked and its conduit approval live, a lender-sale listing past its expiry (or on a closed loan) keeps holding the borrower's partial repayment and collateral withdrawal, a swap-to-repay intent past its cancel grace keeps the position locked and the loan out of internal matching, and a listing, intent or vehicle offer (offset, sale, refinance request) whose position moved stays in place until cleared (#3336), unless someone makes the permissionless `cancelExpiredPrepayListing` / `teardownStaleSaleListing` / `cancelExpiredIntent` / `cancelOffer` call by hand (a closing path also clears a prepay listing or an intent) | tearing down expired listings and intents (#3097), and moved-position listings and vehicles (#3336) |
       | `VAULT_BEACON_UPKEEP_ENABLED` | vault-beacon upkeep pass skips — a Timelock current-version or revoke proposal past its delay, a vault owner's signed pin or unpin past its pin delay, and a signed pin-delay lowering past the current delay all stay pending (nothing lapses: each waits for whoever applies it), unless someone makes the permissionless `executeCurrentVersion` / `executeRevoke` / `executePin` / `executePinDelay` call by hand | applying VaultBeacon changes once their delay has passed (#3282) |
       | `PRICE_CHECKPOINT_ENABLED` | price checkpoint pass skips — no hourly price checkpoint is written unless someone calls the permissionless `checkpointHourlyPrices` by hand, so the #3359 forced-sale floor reads no checkpoint and every forced sale uses the full liquidation slippage cap (the behaviour before #3359; nothing is lost, sales just keep the wider floor) | the hourly checkpoints the forced-sale floor's calm test reads (#3384) |
@@ -1731,6 +1734,7 @@ DELETE FROM protected_lock_readiness; \
 DELETE FROM alert_channel_changes; \
 DELETE FROM asset_ranking; \
 DELETE FROM asset_ranking_run; \
+DELETE FROM keeper_step_status; \
 DELETE FROM indexer_deployment; \
 DELETE FROM indexer_chain_anchor; \
 DELETE FROM pending_activity_events; \
@@ -1788,6 +1792,14 @@ source and chain is due, and the keeper's `assetRankings` pass refetches them
 on its next hourly run (it must be armed). Until then the app shows no tier,
 and its own-risk warning, for every asset. Keeping a restored copy would show
 tiers no fetch has checked.
+
+`keeper_step_status` (#3681) is the keeper's record of which of its
+standing-instruction steps are armed on each chain, which the app reads to say
+whether an instruction has an automatic runner. The keeper republishes it
+every few minutes while it runs. Until it does, the app says no automatic
+runner is active, which is the safe direction: a borrower relies on the
+instruction less, never more. Keeping a restored copy would vouch for flags
+the keeper may no longer have.
 
 `alert_channel_changes` (#3246) holds the pending removals of a Telegram
 alert chat under protected mode. Clearing it only cancels a pending change,
@@ -2110,7 +2122,7 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`,
    `REWARD_SANCTIONS_KEEPER_ENABLED`,
    `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
-   `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_DELIVERY_CONFLICT_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_REMAINDER_RETURN_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `TIER_EXCLUSION_REFRESH_ENABLED`, `REWARD_INDEX_COMPACT_ENABLED`, `SANCTIONS_FLAG_REFRESH_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `PROTECTED_ACCOUNT_ENABLED`, `PROTECTED_LOCK_ENABLED`, `PROTECTED_ALERTS_ENABLED`, `STANDIN_REFRESH_ENABLED`, `POSITION_UPKEEP_ENABLED`, `BACKSTOP_FILL_ENABLED`, `EXPIRED_TEARDOWN_ENABLED`, `VAULT_BEACON_UPKEEP_ENABLED`, `PRICE_CHECKPOINT_ENABLED`, `ASSET_RANKINGS_ENABLED`, `REWARD_STAGING_UPKEEP_ENABLED`, `REWARD_STAGING_UNWIND_ENABLED`, `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
+   `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_DELIVERY_CONFLICT_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_REMAINDER_RETURN_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `TIER_EXCLUSION_REFRESH_ENABLED`, `REWARD_INDEX_COMPACT_ENABLED`, `SANCTIONS_FLAG_REFRESH_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `PROTECTED_ACCOUNT_ENABLED`, `PROTECTED_LOCK_ENABLED`, `PROTECTED_ALERTS_ENABLED`, `STANDIN_REFRESH_ENABLED`, `POSITION_UPKEEP_ENABLED`, `BACKSTOP_FILL_ENABLED`, `STANDING_TOPUP_ENABLED`, `STANDING_REPAY_ENABLED`, `STANDING_INTEREST_ENABLED`, `EXPIRED_TEARDOWN_ENABLED`, `VAULT_BEACON_UPKEEP_ENABLED`, `PRICE_CHECKPOINT_ENABLED`, `ASSET_RANKINGS_ENABLED`, `REWARD_STAGING_UPKEEP_ENABLED`, `REWARD_STAGING_UNWIND_ENABLED`, `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
    file (`sudo -e /etc/vaipakam/keeper.env`), never by assuming what it held.
    Never paste a value from that file anywhere.
 

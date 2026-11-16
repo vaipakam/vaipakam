@@ -374,6 +374,12 @@ const CLASSIFICATION = {
       'the assetRankings pass\'s per-source, per-chain run record (#3446), cleared WITH asset_ranking; ' +
       'an empty record makes every pair due, so the pass refetches rather than trusting a restored row',
   },
+  keeper_step_status: {
+    class: 'replay-derived',
+    reason:
+      'which keeper steps are armed per chain (#3681), republished by the keeper every few minutes while it runs; ' +
+      'a cleared table reads as no runner until then, which is the safe direction, and a restored row would vouch for flags the keeper may no longer have',
+  },
 };
 
 // Tables written by tooling/infra, not domain state.
