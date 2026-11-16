@@ -236,9 +236,12 @@ library LibLoan {
     /// @dev #3205 (#3318 Codex r6) — the ONE check that a position may change
     ///      hands, made by both handover primitives on the EXITING token: its
     ///      current holder's positions must not be held against leaving
-    ///      (`LibProtectedAccount.protectsNfts`: the PositionNFT holder lock,
-    ///      or a retired protected account), the same rule and error the sale
-    ///      verdict applies at listing. A sale or handover moves a position by
+    ///      (`LibProtectedAccount.positionExit` == Held: a retired account, a
+    ///      locked protected vault, or a holder lock without protected mode),
+    ///      the same rule and error the sale verdict applies at listing. A
+    ///      protected holder under the holder lock may leave (#3339): what
+    ///      comes back lands in its vault under the payout delay, and a lender
+    ///      sale applies `LibProtectedAccount.requireLockedSaleFloor` first. A sale or handover moves a position by
     ///      retiring the token and minting a new one, which the core's
     ///      transfer guard never sees, so the lock is checked here, for every
     ///      route (listed sale and its auto-linked accept, direct sale,
@@ -248,7 +251,9 @@ library LibLoan {
     ///      positions rather than hand them over, so none needs an exemption.
     function _requirePositionMayLeave(uint256 tokenId) private view {
         address holder = LibPositionNFT.ownerOf(tokenId);
-        if (LibProtectedAccount.protectsNfts(holder)) revert LibProtectedAccount.PositionNftsLocked(holder);
+        if (LibProtectedAccount.positionExit(holder) == LibProtectedAccount.PositionExit.Held) {
+            revert LibProtectedAccount.PositionNftsLocked(holder);
+        }
     }
 
     /// @dev Replaces the borrower on an existing loan. Symmetric to

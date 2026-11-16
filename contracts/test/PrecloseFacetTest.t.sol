@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibTestProtectedCut} from "./helpers/LibTestProtectedCut.sol";
+import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
@@ -1113,6 +1114,118 @@ contract PrecloseFacetTest is Test {
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.borrower, newBorrower);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #3339 — a protected borrower under the holder lock may hand the
+    ///      obligation over: the collateral returns to its own vault.
+    function testTransferObligation_NftProtectedBorrowerHandsOver() public {
+        vm.prank(newBorrower);
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Borrower,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: COLLATERAL,
+                durationDays: 30,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 500,
+                collateralAmountMax: COLLATERAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            }),
+            type(uint64).max
+        );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
+
+        // Mock cross-facet calls
+        MockVaultWithdraw.deliversAll(address(diamond));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
+
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
+        LibTestProtection.enableWithNfts(address(diamond), borrower, 2 days);
+        vm.expectEmit(true, true, true, false);
+        // Topic-only check (data=false in expectEmit above); zero placeholders.
+        // (loanId, origBorrower, newBorrower, shortfall, newBorrowerTokenId,
+        //  newCollateralAmount, newInterestRateBps, newDurationDays,
+        //  newDueTimestamp, newHealthFactor)
+        emit PrecloseFacet.LoanObligationTransferred(activeLoanId, borrower, newBorrower, 0, 0, 0, 0, 0, 0, 0);
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        assertEq(loan.borrower, newBorrower);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #3339 — a locked protected vault still holds its positions.
+    function testTransferObligation_LockedProtectedBorrowerRefused() public {
+        vm.prank(newBorrower);
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Borrower,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: COLLATERAL,
+                durationDays: 30,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 500,
+                collateralAmountMax: COLLATERAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            }),
+            type(uint64).max
+        );
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
+
+        // Mock cross-facet calls
+        MockVaultWithdraw.deliversAll(address(diamond));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
+
+        LibTestTiming.backdateTerms(address(diamond), validOffer); // #3443
+        LibTestProtection.enableWithNfts(address(diamond), borrower, 2 days);
+        LibTestProtection.lock(address(diamond), borrower, borrower);
+        vm.prank(borrower);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.PositionNftsLocked.selector, borrower));
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer, type(uint64).max);
         vm.clearMockedCalls();
     }
 

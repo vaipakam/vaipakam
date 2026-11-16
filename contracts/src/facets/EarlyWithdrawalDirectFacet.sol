@@ -16,6 +16,7 @@ import {LibLoan} from "../libraries/LibLoan.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -667,6 +668,9 @@ contract EarlyWithdrawalDirectFacet is
         // If the shortfall exceeds what Noah brings, net settlement cannot
         // complete — liam would owe tokens we never collected from him.
         if (shortfall > loan.principal) revert RateShortfallTooHigh();
+        // #3339 — a seller whose positions are under the holder lock sells
+        // only at the loan's own terms: no shortfall out of their principal.
+        LibProtectedAccount.requireLockedSaleFloor(msg.sender, shortfall);
 
         // #1922 (#1503 item 6) — the seller's reviewed-economics bound, checked
         // HERE against the SAME figures the settlement below uses (one

@@ -2039,6 +2039,43 @@
   },
   {
     "type": "error",
+    "name": "LockedSaleRateAbove",
+    "inputs": [
+      {
+        "name": "seller",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "saleRateBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "loanRateBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LockedSaleShortfall",
+    "inputs": [
+      {
+        "name": "seller",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "shortfall",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "NFTBurnFailed",
     "inputs": []
   },

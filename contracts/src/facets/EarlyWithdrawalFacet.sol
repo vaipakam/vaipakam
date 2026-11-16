@@ -21,6 +21,7 @@ import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LenderIntentFacet} from "./LenderIntentFacet.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -266,6 +267,9 @@ contract EarlyWithdrawalFacet is
         if (msg.sender != seller && msg.sender != address(this)) {
             LibServiceCapacity.chargeKeeper();
         }
+        // #3339 — a seller under the holder lock lists at the loan's own rate
+        // or below (the completion re-checks the shortfall itself).
+        LibProtectedAccount.requireLockedSaleRate(seller, interestRateBps, loan.interestRateBps);
 
         // #951 (redesign D1) — consolidate the lender position to its CURRENT
         // holder (the seller) BEFORE listing, re-anchoring both `loan.lender` and
@@ -658,6 +662,10 @@ contract EarlyWithdrawalFacet is
         uint256 saleShortfall = saleRemainingInterest > originalRemainingInterest
             ? saleRemainingInterest - originalRemainingInterest
             : 0;
+        // #3339 — a seller whose positions are under the holder lock sells
+        // only at the loan's own terms: no shortfall, from the escrowed
+        // proceeds or otherwise.
+        LibProtectedAccount.requireLockedSaleFloor(originalLender, saleShortfall);
 
         // #1659 — NET SETTLEMENT out of the escrowed proceeds (canonical spec,
         // "Smart Contract Actions": the sale flow prefers net settlement so the

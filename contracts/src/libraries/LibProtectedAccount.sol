@@ -154,6 +154,12 @@ library LibProtectedAccount {
     ///      core's holder lock, so a protocol route does not take a position
     ///      out of it either (a lender sale).
     error PositionNftsLocked(address account);
+    /// @dev #3339 — a seller under the holder lock may sell only at the
+    ///      loan's own terms: no rate shortfall paid from their principal.
+    error LockedSaleShortfall(address seller, uint256 shortfall);
+    /// @dev #3339 — the same floor at listing: a listing above the loan's own
+    ///      rate would carry a shortfall no fill of it could settle.
+    error LockedSaleRateAbove(address seller, uint256 saleRateBps, uint256 loanRateBps);
 
     // ─── Events (state-change/vault-mutation) ────────────────────────────
 
@@ -268,20 +274,61 @@ library LibProtectedAccount {
         return abi.decode(_viaHost(abi.encodeWithSignature("isProtectionOn(address)", account)), (bool));
     }
 
-    /// @notice Whether `account`'s positions are held against leaving it:
-    ///         its tokens are under the PositionNFT core's holder lock (#3205;
-    ///         the holder's own choice, or set by protected mode), OR the
-    ///         account was retired by a replacement, whose old wallet has lost
-    ///         every right over it. A protocol route that would take a
-    ///         position out of the account (a lender sale) reads this.
-    function protectsNfts(address account) internal view returns (bool) {
-        return abi.decode(_viaHost(abi.encodeWithSignature("protectsNftsOf(address)", account)), (bool));
+    /// @notice How a position may leave `account` by a protocol sale or
+    ///         handover (#3339, owner decision 2026-11-08).
+    /// @dev    Free: no holder lock. UnderDelay: the account is in protected
+    ///         mode, not locked and not retired, with its tokens under the
+    ///         PositionNFT holder lock (protected mode sets it): the position
+    ///         may leave by a sale or handover, because everything coming back
+    ///         lands in the account's own vault under the payout delay, and a
+    ///         lender sale must not pay a rate shortfall out of the seller's
+    ///         principal ({requireLockedSaleFloor}). Held: the account was
+    ///         retired by a replacement, its protected vault is locked, or it
+    ///         locked its tokens without protected mode (no payout delay
+    ///         would cover the proceeds): the position stays until the lock
+    ///         lifts by its delayed unlock.
+    enum PositionExit {
+        Free,
+        UnderDelay,
+        Held
     }
 
-    /// @notice The rule {protectsNfts} applies, run in its host (the vault
+    /// @notice The {PositionExit} of `account`, read through its host.
+    function positionExit(address account) internal view returns (PositionExit) {
+        return PositionExit(abi.decode(_viaHost(abi.encodeWithSignature("positionExitOf(address)", account)), (uint8)));
+    }
+
+    /// @notice The rule {positionExit} applies, run in its host (the vault
     ///         read is compiled there only, not into every caller).
-    function protectsNftsLocal(address account) internal view returns (bool) {
-        return core(account).retired || LibPositionNFT.isHolderLocked(account);
+    function positionExitLocal(address account) internal view returns (PositionExit) {
+        Core memory c = core(account);
+        if (c.retired) return PositionExit.Held;
+        if (!LibPositionNFT.isHolderLocked(account)) return PositionExit.Free;
+        return (c.enabled && !c.locked) ? PositionExit.UnderDelay : PositionExit.Held;
+    }
+
+    /// @notice #3339 — the lender-sale floor for a seller whose positions are
+    ///         under the holder lock: the sale may not pay the buyer a rate
+    ///         shortfall out of the seller's principal. The seller then gets
+    ///         the whole principal into their vault and keeps their earned,
+    ///         unpaid interest as the seller claim (#1209), so the floor is
+    ///         principal plus accrued interest, taken from the loan's own
+    ///         terms (it holds whatever the collateral is). Reads the host
+    ///         only when there is a shortfall.
+    function requireLockedSaleFloor(address seller, uint256 shortfall) internal view {
+        if (shortfall != 0 && positionExit(seller) == PositionExit.UnderDelay) {
+            revert LockedSaleShortfall(seller, shortfall);
+        }
+    }
+
+    /// @notice #3339 — {requireLockedSaleFloor} at listing, where the rate is
+    ///         the whole question: a listing above the loan's own rate would
+    ///         pay its buyer a shortfall, so it is refused before it rests on
+    ///         the book unfillable.
+    function requireLockedSaleRate(address seller, uint256 saleRateBps, uint256 loanRateBps) internal view {
+        if (saleRateBps > loanRateBps && positionExit(seller) == PositionExit.UnderDelay) {
+            revert LockedSaleRateAbove(seller, saleRateBps, loanRateBps);
+        }
     }
 
     /// @notice The wallet that manages `account`: the vault's owner record

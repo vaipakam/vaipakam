@@ -2766,7 +2766,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[10] = ProtectedAccountFacet.isProtectionOn.selector;
         s[11] = ProtectedAccountFacet.protectionManagerOf.selector;
         s[12] = ProtectedAccountFacet.requireCanOpenFor.selector;
-        s[13] = ProtectedAccountFacet.protectsNftsOf.selector;
+        s[13] = ProtectedAccountFacet.positionExitOf.selector;
     }
 
     /// @dev Selectors for `VaultPayoutFacet` — the payout queue, the vault credit and the escape route.

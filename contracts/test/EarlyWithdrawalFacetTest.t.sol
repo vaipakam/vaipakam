@@ -1056,19 +1056,101 @@ contract EarlyWithdrawalFacetTest is Test {
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
-    /// @dev Protected account mode: with NFT protection on, a seller's lender
-    ///      position leaves only by a queued transfer. A sale would move it at
-    ///      once and pay any shortfall to the buyer, past the delay, the
-    ///      allowlist and co-signing, so both sale routes refuse it.
-    function testSellLoanViaBuyOfferRefusesAnNftProtectedSeller() public {
+    /// @dev #3339 — a protected seller whose positions are under the holder
+    ///      lock sells at the loan's own rate: the whole principal lands in
+    ///      the seller's own vault (where the payout delay covers it) and the
+    ///      position moves to the buyer.
+    function testNftProtectedSellerSellsAtTheLoanRate() public {
+        MockVaultWithdraw.deliversAll(address(diamond));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
+        LibTestProtection.enableWithNfts(address(diamond), lender, 2 days);
+        address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        uint256 vaultBefore = ERC20(mockERC20).balanceOf(lenderVault);
+        uint256 walletBefore = ERC20(mockERC20).balanceOf(lender);
+
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
+
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender, newLender, "position moved");
+        assertEq(ERC20(mockERC20).balanceOf(lenderVault) - vaultBefore, PRINCIPAL, "whole principal in the seller's vault");
+        assertEq(ERC20(mockERC20).balanceOf(lender), walletBefore, "nothing reached the seller's wallet");
+    }
+
+    /// @dev #3339 — the same seller cannot sell into a higher-rate buy offer:
+    ///      its shortfall would be paid to the buyer out of the seller's
+    ///      principal, past the payout delay.
+    function testNftProtectedSellerRefusesAShortfall() public {
+        uint256 higher = _buyOfferAtRate(600);
         LibTestProtection.enableWithNfts(address(diamond), lender, 2 days);
 
         vm.prank(lender);
-        vm.expectRevert(
-            abi.encodeWithSelector(LibProtectedAccount.PositionNftsLocked.selector, lender)
-        );
+        vm.expectPartialRevert(LibProtectedAccount.LockedSaleShortfall.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, higher, 0, type(uint256).max, type(uint64).max);
+    }
+
+    /// @dev #3339 — a LOCKED protected vault still holds its positions: the
+    ///      lock usually means a key is suspected.
+    function testLockedProtectedSellerIsStillRefused() public {
+        LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
+        LibTestProtection.enableWithNfts(address(diamond), lender, 2 days);
+        LibTestProtection.lock(address(diamond), lender, lender);
+
+        vm.prank(lender);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.ProtectedVaultLocked.selector, lender));
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
+    }
+
+    /// @dev #3339 — at listing, a protected holder-locked seller may not list
+    ///      above the loan's rate (such a listing could never settle).
+    function testNftProtectedSellerCannotListAboveTheLoanRate() public {
+        LibTestProtection.enableWithNfts(address(diamond), lender, 2 days);
+        vm.prank(lender);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.LockedSaleRateAbove.selector, lender, 600, 500));
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 600, true, 7 days, 0, type(uint256).max, type(uint64).max);
+    }
+
+    /// @dev #3339 — and may list at the loan's rate.
+    function testNftProtectedSellerListsAtTheLoanRate() public {
+        LibTestProtection.enableWithNfts(address(diamond), lender, 2 days);
+        _listSaleOffer();
+    }
+
+    function _buyOfferAtRate(uint256 rateBps) internal returns (uint256 id) {
+        vm.prank(newLender);
+        id = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: rateBps,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: COLLATERAL,
+                durationDays: 30,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: rateBps,
+                collateralAmountMax: COLLATERAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            }),
+            type(uint64).max
+        );
+        LibTestTiming.backdateTerms(address(diamond), id); // #3443
     }
 
     /// @dev #2440 / #3629 — the direct sale credits the seller's own vault,
