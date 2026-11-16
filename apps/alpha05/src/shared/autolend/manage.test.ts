@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunctionData, type Abi, type Log } from 'viem';
 import { INTENT, type IntentRecord } from './autoLend';
 import { hasEnded, manageBlocks, manageCall, manageLogs, manageOffers, type ManageDraft, type ManageFacts } from './manage';
-import { manageReceipt, type ManageReview } from './manageReview';
+import { manageKey, manageReceipt, type ManageReview } from './manageReview';
 
 type Hex = `0x${string}`;
 const USDC = '0x1111111111111111111111111111111111111111' as Hex;
@@ -149,5 +149,24 @@ describe('manageReceipt', () => {
     expect(to('wallet')).toEqual({ kind: 'text', text: 'autoLend.mToWallet' });
     expect(to('unknown')).toEqual({ kind: 'unknown', why: 'receipt.unknown' });
     expect(to('held')).toEqual({ kind: 'text', text: 'payout.toHeld' });
+  });
+});
+
+describe('manageKey', () => {
+  it('moves when any term of the instruction moves', () => {
+    const r = (f: ManageFacts): ManageReview => ({
+      draft: draft('add', 100n),
+      identity: 'x',
+      readAt: 0,
+      facts: f,
+      blocks: [],
+      approvalSteps: 0,
+      route: null,
+      verdict: { kind: 'ok' },
+    });
+    const base = manageKey(r(facts()));
+    expect(manageKey(r(facts()))).toBe(base);
+    expect(manageKey(r(facts({ intent: intent({ maxExposure: 2000n }) })))).not.toBe(base);
+    expect(manageKey(r(facts({ intent: intent({ termsSetAt: NOW }) })))).not.toBe(base);
   });
 });

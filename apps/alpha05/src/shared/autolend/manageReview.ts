@@ -65,7 +65,8 @@ export async function readManageReview(own: OwnStateClient, diamond: Hex, draft:
 }
 
 /** What moved between a review and a re-read of it, as a key: a change in
- *  any figure the receipt states or the verdict stands on. */
+ *  any figure the receipt states or the verdict stands on, and in any of the
+ *  instruction's terms. */
 export function manageKey(r: ManageReview): string {
   const f = r.facts;
   return [
@@ -76,8 +77,11 @@ export function manageKey(r: ManageReview): string {
     r.blocks.map((b) => b.kind).join(','),
     f.unlent,
     f.lent,
-    f.intent.active,
-    f.intent.lendUntil,
+    // The whole instruction, so any change to its terms (a re-set of the
+    // limits, the cap a receipt states, the end date) asks for a new review.
+    ...Object.entries(f.intent)
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([k, v]) => `${k}=${String(v)}`),
   ].join('|');
 }
 
