@@ -32,6 +32,10 @@
     "SignedOfferMatched.offerId": {
       "path": "counterpartyOfferId",
       "why": "Same rule as IntentMatched: the counterparty is the standing on-chain offer a person created; the slice is synthesized for the signed order, whose owner follows it by orderHash (in args_json)."
+    },
+    "CollectionOfferFilled.offerId": {
+      "path": "offerId",
+      "why": "#3328: the row belongs on the collection offer's timeline, the standing offer the lender posted and follows by id. The one-token slice is synthesized for this fill and its own acceptance files the loan under it; sliceOfferId stays in args_json."
     }
   },
   "notScoped": {

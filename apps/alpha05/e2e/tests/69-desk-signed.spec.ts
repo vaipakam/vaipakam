@@ -69,6 +69,7 @@ test('your signed orders are listed with the chain’s standing, and each is can
     periodicInterestCadence: '0',
     refinanceTargetLoanId: '0',
     useFullTermInterest: true,
+    lifecycleFlex: '0',
     creatorFull: false,
     creatorMaxCStar: '0',
     creatorAllowFullDowngrade: false,

@@ -86,6 +86,9 @@ export const ACCEPT_ERRORS = [
   'SignedOfferFeeAboveCap',
   'SignedOfferTakerNotAllowed',
   'SignedOfferCoSignatureInvalid',
+  // #3328 — a collection offer, which fills only through the collection-offer
+  // route (one loan per token); `previewAccept` reports it for a direct take.
+  'CollectionParent',
 ] as const;
 export type AcceptErrorName = (typeof ACCEPT_ERRORS)[number] | 'Unrecognised';
 

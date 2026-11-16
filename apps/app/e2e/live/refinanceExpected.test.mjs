@@ -240,6 +240,7 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
       allowsParallelSale: false,
       refinanceTargetLoanId: 22n,
       useFullTermInterest: true,
+      lifecycleFlex: 0,
     };
     const createReq = decodeTxForComparison(
       {
@@ -461,6 +462,7 @@ describe('refinanceExpected — the payoff-permit route (#3295)', () => {
         allowsParallelSale: false,
         refinanceTargetLoanId: 22n,
         useFullTermInterest: true,
+        lifecycleFlex: 0,
       },
       // The app's chain read at the send, 2 s after the anchor (#3412).
       ANCHOR + 2n + TX_DEADLINE_SEC,

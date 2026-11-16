@@ -96,6 +96,9 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   // `recipient` receives the seized collateral, at the liquidator's choice.
   ['LiquidationDiscounted', ['liquidator', 'recipient']],
   ['NotificationFeeBilled', ['payer']],
+  // #3649 — an extension's added initiation fee, paid from the vault of the
+  // borrower-position holder (`payer`).
+  ['ExtensionFeeCharged', ['payer']],
   ['VPFIYieldFeeDiscountApplied', ['lender']],
   // A rental's lender and its renter (`user`).
   ['VaultRentalUpdated', ['lender', 'user']],
@@ -132,8 +135,6 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['HeldRecommittedToIntent', ['owner', 'roller']],
   // The solver sent the fill the credit was spent on.
   ['IntentPriorityFill', ['solver']],
-  // The owner, or its keeper, re-committed held capital to the owner's intent.
-  ['HeldRecommittedToIntent', ['owner', 'roller']],
   // ── The instant market (#3656).
   ['InstantBorrowed', ['borrower']],
   ['InstantSlotSet', ['owner']],
@@ -141,11 +142,7 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   // ── Collection offers (#3328).
   ['CollectionOfferCreated', ['lender']],
   ['SignedCollectionOfferFilled', ['signer', 'borrower']],
-  // ── Held payments and deferred sales.
-  // A lender payment held in the stored lender's vault, and its later claim
-  // by the current holder.
-  ['LenderPaymentHeld', ['custody']],
-  ['HeldForLenderClaimed', ['claimant']],
+  // ── Deferred sales.
   // Whoever submitted the forced sale that failed and was deferred.
   ['ForcedSaleFallbackDeferred', ['caller']],
   // ── A wallet's own settings and consents.
@@ -207,6 +204,14 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['SettingChangeApplied', ['account']],
   ['ProtectNftsSet', ['account']],
   ['CosignRequirementSet', ['account']],
+  // #3344 — the account's Ready balance: moves into and out of it, top-ups
+  // from Protected, the idle period and how long an asset's Ready counts.
+  ['ReadyMoved', ['account']],
+  ['ReadyTopUpRequested', ['account']],
+  ['ReadyTopUpCancelled', ['account']],
+  ['ReadyIdlePeriodSet', ['account']],
+  ['ReadyIdlePeriodChangeRequested', ['account']],
+  ['ReadyUntilSet', ['account']],
   ['NFTMinted', ['owner']],
   // The PositionNFT's ERC-721 events, decoded through
   // `POSITION_NFT_INDEXED_EVENTS`.
@@ -277,6 +282,7 @@ const LOCAL_NOT_A_PARTY: ReadonlyMap<string, Readonly<Record<string, string>>> =
   ['PayoutReleased', { recipient: "the owner's wallet or an allowlisted address" }],
   ['PayoutCancelled', { by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],
   ['SettingChangeCancelled', { by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],
+  ['ReadyTopUpCancelled', { by: 'the wallet that cancelled (the owner or one of its signers, acting on the account)' }],
   // A keeper being permitted or refused is configured, not acting.
   ['KeeperActionsUpdated', { keeper: 'the keeper being permitted' }],
   ['KeeperRevoked', { keeper: 'the keeper being refused' }],

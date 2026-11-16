@@ -141,6 +141,38 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   LenderPaymentHeld: { label: 'Payment held for the lender', category: 'loan-repay', priority: 30 },
   HeldForLenderClaimed: { label: 'Held payment claimed', category: 'loan-modify', priority: 72 },
   HeldRecommittedToIntent: { label: 'Held payment lent again', category: 'loan-modify', priority: 72 },
+  // #3669 — a leg or treasury share the token refused, held in the payer's
+  // vault under a lien until it can be delivered. The settlement it rides in
+  // carries the row's outcome, so these sit below it.
+  SettlementLegParked: { label: 'Payment held in the payer’s vault', category: 'loan-repay', priority: 30 },
+  SettlementLegReleased: { label: 'Held payment delivered', category: 'loan-repay', priority: 40 },
+  TreasuryShareParked: { label: 'Protocol fee held in the vault', category: 'other', priority: 30 },
+  TreasuryShareReleased: { label: 'Held protocol fee paid', category: 'other', priority: 40 },
+  // A forced sale that failed and was deferred: the fallback opens only after
+  // the minimum span, so the sale can be submitted again first.
+  ForcedSaleFallbackDeferred: { label: 'Collateral sale failed; it can be tried again', category: 'loan-default', priority: 40 },
+  // #3649 — the added initiation fee an extension charges; rides the
+  // extension (LoanExtended, 75).
+  ExtensionFeeCharged: { label: 'Initiation fee paid for the added term', category: 'loan-modify', priority: 15 },
+  // #3328 — collection offers. A fill rides the loan's own opening
+  // (LoanInitiated, 90), so the plain fill sits below it.
+  CollectionOfferCreated: { label: 'Collection offer posted', category: 'offer', priority: 50 },
+  CollectionOfferReduced: { label: 'Collection offer reduced', category: 'offer', priority: 55 },
+  CollectionOfferFilled: { label: 'Collection offer filled', category: 'loan-open', priority: 70 },
+  SignedCollectionOfferFilled: { label: 'Signed collection offer filled', category: 'loan-open', priority: 80 },
+  // #3656 — the instant market. One borrow opens a group of loans, each with
+  // its own InstantLoanOpened, summed by InstantBorrowed.
+  InstantBorrowed: { label: 'Instant borrow', category: 'loan-open', priority: 88 },
+  InstantLoanOpened: { label: 'Loan started by an instant borrow', category: 'loan-open', priority: 60 },
+  InstantSlotSet: { label: 'Instant market settings updated', category: 'offer', priority: 40 },
+  InstantTakenOver: { label: 'Loan taken over by another lender', category: 'loan-modify', priority: 82 },
+  // #3344 — the account's Ready balance (protected mode).
+  ReadyMoved: { label: 'Ready balance updated', category: 'other', priority: 50 },
+  ReadyTopUpRequested: { label: 'Ready balance top-up requested', category: 'other', priority: 40 },
+  ReadyTopUpCancelled: { label: 'Ready balance top-up cancelled', category: 'other', priority: 40 },
+  ReadyIdlePeriodSet: { label: 'Ready balance idle period set', category: 'other', priority: 40 },
+  ReadyIdlePeriodChangeRequested: { label: 'Ready balance idle period change requested', category: 'other', priority: 40 },
+  ReadyUntilSet: { label: 'Ready balance expiry updated', category: 'other', priority: 30 },
   // #1209 — a lender sale's seller keeps a claim on the interest they earned.
   // Recorded rides the sale (below LoanSold's 80); a payment rides the
   // repayment that funded it; the withdrawal is the seller's own transaction;

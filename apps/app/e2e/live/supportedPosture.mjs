@@ -125,6 +125,10 @@ export const NOT_AFFECTING = Object.freeze({
   treasuryFeeBpsAtInit: 'a fee stamp; the settlement amounts it feeds are NOT VERIFIED by this drive',
   liqDiscountTierAtInit: 'a discounted-liquidation stamp (#910), stamped only for liquid collateral; not read by a refinance of an illiquid loan',
   liqDiscountBpsAtInit: 'a discounted-liquidation stamp (#910), stamped only for liquid collateral; not read by a refinance of an illiquid loan',
+  // #3649 — the term the initiation fee has been paid for. Only an extension
+  // reads it; a refinance opens a new loan, which pays its own fee.
+  lifTermOrigin: 'the start the initiation fee\u2019s paid term counts from (#3649); read only by an extension, not by a refinance',
+  lifPaidDays: 'the term the initiation fee has been paid for (#3649); read only by an extension, not by a refinance',
 });
 
 /**

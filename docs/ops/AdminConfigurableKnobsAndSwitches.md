@@ -41,9 +41,9 @@ returns the _effective_ value (default OR stored, whichever applies).
 
 ### Treasury fee on lender interest
 
-Default 2% of accrued lender
-interest goes to treasury (the rev-8 fee freeze, #1352; it was 1%
-before). Range: 0% – `MAX_FEE_BPS`, and **`MAX_FEE_BPS` is 50%, not
+Default 5% of accrued lender
+interest goes to treasury (the #3649 fee levels; it was 2% under the
+rev-8 fee freeze, #1352, and 1% before that). Range: 0% – `MAX_FEE_BPS`, and **`MAX_FEE_BPS` is 50%, not
 the 10% this document previously claimed**. Read the guard for what
 it is: a sanity cap that stops a fat-fingered denomination, not a
 promise that governance can never take the majority of a lender's

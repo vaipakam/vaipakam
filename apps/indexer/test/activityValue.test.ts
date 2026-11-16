@@ -84,6 +84,7 @@ const offerFields = (o: Partial<Record<string, unknown>>) => ({
   fillMode: 0,
   allowsPrepayListing: false,
   refinanceTargetLoanId: 0n,
+  lifecycleFlex: 0,
   ...o,
 });
 

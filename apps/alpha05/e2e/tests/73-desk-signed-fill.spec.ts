@@ -68,6 +68,7 @@ async function signedLenderOrder(role: Role, tliq: Hex, diamond: Hex, until: str
     periodicInterestCadence: '0',
     refinanceTargetLoanId: '0',
     useFullTermInterest: true,
+    lifecycleFlex: '0',
     creatorFull: false,
     creatorMaxCStar: '0',
     creatorAllowFullDowngrade: false,

@@ -19,7 +19,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { fetchFreshConfigValues } from './indexer';
 import { bundleInteger, readConfigBundleLive } from './protocol';
 
-const TREASURY_FEE_BPS_DEFAULT = 200; // 2% of interest (#1352 fee freeze)
+const TREASURY_FEE_BPS_DEFAULT = 500; // 5% of interest (#3649 fee levels; 2% under the #1352 freeze)
 const LIF_BPS_DEFAULT = 20; // 0.2% of principal (#1352 fee freeze)
 const MAX_OFFER_DURATION_DAYS_DEFAULT = 365; // deploy default; tunable [7d, 5y]
 

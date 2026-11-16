@@ -54,8 +54,9 @@ export interface KnobDefault {
 }
 
 export const KNOB_DEFAULTS: Record<KnobName, KnobDefault> = {
-  // 2% since the #1352 fee freeze (mirrors LibVaipakam.TREASURY_FEE_BPS).
-  treasuryFeeBps: { defaultValue: 200, format: 'percent' },
+  // 5% since the #3649 fee levels (mirrors LibVaipakam.TREASURY_FEE_BPS;
+  // 2% under the #1352 freeze before that).
+  treasuryFeeBps: { defaultValue: 500, format: 'percent' },
   // 0.2% since the #1352 fee freeze (LibVaipakam.LOAN_INITIATION_FEE_BPS).
   loanInitiationFeeBps: { defaultValue: 20, format: 'percent' },
   tier1Min: { defaultValue: 100, format: 'count' },

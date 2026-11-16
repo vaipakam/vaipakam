@@ -6268,6 +6268,12 @@ const copySource = {
       // minimum age (a few seconds); this clears by itself.
       termsTooFresh:
         'This offer was posted or changed a few seconds ago, and an offer can be taken only once its terms have stood for a few seconds. Try again shortly. Nothing was sent.',
+      // #3328 — a collection offer lends against any one token of a
+      // collection; each fill opens one loan through the collection-offer
+      // route, so the direct accept refuses it. This app has no fill for it,
+      // and the copy says so rather than pointing at a button that is not here.
+      collectionParent:
+        'This is a collection offer. It lends against one token of a collection per loan, and it can be taken only through the protocol’s collection-offer fill, which this app does not offer yet, not by accepting it directly. Nothing was sent.',
       // A refusal we have no words for — the app can be older than the
       // deployment it is talking to, and this vocabulary grows by
       // appending. Says only what is certainly true.
@@ -6732,6 +6738,29 @@ const copySource = {
       RepayPartialPeriodAdvanced: 'Interest period advanced',
       ForcedSaleSettled: 'Collateral sold for what was owed',
       BorrowerHeldExtraPaid: 'Held sale extra paid out',
+      LenderPaymentHeld: 'Payment held for the lender',
+      HeldForLenderClaimed: 'Held payment claimed',
+      HeldRecommittedToIntent: 'Held payment lent again',
+      SettlementLegParked: 'Payment held in the payer’s vault',
+      SettlementLegReleased: 'Held payment delivered',
+      TreasuryShareParked: 'Protocol fee held in the vault',
+      TreasuryShareReleased: 'Held protocol fee paid',
+      ForcedSaleFallbackDeferred: 'Collateral sale failed; it can be tried again',
+      ExtensionFeeCharged: 'Initiation fee paid for the added term',
+      CollectionOfferCreated: 'Collection offer posted',
+      CollectionOfferReduced: 'Collection offer reduced',
+      CollectionOfferFilled: 'Collection offer filled',
+      SignedCollectionOfferFilled: 'Signed collection offer filled',
+      InstantBorrowed: 'Instant borrow',
+      InstantLoanOpened: 'Loan started by an instant borrow',
+      InstantSlotSet: 'Instant market settings updated',
+      InstantTakenOver: 'Loan taken over by another lender',
+      ReadyMoved: 'Ready balance updated',
+      ReadyTopUpRequested: 'Ready balance top-up requested',
+      ReadyTopUpCancelled: 'Ready balance top-up cancelled',
+      ReadyIdlePeriodSet: 'Ready balance idle period set',
+      ReadyIdlePeriodChangeRequested: 'Ready balance idle period change requested',
+      ReadyUntilSet: 'Ready balance expiry updated',
       SellerInterestClaimRecorded: 'Seller interest claim recorded',
       SellerInterestPaid: 'Seller interest paid',
       SellerInterestWithdrawn: 'Seller interest withdrawn',

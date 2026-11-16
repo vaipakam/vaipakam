@@ -219,6 +219,10 @@ export const NOTIF_DELIBERATELY_NOT_HANDLED: Readonly<Record<string, string>> = 
   SettlementLegReleased:
     'companion to the claim or release that moved the parked leg — shown on both parties\' Activity page',
   LoanInitiatedDetails: 'companion to LoanInitiated (mapped) — no separate row',
+  // #3649 — the added initiation fee an extension charges the borrower-position
+  // holder; it fires inside the extension itself.
+  ExtensionFeeCharged:
+    'companion to the same transaction\'s LoanExtended, which carries the extension\'s row (PR2 entry above); the fee is shown on the payer\'s Activity page',
   // ── Internal / companion / transient — no user-facing notification ─
   OfferCreated: 'own action — the creator initiated it; no inbound notification',
   OfferCreatedDetails: 'companion to OfferCreated — no row',

@@ -105,6 +105,7 @@ const NEUTRAL_FLAGS: Readonly<Record<string, string>> = {
   CollateralSaleProceedsSplit: 'the flag is whether part is held for the borrower',
   DefaultAutoRefinanceCapsChanged: 'says the limits changed, not which way',
   ForcedSaleSettled: 'the flags are what the sale held and covered, shown with its rows',
+  InstantSlotSet: 'says the slot’s settings changed; the flags are its three consents, not one switch',
   LenderFundsClaimed: 'the flag is whether both sides have now claimed',
   LenderIntentSet: 'the flags are order terms',
   LoanDefaulted: 'the flag is a consent record, not the outcome',
