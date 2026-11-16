@@ -1,3 +1,4 @@
+import type { CopyKey } from '../copy/useCopy';
 import { useCopy } from '../copy/useCopy';
 import { bpsPercent } from '../offers/priceGuard';
 import { assetName, tokenAmount, useTokenMeta } from '../reads/tokens';
@@ -5,7 +6,12 @@ import { useOwnRead } from '../reads/useOwnRead';
 import { useOwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
 import { OwnStamp } from '../ui/OwnStamp';
-import { autoLendState, readMyAutoLend, sortMyAutoLend } from './myAutoLend';
+import { autoLendState, readMyAutoLend, sortMyAutoLend, type MyAutoLend, type AutoLendState } from './myAutoLend';
+import { AutoLendManage, useManageOpen } from './AutoLendManage';
+import { manageOffers, type ManageKind } from './manage';
+import type { OwnStateClient } from '../../chain/ownRail';
+import type { SupportedChain } from '../../chain/chains';
+import type { TokenMetaMap } from '../reads/tokens';
 
 type Hex = `0x${string}`;
 
@@ -76,12 +82,64 @@ export function AutoLendSection() {
               {i.acceptsProRata && <p className="tier-b">{text('autoLend.cardProRata')}</p>}
               {state === 'ended' && <p className="tier-a">{text('autoLend.cardEndedNote')}</p>}
               {state === 'stopped' && <p className="tier-a">{text('autoLend.cardStoppedNote')}</p>}
-              <p className="tier-b">{text('autoLend.cardManageSoon')}</p>
+              {chain !== null && own !== null && <ManageRow row={r} state={state} chain={chain} own={own} meta={meta ?? null} onDone={read.refetch} />}
+              <p className="tier-b">{text('autoLend.cardChangeSoon')}</p>
             </li>
           );
         })}
       </ul>
       {BigInt(rows.length) < total && <p className="tier-b">{format('autoLend.sectionMore', { shown: String(rows.length), total: total.toString() })}</p>}
     </section>
+  );
+}
+
+const MANAGE_BUTTON: Record<ManageKind, CopyKey> = { add: 'autoLend.mAddLabel', takeBack: 'autoLend.mTakeBackLabel', stop: 'autoLend.mStopLabel' };
+
+/** One card's management: the steps that fit where it stands, and the open
+ *  step's panel, kept open while its transaction is in flight. */
+function ManageRow({
+  row,
+  state,
+  chain,
+  own,
+  meta,
+  onDone,
+}: {
+  row: MyAutoLend;
+  state: AutoLendState;
+  chain: SupportedChain;
+  own: OwnStateClient;
+  meta: TokenMetaMap | null;
+  onDone: () => void;
+}) {
+  const { text } = useCopy();
+  const i = row.intent;
+  const { kind, open } = useManageOpen(i.lendingAsset, i.collateralAsset);
+  const offers = manageOffers(row.active, state === 'ended', i.availableCapital);
+  if (kind !== null)
+    return (
+      <AutoLendManage
+        kind={kind}
+        lending={i.lendingAsset}
+        collateral={i.collateralAsset}
+        unlent={i.availableCapital}
+        chain={chain}
+        own={own}
+        meta={meta}
+        onClose={() => {
+          open(null);
+          onDone();
+        }}
+      />
+    );
+  if (offers.length === 0) return null;
+  return (
+    <p className="actions" data-testid="autolend-manage">
+      {offers.map((k) => (
+        <button key={k} type="button" className={k === 'stop' ? 'btn' : 'btn btn-primary'} onClick={() => open(k)} data-testid={`autolend-${k}`}>
+          {text(MANAGE_BUTTON[k])}
+        </button>
+      ))}
+    </p>
   );
 }

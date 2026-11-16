@@ -8,13 +8,16 @@
  * funded, and the terms and the funding are sent as ONE transaction. The
  * outcome is measured from that transaction's logs, the chain agrees, and
  * Positions shows the Auto-lend. With the network's switch off the option
- * is closed and says why. Runs on the desktop and the phone project; the
+ * is closed and says why. On Positions, money is added (an exact approval),
+ * money not lent is taken back (more than waits is refused in the review),
+ * and the Auto-lend is stopped with the rest taken back in the same
+ * transaction, each measured and checked against the chain. Runs on the desktop and the phone project; the
  * suite reverts the chain after every test.
  */
 import { erc20Abi, parseEther, type Hex } from 'viem';
 import { WETH } from '@vaipakam/anvil-harness/lending';
 import type { Page } from '@playwright/test';
-import { scenario } from '../lib/chain';
+import { scenario, txDeadline } from '../lib/chain';
 import { accountFor } from '../lib/wallets';
 import { connectWallet, expect, test } from '../lib/wallet';
 
@@ -103,7 +106,7 @@ test('a lender sets up Auto-lend: one choice, an exact approval, terms and fundi
   // this wallet has not allowed it, so the review says the money comes back
   // as a claim instead.
   await expect(receipt).toContainText('comes back to you as a claim instead of being lent again');
-  await expect(receipt).toContainText('take back money that is not lent at any time');
+  await expect(receipt).toContainText('take back money that is not lent at any time while it is not paused');
   await expect(receipt).toContainText('Wallet prompts: 2');
   await fitsWidth(page);
 
@@ -170,4 +173,86 @@ test('with Auto-lend switched off on the network, the option is closed and says 
   await page.getByTestId('lend-offer-open').click();
   await expect(page.getByRole('heading', { level: 2, name: 'Your lending offer' })).toBeVisible();
   await fitsWidth(page);
+});
+
+test('on Positions a lender adds money, takes back money not lent, and stops, each measured against the chain', async ({ launchWallet }) => {
+  const sc = scenario();
+  const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;
+  const lender = accountFor('lender').address;
+  await sc.diamondWrite('admin', 'setPartialFillEnabled', [true]);
+  await sc.diamondWrite('admin', 'setLenderIntentEnabled', [true]);
+  await sc.write('lender', WETH, WETH_ABI, 'deposit', [], parseEther('1'));
+  // An Auto-lend already set up and funded with 0.5 WETH, as the setup flow does.
+  await sc.write('lender', WETH, erc20Abi, 'approve', [sc.diamond, parseEther('0.5')]);
+  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, parseEther('1'), 500n, 5000, 30, parseEther('0.05'), false, 0n, false, true, await txDeadline(sc)]);
+  await sc.diamondWrite('lender', 'fundLenderIntent', [WETH, tliq, parseEther('0.5')]);
+  const capital = () => sc.read<bigint>('getLenderIntentCapital', [lender, WETH, tliq]);
+  const allowance = () => sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'allowance', args: [lender, sc.diamond] });
+
+  const { page, flags } = await launchWallet('lender');
+  await page.goto('/positions');
+  await connectWallet(page);
+  const card = page.getByTestId('autolend-card');
+  await expect(card).toHaveAttribute('data-state', 'active', { timeout: 60_000 });
+
+  // Add: an exact approval, then the funding; the chain agrees and the approval is used up.
+  await card.getByTestId('autolend-add').click();
+  await card.getByTestId('autolend-manage-amount').fill('0.2');
+  await card.getByTestId('autolend-manage-review').click();
+  const add = card.getByTestId('autolend-manage-add');
+  await expect(add.locator('.receipt')).toContainText('Add money to Auto-lend', { timeout: 60_000 });
+  await expect(add.locator('.receipt')).toContainText('Waiting to be lent after this');
+  await expect(add.locator('.receipt')).toContainText('does not promise a fill');
+  await fitsWidth(page);
+  let sent = flags.sentTransactions;
+  await add.getByRole('button', { name: 'Confirm in wallet' }).click();
+  await expect(add.locator('[data-phase="measured"]')).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
+  expect(flags.sentTransactions).toBe(sent + 2);
+  expect(await capital()).toBe(parseEther('0.7'));
+  expect(await allowance()).toBe(0n);
+  await add.getByRole('button', { name: 'Close' }).click();
+
+  // Take back: more than waits is refused in the review; less goes back to the wallet.
+  await expect(card).toContainText('Waiting to be lent: 0.7', { timeout: 60_000 });
+  await card.getByTestId('autolend-takeBack').click();
+  await card.getByTestId('autolend-manage-amount').fill('0.8');
+  await card.getByTestId('autolend-manage-review').click();
+  const back = card.getByTestId('autolend-manage-takeBack');
+  await expect(back).toContainText('Only 0.7', { timeout: 60_000 });
+  await expect(back.getByRole('button', { name: 'Confirm in wallet' })).toBeDisabled();
+  await back.getByTestId('autolend-manage-edit').click();
+  await card.getByTestId('autolend-manage-amount').fill('0.3');
+  await card.getByTestId('autolend-manage-review').click();
+  await expect(back.locator('.receipt')).toContainText('Take back money not lent', { timeout: 60_000 });
+  await expect(back.locator('.receipt')).toContainText('Your wallet, at once');
+  const before = await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [lender] });
+  sent = flags.sentTransactions;
+  await back.getByRole('button', { name: 'Confirm in wallet' }).click();
+  await expect(back.locator('[data-phase="measured"]')).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
+  await expect(back.locator('[data-phase="measured"]')).toContainText('received in your wallet');
+  expect(flags.sentTransactions).toBe(sent + 1);
+  expect(await capital()).toBe(parseEther('0.4'));
+  expect(await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'balanceOf', args: [lender] })).toBe(before + parseEther('0.3'));
+  await back.getByRole('button', { name: 'Close' }).click();
+
+  // Stop, taking back the rest in the same transaction.
+  await expect(card).toContainText('Waiting to be lent: 0.4', { timeout: 60_000 });
+  await card.getByTestId('autolend-stop').click();
+  await expect(card.getByTestId('autolend-stop-takeback')).toBeChecked();
+  await card.getByTestId('autolend-manage-review').click();
+  const stop = card.getByTestId('autolend-manage-stop');
+  await expect(stop.locator('.receipt')).toContainText('No new loans from this Auto-lend', { timeout: 60_000 });
+  await expect(stop.locator('.receipt')).toContainText('Loans already made run to their end');
+  await fitsWidth(page);
+  sent = flags.sentTransactions;
+  await stop.getByRole('button', { name: 'Confirm in wallet' }).click();
+  await expect(stop.locator('[data-phase="measured"]')).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
+  await expect(stop.locator('[data-phase="measured"]')).toContainText('Auto-lend stopped on this pair');
+  expect(flags.sentTransactions).toBe(sent + 1);
+  const intent = await sc.read<StoredIntent>('getLenderIntent', [lender, WETH, tliq]);
+  expect(intent.active).toBe(false);
+  expect(await capital()).toBe(0n);
+  await stop.getByRole('button', { name: 'Close' }).click();
+  await expect(card).toHaveAttribute('data-state', 'stopped', { timeout: 60_000 });
+  await expect(card.getByTestId('autolend-manage')).toHaveCount(0);
 });
