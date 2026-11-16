@@ -48,6 +48,7 @@ That order matters. Whoever sends the update chooses its moment, and a market's 
 
 - The year is 365 days, as in per-second interest everywhere else (#3169).
 - While the reference holds, the index keeps growing at the held figure. Loans must accrue something, and the last agreed figure is the fair one. A second running total, **held time**, grows by the same seconds, so any reader can tell how much of a window was held.
+- **Time nobody observed counts as held too.** When an update arrives later than one update interval after the last, the seconds beyond that interval are added to held time, whether or not the quorum agreed at either end: the reference was carried over them, not measured. A day without updates followed by one good update therefore leaves the averaged read unavailable until enough freshly observed time has built up, instead of certifying yesterday's figure.
 - The update for an asset does nothing if less than the minimum spacing has passed since the last one.
 - Part 2 adds the cap and floor level totals to the same update (`FloatingRateCapFloorLevelsDesign.md` section 3). The update is written with that hook in mind; part 1 leaves it empty.
 
@@ -126,7 +127,7 @@ No Diamond storage changes in part 1.
 
 1. Quorum: median of three, four and five; no agreement holds; two readings hold even when equal; one reading holds; a failing reader is left out; the hold event names the reason. A mute holds the reference whatever the other readings are: four readings that do not agree stay held after any one is muted, and three that agree are held, not re-read, once one is muted.
 2. Limits: the step limit over a short and a long gap, counted as at most one interval; many updates in one block move the reference no further than one; the protocol maximum.
-3. Index: equals the sum of in-force reference times seconds over any sequence; a new reading never prices time before it; growth at the held figure while holding; held time equals the seconds held.
+3. Index: equals the sum of in-force reference times seconds over any sequence; a new reading never prices time before it; growth at the held figure while holding; held time equals the seconds held plus the seconds of every gap beyond one update interval. After a 24-hour gap and one good update the averaged read is unavailable, and becomes available only when held time is back to half the window or less.
 4. A source pushed for one transaction, with the update sent in it, changes interest over the next hour by no more than the step limit allows, and the next update returns at the same speed.
 5. Checkpoints: one per UTC hour, first caller; the link to the previous hour; `averaged` over the window, and unavailable for each stated reason.
 6. Starting an asset: the first reference is the one measured at proposal and carried through the delay; a pushed reading at execution gains nothing; fewer than three sources is refused.
