@@ -1789,7 +1789,9 @@ above. Each resolves here, so a route reviewer needs no private file:
   matcher pass's state is disclosed, and so is whether the protocol's keeper
   may roll repaid loans for the wallet (keeper access and the auto-roll
   action): without it repaid money comes back as a claim, and the review says
-  so instead of promising relending; a VPFI lend is never rolled, and the
+  so instead of promising relending; with it, the review still says the
+  keeper re-lends only a repayment worth a hundred times its fee (and none
+  while it cannot price the fee), a skipped one waiting as a claim; a VPFI lend is never rolled, and the
   review says that whatever the keeper settings. The smallest loan defaults
   to a tenth of what can be lent from the start (the funding or the most at
   once, whichever is smaller), and one above the funding is refused, since

@@ -4740,7 +4740,7 @@ export const copy = {
     rowApproval: B('Lets the protocol take from your wallet'),
     loseNoDirect: A("No borrower accepts it directly: a matching service fills a borrower's request that fits your limits, and nothing promises a fill."),
     loseSizing: A("Each loan's collateral is sized from your ceiling at the prices when it is filled. If the collateral's value falls, the loan can be liquidated, and a sale can return less than you lent."),
-    loseRelend: A('You allow the protocol’s keeper to re-lend for you, so repaid money is put back behind it and lent again, until you stop it or its end date passes.'),
+    loseRelend: A('You allow the protocol’s keeper to re-lend for you, so repaid money is put back behind it and lent again, until you stop it or its end date passes. The keeper re-lends a repayment only when it is worth at least a hundred times the network fee of doing so, and none while it cannot price that fee; a repayment it skips waits in your claims for you.'),
     loseRelendOff: A("You have not allowed the protocol's keeper to re-lend repaid money for you, so each repaid loan's money comes back to you as a claim instead of being lent again. Allowing it is a setting on the Keepers page that covers your whole account."),
     loseRelendVpfi: A('The protocol does not re-lend repaid VPFI, so each repaid loan’s money comes back to you as a claim instead of being lent again, whatever your keeper settings.'),
     loseLtvCapUnread: A('The highest loan-to-value the network takes for this pair now could not be read. If your ceiling is above it, matching requests are refused until prices move or you lower it.'),
