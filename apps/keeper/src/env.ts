@@ -259,6 +259,10 @@ interface BaseEnv {
   STANDING_TOPUP_ENABLED?: string;
   STANDING_REPAY_ENABLED?: string;
   STANDING_INTEREST_ENABLED?: string;
+  /** #3681 — 'true' adds the borrower alerts to the standing-instructions
+   *  pass: a reserve too low for what is next due, a top-up that ran, an
+   *  instruction the contract skipped. */
+  STANDING_ALERTS_ENABLED?: string;
   /** #3688 — 'true' adds the collection-offer step to the armed match pass:
    *  `matchCollectionOffer` pairs a lender's NFT collection offer with a
    *  posted borrower offer whose token is in the offer's set, each pair
@@ -625,6 +629,7 @@ export const PLAIN_VAR_KEYS = [
   'STANDING_TOPUP_ENABLED',
   'STANDING_REPAY_ENABLED',
   'STANDING_INTEREST_ENABLED',
+  'STANDING_ALERTS_ENABLED',
   'COLLECTION_MATCH_ENABLED',
   'REWARD_STAGING_UPKEEP_ENABLED',
   'REWARD_STAGING_UNWIND_ENABLED',
@@ -836,6 +841,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     STANDING_TOPUP_ENABLED: raw.STANDING_TOPUP_ENABLED,
     STANDING_REPAY_ENABLED: raw.STANDING_REPAY_ENABLED,
     STANDING_INTEREST_ENABLED: raw.STANDING_INTEREST_ENABLED,
+    STANDING_ALERTS_ENABLED: raw.STANDING_ALERTS_ENABLED,
     COLLECTION_MATCH_ENABLED: raw.COLLECTION_MATCH_ENABLED,
     REWARD_STAGING_UPKEEP_ENABLED: raw.REWARD_STAGING_UPKEEP_ENABLED,
     REWARD_STAGING_UNWIND_ENABLED: raw.REWARD_STAGING_UNWIND_ENABLED,

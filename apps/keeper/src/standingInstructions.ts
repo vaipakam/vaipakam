@@ -48,16 +48,22 @@
 // simulation succeeds; each waits for its receipt before the next
 // (`stepSender.ts`). Each step has its own share of the run's sends.
 //
-// Not here: the borrower alerts the design asks for (a reserve too low for
-// the next payment, a top-up that ran, an instruction skipped); they need
-// their own alert kinds in the agent (#1722 route) and are a follow-up.
+// BORROWER ALERTS (STANDING_ALERTS_ENABLED, design §6), to the instruction's
+// owner through the agent's keeper route (#1722) and Push: a reserve that
+// will not cover the next repayment or interest period (from three days
+// before it, once a day) or a top-up's empty collateral reserve (weekly); a
+// top-up that ran; an instruction the contract skipped (once a day per
+// reason). The throttle is the keeper's, in its own cursor store.
 //
 // Gated by KEEPER_ENABLED, then each step by its own flag:
 // STANDING_TOPUP_ENABLED, STANDING_REPAY_ENABLED, STANDING_INTEREST_ENABLED.
-// The pass does nothing while none is armed. Ships disarmed.
+// The alerts also need STANDING_ALERTS_ENABLED. The pass does nothing while
+// no step is armed. Ships disarmed.
 
-import { createPublicClient, decodeEventLog, http, zeroAddress, type Abi, type Address, type Hex, type PublicClient } from 'viem';
-import { AdminFacetABI, DIAMOND_ABI_VIEM, LoanClockFacetABI, LoanFacetABI, StandingInstructionFacetABI } from '@vaipakam/contracts/abis';
+import { createPublicClient, decodeEventLog, erc20Abi, formatUnits, http, zeroAddress, type Abi, type Address, type Hex, type PublicClient } from 'viem';
+import { plainField, renderTelegramAlert, type AddressedAlert, type TelegramAlert } from '@vaipakam/lib/telegramAlerts/message';
+import { standingSkipReason } from '@vaipakam/lib/telegramAlerts/standingCopy';
+import { AdminFacetABI, DIAMOND_ABI_VIEM, LoanClockFacetABI, LoanFacetABI, RepayPeriodicFacetABI, StandingInstructionFacetABI } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, subStepArmed, type KeeperContext } from './keeper';
@@ -69,7 +75,8 @@ import { attemptOrder, readLedgerRotation } from './ledgerRotation';
 import { PassReader } from './passReader';
 import { runIndex } from './runWindow';
 import { d1ScanCursors, type ScanCursors } from './scanCursors';
-import { publishKeeperStepStatus } from './db';
+import { listThresholdsForChain, publishKeeperStepStatus, type UserThresholds } from './db';
+import { AlertDelivery, delivered, worthRetrying } from './alertDelivery';
 import { StepSender } from './stepSender';
 
 const pick = (abi: unknown, names: readonly string[]): Abi =>
@@ -90,6 +97,7 @@ export const ABI = [
   ...pick(LoanClockFacetABI, ['getLoanDeadlines']),
   ...pick(LoanFacetABI, ['getLoanDetails']),
   ...pick(AdminFacetABI, ['paused']),
+  ...pick(RepayPeriodicFacetABI, ['previewPeriodicSettle']),
   // The facet's own errors, then every other error the Diamond can revert
   // with, so a refusal from deep in a repayment is named, not hex.
   ...(StandingInstructionFacetABI as Abi).filter((x) => x.type === 'error'),
@@ -166,6 +174,9 @@ export interface StandingInstructionsDeps {
   visit: number;
   /** The steps armed on this keeper. */
   armed: ReadonlySet<Step>;
+  /** The borrower alerts (STANDING_ALERTS_ENABLED); none are sent when
+   *  absent. Delivers one alert and says whether it may be stamped as sent. */
+  notify?: (alert: AddressedAlert) => Promise<NoticeOutcome>;
 }
 
 /** The instructions as `getLoanReserve` returns them. */
@@ -294,6 +305,8 @@ export interface StandingInstructionsReport {
   declined: string[];
   /** Due instructions left for a later run by a step's share of sends. */
   deferred: number;
+  /** Borrower alerts sent this run, by key; null when alerts are off. */
+  alerted: string[] | null;
   refused: Map<string, string>;
   unread: Map<string, string>;
   stopped: string | null;
@@ -360,6 +373,8 @@ export async function runStandingInstructions(env: Env, tick: PassTick): Promise
   const sendDeadline = tick.deadlineMs;
   const visit = runIndex(tick, PASS_CADENCE_SEC * 1000);
   const ledger = d1EventLedger(env.DB);
+  const alertsOn = subStepArmed(env, 'standingInstructions', 'borrower alerts', 'STANDING_ALERTS_ENABLED');
+  const delivery = alertsOn ? new AlertDelivery(env) : null;
   // Chains side by side (runWindow.ts, rule 1): each has its own nonce lane.
   await Promise.all(
     chains.map(async (chain: ChainConfig) => {
@@ -375,6 +390,7 @@ export async function runStandingInstructions(env: Env, tick: PassTick): Promise
           ledger,
           visit,
           armed,
+          notify: delivery === null ? undefined : notifierFor(env, chain, delivery),
         });
         console.log(describeReport(report));
       } catch (err) {
@@ -382,6 +398,31 @@ export async function runStandingInstructions(env: Env, tick: PassTick): Promise
       }
     }),
   );
+  delivery?.disclose('standingInstructions');
+}
+
+/**
+ * One chain's alert sender: the Telegram half as data for the agent, which
+ * sends it to the chat the instruction's owner linked, if any; the Push half
+ * when the owner subscribed on this chain, in their language. The
+ * subscriptions are read once, at the first alert.
+ */
+function notifierFor(env: Env, chain: ChainConfig, delivery: AlertDelivery): (alert: AddressedAlert) => Promise<NoticeOutcome> {
+  let subs: Promise<Map<string, UserThresholds>> | null = null;
+  const appOrigin = env.FRONTEND_ORIGIN ?? '';
+  return async (alert) => {
+    const read = (subs ??= listThresholdsForChain(env.DB, chain.id).then((rows) => new Map(rows.map((r) => [r.wallet.toLowerCase(), r]))));
+    const sub = (await read).get(alert.wallet.toLowerCase());
+    const rendered = renderTelegramAlert(alert, { locale: sub?.locale ?? null, chainName: chain.name ?? String(chain.id), appOrigin });
+    const outcome = await delivery.deliver({
+      telegram: { diamond: chain.diamond as string, message: alert },
+      pushSubscriber: sub?.push_channel ? alert.wallet : null,
+      text: rendered.text,
+      pushTitle: rendered.title,
+      deepLinkUrl: `${appOrigin}/loans/${'loanId' in alert.alert ? alert.alert.loanId : ''}`,
+    });
+    return delivered(outcome) ? 'sent' : worthRetrying(outcome) ? 'retry' : 'gone';
+  };
 }
 
 /** The run's one line for a chain. */
@@ -397,6 +438,7 @@ export function describeReport(r: StandingInstructionsReport): string {
     ...(r.held.length > 0 ? [`held=${r.held.join('; ')}`] : []),
     ...(r.declined.length > 0 ? [`declined=${r.declined.join('; ')}`] : []),
     ...(r.deferred > 0 ? [`deferred=${r.deferred} (taken on later runs)`] : []),
+    ...(r.alerted === null ? [] : [`alerted=${r.alerted.join(',') || 'none'}`]),
     ...(r.refused.size > 0 ? [`refused=${[...r.refused].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
     ...(r.unread.size > 0 ? [`unread=${[...r.unread].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
     ...(r.stopped ? [`stopped=${r.stopped}`] : []),
@@ -448,6 +490,191 @@ export function landedOutcome(diamond: Address, step: Step, loanId: bigint, logs
   return { ran: { step, loanId, amount: ran === undefined ? null : (ran[e.amount] as bigint) } };
 }
 
+// ─── Borrower alerts (#3681 design §6) ──────────────────────────────────────
+
+/** An amount of a token, as the chain gave it. */
+export interface Amount {
+  asset: Address;
+  amount: bigint;
+}
+
+/** One alert the run owes a borrower, before its amounts are written out.
+ *  `key` names it for the throttle; `every` is the least time between two
+ *  alerts with that key (0: every time, for an event that happened once). */
+export type Notice = { key: string; every: number; loanId: bigint; owner: Address } & (
+  | { kind: 'low'; instruction: Step; missing: Amount | null; dueAt: bigint | null }
+  | { kind: 'topUp'; amount: Amount; hfBefore: bigint; hfAfter: bigint; reserveLeft: Amount }
+  | { kind: 'skip'; instruction: Step; code: number; missing: Amount | null }
+);
+
+/** What delivering one alert came to: `sent` (a channel took it), `retry`
+ *  (none did, and one may next run), `gone` (none will: nothing to retry). */
+export type NoticeOutcome = 'sent' | 'retry' | 'gone';
+
+/** How long before a repayment's window opens, or an interest period ends, a
+ *  reserve that will not cover it is reported. */
+export const LOW_WARN_SEC = 3 * 24 * 3600;
+/** The least time between two alerts of one kind on one loan. */
+export const LOW_EVERY_SEC = 24 * 3600;
+/** An empty collateral reserve on a top-up: weekly, since nothing is due. */
+export const LOW_TOPUP_EVERY_SEC = 7 * 24 * 3600;
+export const SKIP_EVERY_SEC = 24 * 3600;
+/** The cursor item holding when each alert key was last sent. */
+export const ALERTS_ITEM = 'alerts-sent';
+
+/**
+ * The reserve alerts a loan's own view calls for at `now`. Pure; exported
+ * for tests. A repayment the payment reserve will not cover, from
+ * LOW_WARN_SEC before its window opens until grace ends; an interest period
+ * the reserve will not cover, from LOW_WARN_SEC before the period ends
+ * (`periodEnd`, null when unread: then only an EMPTY reserve is reported,
+ * without a time); a top-up whose collateral reserve is empty.
+ */
+export function lowReserveNotices(id: bigint, v: ReserveView, d: Deadlines | null, now: bigint, periodEnd: bigint | null): Notice[] {
+  const i = v.instructions;
+  if (i.owner === zeroAddress || !v.ownerHoldsPosition) return [];
+  const out: Notice[] = [];
+  const base = { loanId: id, owner: i.owner };
+  const reserve = BigInt(v.paymentReserve);
+  if (i.repayAtDue && d !== null) {
+    const lead = BigInt(i.repayLeadSeconds);
+    const from = d.maturity > lead ? d.maturity - lead : 0n;
+    if (now + BigInt(LOW_WARN_SEC) >= from && now <= d.graceEnd && BigInt(v.repayShortBy) > 0n) {
+      out.push({
+        ...base,
+        key: `low:repay:${id}`,
+        every: LOW_EVERY_SEC,
+        kind: 'low',
+        instruction: 'repay',
+        missing: reserve === 0n ? null : { asset: v.paymentAsset, amount: BigInt(v.repayShortBy) },
+        dueAt: d.maturity,
+      });
+    }
+  }
+  const owed = BigInt(v.interestShortfall);
+  if (i.payInterest && owed > reserve) {
+    const near = periodEnd !== null && now + BigInt(LOW_WARN_SEC) >= periodEnd;
+    if (near) {
+      out.push({ ...base, key: `low:interest:${id}`, every: LOW_EVERY_SEC, kind: 'low', instruction: 'interest', missing: reserve === 0n ? null : { asset: v.paymentAsset, amount: owed - reserve }, dueAt: periodEnd });
+    } else if (periodEnd === null && reserve === 0n) {
+      out.push({ ...base, key: `low:interest:${id}`, every: LOW_EVERY_SEC, kind: 'low', instruction: 'interest', missing: null, dueAt: null });
+    }
+  }
+  if (BigInt(i.topUpTriggerHf) !== 0n && BigInt(v.collateralReserve) === 0n) {
+    out.push({ ...base, key: `low:topUp:${id}`, every: LOW_TOPUP_EVERY_SEC, kind: 'low', instruction: 'topUp', missing: null, dueAt: null });
+  }
+  return out;
+}
+
+/** The alert a landed call owes, from its receipt: a top-up that ran, or a
+ *  skip. Null for a repayment or an interest payment that ran (the app's
+ *  history shows those) and for a receipt with neither event. Exported for
+ *  tests. */
+export function receiptNotice(diamond: Address, step: Step, id: bigint, owner: Address, v: ReserveView, logs: readonly Log[]): Notice | null {
+  const skip = eventsOf(diamond, 'StandingInstructionSkipped', logs).find((x) => x.loanId === id && Number(x.instruction) === INSTRUCTION[step]);
+  if (skip !== undefined) {
+    const code = Number(skip.reason);
+    const missing = BigInt((skip.missing as bigint | undefined) ?? 0n);
+    return { key: `skip:${step}:${id}:${code}`, every: SKIP_EVERY_SEC, loanId: id, owner, kind: 'skip', instruction: step, code, missing: missing > 0n ? { asset: v.paymentAsset, amount: missing } : null };
+  }
+  if (step !== 'topUp') return null;
+  const ran = eventsOf(diamond, 'CollateralTopUpRun', logs).find((x) => x.loanId === id);
+  if (ran === undefined) return null;
+  return {
+    key: `topUp:${id}`,
+    every: 0,
+    loanId: id,
+    owner: ran.holder as Address,
+    kind: 'topUp',
+    amount: { asset: v.collateralAsset, amount: ran.amount as bigint },
+    hfBefore: ran.hfBefore as bigint,
+    hfAfter: ran.hfAfter as bigint,
+    reserveLeft: { asset: v.collateralAsset, amount: ran.reserveLeft as bigint },
+  };
+}
+
+/** A health factor (1e18) as the alert writes it. */
+const hf = (x: bigint) => Number(x / 10n ** 12n) / 1e6;
+
+/** When each alert key was last sent, with every entry older than a week
+ *  dropped (no throttle is longer). */
+export function liveSent(raw: string | undefined, now: bigint): Map<string, bigint> {
+  const out = liveHolds(raw, 0n);
+  for (const [k, v] of out) if (now - v > BigInt(LOW_TOPUP_EVERY_SEC)) out.delete(k);
+  return out;
+}
+
+/**
+ * Write each due notice out (amounts with their token's decimals and symbol,
+ * read once a run per token) and deliver it, stamping the throttle for each
+ * one a channel took or none ever will. The throttle and the deduplication
+ * are the keeper's: the agent sends what it is given.
+ */
+async function deliverNotices(
+  r: PassReader,
+  chainId: number,
+  deps: StandingInstructionsDeps,
+  report: StandingInstructionsReport,
+  notices: readonly Notice[],
+  now: bigint,
+): Promise<void> {
+  const notify = deps.notify;
+  if (notify === undefined || notices.length === 0) return;
+  const raw = (await deps.cursors.get([ALERTS_ITEM])).get(ALERTS_ITEM);
+  const sent = liveSent(raw, now);
+  const before = encodeHolds(sent);
+  const tokens = new Map<string, Promise<{ decimals: number; symbol: string } | null>>();
+  const token = (asset: Address) => {
+    const k = asset.toLowerCase();
+    if (!tokens.has(k)) {
+      tokens.set(
+        k,
+        Promise.all([r.one<number>('decimals', [], asset, erc20Abi), r.one<string>('symbol', [], asset, erc20Abi)])
+          .then(([decimals, symbol]) => ({ decimals: Number(decimals), symbol: plainField(String(symbol)) ?? '?' }))
+          .catch((err) => {
+            if (err instanceof PastRunDeadline) throw err;
+            return null;
+          }),
+      );
+    }
+    return tokens.get(k)!;
+  };
+  const words = async (a: Amount): Promise<string> => {
+    const t = await token(a.asset);
+    const short = `${a.asset.slice(0, 8)}…${a.asset.slice(-4)}`;
+    return plainField(t === null ? `${a.amount} raw units (${short})` : `${formatUnits(a.amount, t.decimals)} ${t.symbol.slice(0, 24)} (${short})`) ?? '?';
+  };
+  for (const n of notices) {
+    const last = sent.get(n.key);
+    if (n.every > 0 && last !== undefined && now - last < BigInt(n.every)) continue;
+    let alert: TelegramAlert;
+    const loanId = Number(n.loanId);
+    if (n.kind === 'low') {
+      alert = { kind: 'standingReserveLow', loanId, instruction: n.instruction, missing: n.missing === null ? null : await words(n.missing), dueAt: n.dueAt === null ? null : Number(n.dueAt) };
+    } else if (n.kind === 'topUp') {
+      alert = {
+        kind: 'standingTopUp',
+        loanId,
+        amount: await words(n.amount),
+        hfBefore: hf(n.hfBefore),
+        hfAfter: n.hfAfter === 0n ? null : hf(n.hfAfter),
+        reserveLeft: await words(n.reserveLeft),
+      };
+    } else {
+      const reason = standingSkipReason(n.code);
+      if (reason === null) continue;
+      alert = { kind: 'standingSkipped', loanId, instruction: n.instruction, reason, missing: reason === 'reserveShort' && n.missing !== null ? await words(n.missing) : null };
+    }
+    // eslint-disable-next-line no-await-in-loop
+    const outcome = await notify({ chainId, wallet: n.owner.toLowerCase(), alert });
+    if (outcome === 'retry') continue;
+    if (outcome === 'sent') report.alerted?.push(n.key);
+    if (n.every > 0) sent.set(n.key, now);
+  }
+  const after = encodeHolds(sent);
+  if (after !== before || (raw ?? '') !== after) await deps.cursors.put(ALERTS_ITEM, after);
+}
+
 /** The held instructions stored after landed skips, `step:loanId` to the
  *  unix second it may be tried again, with every lapsed hold dropped. */
 export function liveHolds(raw: string | undefined, now: bigint): Map<string, bigint> {
@@ -494,6 +721,7 @@ export async function standingInstructionsOnce(chainId: number, diamond: Address
     held: [],
     declined: [],
     deferred: 0,
+    alerted: deps.notify === undefined ? null : [],
     refused: sender.refused,
     unread: sender.unread,
     stopped: null,
@@ -588,10 +816,26 @@ async function runInstructions(
       const loan = statuses[j] as { status: number } | undefined;
       if (loan !== undefined && Number(loan.status) !== LOAN_ACTIVE) finished.add(id);
     });
+    // For the alerts only: the end of the current interest period of each
+    // loan whose payment reserve will not cover it.
+    const periodEnds = new Map<bigint, bigint>();
+    if (deps.notify !== undefined) {
+      const short = owned.filter((_, j) => {
+        const v = views[j]?.[0] as ReserveView | undefined;
+        return v !== undefined && v.instructions.payInterest && BigInt(v.interestShortfall) > BigInt(v.paymentReserve);
+      });
+      const previews = await r.many(short.map(({ id }) => ({ functionName: 'previewPeriodicSettle', args: [id] })), 'periods', block.number);
+      short.forEach(({ id }, j) => {
+        const p = previews[j] as { periodEndAt: bigint } | undefined;
+        if (p !== undefined) periodEnds.set(id, BigInt(p.periodEndAt));
+      });
+    }
+    const notices: Notice[] = [];
+    const viewOf = new Map<bigint, { view: ReserveView; owner: Address }>();
     const holdsRaw = (await deps.cursors.get([HOLDS_ITEM])).get(HOLDS_ITEM);
     const holds = liveHolds(holdsRaw, now);
     const work: { id: bigint; step: Step }[] = [];
-    owned.forEach(({ id }, j) => {
+    owned.forEach(({ id, owner }, j) => {
       const [view, dl] = views[j] as [ReserveView | undefined, readonly bigint[] | undefined];
       if (view === undefined) {
         sender.noteUnread(`loan:${id}`, 'its reserve');
@@ -599,6 +843,8 @@ async function runInstructions(
       }
       const d: Deadlines | null = dl === undefined ? null : { maturity: BigInt(dl[2]), graceEnd: BigInt(dl[3]) };
       if (finished.has(id)) return;
+      viewOf.set(id, { view, owner });
+      if (deps.notify !== undefined) notices.push(...lowReserveNotices(id, view, d, now, periodEnds.get(id) ?? null));
       const verdict = loanVerdict(view, d, now, interval);
       for (const h of verdict.held) if (deps.armed.has(h.step)) report.held.push(`${h.step} loan ${id}: ${h.why}`);
       for (const step of verdict.send) {
@@ -628,6 +874,11 @@ async function runInstructions(
         const res = await sender.call(step, String(id), FUNCTION_OF[step], [id]);
         if (res === 'landed') {
           const out = landedOutcome(diamond, step, id, sender.receipt?.logs ?? []);
+          const seen = viewOf.get(id);
+          if (deps.notify !== undefined && seen !== undefined) {
+            const n = receiptNotice(diamond, step, id, seen.owner, seen.view, sender.receipt?.logs ?? []);
+            if (n !== null) notices.push(n);
+          }
           if ('skip' in out) {
             report.skips.push(out.skip);
             holds.set(`${step}:${id}`, now + BigInt(SKIP_HOLD_SEC));
@@ -645,6 +896,14 @@ async function runInstructions(
         const words = REFUSALS.get(res);
         if (words !== undefined) report.declined.push(`${step} loan ${id}: ${words}`);
       }
+    }
+    // Alerts after every send: a slow channel never holds a top-up back.
+    // Unsent by the cutoff, they are owed again next run.
+    try {
+      await deliverNotices(r, chainId, deps, report, notices, now);
+    } catch (err) {
+      if (err instanceof PastRunDeadline) sender.noteUnread('alerts', 'the borrower alerts (the read cutoff passed)');
+      else sender.noteUnread('alerts', `the borrower alerts (${shortErr(err)})`);
     }
     const holdsAfter = encodeHolds(holds);
     if (holdsAfter !== holdsBefore || (holdsRaw ?? '') !== holdsAfter) {

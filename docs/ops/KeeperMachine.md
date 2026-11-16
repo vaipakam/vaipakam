@@ -539,7 +539,8 @@ journalctl -u vaipakam-keeper -f
    `STANDING_INTEREST_ENABLED` (`standingInstructions`, every minute: one
    flag per instruction a borrower can set on a loan, the collateral top-up,
    the due repayment and the interest payment, each paid from the borrower's
-   own per-loan reserve, #3681; the pass does nothing while none is set),
+   own per-loan reserve, #3681; the pass does nothing while none is set;
+   its borrower alerts also need `STANDING_ALERTS_ENABLED`),
    `COLLECTION_MATCH_ENABLED` (a step of the `matcher` pass, which
    `KEEPER_ENABLED` arms: matches NFT collection offers with posted
    borrower offers whose token is in the offer's set, #3688),

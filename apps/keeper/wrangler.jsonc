@@ -446,7 +446,7 @@
   //     flag per instruction: the collateral top-up, the due repayment and
   //     the interest payment a borrower set on a loan, each paid from the
   //     borrower's own per-loan reserve. Every minute. Pays only gas. Ship
-  //     unset.
+  //     unset. STANDING_ALERTS_ENABLED adds the borrower alerts. Ships unset.
   //   - COLLECTION_MATCH_ENABLED — 'true' adds the #3688 collection-offer
   //     step to the armed match pass: matchCollectionOffer pairs a lender's
   //     NFT collection offer with a posted borrower offer whose token is in

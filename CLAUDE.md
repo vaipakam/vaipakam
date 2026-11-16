@@ -1400,7 +1400,8 @@ artifacts and stay in their respective env / config:
   the matcher's collection-offer step (#3688) on `COLLECTION_MATCH_ENABLED`,
   `standingInstructions` (#3681) on one flag per instruction,
   `STANDING_TOPUP_ENABLED`, `STANDING_REPAY_ENABLED` and
-  `STANDING_INTEREST_ENABLED`,
+  `STANDING_INTEREST_ENABLED` (its borrower alerts also on
+  `STANDING_ALERTS_ENABLED`),
   `expiredTeardown` (#3097) on `EXPIRED_TEARDOWN_ENABLED`,
   `vaultBeaconUpkeep` (#3282) on `VAULT_BEACON_UPKEEP_ENABLED`,
   `priceCheckpoint` (#3384, the hourly price checkpoints the #3359

@@ -26,6 +26,9 @@ import {
   landedOutcome,
   liveHolds,
   loanVerdict,
+  lowReserveNotices,
+  LOW_WARN_SEC,
+  type NoticeOutcome,
   publishArmedSteps,
   resetPublishedSteps,
   STATUS_PUBLISH_SEC,
@@ -38,6 +41,8 @@ import { encodePos, type EventLedger, type LedgerPos, type LedgerRow } from '../
 import { memoryScanCursors } from '../src/scanCursors';
 import type { KeeperContext } from '../src/keeper';
 import type { Env } from '../src/env';
+import type { AddressedAlert } from '@vaipakam/lib/telegramAlerts/message';
+import { parseAddressedAlert } from '@vaipakam/lib/telegramAlerts/message';
 
 const CHAIN = 84532;
 const DIAMOND: Address = '0x00000000000000000000000000000000000000c1';
@@ -173,6 +178,12 @@ class FakeDiamond {
         const l = this.loans.get(a[0])!;
         return [l.maturity, 0n, l.maturity, l.graceEnd];
       }
+      case 'decimals':
+        return 6;
+      case 'symbol':
+        return 'USDC';
+      case 'previewPeriodicSettle':
+        return { periodEndAt: this.loans.get(a[0])!.periodEnd };
       case 'getLoanDetails':
         return { status: this.loans.get(a[0])?.active === false ? 1 : 0 };
       default:
@@ -354,6 +365,21 @@ describe('loanVerdict', () => {
   });
 });
 
+describe('lowReserveNotices', () => {
+  const d = new FakeDiamond();
+  const notices = (l: FakeLoan, periodEnd: bigint | null) => {
+    d.loans.set(1n, l);
+    return lowReserveNotices(1n, d.view(1n, l.owner), { maturity: l.maturity, graceEnd: l.graceEnd }, NOW, periodEnd);
+  };
+  it('warns of an interest period the reserve will not cover only from three days before it ends', () => {
+    const l = loan({ payInterest: true, interestShortfall: 100n, paymentReserve: 40n });
+    expect(notices(l, NOW + BigInt(LOW_WARN_SEC) + 1n)).toEqual([]);
+    expect(notices(l, NOW + BigInt(LOW_WARN_SEC))).toMatchObject([{ instruction: 'interest', missing: { amount: 60n }, dueAt: NOW + BigInt(LOW_WARN_SEC) }]);
+    expect(notices(loan({ payInterest: true, interestShortfall: 100n }), null), 'an empty reserve, period end unread').toMatchObject([{ instruction: 'interest', missing: null, dueAt: null }]);
+    expect(notices(loan({ ...l, holder: OTHER }), NOW), 'not for a moved position').toEqual([]);
+  });
+});
+
 describe('receipt outcomes and holds', () => {
   it('reads a run, or the contract\'s skip, from the Diamond\'s own events for this loan and instruction', () => {
     const ran = logOf('CollateralTopUpRun', { loanId: 1n, holder: OWNER, amount: 7n, hfBefore: 1n, hfAfter: 2n, reserveLeft: 0n, caller: KEEPER });
@@ -453,7 +479,7 @@ describe('a run', () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  const run = (opts: { armed?: ReadonlySet<Step>; visit?: number } = {}) =>
+  const run = (opts: { armed?: ReadonlySet<Step>; visit?: number; notify?: (a: AddressedAlert) => Promise<NoticeOutcome> } = {}) =>
     standingInstructionsOnce(CHAIN, DIAMOND, {
       client: d.client(),
       readClient: d.client(),
@@ -463,6 +489,7 @@ describe('a run', () => {
       ledger,
       visit: opts.visit ?? 0,
       armed: opts.armed ?? ALL,
+      notify: opts.notify,
     });
   const sent = () => d.sent.map((s) => `${s.fn}(${s.id})`);
   const add = (id: bigint, l: FakeLoan) => {
@@ -580,6 +607,61 @@ describe('a run', () => {
       'topUp loan 2: the position is not held by the wallet that set it, or the loan is not active',
     ]);
     expect((await cursors.get([FLOOR_ITEM])).get(FLOOR_ITEM)).toBe(encodePos({ block: 50, log: 0 }));
+  });
+
+  describe('borrower alerts', () => {
+    const inbox: AddressedAlert[] = [];
+    const notify = async (a: AddressedAlert): Promise<NoticeOutcome> => {
+      // Every alert must pass the agent's own parser.
+      expect(parseAddressedAlert(JSON.parse(JSON.stringify(a)))).not.toBeNull();
+      inbox.push(a);
+      return 'sent';
+    };
+    beforeEach(() => inbox.splice(0));
+
+    it('tells the owner a top-up ran, with amounts in the token and the health factors', async () => {
+      add(1n, loan(underTrigger));
+      const r = await run({ notify });
+      expect(inbox).toEqual([
+        {
+          chainId: CHAIN,
+          wallet: OWNER,
+          alert: { kind: 'standingTopUp', loanId: 1, amount: expect.stringMatching(/^0\.000334 USDC/), hfBefore: 1.2, hfAfter: 1.6, reserveLeft: expect.stringMatching(/^0\.000166 USDC/) },
+        },
+      ]);
+      expect(r.alerted).toEqual(['topUp:1']);
+    });
+
+    it('tells the owner of a skip once a day, and of a short repayment reserve from three days before the window', async () => {
+      add(1n, loan({ ...underTrigger, hiddenSkip: 7 }));
+      add(2n, loan({ repayAtDue: true, paymentReserve: 4_000n, maturity: NOW + BigInt(LOW_WARN_SEC) }));
+      await run({ notify });
+      expect(inbox.map((a) => a.alert)).toEqual([
+        { kind: 'standingReserveLow', loanId: 2, instruction: 'repay', missing: expect.stringMatching(/^0\.001 USDC/), dueAt: Number(NOW + BigInt(LOW_WARN_SEC)) },
+        { kind: 'standingSkipped', loanId: 1, instruction: 'topUp', reason: 'accountLocked', missing: null },
+      ]);
+      d.now = NOW + 31n * 60n; // past the skip hold, inside the day
+      await run({ notify, visit: 1 });
+      expect(inbox, 'both throttled for the day').toHaveLength(2);
+      d.now = NOW + 24n * HOUR;
+      await run({ notify, visit: 2 });
+      expect(inbox.map((a) => a.alert.kind)).toEqual(['standingReserveLow', 'standingSkipped', 'standingReserveLow', 'standingSkipped']);
+    });
+
+    it('sends again next run what no channel took', async () => {
+      add(1n, loan({ trigger: 13n * E18 / 10n, target: 16n * E18 / 10n }));
+      const r = await run({ notify: async () => 'retry' });
+      expect(r.alerted).toEqual([]);
+      await run({ notify, visit: 1 });
+      expect(inbox.map((a) => a.alert)).toEqual([{ kind: 'standingReserveLow', loanId: 1, instruction: 'topUp', missing: null, dueAt: null }]);
+    });
+
+    it('sends none while alerts are off', async () => {
+      add(1n, loan(underTrigger));
+      const r = await run();
+      expect(r.alerted).toBeNull();
+      expect(describeReport(r)).not.toContain('alerted=');
+    });
   });
 
   it('refuses an RPC that serves another chain', async () => {

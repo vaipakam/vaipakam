@@ -783,6 +783,22 @@ evidence that the migration has completed.
   against a repeated warning; the alert service does not filter them.
   Without a way to reach the alert service the keeper sends no Telegram
   warning, still sends Push, and says so once per run.
+- A borrower who leaves standing instructions on a loan (#3681) can be told
+  three things about them, through the same alert service and in the owner's
+  language: that the reserve an instruction spends is too low for what it
+  will next pay, that a collateral top-up ran, and that an instruction was
+  tried and skipped. Each message states only what the chain showed. A too-low
+  payment reserve names how much it is short of the amount due and when that
+  is due, or says the reserve is empty; it says what the instruction will then
+  do (a repayment runs only when the reserve covers all of it, an interest
+  payment pays what the reserve holds and the rest stays owed), never that the
+  loan will default. A collateral reserve is only ever reported empty, since a
+  top-up spends no fixed amount at no fixed time. A top-up names the amount
+  moved, the health factor before and after (or that the after figure could
+  not be read) and what is left in the reserve. A skip says nothing moved and
+  why, in the contract's own terms, and names the shortfall only when the
+  reason is a short reserve. The alert service refuses any of these whose
+  figures do not fit those rules rather than send a message that claims more.
 
 ## Protocol upkeep outside the reward system
 

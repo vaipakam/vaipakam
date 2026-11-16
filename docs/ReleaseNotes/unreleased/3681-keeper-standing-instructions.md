@@ -8,7 +8,8 @@ Some skips the view cannot see, such as a live sale or refinance, a locked accou
 
 The design says a switch the borrower turns on is not a promise that someone will act. The keeper therefore publishes which of its steps are armed on each chain, every few minutes, armed or not. It writes them to a new shared table (migration 0098), and the indexer serves them on `GET /keeper/steps?chainId=`. A row older than 15 minutes reads as not running. The app's instruction panel can use this to say "No automatic runner is active for this instruction here" where that is so, and the same when the state cannot be read.
 
+With `STANDING_ALERTS_ENABLED` also set (unset by default), the pass alerts the instruction's owner through the agent's Telegram route and Push. It sends an alert when a payment reserve will not cover the repayment or the next interest period, from three days before and at most once a day. It also alerts weekly when a top-up's collateral reserve is empty, each time a top-up runs, and when the contract skips an instruction, at most once a day per reason. The keeper keeps the throttle; the alert wording is the shared catalogue's.
+
 The three executors move from a recorded gap to keeper-backed in the permissionless-steps ledger.
 
-> Caveat: the borrower alerts the design asks for (a reserve too low for the next payment, a top-up that ran, an instruction skipped) are not sent yet; they need their own alert kinds in the agent and are a follow-up.
 > Caveat: this depends on the #3681 contract work, which lands with the contract batch; until then the pass names no loans.

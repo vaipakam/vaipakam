@@ -21,6 +21,13 @@
  */
 import { formatAlert, pushTitle } from './hfCopy';
 import { protectedCopy, shortAddress } from './protectedCopy';
+import {
+  STANDING_INSTRUCTIONS,
+  STANDING_SKIP_REASONS,
+  standingCopy,
+  type StandingInstruction,
+  type StandingSkipReason,
+} from './standingCopy';
 
 /** The LOCK outcomes the keeper reports (`protectedTelegram.ts`). */
 export const LOCK_OUTCOMES = ['locked', 'locked-again', 'already-locked', 'not-protected', 'not-allowed', 'expired', 'refused'] as const;
@@ -36,7 +43,21 @@ export type TelegramAlert =
   | { kind: 'lock'; outcome: LockOutcomeKind; reason?: string }
   | { kind: 'locked'; by: string | null }
   | { kind: 'replacement'; nominee: string; by: string }
-  | { kind: 'payout'; what: string; recipient: string; releaseAt: number; code: string; lockHint: boolean };
+  | { kind: 'payout'; what: string; recipient: string; releaseAt: number; code: string; lockHint: boolean }
+  /** #3681 — the reserve an instruction spends is too low for what it will
+   *  next pay. `missing` (an amount with its token) is the shortfall of the
+   *  payment reserve against what is due at `dueAt`, or null when the reserve
+   *  is EMPTY. A top-up has no amount due, so it is only ever reported empty;
+   *  `dueAt` is when the repayment or interest falls due, null for a top-up. */
+  | { kind: 'standingReserveLow'; loanId: number; instruction: StandingInstruction; missing: string | null; dueAt: number | null }
+  /** #3681 — a collateral top-up ran (`CollateralTopUpRun`). Amounts are
+   *  written out with their token; `hfAfter` is null when the contract could
+   *  not read it (the event's 0). */
+  | { kind: 'standingTopUp'; loanId: number; amount: string; hfBefore: number; hfAfter: number | null; reserveLeft: string }
+  /** #3681 — an instruction landed and changed nothing
+   *  (`StandingInstructionSkipped`). `missing` is the reserve's shortfall when
+   *  the reason is a short reserve and the keeper could write it out. */
+  | { kind: 'standingSkipped'; loanId: number; instruction: StandingInstruction; reason: StandingSkipReason; missing: string | null };
 
 /** A message with where it goes. */
 export interface AddressedAlert {
@@ -116,9 +137,48 @@ function parseAlert(raw: unknown): TelegramAlert | null {
       if (typeof a.code !== 'string' || !CODE.test(a.code)) return null;
       if (typeof a.lockHint !== 'boolean') return null;
       return { kind: 'payout', what: a.what.replace(DOMAIN_DOT, '\u2024'), recipient: a.recipient.toLowerCase(), releaseAt: a.releaseAt, code: a.code, lockHint: a.lockHint };
+    case 'standingReserveLow': {
+      if (!isInt(a.loanId, 0, Number.MAX_SAFE_INTEGER) || !isInstruction(a.instruction)) return null;
+      const missing = plainOrNull(a.missing);
+      const dueAt = a.dueAt === null ? null : isInt(a.dueAt, 1, 2 ** 40) ? a.dueAt : undefined;
+      if (missing === undefined || dueAt === undefined) return null;
+      // A top-up spends no known amount at no known time: only "empty" fits.
+      if (a.instruction === 'topUp' && (missing !== null || dueAt !== null)) return null;
+      // A short reserve is always short of something due at a time.
+      if (missing !== null && dueAt === null) return null;
+      return { kind: 'standingReserveLow', loanId: a.loanId, instruction: a.instruction, missing, dueAt };
+    }
+    case 'standingTopUp': {
+      if (!isInt(a.loanId, 0, Number.MAX_SAFE_INTEGER)) return null;
+      const amount = plainOrNull(a.amount);
+      const reserveLeft = plainOrNull(a.reserveLeft);
+      if (!amount || !reserveLeft || !isHf(a.hfBefore)) return null;
+      if (a.hfAfter !== null && !isHf(a.hfAfter)) return null;
+      return { kind: 'standingTopUp', loanId: a.loanId, amount, hfBefore: a.hfBefore, hfAfter: a.hfAfter as number | null, reserveLeft };
+    }
+    case 'standingSkipped': {
+      if (!isInt(a.loanId, 0, Number.MAX_SAFE_INTEGER) || !isInstruction(a.instruction)) return null;
+      if (!(STANDING_SKIP_REASONS as readonly unknown[]).includes(a.reason)) return null;
+      const missing = plainOrNull(a.missing);
+      if (missing === undefined) return null;
+      // Only a short reserve has a shortfall to state.
+      if (missing !== null && a.reason !== 'reserveShort') return null;
+      return { kind: 'standingSkipped', loanId: a.loanId, instruction: a.instruction, reason: a.reason as StandingSkipReason, missing };
+    }
     default:
       return null;
   }
+}
+
+const isInstruction = (v: unknown): v is StandingInstruction => (STANDING_INSTRUCTIONS as readonly unknown[]).includes(v);
+const isHf = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1e6;
+
+/** A free amount field: the checked text (a bare domain's dot made a leader),
+ *  null when the field is null, undefined when it is out of shape. */
+function plainOrNull(v: unknown): string | null | undefined {
+  if (v === null) return null;
+  if (typeof v !== 'string' || !PLAIN.test(v)) return undefined;
+  return v.replace(DOMAIN_DOT, '\u2024');
 }
 
 /** What the agent fills in that the keeper does not choose. */
@@ -172,8 +232,44 @@ export function renderTelegramAlert(m: AddressedAlert, ctx: RenderContext): { te
       const when = new Date(a.releaseAt * 1000).toISOString().slice(0, 16).replace('T', ' ');
       return { text: copy.alertPayout(w, c, a.what, a.recipient, when, a.code, a.lockHint), title: copy.pushTitle };
     }
+    case 'standingReserveLow': {
+      const s = standingCopy(ctx.locale);
+      const l = s.loan(a.loanId, ctx.chainName);
+      const link = loanLink(ctx.appOrigin, a.loanId);
+      const when = a.dueAt === null ? null : utcMinute(a.dueAt);
+      // The parser admits a shortfall only for the repayment or interest, with a time.
+      const text =
+        a.missing !== null && a.instruction !== 'topUp' && when !== null
+          ? s.lowShort(l, a.instruction, a.missing, when, link)
+          : s.lowEmpty(l, a.instruction, when, link);
+      return { text, title: s.pushTitle };
+    }
+    case 'standingTopUp': {
+      const s = standingCopy(ctx.locale);
+      const text = s.topUpRan(
+        s.loan(a.loanId, ctx.chainName),
+        a.amount,
+        a.hfBefore.toFixed(2),
+        a.hfAfter === null ? null : a.hfAfter.toFixed(2),
+        a.reserveLeft,
+        loanLink(ctx.appOrigin, a.loanId),
+      );
+      return { text, title: s.pushTitle };
+    }
+    case 'standingSkipped': {
+      const s = standingCopy(ctx.locale);
+      return {
+        text: s.skipped(s.loan(a.loanId, ctx.chainName), a.instruction, a.reason, a.missing, loanLink(ctx.appOrigin, a.loanId)),
+        title: s.pushTitle,
+      };
+    }
   }
 }
+
+/** A loan's page in the app, on the agent's own origin. */
+const loanLink = (origin: string, loanId: number): string => `${origin}/loans/${loanId}`;
+/** Unix seconds as `YYYY-MM-DD HH:MM`, UTC. */
+const utcMinute = (sec: number): string => new Date(sec * 1000).toISOString().slice(0, 16).replace('T', ' ');
 
 /** The pre-grace warning (moved from the keeper's pre-grace watcher). English
  *  only for now, as it was. */
