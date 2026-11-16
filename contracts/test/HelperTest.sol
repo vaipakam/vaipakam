@@ -126,6 +126,7 @@ import {OfferMaterializeFacet} from "../src/facets/OfferMaterializeFacet.sol";
 import {CollectionOfferFacet} from "../src/facets/CollectionOfferFacet.sol";
 import {ReadyBalanceFacet} from "../src/facets/ReadyBalanceFacet.sol";
 import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
+import {LibTestSettlementLeg} from "./helpers/LibTestSettlementLeg.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -1072,6 +1073,12 @@ contract HelperTest {
         selectors[1] = FeeLevelsFacet.getLoanInitiationFeeTerms.selector;
         selectors[2] = FeeLevelsFacet.quoteLoanInitiationFee.selector;
         selectors[3] = FeeLevelsFacet.quoteExtensionFee.selector;
+    }
+
+    /// @dev #3669 — the refused settlement leg host. Mirrors
+    ///      `DeployDiamond._getSettlementLegSelectors`.
+    function getSettlementLegFacetSelectors() public pure returns (bytes4[] memory) {
+        return LibTestSettlementLeg.selectors();
     }
 
     function getRepayFacetSelectors()
@@ -2075,7 +2082,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](11);
         selectors[0] = ProtocolBroadcastFacet.protocolBroadcastTierUpdate.selector;
         selectors[1] = ProtocolBroadcastFacet.topUpBroadcastBudget.selector;
         selectors[2] = ProtocolBroadcastFacet.withdrawBudget.selector;
@@ -2086,6 +2093,9 @@ contract HelperTest {
         // #1277: getTierPushSpacingSec / setTierPushSpacingSec removed with
         // the spacing window (the budget pays only lowers, never a raise).
         selectors[7] = ProtocolBroadcastFacet.flushTierPushes.selector;
+        selectors[8] = ProtocolBroadcastFacet.broadcastTierTableVersionTo.selector;
+        selectors[9] = ProtocolBroadcastFacet.quoteBroadcastTierTableVersionTo.selector;
+        selectors[10] = ProtocolBroadcastFacet.getTierTableVersion.selector;
         return selectors;
     }
 
@@ -2905,13 +2915,14 @@ contract HelperTest {
     /// #3359 - the forced-sale floor rule. Mirrors
     /// `DeployDiamond._getSaleFloorSelectors`.
     function getSaleFloorFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](6);
+        selectors = new bytes4[](7);
         selectors[0] = SaleFloorFacet.saleFloorBps.selector;
         selectors[1] = SaleFloorFacet.checkpointHourlyPrices.selector;
         selectors[2] = SaleFloorFacet.getHourlyPriceCheckpoint.selector;
         selectors[3] = SaleFloorFacet.setSaleFloorConfig.selector;
         selectors[4] = SaleFloorFacet.getSaleFloorConfig.selector;
         selectors[5] = SaleFloorFacet.swapFloorBps.selector; // #3414
+        selectors[6] = SaleFloorFacet.getHourlyPriceCheckpointVersion.selector; // #3437
     }
 
     /// #2748 - the rate-model host (model, band, offer-rate clamp). Mirrors

@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+// #3437 step 5 — how many earlier price guards, and earlier
+// listing conduits, one vault code may accept beside the current
+// one. A loan still on an older guard or conduit has to be moved
+// off it (the announced retirement of #3437 step 4) before a
+// vault version that no longer lists it ships.
+uint256 constant MAX_PRIOR_ENDPOINTS = 2;
+
 /**
  * @title  VaultOutflowTypes
  * @author Vaipakam Developer Team
@@ -161,12 +168,21 @@ library VaultOutflowTypes {
      * @param seaport       The Seaport the vault answers ERC-1271 for.
      * @param orderProtocol The 1inch order protocol the vault answers ERC-1271
      *                      for and may approve as order taker.
-     * @param conduit       The one listing conduit the vault or its escrow
-     *                      may approve.
-     * @param conduitKey    The Seaport conduit key a listing must name.
-     * @param priceGuard    The standalone price guard (#3447), read from #3268.
+     * @param conduit       The listing conduit new listings use; the vault or
+     *                      its escrow may approve it.
+     * @param conduitKey    Its Seaport conduit key.
+     * @param priceGuard    The price guard new loans use (#3447), read from
+     *                      #3268.
      * @param protection    #3379 B2 — the `VaultProtection` code every vault
      *                      delegatecalls for its protected-mode writes.
+     * @param priorPriceGuards  #3437 step 5 — earlier price guards still used
+     *                      by open loans, accepted beside `priceGuard`. Filled
+     *                      from the first slot; a zero slot is unused.
+     * @param priorConduits #3437 step 5 — earlier listing conduits still used
+     *                      by open loans' listings, accepted beside `conduit`,
+     *                      each with its key at the same index in
+     *                      `priorConduitKeys`. Filled from the first slot.
+     * @param priorConduitKeys The keys of `priorConduits`.
      */
     struct VaultEndpoints {
         address treasury;
@@ -177,6 +193,9 @@ library VaultOutflowTypes {
         bytes32 conduitKey;
         address priceGuard;
         address protection;
+        address[MAX_PRIOR_ENDPOINTS] priorPriceGuards;
+        address[MAX_PRIOR_ENDPOINTS] priorConduits;
+        bytes32[MAX_PRIOR_ENDPOINTS] priorConduitKeys;
     }
 
     /**

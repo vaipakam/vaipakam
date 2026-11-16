@@ -13,6 +13,7 @@ import {Deployments} from "./lib/Deployments.sol";
 import {TestnetChains} from "../src/compliance/TestnetChains.sol";
 import {VaipakamFeedRegistry} from "../src/oracle/VaipakamFeedRegistry.sol";
 import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {PriceGuardState} from "../src/oracle/PriceGuardState.sol";
 import {PriceGuardConfig} from "./lib/PriceGuardConfig.sol";
 
 /// @dev #2548 — the one factory read the mock-rig adoption proves itself with.
@@ -401,10 +402,10 @@ contract ConfigureOracle is Script {
         OracleAdminFacet oa = OracleAdminFacet(diamond);
         AdminFacet af = AdminFacet(diamond);
 
-        PriceGuardConfig.ensureAddress(guard, PriceGuard.Kind.FeedRegistry, bytes32(0), feedRegistry);
-        PriceGuardConfig.ensureAddress(guard, PriceGuard.Kind.Weth, bytes32(0), weth);
-        PriceGuardConfig.ensureAddress(guard, PriceGuard.Kind.EthNumeraireFeed, bytes32(0), ethNumeraireFeed);
-        PriceGuardConfig.ensureAddress(guard, PriceGuard.Kind.SequencerFeed, bytes32(0), sequencerFeed);
+        PriceGuardConfig.ensureAddress(guard, PriceGuardState.Kind.FeedRegistry, bytes32(0), feedRegistry);
+        PriceGuardConfig.ensureAddress(guard, PriceGuardState.Kind.Weth, bytes32(0), weth);
+        PriceGuardConfig.ensureAddress(guard, PriceGuardState.Kind.EthNumeraireFeed, bytes32(0), ethNumeraireFeed);
+        PriceGuardConfig.ensureAddress(guard, PriceGuardState.Kind.SequencerFeed, bytes32(0), sequencerFeed);
         oa.setUniswapV3Factory(uniV3Factory);
         // 0x route — set when configured (validated pre-broadcast above). When
         // absent, liquidations route via the registered on-chain swap adapter(s).
@@ -436,7 +437,7 @@ contract ConfigureOracle is Script {
                     console.log("  skipped (no feed env):", sym);
                     continue;
                 }
-                PriceGuardConfig.ensureAddress(guard, PriceGuard.Kind.StableRef, bytes32(bytes(sym)), feed);
+                PriceGuardConfig.ensureAddress(guard, PriceGuardState.Kind.StableRef, bytes32(bytes(sym)), feed);
                 console.log("  stable reference set:", sym);
             }
         }

@@ -12,7 +12,8 @@ import {OracleAdminFacet} from "../../src/facets/OracleAdminFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
-import {PriceGuard} from "../../src/oracle/PriceGuard.sol";
+import {PriceGuardDeployment} from "../../script/lib/PriceGuardDeployment.sol";
+import {PriceGuardState} from "../../src/oracle/PriceGuardState.sol";
 import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
 import {MockProtocolRegistry} from "../mocks/MockProtocolRegistry.sol";
 import {RegistryKeys} from "../../src/governance/RegistryKeys.sol";
@@ -91,23 +92,16 @@ contract LiquidationMainnetForkTest is Test {
 
     /// @dev #3272 part 2 — the Diamond prices through a price guard. A fork of
     ///      chain 1 is a production chain to the guard, so it holds a delay
-    ///      of at least the guard's own floor ({PriceGuard.MIN_DELAY}, seven
+    ///      of at least the guard's own floor ({PriceGuardState.MIN_DELAY}, seven
     ///      days); its starting config applies at construction, as a
     ///      deploy's does.
     function _wireOracleInfrastructure() internal {
-        PriceGuard.Change[] memory c = new PriceGuard.Change[](3);
-        c[0] = _change(PriceGuard.Kind.FeedRegistry, CHAINLINK_FEED_REGISTRY);
-        c[1] = _change(PriceGuard.Kind.Weth, WETH);
-        c[2] = _change(PriceGuard.Kind.EthNumeraireFeed, ETH_USD_FEED);
-        address guard = ArtifactDeploy.deploy(
-            type(PriceGuard).name,
-            abi.encode(
-                address(this),
-                address(this),
-                LibTestPriceGuard.identity(USD_DENOM, LibTestPriceGuard.ETH),
-                uint64(7 days),
-                c
-            )
+        PriceGuardState.Change[] memory c = new PriceGuardState.Change[](3);
+        c[0] = _change(PriceGuardState.Kind.FeedRegistry, CHAINLINK_FEED_REGISTRY);
+        c[1] = _change(PriceGuardState.Kind.Weth, WETH);
+        c[2] = _change(PriceGuardState.Kind.EthNumeraireFeed, ETH_USD_FEED);
+        address guard = PriceGuardDeployment.build(
+            address(this), address(this), LibTestPriceGuard.identity(USD_DENOM, LibTestPriceGuard.ETH), uint64(7 days), c
         );
         MockProtocolRegistry registry = new MockProtocolRegistry(address(diamond));
         registry.setPointer(RegistryKeys.PRICE_GUARD, guard);
@@ -117,8 +111,8 @@ contract LiquidationMainnetForkTest is Test {
         // return true under that config.
     }
 
-    function _change(PriceGuard.Kind kind, address value) internal pure returns (PriceGuard.Change memory) {
-        return PriceGuard.Change(kind, bytes32(0), bytes32(uint256(uint160(value))));
+    function _change(PriceGuardState.Kind kind, address value) internal pure returns (PriceGuardState.Change memory) {
+        return PriceGuardState.Change(kind, bytes32(0), bytes32(uint256(uint160(value))));
     }
 
     function _oracleAdminSelectors() internal returns (bytes4[] memory) {

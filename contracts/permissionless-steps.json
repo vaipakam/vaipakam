@@ -237,6 +237,11 @@
       "flag": "KEEPER_ENABLED",
       "evidence": "apps/keeper/src/matcher.ts"
     },
+    "SettlementLegFacet.releaseParkedTreasury(address,address)": {
+      "class": "gap",
+      "issue": "#3669",
+      "why": "moves treasury shares a token refused at a close-out from the payer's vault to the treasury the vault code names, once the token allows it; the destination is fixed. The keeper pass (read TreasuryShareParked rows, retry while getParkedTreasury is non-zero, shipped disarmed) lands with the contract batch"
+    },
     "SignedOfferMatchFacet.matchSignedOffer(struct:LibSignedOffer.SignedOffer,bytes,struct:LibSignedOffer.OfferSet,uint256,uint256,struct:LibSignedOffer.FillAuth)": {
       "class": "alternative",
       "of": "OfferMatchFacet.matchOffers(uint256,uint256)",
@@ -297,6 +302,10 @@
       "class": "user",
       "why": "the holder locks its own tokens; it only tightens"
     },
+    "PositionNFT.recover(uint256[])": {
+      "class": "user",
+      "why": "moves a replaced (retired) account's position NFTs to the wallet its vault names as the replacement (#3526); the replacement wallet calls it for its own account. Anyone may, because the destination is the vault's record, not the caller's choice. Nothing waits on it: the replacement wallet already acts on the positions where they are, and payouts follow the account"
+    },
     "PositionNFT.requestUnlock()": {
       "class": "user",
       "why": "the holder asks to unlock its own tokens; it waits the holder's own lock delay"
@@ -345,10 +354,6 @@
       "class": "gated",
       "gate": "the collateral-listing executor or the offer's pinned executor (`_listingGrantSubject` refuses any other msg.sender); the vault then refuses a conduit outside the registry's CONDUITS set"
     },
-    "PriceGuard.executeChange(enum:PriceGuard.Kind,bytes32)": {
-      "class": "user",
-      "why": "governance applies a config change it proposed through the Timelock once the guard's own delay has passed; a change nobody executes leaves the current entry in place"
-    },
     "ProfileFacet.approveKeeper(address,uint16)": {
       "class": "user",
       "why": "the user's own keeper settings"
@@ -376,14 +381,6 @@
       "class": "user",
       "why": "the user's own profile"
     },
-    "ReadyBalanceFacet.cancelReadyTopUp(address,address)": {
-      "class": "gated",
-      "gate": "the account itself or one of its active signers (`_requireOwnerOrSigner` refuses any other msg.sender); it only cancels a pending Protected-to-Ready top-up (#3344)"
-    },
-    "ReadyBalanceFacet.releaseReady(address,address,uint256)": {
-      "class": "gated",
-      "gate": "the account itself or one of its active signers (`_requireOwnerOrSigner` refuses any other msg.sender); it only moves Ready back to the Protected balance (#3344)"
-    },
     "ProtectedAccountFacet.applyProtection(address)": {
       "class": "user",
       "why": "the vault's own lock, unlock, switch-off and replacement apply it in their transaction (#3489 r9, r10, r12), and the owner's switch-on sends it; a separate call only retries a best-effort application, which never leaves a lock's cancellations undone (they bind by lock number)"
@@ -400,15 +397,25 @@
       "flag": "TIER_PUSH_RETRY_ENABLED",
       "evidence": "apps/keeper/src/tierPushRetry.ts"
     },
+    "ProtocolBroadcastFacet.broadcastTierTableVersionTo(uint256)": {
+      "class": "gap",
+      "issue": "#912",
+      "why": "sends Base's tier-table version to one mirror after governance changes the tier table, so the mirror stops honouring caches stamped with the old table; the caller pays the lane. The keeper pass (compare each mirror's getCurrentTierTableVersion with getTierTableVersion, send where behind, shipped disarmed) lands with the contract batch"
+    },
     "ProtocolBroadcastFacet.topUpBroadcastBudget()": {
       "class": "user",
       "why": "a payment into the protocol broadcast budget; no step waits on it"
     },
-    "PriceGuard.executeChange(enum:PriceGuard.Kind,bytes32)": {
+    "PriceGuard.executeChange(enum:PriceGuardState.Kind,bytes32)": {
       "class": "user",
       "why": "governance applies a config change it proposed through the Timelock once the guard's own delay has passed; a change nobody executes leaves the current entry in place"
     },
-    "PriceGuard.executeSecondaryRemoval(enum:PriceGuard.Source)": {
+    "PriceGuard.recordRate(address,bytes32)": {
+      "class": "gap",
+      "issue": "#3683",
+      "why": "records a rate-priced token's exchange rate under its binding, bounded by the binding's daily rise and fall rules; no one chooses the value. Unrecorded, the accepted rate stops following honest growth, which undervalues the collateral and never overvalues it. The keeper's hourly price checkpoint pass is to call it for every binding a token has had, shipped disarmed"
+    },
+    "PriceGuard.executeSecondaryRemoval(enum:PriceGuardState.Source)": {
       "class": "user",
       "why": "the owner or the guardian applies a secondary-source removal it proposed once the fixed 48-hour wait has passed; a removal nobody executes leaves the source muted, still able to refuse a price"
     },
@@ -1005,6 +1012,14 @@
     "VpfiReturnSender.initialize(address,address,address,address,uint256)": {
       "class": "init",
       "why": "the deployment, or the Diamond's factory, initializes each proxy once in the transaction that creates it"
+    },
+    "ReadyBalanceFacet.cancelReadyTopUp(address,address)": {
+      "class": "gated",
+      "gate": "the account itself or one of its active signers (`_requireOwnerOrSigner` refuses any other msg.sender); it only cancels a pending Protected-to-Ready top-up (#3344)"
+    },
+    "ReadyBalanceFacet.releaseReady(address,address,uint256)": {
+      "class": "gated",
+      "gate": "the account itself or one of its active signers (`_requireOwnerOrSigner` refuses any other msg.sender); it only moves Ready back to the Protected balance (#3344)"
     }
   }
 }

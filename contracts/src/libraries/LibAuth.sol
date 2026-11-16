@@ -60,37 +60,66 @@ library LibAuth {
         if (LibVaipakam.cfgKeepersPaused()) revert IVaipakamErrors.KeepersPaused();
     }
 
+    // ─── #3526 — the manager rule ─────────────────────────────────────────
+    //
+    // Who may act on a position or a stored party is that account's MANAGER:
+    // the account's own wallet, or, once a protected-account replacement
+    // retired it, the wallet that replaced it. The retired wallet itself has
+    // lost every right. These helpers decide only WHO MAY ACT. The account
+    // stays the position's accounting identity, the caller pays with its own
+    // funds, and proceeds still go to the account's vault under the protected
+    // payout rules: callers keep those four apart.
+
+    // Each gate compares the caller with the manager directly. The manager of
+    // the zero address is the zero address, which no caller can be, so an
+    // unset party is managed by no one.
+
+    /// @dev Caller must manage the loan's STORED borrower.
     function requireBorrower(LibVaipakam.Loan storage loan) internal view {
-        if (loan.borrower != msg.sender) revert IVaipakamErrors.NotBorrower();
+        if (msg.sender != LibProtectedAccount.manager(loan.borrower)) revert IVaipakamErrors.NotBorrower();
     }
 
+    /// @dev Caller must manage the loan's STORED lender.
     function requireLender(LibVaipakam.Loan storage loan) internal view {
-        if (loan.lender != msg.sender) revert IVaipakamErrors.NotLender();
+        if (msg.sender != LibProtectedAccount.manager(loan.lender)) revert IVaipakamErrors.NotLender();
     }
 
+    /// @dev Caller must be the offer's creator, and that creator must still
+    ///      manage itself (#3526). The controller of a retired creator does
+    ///      not take over its offers: a retired creator's offer can never be
+    ///      accepted (every open refuses a retired account), so the only
+    ///      action left on it is cancelling, which `OfferCancelFacet` allows
+    ///      the manager. Every other creator action (changing terms or the
+    ///      escrowed amount, staging, a payoff permit) is refused to both.
     function requireOfferCreator(LibVaipakam.Offer storage offer) internal view {
-        if (offer.creator != msg.sender) revert IVaipakamErrors.NotOfferCreator();
+        if (offer.creator != msg.sender || msg.sender != LibProtectedAccount.manager(msg.sender)) revert IVaipakamErrors.NotOfferCreator();
     }
 
-    /// @dev Caller must own the lender-side position NFT for this loan.
+    /// @dev Caller must manage the holder of the loan's lender-side position.
     function requireLenderNftOwner(LibVaipakam.Loan storage loan) internal view {
-        if (LibPositionNFT.ownerOf(loan.lenderTokenId) != msg.sender)
-            revert IVaipakamErrors.NotNFTOwner();
+        requirePositionManager(loan.lenderTokenId);
     }
 
-    /// @dev Caller must own the borrower-side position NFT for this loan.
+    /// @dev Caller must manage the holder of the loan's borrower-side position.
     function requireBorrowerNftOwner(LibVaipakam.Loan storage loan) internal view {
-        if (LibPositionNFT.ownerOf(loan.borrowerTokenId) != msg.sender)
-            revert IVaipakamErrors.NotNFTOwner();
+        requirePositionManager(loan.borrowerTokenId);
     }
 
     /// @dev Caller must MANAGE the `tokenId` position NFT's holder: the holder
     ///      itself, or its controller once a protected-account replacement
-    ///      retired it. The rule for a holder's standing CONSENT (auto-extend
-    ///      caps), which a retired wallet must not be able to give.
+    ///      retired it. Reverts for a position that was never minted.
     function requirePositionManager(uint256 tokenId) internal view {
-        if (msg.sender != LibProtectedAccount.manager(LibPositionNFT.ownerOf(tokenId)))
-            revert IVaipakamErrors.NotNFTOwner();
+        if (msg.sender != LibProtectedAccount.manager(LibPositionNFT.ownerOf(tokenId))) revert IVaipakamErrors.NotNFTOwner();
+    }
+
+    /// @dev #3526 — the self-dealing exclusion on a repayment: the caller may
+    ///      not be the loan's lender side, by its stored party, by the lender
+    ///      position's holder, or as the manager of either (so a controller
+    ///      managing both sides is still excluded).
+    function requireNotLenderSide(LibVaipakam.Loan storage loan) internal view {
+        if (msg.sender == loan.lender || msg.sender == LibProtectedAccount.manager(loan.lender)) revert IVaipakamErrors.LenderCannotRepayOwnLoan();
+        address holder = LibPositionNFT.ownerOf(loan.lenderTokenId);
+        if (msg.sender == holder || msg.sender == LibProtectedAccount.manager(holder)) revert IVaipakamErrors.LenderCannotRepayOwnLoan();
     }
 
     /// @dev Canonical keeper-authorization helper (Phase 6).

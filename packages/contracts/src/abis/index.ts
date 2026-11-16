@@ -92,6 +92,7 @@ import OfferMaterializeFacetABI from './OfferMaterializeFacet.json';
 import CollectionOfferFacetABI from './CollectionOfferFacet.json';
 import ReadyBalanceFacetABI from './ReadyBalanceFacet.json';
 import FeeLevelsFacetABI from './FeeLevelsFacet.json';
+import SettlementLegFacetABI from './SettlementLegFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
 import OracleAdminFacetABI from './OracleAdminFacet.json';
@@ -294,6 +295,7 @@ export {
   CollectionOfferFacetABI,
   ReadyBalanceFacetABI,
   FeeLevelsFacetABI,
+  SettlementLegFacetABI,
   ClaimFacetABI,
   OracleFacetABI,
   OracleAdminFacetABI,

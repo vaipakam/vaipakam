@@ -84,6 +84,7 @@ contract VaipakamFeedRegistryTest is Test {
         cs[0] = VaipakamFeedRegistry.Change({
             base: base,
             quote: quote,
+            kind: VaipakamFeedRegistry.EntryKind.Price,
             expectedFeed: expected,
             feed: feed,
             feedDecimals: 8,
@@ -113,7 +114,7 @@ contract VaipakamFeedRegistryTest is Test {
         assertEq(e.directorySha256, DIR);
         assertEq(e.directoryDate, DIR_DATE);
         assertEq(reg.entryCount(), 1);
-        (address[] memory b, address[] memory q,) = reg.entriesPage(0, 10);
+        (address[] memory b, address[] memory q,,) = reg.entriesPage(0, 10);
         assertEq(b[0], link);
         assertEq(q[0], USD);
     }
@@ -480,5 +481,109 @@ contract VaipakamFeedRegistryTest is Test {
         vm.prank(OWNER);
         vm.expectRevert(VaipakamFeedRegistry.RenounceDisabled.selector);
         reg.renounceOwnership();
+    }
+
+    // ─── #3437: epochs and as-of reads ─────────────────────────────────
+
+    function test_EpochRisesOncePerExecutedProposal() public {
+        assertEq(reg.epoch(), 1, "starts at 1");
+        VaipakamFeedRegistry.Change[] memory cs = new VaipakamFeedRegistry.Change[](2);
+        address tok2 = address(new RegistryTokenStub());
+        RegistryFeedStub f2 = new RegistryFeedStub("AAVE / USD", 8);
+        cs[0] = _change(link, USD, address(0), address(linkUsd), "LINK / USD")[0];
+        cs[1] = _change(tok2, USD, address(0), address(f2), "AAVE / USD")[0];
+        _proposeAndExecute(cs);
+        assertEq(reg.epoch(), 2, "one batch is one epoch");
+        assertEq(reg.entry(link, USD).sinceEpoch, 2);
+        assertEq(reg.entry(tok2, USD).sinceEpoch, 2);
+    }
+
+    function test_AsOfReadsFollowTheHistory() public {
+        // e2: add; e3: replace; e4: remove; e5: add again.
+        _proposeAndExecute(_change(link, USD, address(0), address(linkUsd), "LINK / USD"));
+        RegistryFeedStub successor = new RegistryFeedStub("LINK2 / USD", 8);
+        _proposeAndExecute(_change(link, USD, address(linkUsd), address(successor), "LINK2 / USD"));
+        _proposeAndExecute(_change(link, USD, address(successor), address(0), ""));
+        RegistryFeedStub third = new RegistryFeedStub("LINK3 / USD", 8);
+        _proposeAndExecute(_change(link, USD, address(0), address(third), "LINK3 / USD"));
+        assertEq(reg.epoch(), 5);
+
+        assertEq(reg.getFeedAt(link, USD, 1), address(0), "before it was added");
+        assertEq(reg.getFeedAt(link, USD, 2), address(linkUsd));
+        assertEq(reg.getFeedAt(link, USD, 3), address(successor));
+        assertEq(reg.getFeedAt(link, USD, 4), address(0), "removed");
+        assertEq(reg.getFeedAt(link, USD, 5), address(third));
+        assertEq(reg.getFeed(link, USD), address(third), "the live read is the newest epoch");
+
+        assertEq(reg.pairBaseAt(link, USD, 2), bytes32("LINK"));
+        assertEq(reg.pairBaseAt(link, USD, 3), bytes32("LINK2"));
+        assertEq(reg.pairBaseAt(link, USD, 4), bytes32(0));
+        assertEq(reg.pairBaseAt(link, USD, 5), bytes32("LINK3"));
+        assertEq(reg.historyLength(link, USD, VaipakamFeedRegistry.EntryKind.Price), 2);
+    }
+
+    function test_AsOfReadRefusesAnEpochThatDoesNotExist() public {
+        vm.expectRevert(abi.encodeWithSelector(VaipakamFeedRegistry.UnknownEpoch.selector, 0, 1));
+        reg.getFeedAt(link, USD, 0);
+        vm.expectRevert(abi.encodeWithSelector(VaipakamFeedRegistry.UnknownEpoch.selector, 2, 1));
+        reg.getFeedAt(link, USD, 2);
+    }
+
+    function _rateChange(address token, address underlying, address expected, address feed)
+        internal
+        pure
+        returns (VaipakamFeedRegistry.Change[] memory cs)
+    {
+        cs = _change(token, underlying, expected, feed, "wstETH-stETH Exchange Rate");
+        cs[0].kind = VaipakamFeedRegistry.EntryKind.Rate;
+        cs[0].feedDecimals = 18;
+        cs[0].category = VaipakamFeedRegistry.Category.Custom;
+    }
+
+    function test_RateFeedIsItsOwnEntryAndOwnerOnly() public {
+        address wst = address(new RegistryTokenStub());
+        address steth = address(new RegistryTokenStub());
+        RegistryFeedStub rateFeed = new RegistryFeedStub("wstETH-stETH Exchange Rate", 18);
+        VaipakamFeedRegistry.Change[] memory cs = _rateChange(wst, steth, address(0), address(rateFeed));
+
+        vm.prank(BOT);
+        vm.expectRevert(abi.encodeWithSelector(VaipakamFeedRegistry.RateNeedsOwner.selector, 0));
+        reg.propose(cs, DIR, DIR_DATE);
+
+        vm.prank(OWNER);
+        uint256 id = reg.propose(cs, DIR, DIR_DATE);
+        vm.warp(block.timestamp + reg.DEFAULT_DELAY());
+        rateFeed.set(1.2e18, block.timestamp);
+        reg.execute(id, cs);
+
+        assertEq(reg.getRateFeed(wst, steth), address(rateFeed));
+        assertEq(reg.getRateFeedAt(wst, steth, 2), address(rateFeed));
+        assertEq(reg.getFeed(wst, steth), address(0), "a rate is never read as a price");
+        assertEq(reg.pairBase(wst, steth), bytes32(0));
+
+        // Nor may a proposer remove it.
+        VaipakamFeedRegistry.Change[] memory rm = _rateChange(wst, steth, address(rateFeed), address(0));
+        vm.prank(BOT);
+        vm.expectRevert(abi.encodeWithSelector(VaipakamFeedRegistry.RateNeedsOwner.selector, 0));
+        reg.propose(rm, DIR, DIR_DATE);
+    }
+
+    function test_PriceAndRateOfOnePairAreSeparateEntries() public {
+        address steth = address(new RegistryTokenStub());
+        RegistryFeedStub rateFeed = new RegistryFeedStub("LINK-stETH Exchange Rate", 18);
+        _proposeAndExecute(_change(link, USD, address(0), address(linkUsd), "LINK / USD"));
+        VaipakamFeedRegistry.Change[] memory cs = _rateChange(link, steth, address(0), address(rateFeed));
+        cs[0].pair = "LINK-stETH Exchange Rate";
+        rateFeed.set(1.2e18, block.timestamp); // the first execution moved the clock past its heartbeat
+        vm.prank(OWNER);
+        uint256 id = reg.propose(cs, DIR, DIR_DATE);
+        vm.warp(block.timestamp + reg.DEFAULT_DELAY());
+        rateFeed.set(1.2e18, block.timestamp);
+        linkUsd.set(2000e8, block.timestamp);
+        reg.execute(id, cs);
+        assertEq(reg.getFeed(link, USD), address(linkUsd));
+        assertEq(reg.getRateFeed(link, steth), address(rateFeed));
+        (,, VaipakamFeedRegistry.EntryKind[] memory kinds,) = reg.entriesPage(0, 10);
+        assertEq(kinds.length, 2);
     }
 }

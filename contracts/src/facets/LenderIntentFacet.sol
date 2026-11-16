@@ -8,6 +8,7 @@ import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibPriceGuard} from "../libraries/LibPriceGuard.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 import {LibPriorityRouting} from "../libraries/LibPriorityRouting.sol";
@@ -614,6 +615,7 @@ contract LenderIntentFacet is
         address collateralAsset,
         uint256 minFillAmount
     ) private view {
+        LibPriceGuard.requireNotRatePricedLending(lendingAsset); // #3683
         NumeraireValueFacet values = NumeraireValueFacet(address(this));
         values.getNumeraireValue(collateralAsset, 1, false);
         uint256 value = values.getNumeraireValue(lendingAsset, minFillAmount, false);

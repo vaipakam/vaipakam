@@ -22,7 +22,7 @@ import {ICrossChainMessenger} from "../src/crosschain/ICrossChainMessenger.sol";
 import {RemitWire} from "../src/crosschain/RemitWire.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
-import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {PriceGuardState} from "../src/oracle/PriceGuardState.sol";
 
 /// @dev Stand-in for the mirror's CCIP adapter — the receiver only checks
 ///      `msg.sender == messenger` and requires it to have code, so a thin relay
@@ -100,7 +100,7 @@ contract RewardBudgetE2ETest is SetupTest, IVaipakamErrors {
         ethFeed = new MockChainlinkAggregator(
             ETH_USD_RAW, block.timestamp, ETH_USD_DEC
         );
-        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.EthNumeraireFeed, address(ethFeed));
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.EthNumeraireFeed, address(ethFeed));
 
         alice = makeAddr("alice");
         _facet().setInteractionLaunchTimestamp(block.timestamp);

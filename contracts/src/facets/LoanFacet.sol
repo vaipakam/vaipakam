@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibInitiationFee} from "../libraries/LibInitiationFee.sol";
+import {LibPriceGuard} from "../libraries/LibPriceGuard.sol";
 import {LibPriceRead} from "../libraries/LibPriceRead.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
@@ -213,6 +214,12 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // transfer the lender relationship.  Skip liquidity, mixed-collateral,
         // and LTV/HF checks for these.
         bool isLenderSaleVehicle = s.saleOfferToLoanId[offerId] != 0;
+        // #3683 — whatever route opened it, a new loan never lends a token
+        // priced by an exchange rate. A sale vehicle carries an existing
+        // loan's principal, which this rule already admitted.
+        if (!isLenderSaleVehicle && offer.assetType == LibVaipakam.AssetType.ERC20) {
+            LibPriceGuard.requireNotRatePricedLending(offer.lendingAsset);
+        }
 
         // If this is a lender-sale vehicle, the underlying live loan must still
         // be Active.  Otherwise the principal transfer in acceptOffer would send

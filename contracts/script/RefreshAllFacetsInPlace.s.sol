@@ -97,6 +97,7 @@ import {ReadyBalanceFacet} from "../src/facets/ReadyBalanceFacet.sol";
 import {OfferMaterializeFacet} from "../src/facets/OfferMaterializeFacet.sol";
 import {CollectionOfferFacet} from "../src/facets/CollectionOfferFacet.sol";
 import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
+import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
@@ -344,7 +345,10 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // balance; its selectors are new (an Add).
     // 125 -> 126: FeeLevelsFacet (#3649) - the initiation fee's term
     // schedule; all three selectors are new (an Add).
-    uint256 public constant EXPECTED_FACETS = 126;
+    // 126 -> 127: SettlementLegFacet (#3669) - the one host for a settlement
+    // leg the token refuses (park in the payer's vault under a lien, release
+    // at the claim). Its selectors are new (Adds).
+    uint256 public constant EXPECTED_FACETS = 127;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1422,6 +1426,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             "readyBalanceFacet", ArtifactDeploy.deploy(type(ReadyBalanceFacet).name), _getReadyBalanceSelectors()
         );
         items[125] = Item("feeLevelsFacet", ArtifactDeploy.deploy(type(FeeLevelsFacet).name), _getFeeLevelsSelectors());
+        items[126] = Item("settlementLegFacet", ArtifactDeploy.deploy(type(SettlementLegFacet).name), _getSettlementLegSelectors());
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

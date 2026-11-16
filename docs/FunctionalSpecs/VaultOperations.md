@@ -140,7 +140,29 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   capital, extension reserves, vault VPFI, locks, and implementation pinning.
 - The replacement manager acts as holder for the account's existing
   positions. Old extension consent stops counting, and managing one's own
-  recovered position earns no keeper reward. An owner-proposed replacement
+  recovered position earns no keeper reward.
+- **The old wallet holds positions it can no longer use (#3526).** Its
+  position NFTs are locked by the replacement, and it may not ask to unlock
+  them. No position may leave the replaced account, whether the old wallet,
+  an operator it approved earlier, or a marketplace sends it, except to the
+  new wallet. Anyone may move the account's position NFTs to the new wallet;
+  the NFT contract confirms the replacement from the account's own vault
+  record, so the platform cannot direct that move anywhere else. Until they
+  move, the new wallet acts on them for the account, and every payout still
+  goes to the account under its protected payout rules.
+- **Who may act on a position is its holder's manager (#3526).** Claims,
+  collateral withdrawal and top-ups, swap-to-repay, consolidation, listing
+  cancellation, per-loan keeper choices, refinance and extension consent,
+  and a backstop opt-in all accept the holder or, once the holder was
+  replaced, its new wallet, and never the old wallet. Consent the old wallet
+  gave stops counting. The caller pays with its own funds, and proceeds go to
+  the position's holder account. A repayment is refused to the lender side,
+  including the manager of a replaced lender.
+- **A replaced account's open offers can only be cancelled.** They can never
+  be accepted, so the new wallet may cancel them (and recover their escrow
+  under the payout rules), but neither wallet may change their terms or
+  amount, stage them for a sale or a backstop, or attach a refinance payoff
+  permit. An owner-proposed replacement
   is cancelled by a lock. While a signer holds a lock, only a signer can
   cancel the replacement; the owner alert states that restriction.
 - Contract authority and app coverage remain distinct: the extension-reserve

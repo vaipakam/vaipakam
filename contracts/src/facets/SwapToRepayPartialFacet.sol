@@ -188,10 +188,7 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         // borrower-side position NFT could consume claim-bearing
         // collateral and route the partial principal + interest into
         // their own lender vault while keeping the loan Active.
-        if (msg.sender == loan.lender) revert LenderCannotRepayOwnLoan();
-        if (
-            LibPositionNFT.ownerOf(loan.lenderTokenId) == msg.sender
-        ) revert LenderCannotRepayOwnLoan();
+        LibAuth.requireNotLenderSide(loan);
 
         if (!loan.allowsPartialRepay) revert PartialRepayNotAllowed();
 

@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
@@ -32,6 +33,7 @@ import {LibSwap} from "../libraries/LibSwap.sol";
 import {FallbackCustodyFacet} from "./FallbackCustodyFacet.sol";
 import {LibFallbackCustody} from "../libraries/LibFallbackCustody.sol";
 import {SellerClaimFacet} from "./SellerClaimFacet.sol";
+import {SettlementLegFacet} from "./SettlementLegFacet.sol";
 
 /**
  * @title ClaimFacet
@@ -375,8 +377,9 @@ contract ClaimFacet is
                 LibVaipakam.hasActiveFallbackTopUp(loanId)
             ) revert NotBackstopAbsorbable();
         }
-        // Store the AUTHORIZING owner (not a bare bool): the keeper buyout requires
-        // the authorizer to still be the current NFT owner, so a transfer voids it.
+        // Store the AUTHORIZING manager (not a bare bool): the keeper buyout
+        // requires the authorizer to still manage the current NFT owner, so a
+        // transfer, or a replacement of the owner's wallet, voids it (#3526).
         s.lenderBackstopOptIn[loanId] = optIn ? msg.sender : address(0);
         emit LenderBackstopOptInSet(loanId, msg.sender, optIn);
     }
@@ -437,7 +440,7 @@ contract ClaimFacet is
         if (
             loan.status != LibVaipakam.LoanStatus.FallbackPending ||
             !snap.active ||
-            s.lenderBackstopOptIn[loanId] != nftOwner ||
+            s.lenderBackstopOptIn[loanId] != LibProtectedAccount.manager(nftOwner) ||
             LibVaipakam.hasActiveFallbackTopUp(loanId)
         ) revert NotBackstopAbsorbable();
 
@@ -858,6 +861,15 @@ contract ClaimFacet is
         // the payout reads it below.)
         LibVaipakam.ClaimInfo storage claim = s.lenderClaims[loanId];
         if (claim.claimed) revert AlreadyClaimed();
+
+        // #3669 — a lender leg the token refused at settlement waits, liened,
+        // in the payer's vault. Move it to the lender side's vault first; while
+        // the token still refuses, this reverts and the claim stays open for a
+        // later retry. No-op when nothing is parked.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(SettlementLegFacet.releaseParkedLeg.selector, loanId),
+            InvalidLoanStatus.selector
+        );
 
         // #998 S10 (#1006) — fail-closed release of sanctioned-LOCKED proceeds.
         // If this lender side was frozen at close-out because the intended
@@ -1687,7 +1699,8 @@ contract ClaimFacet is
         }
 
         // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
-        LibFacet.transferToTreasury(loan.principalAsset, treasuryGets);
+        // #3669 — a refused share waits, liened, in the borrower's vault.
+        LibFacet.treasuryShareOrPark(2, loan.borrower, loan.principalAsset, treasuryGets);
 
         if (lenderGets > 0) {
             // #821 (Codex #832 r4 P1) — vault-lock so a flagged stored lender

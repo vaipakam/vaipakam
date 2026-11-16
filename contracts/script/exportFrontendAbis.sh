@@ -322,6 +322,8 @@ FACETS=(
   # #3344: a protected account's Ready balance.
   "ReadyBalanceFacet"
   "FeeLevelsFacet"
+  # A refused settlement leg's park and release (#3669).
+  "SettlementLegFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"

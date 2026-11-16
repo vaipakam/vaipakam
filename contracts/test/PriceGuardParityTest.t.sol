@@ -14,12 +14,14 @@ import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {PriceGuardDeployment} from "../script/lib/PriceGuardDeployment.sol";
 import {IFeedRegistryPairBase} from "../src/interfaces/IFeedRegistryPairBase.sol";
 import {ITellor} from "../src/interfaces/ITellor.sol";
 import {IApi3ServerV1} from "../src/interfaces/IApi3ServerV1.sol";
 import {IDIAOracleV2} from "../src/interfaces/IDIAOracleV2.sol";
 import {IPyth} from "../src/interfaces/IPyth.sol";
 import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {PriceGuardState} from "../src/oracle/PriceGuardState.sol";
 import {IPriceGuard} from "../src/interfaces/IPriceGuard.sol";
 
 /**
@@ -261,51 +263,49 @@ contract PriceGuardParityTest is Test {
     function _configure(World memory w) internal returns (PriceGuard guard) {
         address overrideTarget = w.overrideOnDirect ? directFeed : ethUsdFeed;
 
-        PriceGuard.Identity memory id;
+        PriceGuardState.Identity memory id;
         id.numeraireSymbol = bytes32("usd");
         id.ethDenominator = ethDenom;
-        PriceGuard.Change[] memory c = new PriceGuard.Change[](17);
+        PriceGuardState.Change[] memory c = new PriceGuardState.Change[](17);
         uint256 k;
-        c[k++] = _change(PriceGuard.Kind.FeedRegistry, 0, registry);
-        c[k++] = _change(PriceGuard.Kind.Weth, 0, weth);
-        c[k++] = _change(PriceGuard.Kind.SecondarySource, 0, tellor);
-        c[k++] = _change(PriceGuard.Kind.SecondarySource, 1, api3);
-        c[k++] = _change(PriceGuard.Kind.SecondarySource, 2, dia);
-        c[k++] = _changeU(PriceGuard.Kind.SecondaryMaxDeviationBps, w.secDevBps);
-        c[k++] = _changeU(PriceGuard.Kind.SecondaryMaxStaleness, w.secStaleness);
+        c[k++] = _change(PriceGuardState.Kind.FeedRegistry, 0, registry);
+        c[k++] = _change(PriceGuardState.Kind.Weth, 0, weth);
+        c[k++] = _change(PriceGuardState.Kind.SecondarySource, 0, tellor);
+        c[k++] = _change(PriceGuardState.Kind.SecondarySource, 1, api3);
+        c[k++] = _change(PriceGuardState.Kind.SecondarySource, 2, dia);
+        c[k++] = _changeU(PriceGuardState.Kind.SecondaryMaxDeviationBps, w.secDevBps);
+        c[k++] = _changeU(PriceGuardState.Kind.SecondaryMaxStaleness, w.secStaleness);
         if (w.pythMode != 0) {
-            c[k++] = _change(PriceGuard.Kind.PythOracle, 0, pyth);
-            c[k++] = PriceGuard.Change(PriceGuard.Kind.PythFeedId, bytes32(0), PYTH_ID);
+            c[k++] = _change(PriceGuardState.Kind.PythOracle, 0, pyth);
+            c[k++] = PriceGuardState.Change(PriceGuardState.Kind.PythFeedId, bytes32(0), PYTH_ID);
         }
-        if (w.seqMode != 0) c[k++] = _change(PriceGuard.Kind.SequencerFeed, 0, sequencer);
-        if (w.eurRefSet) c[k++] = _change(PriceGuard.Kind.StableRef, uint256(bytes32("EUR")), eurRefFeed);
+        if (w.seqMode != 0) c[k++] = _change(PriceGuardState.Kind.SequencerFeed, 0, sequencer);
+        if (w.eurRefSet) c[k++] = _change(PriceGuardState.Kind.StableRef, uint256(bytes32("EUR")), eurRefFeed);
         if (w.overrideStaleness != 0) {
-            c[k++] = PriceGuard.Change(
-                PriceGuard.Kind.FeedMaxStaleness, bytes32(uint256(uint160(overrideTarget))), bytes32(uint256(w.overrideStaleness))
+            c[k++] = PriceGuardState.Change(
+                PriceGuardState.Kind.FeedMaxStaleness, bytes32(uint256(uint160(overrideTarget))), bytes32(uint256(w.overrideStaleness))
             );
-            c[k++] = PriceGuard.Change(
-                PriceGuard.Kind.FeedMinAnswer, bytes32(uint256(uint160(overrideTarget))), bytes32(uint256(w.overrideMinAnswer))
+            c[k++] = PriceGuardState.Change(
+                PriceGuardState.Kind.FeedMinAnswer, bytes32(uint256(uint160(overrideTarget))), bytes32(uint256(w.overrideMinAnswer))
             );
         }
 
         if (!w.industrial) {
             id.numeraireDenominator = usd;
-            c[k++] = _change(PriceGuard.Kind.EthNumeraireFeed, 0, ethUsdFeed);
+            c[k++] = _change(PriceGuardState.Kind.EthNumeraireFeed, 0, ethUsdFeed);
         } else {
             // Numeraire EUR, PAD USD: the industrial pivot.
             id.numeraireDenominator = eur;
             id.padDenominator = usd;
-            c[k++] = _change(PriceGuard.Kind.EthNumeraireFeed, 0, ethEurFeed);
-            c[k++] = _change(PriceGuard.Kind.EthPadFeed, 0, ethUsdFeed);
-            if (w.padRateDirect) c[k++] = _change(PriceGuard.Kind.PadNumeraireRateFeed, 0, usdEurFeed);
-            c[k++] = _change(PriceGuard.Kind.AssetDirectFeed, uint256(uint160(assetOverride)), overrideFeed);
+            c[k++] = _change(PriceGuardState.Kind.EthNumeraireFeed, 0, ethEurFeed);
+            c[k++] = _change(PriceGuardState.Kind.EthPadFeed, 0, ethUsdFeed);
+            if (w.padRateDirect) c[k++] = _change(PriceGuardState.Kind.PadNumeraireRateFeed, 0, usdEurFeed);
+            c[k++] = _change(PriceGuardState.Kind.AssetDirectFeed, uint256(uint160(assetOverride)), overrideFeed);
         }
         assembly ("memory-safe") {
             mstore(c, k)
         }
-        guard = PriceGuard(
-            ArtifactDeploy.deploy(type(PriceGuard).name, abi.encode(address(this), address(this), id, uint64(0), c))
-        );
+        guard = PriceGuard(PriceGuardDeployment.build(address(this), address(this), id, uint64(0), c));
         // The Diamond records a registry naming this guard, as a deploy does.
         MockProtocolRegistry r = new MockProtocolRegistry(address(diamond));
         r.setPointer(RegistryKeys.PRICE_GUARD, address(guard));
@@ -469,15 +469,15 @@ contract PriceGuardParityTest is Test {
         return IDiamondCut.FacetCut(facet, IDiamondCut.FacetCutAction.Add, sels);
     }
 
-    function _change(PriceGuard.Kind kind, uint256 subject, address value)
+    function _change(PriceGuardState.Kind kind, uint256 subject, address value)
         internal
         pure
-        returns (PriceGuard.Change memory)
+        returns (PriceGuardState.Change memory)
     {
-        return PriceGuard.Change(kind, bytes32(subject), bytes32(uint256(uint160(value))));
+        return PriceGuardState.Change(kind, bytes32(subject), bytes32(uint256(uint160(value))));
     }
 
-    function _changeU(PriceGuard.Kind kind, uint256 value) internal pure returns (PriceGuard.Change memory) {
-        return PriceGuard.Change(kind, bytes32(0), bytes32(value));
+    function _changeU(PriceGuardState.Kind kind, uint256 value) internal pure returns (PriceGuardState.Change memory) {
+        return PriceGuardState.Change(kind, bytes32(0), bytes32(value));
     }
 }

@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {PriceGuardState} from "../src/oracle/PriceGuardState.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -52,14 +53,14 @@ contract SequencerUptimeCheckTest is SetupTest {
     // ─── Healthy path: feed set, UP, past grace ──────────────────────────
 
     function testHealthyWhenUpAndPastGrace() public {
-        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.SequencerFeed, address(seqFeed));
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.SequencerFeed, address(seqFeed));
         assertTrue(OracleFacet(address(diamond)).sequencerHealthy());
     }
 
     // ─── Down path ────────────────────────────────────────────────────────
 
     function testSequencerDownBlocksPriceAndCollapsesLiquidity() public {
-        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.SequencerFeed, address(seqFeed));
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.SequencerFeed, address(seqFeed));
         seqFeed.setStatus(1, block.timestamp); // DOWN
 
         // sequencerHealthy view agrees
@@ -79,7 +80,7 @@ contract SequencerUptimeCheckTest is SetupTest {
     // ─── Just recovered: inside grace window ──────────────────────────────
 
     function testSequencerGracePeriodBlocksPriceAndCollapsesLiquidity() public {
-        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.SequencerFeed, address(seqFeed));
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.SequencerFeed, address(seqFeed));
         // Flip DOWN then back UP at `now - 30min` — inside the 1h window.
         seqFeed.setStatus(1, block.timestamp - 2 hours);
         seqFeed.setStatus(
@@ -101,7 +102,7 @@ contract SequencerUptimeCheckTest is SetupTest {
     // ─── Grace boundary: exactly SEQUENCER_GRACE_PERIOD seconds since UP ─
 
     function testSequencerRecoveredPastGraceIsHealthy() public {
-        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.SequencerFeed, address(seqFeed));
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.SequencerFeed, address(seqFeed));
         seqFeed.setStatus(1, block.timestamp - 3 hours);
         seqFeed.setStatus(
             0,
@@ -117,17 +118,17 @@ contract SequencerUptimeCheckTest is SetupTest {
         PriceGuard guard = PriceGuard(LibTestPriceGuard.guardOf(address(diamond)));
         vm.prank(attacker);
         vm.expectRevert();
-        guard.proposeChange(PriceGuard.Kind.SequencerFeed, bytes32(0), bytes32(uint256(uint160(address(seqFeed)))));
+        guard.proposeChange(PriceGuardState.Kind.SequencerFeed, bytes32(0), bytes32(uint256(uint160(address(seqFeed)))));
     }
 
     // ─── Round-trip: the guard holds the feed the Diamond reads ──────────
 
     function testSequencerFeedRoundTrip() public {
         PriceGuard guard = PriceGuard(LibTestPriceGuard.guardOf(address(diamond)));
-        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.SequencerFeed, address(seqFeed));
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.SequencerFeed, address(seqFeed));
         assertEq(guard.sequencerFeed(), address(seqFeed));
         // Unset by writing zero.
-        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.SequencerFeed, address(0));
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.SequencerFeed, address(0));
         assertEq(guard.sequencerFeed(), address(0));
         assertTrue(OracleFacet(address(diamond)).sequencerHealthy());
     }

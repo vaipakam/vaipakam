@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibTiming} from "../src/libraries/LibTiming.sol";
+import {LibTestSettlementLeg} from "./helpers/LibTestSettlementLeg.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {VaultOutflowTypes, OutflowReason} from "../src/vault/VaultOutflowTypes.sol";
@@ -79,7 +80,7 @@ import {MockVaultWithdraw, VaultOutflowStubFailure} from "./helpers/MockVaultWit
 import {FeeOnTransferERC20Mock} from "./mocks/FeeOnTransferERC20Mock.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
-import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {PriceGuardState} from "../src/oracle/PriceGuardState.sol";
 import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 /**
@@ -454,6 +455,7 @@ contract EarlyWithdrawalFacetTest is Test {
             functionSelectors: helperTest.getLoanClockFacetSelectors()
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        LibTestSettlementLeg.install(address(diamond)); // #3669
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
 
@@ -7347,7 +7349,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // Make the loan's existing collateral blue-chip by IDENTITY, which is
         // the whole mechanism: `_isBlueChip` short-circuits on
         // `asset == weth` (the price guard's, #3272) without reading liquidity.
-        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.Weth, mockCollateralERC20);
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.Weth, mockCollateralERC20);
         (uint8 before, , ) = RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
         assertEq(
             before,

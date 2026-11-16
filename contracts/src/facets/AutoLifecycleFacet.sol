@@ -365,7 +365,14 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         if (loan.periodicInterestCadence != LibVaipakam.PeriodicInterestCadence.None) {
             revert PeriodicCadenceMustSettleFirst();
         }
-        if (LibPositionNFT.ownerOf(loan.borrowerTokenId) != msg.sender) revert NotBorrowerNftOwner();
+        // The holder itself funds its own reserve, from its own wallet into its
+        // own vault, so the reserve is keyed to the holder that extends. A
+        // holder a replacement retired may not (#3526): its replacement wallet
+        // recovers the position first and then funds as the holder.
+        if (
+            LibPositionNFT.ownerOf(loan.borrowerTokenId) != msg.sender ||
+            LibProtectedAccount.manager(msg.sender) != msg.sender
+        ) revert NotBorrowerNftOwner();
         address asset = loan.principalAsset;
         LibFacet.requireAssetNotPaused(asset);
         // Wallet -> the caller's own vault through the protocol chokepoint,

@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
 import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {PriceGuardState} from "../src/oracle/PriceGuardState.sol";
 import {IPriceGuard} from "../src/interfaces/IPriceGuard.sol";
 import {FeedRegistryInterface} from "@vaipakam-vendor/chainlink/FeedRegistryInterface.sol";
 import {MockChainlinkAggregator} from "./mocks/MockChainlinkAggregator.sol";
@@ -72,7 +73,7 @@ contract PriceGuardPadPivotTest is Test {
     function test_Retail_PadIsTheNumeraire_ReadsTheFeedDirectly() public {
         PriceGuard g = _guard(usdDenominator, "usd", address(0));
         assertTrue(g.padIsNumeraire());
-        LibTestPriceGuard.setAddressOn(g, PriceGuard.Kind.EthNumeraireFeed, address(feedEthUsd));
+        LibTestPriceGuard.setAddressOn(g, PriceGuardState.Kind.EthNumeraireFeed, address(feedEthUsd));
 
         (uint256 price, uint8 dec) = g.getAssetPrice(asset);
         assertEq(price, 1e8, "PAD is the numeraire: $1 read directly");
@@ -84,7 +85,7 @@ contract PriceGuardPadPivotTest is Test {
     function test_Industrial_DirectRateFeed_MultipliesThePadPrice() public {
         PriceGuard g = _guard(eurDenominator, "eur", usdDenominator);
         assertFalse(g.padIsNumeraire());
-        LibTestPriceGuard.setAddressOn(g, PriceGuard.Kind.PadNumeraireRateFeed, address(feedUsdEur));
+        LibTestPriceGuard.setAddressOn(g, PriceGuardState.Kind.PadNumeraireRateFeed, address(feedUsdEur));
 
         (uint256 price, uint8 dec) = g.getAssetPrice(asset);
         assertEq(price, 925e5, "asset/USD x USD/EUR");
@@ -95,8 +96,8 @@ contract PriceGuardPadPivotTest is Test {
 
     function test_Industrial_DerivedRate_ComesFromTheEthPivot() public {
         PriceGuard g = _guard(eurDenominator, "eur", usdDenominator);
-        LibTestPriceGuard.setAddressOn(g, PriceGuard.Kind.EthNumeraireFeed, address(feedEthEur));
-        LibTestPriceGuard.setAddressOn(g, PriceGuard.Kind.EthPadFeed, address(feedEthUsd));
+        LibTestPriceGuard.setAddressOn(g, PriceGuardState.Kind.EthNumeraireFeed, address(feedEthEur));
+        LibTestPriceGuard.setAddressOn(g, PriceGuardState.Kind.EthPadFeed, address(feedEthUsd));
 
         (uint256 price, uint8 dec) = g.getAssetPrice(asset);
         assertEq(price, 925e5, "USD/EUR = (ETH/EUR) / (ETH/USD) = 0.925");
@@ -107,12 +108,12 @@ contract PriceGuardPadPivotTest is Test {
 
     function test_Industrial_AssetDirectFeed_SkipsThePivotUntilRemoved() public {
         PriceGuard g = _guard(eurDenominator, "eur", usdDenominator);
-        LibTestPriceGuard.setAddressOn(g, PriceGuard.Kind.PadNumeraireRateFeed, address(feedUsdEur));
+        LibTestPriceGuard.setAddressOn(g, PriceGuardState.Kind.PadNumeraireRateFeed, address(feedUsdEur));
         // The direct feed reads EUR 0.80, so a pivot read (0.925) would show.
         feedAssetEurDirect.setRound(int256(80e6), block.timestamp);
         LibTestPriceGuard.setOn(
             g,
-            PriceGuard.Kind.AssetDirectFeed,
+            PriceGuardState.Kind.AssetDirectFeed,
             bytes32(uint256(uint160(asset))),
             bytes32(uint256(uint160(address(feedAssetEurDirect))))
         );
@@ -121,7 +122,7 @@ contract PriceGuardPadPivotTest is Test {
         assertEq(price, 80e6, "the direct asset/EUR feed is read");
         assertEq(dec, 8);
 
-        LibTestPriceGuard.setOn(g, PriceGuard.Kind.AssetDirectFeed, bytes32(uint256(uint160(asset))), bytes32(0));
+        LibTestPriceGuard.setOn(g, PriceGuardState.Kind.AssetDirectFeed, bytes32(uint256(uint160(asset))), bytes32(0));
         (uint256 pivot,) = g.getAssetPrice(asset);
         assertEq(pivot, 925e5, "removed: the asset is back on the pivot");
     }
@@ -130,9 +131,9 @@ contract PriceGuardPadPivotTest is Test {
 
     function test_Industrial_Weth_IsEthPadTimesTheRate() public {
         PriceGuard g = _guard(eurDenominator, "eur", usdDenominator);
-        LibTestPriceGuard.setAddressOn(g, PriceGuard.Kind.Weth, weth);
-        LibTestPriceGuard.setAddressOn(g, PriceGuard.Kind.EthPadFeed, address(feedEthUsd));
-        LibTestPriceGuard.setAddressOn(g, PriceGuard.Kind.PadNumeraireRateFeed, address(feedUsdEur));
+        LibTestPriceGuard.setAddressOn(g, PriceGuardState.Kind.Weth, weth);
+        LibTestPriceGuard.setAddressOn(g, PriceGuardState.Kind.EthPadFeed, address(feedEthUsd));
+        LibTestPriceGuard.setAddressOn(g, PriceGuardState.Kind.PadNumeraireRateFeed, address(feedUsdEur));
 
         (uint256 price, uint8 dec) = g.getAssetPrice(weth);
         assertEq(price, 3700e8, "ETH/USD x USD/EUR");
@@ -144,7 +145,7 @@ contract PriceGuardPadPivotTest is Test {
     function test_Industrial_NoRateReachable_Refuses() public {
         PriceGuard g = _guard(eurDenominator, "eur", usdDenominator);
         // An ETH/PAD feed alone does not make a rate: ETH/<numeraire> is unset.
-        LibTestPriceGuard.setAddressOn(g, PriceGuard.Kind.EthPadFeed, address(feedEthUsd));
+        LibTestPriceGuard.setAddressOn(g, PriceGuardState.Kind.EthPadFeed, address(feedEthUsd));
 
         vm.expectRevert(IPriceGuard.PadNumeraireRateUnavailable.selector);
         g.getAssetPrice(asset);
@@ -157,13 +158,13 @@ contract PriceGuardPadPivotTest is Test {
     function _guard(address numeraire, bytes32 symbol, address pad) internal returns (PriceGuard g) {
         g = LibTestPriceGuard.deployGuard(
             address(this),
-            PriceGuard.Identity({
+            PriceGuardState.Identity({
                 numeraireDenominator: numeraire,
                 numeraireSymbol: symbol,
                 padDenominator: pad,
                 ethDenominator: ethDenominator
             })
         );
-        LibTestPriceGuard.setAddressOn(g, PriceGuard.Kind.FeedRegistry, registry);
+        LibTestPriceGuard.setAddressOn(g, PriceGuardState.Kind.FeedRegistry, registry);
     }
 }

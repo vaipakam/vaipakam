@@ -60,6 +60,7 @@
     "CollectionOfferFacet",
     "ReadyBalanceFacet",
     "FeeLevelsFacet",
+    "SettlementLegFacet",
     "ClaimFacet",
     "OracleFacet",
     "OracleAdminFacet",

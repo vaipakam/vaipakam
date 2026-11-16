@@ -11,7 +11,7 @@ import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
-import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {PriceGuardState} from "../src/oracle/PriceGuardState.sol";
 
 /**
  * @title RiskAccessFacetTest
@@ -287,7 +287,7 @@ contract RiskAccessFacetTest is SetupTest {
         // tier 0. WETH is the price guard's entry (#3272 part 2); the test
         // contract owns the suite's guard.
         address weth = makeAddr("wethCanonical");
-        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.Weth, weth);
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.Weth, weth);
         _mockTier(weth, 0); // tier 0, yet still blue-chip by the WETH clause
 
         uint8 required = RiskAccessFacet(address(diamond)).pairRequiredRiskLevel(

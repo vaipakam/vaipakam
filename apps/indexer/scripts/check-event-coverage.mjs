@@ -58,6 +58,10 @@ const DELIBERATELY_NOT_HANDLED = {
     '#3629 — held payments of an OPEN intent loan moved back behind the owner\'s standing intent. The loan stays Active with the same principal and collateral, so no loans-row field changes; the intent\'s capital is read live (getLenderIntentCapital), and the event is surfaced through activity_events',
   CollectionOfferCreated:
     '#3328 — the parent offer\'s row comes from its OfferCreated; the set (kind, range or list root, exclusions, published ids) and the loan count are read live through getCollectionOffer and surfaced through activity_events. A typed collection table, which the keeper matcher (#3688) and the app need to list sets, is deferred to that work',
+  SettlementLegParked:
+    '#3669 — custody provenance for a settlement leg the token refused: it waits in the payer\'s vault under a lien for the lender side. The loan still reaches its terminal state through LoanRepaid / LoanDefaulted, which the indexer handles, so no loans-row field changes; the app reads getParkedLenderLeg, and indexer surfacing of the parked row is deferred',
+  SettlementLegReleased:
+    '#3669 — pairs with SettlementLegParked: the lender claim moved the parked leg to the lender side\'s vault, inside the claim the indexer already records',
   LoanKeeperEnabled: 'per-loan keeper authorization — not modelled in the indexer schema',
   OfferKeeperEnabled: 'per-offer keeper authorization — not modelled',
   OfferPriceGuardSet:

@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibInitiationFee} from "./LibInitiationFee.sol";
+import {LibProtectedAccount} from "./LibProtectedAccount.sol";
 import {LibPermit2, ISignatureTransfer} from "./LibPermit2.sol";
 import {LibEntitlement} from "./LibEntitlement.sol";
 
@@ -176,7 +177,13 @@ library LibRefinancePayoff {
     ) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[offerId];
-        if (offer.creator != msg.sender || offer.offerType != LibVaipakam.OfferType.Borrower) {
+        // #3526 — a creator a replacement retired may not attach one: its
+        // request can never be accepted.
+        if (
+            offer.creator != msg.sender ||
+            offer.offerType != LibVaipakam.OfferType.Borrower ||
+            LibProtectedAccount.manager(msg.sender) != msg.sender
+        ) {
             revert RefinancePayoffNotRequestCreator(offerId);
         }
         if (maxAmount == 0 || deadline < block.timestamp || signature.length == 0) {

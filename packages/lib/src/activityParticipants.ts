@@ -64,6 +64,13 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['RefinancePayoffPermitSet', ['signer']],
   ['RefinancePayoffPermitCleared', ['signer']],
   ['RefinancePayoffPulled', ['payer']],
+  // #3669 — a leg or treasury share the token refused stays in the payer's
+  // own vault under a lien until it can be delivered; the payer sees it held
+  // and released.
+  ['SettlementLegParked', ['payer']],
+  ['SettlementLegReleased', ['payer']],
+  ['TreasuryShareParked', ['owner']],
+  ['TreasuryShareReleased', ['owner']],
   ['AutoListOptOutCleared', ['clearedBy']],
   ['LenderBackstopOptInSet', ['lenderNftOwner']],
   ['CollateralAdded', ['borrower']],
@@ -285,6 +292,7 @@ const LOCAL_NOT_A_PARTY: ReadonlyMap<string, Readonly<Record<string, string>>> =
   ['LoanKeeperEnabled', { keeper: 'the keeper being permitted on the loan' }],
   ['OfferKeeperEnabled', { keeper: 'the keeper being permitted on the offer' }],
   ['SwapToRepayIntentForceCancelled', { source: 'the Diamond itself' }],
+  ['HourlyPriceCheckpointed', { guard: 'the price guard the price was read from' }],
   ['VaultOutflow', { vault: "the owner's own vault contract; the owner is a party" }],
   ['VaultGrantSettled', {
     vault: "the owner's own vault contract; the owner is a party",

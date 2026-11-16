@@ -3305,6 +3305,18 @@ library LibVaipakam {
         uint256 grossOwed;
     }
 
+    /// @notice #3359 / #3437 — one asset's hourly price checkpoint: its
+    ///         oracle price that hour, scaled to 1e18, and the price version
+    ///         it was read at, on the guard that read it. The calm test reads
+    ///         "now" at the same version, so a settings change alone never
+    ///         reads as a price move. `price1e18 == 0`: no checkpoint.
+    struct HourlyPriceCheckpoint {
+        uint128 price1e18;
+        uint64 guardEpoch;
+        uint64 registryEpoch;
+        address guard;
+    }
+
     /// @notice #3359 — governance's forced-sale floor settings. Every field
     ///         reads 0 as its default ({SALE_FLOOR_TIER1_BPS_DEFAULT} and
     ///         siblings); written only by `SaleFloorFacet.setSaleFloorConfig`.
@@ -5173,9 +5185,11 @@ library LibVaipakam {
         // for the pair (no implicit capacity).
         mapping(address => mapping(address => uint256)) backstopAbsorbCap;
         // Per-loan lender opt-in to the Role B cash exit. Stores the AUTHORIZING
-        // lender-position-NFT owner (not a bare bool): `claimAsLenderViaBackstop`
-        // requires `lenderBackstopOptIn[loanId] == ownerOf(lenderTokenId)`, so a
-        // post-opt-in NFT transfer voids the authorization (the new owner must
+        // manager of the lender-position-NFT owner (not a bare bool; #3526: the
+        // owner itself, or its replacement wallet once retired):
+        // `claimAsLenderViaBackstop` requires it to equal the CURRENT owner's
+        // manager, so a post-opt-in NFT transfer, or a replacement of the
+        // owner's wallet, voids the authorization (the new manager must
         // re-opt-in). Cleared (→ address(0)) when a FallbackPending loan is CURED
         // back to Active (AddCollateralFacet / RepayFacet), so a stale opt-in can't
         // carry into a later, distinct fallback episode. Preserves the borrower
@@ -8445,13 +8459,12 @@ library LibVaipakam {
         ///      Written only by `SaleFloorFacet.setSaleFloorConfig`. Appended
         ///      — append-only.
         SaleFloorConfig saleFloorCfg;
-        /// @dev #3359 — per asset and UTC hour (`timestamp / 1 hours`), the
-        ///      asset's oracle price that hour, scaled to 1e18; 0 = no
-        ///      checkpoint. Written only by
-        ///      `SaleFloorFacet.checkpointHourlyPrices` (first caller in the
-        ///      hour wins), read by the forced-sale floor's calm test.
-        ///      Appended — append-only.
-        mapping(address => mapping(uint256 => uint256)) hourlyPrice1e18;
+        /// @dev #3359 / #3437 — per asset and UTC hour (`timestamp / 1
+        ///      hours`), the asset's checkpoint that hour
+        ///      ({HourlyPriceCheckpoint}; a zero price = none). Written only
+        ///      by `SaleFloorFacet.checkpointHourlyPrices` (first caller in
+        ///      the hour wins), read by the calm test ({LibPairCalm}).
+        mapping(address => mapping(uint256 => HourlyPriceCheckpoint)) hourlyPriceCheckpoint;
         /// @dev #3361 — every queued payout id, across all accounts: the same
         ///      ids as the union of `pendingPayoutIds`, kept as one set so a
         ///      keeper (ours, or the Chainlink backup) can find matured
@@ -8626,6 +8639,18 @@ library LibVaipakam {
         ///      `FeeLevelsFacet.setLoanInitiationFeeTerms`; read only through
         ///      `LibInitiationFee`. Appended — append-only.
         LifTermConfig lifTermCfg;
+        /// @dev #3669 — per loan, the lender side's settlement leg a token
+        ///      refused to deliver, left in the payer's own vault under a lien
+        ///      for the lender side. Written only by `SettlementLegFacet`
+        ///      (park and release); zero `amount` and zero `payer` mean
+        ///      nothing is parked. Appended — append-only.
+        mapping(uint256 => ParkedLeg) parkedLenderLeg;
+        /// @dev #3669 — per owner and asset, the treasury shares a token
+        ///      refused to deliver, left in the owner's own vault under a lien
+        ///      for the treasury. Written only by `SettlementLegFacet`;
+        ///      released, permissionlessly, to the treasury the vault code
+        ///      names. Appended — append-only.
+        mapping(address => mapping(address => uint256)) parkedTreasury;
     }
 
     /// @notice #3344 — a protected account's Ready settings. See
@@ -8655,6 +8680,27 @@ library LibVaipakam {
         uint64 pendingEpoch;
         uint64 touched;
         uint64 extendedUntil;
+    }
+
+    /// @notice #3669 — a settlement leg a token refused to move to its payee,
+    ///         held in the payer's own vault under a lien for the payee until
+    ///         the payee's claim releases it. See `SettlementLegFacet`.
+    /// @param payer         The vault owner whose vault holds the leg.
+    /// @param asset         The token.
+    /// @param assetType     ERC-20, ERC-721 or ERC-1155.
+    /// @param tokenId       The NFT id (0 for ERC-20).
+    /// @param amount        ERC-20 amount, 1 for an ERC-721, the ERC-1155
+    ///                      quantity.
+    /// @param collateralLien Whether the leg is the loan's collateral, still
+    ///                      under the loan's collateral lien (an in-kind
+    ///                      default), rather than a payment liened on its own.
+    struct ParkedLeg {
+        address payer;
+        address asset;
+        AssetType assetType;
+        bool collateralLien;
+        uint256 tokenId;
+        uint256 amount;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.

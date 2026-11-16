@@ -18,6 +18,12 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockSwapAdapter} from "./mocks/MockSwapAdapter.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
+import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {PriceGuardState} from "../src/oracle/PriceGuardState.sol";
+import {IPriceGuard} from "../src/interfaces/IPriceGuard.sol";
+import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
+import {MockProtocolRegistry} from "./mocks/MockProtocolRegistry.sol";
+import {RegistryKeys} from "../src/governance/RegistryKeys.sol";
 
 /**
  * @title SaleFloorTest
@@ -267,6 +273,76 @@ contract SaleFloorTest is SetupTest {
         SaleFloorFacet(address(diamond)).checkpointHourlyPrices(_assets());
         assertEq(SaleFloorFacet(address(diamond)).getHourlyPriceCheckpoint(mockCollateralERC20, hour), 0);
         assertEq(SaleFloorFacet(address(diamond)).getHourlyPriceCheckpoint(mockERC20, hour), 1_000e18);
+    }
+
+    // ─── Checkpoint versions (#3437) ──────────────────────────────────────
+
+    function test_checkpointRecordsTheGuardAndVersion() public {
+        uint256 hour = block.timestamp / 1 hours;
+        SaleFloorFacet(address(diamond)).checkpointHourlyPrices(_assets());
+        (address g, uint64 ge, uint64 re) =
+            SaleFloorFacet(address(diamond)).getHourlyPriceCheckpointVersion(mockCollateralERC20, hour);
+        address guard = LibTestPriceGuard.guardOf(address(diamond));
+        (uint64 ce, uint64 cr) = PriceGuard(guard).priceVersion();
+        assertEq(g, guard);
+        assertEq(ge, ce);
+        assertEq(re, cr);
+    }
+
+    /// @dev A guard settings change moves the version. The earlier slots are
+    ///      compared with "now" read at their own version, so the change by
+    ///      itself is no move, even when the newest version prices the pair
+    ///      differently.
+    function test_aSettingsChangeAloneIsNotAMove() public {
+        _twoCheckpoints();
+        _tier(1);
+        address guard = LibTestPriceGuard.guardOf(address(diamond));
+        (uint64 ge, uint64 re) = PriceGuard(guard).priceVersion();
+        LibTestPriceGuard.set(
+            address(diamond), PriceGuardState.Kind.FeedMaxStaleness, bytes32(uint256(uint160(mockERC20))), bytes32(uint256(600))
+        );
+        _colPrice(1_500 * 1e8); // the newest version reads 50% higher
+        vm.mockCall(
+            guard,
+            abi.encodeWithSelector(PriceGuard.getAssetPriceAt.selector, mockCollateralERC20, ge, re),
+            abi.encode(uint256(1_000 * 1e8), uint8(8))
+        );
+        vm.mockCall(
+            guard,
+            abi.encodeWithSelector(PriceGuard.getAssetPriceAt.selector, mockERC20, ge, re),
+            abi.encode(uint256(1_000 * 1e8), uint8(8))
+        );
+        assertEq(uint8(_floorNow().reason), uint8(SaleFloorFacet.FloorReason.Tight));
+    }
+
+    function test_aCheckpointOnARetiredVersionIsNotCalm() public {
+        _twoCheckpoints();
+        _tier(1);
+        address guard = LibTestPriceGuard.guardOf(address(diamond));
+        (uint64 ge, uint64 re) = PriceGuard(guard).priceVersion();
+        LibTestPriceGuard.set(
+            address(diamond), PriceGuardState.Kind.FeedMaxStaleness, bytes32(uint256(uint160(mockERC20))), bytes32(uint256(600))
+        );
+        vm.mockCallRevert(
+            guard,
+            abi.encodeWithSelector(PriceGuard.getAssetPriceAt.selector, mockCollateralERC20, ge, re),
+            abi.encodeWithSelector(IPriceGuard.PriceVersionRetired.selector, ge, re)
+        );
+        assertEq(uint8(_floorNow().reason), uint8(SaleFloorFacet.FloorReason.NoCheckpoint));
+    }
+
+    function test_aCheckpointByAnotherGuardIsNotCalm() public {
+        _twoCheckpoints();
+        _tier(1);
+        // The registry's pointer moves to a new guard in the same numeraire;
+        // the slots were written by the old one.
+        PriceGuard next = LibTestPriceGuard.deployGuard(address(this));
+        MockProtocolRegistry(OracleAdminFacet(address(diamond)).getProtocolRegistry()).setPointer(
+            RegistryKeys.PRICE_GUARD, address(next)
+        );
+        mockOraclePrice(mockERC20, 1_000 * 1e8, 8);
+        _colPrice(1_000 * 1e8);
+        assertEq(uint8(_floorNow().reason), uint8(SaleFloorFacet.FloorReason.NoCheckpoint));
     }
 
     // ─── Settings ─────────────────────────────────────────────────────────

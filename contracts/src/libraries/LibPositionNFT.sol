@@ -23,6 +23,7 @@ interface IPositionNFTCore {
         returns (bool locked, uint256 delay, uint256 unlockAt, uint256 lowerDelay, uint256 lowerAt);
     function diamond() external view returns (address);
     function MAX_DIAMOND_LOCK_DELAY() external view returns (uint256);
+    function adoptVaultBeacon(address beacon) external;
 }
 
 /**

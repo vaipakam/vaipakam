@@ -35,6 +35,7 @@ import {VaipakamFeedRegistry} from "../../src/oracle/VaipakamFeedRegistry.sol";
 import {ProtocolRegistry} from "../../src/governance/ProtocolRegistry.sol";
 import {RegistryKeys} from "../../src/governance/RegistryKeys.sol";
 import {PriceGuard} from "../../src/oracle/PriceGuard.sol";
+import {PriceGuardState} from "../../src/oracle/PriceGuardState.sol";
 import {PriceGuardConfig} from "../../script/lib/PriceGuardConfig.sol";
 import {LibTestPriceGuard} from "../helpers/LibTestPriceGuard.sol";
 import {LibTestVaultBeacon} from "../helpers/LibTestVaultBeacon.sol";
@@ -487,7 +488,7 @@ contract LaunchTest is Test {
         vm.startPrank(admin);
         reg.setDelay(0);
         ConfigFacet(diamond).setPaaAssets(paa);
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.FeedRegistry, feedRegistry);
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.FeedRegistry, feedRegistry);
         vm.stopPrank();
         // #3272 part 2 — the deploy built the guard keyed by the registry's
         // quote constants, which every VaipakamFeedRegistry shares.
@@ -504,6 +505,7 @@ contract LaunchTest is Test {
         cs[0] = VaipakamFeedRegistry.Change({
             base: base,
             quote: reg.USD(),
+            kind: VaipakamFeedRegistry.EntryKind.Price,
             expectedFeed: reg.getFeed(base, reg.USD()),
             feed: feed,
             feedDecimals: feed == address(0) ? 0 : 8,
@@ -530,10 +532,10 @@ contract LaunchTest is Test {
     function _configure() internal {
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
         _addAdapter(address(new LaunchAdapterStub()));
         VPFITokenFacet(diamond).setVPFIToken(VPFI);
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.Weth, weth);
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.Weth, weth);
         vm.stopPrank();
     }
 
@@ -649,7 +651,7 @@ contract LaunchTest is Test {
     function test_Testnet_RefusesWithoutSanctionsOracle() public {
         vm.chainId(84532);
         vm.startPrank(admin);
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
         _addAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
@@ -661,7 +663,7 @@ contract LaunchTest is Test {
         vm.chainId(84532);
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
         address adapter = address(new LaunchAdapterStub());
         _addAdapter(adapter);
         AdminFacet(diamond).setSwapAdapterDisabled(adapter, true);
@@ -790,8 +792,8 @@ contract LaunchTest is Test {
     function _configureWithAdapter(address adapter) internal {
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.Weth, weth);
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.Weth, weth);
         _addAdapter(adapter);
         vm.stopPrank();
     }
@@ -930,11 +932,11 @@ contract LaunchTest is Test {
         vm.chainId(8453);
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
         address adapter = address(new LaunchAdapterStub());
         _addAdapter(adapter);
         VPFITokenFacet(diamond).setVPFIToken(VPFI);
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.Weth, weth);
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.Weth, weth);
         vm.stopPrank();
         address registry = _registryWithLane();
         VaipakamTimelock tl = _realTimelock();
@@ -1111,7 +1113,7 @@ contract LaunchTest is Test {
         vm.chainId(84532);
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
         _addAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         address registry = _registryWithLane();
@@ -1123,8 +1125,8 @@ contract LaunchTest is Test {
         vm.chainId(84532);
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchDecimalLessFeed()));
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.Weth, weth);
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.EthNumeraireFeed, address(new LaunchDecimalLessFeed()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.Weth, weth);
         _addAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
@@ -1135,8 +1137,8 @@ contract LaunchTest is Test {
         vm.chainId(84532);
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchWideRoundFeed()));
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.Weth, weth);
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.EthNumeraireFeed, address(new LaunchWideRoundFeed()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.Weth, weth);
         _addAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
@@ -1165,8 +1167,8 @@ contract LaunchTest is Test {
         vm.chainId(84532);
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new LaunchCodeStub()));
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.Weth, weth);
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.Weth, weth);
         _addAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
@@ -1177,8 +1179,8 @@ contract LaunchTest is Test {
         vm.chainId(84532);
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchCodeStub()));
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.Weth, weth);
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.EthNumeraireFeed, address(new LaunchCodeStub()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.Weth, weth);
         _addAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
@@ -1191,8 +1193,8 @@ contract LaunchTest is Test {
         feed.setPrice(0);
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(feed));
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.Weth, weth);
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.EthNumeraireFeed, address(feed));
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.Weth, weth);
         _addAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
@@ -1266,7 +1268,7 @@ contract LaunchTest is Test {
         vm.chainId(84532);
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
         _addAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
@@ -1279,8 +1281,8 @@ contract LaunchTest is Test {
         vm.chainId(84532);
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchCarriedRoundFeed()));
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.Weth, weth);
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.EthNumeraireFeed, address(new LaunchCarriedRoundFeed()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.Weth, weth);
         _addAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
@@ -1535,7 +1537,7 @@ contract LaunchTest is Test {
         vm.chainId(84532);
         _configure();
         vm.startPrank(admin);
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.Weth, address(0xE7E7));
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.Weth, address(0xE7E7));
         vm.stopPrank();
         LibLaunchReadiness.Declared memory d = _d(address(0));
         d.weth = address(0xE7E7);
@@ -1549,7 +1551,7 @@ contract LaunchTest is Test {
         (VaipakamTimelock tl, address registry, uint64 epoch) = _scheduledLaunch();
         address other = address(new LaunchWethStub());
         vm.startPrank(PriceGuard(LibTestPriceGuard.guardOf(diamond)).owner());
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.Weth, other);
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.Weth, other);
         vm.stopPrank();
         (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
             launcher.launchBatch(diamond, _d(registry), _h(), epoch);
@@ -1990,9 +1992,9 @@ contract LaunchTest is Test {
         vm.chainId(84532);
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
         _addAdapter(address(new LaunchAdapterStub()));
-        LibTestPriceGuard.setAddress(diamond, PriceGuard.Kind.Weth, weth);
+        LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.Weth, weth);
         vm.stopPrank();
         LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
         assertTrue(LibLaunchReadiness.allMet(c), "every check met, the CCIP two as not applicable");

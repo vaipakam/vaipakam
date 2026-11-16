@@ -34,6 +34,17 @@ interface IVaipakamRewardMessengerOutbound {
         uint16 tierTableVersion,
         address payable refundAddress
     ) external payable returns (bytes32 messageId);
+
+    function quoteSendVersionBumpedTo(uint256 destChainId, uint16 newVersion)
+        external
+        view
+        returns (uint256 nativeFee);
+
+    function sendVersionBumpedTo(
+        uint256 destChainId,
+        uint16 newVersion,
+        address payable refundAddress
+    ) external payable returns (bytes32 messageId);
 }
 
 /// @dev Internal cross-facet hook to the accumulator's effective-tier
@@ -89,6 +100,15 @@ interface IVPFIDiscountAccumulatorInternal {
  *
  *   Producer call gated to `msg.sender == address(this)`. Mirrors and
  *   unconfigured chains skip silently, as before.
+ *
+ * TABLE VERSION (#912). When governance changes the tier thresholds or the
+ * per-tier discounts, Base's tier-table version goes up, and every mirror
+ * must stop honouring caches stamped with the old table. A per-user push
+ * carries the new version, but only for users who act on Base again.
+ * {broadcastTierTableVersionTo} sends the version itself to one mirror:
+ * anyone may call it, the caller pays the lane's fee, and the version sent
+ * is always Base's own. A keeper pass (shipped disarmed) calls it for each
+ * mirror whose version is behind.
  */
 contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
     /// @notice Why an owed lane was left owed.
@@ -217,6 +237,10 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         path to re-credit. Reject upfront (Codex Sub 2.D round-4
     ///         P3 #3).
     error WithdrawToSelf();
+    /// @notice {broadcastTierTableVersionTo} before governance has ever
+    ///         changed the tier table: version 0 is every mirror's start, so
+    ///         there is nothing to send.
+    error TierTableVersionUnset();
 
     // ─── Producer call (rollup hook) ────────────────────────────────────
 
@@ -276,6 +300,60 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
             (bool ok,) = payable(msg.sender).call{value: unspent}("");
             if (!ok) revert TierPushRefundFailed();
         }
+    }
+
+    /**
+     * @notice #912 — send Base's current tier-table version to the mirror
+     *         `destChainId`, so it stops honouring tier caches stamped with an
+     *         older table at once. Open to anyone; `msg.value` pays the lane
+     *         and the rest is returned to the caller.
+     * @dev    The version is read from storage, never taken from the caller,
+     *         and the mirror applies it as a monotonic max, so a repeat, a
+     *         stale send or an out-of-order delivery is harmless. One lane per
+     *         call: a lane that cannot be routed fails alone. The messenger
+     *         refuses a chain off its broadcast list
+     *         (`NotBroadcastDestination`). Backed by the keeper's
+     *         tier-version pass, which compares each mirror's
+     *         `getCurrentTierTableVersion` with {getTierTableVersion}.
+     * @param  destChainId The mirror to send the version to.
+     */
+    function broadcastTierTableVersionTo(uint256 destChainId)
+        external
+        payable
+        nonReentrant
+        whenNotPaused
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address msgr = s.rewardMessenger;
+        if (!s.isCanonicalVpfiChain || msgr == address(0)) revert TierPushNotConfigured();
+        uint16 version = s.tierTableVersion;
+        if (version == 0) revert TierTableVersionUnset();
+        IVaipakamRewardMessengerOutbound(msgr).sendVersionBumpedTo{value: msg.value}(
+            destChainId, version, payable(msg.sender)
+        );
+    }
+
+    /// @notice #912 — the fee {broadcastTierTableVersionTo} pays for
+    ///         `destChainId`. Refuses what the send refuses.
+    function quoteBroadcastTierTableVersionTo(uint256 destChainId)
+        external
+        view
+        returns (uint256 nativeFee)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address msgr = s.rewardMessenger;
+        if (!s.isCanonicalVpfiChain || msgr == address(0)) revert TierPushNotConfigured();
+        uint16 version = s.tierTableVersion;
+        if (version == 0) revert TierTableVersionUnset();
+        return IVaipakamRewardMessengerOutbound(msgr).quoteSendVersionBumpedTo(destChainId, version);
+    }
+
+    /// @notice #912 — Base's tier-table version: raised by every governance
+    ///         change to the tier thresholds or discounts. A mirror whose
+    ///         `getCurrentTierTableVersion` is lower is owed
+    ///         {broadcastTierTableVersionTo}.
+    function getTierTableVersion() external view returns (uint16) {
+        return LibVaipakam.storageSlot().tierTableVersion;
     }
 
     // ─── Internals ──────────────────────────────────────────────────────

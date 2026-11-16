@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibPriceGuard} from "./LibPriceGuard.sol";
 import {LibNumeraireValueRead} from "./LibNumeraireValueRead.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 import {NumeraireValueFacet} from "../facets/NumeraireValueFacet.sol";
@@ -69,6 +70,8 @@ library LibOfferAdmission {
     /// @dev Runs before the offer is counted as open, so the cap compares the
     ///      creator's count without this offer.
     function enforceBounds(LibVaipakam.Offer storage offer, Route route) internal view {
+        // #3683 — on every route: a rate-priced token is never the principal.
+        if (offer.assetType == LibVaipakam.AssetType.ERC20) LibPriceGuard.requireNotRatePricedLending(offer.lendingAsset);
         if (route == Route.OnBehalf || offer.refinanceTargetLoanId != 0) return;
         enforceValue(offer.lendingAsset, offer.assetType, offer.amount);
         // A signed offer is filled the moment it exists, so it never adds to

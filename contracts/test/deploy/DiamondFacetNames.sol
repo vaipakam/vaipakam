@@ -131,16 +131,18 @@ abstract contract DiamondFacetNames {
     ///      common ledger).
     ///      119 → 121 with `InstantMarketFacet` and `InstantFillFacet` (#3656
     ///      — the instant borrow and its one-fill executor).
+    ///      121 → 122 with `InstantTakeoverFacet` (#3656 §7 — the takeover
+    ///      at face value).
+    ///      122 → 123 with `OfferMaterializeFacet` (#3328 — the signed-offer
+    ///      and intent-slice materialize entries, split off `OfferCreateFacet`).
     ///      123 → 124 with `CollectionOfferFacet` (#3328 — NFT collection offers).
     ///      124 → 125 with `ReadyBalanceFacet` (#3344 — a protected account's
     ///      Ready balance).
-    ///      122 → 123 with `OfferMaterializeFacet` (#3328 — the signed-offer
-    ///      and intent-slice materialize entries, split off `OfferCreateFacet`).
-    ///      121 → 122 with `InstantTakeoverFacet` (#3656 §7 — the takeover
-    ///      at face value).
     ///      125 → 126 with `FeeLevelsFacet` (#3649 — the initiation fee's
     ///      term schedule).
-    function cutFacetNames() internal pure returns (string[126] memory) {
+    ///      126 → 127 with `SettlementLegFacet` (#3669 — a settlement leg the
+    ///      token refuses parks in the payer's vault under a lien).
+    function cutFacetNames() internal pure returns (string[127] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -319,6 +321,8 @@ abstract contract DiamondFacetNames {
             "ReadyBalanceFacet",
             // The initiation fee's term schedule (#3649).
             "FeeLevelsFacet",
+            // A refused settlement leg's park and release (#3669).
+            "SettlementLegFacet",
             "SwapToRepayFacet",
             "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",

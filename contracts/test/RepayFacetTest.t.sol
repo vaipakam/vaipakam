@@ -5,6 +5,8 @@ pragma solidity ^0.8.29;
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {LibTestProtectedCut} from "./helpers/LibTestProtectedCut.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
+import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
+import {LibTestSettlementLeg} from "./helpers/LibTestSettlementLeg.sol";
 import {LibTestVaultEndpoints} from "./helpers/LibTestVaultEndpoints.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
@@ -346,6 +348,7 @@ contract RepayFacetTest is Test {
             functionSelectors: helperTest.getClaimFacetSelectors()
         });
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
+        LibTestSettlementLeg.install(address(diamond)); // #3669
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
         AccessControlFacet(address(diamond)).initializeAccessControl();
@@ -1204,7 +1207,11 @@ contract RepayFacetTest is Test {
     /// @dev Tests cross-facet call failure for the vault chokepoint
     ///      in repayLoan (ERC20 path). T-051 — vault resolution
     ///      moved inside `vaultDepositERC20From`; mock that selector.
-    function testRepayLoanCrossFacetCallFailed() public {
+    /// @dev #3669 — the delivery to the lender's vault fails while the
+    ///      borrower holds and has granted the whole due: the leg parks in
+    ///      the borrower's own vault, liened for the lender side, and the
+    ///      loan is still Repaid.
+    function testRepayLoanDeliveryRefusedParksTheLeg() public {
         helperOfferLoan();
         vm.mockCallRevert(
             address(diamond),
@@ -1212,9 +1219,12 @@ contract RepayFacetTest is Test {
             "mock revert"
         );
         vm.prank(borrower);
-        vm.expectRevert();
         RepayFacet(address(diamond)).repayLoan(1);
         vm.clearMockedCalls();
+        assertEq(uint8(LoanFacet(address(diamond)).getLoanDetails(1).status), uint8(LibVaipakam.LoanStatus.Repaid));
+        LibVaipakam.ParkedLeg memory leg = SettlementLegFacet(address(diamond)).getParkedLenderLeg(1);
+        assertEq(leg.payer, borrower, "parked for the borrower as payer");
+        assertGt(leg.amount, 0, "the lender's due parked");
     }
 
     /// @dev Tests that repayLoan with NFT and useFullTermInterest=true uses full term interest.

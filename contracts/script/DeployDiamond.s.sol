@@ -71,6 +71,7 @@ import {OfferMaterializeFacet} from "../src/facets/OfferMaterializeFacet.sol";
 import {CollectionOfferFacet} from "../src/facets/CollectionOfferFacet.sol";
 import {ReadyBalanceFacet} from "../src/facets/ReadyBalanceFacet.sol";
 import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
+import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {VaultProtection} from "../src/vault/VaultProtection.sol";
@@ -154,6 +155,7 @@ import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {ArtifactDeploy} from "./lib/ArtifactDeploy.sol";
 import {FeedRegistryDeployment} from "./lib/FeedRegistryDeployment.sol";
 import {PriceGuardDeployment} from "./lib/PriceGuardDeployment.sol";
+import {PriceGuard} from "../src/oracle/PriceGuard.sol";
 import {RegistryKeys} from "../src/governance/RegistryKeys.sol";
 
 contract DeployDiamond is Script, ArtifactRootBase {
@@ -598,6 +600,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
             ReadyBalanceFacet(ArtifactDeploy.deploy(type(ReadyBalanceFacet).name));
         // #3649 — the initiation fee's term schedule.
         FeeLevelsFacet feeLevelsFacet = FeeLevelsFacet(ArtifactDeploy.deploy(type(FeeLevelsFacet).name));
+        SettlementLegFacet settlementLegFacet = SettlementLegFacet(ArtifactDeploy.deploy(type(SettlementLegFacet).name));
         // #1841 - the one sale-exit verdict: the lender exit chooser's view and
         // the guard both sale entries self-call.
         SaleExitVerdictFacet saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
@@ -646,7 +649,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](126);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](127);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -775,6 +778,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[123] = _buildCut(address(collectionOfferFacet), _getCollectionOfferSelectors());
         cuts[124] = _buildCut(address(readyBalanceFacet), _getReadyBalanceSelectors());
         cuts[125] = _buildCut(address(feeLevelsFacet), _getFeeLevelsSelectors());
+        cuts[126] = _buildCut(address(settlementLegFacet), _getSettlementLegSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1229,6 +1233,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
             abi.encode(admin, diamond, admin, vaultImpl)
         );
         VaultFactoryFacet(diamond).initializeVaultBeacon(vaultBeacon);
+        // #3526 — the same call hands the beacon to the PositionNFT core,
+        // which finds a retired holder's vault through it.
         console.log("Vault beacon:", vaultBeacon);
         require(
             AdminFacet(diamond).getTreasury() == treasury,
@@ -1420,6 +1426,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeBackstopVault(backstopVault);
         Deployments.writeVaultProtection(vaultProtection);
         Deployments.writePriceGuard(priceGuard);
+        Deployments.writePriceGuardReader(PriceGuard(priceGuard).READER());
         if (feedRegistryCreated) Deployments.writeFeedRegistry(feedRegistry);
         Deployments.writeTreasury(treasury);
         Deployments.writeAdmin(admin);
@@ -1536,6 +1543,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("collectionOfferFacet", address(collectionOfferFacet));
         Deployments.writeFacet("readyBalanceFacet", address(readyBalanceFacet));
         Deployments.writeFacet("feeLevelsFacet", address(feeLevelsFacet));
+        Deployments.writeFacet("settlementLegFacet", address(settlementLegFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
         Deployments.writeFacet("refinancePayoffFacet", address(refinancePayoffFacet));
@@ -2268,6 +2276,23 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[3] = FeeLevelsFacet.quoteExtensionFee.selector;
     }
 
+    /// @dev Selectors for `SettlementLegFacet` (#3669) — the one host for a
+    ///      settlement leg the token refuses: deliver or park it in the
+    ///      payer's vault under a lien, and release it at the claim.
+    function _getSettlementLegSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](10);
+        s[0] = SettlementLegFacet.deliverLenderDueOrPark.selector;
+        s[1] = SettlementLegFacet.moveInKindCollateralOrPark.selector;
+        s[2] = SettlementLegFacet.inKindMove.selector;
+        s[3] = SettlementLegFacet.releaseParkedLeg.selector;
+        s[4] = SettlementLegFacet.getParkedLenderLeg.selector;
+        s[5] = SettlementLegFacet.depositLenderShareOrPark.selector;
+        s[6] = SettlementLegFacet.depositToStoredLender.selector;
+        s[7] = SettlementLegFacet.treasuryShareOrPark.selector;
+        s[8] = SettlementLegFacet.releaseParkedTreasury.selector;
+        s[9] = SettlementLegFacet.getParkedTreasury.selector;
+    }
+
     function _getRepaySelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](3);
         s[0] = RepayFacet.repayLoan.selector;
@@ -2845,13 +2870,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev Selectors for `SaleFloorFacet` (#3359) — the forced-sale floor
     ///      rule, its settings and the hourly price checkpoints it reads.
     function _getSaleFloorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](6);
+        s = new bytes4[](7);
         s[0] = SaleFloorFacet.saleFloorBps.selector;
         s[1] = SaleFloorFacet.checkpointHourlyPrices.selector;
         s[2] = SaleFloorFacet.getHourlyPriceCheckpoint.selector;
         s[3] = SaleFloorFacet.setSaleFloorConfig.selector;
         s[4] = SaleFloorFacet.getSaleFloorConfig.selector;
         s[5] = SaleFloorFacet.swapFloorBps.selector; // #3414
+        s[6] = SaleFloorFacet.getHourlyPriceCheckpointVersion.selector; // #3437
     }
 
     /// @dev Selectors for `VaultOutflowFacet` (#3205 part 2) — the one vault
@@ -3501,7 +3527,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](8);
+        s = new bytes4[](11);
         s[0] = ProtocolBroadcastFacet.protocolBroadcastTierUpdate.selector;
         s[1] = ProtocolBroadcastFacet.topUpBroadcastBudget.selector;
         s[2] = ProtocolBroadcastFacet.withdrawBudget.selector;
@@ -3512,6 +3538,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #1277: getTierPushSpacingSec / setTierPushSpacingSec removed with
         // the spacing window (the budget pays only lowers, never a raise).
         s[7] = ProtocolBroadcastFacet.flushTierPushes.selector;
+        // #912: the per-mirror tier-table version send, its quote and the
+        // canonical version a keeper compares each mirror against.
+        s[8] = ProtocolBroadcastFacet.broadcastTierTableVersionTo.selector;
+        s[9] = ProtocolBroadcastFacet.quoteBroadcastTierTableVersionTo.selector;
+        s[10] = ProtocolBroadcastFacet.getTierTableVersion.selector;
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {

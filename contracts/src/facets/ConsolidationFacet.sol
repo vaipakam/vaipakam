@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -118,15 +119,12 @@ contract ConsolidationFacet is
             return;
         }
 
-        // Holder auth lives ONLY here (k95): msg.sender must be the current
-        // holder of the side's position NFT. The stored (departed) owner has no
-        // claim and cannot call this.
-        uint256 tokenId = isLenderSide
-            ? loan.lenderTokenId
-            : loan.borrowerTokenId;
-        if (LibPositionNFT.ownerOf(tokenId) != msg.sender) {
-            revert NotNFTOwner();
-        }
+        // Holder auth lives ONLY here (k95): msg.sender must manage the current
+        // holder of the side's position NFT (the holder itself, or its
+        // replacement wallet once retired, #3526). The stored (departed) owner
+        // has no claim and cannot call this. Consolidation re-anchors the side
+        // to the HOLDER, whoever calls it.
+        LibAuth.requirePositionManager(isLenderSide ? loan.lenderTokenId : loan.borrowerTokenId);
 
         LibConsolidation.Result r = LibConsolidation.consolidateToHolder(
             loanId,
