@@ -89,6 +89,13 @@
       "binding": "R2_LEGAL_VAULT",
       "bucket_name": "vaipakam-legal-vault",
     },
+    // #3688 — read-only binding to the indexer's collection-offer list
+    // store. The nightly copies each newly stored list file to B2 under its
+    // own nonce (src/collectionLists.ts); nothing is written back to R2.
+    {
+      "binding": "COLLECTION_LISTS",
+      "bucket_name": "vaipakam-collection-lists",
+    },
   ],
   // Secrets live in `wrangler secret put`:
   //   B2_WRITE_ACCESS_KEY_ID       — Application Key id, scoped

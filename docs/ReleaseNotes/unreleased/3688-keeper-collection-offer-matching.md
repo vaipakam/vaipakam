@@ -14,4 +14,6 @@ The step ships disarmed behind its own flag, `COLLECTION_MATCH_ENABLED`. Arming 
 
 Closes #3688. Before deploying, the operator creates the `vaipakam-collection-lists` storage bucket the indexer binds; the indexer deploy fails without it.
 
-> Caveat: the nightly backup does not yet include the posted list files; that step is waiting on a design answer. The market summary's depth counts still include listed offers whose list is not published.
+Posted list files exist nowhere on-chain, so the nightly backup now copies each newly stored one to the backup bucket, outside the encrypted archive and unencrypted, because the files are public. Every copy gets its own random name part, so a leaked write key can add a copy but not replace one. The backup watcher reads the indexer's new public list index and pages for any published list with no copy two days after it was stored. A new restore step takes, for each list, a copy whose bytes match its hash and ignores the rest. The restore runbook, the backup security design and the restore drill carry the new step. The backup Worker binds the same list bucket, which the owner approves at its deploy.
+
+> Caveat: the market summary's depth counts still include listed offers whose list is not published.

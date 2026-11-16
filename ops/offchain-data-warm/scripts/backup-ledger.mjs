@@ -47,6 +47,9 @@
  *   LEDGER_BUCKET    default vaipakam-offchain-backup-ledger
  *   ARCHIVE_FIRST_MONTHLY / ARCHIVE_FIRST_YEARLY   the committed first periods
  *   BACKUP_ACKNOWLEDGED   problem keys an operator investigated, comma-separated
+ *   INDEXER_ORIGIN   the indexer whose published collection-offer lists must
+ *       each have a copy in the archive bucket (#3688); unset, that check is
+ *       skipped and the summary says so
  *
  * `--dry-run` reads and judges without writing an entry or a retention.
  */
@@ -60,6 +63,7 @@ import { importRecipientKey, parseRecipientsFile } from '../src/archiveFormat.ts
 import { MAX_MANIFEST_BYTES, MAX_STORED_ARCHIVE_BYTES } from '../src/limits.ts';
 import { TIERS, validateBaseline } from '../src/tiers.ts';
 import { authorize, bytesById, digestById, extendRetention, listAllVersions, requireScope, uploadLocked } from './lib/b2-native.mjs';
+import { COLLECTION_LIST_PREFIX, judgeListCopies, readListIndex } from './lib/collection-list-rules.mjs';
 import {
   HEAD_BYTES,
   MANIFEST_GRACE_MS,
@@ -308,6 +312,26 @@ export async function runWatcher({ env = process.env, dryRun = false, now = Date
     renewalFailures,
     manifestRechecks,
   });
+
+  // 5. #3688 — every published collection-offer list has a copy. An index the
+  // run cannot read is a problem, not a run without a verdict: the archives
+  // above were still judged.
+  if (env.INDEXER_ORIGIN) {
+    try {
+      const published = await readListIndex(env.INDEXER_ORIGIN, { fetchImpl });
+      const versions = await listAllVersions(archiveAuth, archiveBucketId, COLLECTION_LIST_PREFIX, io);
+      const lists = judgeListCopies({ now, published, versions });
+      problems.push(...lists.problems);
+      notes.push(...lists.notes);
+    } catch (e) {
+      problems.push({
+        keys: ['collection-list-index-unreadable'],
+        text: `Collection-offer list copies were not checked: ${String(e?.message ?? e).slice(0, 200)}`,
+      });
+    }
+  } else {
+    notes.push('Collection-offer list copies were not checked: INDEXER_ORIGIN is not set.');
+  }
 
   const acknowledged = parseAcknowledged(env.BACKUP_ACKNOWLEDGED);
   const live = problems

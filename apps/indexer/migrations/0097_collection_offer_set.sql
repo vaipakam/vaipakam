@@ -45,10 +45,19 @@ CREATE TABLE IF NOT EXISTS collection_offer_set (
   -- 'event' when the creation event carried the ids, 'file' when they came
   -- as a posted file, NULL while there is no list.
   list_source     TEXT,
+  -- When the indexer first stored this offer's list file in the list store
+  -- (unix seconds); NULL while it holds none. The nightly backup copies the
+  -- files stored in its look-back window to B2 (ops/offchain-data-warm,
+  -- src/collectionLists.ts) without keeping a record of its own.
+  list_stored_at  INTEGER,
   block_number    INTEGER NOT NULL,
   updated_at      INTEGER NOT NULL,
   PRIMARY KEY (chain_id, offer_id)
 );
+
+-- The nightly backup finds the files stored lately.
+CREATE INDEX IF NOT EXISTS idx_collection_offer_set_list_stored_at
+  ON collection_offer_set (list_stored_at);
 
 -- The list route finds the offers a posted file belongs to by its hash.
 CREATE INDEX IF NOT EXISTS idx_collection_offer_set_list_hash

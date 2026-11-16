@@ -102,6 +102,9 @@ jobs:
       B2_LEDGER_KEY: ${{ secrets.B2_LEDGER_KEY }}
       ARCHIVE_BUCKET: vaipakam-offchain-data-warm
       LEDGER_BUCKET: vaipakam-offchain-backup-ledger
+      # The indexer's public list index (#3688): every collection-offer list
+      # it publishes needs a copy under collection-lists/ in ARCHIVE_BUCKET.
+      INDEXER_ORIGIN: https://indexer.vaipakam.com
       # The first monthly and yearly cut this deployment wrote, as committed
       # facts (design §5.3): a deletion of the oldest period is undetectable
       # without them. Unset while they are unconfirmed; the run summary prints

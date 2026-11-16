@@ -13,6 +13,7 @@ import { buildTree, canonicalListFile, CollateralSetKind } from '@vaipakam/lib/c
 import type { Env } from '../src/env';
 import {
   handleCollectionListGet,
+  handleCollectionListIndex,
   handleCollectionListPost,
   listKey,
   recordCollectionOfferCreated,
@@ -113,6 +114,12 @@ describe('collection offer sets in the indexer (#3688)', () => {
     seedOffer(1);
     await recordCollectionOfferCreated(env, CHAIN, event({ publishedIds: IDS }), 10n, 100);
     expect(store.objects.get(listKey(HASH))).toBe(FILE);
+    // Stored at 100; a re-scan at 500 keeps the first time.
+    await recordCollectionOfferCreated(env, CHAIN, event({ publishedIds: IDS }), 10n, 500);
+    const idx = (await (await handleCollectionListIndex(new Request('https://x/collection-lists'), env)).json()) as {
+      lists: { storedAt: number }[];
+    };
+    expect(idx.lists[0].storedAt).toBe(100);
     const offers = await activeIds(env);
     expect(offers.map((o) => o.offerId)).toEqual([1]);
     expect(offers[0].collectionSet).toMatchObject({
@@ -157,6 +164,16 @@ describe('collection offer sets in the indexer (#3688)', () => {
     // A re-scan reads the stored file and writes the same verdict.
     await recordCollectionOfferCreated(env, CHAIN, event(), 10n, 200);
     expect((await activeIds(env)).map((o) => o.offerId)).toEqual([2, 1]);
+
+    // The index the backup watcher reads names the file once, with the time
+    // it was first stored (the re-scan did not move it).
+    const idx = await handleCollectionListIndex(new Request('https://x/collection-lists'), env);
+    const body = (await idx.json()) as { lists: { listHash: string; storedAt: number }[]; nextAfter: string | null };
+    expect(body.lists).toHaveLength(1);
+    expect(body.lists[0].listHash).toBe(HASH);
+    expect(body.lists[0].storedAt).toBeGreaterThan(0);
+    expect(body.nextAfter).toBeNull();
+    expect((await handleCollectionListIndex(new Request('https://x/collection-lists?after=zz'), env)).status).toBe(400);
   });
 
   it('refuses a file no offer names, one that does not match, and a non-canonical one', async () => {

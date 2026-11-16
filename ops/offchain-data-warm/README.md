@@ -236,6 +236,7 @@ which means tickets have no backup — a product decision, tracked as **#1474**.
 | `vaipakam-warm` D1 (hybrid, #1481) | `signed_offers` — born off chain, with columns the indexer projects from chain events. The restore imports the user's part and leaves the projected part to the block-zero replay. |
 | `vaipakam-warm` D1 (re-derivable) | `offers`, `loans`, `activity_events`, `oracle_snapshot_state`, `liquidity_confidence`, `indexer_cursor` — kept for restore-performance only; can be skipped on restore in favour of a fresh re-index from block 0. |
 | `vaipakam-legal-vault` R2 | Every uploaded legal-hold document. |
+| `vaipakam-collection-lists` R2 (#3688) | Every published NFT collection-offer list file, copied OUTSIDE the archive to `collection-lists/<listHash>/<nonce>.json`, unencrypted because the files are public. The nightly copies the files stored in the last 72 hours; the backup watcher pages for a published list with no copy. |
 
 Every table any Worker writes has exactly one of these treatments, and
 `apps/indexer/scripts/check-table-classification.mjs` refuses a tree where a
@@ -448,7 +449,9 @@ for the full procedure. High level:
 4. `wrangler d1 execute --file=<dump.sql>` to restore the born-off-
    chain tables; re-bootstrap the indexer from block 0 for the
    re-derivable tables.
-5. `wrangler r2 object put` per object for the legal-vault.
+5. `wrangler r2 object put` per object for the legal-vault, and
+   `scripts/restore-collection-lists.mjs --upload` for the collection-offer
+   list files, before the re-index reads them.
 6. Run the indexer event-coverage guardrail; smoke-test on testnet
    before re-pointing production.
 

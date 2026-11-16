@@ -23,6 +23,9 @@ export interface Env {
   DB_ARCHIVE: D1Database;
   // R2 binding — read-only (the Worker never writes to legal-vault).
   R2_LEGAL_VAULT: R2Bucket;
+  // #3688 — read-only binding to the indexer's collection-offer list store.
+  // Optional: unset, the nightly skips the list copy and says so.
+  COLLECTION_LISTS?: R2Bucket;
   // Operator-configured (wrangler secret put; see wrangler.jsonc for why).
   B2_ENDPOINT: string;
   B2_BUCKET: string;

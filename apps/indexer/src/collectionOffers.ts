@@ -134,17 +134,19 @@ export async function recordCollectionOfferCreated(
   now: number,
 ): Promise<void> {
   const list = await checkOfferList(ev, (hash) => readStoredList(env, hash));
+  let storedAt: number | null = null;
   if (list.file !== null && env.COLLECTION_LISTS) {
     await env.COLLECTION_LISTS.put(listKey(ev.listHash), list.file, {
       httpMetadata: { contentType: 'application/json' },
     });
+    storedAt = now;
   }
   await env.DB.prepare(
     `INSERT INTO collection_offer_set
        (chain_id, offer_id, lender, kind, per_loan, loans, low, high, root,
         list_count, list_hash, label, exclusions, list_check, list_source,
-        block_number, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        list_stored_at, block_number, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (chain_id, offer_id) DO UPDATE SET
        lender = excluded.lender, kind = excluded.kind,
        per_loan = excluded.per_loan, loans = excluded.loans,
@@ -152,6 +154,9 @@ export async function recordCollectionOfferCreated(
        list_count = excluded.list_count, list_hash = excluded.list_hash,
        label = excluded.label, exclusions = excluded.exclusions,
        list_check = excluded.list_check, list_source = excluded.list_source,
+       -- The FIRST store time stays, so a re-scan does not make the nightly
+       -- copy the file again; a file stored only now gets its time.
+       list_stored_at = COALESCE(collection_offer_set.list_stored_at, excluded.list_stored_at),
        block_number = excluded.block_number, updated_at = excluded.updated_at`,
   )
     .bind(
@@ -170,6 +175,7 @@ export async function recordCollectionOfferCreated(
       JSON.stringify(ev.exclusions.map((x) => x.toString())),
       list.check,
       list.source,
+      storedAt,
       Number(blockNumber),
       now,
     )
@@ -234,9 +240,11 @@ export async function handleCollectionListPost(req: Request, env: Env): Promise<
     await env.DB.batch(
       verdicts.map((v) =>
         env.DB.prepare(
-          `UPDATE collection_offer_set SET list_check = ?, list_source = 'file', updated_at = ?
+          `UPDATE collection_offer_set
+              SET list_check = ?, list_source = 'file', updated_at = ?,
+                  list_stored_at = COALESCE(list_stored_at, ?)
             WHERE chain_id = ? AND offer_id = ? AND list_source IS NOT 'event'`,
-        ).bind(v.listCheck, now, v.chainId, v.offerId),
+        ).bind(v.listCheck, now, v.listCheck === 'ok' ? now : null, v.chainId, v.offerId),
       ),
     );
     return jsonResponse({ listHash: hash, ids: ids.length, offers: verdicts }, 201);
@@ -263,6 +271,40 @@ export async function handleCollectionListGet(env: Env, hashRaw: string): Promis
       'Cache-Control': 'public, max-age=31536000, immutable',
     },
   });
+}
+
+/**
+ * GET /collection-lists — every list file the store holds, by hash, in hash
+ * order, with when it was first stored: `{ lists: [{ listHash, storedAt }],
+ * nextAfter }`, paged with `?after=<hash>&limit=<n>` (at most 1000). The
+ * backup watcher reads it to check that every stored file has a copy in the
+ * backup (#3688); anyone may, since every file is public.
+ */
+export async function handleCollectionListIndex(req: Request, env: Env): Promise<Response> {
+  const url = new URL(req.url);
+  const after = (url.searchParams.get('after') ?? '').toLowerCase();
+  if (after !== '' && !/^0x[0-9a-f]{64}$/.test(after)) return jsonResponse({ error: 'bad-after' }, 400);
+  const limitRaw = Number(url.searchParams.get('limit') ?? '500');
+  const limit = Number.isInteger(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 1000) : 500;
+  try {
+    const rows = await env.DB.prepare(
+      `SELECT list_hash, MIN(list_stored_at) AS stored_at
+         FROM collection_offer_set
+        WHERE list_stored_at IS NOT NULL AND list_hash > ?
+        GROUP BY list_hash
+        ORDER BY list_hash
+        LIMIT ?`,
+    )
+      .bind(after, limit)
+      .all<{ list_hash: string; stored_at: number }>();
+    const lists = (rows.results ?? []).map((r) => ({ listHash: r.list_hash, storedAt: r.stored_at }));
+    const nextAfter = lists.length === limit ? lists[lists.length - 1].listHash : null;
+    return jsonResponse({ lists, nextAfter });
+  } catch (err) {
+    if (isMissingSetTable(err)) return jsonResponse({ lists: [], nextAfter: null });
+    console.error('[collectionOffers] list index failed', redactedError(err));
+    return jsonResponse({ error: 'list-index-failed' }, 500);
+  }
 }
 
 /** CORS preflight for `/collection-lists` (the app posts from its own origin). */

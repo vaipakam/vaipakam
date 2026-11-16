@@ -231,6 +231,7 @@ then deploy.
 
    ```bash
    wrangler r2 bucket create vaipakam-legal-vault
+   wrangler r2 bucket create vaipakam-collection-lists   # list files, §5a
    ```
 
 5. Update every `wrangler.jsonc` in the monorepo that carries a
@@ -1602,6 +1603,47 @@ Two pitfalls to avoid:
 
 Per-object SHA-256 in the archive lets you verify each upload landed
 intact (compare against `wrangler r2 object get … --pipe | sha256sum`).
+
+---
+
+## 5a. Restore the collection-offer list files (#3688)
+
+A listed NFT collection offer names its token ids on-chain only by a root
+and a list hash. When the list was posted to the indexer as a file (more
+ids than an event carries), that file exists nowhere on-chain: the indexer
+keeps it in the `vaipakam-collection-lists` R2 bucket under
+`lists/<listHash>`. The nightly copies each new file to the archive bucket
+under `collection-lists/<listHash>/<nonce>.json`. These copies are **not
+encrypted** (the files are public by design), so no decryption step
+applies, and they are **not** in the archive, so §2 to §5 do not restore
+them.
+
+Restore them **before** §6 replays the chain. The replay reads each stored
+file to check an offer's list; an offer whose file is missing stays out of
+the default book until someone posts the file again.
+
+```bash
+# From ops/offchain-data-warm/, with the same archive read key as §2
+# (listFiles + readFiles on the archive bucket, nothing else).
+B2_ARCHIVE_READ_KEY_ID=… B2_ARCHIVE_READ_KEY=… \
+  node scripts/restore-collection-lists.mjs --outdir ../../restore
+# Check the counts it prints, then upload:
+B2_ARCHIVE_READ_KEY_ID=… B2_ARCHIVE_READ_KEY=… \
+  node scripts/restore-collection-lists.mjs --outdir ../../restore --upload --remote
+```
+
+How it chooses a copy: a hash can hold several copies, because every
+nightly that sees a file adds one under a fresh nonce, and a leaked write
+key could add a forged one (it cannot overwrite one). So the script trusts
+no copy by its name. Per hash, it takes the newest copy whose bytes hash
+(Keccak-256) to that hash and ignores the rest, and it prints how many
+copies it refused. A hash with **no** good copy is printed by name
+(`NO GOOD COPY: 0x…`) and the script exits 1 after writing the good ones.
+List hashes are public, since they are on-chain; a copy's object name is
+never printed. For such a hash, the file has to be posted to the indexer
+again (`POST /collection-lists`) from another source: the offer's lender
+holds it. The upload spawns `wrangler r2 object put` with an argv array,
+as §5 does.
 
 ---
 

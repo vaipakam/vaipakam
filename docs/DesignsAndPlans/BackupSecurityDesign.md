@@ -183,6 +183,36 @@ a published deletion promise. The ledger already detects a deleted archive
 archive-level immutability anyway, it is a separate decision on top of this
 one, not a change to it.
 
+### 4.1 Collection-offer list copies (#3688)
+
+The nightly also copies the published NFT collection-offer list files, which
+the indexer holds in its own R2 bucket and which exist nowhere on-chain. It
+does so without giving up anything this section establishes:
+
+- **The Worker still writes nothing it can read back, and keeps no record.**
+  It reads which files the indexer stored in the last 72 hours from the
+  shared D1 (`collection_offer_set.list_stored_at`, written by the indexer
+  under the shared migrations) and copies each one. It never writes D1 and
+  never lists B2, so two missed nights lose nothing and a file is copied a
+  few times at most.
+- **Every copy has its own nonce**: `collection-lists/<listHash>/<nonce>.json`.
+  A leaked write key can add a copy beside it but cannot overwrite it, and
+  the nightly report names copies only by count.
+- **The files are stored unencrypted, on purpose.** They are public by
+  design: the indexer serves each one by its hash so anyone can recompute an
+  offer's root, and they hold token ids only, no personal data. Encrypting
+  them would protect nothing and would make the restore depend on the
+  recipient keys.
+- **A restore trusts the bytes, not the name.** Per hash it takes any copy
+  whose bytes hash (Keccak-256) to the name and ignores the rest
+  (`scripts/restore-collection-lists.mjs`, runbook §5a). A forged copy can
+  therefore only cost a download, never a wrong list.
+- **The watcher reports a file never copied.** It reads the indexer's public
+  list index (`GET /collection-lists`) and pages for every published hash
+  with no copy 48 hours after the file was stored. Only presence is judged
+  there; whether a copy's bytes match is judged at restore, which names a
+  hash with no good copy.
+
 ## 5. The backup watcher and its ledger (#1473)
 
 ### 5.1 Where it runs
@@ -410,6 +440,14 @@ drift. Whether it has been corrected since is not recorded anywhere this
 design could check; the `--check` run answers it. Correcting it needs a key with `writeBuckets`, which only the owner
 holds. It is an owner step (§9), independent of the build, and should not wait
 for it.
+
+The `collection-lists/` prefix (§4.1) has **no** lifecycle rule, so its
+copies are kept indefinitely, like the yearly tier. That is deliberate: the
+files are public and hold no personal data, so no deletion promise covers
+them, and an offer's list is needed for as long as the offer can be
+matched. Each file gets a few copies (one per nightly in its 72-hour
+window), so the prefix grows with the number of lists published, not with
+time.
 
 ### 7.3 The restore drill
 

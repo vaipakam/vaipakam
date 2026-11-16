@@ -14,6 +14,7 @@
 
 import { parseRegionFromEndpoint, type B2Config } from './b2';
 import { runNightlyBackup, type WrittenArchive } from './backup';
+import type { ListMirrorOutcome } from './collectionLists';
 import type { Env } from './env';
 
 /**
@@ -194,6 +195,13 @@ function archiveLine(a: WrittenArchive): string {
   return `  ${a.tier} ${a.period}: ${(a.bytes / 1024 / 1024).toFixed(2)} MB, sha256 ${a.sha256}`;
 }
 
+/** #3688 — the collection-offer list copy, as one report line. */
+function listMirrorLine(m: ListMirrorOutcome): string {
+  if (m.skipped) return `  collection lists: not copied (${m.skipped})`;
+  const missing = m.missingFromStore > 0 ? `, ${m.missingFromStore} recorded but not in the store ⚠️` : '';
+  return `  collection lists: ${m.copied} copied (${(m.bytes / 1024).toFixed(1)} KB)${missing}`;
+}
+
 async function handleNightlyBackup(env: Env, cfg: B2Config): Promise<void> {
   try {
     const out = await runNightlyBackup(env, cfg);
@@ -220,6 +228,7 @@ async function handleNightlyBackup(env: Env, cfg: B2Config): Promise<void> {
         // is here so the operator can match the two.
         `  encrypted to recipient set ${out.recipientSet}`,
         `  rows: ${out.rowsBackedUp}, R2 objects: ${out.r2ObjectsBackedUp}`,
+        listMirrorLine(out.collectionLists),
         `  open support tickets: ${await openSupportTicketCount(env)}`,
         `  took ${(out.durationMs / 1000).toFixed(1)} s`,
       ].join('\n'),

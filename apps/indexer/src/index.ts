@@ -147,6 +147,7 @@ import {
 } from './signedOfferRoutes';
 import {
   handleCollectionListGet,
+  handleCollectionListIndex,
   handleCollectionListPost,
   handleCollectionListsPreflight,
 } from './collectionOffers';
@@ -667,6 +668,9 @@ export default {
       if (req.method === 'OPTIONS') return handleCollectionListsPreflight();
       if (url.pathname === '/collection-lists' && req.method === 'POST') {
         return handleCollectionListPost(req, resolved);
+      }
+      if (url.pathname === '/collection-lists' && req.method === 'GET') {
+        return handleCollectionListIndex(req, resolved);
       }
       const byHash = /^\/collection-lists\/([^/]+)$/.exec(url.pathname);
       if (byHash && req.method === 'GET') return handleCollectionListGet(resolved, byHash[1]);

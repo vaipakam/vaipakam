@@ -31,6 +31,7 @@ import { recipientSetForRun } from './recipients';
 import type { B2Config } from './b2';
 import { putObject } from './b2';
 import { MAX_ARCHIVE_BYTES } from './limits';
+import { mirrorCollectionLists, type ListMirrorOutcome } from './collectionLists';
 import { TIERS } from './tiers';
 import type { Env } from './env';
 
@@ -267,6 +268,8 @@ export interface BackupRunOutput {
   recipientSet: number;
   rowsBackedUp: number;
   r2ObjectsBackedUp: number;
+  /** #3688 — the copy of newly stored collection-offer list files. */
+  collectionLists: ListMirrorOutcome;
   durationMs: number;
 }
 
@@ -477,12 +480,18 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
     if (isFirstOfYear) await upload('yearly', yearKey, await seal(longTables, plaintext, 'yearly', yearKey));
   }
 
+  // 6. #3688 — copy the collection-offer list files stored lately, AFTER the
+  //    archives: a failed copy must not cost the night its archive, and the
+  //    run still reports the failure.
+  const collectionLists = await mirrorCollectionLists(env.DB_ARCHIVE, env.COLLECTION_LISTS, b2Cfg, startedAt, newNonce);
+
   const rowsBackedUp = archiveTables.reduce((a, t) => a + t.rowCount, 0);
   return {
     archives: written,
     recipientSet: recipientSet.set,
     rowsBackedUp,
     r2ObjectsBackedUp: r2Objects.length,
+    collectionLists,
     durationMs: Date.now() - startedAt,
   };
 }
