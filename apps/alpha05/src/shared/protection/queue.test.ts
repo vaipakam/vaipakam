@@ -49,7 +49,7 @@ function row(over: Partial<NonNullable<QueueRow['payout']>> = {}, id = 1n): Queu
   return {
     id,
     code: 'ABCDEF',
-    payout: { user: OWNER, state: ROW_QUEUED, kind: 0, asset: WETH, tokenId: 0n, amount: 100n, recipient: OWNER, releaseAt: NOW - 1, cosigned: false, ...over },
+    payout: { user: OWNER, state: ROW_QUEUED, kind: 0, asset: WETH, tokenId: 0n, amount: 100n, recipient: OWNER, releaseAt: NOW - 1, cosigned: false, needsCosign: null, releaseCancels: false, ...over },
   };
 }
 
@@ -63,6 +63,11 @@ describe('queue rules', () => {
     expect(code(queueVerdict('release', queue({}, { locked: true }), row(), OTHER, NOW, copy))).toBe('ProtectedVaultLocked');
     expect(code(queueVerdict('release', queue({}, { requireCosign: true }), row(), OTHER, NOW, copy))).toBe('CosignRequired');
     expect(code(queueVerdict('release', queue({}, { requireCosign: true }), row({ cosigned: true }), OTHER, NOW, copy))).toBe('open');
+    // Codex #3489 r2: the row's own reading of the release rule wins: an
+    // unverified destination needs a co-sign with the setting off, and a
+    // signerless account needs none with it on.
+    expect(code(queueVerdict('release', queue(), row({ needsCosign: true }), OTHER, NOW, copy))).toBe('CosignRequired');
+    expect(code(queueVerdict('release', queue({}, { requireCosign: true }), row({ needsCosign: false }), OTHER, NOW, copy))).toBe('open');
     expect(code(queueVerdict('release', queue(), row({ state: ROW_CANCELLED }), OTHER, NOW, copy))).toBe('RowNotQueued');
     expect(code(queueVerdict('release', queue(), row(), OTHER, null, copy))).toBe('unknown');
   });
@@ -83,13 +88,16 @@ describe('queue rules', () => {
     expect(code(queueVerdict('cancel', queue({ paused: true }), row(), OWNER, NOW, copy))).toBe('open');
   });
 
-  it('opens a release that cancels a row whose destination is no longer allowed, before any time check', () => {
-    const r = row({ recipient: OTHER, releaseAt: NOW + 1000 });
-    expect(releaseCancels(queue(), r)).toBe(true);
+  it('opens a release that cancels a row by the protocol’s own answer, before any time check (Codex #3489 r12)', () => {
+    // A destination removed and re-added is on the list again; the row's own
+    // reading of the release rule still says it cancels.
+    const r = row({ recipient: SAFE, releaseAt: NOW + 1000, releaseCancels: true });
+    expect(releaseCancels(r)).toBe(true);
     expect(code(queueVerdict('release', queue(), r, OTHER, NOW, copy))).toBe('open');
-    expect(releaseCancels(queue(), row({ recipient: SAFE }))).toBe(false);
-    expect(releaseCancels(queue({ allowlist: null }), row({ recipient: SAFE }))).toBeNull();
-    expect(code(queueVerdict('release', queue({ allowlist: null }), row({ recipient: SAFE }), OTHER, NOW, copy))).toBe('unknown');
+    expect(releaseCancels(row({ recipient: SAFE }))).toBe(false);
+    expect(releaseCancels(row({ releaseCancels: null }))).toBeNull();
+    expect(code(queueVerdict('release', queue(), row({ releaseCancels: null }), OTHER, NOW, copy))).toBe('unknown');
+    expect(releaseCancels(row({ state: 2, releaseCancels: true }))).toBe(false);
   });
 
   it('treats a retired account’s controller as its manager', () => {
@@ -106,8 +114,11 @@ describe('queue rules', () => {
     expect(code(queueVerdict('cancel', queue(), row(), OTHER, NOW, copy))).toBe('NotManagerOrSigner');
     expect(code(queueVerdict('cancel', queue(), row({ state: ROW_CANCELLED }), OWNER, NOW, copy))).toBe('RowNotQueued');
     expect(code(queueVerdict('cosign', queue({}, { requireCosign: true }), row(), SIGNER, NOW, copy))).toBe('open');
+    expect(code(queueVerdict('cosign', queue(), row({ needsCosign: true }), SIGNER, NOW, copy))).toBe('open');
     expect(code(queueVerdict('cosign', queue({}, { requireCosign: true }), row(), OWNER, NOW, copy))).toBe('NotSigner');
     expect(code(queueVerdict('cosign', queue({}, { requireCosign: true }), row({ cosigned: true }), SIGNER, NOW, copy))).toBe('AlreadyCosigned');
+    // A signer never co-signs a payout to itself.
+    expect(code(queueVerdict('cosign', queue({}, { requireCosign: true }), row({ recipient: SIGNER }), SIGNER, NOW, copy))).toBe('CannotCosignOwnPayout');
     expect(code(queueVerdict('cosign', queue(), row(), SIGNER, NOW, copy))).toBe('CosignNotRequired');
     expect(code(queueVerdict('cosign', queue({ signers: null }), row(), SIGNER, NOW, copy))).toBe('unknown');
     expect(holdsRole('cosign', queue(), OWNER)).toBe(false);

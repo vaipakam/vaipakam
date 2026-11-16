@@ -50,6 +50,13 @@ contract LibDeliveryHarness {
     function pullExact(address token, address from, address to, uint256 amount) external {
         LibDelivery.pullExact(token, from, to, amount);
     }
+
+    /// @dev #3379 B2 — LibDelivery asks the host (the Diamond's
+    ///      `ProtectedAccountFacet.isProtectionOn`) whether the payee is
+    ///      protected; the harness stands for a Diamond where no one is.
+    function isProtectionOn(address) external pure returns (bool) {
+        return false;
+    }
 }
 
 /**

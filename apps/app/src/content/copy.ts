@@ -6913,6 +6913,7 @@ const copySource = {
       ProtectedDelaySet: 'Payout delay changed',
       ProtectNftsSet: 'Position NFT protection changed',
       CosignRequirementSet: 'Co-signing requirement changed',
+      ProtectionApplied: 'Protected mode settings applied',
       AllowlistAddRequested: 'Payout address addition requested',
       AllowlistAddCancelled: 'Payout address addition cancelled',
       AllowlistAdded: 'Payout address added',

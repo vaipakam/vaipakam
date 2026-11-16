@@ -56,6 +56,12 @@ describe('payoutStatus', () => {
 
   it('reports the time before the missing co-signature', () => {
     expect(payoutStatus(row, record({ requireCosign: true }), 10n)).toBe('waiting');
+    // Codex #3489 r2: the row's own reading of the release rule wins over the
+    // account setting: an unverified destination needs a co-sign with the
+    // setting off, and a signerless account needs none with it on.
+    expect(payoutStatus({ ...row, needsCosign: true }, record(), 1_000n)).toBe('needsCosign');
+    expect(payoutStatus({ ...row, needsCosign: false }, record({ requireCosign: true }), 1_000n)).toBe('due');
+    expect(payoutStatus({ ...row, needsCosign: null }, record({ requireCosign: true }), 1_000n)).toBe('needsCosign');
   });
 });
 

@@ -2,6 +2,8 @@
 pragma solidity ^0.8.29;
 
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {VaultProtection} from "../src/vault/VaultProtection.sol";
+import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {Test, console} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
@@ -437,8 +439,7 @@ contract VaultBeaconTest is Test {
     // ─── Protected mode: the pin delay ───────────────────────────────────
 
     function _protectAlice() internal {
-        vm.prank(alice);
-        ProtectedAccountFacet(address(diamond)).enableProtectedMode(LibProtectedAccount.MIN_DELAY, false);
+        LibTestProtection.enable(address(diamond), alice, LibProtectedAccount.MIN_DELAY);
     }
 
     /// Under protected mode a first pin, a re-pin and an unpin each wait the
@@ -475,14 +476,90 @@ contract VaultBeaconTest is Test {
 
         // Locked: no pin request at all, and a lock cancels a pending one.
         _pinAlice(3);
-        vm.prank(alice);
-        ProtectedAccountFacet(address(diamond)).lockVault(alice);
+        LibTestProtection.lock(address(diamond), alice, alice);
         (, uint256 at) = beacon.pendingPinOf(vaultA);
         assertEq(at, 0, "the lock cancelled the pending pin");
         bytes memory sig = _sign(ALICE_KEY, beacon.pinChangeDigest(vaultA, 2));
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.ProtectedVaultLocked.selector, alice));
         VaultDepositoryFacet(address(diamond)).pinVaultVersion(2, sig);
+    }
+
+    /// #3522 seam 4 (in #3489): pin authority follows the vault's owner
+    /// record. After a replacement the controller can unpin; the retired
+    /// owner cannot unpin or change the pin delay, and a signature it gave
+    /// before the recovery cannot be replayed.
+    function test_pinAuthorityMovesToTheControllerOnReplacement() public {
+        _protectAlice();
+        // Pinned to the real vault code (version 1): the test markers carry no
+        // protection code, and the replacement runs through the vault.
+        _pinAlice(1);
+        vm.warp(block.timestamp + beacon.pinDelay(vaultA));
+        beacon.executePin(vaultA);
+        assertEq(beacon.pinnedVersion(vaultA), 1, "fixture: pinned");
+        bytes memory preRecovery = _sign(ALICE_KEY, beacon.pinChangeDigest(vaultA, 0));
+        // External review 2026-11-11: the old key leaves changes pending (an
+        // unpin and a delay lowering) before the recovery; neither survives it.
+        _unpinAlice();
+        uint256 dBefore = beacon.pinDelay(vaultA);
+        bytes memory lower = _sign(ALICE_KEY, beacon.pinDelayDigest(vaultA, dBefore - 1));
+        beacon.setPinDelay(vaultA, dBefore - 1, lower);
+        (, uint256 pinAt) = beacon.pendingPinOf(vaultA);
+        (, uint256 delayAt) = beacon.pendingPinDelayOf(vaultA);
+        assertGt(pinAt, 0, "fixture: an unpin pending");
+        assertGt(delayAt, 0, "fixture: a lowering pending");
+        preRecovery = _sign(ALICE_KEY, beacon.pinChangeDigest(vaultA, 0));
+
+        LibTestProtection.propose(address(diamond), alice, alice, bob);
+        vm.warp(vm.getBlockTimestamp() + LibProtectedAccount.MIN_DELAY);
+        LibTestProtection.finalizeReplacement(address(diamond), alice);
+        vm.warp(vm.getBlockTimestamp() + LibProtectedAccount.MIN_DELAY + 1); // past the cool-down
+        (, pinAt) = beacon.pendingPinOf(vaultA);
+        (, delayAt) = beacon.pendingPinDelayOf(vaultA);
+        assertEq(pinAt, 0, "the old key's pending unpin died with the recovery");
+        assertEq(delayAt, 0, "so did its pending delay lowering");
+        assertEq(beacon.pinnedVersion(vaultA), 1, "the pin itself is untouched");
+
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(VaultBeacon.InvalidSignature.selector, vaultA, bob));
+        VaultDepositoryFacet(address(diamond)).unpinVaultVersion(alice, preRecovery);
+        bytes memory retired = _sign(ALICE_KEY, beacon.pinChangeDigest(vaultA, 0));
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(VaultBeacon.InvalidSignature.selector, vaultA, bob));
+        VaultDepositoryFacet(address(diamond)).unpinVaultVersion(alice, retired);
+        uint256 d = beacon.pinDelay(vaultA);
+        bytes memory retiredDelay = _sign(ALICE_KEY, beacon.pinDelayDigest(vaultA, d + 1));
+        vm.expectRevert(abi.encodeWithSelector(VaultBeacon.InvalidSignature.selector, vaultA, bob));
+        beacon.setPinDelay(vaultA, d + 1, retiredDelay);
+
+        bytes memory controller = _sign(BOB_KEY, beacon.pinChangeDigest(vaultA, 0));
+        vm.prank(bob);
+        VaultDepositoryFacet(address(diamond)).unpinVaultVersion(alice, controller);
+        // The retired key cannot cancel the controller's request.
+        bytes memory oldCancel = _sign(ALICE_KEY, beacon.cancelPinDigest(vaultA));
+        vm.expectRevert(abi.encodeWithSelector(VaultBeacon.InvalidSignature.selector, vaultA, bob));
+        beacon.cancelPin(vaultA, oldCancel);
+        vm.warp(vm.getBlockTimestamp() + beacon.pinDelay(vaultA));
+        beacon.executePin(vaultA);
+        assertEq(beacon.pinnedVersion(vaultA), 0, "the controller unpinned");
+    }
+
+    /// Codex #3489 r8 — applyProtection compares the vault's delay with the
+    /// beacon's LIVE pin delay: one the owner lowered at the beacon on its own
+    /// is raised again, though the delay the platform last recorded is equal.
+    function test_applyRaisesAPinDelayLoweredAtTheBeacon() public {
+        _protectAlice();
+        uint256 raised = beacon.pinDelay(vaultA);
+        assertEq(raised, beacon.MAX_DIAMOND_PIN_DELAY(), "fixture: protected mode raised it (capped)");
+        // The owner lowers the beacon's pin delay on its own (waits the delay).
+        bytes memory sig = _sign(ALICE_KEY, beacon.pinDelayDigest(vaultA, 0));
+        beacon.setPinDelay(vaultA, 0, sig);
+        vm.warp(block.timestamp + raised);
+        beacon.executePinDelay(vaultA);
+        assertEq(beacon.pinDelay(vaultA), 0, "fixture: lowered at the beacon");
+        // The platform's recorded delay is unchanged, yet applying raises it.
+        ProtectedAccountFacet(address(diamond)).applyProtection(alice);
+        assertEq(beacon.pinDelay(vaultA), raised, "raised again to the vault's delay");
     }
 
     /// A facet calling the beacon directly with a valid owner signature can
@@ -576,14 +653,13 @@ contract VaultBeaconTest is Test {
     function test_switchingProtectionOffCancelsAPendingPin() public {
         _protectAlice();
         uint256 t0 = block.timestamp;
-        vm.prank(alice);
-        ProtectedAccountFacet(address(diamond)).requestDisableProtectedMode();
+        LibTestProtection.requestDisable(address(diamond), alice, alice);
         vm.warp(t0 + 1 days);
         _pinAlice(3);
         (, uint256 pinAt) = beacon.pendingPinOf(vaultA);
         assertGt(pinAt, 0, "a pin change is pending");
         vm.warp(t0 + LibProtectedAccount.MIN_DELAY);
-        ProtectedAccountFacet(address(diamond)).finalizeSettingChanges(alice);
+        LibTestProtection.finalizeSettings(address(diamond), alice);
         (, uint256 after_) = beacon.pendingPinOf(vaultA);
         assertEq(after_, 0, "the switch-off cancelled it at the beacon");
 
@@ -600,15 +676,14 @@ contract VaultBeaconTest is Test {
         _protectAlice();
         uint256 d = beacon.pinDelay(vaultA);
         uint256 t0 = block.timestamp;
-        vm.prank(alice);
-        ProtectedAccountFacet(address(diamond)).requestDisableProtectedMode();
+        LibTestProtection.requestDisable(address(diamond), alice, alice);
         bytes memory lower = _sign(ALICE_KEY, beacon.pinDelayDigest(vaultA, 0));
         beacon.setPinDelay(vaultA, 0, lower);
         (, uint256 lowerAt) = beacon.pendingPinDelayOf(vaultA);
         assertGt(lowerAt, 0, "a lowering is pending");
 
         vm.warp(t0 + LibProtectedAccount.MIN_DELAY);
-        ProtectedAccountFacet(address(diamond)).finalizeSettingChanges(alice);
+        LibTestProtection.finalizeSettings(address(diamond), alice);
         (, uint256 after_) = beacon.pendingPinDelayOf(vaultA);
         assertEq(after_, 0, "the switch-off voided the lowering");
 

@@ -165,6 +165,8 @@ library VaultOutflowTypes {
      *                      may approve.
      * @param conduitKey    The Seaport conduit key a listing must name.
      * @param priceGuard    The standalone price guard (#3447), read from #3268.
+     * @param protection    #3379 B2 — the `VaultProtection` code every vault
+     *                      delegatecalls for its protected-mode writes.
      */
     struct VaultEndpoints {
         address treasury;
@@ -174,6 +176,7 @@ library VaultOutflowTypes {
         address conduit;
         bytes32 conduitKey;
         address priceGuard;
+        address protection;
     }
 
     /**

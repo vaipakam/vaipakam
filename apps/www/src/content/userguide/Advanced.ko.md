@@ -1245,6 +1245,14 @@ gas도 없습니다. Alerts는 advisory입니다 — funds를 move하지 않습�
 
 알림 페이지는 연결된 지갑의 네트워크에서 인덱스의 받은편지함을 최신순으로 한 번에 50행씩 읽습니다. 행은 기록되는 시점에 대출 포지션을 보유한 지갑 앞으로 기록됩니다. 대출 시작, 부분 및 전액 상환(조기 상환, 재융자, 스왑 상환, 담보 매각에 의한 종료 포함), 채무 불이행 또는 청산, 내부 매칭에 의한 종료, 끝난 것은 보았지만 어떻게 끝났는지 인덱스가 알 수 없는 대출, 만기 7일 전과 1일 전 알림, 유예 기간 시작과 종료, 그리고 건전성이 1.5, 1.2, 1.05 아래로 떨어진 경우입니다. 건전성 행은 프로토콜의 키퍼가 기록하므로 키퍼가 작동하는 동안에만, 건전성이 적용되는 대출에 대해서만 도착합니다. 보상 항목의 최종 알림과 만료 행은 해당 항목의 소유자에게 갑니다. 행은 금액이 아니라 가리키는 표시입니다. 대출 페이지가 체인을 읽습니다. 다른 네트워크나 지갑에 대한 응답은 거부되고, 읽을 수 없는 행은 개수로 표시되며, 알 수 없는 종류는 이름 그대로 표시됩니다. 헤더의 숫자는 이 브라우저에서 읽음으로 기록된 가장 최신 ID보다 ID가 큰 행을 인덱스가 모든 행에 대해 직접 센 값입니다. ID는 기록 순서대로만 커지므로 이전 블록으로 기록된 행도 셉니다. 페이지를 열면 그때까지 기록된 모든 행이 읽음으로 기록됩니다. 읽음 표시는 이 브라우저에만 저장되며 앞으로만 움직입니다. 텔레그램, 푸시, 건전성 경고와 상환 알림은 받은편지함 바로 아래에서 설정합니다. 행은 기록입니다. 행이 작성된 시점의 대출이나 항목 상태를 알려 줄 뿐 지금도 그렇다고 말하지 않으며, 보상 만료 행은 항목의 프로그램 반환이 시작되었다는 뜻이지 완료되었다는 뜻이 아닙니다.
 
+<a id="activity-history"></a>
+
+### 활동
+
+활동 페이지는 인덱스의 `GET /activity?wallet=`을 `block:logIndex` 커서로 페이지당 50행씩 읽습니다. 인덱스는 두 부분에서 답합니다. 지갑이 한 번이라도 포지션을 보유했던 대출의 모든 이벤트(참여 기록)와, 공통 참여자 규칙(실행자와 종류별로 나열된 당사자)에 따라 지갑을 지목하는 모든 이벤트입니다. 후자는 수집할 때 이벤트마다 기록되고, 그 전에 저장된 기록은 한 번만 실행되는 백필로 한 페이지씩 기록됩니다. 백필이 저장된 최신 이벤트를 넘어 읽기 전까지 `walletComplete`는 false이며, 그동안 페이지는 이전 활동이 빠져 있을 수 있다고 알리고 끝을 주장하지 않습니다. 지갑 필터는 다른 필터와 함께 쓸 수 없습니다.
+
+첫 페이지에는 확정 전 레인(안전한 블록 위의 이벤트, 시각은 아직 읽지 않음)과, 대조 읽기로 종료 상태가 확인된 대출도 함께 오며, 관찰된 상태와 블록과 함께 피드 위치에 놓입니다. 한 거래의 이벤트는 한 줄로, 장부 기록이 아닌 첫 이벤트(토큰 전송, 승인, 세부 정보 동반 이벤트, 스왑 시도 제외)를 앞에 둡니다. 금액은 인덱스의 정규화된 필드에서만 가져오고 원시 인수에서는 가져오지 않으며, 참여자 규칙이 기록할 수 있는 모든 종류에는 레이블이 있고 알 수 없는 종류는 이름을 표시합니다. 대출을 시작한 거래는 대출 시작을 앞에 두고 수락이나 매칭은 그 아래에 둡니다. 줄에 표시되는 지갑은 공통 행위자 규칙이 이벤트를 기록한 지갑이며, 거래를 보낸 지갑과 다를 수 있습니다. 인덱스가 수량을 기록하지 않은 다중 사본 토큰은 그렇다고 표시하고, 확인으로 찾은 대출 종료를 읽지 못하면 일부가 빠졌을 수 있다고 알리며 목록의 끝을 주장하지 않습니다.
+
 <a id="alerts-channels"></a>
 
 ### 텔레그램, 푸시, 경고
@@ -2297,6 +2305,12 @@ Positions는 하나의 공유 리더로 Home과 같은 보유 목록을 읽습�
 
 검토 화면은 한 블록에서 `getOffer(id)`, `getOffersWithState([id])`, `getOfferLinkedLoanId(id)`, `paused()`, 생성자의 `getProtectedAccount`를 읽은 뒤 `OfferCancelFacet.cancelOffer(id)`를 시험 실행합니다. 파셋은 생성자의 관리자에게는 언제든, `expiresAt`이 지나면 누구에게나 취소를 허용합니다. `OfferAlreadyAccepted`, `OfferAlreadyConsumedBySale`를 거부하고, `amountFilled == 0`인 오퍼가 300초 미만이며 만료되지 않았으면 `CancelCooldownActive`로 거부하며, `whenNotPaused`입니다. 반환액은 파셋 자체의 분기로 계산합니다. ERC-20 대출 오퍼는 대출 자산의 `(amountMax 또는 amount) - amountFilled`, NFT 대출 오퍼는 그 토큰 또는 ERC-1155 수량, 차입 요청은 쓰지 않은 담보 `(collateralAmountMax 또는 collateralAmount) - collateralAmountFilled` 또는 그 NFT(`refinanceCarryOver`가 담보를 대출에 남기면 없음), 대여 요청은 `amount × durationDays`에 `rentalBufferBpsAtCreate` 버퍼를 더한 값입니다. `getOfferLinkedLoanId`로 대출에 묶인 오퍼나 기록된 버퍼가 0인 대여 요청(이 경우 프로토콜은 현재 비율을 씀)은 서명 전에 계산하지 않습니다. 모든 반환은 볼트 출금을 통해 생성자의 볼트를 떠나므로, 보호 모드는 대기열에 넣거나 계정이 잠긴 동안 볼트에 둡니다. 포지션 토큰은 폐기됩니다. 완료 카드는 `OfferCanceled(offerId, creator)`, 생성자에 대한 프로토콜의 지급 기록, 생성자에게 간 토큰 자체의 전송을 읽습니다.
 
+<a id="offer-edit"></a>
+
+### 오퍼 변경
+
+`OfferMutateFacet.modifyOffer(offerId, {amount, amountMax, interestRateBps, interestRateBpsMax, collateralAmount, collateralAmountMax}, validUntil)`를 쓰며, `validUntil`은 체인의 시계에서 가져옵니다(#3412). 파셋은 바뀌는 묶음만 검사합니다. 각각에 대한 `LibOfferShape` 규칙(상한을 넘지 않는 양의 하한, 전부 아니면 무 `fillMode`에서는 금액 하나, 최대 10,000 bps의 이자율 상한, 대출자의 담보 수치 하나), `amountFilled`나 `collateralAmountFilled` 미만 금지, 금액 변경 시 주기 규칙과 가치 하한, 금액이나 담보 변경 시 오퍼 한도입니다. 생성자가 아닌 호출, 수락된 오퍼, 일시 중지된 자산이나 프로토콜, 제재 대상 호출자, 설정된 `parallelSaleOrderHash`, 소진되었거나 연결된 매각 수단, 상계 수단은 거절하며, 리파이낸스로 표시된 오퍼는 금액과 담보를 유지합니다. 대출자의 ERC-20 오퍼는 `amountMax`의 차이를, ERC-20 담보를 건 차입자의 ERC-20 요청은 `collateralAmountMax`의 차이를 정산합니다. 증가분은 지갑이 Diamond에 준 승인 아래 `vaultDepositERC20`으로 지갑에서 가져오고, 감소분은 사유 `OFFER_REFUND`로 볼트 출금 경로를 통해 나가며, 보호 모드는 이를 대기열에 넣거나 보류합니다. 변경은 `termsSetAt`을 다시 찍어 체결이 `getMinTermsAgeSec`만큼 기다리게 하고, `backstopEligibleAfter`를 지웁니다. 검토는 한 블록에서 `getOffer`, `getOffersWithState`, `getOfferLinkedLoanId`, `paused()`, `getMinTermsAgeSec`, 생성자의 보호 계정, 그리고 인출이 있으면 지갑의 잔액과 승인을 읽고, `modifyOffer`를 모의 실행합니다. 인출이 승인을 넘으면 정확한 승인 뒤에 실행합니다. 완료 카드는 `OfferModified`를 검토 내용과 비교하고 토큰 이전과 지급 기록을 측정합니다. 매칭 섹션의 이자율 차이는 독자 범위 중 상대편 쪽 경계를 상대의 가장 가까운 경계로 채웁니다(#3659).
+
 <a id="offers-price-guard"></a>
 
 ### 가격 변동 보호
@@ -2308,6 +2322,16 @@ ERC-20 담보에 대한 ERC-20의 열린 오퍼에서는 작성자가 오퍼 페
 ### Risk Access: 내 위험 등급
 
 스위치는 `getRiskAccessGateEnabled`입니다. 흐름에 필요한 단계는 프로토콜 자체의 답입니다. 수락에서는 `previewCreatorBlock`이 대출자가 차단되지 않았음을 보인 뒤 `previewOfferAcceptBlock`(1 = 등급 부족, 2 = 쌍 동의, 3 = 엄격 모드 확인, 4 = 예전에는 수락 시 확인이 대신하던 비유동 페어로, 2와 같이 차단하며 페어 동의로 해제됩니다), 요청에서는 `createOffer` 모의 실행의 `RiskTierTooLow`, `IlliquidPairNotConsented`, `MidTierPairNotAcknowledged`입니다. 단계는 한 블록에서 쌍의 `pairRequiredRiskLevel`(오퍼는 `acceptMidTierAckPair`), `getVaultRiskTier`, `getEffectiveRiskTier`, `getCurrentRiskTermsVersion`과 비교한 `getVaultRiskTierVersion`, `getRiskTierUnlockAt`, `getRiskAccessUnlockCooldown`, `getRiskTierMutationNonce`를 읽고, 쌍에 대해서는 `isPairConsentPending`과 `hasIlliquidPairConsent`, 또는 `isMidTierAckPending`과 `midTierStrictBlocked`를 읽습니다. 등급 올리기는 쌍에 필요한 최소 등급으로의 `setVaultRiskTierChecked(level, nonce, termsVersion)`이며, 검토 후 다른 등급 쓰기나 약관 변경이 있었다면 아무것도 바꾸지 않고 거부됩니다. 쌍 단계는 `setIlliquidPairConsent(pair, true)` 또는 `setMidTierPairAck(pair)`입니다. 대기 중인 등급 올리기나 보류 중인 쌍 단계는 다시 제시하지 않습니다. 보류 중인 쌍 단계가 언제 효력이 생기는지 돌려주는 읽기는 없으므로, 검토 화면은 그 시각을 읽을 수 없다고 알립니다. 그 시각은 단계 자체의 완료 카드만 영수증 블록 시각과 대기 기간의 합으로 보여 줍니다. 결과는 영수증 블록에서 다시 읽습니다.
+
+<a id="wallet-keys"></a>
+
+### 내 지갑과 그 키
+
+Vaipakam은 지갑을 만들거나 보관하지 않습니다. 셀프 커스터디 지갑, 즉 본인 계정의 키를 보관하는 앱이나 기기가 필요합니다. 여기서는 누구도 그 키를 보거나, 자금을 옮기거나, 접근 권한을 되찾아 줄 수 없습니다. 키를 잃으면 자금에 대한 접근도 잃습니다. 앱은 지갑 선택 화면과, 연결 전의 홈 화면에서 이를 알리며, 하단에서 키를 안전하게 지키는 방법을 다룬 짧은 페이지로 연결합니다. 그 페이지는 어떤 지갑 브랜드도 언급하지 않습니다.
+
+지갑을 설정하면 복구 문구(단어 목록)가 표시됩니다. 종이에 적어 남에게 보이지 않게 보관하세요. 웹사이트에 입력하거나, 온라인에 저장하거나, 누구와도 공유하지 마세요. Vaipakam의 누구도 이를 요구하지 않습니다. 무엇이든 승인하기 전에 사이트 주소를 확인하고 지갑이 보여 주는 내용을 읽으세요. 큰 금액에는 키가 별도의 하드웨어 기기에 머무는 지갑이 더 안전하며, 먼저 소액으로 시도해 보는 것이 좋습니다.
+
+컴퓨터에서는 지갑의 브라우저 확장 프로그램으로 연결하거나, 휴대폰의 지갑으로 선택 화면의 코드를 스캔하세요. 휴대폰에서는 지갑 앱의 자체 브라우저에서 앱을 열거나, 선택 화면에서 'Other'를 고르세요. 지갑이 없어도 주요 위험과 분석은 읽을 수 있습니다.
 
 <a id="terms-gate"></a>
 

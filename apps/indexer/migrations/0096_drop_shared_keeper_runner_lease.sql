@@ -1,0 +1,15 @@
+-- #3550 — retire the shared copy of the keeper's one-runner lease.
+--
+-- WHY. #1722 (PR #3549) moved the lease into the keeper's private database,
+-- `vaipakam-keeper-db` (keeper migration 0009). The copy 0059 created here was
+-- kept for one release so a keeper machine still on the older build could keep
+-- claiming where it did. The keeper machine now runs a build that claims only in
+-- its private database, and nothing else ever read this table, so it is dropped.
+--
+-- SAFE AGAINST THE DEPLOYED KEEPER. The serving keeper never names this table;
+-- only a keeper older than PR #3549 did, and none runs any more.
+--
+-- Drops only, the one thing `apps/keeper/test/keeperPrivateD1.test.ts` lets a
+-- shared migration do to a keeper-private table. 0059 is applied and stays as it
+-- is, so a fresh database still creates the table and then drops it here.
+DROP TABLE IF EXISTS keeper_runner_lease;

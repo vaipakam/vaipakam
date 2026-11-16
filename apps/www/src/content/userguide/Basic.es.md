@@ -664,6 +664,14 @@ de peligro. No hay coste de gas; nada ocurre on-chain.
 
 La página Alertas muestra los avisos que el índice del protocolo guarda para tu wallet en la red en la que estás, los más recientes primero. Es gratis y no hay que darse de alta en nada. Se escribe un aviso cuando un préstamo empieza, se devuelve en parte o del todo, entra en impago o se liquida, se acerca a su vencimiento, entra en su periodo de gracia o sale de él, o su salud baja de 1,5, 1,2 o 1,05, y cuando una entrada de recompensa se acerca a su plazo de reclamación o lo pasa. Cada aviso abre el préstamo, cuya página lo lee de la cadena, o Claims para una recompensa. La campana junto a tu wallet, arriba, cuenta los avisos llegados desde la última vez que abriste la página en este navegador. Si el índice no se puede leer, la página lo dice en lugar de mostrar una bandeja vacía. Telegram, push, los avisos de salud y los recordatorios de pago se configuran justo debajo de la bandeja. Cada alerta describe cómo estaban las cosas cuando se escribió; abra el préstamo para ver cómo está ahora.
 
+<a id="activity-history"></a>
+
+### Tu actividad
+
+La página Actividad, a la que se llega desde Posiciones y desde Alertas, muestra todo lo que en la red actual involucró a tu billetera, lo más reciente primero: los eventos de cualquier préstamo en el que hayas tenido una posición y los eventos que nombran a tu billetera, como tus ofertas, tu bóveda, tus ajustes y tus recompensas. Cada transacción es una línea, encabezada por lo que ocurrió, con el resto de esa transacción plegado debajo. Una línea indica su préstamo u oferta, la billetera a la que se atribuye, que puede no ser la que la envió, y cuándo, y enlaza a la transacción.
+
+Un importe se muestra solo cuando el índice registró uno; si no, la línea dice que no se registró ningún importe. Los eventos de los bloques más recientes van primero, marcados como no definitivos, porque un bloque todavía puede cambiar. Un préstamo cuyo final encontró una comprobación, y no un evento, lo dice. Mientras el índice sigue leyendo el historial antiguo, la página dice que puede faltar actividad anterior, y una página que el índice no pudo responder nunca se muestra como un historial vacío.
+
 <a id="alerts-channels"></a>
 
 ### Telegram, push y avisos
@@ -1438,13 +1446,19 @@ Debajo de tus ofertas, el libro de ofertas muestra todas las ofertas abiertas de
 
 ### La página de una oferta
 
-Cada oferta tiene su propia página, leída de la cadena una vez que hay una billetera conectada. Muestra quién la publicó, el importe, lo ya cubierto, la garantía, el plazo y cuándo caduca. Desde ahí puedes tomar entera una oferta de préstamo abierta, con la misma revisión y el mismo consentimiento que en Pedir prestado y Prestar: pedir prestado de la oferta de un prestamista o financiar la solicitud de un prestatario. Cancelar y Limpiar funcionan ahí igual que en tus ofertas. Los alquileres, las ofertas con garantía NFT, las ventas de un préstamo en curso y las ofertas de cierre anticipado se toman por ahora en la app actual, y la página enlaza a ella. Una oferta no queda reservada mientras la revisas; otra persona puede tomarla o cancelarla antes. En una oferta abierta de token por token que publicó, una sección explica por qué aún no se empareja: las ofertas abiertas más cercanas del otro lado del par y lo primero que el propio protocolo rechaza de la más cercana, como la tasa, el plazo o una opción de reembolso. También puede decir que un par se emparejaría ahora y solo espera a que alguien envíe el emparejamiento, o que no hay nada del otro lado. Nunca promete un emparejamiento y dice que esta app aún no puede cambiar una oferta abierta: para cerrar una diferencia, cancele la oferta y publique una nueva.
+Cada oferta tiene su propia página, leída de la cadena una vez que hay una billetera conectada. Muestra quién la publicó, el importe, lo ya cubierto, la garantía, el plazo y cuándo caduca. Desde ahí puedes tomar entera una oferta de préstamo abierta, con la misma revisión y el mismo consentimiento que en Pedir prestado y Prestar: pedir prestado de la oferta de un prestamista o financiar la solicitud de un prestatario. Cancelar y Limpiar funcionan ahí igual que en tus ofertas. Los alquileres, las ofertas con garantía NFT, las ventas de un préstamo en curso y las ofertas de cierre anticipado se toman por ahora en la app actual, y la página enlaza a ella. Una oferta no queda reservada mientras la revisas; otra persona puede tomarla o cancelarla antes. En una oferta abierta de token por token que publicó, una sección explica por qué aún no se empareja: las ofertas abiertas más cercanas del otro lado del par y lo primero que el propio protocolo rechaza de la más cercana, como la tasa, el plazo o una opción de reembolso. También puede decir que un par se emparejaría ahora y solo espera a que alguien envíe el emparejamiento, o que no hay nada del otro lado. Nunca promete un emparejamiento. Una diferencia de tasa tiene un botón que abre el cambio de la oferta con la tasa que la cierra ya escrita; una diferencia de plazo o de una opción de reembolso exige cancelar la oferta y publicarla de nuevo, porque esos no pueden cambiar.
 
 <a id="offer-cancel"></a>
 
 ### Cancelar una oferta
 
 Cancelar en una oferta abierta que creaste la retira del libro y devuelve lo que aún bloquea en tu bóveda: el importe no prestado o el NFT de una oferta de préstamo, la garantía sin usar de una solicitud, o la tarifa prepagada y el margen de una solicitud de alquiler. Una oferta que nada ha completado no puede cancelarse en sus primeros cinco minutos, para que una cancelación nunca compita con una aceptación; la revisión dice cuándo podrá, y levanta el bloqueo por sí sola. La parte ya completada sigue completada. Una oferta vencida tiene un botón Limpiar que devuelve de la misma forma lo que bloqueaba; cualquiera puede limpiar una oferta vencida, y la devolución siempre va a su creador. La revisión dice qué vuelve y adónde: sin modo protegido llega a tu billetera al instante; con él, espera el retraso de tu cuenta en la cola de pagos, o queda en tu bóveda mientras la cuenta está bloqueada. Cuando la app no puede calcular la devolución, como en una oferta ligada a un préstamo en curso, la revisión lo dice y la tarjeta final muestra lo que se movió. Mientras el protocolo está en pausa, cancelar está cerrado. Nada sale de tu billetera y no se pide ninguna aprobación, así que tu billetera pregunta una vez.
+
+<a id="offer-edit"></a>
+
+### Cambiar una oferta
+
+«Cambiar esta oferta», en la página de una oferta de préstamo o solicitud abierta que usted publicó, cambia su rango de tasa, su rango de importe o su garantía sin cancelarla. El plazo y las opciones de reembolso quedan como se publicaron; para cambiarlos, cancele y publique de nuevo. Una solicitud de refinanciación solo puede cambiar su tasa, y una venta o una oferta de cierre anticipado no puede cambiar. El formulario parte de las cifras de la propia oferta. La revisión muestra cada cifra antes y después y lo que se mueve: subir lo que la oferta bloquea mueve la diferencia de su billetera a su bóveda, tras una aprobación de exactamente esa cantidad; bajarlo devuelve la diferencia a su billetera, o a su cola de pagos con el modo protegido activo. Un cambio de tasa no mueve nada. Tras un cambio, la oferta no puede tomarse durante una breve espera, para que nadie la tome con condiciones que no vio. Si alguien toma la oferta completa antes, el cambio se rechaza y nada se mueve. Mientras el protocolo está en pausa, los cambios están cerrados.
 
 <a id="offers-price-guard"></a>
 
@@ -1457,6 +1471,16 @@ Una oferta de un token contra garantía en token puede llevar una protección an
 ### Risk Access: tu nivel de riesgo
 
 Toda cuenta empieza en el nivel de riesgo más bajo, solo activos blue-chip, y solo tú puedes subirlo. Un par necesita el nivel de su token más arriesgado: los tokens blue-chip no necesitan nada, otros tokens líquidos necesitan «Activos líquidos» y un token ilíquido necesita «Cualquier activo, incluidos los ilíquidos» más tu acuerdo con ese par exacto. Cuando aceptar una oferta o publicar una solicitud necesita un paso así, la revisión lo dice en el mismo lugar y lo ofrece como una sola confirmación en la billetera con su propio recibo: qué cambia, a qué pares alcanza, cuándo entra en vigor y que no se mueven fondos. Subir tu nivel, o aceptar un par, puede esperar un periodo que fija el protocolo; para un nivel subido la app muestra la hora en que entra en vigor, leída de la cadena; para un acuerdo dice que el protocolo aún no publica esa hora; y nunca ofrece el mismo paso dos veces, porque un segundo reiniciaría la espera. Bajar tu nivel siempre surte efecto al instante. Cuando el protocolo publica nuevos términos de riesgo, tu nivel y tus acuerdos dejan de contar hasta que los confirmes de nuevo. Si activaste el modo estricto, cada par líquido también necesita tu reconocimiento. Un bloqueo que viene del nivel de riesgo del prestamista se muestra como suyo: nada en tu cuenta lo cambiaría.
+
+<a id="wallet-keys"></a>
+
+### Tu billetera y sus claves
+
+Vaipakam no crea ni guarda billeteras. Necesitas una billetera de autocustodia: una aplicación o un dispositivo que guarda las claves de tu propia cuenta. Nadie aquí puede ver esas claves, mover tus fondos ni recuperar tu acceso, así que si pierdes las claves, pierdes el acceso a los fondos. La aplicación lo dice en el selector de billetera y en Inicio antes de conectar, y su pie de página enlaza una página breve sobre cómo mantener tus claves a salvo. Esa página no nombra ninguna marca de billetera.
+
+Al configurar una billetera, esta muestra una frase de recuperación, una lista de palabras. Escríbela en papel y mantenla en privado. Nunca la escribas en un sitio web, la guardes en línea ni la compartas: nadie de Vaipakam te la pedirá nunca. Comprueba la dirección del sitio y lee lo que muestra tu billetera antes de aprobar nada. Para cantidades grandes es más seguro usar una billetera cuyas claves se quedan en un dispositivo físico aparte, y conviene probar primero con una cantidad pequeña.
+
+En un ordenador, conecta mediante la extensión de navegador de tu billetera, o escanea el código del selector con la billetera de tu teléfono. En un teléfono, abre la aplicación en el navegador propio de tu billetera, o elige «Other» en el selector. Sin billetera puedes seguir leyendo los riesgos clave y las analíticas.
 
 <a id="terms-gate"></a>
 

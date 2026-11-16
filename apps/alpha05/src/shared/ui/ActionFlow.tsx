@@ -355,6 +355,16 @@ export function ActionFlow({
               {leg.status === 'done' ? leg.label : `${leg.label}: ${leg.reason}`}
             </Notice>
           ))}
+          {(phase.landed ?? []).length > 0 ? (
+            <div data-testid="flow-earlier-steps">
+              <p>{text('flow.earlierSteps')}</p>
+              {(phase.landed ?? []).map((leg) => (
+                <Notice key={leg.label} tone={leg.status === 'done' ? 'ok' : 'warn'} tier="A">
+                  {leg.status === 'done' ? leg.label : `${leg.label}: ${leg.reason}`}
+                </Notice>
+              ))}
+            </div>
+          ) : null}
           <p className="actions">
             <button type="button" className="btn" onClick={close}>
               {text('flow.close')}

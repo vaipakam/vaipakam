@@ -310,8 +310,9 @@
       },
       "basics-wallet": {
         "q": "Do I need a crypto wallet, and what is one?",
-        "a1": "A wallet (MetaMask, Rabby, Coinbase Wallet, and similar) is the app that holds the private key controlling on-chain assets. Think of it as a login and a signing pen rolled into one — it's how Vaipakam knows that a transaction is genuinely coming from the account holder.",
-        "a2": "A wallet is only required to <em>act</em> on a position (create an offer, accept a loan, repay, claim). Browsing the analytics dashboard and reading loan details works with no wallet at all. Vaipakam never sees or stores private keys — the wallet lives entirely in the browser or extension."
+        "a1": "A wallet is the app or device that holds the private keys controlling an on-chain account. Think of it as a login and a signing pen rolled into one — it's how Vaipakam knows that a transaction genuinely comes from the account holder. Vaipakam needs a self-custody wallet, one whose keys only its owner holds; it does not create wallets for anyone.",
+        "a2": "A wallet is only required to <em>act</em> on a position (create an offer, accept a loan, repay, claim). Browsing the analytics and reading the key risks works with no wallet at all. Vaipakam never sees, stores or recovers private keys: if the keys or the recovery phrase are lost, no one can restore access to the funds.",
+        "a3": "The user guide explains <guide>how to keep a wallet's keys safe</guide>, without recommending any wallet."
       },
       "basics-collateral": {
         "q": "Why does borrowing require \"collateral\"?",

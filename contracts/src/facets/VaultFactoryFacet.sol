@@ -190,13 +190,12 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
             }
             // #3204 — a BeaconProxy: on every call it asks the VaultBeacon
             // which code to run, so one timelocked change reaches every vault.
-            // The vault records its owner wallet here, once; the beacon checks
-            // every pin signature against that record.
-            bytes memory _data = abi.encodeCall(
-                VaipakamVaultImplementation.initialize,
-                (s.diamondAddress, user)
-            );
-            proxy = address(new BeaconProxy(s.vaultBeacon, _data));
+            // #3393 — created with CREATE2, salted by the owner wallet and
+            // constructed with no call data, so its address is a function of
+            // its creation owner alone (`LibUserVault.predict`); it is
+            // initialized in this same transaction, recording that owner.
+            proxy = address(new BeaconProxy{salt: bytes32(uint256(uint160(user)))}(s.vaultBeacon, ""));
+            VaipakamVaultImplementation(proxy).initialize(s.diamondAddress, user);
             s.userVaipakamVaults[user] = proxy;
             s.vaultUserOf[proxy] = user;
             emit UserVaultCreated(user, proxy);

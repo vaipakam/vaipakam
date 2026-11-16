@@ -131,6 +131,8 @@ const CLASSIFICATION = {
       'numbered above every mark, which re-examines rather than skips',
   },
   loan_participants: { class: 'replay-derived', reason: 'append-only chain history (#1450 r31)' },
+  activity_participants: { class: 'replay-derived', reason: 'per-event participants, derived from activity_events (#3677)' },
+  activity_participants_state: { class: 'replay-derived', reason: 'backfill watermark over activity_events (#3677)' },
   loan_lifecycle_state: {
     class: 'replay-derived',
     reason: 'the status each loan last announced, read off LoanInitiated / LoanStatusChanged (#2337)',
@@ -348,8 +350,8 @@ const CLASSIFICATION = {
   keeper_runner_lease: {
     class: 'replay-derived',
     reason:
-      'one-runner keeper lease (#2503), keeper-PRIVATE since #1722 (keeper migration 0009; the ' +
-      'shared copy from migration 0059 waits for its drop and nothing claims it); it self-expires ' +
+      'one-runner keeper lease (#2503), keeper-PRIVATE since #1722 (keeper migration 0009; ' +
+      'shared migration 0096 drops the old copy from 0059, #3550); it self-expires ' +
       'within 10 minutes, a lease past its maximum term is taken, and §6 clears it while the ' +
       'keeper is stopped, so a forged lease cannot hold the restored keeper off',
   },

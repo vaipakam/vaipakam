@@ -226,6 +226,9 @@ import VaultBeaconABI from './VaultBeacon.json';
 import PositionNFTABI from './PositionNFT.json';
 import ProtocolRegistryABI from './ProtocolRegistry.json';
 import PriceGuardABI from './PriceGuard.json';
+// #3379 B2 — the vault code and its protected-mode rules (standalone).
+import VaipakamVaultImplementationABI from './VaipakamVaultImplementation.json';
+import VaultProtectionABI from './VaultProtection.json';
 
 export {
   OfferCreateFacetABI,
@@ -374,6 +377,8 @@ export {
   PositionNFTABI,
   ProtocolRegistryABI,
   PriceGuardABI,
+  VaipakamVaultImplementationABI,
+  VaultProtectionABI,
 };
 
 import type { Abi } from 'viem';

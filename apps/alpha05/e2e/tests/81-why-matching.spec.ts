@@ -47,7 +47,7 @@ test('names the closest request’s rate gap, and a request whose rates meet as 
   await expect(why.getByTestId('why-match-standing')).toHaveText('Open offers on the other side of this pair: 1.');
   await why.getByTestId('why-match-closest').locator('summary').click();
   await expect(why.getByTestId(`why-match-row-${far}`)).toContainText('their rates do not overlap.');
-  await expect(why).toContainText('This app cannot change an open offer yet.');
+  await expect(why.getByTestId('why-match-change-rate')).toHaveText('Change my lowest rate to 5.5%');
   await fitsWidth(page);
 
   // A second request whose range reaches 7%: the protocol would match it.
