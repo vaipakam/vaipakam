@@ -67,7 +67,7 @@ const GRANDFATHERED_SHARED = new Map<string, string[]>([
   ['0043_keeper_commitment_scan.sql', ['keeper_commitment_scan', 'keeper_commitment_day']],
   ['0044_keeper_remit_ack.sql', ['keeper_remit_ack_frontier', 'keeper_remit_ack']],
   // #1722 — the one-runner lease began in the shared database and moved into
-  // the private one; the shared copy stays until a later drop-only migration.
+  // the private one; 0096 drops the shared copy (#3550).
   ['0059_keeper_runner_lease.sql', ['keeper_runner_lease']],
 ]);
 
@@ -77,7 +77,8 @@ const GRANDFATHERED_SHARED = new Map<string, string[]>([
  * there any more; the drop is a separate release so a keeper still running
  * the previous build (which claims there) is not stopped mid-update.
  */
-const SHARED_COPY_AWAITING_DROP = new Set<string>(['keeper_runner_lease']);
+// None today: 0096 dropped the last one (#3550).
+const SHARED_COPY_AWAITING_DROP = new Set<string>([]);
 
 describe("the keeper's private database", () => {
   it('its migrations create exactly the eighteen keeper-private tables', () => {

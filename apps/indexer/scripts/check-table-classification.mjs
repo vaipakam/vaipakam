@@ -350,8 +350,8 @@ const CLASSIFICATION = {
   keeper_runner_lease: {
     class: 'replay-derived',
     reason:
-      'one-runner keeper lease (#2503), keeper-PRIVATE since #1722 (keeper migration 0009; the ' +
-      'shared copy from migration 0059 waits for its drop and nothing claims it); it self-expires ' +
+      'one-runner keeper lease (#2503), keeper-PRIVATE since #1722 (keeper migration 0009; ' +
+      'shared migration 0096 drops the old copy from 0059, #3550); it self-expires ' +
       'within 10 minutes, a lease past its maximum term is taken, and §6 clears it while the ' +
       'keeper is stopped, so a forged lease cannot hold the restored keeper off',
   },
