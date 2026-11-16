@@ -37,11 +37,43 @@ export function manageKeyFor(lending: Hex, collateral: Hex): string {
 
 /** Which step a pair's panel is open on, or null; held while a step is in
  *  flight, so a refreshed list keeps the panel on screen. */
-export function useManageOpen(lending: Hex, collateral: Hex): { kind: ManageKind | null; held: boolean; open: (k: ManageKind | null) => void } {
+export function useManageOpen(
+  lending: Hex,
+  collateral: Hex,
+  opener?: { who: string; unlent: bigint },
+): { kind: ManageKind | null; held: boolean; open: (k: ManageKind | null) => void } {
   const key = manageKeyFor(lending, collateral);
   const entry = useTxEntry(key);
   const [kind, setKind] = useStoredValue<ManageKind>(`${key}:kind`);
-  return { kind, held: kind !== null || holdsFlow(entry.phase), open: setKind };
+  const [, setOpen] = useStoredValue<readonly OpenManage[]>(OPEN_INDEX);
+  const open = (k: ManageKind | null) => {
+    setKind(k);
+    setOpen((cur) => {
+      const rest = (cur ?? []).filter((e) => manageKeyFor(e.lending, e.collateral) !== key);
+      return k === null || opener === undefined ? rest : [...rest, { who: opener.who, lending, collateral, unlent: opener.unlent }];
+    });
+  };
+  return { kind, held: kind !== null || holdsFlow(entry.phase), open };
+}
+
+/** A pair whose management panel is open, recorded with the panel and not
+ *  with the list: a stop that takes back every coin drops the Auto-lend from
+ *  the wallet's list, and its open step (the finish card, or a tracker still
+ *  waiting) must stay reachable, even when Positions mounts again after it. */
+export interface OpenManage {
+  /** The wallet and network it was opened under (`chainId:account`). */
+  who: string;
+  lending: Hex;
+  collateral: Hex;
+  /** Set aside and not lent, as the list read it when the panel opened. */
+  unlent: bigint;
+}
+
+const OPEN_INDEX = 'autolend.manage.open';
+
+/** Every open management panel, from the store. */
+export function useOpenManages(): readonly OpenManage[] {
+  return useStoredValue<readonly OpenManage[]>(OPEN_INDEX)[0] ?? [];
 }
 
 interface AutoLendManageProps {
