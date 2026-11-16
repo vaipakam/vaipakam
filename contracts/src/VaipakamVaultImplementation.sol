@@ -92,9 +92,11 @@ contract VaipakamVaultImplementation is
     ///         whose owner record is it). SEAPORT / ORDER_PROTOCOL: the only
     ///         callers this vault's ERC-1271 answers, each for the orders it
     ///         hashed. CONDUIT / CONDUIT_KEY: the one listing conduit a vault
-    ///         or its escrow approves, and the key a listing must name.
-    ///         PRICE_GUARD: the standalone price guard (#3447), read from
-    ///         #3268 on.
+    ///         or its escrow approves for new listings, and its key.
+    ///         PRICE_GUARD: the standalone price guard new loans use (#3447),
+    ///         read from #3268 on. The PRIOR_* constants (#3437 step 5) are
+    ///         the earlier guards and conduits open loans still use, accepted
+    ///         beside the current ones; zero is an unused slot.
     address public immutable TREASURY;
     address public immutable BACKSTOP;
     address public immutable SEAPORT;
@@ -104,6 +106,12 @@ contract VaipakamVaultImplementation is
     address public immutable PRICE_GUARD;
     /// @notice #3379 B2 — the protected-mode code this vault delegatecalls.
     address public immutable PROTECTION;
+    address public immutable PRIOR_PRICE_GUARD_0;
+    address public immutable PRIOR_PRICE_GUARD_1;
+    address public immutable PRIOR_CONDUIT_0;
+    address public immutable PRIOR_CONDUIT_1;
+    bytes32 public immutable PRIOR_CONDUIT_KEY_0;
+    bytes32 public immutable PRIOR_CONDUIT_KEY_1;
 
     /// @dev Vault-side rental wrapper state. Authoritative for this platform:
     ///      external integrators SHOULD query the vault (via the factory
@@ -241,6 +249,59 @@ contract VaipakamVaultImplementation is
         CONDUIT_KEY = e.conduitKey;
         PRICE_GUARD = e.priceGuard;
         PROTECTION = e.protection;
+        _requirePriorEndpoints(e);
+        PRIOR_PRICE_GUARD_0 = e.priorPriceGuards[0];
+        PRIOR_PRICE_GUARD_1 = e.priorPriceGuards[1];
+        PRIOR_CONDUIT_0 = e.priorConduits[0];
+        PRIOR_CONDUIT_1 = e.priorConduits[1];
+        PRIOR_CONDUIT_KEY_0 = e.priorConduitKeys[0];
+        PRIOR_CONDUIT_KEY_1 = e.priorConduitKeys[1];
+    }
+
+    /// @dev #3437 step 5 — the earlier lists are filled from the first slot,
+    ///      name each entry once, never repeat the current entry, and pair
+    ///      every conduit with its key. Checked once, at construction.
+    function _requirePriorEndpoints(VaultOutflowTypes.VaultEndpoints memory e) private pure {
+        address[2] memory c = e.priorConduits;
+        bytes32[2] memory k = e.priorConduitKeys;
+        bool bad = _badPriors(e.priorPriceGuards[0], e.priorPriceGuards[1], e.priceGuard)
+            || _badPriors(c[0], c[1], e.conduit)
+            || (k[0] != bytes32(0) && (k[0] == k[1] || k[0] == e.conduitKey))
+            || (k[1] != bytes32(0) && k[1] == e.conduitKey)
+            || (c[0] == address(0)) != (k[0] == bytes32(0))
+            || (c[1] == address(0)) != (k[1] == bytes32(0));
+        if (bad) revert PriorEndpointsInvalid();
+    }
+
+    /// @dev An earlier list of two is bad when its second slot is filled and
+    ///      its first is not, when it names one entry twice, or when it
+    ///      repeats the current entry.
+    function _badPriors(address p0, address p1, address current) private pure returns (bool) {
+        if (p0 == address(0)) return p1 != address(0);
+        return p0 == p1 || p0 == current || (p1 != address(0) && p1 == current);
+    }
+
+    /// @notice #3437 step 5 — whether this vault code accepts `guard` as the
+    ///         price guard a loan is on: the guard new loans use, or one of
+    ///         the earlier guards this code lists. The guard itself refuses a
+    ///         price version below its floor, whoever asks.
+    function isAcceptedPriceGuard(address guard) public view returns (bool) {
+        return guard != address(0)
+            && (guard == PRICE_GUARD || guard == PRIOR_PRICE_GUARD_0 || guard == PRIOR_PRICE_GUARD_1);
+    }
+
+    /// @notice #3437 step 5 — whether this vault code accepts `conduit`, the
+    ///         one new listings use or an earlier one this code lists.
+    function isAcceptedConduit(address conduit) public view returns (bool) {
+        return conduit != address(0)
+            && (conduit == CONDUIT || conduit == PRIOR_CONDUIT_0 || conduit == PRIOR_CONDUIT_1);
+    }
+
+    /// @notice #3437 step 5 — whether a listing may name `conduitKey`: the key
+    ///         of the conduit new listings use, or of an earlier one listed.
+    function isAcceptedConduitKey(bytes32 conduitKey) public view returns (bool) {
+        return conduitKey != bytes32(0)
+            && (conduitKey == CONDUIT_KEY || conduitKey == PRIOR_CONDUIT_KEY_0 || conduitKey == PRIOR_CONDUIT_KEY_1);
     }
 
     /// @notice #3431 — the endpoints fixed in this vault code, as one record.
@@ -253,7 +314,10 @@ contract VaipakamVaultImplementation is
             conduit: CONDUIT,
             conduitKey: CONDUIT_KEY,
             priceGuard: PRICE_GUARD,
-            protection: PROTECTION
+            protection: PROTECTION,
+            priorPriceGuards: [PRIOR_PRICE_GUARD_0, PRIOR_PRICE_GUARD_1],
+            priorConduits: [PRIOR_CONDUIT_0, PRIOR_CONDUIT_1],
+            priorConduitKeys: [PRIOR_CONDUIT_KEY_0, PRIOR_CONDUIT_KEY_1]
         });
     }
 
@@ -368,8 +432,13 @@ contract VaipakamVaultImplementation is
     /// @dev #3431 — an order's terms name another maker or offerer than this
     ///      vault (or one of its own listing escrows).
     error OrderNotThisVaults(address maker);
-    /// @dev #3431 — a listing names another conduit key than the constant's.
+    /// @dev #3431 — a listing names a conduit key this vault code does not
+    ///      accept (#3437 step 5: the current one or an earlier one listed).
     error OrderConduitRefused(bytes32 conduitKey);
+    /// @dev #3437 step 5 — the earlier guards or conduits given at
+    ///      construction are out of order, repeated, repeat the current entry,
+    ///      or leave a conduit without its key.
+    error PriorEndpointsInvalid();
     /// @dev #3431 — the protocol this order needs is not set in this code.
     error OrderProtocolUnset();
     /// @dev #3431 — {swapOut}'s adapter took more than offered, or delivered
@@ -409,7 +478,7 @@ contract VaipakamVaultImplementation is
         if (escrowKey == bytes32(0) ? offerer != address(this) : offerer != listingEscrowAddress(escrowKey)) {
             revert OrderNotThisVaults(offerer);
         }
-        if (c.conduitKey != CONDUIT_KEY) revert OrderConduitRefused(c.conduitKey);
+        if (!isAcceptedConduitKey(c.conduitKey)) revert OrderConduitRefused(c.conduitKey);
         orderHash = ISeaportOrderHash(seaport).getOrderHash(c);
         _recordOrder(orderHash, seaport);
     }
@@ -1009,12 +1078,15 @@ contract VaipakamVaultImplementation is
 
     /// @dev THE rule for every spender right this vault grants or causes (a
     ///      just-in-time allowance, a listing escrow's conduit approval): the
-    ///      spender must be the constant its class names (#3431): CONDUIT for
-    ///      a marketplace conduit, ORDER_PROTOCOL for an order taker. No
+    ///      spender must be the constant its class names (#3431): an accepted
+    ///      conduit (#3437 step 5) for a marketplace conduit, ORDER_PROTOCOL
+    ///      for an order taker. No
     ///      approval path may skip it.
     function _requireSpender(VaultOutflowTypes.GrantClass c, address spender) private view {
-        address allowed = c == VaultOutflowTypes.GrantClass.Conduit ? CONDUIT : ORDER_PROTOCOL;
-        if (spender == address(0) || spender != allowed) revert GrantRefused(c, spender);
+        bool ok = c == VaultOutflowTypes.GrantClass.Conduit
+            ? isAcceptedConduit(spender)
+            : spender != address(0) && spender == ORDER_PROTOCOL;
+        if (!ok) revert GrantRefused(c, spender);
     }
 
     /**

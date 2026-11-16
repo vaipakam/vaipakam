@@ -570,6 +570,19 @@ and the loan or offer it belongs to.
   own settings, so a mismatch can never silently refuse every fee or fill.
   The treasury is outside that comparison because the platform keeps no
   second copy of it: the vault code is the only place it is held (#3569).
+- **A vault accepts the price guard and the listing conduit an open loan
+  still uses** (#3437). Beside the guard and the conduit new loans use, the
+  vault code may list up to two earlier guards and two earlier conduits
+  (each with its conduit key) that open loans or their listings still use.
+  A listing may name any conduit the code lists, and the vault may approve
+  any of them, so new vault code that moves new listings to another conduit
+  never strands an open loan's listing. Any other guard or conduit is
+  refused. Vault code whose earlier lists repeat an entry, repeat the current
+  one, skip a slot or leave a conduit without its key cannot be built. A
+  loan on a guard or conduit older than the code lists must be moved off it,
+  by the announced retirement, before such code ships. The vault's own price
+  checks, which use the guard a loan names only when its code accepts it,
+  come with the vault-checked close-outs (#3268).
 - **A vault signs only its own orders, and only for the marketplace that
   asks** (#3431). A collateral listing or a swap-to-repay order is
   registered on the vault from its terms: the vault checks it is the order's

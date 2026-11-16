@@ -51,6 +51,21 @@
             "name": "protection",
             "type": "address",
             "internalType": "address"
+          },
+          {
+            "name": "priorPriceGuards",
+            "type": "address[2]",
+            "internalType": "address[2]"
+          },
+          {
+            "name": "priorConduits",
+            "type": "address[2]",
+            "internalType": "address[2]"
+          },
+          {
+            "name": "priorConduitKeys",
+            "type": "bytes32[2]",
+            "internalType": "bytes32[2]"
           }
         ]
       }
@@ -138,6 +153,84 @@
   {
     "type": "function",
     "name": "PRICE_GUARD",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "PRIOR_CONDUIT_0",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "PRIOR_CONDUIT_1",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "PRIOR_CONDUIT_KEY_0",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "PRIOR_CONDUIT_KEY_1",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "PRIOR_PRICE_GUARD_0",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "PRIOR_PRICE_GUARD_1",
     "inputs": [],
     "outputs": [
       {
@@ -425,6 +518,63 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "isAcceptedConduit",
+    "inputs": [
+      {
+        "name": "conduit",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isAcceptedConduitKey",
+    "inputs": [
+      {
+        "name": "conduitKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isAcceptedPriceGuard",
+    "inputs": [
+      {
+        "name": "guard",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -1597,6 +1747,21 @@
             "name": "protection",
             "type": "address",
             "internalType": "address"
+          },
+          {
+            "name": "priorPriceGuards",
+            "type": "address[2]",
+            "internalType": "address[2]"
+          },
+          {
+            "name": "priorConduits",
+            "type": "address[2]",
+            "internalType": "address[2]"
+          },
+          {
+            "name": "priorConduitKeys",
+            "type": "bytes32[2]",
+            "internalType": "bytes32[2]"
           }
         ]
       }
@@ -2055,6 +2220,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "PriorEndpointsInvalid",
+    "inputs": []
   },
   {
     "type": "error",

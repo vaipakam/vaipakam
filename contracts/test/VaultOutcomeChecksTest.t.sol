@@ -21,6 +21,7 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
+import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 // ─── Fixtures ────────────────────────────────────────────────────────────
 
@@ -352,6 +353,107 @@ contract VaultOutcomeChecksTest is SetupTest {
             )
         );
         VaipakamVaultImplementation(vault).transferOut(o);
+    }
+
+    // ─── #3437 step 5: earlier guards and conduits ───────────────────────
+
+    /// @notice The vault code accepts the price guard new loans use and the
+    ///         earlier guards it lists, and nothing else.
+    function test_step5_acceptsTheCurrentAndListedEarlierGuards() public {
+        VaultOutflowTypes.VaultEndpoints memory e = LibTestVaultBeacon.endpointsOf(address(diamond));
+        address older = makeAddr("olderGuard");
+        address oldest = makeAddr("oldestGuard");
+        e.priorPriceGuards = [older, oldest];
+        LibTestVaultBeacon.setEndpoints(address(diamond), e);
+
+        VaipakamVaultImplementation v = VaipakamVaultImplementation(vault);
+        assertTrue(v.isAcceptedPriceGuard(e.priceGuard), "the current guard");
+        assertTrue(v.isAcceptedPriceGuard(older), "an earlier guard it lists");
+        assertTrue(v.isAcceptedPriceGuard(oldest), "the second earlier guard");
+        assertFalse(v.isAcceptedPriceGuard(stranger), "a guard it does not list");
+        assertFalse(v.isAcceptedPriceGuard(address(0)), "no guard");
+        VaultOutflowTypes.VaultEndpoints memory back = v.vaultEndpoints();
+        assertEq(back.priorPriceGuards[0], older);
+        assertEq(back.priorPriceGuards[1], oldest);
+    }
+
+    /// @notice A listing may name an earlier conduit's key the vault code
+    ///         lists, and its escrow may approve that conduit, so a vault
+    ///         version with a new conduit does not strand an open loan's
+    ///         listing. An unlisted conduit or key is still refused.
+    function test_step5_anEarlierListedConduitIsAccepted() public {
+        VaultOutflowTypes.VaultEndpoints memory e = LibTestVaultBeacon.endpointsOf(address(diamond));
+        address oldConduit = makeAddr("oldConduit");
+        bytes32 oldKey = keccak256("old-conduit-key");
+        e.priorConduits[0] = oldConduit;
+        e.priorConduitKeys[0] = oldKey;
+        LibTestVaultBeacon.setEndpoints(address(diamond), e);
+
+        OrderComponents memory c = _listing(vault);
+        c.conduitKey = oldKey;
+        bytes32 h = RegistrarProbeFacet(address(diamond)).probeRegisterSeaport(vault, c, bytes32(0));
+        assertEq(h, seaport.getOrderHash(c), "an order on the earlier conduit registers");
+
+        address coll = address(new ERC1155Mock());
+        vm.prank(address(diamond));
+        VaipakamVaultImplementation(vault).openListingEscrow(keccak256("old"), coll, oldConduit);
+
+        c.conduitKey = keccak256("rogue");
+        vm.expectRevert(abi.encodeWithSelector(VaipakamVaultImplementation.OrderConduitRefused.selector, c.conduitKey));
+        RegistrarProbeFacet(address(diamond)).probeRegisterSeaport(vault, c, bytes32(0));
+        address rogue = makeAddr("rogueConduit");
+        vm.prank(address(diamond));
+        vm.expectRevert(
+            abi.encodeWithSelector(VaipakamVaultImplementation.GrantRefused.selector, VaultOutflowTypes.GrantClass.Conduit, rogue)
+        );
+        VaipakamVaultImplementation(vault).openListingEscrow(keccak256("rogue"), coll, rogue);
+    }
+
+    /// @notice Vault code whose earlier lists are out of order, repeat an
+    ///         entry, repeat the current one, or leave a conduit without its
+    ///         key is refused when it is built.
+    function test_step5_badEarlierListsAreRefusedAtConstruction() public {
+        VaultOutflowTypes.VaultEndpoints memory base = LibTestVaultBeacon.endpointsOf(address(diamond));
+        address a = makeAddr("a");
+        address b = makeAddr("b");
+        bytes32 ka = keccak256("ka");
+
+        VaultOutflowTypes.VaultEndpoints memory e = base;
+        e.priorPriceGuards = [address(0), a]; // second slot without the first
+        _expectRefusedCode(e);
+        e = LibTestVaultBeacon.endpointsOf(address(diamond));
+        e.priorPriceGuards = [a, a]; // repeated
+        _expectRefusedCode(e);
+        e = LibTestVaultBeacon.endpointsOf(address(diamond));
+        e.priorPriceGuards = [e.priceGuard, address(0)]; // the current guard
+        _expectRefusedCode(e);
+        e = LibTestVaultBeacon.endpointsOf(address(diamond));
+        e.priorConduits[0] = a; // a conduit with no key
+        _expectRefusedCode(e);
+        e = LibTestVaultBeacon.endpointsOf(address(diamond));
+        e.priorConduits[0] = a;
+        e.priorConduitKeys[0] = e.conduitKey; // the current key
+        _expectRefusedCode(e);
+        e = LibTestVaultBeacon.endpointsOf(address(diamond));
+        e.priorConduits = [a, b];
+        e.priorConduitKeys = [ka, ka]; // one key twice
+        _expectRefusedCode(e);
+        e = LibTestVaultBeacon.endpointsOf(address(diamond));
+        e.priorConduits = [e.conduit, address(0)]; // the current conduit
+        e.priorConduitKeys[0] = ka;
+        _expectRefusedCode(e);
+    }
+
+    function _expectRefusedCode(VaultOutflowTypes.VaultEndpoints memory e) internal {
+        address nft = VaipakamVaultImplementation(vault).POSITION_NFT();
+        vm.expectRevert(VaipakamVaultImplementation.PriorEndpointsInvalid.selector);
+        this.buildVaultCode(nft, e);
+    }
+
+    /// @dev External, so the refused construction is the call the test
+    ///      expects to revert.
+    function buildVaultCode(address nft, VaultOutflowTypes.VaultEndpoints memory e) external returns (address) {
+        return ArtifactDeploy.deploy(type(VaipakamVaultImplementation).name, abi.encode(nft, e));
     }
 
     // ─── Builders ────────────────────────────────────────────────────────
