@@ -2209,7 +2209,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev Selectors for `StandingInstructionFacet` (#3681) — the loan
     ///      reserve, the standing instructions, their executors and views.
     function _getStandingInstructionSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](10);
+        s = new bytes4[](11);
         s[0] = StandingInstructionFacet.fundLoanReserve.selector;
         s[1] = StandingInstructionFacet.withdrawLoanReserve.selector;
         s[2] = StandingInstructionFacet.setStandingInstructions.selector;
@@ -2220,6 +2220,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[7] = StandingInstructionFacet.getLoanReserve.selector;
         s[8] = StandingInstructionFacet.getStandingInstructionConfig.selector;
         s[9] = StandingInstructionFacet.setStandingInstructionConfig.selector;
+        s[10] = StandingInstructionFacet.payRepaymentFromReserve.selector;
     }
 
     /// @dev Selectors for `LoanClockFacet` (#3410) — the loan clock's
@@ -2242,12 +2243,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getRepaySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](3);
         s[0] = RepayFacet.repayLoan.selector;
         s[1] = RepayFacet.repayPartial.selector;
         s[2] = RepayFacet.calculateRepaymentAmount.selector;
         // #3681 — the repayment paid from the holder's payment reserve.
-        s[3] = RepayFacet.repayLoanFromReserve.selector;
     }
 
     /// @dev Issue #66 — the NFT-rental daily-deduction loop and the

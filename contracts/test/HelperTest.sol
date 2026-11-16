@@ -1013,7 +1013,7 @@ contract HelperTest {
     /// @dev #3685 — the collateral-lien entries, split off
     ///      EncumbranceMutateFacet. Mirrors `DeployDiamond._getCollateralLienSelectors`.
     function getStandingInstructionFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](10);
+        selectors = new bytes4[](11);
         selectors[0] = StandingInstructionFacet.fundLoanReserve.selector;
         selectors[1] = StandingInstructionFacet.withdrawLoanReserve.selector;
         selectors[2] = StandingInstructionFacet.setStandingInstructions.selector;
@@ -1024,6 +1024,7 @@ contract HelperTest {
         selectors[7] = StandingInstructionFacet.getLoanReserve.selector;
         selectors[8] = StandingInstructionFacet.getStandingInstructionConfig.selector;
         selectors[9] = StandingInstructionFacet.setStandingInstructionConfig.selector;
+        selectors[10] = StandingInstructionFacet.payRepaymentFromReserve.selector;
     }
 
     function getCollateralLienFacetSelectors() public pure returns (bytes4[] memory selectors) {
@@ -1039,11 +1040,10 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](3);
         selectors[0] = RepayFacet.repayLoan.selector;
         selectors[1] = RepayFacet.repayPartial.selector;
         selectors[2] = RepayFacet.calculateRepaymentAmount.selector;
-        selectors[3] = RepayFacet.repayLoanFromReserve.selector;
     }
 
     /// Issue #66 — periodic-interest + NFT-rental daily-deduction

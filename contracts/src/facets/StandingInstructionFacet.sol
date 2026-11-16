@@ -12,6 +12,7 @@ import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibPriceRead} from "../libraries/LibPriceRead.sol";
@@ -70,7 +71,7 @@ import {ConsolidationFacet} from "./ConsolidationFacet.sol";
  *         Interest is booked through `LibInterestPayment`, hosted on
  *         `RepayPeriodicFacet.bookInterestPayment`, which the periodic forced
  *         sale also uses. The full repayment runs through
- *         `RepayFacet.repayLoanFromReserve`, the ordinary repayment with the
+ *         `RepayFacet.repayLoan` (bound to the reserve), the ordinary repayment with the
  *         holder's payment reserve as the payer.
  */
 contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
@@ -526,7 +527,10 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
     ///         amounts, the late fee if past the due date, the collateral
     ///         back to the borrower side). All or nothing: a reserve short of
     ///         the full amount changes nothing and says how much is missing.
-    function runDueRepayment(uint256 loanId) external nonReentrant {
+    /// @dev Holds no reentrancy guard of its own: it makes no external call
+    ///      before the repayment, and the repayment it self-calls takes the
+    ///      Diamond's guard for the whole movement of funds.
+    function runDueRepayment(uint256 loanId) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         LibVaipakam.StandingInstructions storage si = s.standingInstructions[loanId];
@@ -553,13 +557,35 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
             _skip(loanId, INSTRUCTION_REPAY_AT_DUE, skip, missing);
             return;
         }
-        // The ordinary repayment with the holder's payment reserve as payer;
-        // it draws exactly what it charges, and runs under this call's guard.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSignature("repayLoanFromReserve(uint256,address)", loanId, holder),
-            bytes4(0)
-        );
+        // The ordinary repayment, bound to the holder's payment reserve as
+        // payer; it draws exactly what it charges.
+        LibStandingInstructions.bindReserveRepayer(loanId, holder);
+        LibFacet.crossFacetCall(abi.encodeWithSignature("repayLoan(uint256)", loanId), bytes4(0));
         emit DueRepaymentRun(loanId, holder, due, s.paymentReserve[loanId][holder], msg.sender);
+    }
+
+    /// @notice The reserve-paid legs of the due repayment: `holder`'s
+    ///         payment reserve for `loanId` is released and drawn into the
+    ///         Diamond for exactly `treasuryShare + lenderDue` (refused unless
+    ///         all of it arrives), then the treasury share goes through the
+    ///         fee host and the lender's due into the stored lender's vault,
+    ///         refused unless it all arrives, as from a wallet.
+    /// @dev    Reached only by self-call from `RepayFacet.repayLoan` on the reserve path
+    ///         (so under {runDueRepayment}'s guard), which has computed both
+    ///         amounts and books the repayment. It lives here, beside the
+    ///         reserve, because RepayFacet has no EIP-170 room for it.
+    function payRepaymentFromReserve(uint256 loanId, address holder, uint256 treasuryShare, uint256 lenderDue)
+        external
+    {
+        if (msg.sender != address(this)) revert IVaipakamErrors.UnauthorizedCrossFacetCall();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        address asset = loan.principalAsset;
+        uint256 total = treasuryShare + lenderDue;
+        LibEncumbrance.unlienLoanReserve(loanId, holder, RESERVE_PAYMENT, asset, total);
+        LibVaultOutflow.toDiamondExact(holder, asset, total, loanId, OutflowReason.STANDING_INSTRUCTION);
+        LibFacet.transferToTreasury(asset, treasuryShare);
+        LibSanctionedLock.depositLockedInFull(s, loan.lender, loanId, asset, lenderDue);
     }
 
     // ─── Views ───────────────────────────────────────────────────────
