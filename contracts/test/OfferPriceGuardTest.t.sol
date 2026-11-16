@@ -345,7 +345,10 @@ contract OfferPriceGuardTest is SetupTest {
     function test_Armed_LapsesWithTheTransaction() public {
         vm.prank(lender);
         OfferPriceGuardFacet(address(diamond)).armOfferPriceGuard(700);
-        // A later transaction's post is not guarded.
+        // A later transaction's post is not guarded. Each top-level call
+        // below is its own transaction for transient storage on forge >= 1.8
+        // (the CI pin), which is exactly the boundary this test asserts; the
+        // same-transaction case is `_armAndPost`, driven inside one multicall.
         uint256 offerId = _lenderOffer();
         assertEq(_view(offerId).maxMoveBps, 0);
     }

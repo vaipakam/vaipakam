@@ -17,6 +17,7 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
+import {LibTierRecord} from "../libraries/LibTierRecord.sol";
 
 /**
  * @title  SettlementLegFacet
@@ -54,12 +55,12 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 contract SettlementLegFacet is IVaipakamErrors, DiamondReentrancyGuard, DiamondPausable {
     /// @notice The gas each attempt to move a leg is given: exactly this,
     ///         well above a vault-to-vault move that also creates the payee's
-    ///         vault. A VPFI leg refreshes the tier record of both vaults'
-    ///         owners inside the move (#1820), and a first refresh after a
-    ///         long gap rewrites up to 30 day slots: measured at about 1.93M
-    ///         for a VPFI move between two such owners that also created the
-    ///         payee's vault, which 1.5M parked as if the token had refused it.
-    uint256 internal constant ATTEMPT_GAS = 3_000_000;
+    ///         vault. The tier-record refresh a VPFI move triggers (#1820) is
+    ///         not part of it: the attempt defers it (LibTierRecord deferral)
+    ///         and {_attempt} runs it after a successful move, in the
+    ///         settling frame, so a stale record cannot make a deliverable
+    ///         leg park.
+    uint256 internal constant ATTEMPT_GAS = 1_000_000;
     /// @dev The CALL's own cost that the 63/64 rule applies after.
     uint256 private constant CALL_OVERHEAD_GAS = 20_000;
 
@@ -372,10 +373,17 @@ contract SettlementLegFacet is IVaipakamErrors, DiamondReentrancyGuard, DiamondP
     }
 
     /// @dev One attempt with exactly {ATTEMPT_GAS}, made only when that much
-    ///      can reach it.
+    ///      can reach it. The tier records of the owners whose VPFI the move
+    ///      changed are refreshed after it, here, outside the allowance; a
+    ///      move that reverted noted no one.
     function _attempt(bytes memory data) private returns (bool ok, bytes memory ret) {
         if (gasleft() < ATTEMPT_GAS + ATTEMPT_GAS / 63 + CALL_OVERHEAD_GAS) revert SettlementAttemptOutOfGas();
+        LibTierRecord.beginDeferral();
         (ok, ret) = address(this).call{gas: ATTEMPT_GAS}(data);
+        address[] memory owners = LibTierRecord.endDeferral();
+        for (uint256 i; i < owners.length; ++i) {
+            LibTierRecord.refresh(owners[i]);
+        }
     }
 
     function _park(

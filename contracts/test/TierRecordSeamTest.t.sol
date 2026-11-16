@@ -19,6 +19,7 @@ import {VaipakamRewardMessenger} from "../src/crosschain/VaipakamRewardMessenger
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibTierRecord} from "../src/libraries/LibTierRecord.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
 import {MockCcipRouter} from "./mocks/MockCcipRouter.sol";
 
 /// @dev Drives {LibTierRecord}'s transient queue outside a Diamond.
@@ -36,6 +37,22 @@ contract TierQueueHarness {
 
     function pendingNow() external view returns (uint256) {
         return LibTierRecord.pending();
+    }
+
+    /// @dev #3669 — a nested bracket hands its notes to the outermost close.
+    function deferNested(address a, address b)
+        external
+        returns (bool open, uint256 innerLen, address[] memory outer, bool openAfter)
+    {
+        LibTierRecord.beginDeferral();
+        LibTierRecord.defer(a);
+        LibTierRecord.beginDeferral();
+        LibTierRecord.defer(b);
+        LibTierRecord.defer(a);
+        open = LibTierRecord.deferring();
+        innerLen = LibTierRecord.endDeferral().length;
+        outer = LibTierRecord.endDeferral();
+        openAfter = LibTierRecord.deferring();
     }
 }
 
@@ -240,6 +257,53 @@ contract TierRecordSeamTest is SetupTest {
         assertEq(users[0], a, "first queued first");
         assertEq(users[1], b, "second");
         assertEq(h.pendingNow(), 0, "empty after the action");
+    }
+
+    // ─── Deferral (#3669) ──────────────────────────────────────────────
+
+    function test_Deferral_NestsAndHandsNotesToTheOutermostClose() public {
+        TierQueueHarness h = new TierQueueHarness();
+        address a = makeAddr("a");
+        address b = makeAddr("b");
+        (bool open, uint256 innerLen, address[] memory outer, bool openAfter) = h.deferNested(a, b);
+        assertTrue(open, "open inside the bracket");
+        assertEq(innerLen, 0, "an inner close returns nothing");
+        assertEq(outer.length, 2, "the outer close returns each user once");
+        assertEq(outer[0], a, "first noted first");
+        assertEq(outer[1], b, "second");
+        assertFalse(openAfter, "closed");
+    }
+
+    /// @dev A settlement leg's move runs under a fixed gas allowance. The
+    ///      payee's tier record is 40 days stale, so its rollup rewrites
+    ///      every day slot: inside the allowance that parked a deliverable
+    ///      leg. The rollup now runs after the move, outside it.
+    function test_SettlementLeg_StaleRecordRefreshesAfterTheMove_LegDelivers() public {
+        _wirePush();
+        address payee = makeAddr("payee");
+        vpfiToken.transfer(payee, 100 ether);
+        vpfiToken.transfer(user, 50 ether);
+        vm.startPrank(payee);
+        VPFIDiscountFacet(address(diamond)).setVPFIDiscountConsent(true);
+        IERC20(address(vpfiToken)).approve(address(diamond), type(uint256).max);
+        VPFIDiscountFacet(address(diamond)).depositVPFIToVault(100 ether);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 40 days);
+
+        LibVaipakam.Loan memory loan;
+        loan.id = 77;
+        loan.lender = payee;
+        loan.borrower = user;
+        TestMutatorFacet(address(diamond)).setLoan(77, loan);
+
+        vm.expectCall(address(diamond), abi.encodeCall(VPFIDiscountAccumulatorFacet.syncTierRecord, (payee)), 2);
+        vm.prank(address(diamond));
+        bool parked = SettlementLegFacet(address(diamond)).deliverLenderDueOrPark(
+            77, user, address(vpfiToken), 50 ether
+        );
+        assertFalse(parked, "the leg is delivered");
+        (,, uint120 dayClose,) = TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(payee);
+        assertEq(uint256(dayClose), 150 ether, "the payee's record carries the delivered VPFI");
     }
 
     // ─── Paths that used to leave the record stale ─────────────────────

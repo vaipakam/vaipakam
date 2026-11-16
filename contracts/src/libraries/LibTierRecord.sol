@@ -33,6 +33,17 @@ pragma solidity ^0.8.29;
  *
  *         The queue lives in transient storage (EIP-1153): a reverted action
  *         discards it, and it never outlives the transaction.
+ *
+ *         DEFERRAL. A step that runs a balance move under a fixed gas
+ *         allowance (a settlement leg attempt, #3669) brackets it with
+ *         {beginDeferral} / {endDeferral}. In between, `syncTierRecord`
+ *         only notes the user ({defer}), so the move's cost does not depend
+ *         on how long ago a user's record was last rolled up (up to 30 day
+ *         slots). {endDeferral} returns the noted users once the outermost
+ *         bracket closes, and the caller refreshes each from the balance then
+ *         in storage, in its own frame. A noted user whose move reverted is
+ *         dropped with the move, because the note is transient storage
+ *         written inside the reverted call.
  */
 library LibTierRecord {
     /// @dev `VPFIDiscountAccumulatorFacet.syncTierRecord(address)`.
@@ -43,6 +54,12 @@ library LibTierRecord {
     /// @dev Transient slot holding the queue length; entry `i` sits at
     ///      `QUEUE_SLOT + 1 + i`. `keccak256("vaipakam.transient.tierPushQueue") - 1`.
     bytes32 private constant QUEUE_SLOT = bytes32(uint256(keccak256("vaipakam.transient.tierPushQueue")) - 1);
+    /// @dev Transient set of users whose refresh is deferred, laid out like
+    ///      the push queue. `keccak256("vaipakam.transient.tierDeferred") - 1`.
+    bytes32 private constant DEFERRED_SLOT = bytes32(uint256(keccak256("vaipakam.transient.tierDeferred")) - 1);
+    /// @dev Transient bracket depth of {beginDeferral}.
+    ///      `keccak256("vaipakam.transient.tierDeferDepth") - 1`.
+    bytes32 private constant DEFER_DEPTH_SLOT = bytes32(uint256(keccak256("vaipakam.transient.tierDeferDepth")) - 1);
 
     /// @dev `FunctionDoesNotExist()`, the Diamond fallback's revert for an
     ///      unrouted selector.
@@ -82,46 +99,94 @@ library LibTierRecord {
     /// @notice Queue `user` for the push at the end of the action; a user
     ///         already queued is not added twice.
     function enqueue(address user) internal {
-        bytes32 mark = _markSlot(user);
-        bytes32 lenSlot = QUEUE_SLOT;
+        _add(QUEUE_SLOT, user);
+    }
+
+    /// @notice How many users are queued.
+    function pending() internal view returns (uint256) {
+        return _len(QUEUE_SLOT);
+    }
+
+    /// @notice Return every queued user and empty the queue.
+    function drain() internal returns (address[] memory) {
+        return _drain(QUEUE_SLOT);
+    }
+
+    // ─── Deferral ────────────────────────────────────────────────────────
+
+    /// @notice Open a deferral bracket (brackets nest).
+    function beginDeferral() internal {
+        bytes32 d = DEFER_DEPTH_SLOT;
+        assembly ("memory-safe") {
+            tstore(d, add(tload(d), 1))
+        }
+    }
+
+    /// @notice Whether a deferral bracket is open.
+    function deferring() internal view returns (bool open) {
+        bytes32 d = DEFER_DEPTH_SLOT;
+        assembly ("memory-safe") {
+            open := iszero(iszero(tload(d)))
+        }
+    }
+
+    /// @notice Note `user` for a refresh when the bracket closes.
+    function defer(address user) internal {
+        _add(DEFERRED_SLOT, user);
+    }
+
+    /// @notice Close a deferral bracket. The outermost close returns every
+    ///         noted user and empties the set; an inner close returns none,
+    ///         so the notes reach the frame that opened the bracket.
+    function endDeferral() internal returns (address[] memory users) {
+        bytes32 d = DEFER_DEPTH_SLOT;
+        uint256 depth;
+        assembly ("memory-safe") {
+            depth := sub(tload(d), 1)
+            tstore(d, depth)
+        }
+        if (depth != 0) return users;
+        return _drain(DEFERRED_SLOT);
+    }
+
+    // ─── Transient sets ──────────────────────────────────────────────────
+
+    function _add(bytes32 base, address user) private {
+        bytes32 mark = _markSlot(base, user);
         assembly ("memory-safe") {
             if iszero(tload(mark)) {
                 tstore(mark, 1)
-                let len := tload(lenSlot)
-                tstore(add(add(lenSlot, 1), len), user)
-                tstore(lenSlot, add(len, 1))
+                let len := tload(base)
+                tstore(add(add(base, 1), len), user)
+                tstore(base, add(len, 1))
             }
         }
     }
 
-    /// @notice How many users are queued.
-    function pending() internal view returns (uint256 len) {
-        bytes32 lenSlot = QUEUE_SLOT;
+    function _len(bytes32 base) private view returns (uint256 len) {
         assembly ("memory-safe") {
-            len := tload(lenSlot)
+            len := tload(base)
         }
     }
 
-    /// @notice Return every queued user and empty the queue.
-    function drain() internal returns (address[] memory users) {
-        uint256 len = pending();
+    function _drain(bytes32 base) private returns (address[] memory users) {
+        uint256 len = _len(base);
         users = new address[](len);
-        bytes32 lenSlot = QUEUE_SLOT;
         for (uint256 i; i < len; ++i) {
             address user;
             assembly ("memory-safe") {
-                let at := add(add(lenSlot, 1), i)
+                let at := add(add(base, 1), i)
                 user := tload(at)
                 tstore(at, 0)
             }
             users[i] = user;
-            bytes32 mark = _markSlot(user);
+            bytes32 mark = _markSlot(base, user);
             assembly ("memory-safe") {
                 tstore(mark, 0)
             }
         }
         assembly ("memory-safe") {
-            tstore(lenSlot, 0)
+            tstore(base, 0)
         }
     }
 
@@ -141,8 +206,8 @@ library LibTierRecord {
         }
     }
 
-    function _markSlot(address user) private pure returns (bytes32) {
-        return keccak256(abi.encode(user, QUEUE_SLOT));
+    function _markSlot(bytes32 base, address user) private pure returns (bytes32) {
+        return keccak256(abi.encode(user, base));
     }
 
 }
