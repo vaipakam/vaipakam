@@ -50,6 +50,13 @@ A borrower-initiated entry, `borrowInstant`:
 - **The borrower's signed confirmation covers** the list, the kind, the highest margin or rate, the cap level, the lifecycle settings and the base term, under the acceptance-term binding.
 - The fixed-rate form is #3325 with slots added as a source. It needs no reference rate, so it can ship before floating loans exist.
 
+Settled with the builder on 2026-11-15:
+
+- **One rule for a fill.** The checks a matcher's fill of a slot runs are in one library, and the borrower's direct fill runs the same ones. Each fill opens a borrower slice for that part and passes through the shared match step. The slice opens and closes in the same transaction, emits the events any offer does, and never counts toward the open-offer cap; the indexer never lists it as an open offer.
+- **No matcher, no service charge.** The call names no matcher, so the borrower is never paid a share of their own fee. The fee is split as for a direct accept: the treasury floor, then the integrator share if the borrower names a registered integrator (`IntegratorFeeShareDesign.md`), then the rest as the fee design says. The matcher capacity a third party's fill is charged against is not charged here; the fill limit bounds the work.
+- **Where the collateral comes from.** Free balance in the borrower's vault first, then one deposit from the wallet for the rest. The preview and the summary event state how much came from each.
+- **A standing offer as a source** is filled on the match path at the offer's own rate. It is filled in part only where the offer itself allows partial fills; otherwise whole, or skipped and reported. Every condition of the offer still holds: its allowed taker, its expiry, its maker's price-move guard, the timing rule, and its collateral requirement, in proportion, as a floor.
+
 The loans opened by one call share a **group id**, stored on each loan and stated in one summary event (the loans, the amounts, the margins, the collateral locked per loan, the slots skipped and why).
 
 ## 5. One position for the borrower: the group
@@ -70,6 +77,12 @@ An instant-market loan has a **base term** (30 days by default; 7 or 30 offered)
 - **When a lender stops and nobody takes the loan over,** the loan ends at its current due date and the borrower must repay it or replace it, as with any loan; the keeper's advance alert says so, and a replacement from other slots is offered in the app. This is the one place the experience differs from an open-ended loan elsewhere, and the review states it: "a lender may end this loan at a renewal date; you then have until the due date and the grace period".
 - A renewal the borrower's reserve cannot fund does not happen, and the loan keeps its due date.
 
+Settled with the builder on 2026-11-15:
+
+- **Renewal has its own entry** for instant-market loans made from a slot, open to anyone since both consents stand: the same rate, one base term. The slot's consent is read at that moment (a paused, cancelled or re-owned slot gives none), and for a fixed loan both sides' rate limits are read at that moment too. It shares the in-place extension's interest booking; there is no second copy. Interest comes from the borrower's one per-loan reserve (`StandingInstructionsDesign.md`), and renewal is the loan's single plan for maturity there. A loan made from a standing offer is refused by this entry and renews only through the existing extension under limits its lender sets. The entry has its row in the permissionless-steps ledger and a keeper pass that ships disarmed.
+- **The fee for the added time** goes through one seam that charges nothing until the fee levels are built (`FeeLevelsDesign.md`); the event says so.
+- **Renewal is built after the per-loan reserve.** Until then the slot's renewal consent is stored and nothing acts on it, `borrowInstant` does not take the "no end date" choice, and the app says that every loan ends at its due date.
+
 ## 7. A lender leaves: takeover at face value
 
 A takeover moves a loan from one lender to another for exactly the principal outstanding, with no pricing step. Two things make that fair. The outgoing lender chooses it, and a lender who wants more than face value for a loan uses the ordinary sale routes. The incoming lender takes only a loan their slot would open today on the same terms (the as-new test below). For a floating loan the two views meet by themselves, since the loan earns the market rate at every moment. For a fixed loan the as-new test carries the weight: the loan's rate must be at or above the incoming slot's minimum rate.
@@ -82,6 +95,7 @@ A takeover moves a loan from one lender to another for exactly the principal out
 - **The borrower** signs nothing, pays nothing, and none of their terms change. No initiation fee is charged: no loan is opened.
 - The incoming lender is checked as a standing participant (risk access, sanctions) and may not be the borrower. The outgoing slot's exposure is released and the incoming slot's is taken.
 - One event states the loan, both lenders, the principal paid, the interest left as a seller claim, and the slot.
+- Settled with the builder on 2026-11-15: a keeper acts under the holder's existing mandate for a direct sale, checked through the one sale-exit rule; the incoming principal comes from the slot's reserved capital, as a fill's does; and the loan's record of which slot it came from is rewritten for the incoming slot, so the lend-until limit follows the new lender. Interest earned stays a seller claim.
 
 A loan whose interest is owed for the full term whatever the repayment date is not eligible: what is owed on it is not what has been earned, so face value is not its worth. Selling any loan at a price other than face value is the secondary-market question the owner has set aside, and nothing here opens it.
 
@@ -92,7 +106,7 @@ The review of a fixed-rate takeover tells the outgoing lender that the loan is h
 Running totals per lending asset (and per pair for the instant market), written by the steps that already change them:
 
 - **Declared:** the sum of the largest exposure of every Auto-lend slot that is active and whose fill window is still open. A slot with an end date leaves the total when its window closes without anyone acting: its exposure is also recorded against the UTC day its window closes, every write first removes the days that have fully passed, and the view applies the same subtraction. The figure is therefore stated "as of the start of today (UTC)": a slot whose window closes today still counts until the day ends.
-- **Lent:** three figures, per asset and per pair. All open principal from every route, which the shortfall reserve's activation check reads. Open principal lent out of Auto-lend slots. Open principal opened through the instant market. A loan's source is fixed when it opens.
+- **Lent:** three figures, per asset and per pair. All open principal from every route, which the shortfall reserve's activation check reads. Open principal lent out of Auto-lend slots. Open principal opened through the instant market. Whether a loan was opened through the instant market is fixed when it opens. Whether it counts as lent out of a slot follows the slot it is held from now: it leaves the figure when that slot's exposure is released, and a loan taken over into a slot joins it. Otherwise "how full" would understate the exposure in use.
 
 They are exact and cost one counter update per change. What the ledger does **not** know is how much of the declared amount is in the lenders' vaults at this moment, since a vault balance changes without touching a slot. That figure, "available now", is computed by a paged view and by the indexer, and is always labelled as an estimate at the time of reading. The app's "how full" figure is the principal lent out of Auto-lend slots divided by declared; all-route principal is never divided by it.
 
@@ -162,7 +176,7 @@ Build it as designed, top-tier pairs only, behind the master switch:
 
 ## 15. Open items for the builder to raise, not decide silently
 
+Settled on 2026-11-15: earned interest stays a seller claim at takeover; renewal uses the one per-loan reserve, not one per group.
+
 - The timing rule (#3443): a borrower-initiated fill takes standing slot terms, as a direct accept takes an offer; confirm no slot-side ageing rule is bypassed.
-- Whether the outgoing lender's earned interest is better paid by the incoming lender at takeover than left as a seller claim.
 - How a group helper reports partial completion without hiding a failed loan.
-- Whether the renewal reserve should be one per group.
