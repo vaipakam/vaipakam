@@ -340,21 +340,24 @@ export function setupBlocks(draft: AutoLendDraft, f: SetupFacts): SetupBlock[] {
   return out;
 }
 
-/** The highest loan-to-value the network takes for the pair now: none when
- *  the protocol's loan-start risk bound does not apply to it (an unpriced
- *  leg), closed when it opens no new loan against the collateral. */
-export type LtvCap = { kind: 'none' } | { kind: 'closed' } | { kind: 'cap'; bps: number };
+/** The network's loan-start bound for the pair against the setup's ceiling:
+ *  none when the bound does not apply (an unpriced leg), closed when it
+ *  opens no new loan against the collateral, else whether the ceiling fits,
+ *  with the bound as an approximate loan-to-value for the reader. */
+export type LtvCap = { kind: 'none' } | { kind: 'closed' } | { kind: 'cap'; fits: boolean; approxBps: number };
 
 const NO_LOANS = 2n ** 256n - 1n;
 
-/** The loan-start bound read through the protocol's own rule
- *  (`OfferPreviewFacet.initRiskBounds`, which every match asks): the least
- *  collateral it takes for `amount`, turned into a loan-to-value with the
- *  protocol's own values of both legs (the debt rounded up, the collateral
- *  down), rounded up so a ceiling exactly at the bound is never refused.
- *  A fill whose collateral at the setup's ceiling is under that least
- *  collateral is refused, so a ceiling above it never lends. */
-export async function readLtvCap(c: PublicClient, diamond: Hex, lending: Hex, collateral: Hex, amount: bigint): Promise<LtvCap> {
+/** The loan-start bound read through the protocol's own rules, compared as
+ *  a fill compares it: the least collateral `initRiskBounds` takes for
+ *  `amount` (the entry every match asks) against the collateral a fill at
+ *  the setup's ceiling posts, which is `LibRiskMath.minCollateralForLtvCap`
+ *  rebuilt from the same reads (the debt valued rounded up, divided by the
+ *  ceiling rounded up, turned into collateral rounded up). Comparing the
+ *  amounts, not a loan-to-value derived from a rounded amount, keeps a
+ *  low-decimal collateral from understating the bound. The approximate
+ *  figure is only for the sentence that names it. */
+export async function readLtvCap(c: PublicClient, diamond: Hex, lending: Hex, collateral: Hex, amount: bigint, ltvBps: number): Promise<LtvCap> {
   const [floor] = (await c.readContract({ address: diamond, abi: OFFER_PREVIEW, functionName: 'initRiskBounds', args: [lending, collateral, amount, 0n] })) as readonly [
     bigint,
     boolean,
@@ -362,18 +365,19 @@ export async function readLtvCap(c: PublicClient, diamond: Hex, lending: Hex, co
   ];
   if (floor === 0n) return { kind: 'none' };
   if (floor === NO_LOANS) return { kind: 'closed' };
-  const value = (asset: Hex, v: bigint, debt: boolean) =>
-    c.readContract({ address: diamond, abi: NUMERAIRE, functionName: 'getNumeraireValue', args: [asset, v, debt] }) as Promise<bigint>;
-  const [lend, coll] = await Promise.all([value(lending, amount, true), value(collateral, floor, false)]);
-  if (coll === 0n) throw new Error('collateral valued at nothing');
-  return { kind: 'cap', bps: Number((lend * 10_000n + coll - 1n) / coll) };
+  const read = <T>(functionName: string, args: readonly unknown[]) => c.readContract({ address: diamond, abi: NUMERAIRE, functionName, args }) as Promise<T>;
+  const [lend, coll] = await Promise.all([read<bigint>('getNumeraireValue', [lending, amount, true]), read<bigint>('getNumeraireValue', [collateral, floor, false])]);
+  const ceil = (n: bigint, d: bigint) => (n + d - 1n) / d;
+  const posted = ltvBps === 0 ? NO_LOANS : await read<bigint>('getAmountForNumeraireValue', [collateral, ceil(lend * 10_000n, BigInt(ltvBps)), true]);
+  const approxBps = coll === 0n ? 0 : Number(ceil(lend * 10_000n, coll));
+  return { kind: 'cap', fits: posted >= floor, approxBps };
 }
 
 /** The block a ceiling above the network's bound earns, if any. */
-export function ltvCapBlock(ltvBps: number, cap: LtvCap | null): SetupBlock | null {
+export function ltvCapBlock(cap: LtvCap | null): SetupBlock | null {
   if (cap === null || cap.kind === 'none') return null;
   if (cap.kind === 'closed') return { kind: 'ltvClosed' };
-  return ltvBps > cap.bps ? { kind: 'ltvCap', capBps: cap.bps } : null;
+  return cap.fits ? null : { kind: 'ltvCap', capBps: cap.approxBps };
 }
 
 /** Whether the instruction can be filled at all on this network now, from

@@ -4744,7 +4744,7 @@ export const copy = {
     loseRelendOff: A("You have not allowed the protocol's keeper to re-lend repaid money for you, so each repaid loan's money comes back to you as a claim instead of being lent again. Allowing it is a setting on the Keepers page that covers your whole account."),
     loseRelendVpfi: A('The protocol does not re-lend repaid VPFI, so each repaid loan’s money comes back to you as a claim instead of being lent again, whatever your keeper settings.'),
     loseLtvCapUnread: A('The highest loan-to-value the network takes for this pair now could not be read. If your ceiling is above it, matching requests are refused until prices move or you lower it.'),
-    loseLtvCap: A('At today’s prices the network takes at most about {{cap}} loan-to-value for this pair; that limit moves with prices, and a loan above it is not made.'),
+    loseLtvCap: A('Your loan-to-value ceiling is within what the network takes for this pair at today’s prices; that bound moves with prices, and a loan above it is not made.'),
     loseRelendUnknown: A("Whether the protocol's keeper may re-lend repaid money for you could not be read. If it may not, each repaid loan's money comes back to you as a claim instead of being lent again."),
     loseVault: A('The money stays in your own vault, set aside for Auto-lend. The protocol lets you take back money that is not lent at any time.'),
     loseUntil: A(
@@ -4763,7 +4763,7 @@ export const copy = {
     blockFloorUnread: A("The network's minimum loan could not be read, so a smallest loan cannot be set. Enter one under Advanced limits, or try again."),
     blockFloor: A('The smallest loan must be worth at least the network’s minimum, {{floor}} now. Lend more, or raise the smallest loan.'),
     blockMinAboveFund: A('The smallest loan, {{min}}, is more than the {{fund}} you would fund, so no loan could be made. Fund more, or lower the smallest loan.'),
-    blockLtvCap: A('Your loan-to-value ceiling, {{ltv}}, is above the about {{cap}} the network takes for this pair at today’s prices, so matching requests would be refused. Lower it to {{cap}} or less.'),
+    blockLtvCap: A('Your loan-to-value ceiling, {{ltv}}, is above the about {{cap}} the network takes for this pair at today’s prices, so matching requests would be refused. Lower it.'),
     blockLtvClosed: A('The network makes no new loans against this collateral now, so this setup could not lend.'),
     blockBalance: A('Your wallet holds {{have}}, less than the {{need}} you would fund.'),
     blockOff: A('Auto-lend is switched off on this network now ({{why}}), so it could not lend.'),

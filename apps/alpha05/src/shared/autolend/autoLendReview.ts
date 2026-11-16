@@ -136,11 +136,11 @@ export async function readAutoLendReview(own: OwnStateClient, diamond: Hex, draf
     minFill === null || minFill === 0n
       ? Promise.resolve(null)
       : own
-          .read((c) => readLtvCap(c, diamond, draft.lending, draft.collateral, minFill))
+          .read((c) => readLtvCap(c, diamond, draft.lending, draft.collateral, minFill, draft.parsed.maxInitLtvBps))
           .then((x) => x.value)
           .catch(() => null),
   ]);
-  const capBlock = ltvCapBlock(draft.parsed.maxInitLtvBps, ltvCap);
+  const capBlock = ltvCapBlock(ltvCap);
   const blocks = capBlock === null ? setupBlocks(draft, facts) : [...setupBlocks(draft, facts), capBlock];
   let verdict: CreateVerdict;
   if (minFill === null) {
@@ -168,7 +168,7 @@ export function reviewKey(r: AutoLendReview): string {
     r.posture,
     r.risk ?? '',
     r.roll,
-    r.ltvCap === null ? 'x' : r.ltvCap.kind === 'cap' ? r.ltvCap.bps : r.ltvCap.kind,
+    r.ltvCap === null ? 'x' : r.ltvCap.kind === 'cap' ? `${r.ltvCap.fits}:${r.ltvCap.approxBps}` : r.ltvCap.kind,
     r.blocks.map((b) => b.kind).join(','),
     r.facts.minTermsAgeSec,
     r.facts.floor ?? 'x',
@@ -258,7 +258,7 @@ export function autoLendReceipt(r: AutoLendReview, meta: TokenMetaMap | null, co
     text('autoLend.loseVault'),
   ];
   if (r.ltvCap === null) consequences.push(text('autoLend.loseLtvCapUnread'));
-  else if (r.ltvCap.kind === 'cap') consequences.push(format('autoLend.loseLtvCap', { cap: bpsPercent(r.ltvCap.bps) }));
+  else if (r.ltvCap.kind === 'cap' && r.ltvCap.fits) consequences.push(text('autoLend.loseLtvCap'));
   if (d.lendUntil !== 0n) consequences.push(format('autoLend.loseUntil', { date: new Date(Number(d.lendUntil) * 1000).toLocaleString() }));
   if (p.acceptsProRata) consequences.push(text('autoLend.loseProRata'));
   const ageDays = wholeDays(r.facts.minTermsAgeSec);

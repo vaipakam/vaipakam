@@ -136,12 +136,13 @@ describe('what stops a setup before any dry run', () => {
   });
 
   it('stops a loan-to-value ceiling above the network’s bound for the pair, and only that', () => {
-    expect(ltvCapBlock(6000, { kind: 'cap', bps: 5500 })).toEqual({ kind: 'ltvCap', capBps: 5500 });
-    expect(ltvCapBlock(5500, { kind: 'cap', bps: 5500 })).toBeNull();
-    expect(ltvCapBlock(6000, { kind: 'none' })).toBeNull();
-    expect(ltvCapBlock(6000, { kind: 'closed' })).toEqual({ kind: 'ltvClosed' });
+    expect(ltvCapBlock({ kind: 'cap', fits: false, approxBps: 5500 })).toEqual({ kind: 'ltvCap', capBps: 5500 });
+    // A fitting ceiling is not refused, even when the rounded figure reads lower (low-decimal collateral).
+    expect(ltvCapBlock({ kind: 'cap', fits: true, approxBps: 1000 })).toBeNull();
+    expect(ltvCapBlock({ kind: 'none' })).toBeNull();
+    expect(ltvCapBlock({ kind: 'closed' })).toEqual({ kind: 'ltvClosed' });
     // Unread is stated as a consequence, not a block.
-    expect(ltvCapBlock(6000, null)).toBeNull();
+    expect(ltvCapBlock(null)).toBeNull();
   });
 
   it('finds nothing to stop a setup that fits', () => {
