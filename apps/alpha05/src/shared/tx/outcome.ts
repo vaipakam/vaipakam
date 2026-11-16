@@ -33,6 +33,10 @@ export type TxPhase =
        *  one leg per step that had something standing; empty when there
        *  was nothing to undo. */
       unwound?: readonly LegOutcome[];
+      /** What the earlier transactions of a multi-transaction action did
+       *  (`landedBefore`, Codex #3489 r20): they took effect even though
+       *  this one was superseded. Empty for a one-transaction action. */
+      landed?: readonly LegOutcome[];
     }
   /** Submitted, but the receipt could not be read (the node timed out or
    *  went away): the transaction may still execute, so the hash is kept and

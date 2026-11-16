@@ -33,6 +33,8 @@ const ONE_TIME_BACKFILLS = [
   // Codex #2836 r1: reachable only through `applyRecycleDaySeries` until
   // then, which neither the caught-up return nor an event-free window calls.
   'ensureReportedCumulativeProjection',
+  // #3677: the wallet filter's participant index.
+  'ensureActivityParticipantsBackfill',
 ];
 
 const SOURCE = readFileSync(

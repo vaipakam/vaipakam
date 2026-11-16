@@ -13,6 +13,7 @@ import { WorldRailProvider } from './shared/reads/world/WorldRailContext';
 import { ErrorBoundary } from './app/ErrorBoundary';
 import { TxStoreProvider } from './shared/tx/txStore';
 import { App } from './App';
+import { WalletNeeded } from './shared/wallet/WalletNeeded';
 import { startInstall } from './shared/install/install';
 // i18n bootstrap: a side-effect import BEFORE the app renders so the
 // detection chain has resolved and <html lang>/dir are right by first paint.
@@ -59,11 +60,12 @@ const queryClient = new QueryClient({
   },
 });
 
-/** ConnectKit takes the RESOLVED theme, so the bridge lives under ThemeProvider. */
+/** ConnectKit takes the RESOLVED theme, so the bridge lives under ThemeProvider.
+ *  The picker carries the self-custody notice (#3671) as its disclaimer. */
 function ConnectKitThemed({ children }: { children: React.ReactNode }) {
   const { resolved } = useTheme();
   return (
-    <ConnectKitProvider mode={resolved} options={{ hideNoWalletCTA: true, hideQuestionMarkCTA: true }}>
+    <ConnectKitProvider mode={resolved} options={{ hideNoWalletCTA: true, hideQuestionMarkCTA: true, disclaimer: <WalletNeeded testId="picker-wallet-needed" /> }}>
       {children}
     </ConnectKitProvider>
   );

@@ -8,8 +8,9 @@
  */
 import { describe, expect, it } from 'vitest';
 import { encodeFunctionData } from 'viem';
-import { DIAMOND_ABI_VIEM, PositionNFTABI } from '@vaipakam/contracts/abis';
+import { DIAMOND_ABI_VIEM, PositionNFTABI, VaipakamVaultImplementationABI } from '@vaipakam/contracts/abis';
 import { LEGACY_DIAMOND_NFT_ABI } from '@vaipakam/lib/positionNft';
+import { directAuth, protectionCall } from '@vaipakam/lib/protectedAccountView';
 import { EXIT_WRITES, isExitWrite } from './tosWriteGate';
 
 const call = (functionName: string, args: readonly unknown[]) => ({
@@ -106,34 +107,62 @@ describe('isExitWrite', () => {
       'cancelPayout',
       'cancelPositionTransfer',
       'cosignPayout',
-      'lockVault',
       'requestUnlock',
-      'removeAllowlisted',
       'cancelSettingChange',
-      'cancelAddAllowlisted',
-      'cancelAddSigner',
-      'cancelRemoveSigner',
-      'cancelReplacement',
-      'enableProtectedMode',
       'finalizeSettingChanges',
+      'applyProtection',
+      'lockPositionNfts',
     ]) {
       expect(isExitWrite(fn, []), fn).toBe(true);
     }
+    // #3379 B2 — the vault's `protect(bytes)` carries them now: an exit only
+    // when the VaultProtection call inside is one.
+    const me = '0x00000000000000000000000000000000000000a1' as const;
+    const other = '0x00000000000000000000000000000000000000b2' as const;
+    for (const [fn, args] of [
+      ['lock', [directAuth(me)]],
+      ['requestUnlock', [directAuth(me)]],
+      ['removeAllowlisted', [other, directAuth(me)]],
+      ['cancelSetting', [4, directAuth(me)]],
+      ['cancelAllowlisted', [other, directAuth(me)]],
+      ['enable', [3 * 86_400, directAuth(me)]],
+      ['finalizeSettings', []],
+      ['signerChange', [4, other, directAuth(me)]],
+      ['replacement', [3, other, directAuth(me)]],
+    ] as const) {
+      expect(isExitWrite('protect', [protectionCall(fn, args)]), fn).toBe(true);
+    }
+  });
+
+  it('gates a vault protect() whose inner call adds exposure or reach, or cannot be read (#3379 B2)', () => {
+    const me = '0x00000000000000000000000000000000000000a1' as const;
+    const other = '0x00000000000000000000000000000000000000b2' as const;
+    for (const [fn, args] of [
+      ['addAllowlisted', [other, directAuth(me)]],
+      ['finalizeAllowlisted', [other]],
+      ['setDelay', [86_400, directAuth(me)]],
+      ['requestDisable', [directAuth(me)]],
+      ['signerChange', [1, other, directAuth(me)]],
+      ['signerChange', [2, me, directAuth(me)]],
+      ['signerChange', [3, other, directAuth(me)]],
+      ['finalizeSigner', [other]],
+      ['replacement', [1, other, directAuth(me)]],
+      ['replacement', [2, other, directAuth(me)]],
+      ['finalizeReplacement', []],
+    ] as const) {
+      expect(isExitWrite('protect', [protectionCall(fn, args)]), `${fn}(${String(args[0])})`).toBe(false);
+    }
+    expect(isExitWrite('protect', [])).toBe(false);
+    expect(isExitWrite('protect', ['0xdeadbeef'])).toBe(false);
   });
 
   it('still gates the protected-account writes that add exposure or reach', () => {
     // Depositing, widening where payouts may go, adding signers and moving
-    // the account to another wallet are new commitments, not exits.
+    // the account to another wallet are new commitments, not exits. Since
+    // #3379 B2 all but the deposit go through the vault's protect(), gated
+    // by its inner call (the test above).
     for (const fn of [
       'depositToVault',
-      'addAllowlisted',
-      'addSigner',
-      'acceptSignerRole',
-      'proposeReplacement',
-      'approveReplacement',
-      'finalizeReplacement',
-      'requestDisableProtectedMode',
-      'setProtectedDelay',
     ]) {
       expect(isExitWrite(fn, []), fn).toBe(false);
     }
@@ -262,6 +291,8 @@ describe('isExitWrite', () => {
       ...names(DIAMOND_ABI_VIEM),
       ...names(LEGACY_DIAMOND_NFT_ABI),
       ...names(PositionNFTABI),
+      // #3379 B2 — the vault's `protect(bytes)`.
+      ...names(VaipakamVaultImplementationABI),
     ]);
     for (const fn of EXIT_WRITES) {
       expect(abiNames.has(fn), fn).toBe(true);

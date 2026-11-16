@@ -145,6 +145,8 @@
     "VaultBeacon",
     "PositionNFT",
     "ProtocolRegistry",
-    "PriceGuard"
+    "PriceGuard",
+    "VaipakamVaultImplementation",
+    "VaultProtection"
   ]
 }

@@ -25,7 +25,7 @@
  * without this list, reaching the page hands them everything else on it.
  */
 import { decodeFunctionData, toFunctionSelector, type AbiFunction } from 'viem';
-import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import { DIAMOND_ABI_VIEM, VaultProtectionABI } from '@vaipakam/contracts/abis';
 import { LEGACY_DIAMOND_NFT_ABI } from '@vaipakam/lib/positionNft';
 
 /**
@@ -176,7 +176,6 @@ export const EXIT_WRITES: ReadonlySet<string> = new Set([
   'cosignPositionTransfer',
   'cancelPayout',
   'cosignPayout',
-  'lockVault',
   // `requestUnlock` is also the PositionNFT holder lock's own unlock
   // request; with `lock`, `cancelUnlock` and `executeUnlock` (#3205) it
   // protects or frees the holder's own tokens.
@@ -186,15 +185,63 @@ export const EXIT_WRITES: ReadonlySet<string> = new Set([
   'executeUnlock',
   // Protected mode's own switch-on of that holder lock (a Diamond write).
   'lockPositionNfts',
-  'removeAllowlisted',
+  // #3379 B2 — protected mode's record lives in the account's vault, and its
+  // writes go through the vault's one entry, `protect(bytes)`. That entry
+  // carries protective and loosening writes alike, so it is permitted only
+  // when the VaultProtection call inside it is itself an exit (see
+  // `PROTECT_EXITS`), the way `multicall` is read: the inner call decides.
+  'protect',
+  // Creating (or returning) the wallet's own vault, which protection now
+  // needs before it can be switched on there: the retired
+  // `enableProtectedMode` did the same inside its own call. It opens nothing.
+  'getOrCreateUserVault',
+  // The platform side of a posture the vault already holds (a lock, a
+  // switch-on, a replacement). It only tightens, so it is an exit like the
+  // lock it completes.
+  'applyProtection',
   'cancelSettingChange',
-  'cancelAddAllowlisted',
-  'cancelAddSigner',
-  'cancelRemoveSigner',
-  'cancelReplacement',
-  'enableProtectedMode',
   'finalizeSettingChanges',
 ]);
+
+/**
+ * #3379 B2 — the VaultProtection calls a `protect(bytes)` write may carry
+ * without accepted Terms: the same writes the Diamond's retired protected-mode
+ * entries had on this list (a lock, an unlock request, removing a payout
+ * address, a cancellation, turning protection on, applying matured settings),
+ * under their vault names. `signerChange` and `replacement` take an action:
+ * only their CANCEL action is an exit (adding, accepting or removing a signer,
+ * and proposing or approving a replacement, stay gated, as their Diamond
+ * names did). Values are the action argument's index and the permitted action,
+ * or null when every call of that name is an exit.
+ */
+const PROTECT_EXITS: Readonly<Record<string, { at: number; action: number } | null>> = {
+  lock: null,
+  requestUnlock: null,
+  removeAllowlisted: null,
+  cancelSetting: null,
+  cancelAllowlisted: null,
+  enable: null,
+  finalizeSettings: null,
+  // `signerChange(uint8 action, …)`: 4 = cancel a pending addition or removal.
+  signerChange: { at: 0, action: 4 },
+  // `replacement(uint8 action, …)`: 3 = cancel the proposal.
+  replacement: { at: 0, action: 3 },
+};
+
+/** Whether `data`, the argument of a vault's `protect(bytes)`, is an exit. */
+function isProtectExit(data: unknown): boolean {
+  if (typeof data !== 'string' || data.length < 10) return false;
+  try {
+    const inner = decodeFunctionData({ abi: VaultProtectionABI as readonly unknown[] as AbiFunction[], data: data as `0x${string}` });
+    const rule = PROTECT_EXITS[inner.functionName];
+    if (rule === undefined) return false;
+    if (rule === null) return true;
+    return Number((inner.args ?? [])[rule.at]) === rule.action;
+  } catch {
+    // Undecodable is not harmless — refuse it.
+    return false;
+  }
+}
 
 /**
  * Writes permitted only when their argument turns something OFF.
@@ -264,6 +311,7 @@ export function isExitWrite(functionName: string, args: readonly unknown[]): boo
   const zeroAt = ZERO_ONLY[functionName];
   if (zeroAt !== undefined) return args[zeroAt] === 0n;
 
+  if (functionName === 'protect') return isProtectExit(args[0]);
   if (functionName !== 'multicall') return true;
 
   const calls = args[0];

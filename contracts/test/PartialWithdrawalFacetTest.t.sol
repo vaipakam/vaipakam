@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestProtectedCut} from "./helpers/LibTestProtectedCut.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {LibTestSettlementLeg} from "./helpers/LibTestSettlementLeg.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
@@ -237,7 +238,7 @@ contract PartialWithdrawalFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         LibTestSettlementLeg.install(address(diamond)); // #3669
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));

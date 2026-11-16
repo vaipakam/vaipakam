@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestProtectedCut} from "../helpers/LibTestProtectedCut.sol";
 import {LibTestPositionNFT} from "../helpers/LibTestPositionNFT.sol";
 import {LibTestSettlementLeg} from "../helpers/LibTestSettlementLeg.sol";
 import {Test} from "forge-std/Test.sol";
@@ -440,7 +441,7 @@ contract InvariantBase is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         LibTestSettlementLeg.install(address(diamond)); // #3669
         LibTestForcedSalePreview.install(address(diamond));
         LibTestVaultBeacon.installDepository(address(diamond));

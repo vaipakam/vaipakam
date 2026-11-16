@@ -1138,6 +1138,14 @@ direction 出现 band crossing 时，通过配置的 channels fire 一次。
 
 提醒页面按从新到旧的顺序读取索引为已连接钱包在其网络上保存的收件箱，每次五十行。每一行都写给写入时持有该贷款仓位的钱包：贷款开始；部分和全部还款，包括提前结清、再融资、换币还款以及出售抵押品结清；违约或清算；内部撮合结清；索引看到已结束但无法判断如何结束的贷款；到期前 7 天和 1 天的通知；进入宽限期和宽限期结束；以及健康度降到 1.5、1.2 和 1.05 以下。健康度提醒由协议的 keeper 写入，因此只在它运行时、且只对适用健康度的贷款才会出现。奖励条目的最后通知和过期提醒发给该条目的所有者。每一行只是一个指引，从不是金额：贷款页面会读取链上数据。针对其他网络或钱包的回应会被拒绝，无法读取的行会被计数，未知类型会按名称显示。顶部的计数由索引自己对所有行统计：ID 大于此浏览器中记录为已读的最新 ID 的行数；ID 只按写入顺序增长，所以带有较早区块号的行也会被计入。打开页面时，到那时为止写入的所有行都会记录为已读。已读标记只保存在此浏览器中，并且只会向前推进。Telegram、推送、健康度警告和还款提醒就在收件箱下方设置。每一行都是历史记录：它说明写入该行时贷款或条目的状态，从不表示现在仍是如此；奖励到期行表示该条目已开始退回计划，而不是已经完成。
 
+<a id="activity-history"></a>
+
+### 活动
+
+活动页面读取索引的 `GET /activity?wallet=`，按 `block:logIndex` 游标每页五十行。索引从两部分作答：钱包曾持有仓位的任何贷款的每个事件(参与历史)，以及按共享参与者规则(执行者加上每种事件列出的当事方)提到该钱包的每个事件；后者在摄取时逐个事件记录，较早存储的历史则由一次性回填逐页记录。回填读过最新存储事件之前，`walletComplete` 为 false，此时页面说明较早的活动可能缺失，并且不宣称已到末尾。钱包筛选不能与其他筛选同时使用。
+
+第一页还包含尚未最终的事件(安全区块之上、尚未读取时间)，以及经对账读取发现终止状态的贷款，按观察到的状态和区块放在信息流中的位置。同一交易的事件合为一行，以其第一个非记账事件开头(记账事件指代币转账、授权、明细附带事件、兑换尝试)。金额只取自索引的规范化字段，绝不取自原始参数；参与者规则可能记录的每种事件都有标签，未知类型会显示其名称。开立贷款的交易以贷款开立开头，接受或撮合列在其下。一行所列的钱包是共享行为者规则记录该事件所归属的钱包，可能与交易发送者不同。索引未记录份数的多份代币会说明这一点；若无法读取核查发现的贷款结束记录，页面会说明可能缺少部分记录，且不声称列表已完整。
+
 <a id="alerts-channels"></a>
 
 ### Telegram、推送与警告
@@ -2138,6 +2146,12 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 
 确认页在同一区块读取 `getOffer(id)`、`getOffersWithState([id])`、`getOfferLinkedLoanId(id)`、`paused()` 以及创建者的 `getProtectedAccount`，然后试运行 `OfferCancelFacet.cancelOffer(id)`。该切面允许创建者的管理者随时取消，`expiresAt` 过后任何人都可取消；它会以 `OfferAlreadyAccepted`、`OfferAlreadyConsumedBySale` 拒绝，并在 `amountFilled == 0` 的报价创建不足 300 秒且未过期时以 `CancelCooldownActive` 拒绝，且受 `whenNotPaused` 限制。退回数额按切面自身的分支计算：ERC-20 借出报价退回借出资产的 `(amountMax 或 amount) - amountFilled`；NFT 借出报价退回其代币或 ERC-1155 数量；借款请求退回未使用的抵押品 `(collateralAmountMax 或 collateralAmount) - collateralAmountFilled` 或其 NFT，当 `refinanceCarryOver` 把抵押品留在贷款中时不退回；租赁请求退回 `amount × durationDays` 加上按 `rentalBufferBpsAtCreate` 计算的缓冲金。通过 `getOfferLinkedLoanId` 与贷款绑定的报价，或记录的缓冲率为零的租赁请求（此时协议使用当前费率），在签名前不计算。所有退回都经由金库提取离开创建者的金库，因此保护模式会将其排入队列，或在账户锁定期间留在金库中。仓位代币被注销。完成卡片读取 `OfferCanceled(offerId, creator)`、协议给创建者的付款记录，以及代币本身向创建者的转账。
 
+<a id="offer-edit"></a>
+
+### 修改报价
+
+`OfferMutateFacet.modifyOffer(offerId, {amount, amountMax, interestRateBps, interestRateBpsMax, collateralAmount, collateralAmountMax}, validUntil)`，其中 `validUntil` 取自链上时钟（#3412）。该 facet 只检查发生变化的组：每组的 `LibOfferShape` 规则（下限为正且不高于上限；全部或全无的 `fillMode` 只有一个金额；利率上限最多 10,000 bps；出借人只有一个抵押数字），不得低于 `amountFilled` 或 `collateralAmountFilled`，金额变化时检查付息周期规则和价值下限，金额或抵押变化时检查报价上下限。它拒绝非创建者、已接受的报价、已暂停的资产或协议、受制裁的调用者、已设置的 `parallelSaleOrderHash`、已消耗或已关联的出售载体以及抵销载体；带再融资标记的报价保持其金额和抵押。出借人的 ERC-20 报价结算 `amountMax` 的差额，以 ERC-20 作抵押的借款人 ERC-20 请求结算 `collateralAmountMax` 的差额：增加部分在钱包对 Diamond 的授权下由 `vaultDepositERC20` 从钱包拉取，减少部分以原因 `OFFER_REFUND` 经金库出账离开金库，保护模式会将其排队或扣留。修改会重新标记 `termsSetAt`，因此成交需等待 `getMinTermsAgeSec`，并清除 `backstopEligibleAfter`。审核在同一区块读取 `getOffer`、`getOffersWithState`、`getOfferLinkedLoanId`、`paused()`、`getMinTermsAgeSec`、创建者的保护账户，以及在需要拉取时钱包的余额和授权；它试运行 `modifyOffer`，当拉取超过授权时在精确授权之后试运行。完成卡片将 `OfferModified` 与审核内容比对，并计量代币转账和支付记录。撮合部分的利率差距会把读者区间中对手方一侧的边界填为对方最近的边界（#3659）。
+
 <a id="offers-price-guard"></a>
 
 ### 价格变动保护
@@ -2149,6 +2163,16 @@ Positions 通过一个共享读取器读取与 Home 相同的持仓清单：`get
 ### Risk Access：你的风险等级
 
 开关是 `getRiskAccessGateEnabled`。一个流程需要哪一步，由协议自身的回答决定：接受报价时，在 `previewCreatorBlock` 显示贷方未被阻挡之后，看 `previewOfferAcceptBlock`（1 = 等级过低，2 = 交易对同意，3 = 严格模式确认，4 = 过去由接受时的确认覆盖的非流动交易对；它与 2 一样构成阻止，交易对同意可解除）；发布请求时，看 `createOffer` 模拟执行返回的 `RiskTierTooLow`、`IlliquidPairNotConsented` 或 `MidTierPairNotAcknowledged`。该步骤在同一区块内读取交易对的 `pairRequiredRiskLevel`（报价则用 `acceptMidTierAckPair`）、`getVaultRiskTier`、`getEffectiveRiskTier`、对照 `getCurrentRiskTermsVersion` 的 `getVaultRiskTierVersion`、`getRiskTierUnlockAt`、`getRiskAccessUnlockCooldown` 和 `getRiskTierMutationNonce`，对交易对则读取 `isPairConsentPending` 与 `hasIlliquidPairConsent`，或 `isMidTierAckPending` 与 `midTierStrictBlocked`。提高等级使用 `setVaultRiskTierChecked(level, nonce, termsVersion)`，提高到该交易对所需的最低等级；若审核之后有其他等级写入或条款变更，交易会被拒绝且不改变任何内容。交易对步骤是 `setIlliquidPairConsent(pair, true)` 或 `setMidTierPairAck(pair)`。仍在等待中的等级提高或仍待生效的交易对步骤不会再次提供。没有任何读取接口返回待生效交易对步骤的生效时间，因此审核界面会说明无法读取该时间；只有该步骤本身的完成卡片会给出它，即收据所在区块时间加等待期。结果在收据所在区块读回。
+
+<a id="wallet-keys"></a>
+
+### 你的钱包及其密钥
+
+Vaipakam 不创建也不保管钱包。你需要一个自托管钱包:一个保管你自己账户密钥的应用或设备。这里没有任何人能看到这些密钥、动用你的资金或恢复你的访问权限;如果丢失密钥,你就会失去对资金的访问权。应用会在钱包选择界面以及连接前的首页说明这一点,页脚还链接到一个关于如何保管好密钥的简短页面。该页面不推荐任何钱包品牌。
+
+设置钱包时,它会显示一个恢复短语,即一组单词。请把它写在纸上并妥善保密。绝不要在任何网站上输入它、在线保存它或与任何人分享:Vaipakam 的任何人都不会向你索要它。在批准任何操作之前,请核对网站地址并阅读钱包显示的内容。对于较大的金额,密钥保存在独立硬件设备上的钱包更安全,建议先用小额试一试。
+
+在电脑上,请通过钱包的浏览器扩展连接,或用手机上的钱包扫描选择界面中的二维码。在手机上,请在钱包应用自带的浏览器中打开本应用,或在选择界面中选择“Other”。没有钱包时,你仍可以阅读主要风险和数据分析。
 
 <a id="terms-gate"></a>
 

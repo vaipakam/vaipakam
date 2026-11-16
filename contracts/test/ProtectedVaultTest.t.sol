@@ -32,6 +32,8 @@ import {ERC1155Mock} from "./mocks/ERC1155Mock.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {VaultProtection} from "../src/vault/VaultProtection.sol";
+import {LibTestProtection as P} from "./helpers/LibTestProtection.sol";
 
 /**
  * @title ProtectedVaultTest
@@ -149,9 +151,40 @@ contract ProtectedVaultTest is Test {
         _depo().depositToVault(K20, address(token), 0, amount);
     }
 
+    /// @dev #3379 B2 — protected mode is the vault's own record: the owner
+    ///      switches it on there (with NFT protection, as the old
+    ///      `enableProtectedMode(DELAY, true)` did) and the platform applies it.
     function _enable() internal {
-        vm.prank(user);
-        _prot().enableProtectedMode(DELAY, true);
+        P.enableWithNfts(address(diamond), user, DELAY);
+    }
+
+    /// @dev `user`'s vault, where its protected record lives.
+    function _v() internal returns (VaipakamVaultImplementation) {
+        return P.vaultOf(address(diamond), user);
+    }
+
+    function _locked() internal returns (bool locked) {
+        (, locked,,,) = _v().protectionCore();
+    }
+
+    function _enabled() internal returns (bool enabled) {
+        (enabled,,,,) = _v().protectionCore();
+    }
+
+    /// @dev A direct vault write `key` makes, expected to revert with `err`.
+    ///      The vault is resolved first so the expectation binds to the write.
+    function _expectProtectRevert(address key, bytes memory data, bytes memory err) internal {
+        VaipakamVaultImplementation v = _v();
+        vm.prank(key);
+        vm.expectRevert(err);
+        v.protect(data);
+    }
+
+    /// @dev A permissionless vault finalize, expected to revert with `err`.
+    function _expectFinalizeRevert(bytes memory data, bytes memory err) internal {
+        VaipakamVaultImplementation v = _v();
+        vm.expectRevert(err);
+        v.protect(data);
     }
 
     function _queue(uint256 amount, address to) internal returns (uint256 id) {
@@ -171,12 +204,7 @@ contract ProtectedVaultTest is Test {
     }
 
     function _addSigner(address signer) internal {
-        vm.prank(user);
-        _prot().addSigner(user, signer);
-        vm.prank(signer);
-        _prot().acceptSignerRole(user);
-        vm.warp(block.timestamp + DELAY);
-        _prot().finalizeAddSigner(user, signer);
+        P.addSigner(address(diamond), user, user, signer, DELAY);
     }
 
     function _threeSigners() internal {
@@ -384,141 +412,158 @@ contract ProtectedVaultTest is Test {
     function testAllowlistAdditionWaitsTheDelay() public {
         _deposit20(100 ether);
         _enable();
-        vm.prank(user);
-        _prot().addAllowlisted(user, friend);
-        vm.expectRevert();
-        _prot().finalizeAddAllowlisted(user, friend);
+        P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.addAllowlisted, (friend, P.direct(user))));
+        _expectFinalizeRevert(
+            abi.encodeCall(VaultProtection.finalizeAllowlisted, (friend)),
+            abi.encodeWithSelector(VaultProtection.NotReady.selector, uint64(block.timestamp + DELAY))
+        );
         vm.warp(block.timestamp + DELAY);
-        _prot().finalizeAddAllowlisted(user, friend);
+        _v().protect(abi.encodeCall(VaultProtection.finalizeAllowlisted, (friend)));
         _queue(1 ether, friend);
     }
 
-    function testPendingAdditionsAreListedUntilAppliedCancelledOrVoided() public {
+    /// @dev #3379 B2 — each pending addition is read per entry from the
+    ///      vault: its ready time until it is applied or cancelled.
+    function testPendingAdditionsAreReadableUntilAppliedOrCancelled() public {
         _enable();
-        vm.startPrank(user);
-        _prot().addAllowlisted(user, friend);
-        _prot().addAllowlisted(user, thief);
-        _prot().addSigner(user, s1);
-        vm.stopPrank();
-        (address[] memory dests, uint256[] memory at) = _prot().getPendingAllowlistAdditions(user);
-        assertEq(dests.length, 2);
-        assertEq(at[0], block.timestamp + DELAY);
-        (address[] memory noms,, bool[] memory acc) = _prot().getPendingSignerAdditions(user);
-        assertEq(noms.length, 1);
-        assertEq(noms[0], s1);
-        assertFalse(acc[0]);
+        P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.addAllowlisted, (friend, P.direct(user))));
+        P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.addAllowlisted, (thief, P.direct(user))));
+        P.call(
+            address(diamond), user, user, abi.encodeCall(VaultProtection.signerChange, (uint8(1), s1, P.direct(user)))
+        );
+        assertEq(_v().allowEntry(friend).readyAt, block.timestamp + DELAY);
+        assertEq(_v().allowEntry(thief).readyAt, block.timestamp + DELAY);
+        assertEq(_v().signerEntry(s1).addAt, block.timestamp + DELAY);
+        assertFalse(_v().signerEntry(s1).accepted);
 
-        // A cancelled addition drops off the list; an applied one too.
-        vm.prank(user);
-        _prot().cancelAddAllowlisted(user, thief);
+        // A cancelled addition reads as none; an applied one becomes active.
+        P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.cancelAllowlisted, (thief, P.direct(user))));
+        assertEq(_v().allowEntry(thief).readyAt, 0);
         vm.warp(block.timestamp + DELAY);
-        _prot().finalizeAddAllowlisted(user, friend);
-        (dests,) = _prot().getPendingAllowlistAdditions(user);
-        assertEq(dests.length, 0);
-
-        // A lock voids the rest, and the list says so.
-        vm.prank(user);
-        _prot().lockVault(user);
-        (noms,,) = _prot().getPendingSignerAdditions(user);
-        assertEq(noms.length, 0);
+        _v().protect(abi.encodeCall(VaultProtection.finalizeAllowlisted, (friend)));
+        assertTrue(_v().allowEntry(friend).active);
+        assertEq(_v().allowEntry(friend).readyAt, 0);
+        (,,,,,, address[] memory allowlist) = _v().protectionState();
+        assertEq(allowlist.length, 1);
+        assertEq(allowlist[0], friend);
     }
 
-    function testPendingAllowlistAdditionsAreCapped() public {
+    /// @dev #3379 B2 — the vault caps the allowlist at MAX_ALLOWLIST active
+    ///      destinations: an addition is refused once that many are active.
+    function testAllowlistIsCapped() public {
         _enable();
-        vm.startPrank(user);
-        for (uint256 i; i < LibProtectedAccount.MAX_ALLOWLIST; ++i) {
-            _prot().addAllowlisted(user, address(uint160(0xD000 + i)));
+        VaipakamVaultImplementation v = _v();
+        uint256 max = VaultProtection(v.PROTECTION()).MAX_ALLOWLIST();
+        for (uint256 i; i < max; ++i) {
+            P.call(
+                address(diamond),
+                user,
+                user,
+                abi.encodeCall(VaultProtection.addAllowlisted, (address(uint160(0xD000 + i)), P.direct(user)))
+            );
         }
-        vm.expectRevert(LibProtectedAccount.TooManyAllowlisted.selector);
-        _prot().addAllowlisted(user, address(0xDEAD));
         // Asking again for one already pending is not a new entry.
-        _prot().addAllowlisted(user, address(uint160(0xD000)));
-        vm.stopPrank();
+        P.call(
+            address(diamond), user, user, abi.encodeCall(VaultProtection.addAllowlisted, (address(0xD000), P.direct(user)))
+        );
+        vm.warp(block.timestamp + DELAY);
+        for (uint256 i; i < max; ++i) {
+            v.protect(abi.encodeCall(VaultProtection.finalizeAllowlisted, (address(uint160(0xD000 + i)))));
+        }
+        _expectProtectRevert(
+            user,
+            abi.encodeCall(VaultProtection.addAllowlisted, (address(0xDEAD), P.direct(user))),
+            abi.encodeWithSelector(VaultProtection.TooMany.selector)
+        );
     }
 
     function testAllowlistAdditionExpiresOneDelayAfterItMatures() public {
         _enable();
-        vm.prank(user);
-        _prot().addAllowlisted(user, friend);
-        uint256 at = _prot().getAllowlistPendingAt(user, friend);
+        P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.addAllowlisted, (friend, P.direct(user))));
+        uint64 at = _v().allowEntry(friend).readyAt;
         vm.warp(at + DELAY + 1);
-        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.ChangeExpired.selector, at + DELAY));
-        _prot().finalizeAddAllowlisted(user, friend);
+        _expectFinalizeRevert(
+            abi.encodeCall(VaultProtection.finalizeAllowlisted, (friend)),
+            abi.encodeWithSelector(VaultProtection.Expired.selector, at + DELAY)
+        );
     }
 
     function testLockVoidsPendingAllowlistAndSignerChanges() public {
         _enable();
         _addSigner(s1);
-        vm.startPrank(user);
-        _prot().addAllowlisted(user, friend); // say a thief asked for these
-        _prot().addSigner(user, s2);
-        _prot().requestRemoveSigner(user, s1);
-        vm.stopPrank();
-        vm.prank(s2);
-        _prot().acceptSignerRole(user);
+        // Say a thief asked for these.
+        P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.addAllowlisted, (friend, P.direct(user))));
+        P.call(
+            address(diamond), user, user, abi.encodeCall(VaultProtection.signerChange, (uint8(1), s2, P.direct(user)))
+        );
+        P.call(
+            address(diamond), user, user, abi.encodeCall(VaultProtection.signerChange, (uint8(3), s1, P.direct(user)))
+        );
+        P.call(address(diamond), user, s2, abi.encodeCall(VaultProtection.signerChange, (uint8(2), s2, P.direct(s2))));
 
-        vm.prank(s1);
-        _prot().lockVault(user);
-        // Every one of them now reads as none, and none can be finalized
-        // once the account unlocks, though all would have matured by then.
-        assertEq(_prot().getAllowlistPendingAt(user, friend), 0);
-        assertEq(_prot().getSignerChange(user, s2).addAt, 0);
-        assertEq(_prot().getSignerChange(user, s1).removeAt, 0);
-        vm.prank(user);
-        _prot().requestUnlock(user);
+        P.lock(address(diamond), user, s1);
+        // None can be finalized once the account unlocks, though all would
+        // have matured by then.
+        P.requestUnlock(address(diamond), user, user);
         vm.warp(block.timestamp + DELAY);
-        _prot().finalizeSettingChanges(user);
-        assertFalse(_prot().getProtectedAccount(user).locked);
+        P.finalizeSettings(address(diamond), user);
+        assertFalse(_locked());
 
-        vm.expectRevert(LibProtectedAccount.ChangeNotRequested.selector);
-        _prot().finalizeAddAllowlisted(user, friend);
-        vm.expectRevert(LibProtectedAccount.ChangeNotRequested.selector);
-        _prot().finalizeAddSigner(user, s2);
-        vm.expectRevert(LibProtectedAccount.ChangeNotRequested.selector);
-        _prot().finalizeRemoveSigner(user, s1);
+        bytes memory notRequested = abi.encodeWithSelector(VaultProtection.NotRequested.selector);
+        _expectFinalizeRevert(abi.encodeCall(VaultProtection.finalizeAllowlisted, (friend)), notRequested);
+        _expectFinalizeRevert(abi.encodeCall(VaultProtection.finalizeSigner, (s2)), notRequested);
+        _expectFinalizeRevert(abi.encodeCall(VaultProtection.finalizeSigner, (s1)), notRequested);
+        assertTrue(_v().signerEntry(s1).active, "the voided removal left s1 a signer");
 
         // They can be asked for again, and then wait a fresh delay.
-        vm.prank(user);
-        _prot().addAllowlisted(user, friend);
-        assertEq(_prot().getAllowlistPendingAt(user, friend), block.timestamp + DELAY);
-        vm.prank(user);
-        _prot().addSigner(user, s2);
+        P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.addAllowlisted, (friend, P.direct(user))));
+        assertEq(_v().allowEntry(friend).readyAt, block.timestamp + DELAY);
+        P.call(
+            address(diamond), user, user, abi.encodeCall(VaultProtection.signerChange, (uint8(1), s2, P.direct(user)))
+        );
     }
 
     function testSwitchOffVoidsPendingChangesForALaterReEnable() public {
         _enable();
-        vm.startPrank(user);
-        _prot().addAllowlisted(user, friend);
-        _prot().addSigner(user, s2);
-        _prot().requestDisableProtectedMode();
-        vm.stopPrank();
+        P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.addAllowlisted, (friend, P.direct(user))));
+        P.call(
+            address(diamond), user, user, abi.encodeCall(VaultProtection.signerChange, (uint8(1), s2, P.direct(user)))
+        );
+        P.requestDisable(address(diamond), user, user);
         vm.warp(block.timestamp + DELAY);
-        _prot().finalizeSettingChanges(user);
-        assertFalse(_prot().getProtectedAccount(user).enabled);
+        P.finalizeSettings(address(diamond), user);
+        assertFalse(_enabled());
 
         _enable();
-        vm.expectRevert(LibProtectedAccount.ChangeNotRequested.selector);
-        _prot().finalizeAddAllowlisted(user, friend);
+        bytes memory notRequested = abi.encodeWithSelector(VaultProtection.NotRequested.selector);
+        _expectFinalizeRevert(abi.encodeCall(VaultProtection.finalizeAllowlisted, (friend)), notRequested);
+        // The old nominee's acceptance belongs to the cleared posture: it is
+        // refused, and the addition can never be applied.
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
         vm.prank(s2);
-        vm.expectRevert(LibProtectedAccount.ChangeNotRequested.selector);
-        _prot().acceptSignerRole(user);
+        vm.expectRevert(VaultProtection.NotRequested.selector);
+        v.protect(abi.encodeCall(VaultProtection.signerChange, (uint8(2), s2, P.direct(s2))));
+        vm.warp(block.timestamp + DELAY);
+        _expectFinalizeRevert(abi.encodeCall(VaultProtection.finalizeSigner, (s2)), notRequested);
     }
 
+    /// @dev A due co-sign switch-off applies while a payout row is open, and a
+    ///      requested switch-off does not stand in its way.
     function testWaitingSwitchOffDoesNotHoldBackOtherDueChanges() public {
         _deposit20(10 ether);
         _enable();
         uint256 id = _queue(1 ether, user);
-        vm.startPrank(user);
+        vm.prank(user);
         _prot().setRequireCosign(user, false);
-        _prot().requestDisableProtectedMode();
-        vm.stopPrank();
+        P.requestDisable(address(diamond), user, user);
         vm.warp(block.timestamp + DELAY);
-        // The switch-off waits for the open row; the other due change applies.
         _prot().finalizeSettingChanges(user);
-        assertTrue(_prot().getProtectedAccount(user).enabled);
+        (, , uint64 pendingOff) = _prot().getProtection(user);
+        assertEq(pendingOff, 0, "the co-sign switch-off applied");
+        assertTrue(_enabled());
         _pay().releasePayout(id);
-        _prot().finalizeSettingChanges(user);
-        assertFalse(_prot().getProtectedAccount(user).enabled);
+        P.finalizeSettings(address(diamond), user);
+        assertFalse(_enabled());
     }
 
     function testEarmarkStopsQueueingMoreThanIsFree() public {
@@ -580,8 +625,7 @@ contract ProtectedVaultTest is Test {
         assertEq(open.length, 1);
         assertEq(open[0], c);
 
-        vm.prank(s1);
-        _prot().lockVault(user);
+        P.lock(address(diamond), user, s1);
         assertEq(_pay().getOpenPayoutCount(), 0, "a lock's cancel-all empties it");
     }
 
@@ -589,11 +633,20 @@ contract ProtectedVaultTest is Test {
 
     function testSignerNeedsItsOwnAcceptance() public {
         _enable();
-        vm.prank(user);
-        _prot().addSigner(user, s1);
+        P.call(
+            address(diamond), user, user, abi.encodeCall(VaultProtection.signerChange, (uint8(1), s1, P.direct(user)))
+        );
         vm.warp(block.timestamp + DELAY);
-        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.SignerNotAccepted.selector, s1));
-        _prot().finalizeAddSigner(user, s1);
+        _expectFinalizeRevert(
+            abi.encodeCall(VaultProtection.finalizeSigner, (s1)),
+            abi.encodeWithSelector(VaultProtection.NotRequested.selector)
+        );
+        // Only the nominee's own key accepts.
+        _expectProtectRevert(
+            user,
+            abi.encodeCall(VaultProtection.signerChange, (uint8(2), s1, P.direct(user))),
+            abi.encodeWithSelector(VaultProtection.NotRequested.selector)
+        );
     }
 
     function testCosignRequiredForRelease() public {
@@ -612,13 +665,63 @@ contract ProtectedVaultTest is Test {
         assertEq(token.balanceOf(user), 995 ether);
     }
 
+    /// @dev A signer that is also a payout destination cannot co-sign a payout
+    ///      to itself: the co-signature is a second key approving a payout to
+    ///      someone else.
+    function testASignerCannotCosignAPayoutToItself() public {
+        _deposit20(10 ether);
+        _enable();
+        _addSigner(s1);
+        _addSigner(s2);
+        P.allow(address(diamond), user, user, s1, DELAY);
+        vm.prank(user);
+        _prot().setRequireCosign(user, true);
+        uint256 id = _queue(1 ether, s1);
+        vm.prank(s1);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.CannotCosignOwnPayout.selector, id));
+        _pay().cosignPayout(id);
+        // Another signer may.
+        vm.prank(s2);
+        _pay().cosignPayout(id);
+        assertTrue(_pay().getPendingPayout(id).cosigned, "co-signed by the other signer");
+    }
+
+    /// @dev #3415 — a payout to an allowlisted destination that has not
+    ///      verified itself needs a secondary signer's co-sign whenever the
+    ///      account has signers, though the account's own co-sign setting is
+    ///      off. Once the destination verifies itself, a fresh row to it
+    ///      releases without one.
+    function test3415_unverifiedDestinationNeedsACosignUntilItVerifies() public {
+        _deposit20(10 ether);
+        _enable();
+        _addSigner(s1);
+        P.allow(address(diamond), user, user, friend, DELAY);
+        assertTrue(_v().allowEntry(friend).active);
+        assertFalse(_v().allowEntry(friend).verified);
+        (, bool requireCosign,) = _prot().getProtection(user);
+        assertFalse(requireCosign, "the account's own co-sign setting is off");
+
+        uint256 id = _queue(2 ether, friend);
+        vm.warp(block.timestamp + DELAY);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.CosignRequired.selector, id));
+        _pay().releasePayout(id);
+        vm.prank(user);
+        _pay().cancelPayout(id);
+
+        P.verify(address(diamond), user, friend);
+        assertTrue(_v().allowEntry(friend).verified);
+        uint256 id2 = _queue(3 ether, friend);
+        vm.warp(block.timestamp + DELAY);
+        _pay().releasePayout(id2);
+        assertEq(token.balanceOf(friend), 3 ether, "a verified destination is paid without a co-sign");
+    }
+
     function testSignerLockCancelsRowsAndBlocksNewOnes() public {
         _deposit20(10 ether);
         _enable();
         _addSigner(s1);
         uint256 id = _queue(5 ether, user);
-        vm.prank(s1);
-        _prot().lockVault(user);
+        P.lock(address(diamond), user, s1);
         assertEq(_pay().getPendingPayout(id).state, LibProtectedAccount.ROW_CANCELLED);
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.ProtectedVaultLocked.selector, user));
@@ -628,11 +731,10 @@ contract ProtectedVaultTest is Test {
         LibTestOutflow.withdrawERC20(address(diamond), user, address(token), user, 1 ether);
         assertEq(token.balanceOf(user), 990 ether);
 
-        vm.prank(user);
-        _prot().requestUnlock(user);
+        P.requestUnlock(address(diamond), user, user);
         vm.warp(block.timestamp + DELAY);
-        _prot().finalizeSettingChanges(user);
-        assertFalse(_prot().getProtectedAccount(user).locked);
+        P.finalizeSettings(address(diamond), user);
+        assertFalse(_locked());
     }
 
     function testKeeperWithTheLockBitLocks() public {
@@ -643,7 +745,7 @@ contract ProtectedVaultTest is Test {
         vm.stopPrank();
         vm.prank(keeper);
         _prot().lockVaultFor(user);
-        assertTrue(_prot().getProtectedAccount(user).locked);
+        assertTrue(_locked());
     }
 
     function testKeeperWithoutTheLockBitCannotLock() public {
@@ -658,18 +760,11 @@ contract ProtectedVaultTest is Test {
     function testSignerMajorityReplacesPrimaryAndPayoutsFollow() public {
         _deposit20(10 ether);
         _enable();
-        _threeSigners();
-        vm.prank(s1);
-        _prot().proposeReplacement(user, nominee);
-        vm.prank(s2);
-        _prot().approveReplacement(user);
-        vm.warp(block.timestamp + DELAY);
-        _prot().finalizeReplacement(user);
+        _replaceWithNominee();
 
-        LibVaipakam.ProtectedAccount memory a = _prot().getProtectedAccount(user);
-        assertTrue(a.retired);
-        assertEq(a.controller, nominee);
-        assertEq(_prot().getRetiredAccountOf(nominee), user);
+        assertEq(_v().vaultOwner(), nominee, "the vault's owner record moved");
+        assertEq(_prot().getRetiredAccountsOf(nominee).length, 1);
+        assertEq(_prot().getRetiredAccountsOf(nominee)[0], user);
 
         // The old wallet has lost the account.
         vm.prank(user);
@@ -679,9 +774,14 @@ contract ProtectedVaultTest is Test {
         // The controller withdraws through the delay; loosening waits out the cool-down.
         vm.prank(nominee);
         uint256 id = _depo().withdrawFromVault(user, K20, address(token), 0, 4 ether, nominee);
-        vm.prank(nominee);
-        vm.expectRevert();
-        _prot().addAllowlisted(user, friend);
+        _expectProtectRevert(
+            nominee,
+            // A loosening change (here a signer addition) waits the new
+            // owner's cool-down. (A replaced account takes no payout
+            // destination at all: testAReplacedAccountTakesNoPayoutDestination.)
+            abi.encodeCall(VaultProtection.signerChange, (uint8(1), s3, P.direct(nominee))),
+            abi.encodeWithSelector(VaultProtection.InCooldown.selector, uint64(block.timestamp + DELAY))
+        );
         vm.warp(block.timestamp + DELAY);
         _pay().releasePayout(id);
         assertEq(token.balanceOf(nominee), 4 ether);
@@ -693,48 +793,44 @@ contract ProtectedVaultTest is Test {
         // The outgoing primary asks for loosening changes just before it is
         // replaced: a signer removal, an allowlist addition, co-sign off and
         // NFT protection off.
-        vm.startPrank(user);
+        vm.prank(user);
         _prot().setRequireCosign(user, true);
-        _prot().requestRemoveSigner(user, s3);
-        _prot().addAllowlisted(user, thief);
+        P.call(
+            address(diamond), user, user, abi.encodeCall(VaultProtection.signerChange, (uint8(3), s3, P.direct(user)))
+        );
+        P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.addAllowlisted, (thief, P.direct(user))));
+        vm.prank(user);
         _prot().setRequireCosign(user, false);
-        vm.stopPrank();
         // ...and asks the PositionNFT core to unlock its positions (#3205).
         vm.prank(user);
         _core().requestUnlock();
 
-        vm.prank(s1);
-        _prot().proposeReplacement(user, nominee);
-        vm.prank(s2);
-        _prot().approveReplacement(user);
+        P.propose(address(diamond), user, s1, nominee);
+        P.approve(address(diamond), user, s2, nominee);
         vm.warp(block.timestamp + DELAY);
-        _prot().finalizeReplacement(user);
+        P.finalizeReplacement(address(diamond), user);
 
         // Nothing the old key asked for survives the handover.
-        assertEq(_prot().getSignerChange(user, s3).removeAt, 0);
-        assertEq(_prot().getAllowlistPendingAt(user, thief), 0);
-        LibVaipakam.ProtectedAccount memory a = _prot().getProtectedAccount(user);
-        assertEq(a.pendingCosignOffAt, 0);
+        (, bool requireCosign, uint64 pendingCosignOffAt) = _prot().getProtection(user);
+        assertEq(pendingCosignOffAt, 0);
         (, , uint256 unlockAt, , ) = _core().lockOf(user);
         assertEq(unlockAt, 0, "the replacement voided the pending unlock");
-        vm.expectRevert();
-        _prot().finalizeRemoveSigner(user, s3);
-        vm.expectRevert();
-        _prot().finalizeAddAllowlisted(user, thief);
+        bytes memory notRequested = abi.encodeWithSelector(VaultProtection.NotRequested.selector);
+        _expectFinalizeRevert(abi.encodeCall(VaultProtection.finalizeSigner, (s3)), notRequested);
+        _expectFinalizeRevert(abi.encodeCall(VaultProtection.finalizeAllowlisted, (thief)), notRequested);
+        assertTrue(_v().signerEntry(s3).active, "the voided removal left s3 a signer");
+        vm.expectRevert(LibProtectedAccount.ChangeNotRequested.selector);
         _prot().finalizeSettingChanges(user);
-        a = _prot().getProtectedAccount(user);
-        assertTrue(a.requireCosign);
+        assertTrue(requireCosign);
         assertTrue(_core().isLocked(user), "positions stay locked");
     }
 
     function _replaceWithNominee() internal {
         _threeSigners();
-        vm.prank(s1);
-        _prot().proposeReplacement(user, nominee);
-        vm.prank(s2);
-        _prot().approveReplacement(user);
+        P.propose(address(diamond), user, s1, nominee);
+        P.approve(address(diamond), user, s2, nominee);
         vm.warp(block.timestamp + DELAY);
-        _prot().finalizeReplacement(user);
+        P.finalizeReplacement(address(diamond), user);
     }
 
     function testRetiredWalletCannotLockOrAdoptButTheControllerLocks() public {
@@ -756,44 +852,55 @@ contract ProtectedVaultTest is Test {
         // The controller can lock the account it now manages.
         vm.prank(nominee);
         _prot().lockVaultFor(user);
-        assertTrue(_prot().getProtectedAccount(user).locked);
+        assertTrue(_locked());
     }
 
     function testTwoSignersCannotRecover() public {
         _enable();
         _addSigner(s1);
         _addSigner(s2);
-        vm.prank(s1);
-        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.NotEnoughSigners.selector, 2, 3));
-        _prot().proposeReplacement(user, nominee);
+        _expectProtectRevert(
+            s1,
+            abi.encodeCall(VaultProtection.replacement, (uint8(1), nominee, P.direct(s1))),
+            abi.encodeWithSelector(VaultProtection.NotEnoughSigners.selector, 2, 3)
+        );
     }
 
     function testOwnerCannotCancelReplacementUnderSignerLock() public {
         _enable();
         _threeSigners();
-        vm.prank(s1);
-        _prot().lockVault(user);
-        vm.prank(s1);
-        _prot().proposeReplacement(user, nominee);
-        vm.prank(user);
-        vm.expectRevert(LibProtectedAccount.OwnerCannotCancelWhileSignerLock.selector);
-        _prot().cancelReplacement(user);
+        P.lock(address(diamond), user, s1);
+        P.propose(address(diamond), user, s1, nominee);
+        _expectProtectRevert(
+            user,
+            abi.encodeCall(VaultProtection.replacement, (uint8(3), nominee, P.direct(user))),
+            abi.encodeWithSelector(VaultProtection.OwnerBlockedBySignerLock.selector)
+        );
     }
 
     // ─── Switching off ───────────────────────────────────────────────────
 
+    /// @dev #3379 B2 — the switch-off waits the delay. (The "no open rows"
+    ///      half of the old test is not enforced by the vault's switch-off;
+    ///      see the port report.)
     function testDisableWaitsTheDelayAndNeedsNoOpenRows() public {
         _deposit20(10 ether);
         _enable();
         uint256 id = _queue(1 ether, user);
-        vm.prank(user);
-        _prot().requestDisableProtectedMode();
-        vm.warp(block.timestamp + DELAY);
-        vm.expectRevert(LibProtectedAccount.PendingRowsExist.selector);
-        _prot().finalizeSettingChanges(user);
+        P.requestDisable(address(diamond), user, user);
+        vm.warp(block.timestamp + DELAY - 1);
+        P.finalizeSettings(address(diamond), user);
+        assertTrue(_enabled(), "not before the delay");
+        vm.warp(block.timestamp + 1);
+        // The switch-off waits while a row is queued: it was the one change
+        // due, so it says so rather than succeed doing nothing.
+        address v = address(P.vaultOf(address(diamond), user));
+        vm.expectRevert(VaultProtection.PendingRowsExist.selector);
+        VaipakamVaultImplementation(v).protect(abi.encodeCall(VaultProtection.finalizeSettings, ()));
+        assertTrue(_enabled(), "not while a row is queued");
         _pay().releasePayout(id);
-        _prot().finalizeSettingChanges(user);
-        assertFalse(_prot().getProtectedAccount(user).enabled);
+        P.finalizeSettings(address(diamond), user);
+        assertFalse(_enabled());
     }
 
     // ─── The escape route ────────────────────────────────────────────────
@@ -993,24 +1100,21 @@ contract ProtectedVaultTest is Test {
         _core().requestUnlock();
         (, , at, , ) = _core().lockOf(user);
         assertGt(at, 0);
-        vm.prank(user);
-        _prot().lockVault(user);
+        P.lock(address(diamond), user, user);
         (, , at, , ) = _core().lockOf(user);
         assertEq(at, 0, "lock voids the pending unlock");
         assertTrue(_core().isLocked(user));
         // Unlock the protected vault again (its own delayed path).
-        vm.prank(user);
-        _prot().requestUnlock(user);
+        P.requestUnlock(address(diamond), user, user);
         vm.warp(block.timestamp + DELAY);
-        _prot().finalizeSettingChanges(user);
+        P.finalizeSettings(address(diamond), user);
         // 2. A switch-off voids it.
         vm.prank(user);
         _core().requestUnlock();
-        vm.prank(user);
-        _prot().requestDisableProtectedMode();
+        P.requestDisable(address(diamond), user, user);
         vm.warp(block.timestamp + DELAY);
-        _prot().finalizeSettingChanges(user);
-        assertFalse(_prot().getProtectedAccount(user).enabled);
+        P.finalizeSettings(address(diamond), user);
+        assertFalse(_enabled());
         (, , at, , ) = _core().lockOf(user);
         assertEq(at, 0, "switch-off voids the pending unlock");
         // 3. A re-enable voids it.
@@ -1064,13 +1168,13 @@ contract ProtectedVaultTest is Test {
     function testALockVoidsTheOwnersReplacementProposal() public {
         _enable();
         _addSigner(s1);
-        vm.prank(user);
-        _prot().proposeReplacement(user, nominee);
-        vm.prank(s1);
-        _prot().lockVault(user);
+        P.propose(address(diamond), user, user, nominee);
+        P.lock(address(diamond), user, s1);
         vm.warp(block.timestamp + DELAY);
-        vm.expectRevert(LibProtectedAccount.NoReplacementProposed.selector);
-        _prot().finalizeReplacement(user);
+        _expectFinalizeRevert(
+            abi.encodeCall(VaultProtection.finalizeReplacement, ()),
+            abi.encodeWithSelector(VaultProtection.NoProposal.selector)
+        );
     }
 
     // ─── The depository ledger ───────────────────────────────────────────
@@ -1119,17 +1223,15 @@ contract ProtectedVaultTest is Test {
     function testPayoutKeptInLockedVaultBecomesTheOwners() public {
         _protocolPlaces20(user, 10 ether);
         _enable();
-        vm.prank(user);
-        _prot().lockVault(user);
+        P.lock(address(diamond), user, user);
         // A settlement paying the locked owner's wallet stays in the vault ...
         vm.prank(address(diamond));
         LibTestOutflow.withdrawERC20(address(diamond), user, address(token), user, 4 ether);
         // ... and is theirs to withdraw once unlocked.
         assertEq(_depo().getDepositoryHolding(user, address(token), 0), 4 ether);
-        vm.prank(user);
-        _prot().requestUnlock(user);
+        P.requestUnlock(address(diamond), user, user);
         vm.warp(block.timestamp + DELAY);
-        _prot().finalizeSettingChanges(user);
+        P.finalizeSettings(address(diamond), user);
         assertEq(_depo().withdrawableNow(user, K20, address(token), 0), 4 ether);
     }
 
@@ -1237,56 +1339,47 @@ contract ProtectedVaultTest is Test {
     function testRepeatLockByOwnerKeepsTheSignerOrigin() public {
         _enable();
         _threeSigners();
-        vm.prank(s1);
-        _prot().lockVault(user);
-        vm.prank(user);
-        _prot().lockVault(user);
-        assertEq(_prot().getProtectedAccount(user).lockedBy, s1);
-        vm.prank(user);
-        vm.expectRevert(LibProtectedAccount.OwnerCannotCancelWhileSignerLock.selector);
-        _prot().proposeReplacement(user, friend);
+        P.lock(address(diamond), user, s1);
+        P.lock(address(diamond), user, user);
+        (,,,, address lockedBy,,) = _v().protectionState();
+        assertEq(lockedBy, s1);
+        _expectProtectRevert(
+            user,
+            abi.encodeCall(VaultProtection.replacement, (uint8(1), friend, P.direct(user))),
+            abi.encodeWithSelector(VaultProtection.OwnerBlockedBySignerLock.selector)
+        );
     }
 
     function testApprovalsOfAClearedRoundDoNotCarryOver() public {
         _enable();
         _threeSigners();
-        vm.prank(s1);
-        _prot().proposeReplacement(user, nominee);
-        (LibVaipakam.ReplacementProposal memory p,,) = _prot().getReplacement(user);
-        uint32 firstRound = p.round;
+        P.propose(address(diamond), user, s1, nominee);
+        (,,, uint32 firstRound) = _v().replacementProposal();
 
         // Switching off clears the account; switching on again starts over.
-        vm.prank(user);
-        _prot().requestDisableProtectedMode();
+        P.requestDisable(address(diamond), user, user);
         vm.warp(block.timestamp + DELAY);
-        _prot().finalizeSettingChanges(user);
+        P.finalizeSettings(address(diamond), user);
+        assertFalse(_enabled());
         _enable();
         _threeSigners();
 
-        vm.prank(s2);
-        _prot().proposeReplacement(user, friend);
-        (p,,) = _prot().getReplacement(user);
-        assertGt(p.round, firstRound);
+        P.propose(address(diamond), user, s2, friend);
+        (,, uint64 readyAt, uint32 round) = _v().replacementProposal();
+        assertGt(round, firstRound);
+        assertEq(readyAt, 0, "one of three is no majority");
         // s1's approval of the cleared round does not count for this one:
         // s1 may approve, and only now is the majority reached.
-        vm.prank(s1);
-        _prot().approveReplacement(user);
-        (p,,) = _prot().getReplacement(user);
-        assertTrue(p.readyAt != 0);
+        P.approve(address(diamond), user, s1, friend);
+        (,, readyAt,) = _v().replacementProposal();
+        assertTrue(readyAt != 0);
     }
 
     function testRetiredAccountProtectsPositionNftsEvenIfNotChosen() public {
         _mintTo(user, 1);
-        vm.prank(user);
-        _prot().enableProtectedMode(DELAY, false);
+        P.enable(address(diamond), user, DELAY);
         assertFalse(_core().isLocked(user));
-        _threeSigners();
-        vm.prank(s1);
-        _prot().proposeReplacement(user, nominee);
-        vm.prank(s2);
-        _prot().approveReplacement(user);
-        vm.warp(block.timestamp + DELAY);
-        _prot().finalizeReplacement(user);
+        _replaceWithNominee();
         // The old wallet still holds the token but can no longer move it:
         // the replacement put it under the core's holder lock (#3205; the
         // vault-verified recovery transfer to the new wallet is PR 2).
@@ -1294,6 +1387,544 @@ contract ProtectedVaultTest is Test {
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(PositionNFT.HolderIsLocked.selector, user));
         _core().transferFrom(user, thief, 1);
+    }
+
+    // ─── Codex #3489 round 1 ─────────────────────────────────────────────
+
+    /// @dev A second replacement is a handover too: the outgoing controller's
+    ///      pending co-sign switch-off dies with it and can never apply.
+    function testSecondReplacementDropsTheOutgoingControllersPendingChanges() public {
+        _deposit20(10 ether);
+        _enable();
+        P.propose(address(diamond), user, user, nominee);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.finalizeReplacement(address(diamond), user);
+        vm.warp(vm.getBlockTimestamp() + DELAY + 1); // past the cool-down
+        P.addSigner(address(diamond), user, nominee, s1, DELAY);
+        vm.startPrank(nominee);
+        _prot().setRequireCosign(user, true);
+        _prot().setRequireCosign(user, false);
+        vm.stopPrank();
+        (,, uint64 offAt) = _prot().getProtection(user);
+        assertGt(offAt, 0, "fixture: the controller's switch-off is pending");
+
+        address nominee2 = makeAddr("nominee2");
+        P.propose(address(diamond), user, nominee, nominee2);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.finalizeReplacement(address(diamond), user);
+        (,, offAt) = _prot().getProtection(user);
+        assertEq(offAt, 0, "the handover dropped it");
+        assertEq(_prot().getRetiredAccountsOf(nominee2).length, 1, "the new controller is recorded");
+        assertEq(_prot().getRetiredAccountsOf(nominee2)[0], user, "the new controller is recorded");
+        assertEq(_prot().getRetiredAccountsOf(nominee).length, 0, "the outgoing one is not");
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        vm.expectRevert(LibProtectedAccount.ChangeNotRequested.selector);
+        _prot().finalizeSettingChanges(user);
+    }
+
+    /// @dev Every platform-side loosening waits out a new owner's cool-down.
+    function testCosignOffIsRefusedDuringTheNewOwnersCooldown() public {
+        _enable();
+        _addSigner(s1);
+        vm.prank(user);
+        _prot().setRequireCosign(user, true);
+        P.propose(address(diamond), user, user, nominee);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.finalizeReplacement(address(diamond), user);
+        vm.prank(nominee);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibProtectedAccount.PrimaryInCooldown.selector, vm.getBlockTimestamp() + DELAY)
+        );
+        _prot().setRequireCosign(user, false);
+    }
+
+    /// @dev Removing the last signer leaves nobody to co-sign: the requirement
+    ///      stops binding at once and is cleared when applied.
+    function testRemovingTheLastSignerClearsTheCosignRequirement() public {
+        _deposit20(10 ether);
+        _enable();
+        _addSigner(s1);
+        vm.prank(user);
+        _prot().setRequireCosign(user, true);
+        P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.signerChange, (uint8(3), s1, P.direct(user))));
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.vaultOf(address(diamond), user).protect(abi.encodeCall(VaultProtection.finalizeSigner, (s1)));
+        uint256 id = _queue(1 ether, user);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        // Before anyone applies the platform side, the stored flag is still
+        // set: every reader uses the effective rule, so nothing waits on a
+        // co-signature nobody can give.
+        assertFalse(_pay().payoutNeedsCosign(id), "the view: no co-sign needed");
+        (, bool inForce,) = _prot().getProtection(user);
+        assertFalse(inForce, "reported as it binds");
+        uint256 before = token.balanceOf(user);
+        _pay().releasePayout(id); // no co-sign: no signer is left to give one
+        assertEq(token.balanceOf(user) - before, 1 ether, "paid without a co-sign");
+        _prot().applyProtection(user);
+        (, bool requireCosign,) = _prot().getProtection(user);
+        assertFalse(requireCosign, "cleared on apply");
+    }
+
+    /// @dev Codex #3489 r14 — removing the last signer clears the co-sign
+    ///      requirement for good: a signer added afterwards, with no
+    ///      application in between, does not revive it, and an application
+    ///      after that clears the stored flag.
+    function testANewSignerNeverRevivesAClearedCosignRequirement() public {
+        _deposit20(10 ether);
+        _enable();
+        _addSigner(s1);
+        vm.prank(user);
+        _prot().setRequireCosign(user, true);
+        P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.signerChange, (uint8(3), s1, P.direct(user))));
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.vaultOf(address(diamond), user).protect(abi.encodeCall(VaultProtection.finalizeSigner, (s1)));
+        _addSigner(s2);
+        (, bool inForce,) = _prot().getProtection(user);
+        assertFalse(inForce, "a new signer does not revive the requirement");
+        uint256 id = _queue(1 ether, user);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        assertFalse(_pay().payoutNeedsCosign(id), "the owner's payout needs no co-sign");
+        uint256 before = token.balanceOf(user);
+        _pay().releasePayout(id);
+        assertEq(token.balanceOf(user) - before, 1 ether, "paid without a co-sign");
+        _prot().applyProtection(user);
+        // Switching it on again is the owner's own act, under the new count.
+        vm.prank(user);
+        _prot().setRequireCosign(user, true);
+        (, inForce,) = _prot().getProtection(user);
+        assertTrue(inForce, "switched on again, it binds");
+    }
+
+    /// @dev Codex #3489 r2 — one co-sign rule, read per row: the view agrees
+    ///      with the release, the account's setting binds only while it has a
+    ///      signer, and an unverified destination needs a co-sign with the
+    ///      setting off.
+    function testPayoutNeedsCosignFollowsTheReleaseRule() public {
+        _deposit20(10 ether);
+        _enable();
+        _addSigner(s1);
+        P.allow(address(diamond), user, user, friend, DELAY);
+        uint256 toFriend = _queue(1 ether, friend);
+        uint256 toUser = _queue(1 ether, user);
+        assertTrue(_pay().payoutNeedsCosign(toFriend), "unverified destination, setting off");
+        assertFalse(_pay().payoutNeedsCosign(toUser), "the owner's wallet, setting off");
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.CosignRequired.selector, toFriend));
+        _pay().releasePayout(toFriend);
+
+        vm.prank(user);
+        _prot().setRequireCosign(user, true);
+        assertTrue(_pay().payoutNeedsCosign(toUser), "setting on, a signer to give it");
+        (, bool on,) = _prot().getProtection(user);
+        assertTrue(on);
+        // The last signer leaves: the setting stops binding before anyone applies.
+        P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.signerChange, (uint8(3), s1, P.direct(user))));
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.vaultOf(address(diamond), user).protect(abi.encodeCall(VaultProtection.finalizeSigner, (s1)));
+        assertFalse(_pay().payoutNeedsCosign(toUser), "no signer left");
+        (, on,) = _prot().getProtection(user);
+        assertFalse(on, "reported as it binds");
+        _pay().releasePayout(toUser);
+        assertFalse(_pay().payoutNeedsCosign(toUser), "not queued any more");
+    }
+
+    /// @dev Codex #3489 r11 — removing a destination kills the payouts queued
+    ///      to it for good: re-adding the same address starts a new generation
+    ///      that never revives them.
+    function testReAddingADestinationNeverRevivesItsCancelledPayouts() public {
+        _deposit20(10 ether);
+        _enable();
+        P.allow(address(diamond), user, user, friend, DELAY);
+        uint256 old = _queue(1 ether, friend);
+        P.removeAllowed(address(diamond), user, user, friend);
+        vm.warp(vm.getBlockTimestamp() + 1);
+        P.allow(address(diamond), user, user, friend, DELAY); // re-added and finalized
+        assertFalse(_pay().payoutNeedsCosign(old), "a row the release cancels needs no co-sign");
+        _pay().releasePayout(old);
+        assertEq(_pay().getPendingPayout(old).state, 3, "the old row is cancelled, not paid");
+        assertEq(token.balanceOf(friend), 0, "nothing reached the destination");
+        // A row queued to the new activation pays.
+        uint256 fresh = _queue(1 ether, friend);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        _pay().releasePayout(fresh);
+        assertEq(token.balanceOf(friend), 1 ether, "the new activation pays");
+    }
+
+    /// @dev Codex #3489 r10 — a replacement finalized straight on the vault
+    ///      holds the retired wallet's positions in the same transaction, with
+    ///      no separate application: there is no window to move them.
+    function testAReplacementHoldsThePositionsInItsOwnTransaction() public {
+        P.enable(address(diamond), user, DELAY); // NFTs not locked by the owner
+        (bool lockedBefore,,,,) = LibTestPositionNFT.core(address(diamond)).lockOf(user);
+        assertFalse(lockedBefore, "fixture: positions not held yet");
+        P.propose(address(diamond), user, user, nominee);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.vaultOf(address(diamond), user).protect(abi.encodeCall(VaultProtection.finalizeReplacement, ()));
+        (bool locked,,,,) = LibTestPositionNFT.core(address(diamond)).lockOf(user);
+        assertTrue(locked, "held by the finalize itself");
+        assertEq(_prot().protectionManagerOf(user), nominee);
+    }
+
+    /// @dev Codex #3489 r9 — a vault lock lands its platform side with it: a
+    ///      pending co-sign switch-off is voided by the lock's own application.
+    function testAVaultLockAppliesItsPlatformSide() public {
+        _deposit20(10 ether);
+        _enable();
+        _addSigner(s1);
+        vm.prank(user);
+        _prot().setRequireCosign(user, true);
+        vm.prank(user);
+        _prot().setRequireCosign(user, false);
+        uint256 id = _queue(1 ether, user);
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        vm.prank(user);
+        v.protect(abi.encodeCall(VaultProtection.lock, (P.direct(user))));
+        (,, uint64 offAt) = _prot().getProtection(user);
+        assertEq(offAt, 0, "the switch-off died with the lock");
+        assertEq(_pay().getPendingPayout(id).state, 3, "the queued row was cancelled at once");
+    }
+
+    /// @dev #3489 (alpha05 e2e) — a lock sent with the least gas it succeeds
+    ///      with, which is what `eth_estimateGas` finds, still lands its
+    ///      platform side: a gas limit that would starve the best-effort
+    ///      application is refused instead of locking without it.
+    function testTheLeastGasALockSucceedsWithStillAppliesIt() public {
+        _deposit20(10 ether);
+        _enable();
+        uint256 id = _queue(1 ether, user);
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        bytes memory call = abi.encodeCall(v.protect, (abi.encodeCall(VaultProtection.lock, (P.direct(user)))));
+        uint256 lo = 50_000;
+        uint256 hi = 3_000_000;
+        uint256 snap = vm.snapshotState();
+        vm.prank(user);
+        (bool okHi,) = address(v).call{gas: hi}(call);
+        assertTrue(okHi, "fixture: the lock succeeds with ample gas");
+        vm.revertToState(snap);
+        while (hi - lo > 1) {
+            uint256 mid = (lo + hi) / 2;
+            snap = vm.snapshotState();
+            vm.prank(user);
+            (bool ok,) = address(v).call{gas: mid}(call);
+            vm.revertToState(snap);
+            if (ok) hi = mid;
+            else lo = mid;
+        }
+        vm.prank(user);
+        (bool okMin,) = address(v).call{gas: hi}(call);
+        assertTrue(okMin, "the least gas succeeds");
+        assertEq(_pay().getPendingPayout(id).state, 3, "and the platform side landed with it");
+    }
+
+    /// @dev Codex #3489 r16 — a raised delay applies its platform side in its
+    ///      own transaction, and a raise whose platform delays are already as
+    ///      long (they were never lowered with the vault's) still lands.
+    function testARaisedDelayLandsWhenThePlatformHasNothingToApply() public {
+        P.enable(address(diamond), user, 5 days);
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        vm.prank(user);
+        v.protect(abi.encodeCall(VaultProtection.setDelay, (uint32(2 days), P.direct(user))));
+        vm.warp(vm.getBlockTimestamp() + 5 days);
+        v.protect(abi.encodeCall(VaultProtection.finalizeSettings, ()));
+        // The platform keeps its longer delays; raising the vault to 3 days
+        // has nothing to apply there, and lands.
+        vm.prank(user);
+        v.protect(abi.encodeCall(VaultProtection.setDelay, (uint32(3 days), P.direct(user))));
+        (,, uint32 delay,,,,) = v.protectionState();
+        assertEq(delay, 3 days, "raised");
+        vm.expectRevert(LibProtectedAccount.ChangeNotRequested.selector);
+        _prot().applyProtection(user);
+    }
+
+    /// @dev Owner security review of #3489 — a lock never lands without its
+    ///      platform side: any refusal of the application (here, the shape of
+    ///      the Diamond's reentrancy guard) reverts the lock with it, and the
+    ///      queued payout stays queued under an unlocked vault.
+    function testALockIsRefusedWhenItsPlatformSideIsRefused() public {
+        _deposit20(10 ether);
+        _enable();
+        uint256 id = _queue(1 ether, user);
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        bytes memory refusal = abi.encodeWithSignature("ReentrancyGuardReentrantCall()");
+        vm.mockCallRevert(
+            address(diamond), abi.encodeWithSelector(ProtectedAccountFacet.applyProtection.selector, user), refusal
+        );
+        vm.prank(user);
+        vm.expectRevert(refusal);
+        v.protect(abi.encodeCall(VaultProtection.lock, (P.direct(user))));
+        vm.clearMockedCalls();
+        (, bool locked,,,,,) = v.protectionState();
+        assertFalse(locked, "the lock did not land");
+        assertEq(_pay().getPendingPayout(id).state, 1, "the row is untouched");
+        // With the platform healthy, the same lock lands with its side.
+        vm.prank(user);
+        v.protect(abi.encodeCall(VaultProtection.lock, (P.direct(user))));
+        assertEq(_pay().getPendingPayout(id).state, 3, "cancelled with the lock");
+    }
+
+    /// @dev Owner security review of #3489 — an unlock never lands without
+    ///      its platform side either.
+    function testAnUnlockIsRefusedWhenItsPlatformSideIsRefused() public {
+        _enable();
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        vm.prank(user);
+        v.protect(abi.encodeCall(VaultProtection.lock, (P.direct(user))));
+        vm.prank(user);
+        v.protect(abi.encodeCall(VaultProtection.requestUnlock, (P.direct(user))));
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        bytes memory refusal = abi.encodeWithSignature("ReentrancyGuardReentrantCall()");
+        vm.mockCallRevert(
+            address(diamond), abi.encodeWithSelector(ProtectedAccountFacet.applyProtection.selector, user), refusal
+        );
+        vm.expectRevert(refusal);
+        v.protect(abi.encodeCall(VaultProtection.finalizeSettings, ()));
+        vm.clearMockedCalls();
+        (, bool locked,,,,,) = v.protectionState();
+        assertTrue(locked, "still locked");
+        v.protect(abi.encodeCall(VaultProtection.finalizeSettings, ()));
+        (, locked,,,,,) = v.protectionState();
+        assertFalse(locked, "unlocked with its platform side");
+        vm.expectRevert(LibProtectedAccount.ChangeNotRequested.selector);
+        _prot().applyProtection(user);
+    }
+
+    /// @dev The one answer the application may give without reverting the
+    ///      vault's change: nothing to apply (the platform already matches).
+    function testNothingToApplyDoesNotBlockTheVaultsChange() public {
+        _enable();
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(ProtectedAccountFacet.applyProtection.selector, user),
+            abi.encodeWithSelector(LibProtectedAccount.ChangeNotRequested.selector)
+        );
+        vm.prank(user);
+        v.protect(abi.encodeCall(VaultProtection.lock, (P.direct(user))));
+        (, bool locked,,,,,) = v.protectionState();
+        assertTrue(locked, "the lock landed");
+    }
+
+    /// @dev Codex #3489 r7 — neither of the account's own wallets may become
+    ///      its signer: after a replacement the original wallet cannot be
+    ///      nominated, and a nomination made before it became an account
+    ///      wallet cannot be finalized.
+    function testTheAccountsOwnWalletsCannotBecomeSigners() public {
+        _enable();
+        P.propose(address(diamond), user, user, nominee);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.finalizeReplacement(address(diamond), user);
+        vm.warp(vm.getBlockTimestamp() + DELAY + 1); // past the cool-down
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        vm.prank(nominee);
+        vm.expectRevert(abi.encodeWithSelector(VaultProtection.NomineeIsAccountWallet.selector, user));
+        v.protect(abi.encodeCall(VaultProtection.signerChange, (uint8(1), user, P.direct(nominee))));
+        vm.prank(nominee);
+        vm.expectRevert(abi.encodeWithSelector(VaultProtection.NomineeIsAccountWallet.selector, nominee));
+        v.protect(abi.encodeCall(VaultProtection.signerChange, (uint8(1), nominee, P.direct(nominee))));
+        // An ordinary signer can still be added.
+        P.addSigner(address(diamond), user, nominee, s1, DELAY);
+        assertTrue(v.signerEntry(s1).active);
+    }
+
+    /// @dev Codex #3489 r6 — a replaced account pays only its manager: the
+    ///      new wallet cannot add a payout destination, not even the original
+    ///      wallet, and the readers admit no destination but the manager.
+    function testAReplacedAccountTakesNoPayoutDestination() public {
+        _enable();
+        P.propose(address(diamond), user, user, nominee);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.finalizeReplacement(address(diamond), user);
+        vm.warp(vm.getBlockTimestamp() + DELAY + 1); // past the cool-down
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        vm.prank(nominee);
+        vm.expectRevert(VaultProtection.RetiredAccount.selector);
+        v.protect(abi.encodeCall(VaultProtection.addAllowlisted, (user, P.direct(nominee))));
+        vm.prank(nominee);
+        vm.expectRevert(VaultProtection.RetiredAccount.selector);
+        v.protect(abi.encodeCall(VaultProtection.addAllowlisted, (friend, P.direct(nominee))));
+    }
+
+    /// @dev Codex #3489 r6 — a signer may withdraw its own nomination but
+    ///      never cancel its own removal; the owner or another signer may.
+    function testASignerCannotCancelItsOwnRemoval() public {
+        _enable();
+        _addSigner(s1);
+        _addSigner(s2);
+        P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.signerChange, (uint8(3), s1, P.direct(user))));
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        vm.prank(s1);
+        vm.expectRevert(abi.encodeWithSelector(VaultProtection.CannotCancelOwnRemoval.selector, s1));
+        v.protect(abi.encodeCall(VaultProtection.signerChange, (uint8(4), s1, P.direct(s1))));
+        assertGt(v.signerEntry(s1).removeAt, 0, "still being removed");
+        P.call(address(diamond), user, s2, abi.encodeCall(VaultProtection.signerChange, (uint8(4), s1, P.direct(s2))));
+        assertEq(v.signerEntry(s1).removeAt, 0, "another signer may cancel it");
+        // A nominee still withdraws its own pending nomination.
+        P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.signerChange, (uint8(1), s3, P.direct(user))));
+        P.call(address(diamond), user, s3, abi.encodeCall(VaultProtection.signerChange, (uint8(4), s3, P.direct(s3))));
+        assertEq(v.signerEntry(s3).addAt, 0, "nomination withdrawn");
+    }
+
+    /// @dev Codex #3489 r4 — a replacement may not name the account's own
+    ///      wallet: the creation owner (which would undo the retirement) or
+    ///      the wallet holding it now.
+    function testAReplacementBackToTheAccountsOwnWalletIsRefused() public {
+        _enable();
+        P.propose(address(diamond), user, user, nominee);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.finalizeReplacement(address(diamond), user);
+        vm.warp(vm.getBlockTimestamp() + DELAY + 1);
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        vm.prank(nominee);
+        vm.expectRevert(abi.encodeWithSelector(VaultProtection.NomineeIsAccountWallet.selector, user));
+        v.protect(abi.encodeCall(VaultProtection.replacement, (uint8(1), user, P.direct(nominee))));
+        vm.prank(nominee);
+        vm.expectRevert(abi.encodeWithSelector(VaultProtection.NomineeIsAccountWallet.selector, nominee));
+        v.protect(abi.encodeCall(VaultProtection.replacement, (uint8(1), nominee, P.direct(nominee))));
+    }
+
+    /// @dev Codex #3489 r4/r5 — after A→B→C the account stays retired,
+    ///      protected and routed through its vault; a switch-off is refused.
+    function testRetirementIsPermanentAcrossReplacementsAndASwitchOff() public {
+        _deposit20(10 ether);
+        _enable();
+        address third = makeAddr("third");
+        P.propose(address(diamond), user, user, nominee);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.finalizeReplacement(address(diamond), user);
+        vm.warp(vm.getBlockTimestamp() + DELAY + 1);
+        P.propose(address(diamond), user, nominee, third);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.finalizeReplacement(address(diamond), user);
+        vm.warp(vm.getBlockTimestamp() + DELAY + 1);
+        _expectProtectRevert(
+            third,
+            abi.encodeCall(VaultProtection.requestDisable, (P.direct(third))),
+            abi.encodeWithSelector(VaultProtection.RetiredAccount.selector)
+        );
+        (bool on,,,, bool retired) = P.vaultOf(address(diamond), user).protectionCore();
+        assertTrue(on, "a retired account cannot be switched off");
+        assertTrue(retired, "still retired");
+        assertTrue(_prot().isProtectionOn(user), "still governed");
+        assertEq(_prot().protectionManagerOf(user), third, "managed by the latest wallet");
+        vm.prank(user);
+        vm.expectRevert();
+        _depo().withdrawFromVault(user, K20, address(token), 0, 1 ether, user);
+        vm.prank(third);
+        uint256 id = _depo().withdrawFromVault(user, K20, address(token), 0, 1 ether, third);
+        assertEq(token.balanceOf(third), 0, "queued through the vault");
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        _pay().releasePayout(id);
+        assertEq(token.balanceOf(third), 1 ether, "paid to the latest wallet");
+    }
+
+    /// @dev Codex #3489 r3 — a row the release would cancel (its destination
+    ///      removed) is not reported as waiting on a co-signature, so a
+    ///      keeper's release settles it.
+    function testARowTheReleaseWouldCancelNeedsNoCosign() public {
+        _deposit20(10 ether);
+        _enable();
+        _addSigner(s1);
+        P.allow(address(diamond), user, user, friend, DELAY);
+        uint256 id = _queue(1 ether, friend);
+        assertTrue(_pay().payoutNeedsCosign(id), "fixture: unverified destination");
+        P.removeAllowed(address(diamond), user, user, friend);
+        assertFalse(_pay().payoutNeedsCosign(id), "the release cancels it first");
+        _pay().releasePayout(id);
+        assertEq(_pay().getPendingPayout(id).state, 3, "cancelled by the release");
+    }
+
+    /// @dev Codex #3489 r3 — a removal voided by a lock or a replacement
+    ///      reads as not pending, and a fresh one can be requested.
+    function testAVoidedSignerRemovalReadsAsNotPending() public {
+        _enable();
+        _addSigner(s1);
+        P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.signerChange, (uint8(3), s1, P.direct(user))));
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        assertGt(v.signerEntry(s1).removeAt, 0, "fixture: removal pending");
+        P.lock(address(diamond), user, user);
+        assertEq(v.signerEntry(s1).removeAt, 0, "a lock voids it");
+        assertTrue(v.signerEntry(s1).active, "still a signer");
+    }
+
+    function testAVoidedSignerRemovalCanBeAskedAgainAfterAReplacement() public {
+        _enable();
+        _addSigner(s1);
+        P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.signerChange, (uint8(3), s1, P.direct(user))));
+        P.propose(address(diamond), user, user, nominee);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.finalizeReplacement(address(diamond), user);
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
+        assertEq(v.signerEntry(s1).removeAt, 0, "the replacement voids it");
+        vm.warp(vm.getBlockTimestamp() + DELAY + 1); // past the new owner's cool-down
+        P.call(address(diamond), user, nominee, abi.encodeCall(VaultProtection.signerChange, (uint8(3), s1, P.direct(nominee))));
+        assertGt(v.signerEntry(s1).removeAt, 0, "asked again");
+    }
+
+    /// @dev Codex #3489 r3 — a replacement's routing is permanent: after the
+    ///      new wallet switches protected mode off, the retired wallet's
+    ///      payouts still go through the vault to the new wallet.
+    /// @dev Codex #3489 r5 — a replaced account's protection cannot be
+    ///      switched off, so its payouts keep both the vault routing and the
+    ///      delay: a withdrawal queues and pays the new wallet only after it.
+    function testARetiredAccountCannotBeSwitchedOff_andKeepsItsDelay() public {
+        _deposit20(10 ether);
+        _enable();
+        P.propose(address(diamond), user, user, nominee);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.finalizeReplacement(address(diamond), user);
+        vm.warp(vm.getBlockTimestamp() + DELAY + 1);
+        _expectProtectRevert(
+            nominee,
+            abi.encodeCall(VaultProtection.requestDisable, (P.direct(nominee))),
+            abi.encodeWithSelector(VaultProtection.RetiredAccount.selector)
+        );
+        uint256 before = token.balanceOf(user);
+        vm.prank(nominee);
+        uint256 id = _depo().withdrawFromVault(user, K20, address(token), 0, 1 ether, nominee);
+        assertEq(token.balanceOf(nominee), 0, "queued, not paid at once");
+        vm.expectRevert();
+        _pay().releasePayout(id); // not before the delay
+        assertEq(token.balanceOf(user), before, "the retired wallet got nothing");
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        _pay().releasePayout(id);
+        assertEq(token.balanceOf(nominee), 1 ether, "paid to the new wallet");
+    }
+
+    /// @dev Codex #3489 r5 — a manager with protected mode on in its OWN
+    ///      account is paid a retired account's payout into its own vault,
+    ///      so its own delay and lock still hold that money.
+    function testAProtectedManagerIsPaidIntoItsOwnVault() public {
+        _deposit20(10 ether);
+        _enable();
+        P.enable(address(diamond), nominee, DELAY);
+        P.propose(address(diamond), user, user, nominee);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        P.finalizeReplacement(address(diamond), user);
+        address managerVault = address(P.vaultOf(address(diamond), nominee));
+        uint256 before = token.balanceOf(managerVault);
+        vm.prank(nominee);
+        uint256 id = _depo().withdrawFromVault(user, K20, address(token), 0, 2 ether, nominee);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        _pay().releasePayout(id);
+        assertEq(token.balanceOf(managerVault) - before, 2 ether, "landed in the manager's own vault");
+        assertEq(token.balanceOf(nominee), 0, "not in the manager's wallet");
+    }
+
+    /// @dev An allowlisted destination that has protected mode on is paid
+    ///      into its own vault, which the paying vault accepts.
+    function testAllowlistedProtectedDestinationIsPaidIntoItsVault() public {
+        _deposit20(10 ether);
+        _enable();
+        P.enable(address(diamond), friend, DELAY);
+        P.allow(address(diamond), user, user, friend, DELAY);
+        P.verify(address(diamond), user, friend);
+        address friendVault = address(P.vaultOf(address(diamond), friend));
+        uint256 before = token.balanceOf(friendVault);
+        uint256 id = _queue(2 ether, friend);
+        vm.warp(vm.getBlockTimestamp() + DELAY);
+        _pay().releasePayout(id);
+        assertEq(token.balanceOf(friendVault) - before, 2 ether, "landed in the destination's vault");
+        assertEq(token.balanceOf(friend), 0, "not in its wallet");
     }
 }
 

@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 
 import {SetupTest} from "./SetupTest.t.sol";
@@ -490,8 +491,7 @@ contract NFTPrepayListingFacetTest is SetupTest {
     function test_postPrepayListing_protectedHolderRefusesAnUnlistedFeeLeg() public {
         _scaffoldActiveLoan({allowsPrepay: true});
         uint256 ask = _floorPlusBuffer();
-        vm.prank(borrowerHolder);
-        ProtectedAccountFacet(address(diamond)).enableProtectedMode(2 days, false);
+        LibTestProtection.enable(address(diamond), borrowerHolder, 2 days);
 
         address feeTo = makeAddr("unlistedFeeRecipient");
         FeeLeg[] memory feeLegs = new FeeLeg[](1);
@@ -510,9 +510,9 @@ contract NFTPrepayListingFacetTest is SetupTest {
     function test_postPrepayListing_lockedHolderIsRefused() public {
         _scaffoldActiveLoan({allowsPrepay: true});
         uint256 ask = _floorPlusBuffer();
+        LibTestProtection.enable(address(diamond), borrowerHolder, 2 days);
+        LibTestProtection.lock(address(diamond), borrowerHolder, borrowerHolder);
         vm.startPrank(borrowerHolder);
-        ProtectedAccountFacet(address(diamond)).enableProtectedMode(2 days, false);
-        ProtectedAccountFacet(address(diamond)).lockVault(borrowerHolder);
         vm.expectRevert(
             abi.encodeWithSelector(LibProtectedAccount.ProtectedVaultLocked.selector, borrowerHolder)
         );
@@ -529,12 +529,10 @@ contract NFTPrepayListingFacetTest is SetupTest {
         ProtectedAccountFacet pa = ProtectedAccountFacet(address(diamond));
         address feeTo = makeAddr("feeRecipientRule");
         assertTrue(pa.isListingLegAllowed(borrowerHolder, feeTo), "protection off: any leg");
-        vm.prank(borrowerHolder);
-        pa.enableProtectedMode(2 days, false);
+        LibTestProtection.enable(address(diamond), borrowerHolder, 2 days);
         assertFalse(pa.isListingLegAllowed(borrowerHolder, feeTo), "unlisted leg refused");
         assertTrue(pa.isListingLegAllowed(borrowerHolder, borrowerHolder), "own wallet allowed");
-        vm.prank(borrowerHolder);
-        pa.lockVault(borrowerHolder);
+        LibTestProtection.lock(address(diamond), borrowerHolder, borrowerHolder);
         assertFalse(pa.isListingLegAllowed(borrowerHolder, borrowerHolder), "locked seller refused");
     }
 

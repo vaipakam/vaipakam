@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { encodeAbiParameters, encodeEventTopics, type Abi, type Log } from 'viem';
-import { ProtectedAccountFacetABI } from '@vaipakam/contracts/abis';
-import { dueChanges, measureSafety, pendingChanges, safetyBlockers, safetyCall, safetyChanged, type SafetyFacts, type SafetyMode, type SafetyReview } from './safety';
+import { ProtectedAccountFacetABI, VaultFactoryFacetABI, VaultProtectionABI } from '@vaipakam/contracts/abis';
+import { directAuth, protectionCall } from '@vaipakam/lib/protectedAccountView';
+import { dueChanges, landedBeforeOutcome, measureSafety, pendingChanges, safetyBlockers, safetyChanged, safetyLogs, safetySteps, sendSafetySteps, type SafetyFacts, type SafetyMode, type SafetyReview } from './safety';
 import { safetyReceipt } from './safetyReceipt';
 
 type Hex = `0x${string}`;
 const DIAMOND = '0x00000000000000000000000000000000000000d1' as Hex;
 const ME = '0x00000000000000000000000000000000000000e1' as Hex;
 const OTHER = '0x00000000000000000000000000000000000000e2' as Hex;
+const VAULT = '0x00000000000000000000000000000000000000f1' as Hex;
 const ZERO = '0x0000000000000000000000000000000000000000' as Hex;
 const DAY = 86_400;
 const NOW = 1_800_000_000;
@@ -42,6 +44,7 @@ const LOCKED: SafetyMode = { ...ON, locked: true, lockedAt: NOW - DAY, lockedBy:
 function facts(p: Partial<SafetyFacts> = {}): SafetyFacts {
   return {
     account: ME,
+    vault: VAULT,
     mode: OFF,
     bounds: { min: 2 * DAY, max: 5 * DAY },
     paused: false,
@@ -58,7 +61,8 @@ function review(action: SafetyReview['action'], f: Partial<SafetyFacts> = {}, p:
 }
 
 function eventLog(eventName: string, args: Record<string, unknown>, data: { types: { type: string }[]; values: unknown[] }, address: Hex = DIAMOND): Log {
-  const topics = encodeEventTopics({ abi: ProtectedAccountFacetABI as Abi, eventName, args } as never);
+  const abi = (address === VAULT ? VaultProtectionABI : ProtectedAccountFacetABI) as Abi;
+  const topics = encodeEventTopics({ abi, eventName, args } as never);
   return { address, topics, data: data.types.length === 0 ? '0x' : encodeAbiParameters(data.types, data.values as never) } as unknown as Log;
 }
 
@@ -72,12 +76,23 @@ describe('pending and due changes', () => {
   });
 });
 
-describe('safetyCall', () => {
-  it('turns on with the chosen delay and NFT setting, and acts on the wallet’s own account otherwise', () => {
-    expect(safetyCall('enable', ME, { delaySeconds: 3 * DAY, protectNfts: true })).toMatchObject({ functionName: 'enableProtectedMode', args: [3 * DAY, true] });
-    expect(safetyCall('lock', ME, null)).toMatchObject({ functionName: 'lockVault', args: [ME] });
-    expect(safetyCall('unlock', ME, null)).toMatchObject({ functionName: 'requestUnlock', args: [ME] });
-    expect(safetyCall('finalize', ME, null)).toMatchObject({ functionName: 'finalizeSettingChanges', args: [ME] });
+describe('safetySteps', () => {
+  it('writes each action to the wallet’s own vault with its direct authorization; the vault applies the platform side itself', () => {
+    const auth = directAuth(ME);
+    const protect = (fn: string, args: readonly unknown[]) => ({ to: 'vault', functionName: 'protect', args: [protectionCall(fn, args)] });
+    expect(safetySteps('enable', ME, VAULT, { delaySeconds: 3 * DAY, protectNfts: true })).toMatchObject([
+      protect('enable', [3 * DAY, auth]),
+      { to: 'diamond', functionName: 'lockPositionNfts', args: [ME] },
+    ]);
+    // #3489 r16: the switch-on applies its own platform side.
+    expect(safetySteps('enable', ME, null, { delaySeconds: 3 * DAY, protectNfts: false }).map((x) => x.functionName)).toEqual(['getOrCreateUserVault', 'protect']);
+    // One transaction: the vault's lock applies its own platform side (#3489 r9).
+    expect(safetySteps('lock', ME, VAULT, null)).toEqual([expect.objectContaining(protect('lock', [auth]))]);
+    expect(safetySteps('unlock', ME, VAULT, null)).toMatchObject([protect('requestUnlock', [auth])]);
+    expect(safetySteps('finalize', ME, VAULT, null, ['cosignOff'])).toMatchObject([{ to: 'diamond', functionName: 'finalizeSettingChanges', args: [ME] }]);
+    // The vault's finalizer applies an unlock's and a switch-off's platform side (#3489 r12).
+    expect(safetySteps('finalize', ME, VAULT, null, ['unlock']).map((x) => x.functionName)).toEqual(['protect']);
+    expect(safetySteps('finalize', ME, VAULT, null, ['disable']).map((x) => x.functionName)).toEqual(['protect']);
   });
 });
 
@@ -129,21 +144,18 @@ describe('safetyChanged', () => {
 });
 
 describe('measureSafety', () => {
-  it('reads the switch-on and its delay from the Diamond’s own logs for this wallet', () => {
-    const on = eventLog('ProtectedModeEnabled', { account: ME }, { types: [{ type: 'uint32' }, { type: 'bool' }], values: [2 * DAY, false] });
-    expect(measureSafety(review('enable'), [on], DIAMOND, copy)).toEqual([{ status: 'done', label: 'safety.legEnabled:{"delay":"2 days"}' }]);
-    const other = eventLog('ProtectedModeEnabled', { account: OTHER }, { types: [{ type: 'uint32' }, { type: 'bool' }], values: [2 * DAY, false] });
-    expect(measureSafety(review('enable'), [other], DIAMOND, copy)[0]?.status).toBe('not-done');
-    const elsewhere = eventLog('ProtectedModeEnabled', { account: ME }, { types: [{ type: 'uint32' }, { type: 'bool' }], values: [2 * DAY, false] }, OTHER);
-    expect(measureSafety(review('enable'), [elsewhere], DIAMOND, copy)[0]?.status).toBe('not-done');
+  const posture = (account: Hex, enabled: boolean, locked: boolean, address: Hex = DIAMOND) =>
+    eventLog('ProtectionApplied', { account }, { types: [{ type: 'bool' }, { type: 'bool' }, { type: 'bool' }, { type: 'uint32' }], values: [enabled, locked, false, 2 * DAY] }, address);
+  it('reads the switch-on and its delay from the Diamond’s applied posture for this wallet', () => {
+    expect(measureSafety(review('enable'), [posture(ME, true, false)], DIAMOND, copy)).toEqual([{ status: 'done', label: 'safety.legEnabled:{"delay":"2 days"}' }]);
+    expect(measureSafety(review('enable'), [posture(OTHER, true, false)], DIAMOND, copy)[0]?.status).toBe('not-done');
+    expect(measureSafety(review('enable'), [posture(ME, true, false, OTHER)], DIAMOND, copy)[0]?.status).toBe('not-done');
   });
-  it('reads a lock, an unlock request and the changes applied', () => {
-    const locked = eventLog('VaultLocked', { account: ME, by: ME }, { types: [], values: [] });
-    expect(measureSafety(review('lock', { mode: ON }), [locked], DIAMOND, copy)).toEqual([{ status: 'done', label: 'safety.legLocked' }]);
-    const asked = eventLog('SettingChangeRequested', { account: ME, kind: 5 }, { types: [{ type: 'uint256' }, { type: 'uint256' }], values: [0n, BigInt(NOW)] });
+  it('reads a lock, an unlock request (from the vault) and the changes applied', () => {
+    expect(measureSafety(review('lock', { mode: ON }), [posture(ME, true, true)], DIAMOND, copy)).toEqual([{ status: 'done', label: 'safety.legLocked' }]);
+    const asked = eventLog('ProtectionSettingRequested', { action: 4 }, { types: [{ type: 'uint256' }, { type: 'uint64' }, { type: 'address' }], values: [0n, BigInt(NOW), ME] }, VAULT);
     expect(measureSafety(review('unlock', { mode: LOCKED }), [asked], DIAMOND, copy)[0]?.status).toBe('done');
-    const applied = eventLog('SettingChangeApplied', { account: ME, kind: 5 }, { types: [], values: [] });
-    const legs = measureSafety(review('finalize', { mode: LOCKED }, { due: ['unlock', 'disable'] }), [applied], DIAMOND, copy);
+    const legs = measureSafety(review('finalize', { mode: LOCKED }, { due: ['unlock', 'disable'] }), [posture(ME, true, false)], DIAMOND, copy);
     expect(legs.map((l) => l.status)).toEqual(['done', 'not-done']);
   });
 });
@@ -155,6 +167,7 @@ describe('safetyReceipt', () => {
     expect(r.consequences).toEqual(
       expect.arrayContaining(['safety.enableNeverOthers', 'safety.enableInbound', 'safety.enableNftsOff', 'safety.enableVault', 'safety.enableVoidsPin']),
     );
+    // #3489 r16: one prompt, the vault's write, which applies the platform side.
     expect(r.prompts).toBe(1);
   });
   it('a lock states what it cancels and drops; unread facts are said', () => {
@@ -173,5 +186,147 @@ describe('safetyReceipt', () => {
     const r = safetyReceipt(review('finalize', { mode: { ...ON, delaySeconds: 5 * DAY, pendingDelay: 2 * DAY, pendingDelayAt: NOW - 1 } }, { due: ['lowerDelay'] }), copy);
     expect(r.rows[0]?.value).toEqual({ kind: 'text', text: 'safety.changeLowerDelayTo:{"delay":"2 days"}' });
     expect(r.rows.find((x) => x.label === 'safety.rowDelayAfter')?.value).toEqual({ kind: 'text', text: 'safety.delayFromTo:{"to":"2 days","from":"5 days"}' });
+  });
+});
+
+// Codex #3489 r1: an action of several transactions is measured over every
+// step that landed, and a later step that could not be sent is a leg of the
+// outcome, not a failure of the whole action.
+describe('sendSafetySteps and safetyLogs', () => {
+  const H1 = ('0x' + '1'.repeat(64)) as Hex;
+  const H2 = ('0x' + '2'.repeat(64)) as Hex;
+  const lowered = eventLog('ProtectionSettingApplied', { action: 2 }, { types: [{ type: 'uint256' }], values: [2n * BigInt(DAY)] }, VAULT);
+  const cosignOff = eventLog('SettingChangeApplied', { account: ME, kind: 4 }, { types: [], values: [] });
+  const finalize = review('finalize', { mode: { ...ON, delaySeconds: 5 * DAY, pendingDelay: 2 * DAY, pendingDelayAt: NOW - 1, requireCosign: true, pendingCosignOffAt: NOW - 1 } }, { due: ['lowerDelay', 'cosignOff'] });
+  const label = (i: number) => `step ${i + 1}`;
+
+  it('measures the vault step and the Diamond step together', async () => {
+    const sent = await sendSafetySteps(2, async (i) => (i === 0 ? H1 : H2), async () => ({ ok: true, logs: [lowered] }), label, 'reverted', 'unread');
+    expect(sent).toMatchObject({ hash: H2, stopped: null });
+    const legs = measureSafety(finalize, safetyLogs(sent.landed, { transactionHash: H2, logs: [cosignOff] }), DIAMOND, copy);
+    expect(legs.map((l) => l.status)).toEqual(['done', 'done']);
+    // The last receipt alone (the old measurement) misses the vault step.
+    expect(measureSafety(finalize, [cosignOff], DIAMOND, copy).map((l) => l.status)).toEqual(['not-done', 'done']);
+  });
+
+  it('a later step that cannot be sent leaves the landed one measured, and says which step stopped', async () => {
+    const sent = await sendSafetySteps(
+      2,
+      async (i) => {
+        if (i === 1) throw new Error('user rejected');
+        return H1;
+      },
+      async () => ({ ok: true, logs: [lowered] }),
+      label,
+      'reverted',
+      'unread',
+    );
+    expect(sent.hash).toBe(H1);
+    expect(sent.stopped).toMatchObject({ status: 'not-done', label: 'step 2' });
+    // The tracker follows H1: its logs are counted once.
+    const logs = safetyLogs(sent.landed, { transactionHash: H1, logs: [lowered] });
+    expect(logs).toHaveLength(1);
+    expect(measureSafety(finalize, logs, DIAMOND, copy).map((l) => l.status)).toEqual(['done', 'not-done']);
+  });
+
+  it('a last step that reverts after an earlier one landed is a partial action, never one that changed nothing (Codex #3489 r17)', async () => {
+    const sent = await sendSafetySteps(
+      2,
+      async (i) => (i === 0 ? H1 : H2),
+      async (hash) => (hash === H1 ? { ok: true, logs: [lowered] } : { ok: false, logs: [] }),
+      label,
+      'reverted',
+      'unread',
+    );
+    expect(sent.hash).toBe(H1);
+    expect(sent.stopped).toMatchObject({ status: 'not-done', label: 'step 2', reason: 'reverted' });
+    const logs = safetyLogs(sent.landed, { transactionHash: H1, logs: [lowered] });
+    expect(measureSafety(finalize, logs, DIAMOND, copy).map((l) => l.status)).toEqual(['done', 'not-done']);
+  });
+
+  it('a receipt that cannot be read is followed, not failed, and no later step is sent (Codex #3489 r18)', async () => {
+    let sentCount = 0;
+    const sent = await sendSafetySteps(
+      3,
+      async (i) => {
+        sentCount++;
+        return i === 0 ? H1 : H2;
+      },
+      async (hash) => {
+        if (hash === H2) throw new Error('timed out');
+        return { ok: true, logs: [lowered] };
+      },
+      label,
+      'reverted',
+      'unread',
+    );
+    expect(sentCount).toBe(2);
+    expect(sent.hash).toBe(H2);
+    expect(sent.landed.map((l) => l.hash)).toEqual([H1]);
+    expect(sent.stopped).toMatchObject({ status: 'not-done', label: 'step 3', reason: 'unread' });
+  });
+
+  it('a followed step that reverts still reports the steps that landed before it (Codex #3489 r19)', async () => {
+    const sent = await sendSafetySteps(
+      3,
+      async (i) => (i === 0 ? H1 : H2),
+      async (hash) => {
+        if (hash === H2) throw new Error('timed out');
+        return { ok: true, logs: [lowered] };
+      },
+      label,
+      'reverted',
+      'unread',
+    );
+    // The tracker later reads H2 as reverted: the earlier step is measured.
+    const legs = landedBeforeOutcome(finalize, sent, DIAMOND, copy);
+    expect(legs.map((l) => l.status)).toEqual(['done', 'not-done', 'not-done']);
+    expect(legs[2]).toMatchObject({ label: 'step 3', reason: 'unread' });
+    expect(landedBeforeOutcome(finalize, null, DIAMOND, copy)).toEqual([]);
+    expect(landedBeforeOutcome(finalize, { hash: H1, landed: [], stopped: null }, DIAMOND, copy)).toEqual([]);
+  });
+
+  it('a failure before anything landed is still the action failing', async () => {
+    await expect(sendSafetySteps(2, async () => H1, async () => ({ ok: false, logs: [] }), label, 'reverted', 'unread')).rejects.toThrow();
+    await expect(
+      sendSafetySteps(2, async () => {
+        throw new Error('refused');
+      }, async () => ({ ok: true, logs: [] }), label, 'reverted', 'unread'),
+    ).rejects.toThrow('refused');
+  });
+});
+
+// Codex #3489 r2: the vault's change and the platform's application are
+// measured apart, so a landed vault step is never reported as undone.
+describe('measureSafety: vault step landed, platform apply did not', () => {
+  it('a lock in the vault is done, with the platform side stated as pending', () => {
+    const locked = eventLog('VaultLocked', { by: ME }, { types: [], values: [] }, VAULT);
+    const legs = measureSafety(review('lock', { mode: ON }), [locked], DIAMOND, copy);
+    expect(legs.map((l) => [l.status, l.label])).toEqual([
+      ['done', 'safety.legLocked'],
+      ['not-done', 'safety.legPlatform'],
+    ]);
+  });
+  it('a switch-on in the vault is done, with the platform side stated as pending', () => {
+    const on = eventLog('ProtectionEnabled', {}, { types: [{ type: 'uint32' }, { type: 'address' }], values: [2 * DAY, ME] }, VAULT);
+    const legs = measureSafety(review('enable'), [on], DIAMOND, copy);
+    expect(legs.map((l) => l.status)).toEqual(['done', 'not-done']);
+    expect(legs[1]).toMatchObject({ reason: 'safety.platformPending' });
+  });
+  it('a switch-on that also created the vault is measured from the vault the Diamond names (Codex #3489 r13)', () => {
+    const NEW_VAULT = '0x00000000000000000000000000000000000000b7' as Hex;
+    const factory = VaultFactoryFacetABI as Abi;
+    const createdBy = (user: Hex): Log =>
+      ({
+        address: DIAMOND,
+        topics: encodeEventTopics({ abi: factory, eventName: 'UserVaultCreated', args: { user } } as never),
+        data: encodeAbiParameters([{ type: 'address' }], [NEW_VAULT]),
+      }) as unknown as Log;
+    const on = { ...eventLog('ProtectionEnabled', {}, { types: [{ type: 'uint32' }, { type: 'address' }], values: [2 * DAY, ME] }, VAULT), address: NEW_VAULT } as Log;
+    const legs = measureSafety(review('enable', { vault: null }), [createdBy(ME), on], DIAMOND, copy);
+    expect(legs.map((l) => l.status)).toEqual(['done', 'not-done']);
+    expect(legs[1]).toMatchObject({ reason: 'safety.platformPending' });
+    // Another account's creation names no vault of this account's.
+    expect(measureSafety(review('enable', { vault: null }), [createdBy(OTHER), on], DIAMOND, copy)[0]?.status).toBe('not-done');
   });
 });

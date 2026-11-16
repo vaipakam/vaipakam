@@ -91,10 +91,10 @@ The review of a fixed-rate takeover tells the outgoing lender that the loan is h
 
 Running totals per lending asset (and per pair for the instant market), written by the steps that already change them:
 
-- **Declared:** the sum of the largest exposure of every active Auto-lend slot.
-- **Lent:** open principal, in total and through the instant market.
+- **Declared:** the sum of the largest exposure of every Auto-lend slot that is active and whose fill window is still open. A slot with an end date leaves the total when its window closes without anyone acting: its exposure is also recorded against the UTC day its window closes, every write first removes the days that have fully passed, and the view applies the same subtraction. The figure is therefore stated "as of the start of today (UTC)": a slot whose window closes today still counts until the day ends.
+- **Lent:** three figures, per asset and per pair. All open principal from every route, which the shortfall reserve's activation check reads. Open principal lent out of Auto-lend slots. Open principal opened through the instant market. A loan's source is fixed when it opens.
 
-They are exact and cost one counter update per change. What the ledger does **not** know is how much of the declared amount is in the lenders' vaults at this moment, since a vault balance changes without touching a slot. That figure, "available now", is computed by a paged view and by the indexer, and is always labelled as an estimate at the time of reading. The app's "how full" figure is lent divided by declared.
+They are exact and cost one counter update per change. What the ledger does **not** know is how much of the declared amount is in the lenders' vaults at this moment, since a vault balance changes without touching a slot. That figure, "available now", is computed by a paged view and by the indexer, and is always labelled as an estimate at the time of reading. The app's "how full" figure is the principal lent out of Auto-lend slots divided by declared; all-route principal is never divided by it.
 
 The totals set no rate. They also give the shortfall reserve the open-principal figure its activation checks read.
 

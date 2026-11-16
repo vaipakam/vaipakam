@@ -7,7 +7,7 @@
 import type { CopyAccess } from '../copy/useCopy';
 import type { Receipt, ReceiptRow } from '../receipt/types';
 import { formatSpan } from '../ui/format';
-import { changeText, pendingChanges, type SafetyReview } from './safety';
+import { changeText, pendingChanges, safetySteps, type SafetyReview } from './safety';
 
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
 
@@ -92,5 +92,8 @@ export function safetyReceipt(r: SafetyReview, copy: Copy): Receipt {
   const title = text(
     r.action === 'enable' ? 'safety.titleEnable' : r.action === 'lock' ? 'safety.titleLock' : r.action === 'unlock' ? 'safety.titleUnlock' : 'safety.titleFinalize',
   );
-  return { title, rows, consequences, prompts: 1, readAt: r.readAt };
+  // #3379 B2: an action can be several transactions (the vault's write, then
+  // the Diamond applying it), each its own wallet prompt.
+  const prompts = Math.max(1, safetySteps(r.action, f.account, f.vault, r.draft, r.due).length);
+  return { title, rows, consequences, prompts, readAt: r.readAt };
 }

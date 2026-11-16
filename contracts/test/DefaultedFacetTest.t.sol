@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestProtectedCut} from "./helpers/LibTestProtectedCut.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
 import {LibTestSettlementLeg} from "./helpers/LibTestSettlementLeg.sol";
@@ -448,7 +449,7 @@ contract DefaultedFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
-        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+        IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         LibTestSettlementLeg.install(address(diamond)); // #3669
         LibTestForcedSalePreview.install(address(diamond));
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
