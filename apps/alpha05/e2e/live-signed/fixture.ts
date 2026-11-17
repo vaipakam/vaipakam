@@ -6,10 +6,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createPublicClient, createWalletClient, defineChain, erc20Abi, http, parseAbi, parseUnits, type Abi, type Hex } from 'viem';
 import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import { connectWallet as connectShared, walletTest } from '@vaipakam/e2e-wallet';
-import { getDeployment } from '@vaipakam/contracts/deployments';
 import type { Locator, Page } from '@playwright/test';
 
 export { expect } from '@vaipakam/e2e-wallet';
@@ -42,7 +42,11 @@ export function accountFor(role: Role): PrivateKeyAccount {
 const chain = defineChain({ id: CHAIN_ID, name: `test-${CHAIN_ID}`, nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: [RPC] } } });
 export const pub = createPublicClient({ chain, transport: http(RPC) });
 
-const dep = getDeployment(CHAIN_ID) as unknown as { diamond: Hex; testnetMocks: Record<string, Hex> };
+// Read the bundle as a file: Playwright's loader refuses a JSON import
+// without an import attribute on current Node.
+const BUNDLE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../packages/contracts/src/deployments.json');
+const dep = (JSON.parse(fs.readFileSync(BUNDLE, 'utf8')) as Record<string, { diamond: Hex; testnetMocks: Record<string, Hex> }>)[String(CHAIN_ID)];
+if (dep === undefined) throw new Error(`no deployment for chain ${CHAIN_ID} in ${BUNDLE}`);
 export const DIAMOND = dep.diamond;
 /** Mintable test tokens: mUSDC ($1) lent, tLIQ ($2,000) locked. */
 export const MUSDC = dep.testnetMocks.liquidToken2 as Hex;
