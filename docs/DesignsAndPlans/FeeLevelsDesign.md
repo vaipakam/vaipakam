@@ -98,7 +98,7 @@ The levels in section 2 with the term rule in section 3.
 Settled with the builder on 2026-11-16:
 
 - A charge taken from the fee that was collected (the matcher's share, and later the integrator's and the inviter's) follows the loan's term rate, because it is a part of the above-floor amount of the fee actually charged. The paid tariff, which is not a part of the collected fee, keeps the base rate.
-- An obligation handover that lengthens the term charges the difference for the added time, as an extension does. One that does not lengthen it charges nothing more.
+- An obligation handover charges nothing more. It cannot lengthen the term: a replacement whose maturity falls after the loan's current maturity is refused (the lender-protection rule), and the fee counts the total term from the loan's start. If that rule is ever relaxed, the added time is charged through the same function an extension uses.
 
 Still for the builder to raise, not decide silently:
 
