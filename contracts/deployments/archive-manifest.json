@@ -1,6 +1,6 @@
 {
   "purpose": "Committed inventory of every ARCHIVED Diamond (a --fresh redeploy archives the off-chain artifact but cannot wipe on-chain custody). The local .archive/ directories are gitignored; this file is what a clean checkout censuses. Regenerate with --write-archive-manifest.",
-  "generatedAt": "2026-11-04T00:15:27.748Z",
+  "generatedAt": "2026-11-16T21:08:05.338Z",
   "entries": [
     {
       "slug": "arb-sepolia",
@@ -36,6 +36,14 @@
     },
     {
       "slug": "arb-sepolia",
+      "stamp": "2026-10-29T07-54-07Z",
+      "chainId": 421614,
+      "diamond": "0x50199e30838f368fa18ba87764F9F078c5d5c209",
+      "deployBlock": 320151741,
+      "vpfiToken": "0x37e97878b91dC6636b0bA670aa58f38DFf9534f2"
+    },
+    {
+      "slug": "arb-sepolia",
       "stamp": "2026-11-03T20-33-07Z",
       "chainId": 421614,
       "diamond": "0x50199e30838f368fa18ba87764F9F078c5d5c209",
@@ -49,6 +57,14 @@
       "diamond": "0xA6106C6399De12936CB6ca1A1A11fE346CEA21E6",
       "deployBlock": 325754849,
       "vpfiToken": null
+    },
+    {
+      "slug": "arb-sepolia",
+      "stamp": "2026-11-13T03-02-51Z",
+      "chainId": 421614,
+      "diamond": "0x0ae80D88a867597CfB69A158f8f5b06b090ECE14",
+      "deployBlock": 325782709,
+      "vpfiToken": "0x519e77E9ed87046E4870fe7e137456a15B944F61"
     },
     {
       "slug": "base-sepolia",
@@ -124,11 +140,27 @@
     },
     {
       "slug": "base-sepolia",
+      "stamp": "2026-10-29T07-04-11Z",
+      "chainId": 84532,
+      "diamond": "0x2535baC87F3df287268fC697F2f31cf418365303",
+      "deployBlock": 48245206,
+      "vpfiToken": "0x7D16CFe61Ef384Ef31669F5fe83f9597BF5c218d"
+    },
+    {
+      "slug": "base-sepolia",
       "stamp": "2026-11-03T18-26-22Z",
       "chainId": 84532,
       "diamond": "0x2535baC87F3df287268fC697F2f31cf418365303",
       "deployBlock": 48245206,
       "vpfiToken": "0x7D16CFe61Ef384Ef31669F5fe83f9597BF5c218d"
+    },
+    {
+      "slug": "base-sepolia",
+      "stamp": "2026-11-13T03-27-48Z",
+      "chainId": 84532,
+      "diamond": "0x63816B149266C9dBFB7683dfd02D851915238049",
+      "deployBlock": 54072444,
+      "vpfiToken": "0xc836ED21A58651f6746D4Cf6A4a1C814230402A5"
     },
     {
       "slug": "bnb-testnet",
@@ -153,6 +185,30 @@
       "diamond": "0xfa7685Eb0160f8998f70F196d64Be223ce120bC2",
       "deployBlock": 137433841,
       "vpfiToken": "0x2e02cC4F2C55cbca685bE216FCBF747eA0581F71"
+    },
+    {
+      "slug": "bnb-testnet",
+      "stamp": "2026-11-16T19-49-05Z",
+      "chainId": 97,
+      "diamond": "0xfe2A3DE4DBa8F7f20ce52a0b28A56df31771341E",
+      "deployBlock": 140668803,
+      "vpfiToken": "0x77845c81d149B7D294DD8BF78dA754E0a0f5BdFC"
+    },
+    {
+      "slug": "bnb-testnet",
+      "stamp": "2026-11-16T20-33-26Z",
+      "chainId": 97,
+      "diamond": "0x7039cAf689F725A784BBc43bA0daDF7C65d61BBc",
+      "deployBlock": 143124142,
+      "vpfiToken": null
+    },
+    {
+      "slug": "bnb-testnet",
+      "stamp": "2026-11-16T21-08-04Z",
+      "chainId": 97,
+      "diamond": "0xD4a72F0515DB3d9C83deFbCc2A02487f453B08df",
+      "deployBlock": 143130075,
+      "vpfiToken": null
     },
     {
       "slug": "op-sepolia",
@@ -180,10 +236,10 @@
     }
   ],
   "livePublicationsInProgress": {},
-  "liveGeneration": 9,
+  "liveGeneration": 16,
   "lastLivePublished": {
     "slug": "bnb-testnet",
-    "diamond": "0xfe2A3DE4DBa8F7f20ce52a0b28A56df31771341E",
-    "at": "2026-11-04T00:49:25.407Z"
+    "diamond": "0xBc839c06Ee431d50EA6B087E0f26e80fb022564E",
+    "at": "2026-11-16T21:43:56.999Z"
   }
 }

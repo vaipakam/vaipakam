@@ -240,7 +240,7 @@ contract DeployArtifactCompletenessTest is Test {
         );
         address seaport = 0x0000000000000068F116a894984e2DB1123eB395;
         vm.etch(seaport, hex"00");
-        vm.mockCall(seaport, abi.encodeWithSignature("conduitController()"), abi.encode(address(controller)));
+        vm.mockCall(seaport, abi.encodeWithSignature("information()"), abi.encode("1.6", bytes32(0), address(controller)));
         vm.etch(0x111111125421cA6dc452d289314280a0f8842A65, hex"00");
     }
 

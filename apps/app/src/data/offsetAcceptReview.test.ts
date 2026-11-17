@@ -4,7 +4,7 @@
  * and the right reads, driven with a fake client.
  */
 import { DEPLOYMENTS } from "@vaipakam/contracts/deployments";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ContractFunctionExecutionError,
   ContractFunctionRevertedError,
@@ -19,7 +19,19 @@ import {
   type OffsetReview,
 } from "./offsetAcceptReview";
 
-const DIAMOND = DEPLOYMENTS[84532]!.diamond as `0x${string}`; // a legacy-mode record (#3205)
+// Keep the legacy ownership path covered independently of the live deployment.
+vi.mock("@vaipakam/contracts/deployments", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@vaipakam/contracts/deployments")>();
+  return {
+    ...actual,
+    DEPLOYMENTS: {
+      ...actual.DEPLOYMENTS,
+      84532: { ...actual.DEPLOYMENTS[84532], positionNFT: undefined },
+    },
+  };
+});
+
+const DIAMOND = DEPLOYMENTS[84532]!.diamond as `0x${string}`;
 const ASSET = "0x00000000000000000000000000000000000000a1" as const;
 const POSTER = "0x00000000000000000000000000000000000000b0" as const;
 const OTHER = "0x00000000000000000000000000000000000000c0" as const;

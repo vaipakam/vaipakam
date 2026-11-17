@@ -359,7 +359,7 @@ export interface Deployment {
   rewardBaseChainId?: number;
   rewardGraceSeconds?: number;
   rewardExpectedSourceChainIds?: number[];
-  interactionLaunchTimestamp?: string;
+  interactionLaunchTimestamp?: number;
 
   // ── Universal cross-chain plumbing ──────────────────────────────
   weth?: HexAddress;
