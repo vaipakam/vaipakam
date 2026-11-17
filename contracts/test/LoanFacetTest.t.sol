@@ -1179,7 +1179,7 @@ contract LoanFacetTest is Test {
         );
         assertEq(
             loan.treasuryFeeBpsAtInit,
-            500, // #3649 5% default
+            1000, // #3649 10% default
             "treasury fee is still snapshotted on the sale vehicle"
         );
     }

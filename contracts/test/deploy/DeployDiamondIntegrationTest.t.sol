@@ -545,8 +545,8 @@ contract DeployDiamondIntegrationTest is Test, DiamondFacetNames {
         );
         assertEq(
             ConfigFacet(diamond).getTreasuryFeeBps(),
-            500,
-            "yield-fee default must resolve to 500 bps (#3649)"
+            1000,
+            "yield-fee default must resolve to 1000 bps (#3649)"
         );
 
         // Codex #1411 r1 — the effective getter is

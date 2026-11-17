@@ -30,7 +30,7 @@ contract ConfigFacetTest is Test {
 
     // Mirror defaults declared in LibVaipakam (kept in sync with on-chain
     // constants so a drift produces an immediate test failure).
-    uint256 constant DEFAULT_TREASURY_FEE_BPS = 500; // #3649: 5% of interest
+    uint256 constant DEFAULT_TREASURY_FEE_BPS = 1000; // #3649: 10% of interest
     uint256 constant DEFAULT_LOAN_INIT_FEE_BPS = 20;
     uint256 constant DEFAULT_LIQ_HANDLING_FEE_BPS = 200;
     uint256 constant DEFAULT_MAX_SLIPPAGE_BPS = 600;

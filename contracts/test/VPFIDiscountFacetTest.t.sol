@@ -955,7 +955,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         // borrower's total is unchanged by it.
         uint256 feeBase = (borrowerBefore -
             IERC20(mockERC20).balanceOf(borrower)) - principal;
-        uint256 fullFee = (feeBase * 500) / 10000; // TREASURY_FEE_BPS = 500 (#3649)
+        uint256 fullFee = (feeBase * 1000) / 10000; // TREASURY_FEE_BPS = 1000 (#3649)
         // Mirror the contract's rounding EXACTLY: it computes the reduction as
         // `floor(fullFee × effBps / 10000)` then subtracts it, rather than
         // `floor(fullFee × (10000 − effBps) / 10000)` (which can differ by 1 wei).
@@ -1016,7 +1016,7 @@ contract VPFIDiscountFacetTest is SetupTest {
 
         uint256 feeBase = (borrowerBefore -
             IERC20(mockERC20).balanceOf(borrower)) - principal;
-        uint256 fullFee = (feeBase * 500) / 10000; // TREASURY_FEE_BPS = 500 (#3649)
+        uint256 fullFee = (feeBase * 1000) / 10000; // TREASURY_FEE_BPS = 1000 (#3649)
         assertEq(
             IERC20(mockERC20).balanceOf(treasuryRecipient) - treasuryErc20Before,
             fullFee,
@@ -1052,7 +1052,7 @@ contract VPFIDiscountFacetTest is SetupTest {
 
         uint256 feeBase = (borrowerBefore -
             IERC20(mockERC20).balanceOf(borrower)) - principal;
-        uint256 fullFee = (feeBase * 500) / 10000; // TREASURY_FEE_BPS = 500 (#3649)
+        uint256 fullFee = (feeBase * 1000) / 10000; // TREASURY_FEE_BPS = 1000 (#3649)
         assertEq(
             IERC20(mockERC20).balanceOf(treasuryRecipient) - treasuryErc20Before,
             fullFee,

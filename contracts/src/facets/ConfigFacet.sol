@@ -160,7 +160,7 @@ contract ConfigFacet is DiamondAccessControl {
 
     /**
      * @notice Update the two protocol fees in one atomic call.
-     * @param treasuryFeeBps       Fee on lender interest (defaults to 500 ≡ 5%; #3649).
+     * @param treasuryFeeBps       Fee on lender interest (defaults to 1000 ≡ 10%; #3649, owner decision 2026-11-17).
      * @param loanInitiationFeeBps The initiation fee's BASE rate, for a loan up to the
      *                             base term (defaults to 20 ≡ 0.2%); longer terms pay
      *                             more ({LibInitiationFee}, #3649). At most the yearly rate.

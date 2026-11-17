@@ -81,7 +81,7 @@ library LibVaipakam {
     ///      `MIN_HEALTH_FACTOR` (1.5e18) sits inside the band as the default.
     uint256 constant MIN_ADMISSION_HEALTH_FACTOR = 120 * 1e16; // 1.2e18
     uint256 constant MAX_ADMISSION_HEALTH_FACTOR = 200 * 1e16; // 2.0e18
-    uint256 constant TREASURY_FEE_BPS = 500; // 5% of interest (#3649 fee levels; was 200 = 2% under the #1352 freeze)
+    uint256 constant TREASURY_FEE_BPS = 1000; // 10% of interest (#3649 fee levels, owner decision 2026-11-17; was 200 = 2% under the #1352 freeze)
     /// @dev Pre-freeze 1% yield fee. The FROZEN grandfather fallback for a
     ///      snapshot-0 (pre-#957) open loan in {effectiveTreasuryFeeBps} — a
     ///      snapshot-0 loan resolves to this, NOT the live 200-bps default, so
@@ -466,7 +466,7 @@ library LibVaipakam {
     ///      (`FeeLevelsFacet.setLoanInitiationFeeTerms`); the rate is read only
     ///      through `LibInitiationFee`.
     uint256 constant LIF_BASE_TERM_DAYS_DEFAULT = 30;
-    uint256 constant LIF_YEARLY_BPS_DEFAULT = 50;
+    uint256 constant LIF_YEARLY_BPS_DEFAULT = 100; // 1% a year (owner decision 2026-11-17)
     uint256 constant LIF_YEAR_DAYS_DEFAULT = 365;
     // Fallback-path split (README §7): lender gets principal + accrued
     // interest + {FALLBACK_LENDER_BONUS_BPS} of principal; treasury gets
@@ -1193,7 +1193,7 @@ library LibVaipakam {
      */
     struct ProtocolConfig {
         // ── Packed BPS slot (14 × uint16 = 224 bits; 32 bits of headroom) ──
-        uint16 treasuryFeeBps; // 0 ⇒ TREASURY_FEE_BPS (500)
+        uint16 treasuryFeeBps; // 0 ⇒ TREASURY_FEE_BPS (1000)
         uint16 loanInitiationFeeBps; // 0 ⇒ LOAN_INITIATION_FEE_BPS (20)
         uint16 liquidationHandlingFeeBps; // 0 ⇒ LIQUIDATION_HANDLING_FEE_BPS (200)
         uint16 maxLiquidationSlippageBps; // 0 ⇒ MAX_LIQUIDATION_SLIPPAGE_BPS (600)
@@ -2386,7 +2386,7 @@ library LibVaipakam {
         // pre-#957 rate — NOT the live knob. That distinction is the whole
         // point of the field. The live knob is `cfgTreasuryFeeBps()`, which
         // returns the governance override in `protocolCfg.treasuryFeeBps`
-        // when set and otherwise `TREASURY_FEE_BPS` (500 since #3649; 200 under the rev-8 freeze
+        // when set and otherwise `TREASURY_FEE_BPS` (1000 since #3649; 200 under the rev-8 freeze
         // default, #1352) — so resolving a grandfathered loan against it
         // would reprice it at repay from 1% to WHATEVER IS LIVE THEN, in
         // EITHER DIRECTION. `setFeesConfig` bounds the override only from

@@ -44,7 +44,7 @@ contract FeeLevelsFacet is DiamondAccessControl {
      * @notice Set the initiation fee's term settings: the term up to which
      *         the base rate applies, the yearly rate, and the one-year point
      *         at which the rate reaches it. Pass 0 for a field to restore its
-     *         default (30 days, 0.5% a year, 365 days).
+     *         default (30 days, 1% a year, 365 days).
      * @dev    ADMIN_ROLE (the Timelock after handover). A loan's fee is fixed
      *         when it opens, so a change never reprices an open loan; an
      *         extension's added fee is priced on the settings in force when

@@ -545,7 +545,7 @@ contract MeasuredDeliveryTest is SetupTest {
             "the default completed"
         );
         assertEq(_bal(mockERC20, address(diamond)), diamond0, "the Diamond's other holdings paid nothing");
-        uint256 treasuryFee = (l.prepayAmount * 500) / 10_000;
+        uint256 treasuryFee = (l.prepayAmount * 1000) / 10_000;
         uint256 shortfall = l.prepayAmount - _less(l.prepayAmount);
         assertLt(shortfall, treasuryFee, "fixture: the treasury fee covers the shortfall");
         (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);

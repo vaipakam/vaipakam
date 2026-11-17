@@ -582,8 +582,8 @@ contract RepayFacetTest is Test {
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(1);
         assertEq(
             loan.treasuryFeeBpsAtInit,
-            500,
-            "treasury fee snapshotted at the 5% default at init (#3649)"
+            1000,
+            "treasury fee snapshotted at the 10% default at init (#3649)"
         );
         assertEq(
             loan.loanInitiationFeeBpsAtInit,
@@ -602,7 +602,7 @@ contract RepayFacetTest is Test {
         );
         assertEq(
             rental.treasuryFeeBpsAtInit,
-            500,
+            1000,
             "treasury fee still snapshotted on the NFT rental (#3649 default)"
         );
     }

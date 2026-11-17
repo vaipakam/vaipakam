@@ -133,7 +133,7 @@ contract RefinanceFacetTest is SetupTest {
     /// @dev The fee constants the fixture loan is born under (#1352 freeze):
     ///      2% treasury cut on interest, 0.2% initiation fee, of which the
     ///      matcher (on a direct accept, the accepting lender) takes 1%.
-    uint256 internal constant TREASURY_FEE_BPS = 500; // #3649
+    uint256 internal constant TREASURY_FEE_BPS = 1000; // #3649
     uint256 internal constant LIF_BPS = 20;
     uint256 internal constant MATCHER_BPS = 100;
 

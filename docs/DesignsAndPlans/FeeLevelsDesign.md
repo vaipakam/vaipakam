@@ -113,7 +113,7 @@ Built in stage 1 (term rate):
 - One library computes the rate for a term and the fee for a principal and term. Every charger and preview reads it.
 - A small facet holds the three term settings (base term, yearly rate, one-year point; the base rate stays the existing initiation fee setting), their getter, and a quote of the fee and rate for a principal and term. The setter refuses a base term outside 1 to 90 days, a one-year point outside 180 to 730 days, a yearly rate below the base rate, and a yearly rate whose longest-term fee would pass the 50% ceiling. The base-rate setter now refuses a base rate above the yearly rate.
 - The loan stamps its term rate (rounded down) as its initiation fee rate when it opens.
-- The interest share default is 5%.
+- The interest share default is 10%, and the yearly rate 1% (owner decision 2026-11-17, replacing 5% and 0.5%).
 
 Built in stage 2 (extension):
 

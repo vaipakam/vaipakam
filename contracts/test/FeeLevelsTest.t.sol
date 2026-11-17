@@ -66,10 +66,10 @@ contract FeeLevelsTest is Test {
         (uint256 b, uint256 t0, uint256 y, uint256 d) = fees.getLoanInitiationFeeTerms();
         assertEq(b, 20);
         assertEq(t0, 30);
-        assertEq(y, 50);
+        assertEq(y, 100);
         assertEq(d, 365);
         (uint256 tFee,) = config.getFeesConfig();
-        assertEq(tFee, 500, "interest share default is 5%");
+        assertEq(tFee, 1000, "interest share default is 10%");
     }
 
     // ── The rate at the design's points ──────────────────────────────────
@@ -78,23 +78,26 @@ contract FeeLevelsTest is Test {
         // 0.2% up to 30 days.
         assertEq(_fee(1), 20e18);
         assertEq(_fee(30), 20e18);
-        // Straight line from 0.2% at 30 days to 0.5% at 365 days.
-        assertEq(_fee(31), (P * (20 * 334 + 50 * 1)) / (335 * 10_000));
-        assertEq(_fee(197), (P * (20 * 168 + 50 * 167)) / (335 * 10_000));
-        assertEq(_fee(365), 50e18);
-        // 0.5% a year, in proportion to the days, beyond one year.
-        assertEq(_fee(366), (P * 50 * 366) / (365 * 10_000));
-        assertEq(_fee(548), (P * 50 * 548) / (365 * 10_000));
-        assertEq(_fee(730), 100e18);
+        // Straight line from 0.2% at 30 days to 1% at 365 days.
+        assertEq(_fee(31), (P * (20 * 334 + 100 * 1)) / (335 * 10_000));
+        assertEq(_fee(197), (P * (20 * 168 + 100 * 167)) / (335 * 10_000));
+        assertEq(_fee(365), 100e18);
+        // 1% a year, in proportion to the days, beyond one year.
+        assertEq(_fee(366), (P * 100 * 366) / (365 * 10_000));
+        assertEq(_fee(548), (P * 100 * 548) / (365 * 10_000));
+        assertEq(_fee(730), 200e18);
+        // The design's figures on 10,000: about 34 at 90 days, about 56 at 180.
+        assertEq(_fee(90) / 1e18, 34);
+        assertEq(_fee(180) / 1e18, 55); // 55.82…, about 56
     }
 
     function test_quotedRatesBracketTheExactRate() public view {
         (, uint256 down, uint256 up) = fees.quoteLoanInitiationFee(P, 197);
-        assertEq(down, 34); // 11710 / 335 = 34.955…
-        assertEq(up, 35);
+        assertEq(down, 59); // 20060 / 335 = 59.88…
+        assertEq(up, 60);
         (, down, up) = fees.quoteLoanInitiationFee(P, 730);
-        assertEq(down, 100);
-        assertEq(up, 100);
+        assertEq(down, 200);
+        assertEq(up, 200);
     }
 
     /// The rate never falls as the term grows, and there is no step at the
@@ -103,8 +106,8 @@ contract FeeLevelsTest is Test {
     function test_noStepAndNonDecreasing() public view {
         uint256 prev = _fee(1);
         // Steepest per-day rise: the slope between 30 and 365 days
-        // ((50 - 20) / 335 bps a day) is below the yearly slope (50 / 365).
-        uint256 maxStep = (P * 50) / (365 * 10_000) + 1;
+        // ((100 - 20) / 335 bps a day) is below the yearly slope (100 / 365).
+        uint256 maxStep = (P * 100) / (365 * 10_000) + 1;
         for (uint256 t = 2; t <= 800; ++t) {
             uint256 f = _fee(t);
             assertGe(f, prev, "non-decreasing");
@@ -132,20 +135,20 @@ contract FeeLevelsTest is Test {
         fees.setLoanInitiationFeeTerms(0, 0, 0);
         (, t0, y, d) = fees.getLoanInitiationFeeTerms();
         assertEq(t0, 30);
-        assertEq(y, 50);
+        assertEq(y, 100);
         assertEq(d, 365);
     }
 
     function test_setTermsIsAdminOnly() public {
         vm.prank(attacker);
         vm.expectRevert();
-        fees.setLoanInitiationFeeTerms(30, 50, 365);
+        fees.setLoanInitiationFeeTerms(30, 100, 365);
     }
 
     function test_setTermsBounds() public {
-        _expectBad(91, 50, 365); // base term above 90 days
-        _expectBad(30, 50, 179); // one-year point below 180 days
-        _expectBad(30, 50, 731); // one-year point above 730 days
+        _expectBad(91, 100, 365); // base term above 90 days
+        _expectBad(30, 100, 179); // one-year point below 180 days
+        _expectBad(30, 100, 731); // one-year point above 730 days
         _expectBad(30, 19, 365); // yearly rate below the base rate (0.2%)
         // The longest admissible term may not cost more than the 50% ceiling:
         // y * 4385 <= 5000 * d. At d = 365: y <= 416.
@@ -155,9 +158,9 @@ contract FeeLevelsTest is Test {
     }
 
     function test_baseRateMayNotPassTheYearlyRate() public {
-        config.setFeesConfig(500, 50); // equal is allowed
-        vm.expectRevert(abi.encodeWithSelector(ConfigFacet.InvalidFeeBps.selector, 51, 50));
-        config.setFeesConfig(500, 51);
+        config.setFeesConfig(1000, 100); // equal is allowed
+        vm.expectRevert(abi.encodeWithSelector(ConfigFacet.InvalidFeeBps.selector, 101, 100));
+        config.setFeesConfig(1000, 101);
     }
 
     function _expectBad(uint16 t0, uint16 y, uint16 d) internal {
