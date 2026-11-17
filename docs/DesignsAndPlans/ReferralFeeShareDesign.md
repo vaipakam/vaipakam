@@ -1,6 +1,7 @@
 # Referral share of the initiation fee: design
 
 **Status:** owner approved the shape on 2026-11-17. Card #3722. Design for review before build.
+**Rates changed 2026-11-17 (owner decision):** the new user's cut and the inviter's share are each 10% of the above-floor part, in place of 20%, together with the higher fee levels of `FeeLevelsDesign.md`. The same day the owner decided against a value cap per new wallet and against identity checks (sections 5 and 9).
 **Related:** `IntegratorFeeShareDesign.md` (#3682, #3720), `FeeLevelsDesign.md` (#3649), `ShortfallReserveDesign.md` (#3641, the treasury floor). This replaces the deferred referral half of `VpfiUsagePerksAndReferralDesign.md`, which paid in fee credits.
 
 ## 1. What is offered
@@ -20,14 +21,14 @@ The initiation fee divides in a fixed order: the treasury keeps its floor (0.1% 
 
 Let **A** be the above-floor part of the fee after the borrower's hold discount.
 
-- **The new user's cut** is 20% of A (less where the discount ceiling below binds). It is simply not charged.
-- **The inviter's share** is 20% of A, paid from what is collected.
+- **The new user's cut** is 10% of A (less where the discount ceiling below binds). It is simply not charged.
+- **The inviter's share** is 10% of A, paid from what is collected.
 - Both rates are bounded settings behind the usual delay (each 0 to 30%). The rates in force when a loan opens apply; nothing is repriced later because nothing is paid later.
-- **The existing ceiling on a party's fee discount holds for the two together.** A borrower's hold discount and referral cut can never take more than that ceiling (half) off the full fee. The cut is therefore the lesser of 20% of A and whatever allowance the hold discount has left; a borrower already at the ceiling gets no cut. The inviter's share is not affected by this: it stays 20% of A, subject to 2.1. Previews show the cut after this rule.
+- **The existing ceiling on a party's fee discount holds for the two together.** A borrower's hold discount and referral cut can never take more than that ceiling (half) off the full fee. The cut is therefore the lesser of 10% of A and whatever allowance the hold discount has left; a borrower already at the ceiling gets no cut. The inviter's share is not affected by this: it stays 10% of A, subject to 2.1. Previews show the cut after this rule.
 - A fee at or below the floor has no above-floor part, so there is no cut and no share.
 - The added fee an extension pays carries neither.
 
-Examples on 10,000 units of principal with no hold discount: a 30-day loan's fee is 20, of which 10 is above the floor; the new user pays 18 and the inviter receives 2. A one-year loan's fee is 50, of which 40 is above the floor; the new user pays 42 and the inviter receives 8.
+Examples on 10,000 units of principal with no hold discount: a 30-day loan's fee is 20, of which 10 is above the floor; the new user pays 19 and the inviter receives 1. A one-year loan's fee is 100, of which 90 is above the floor; the new user pays 91 and the inviter receives 9.
 
 ### 2.1 Order and ceiling
 
@@ -61,9 +62,10 @@ A view returns, for a wallet: its inviter, the loans left and the end time. Ever
 
 A person can invite their own second wallet. No on-chain rule can tell two wallets of one person apart, and the design does not pretend to.
 
-- It can never be turned into a profit: the cut and the share together are part of a fee that person paid. At the default rates they are at most 40% of its above-floor part. At the highest rates the settings allow (30% each) they would be 60%, which is the default ceiling of 2.1, so no setting lets them pass the ceiling.
+- It can never be turned into a profit: the cut and the share together are part of a fee that person paid. At the default rates they are at most 20% of its above-floor part. At the highest rates the settings allow (30% each) they would be 60%, which is the default ceiling of 2.1, so no setting lets them pass the ceiling.
 - It lasts ten loans or 180 days per new wallet. A person who keeps making new wallets keeps a lower fee, at the price of moving their assets each time and of starting each wallet without its history, its hold discount tenure and its raised access (which waits its own delay, #3717).
 - The worst case for the platform is bounded by section 2.1: on every loan the treasury still receives its whole floor and the reserve still receives at least the set part of the above-floor amount. A referral can slow the reserve's funding; it can never take from it or from the treasury.
+- **The largest case, stated.** Nothing limits the size of a loan that carries the cut and the share. On a 1,000,000-unit one-year loan the fee is 10,000, of which 9,000 is above the floor, and a person who invited their own new wallet gets 1,800 of it back. The treasury still receives its 1,000 and the reserve at least 3,600 under the ceiling of 2.1 (7,200 when no matcher or integrator is named). The owner considered a cap on the value a new wallet's referral applies to and decided against it on 2026-11-17 (section 9).
 - The two rates are settings and can be lowered to zero for new loans. Public counters (total cut, total share, loans counted, share redirected) show what the programme costs.
 
 ## 6. What a user is told
@@ -110,10 +112,12 @@ The accept facets are close to the size limit: everything is computed in the fee
 7. **Bind off-chain in the app.** Cannot be checked, and another front end could not honour it.
 8. **A budget per period for the programme.** Bounds the cost another way, but adds a ledger and makes a user's fee depend on what others did that month. The ceiling of 2.1 bounds it per loan instead.
 9. **No referral until after launch.** Costs nothing. The build is small because it reuses the fee host's integrator split.
+10. **A cap on the value the referral applies to** (for example the first 25,000 units a new wallet borrows). It would make cycling wallets on large loans not worth doing. The owner decided against it on 2026-11-17: the amounts are part of a fee the same person paid, and the ceiling of 2.1 already bounds what the reserve gives up on each loan.
+11. **An identity check on the inviter and the new user** (a phone number, a messaging account, an address funded from an exchange). Rejected. A contract cannot check any of them, so the platform would have to sign an approval per wallet and hold personal data, which no other front end could honour and which the platform's permissionless stance excludes. A throwaway number or account costs very little, so the check stops few; an exchange's withdrawals come from shared wallets so they identify no customer, and one exchange account can fund any number of wallets.
 
 ## 10. Recommendation
 
-The design above: a matching 20% of the above-floor part to each side, for the first 10 loans or 180 days, whichever comes first, bound once on-chain before the wallet's first loan, the inviter paid directly to their wallet, with the per-loan ceiling protecting the reserve.
+The design above: a matching 10% of the above-floor part to each side, for the first 10 loans or 180 days, whichever comes first, bound once on-chain before the wallet's first loan, the inviter paid directly to their wallet, with the per-loan ceiling protecting the reserve.
 
 ## 11. Open items for the builder to raise, not decide silently
 

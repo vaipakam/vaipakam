@@ -2,6 +2,7 @@
 
 **Status:** owner approved the feature on 2026-11-15, before the feature freeze. Card #3682. Design for review before build.
 **Related:** `FeeLevelsDesign.md` (#3649), `ShortfallReserveDesign.md` (#3641, the treasury floor), `ReferralFeeShareDesign.md` (#3722, the order and the per-loan ceiling), the matcher's share of the initiation fee, `VaultOutflowPolicyDesign.md`.
+**Rate changed 2026-11-17 (owner decision):** the default share is 10% of the above-floor amount, in place of 20%, together with the higher fee levels of `FeeLevelsDesign.md`.
 **Reviewed 2026-11-17:** the additions of #3720 (suspension, declared contracts, public record, a list anyone can check) are in sections 4, 6 and 7; the order of the split and the ceiling follow `ReferralFeeShareDesign.md` 2.1; the matcher's base is settled (section 12).
 
 ## 1. Why
@@ -23,10 +24,10 @@ Scope of the first version:
 
 The initiation fee already divides in a fixed order: the treasury keeps its floor (0.1% of principal), and the rest goes to the reserve (`ShortfallReserveDesign.md` section 8). The integrator's share comes out of **the part above the treasury floor**, never out of the floor.
 
-- The share is a percentage of the above-floor amount actually collected. Default 20%; hard ceiling 50%, in code. Both the default and a per-integrator rate are bounded settings behind the Timelock delay.
+- The share is a percentage of the above-floor amount actually collected. Default 10% (owner decision 2026-11-17; 20% before the fee levels were raised); hard ceiling 50%, in code. Both the default and a per-integrator rate are bounded settings behind the Timelock delay.
 - A fee discount reduces the above-floor part first, so it reduces the integrator's share with it. A fee collected at or below the floor pays the integrator nothing.
 - The added fee an extension pays carries no integrator share. It goes to the reserve whole, as designed.
-- Examples at the default rate on 10,000 units of principal: a 30-day loan pays a fee of 20, of which 10 is above the floor, so the integrator receives 2. A one-year loan pays 50, of which 40 is above the floor, so the integrator receives 8.
+- Examples at the default rate on 10,000 units of principal: a 30-day loan pays a fee of 20, of which 10 is above the floor, so the integrator receives 1. A one-year loan pays 100, of which 90 is above the floor, so the integrator receives 9. Because the fee is larger, 10% of it pays an integrator about what 20% of the earlier fee did on a one-year loan, and less on a short one. A per-integrator rate above the default remains possible up to the ceiling.
 
 The rate in force when the loan opens applies. Nothing is repriced later, because nothing is paid later.
 
