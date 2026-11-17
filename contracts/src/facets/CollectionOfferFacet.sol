@@ -6,6 +6,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibCollateralSet} from "../libraries/LibCollateralSet.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibIntentFill} from "../libraries/LibIntentFill.sol";
@@ -508,7 +509,7 @@ contract CollectionOfferFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
             params.offerType != LibVaipakam.OfferType.Lender
                 || params.assetType != LibVaipakam.AssetType.ERC20
                 || params.collateralAssetType == LibVaipakam.AssetType.ERC20
-                || params.collateralAsset == address(this)
+                || params.collateralAsset == LibPositionNFT._storage().core
                 || params.refinanceTargetLoanId != 0
                 || (params.amountMax != 0 && params.amountMax != params.amount)
                 || (params.interestRateBpsMax != 0 && params.interestRateBpsMax != params.interestRateBps)
@@ -586,7 +587,7 @@ contract CollectionOfferFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
                 || o.setKind > uint8(LibVaipakam.CollateralSetKind.Listed)
                 || o.assetType != uint8(LibVaipakam.AssetType.ERC20)
                 || o.collateralAssetType == uint8(LibVaipakam.AssetType.ERC20)
-                || o.collateralAsset == address(this)
+                || o.collateralAsset == LibPositionNFT._storage().core
                 || o.refinanceTargetLoanId != 0
                 || o.amount == 0
                 || (o.amountMax != 0 && o.amountMax != o.amount)

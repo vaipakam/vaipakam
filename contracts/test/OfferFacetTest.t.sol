@@ -643,6 +643,61 @@ contract OfferFacetTest is Test {
         );
     }
 
+    /// @notice A platform position token is neither collateral nor the lent
+    ///         asset (chained-attack B9): a pledged position would sit in a
+    ///         vault, which cannot claim it.
+    function testCreateOfferRefusesPositionTokenAsCollateralOrLent() public {
+        address positionCore = VaipakamNFTFacet(address(diamond)).positionNFT();
+        assertTrue(positionCore != address(0));
+        LibVaipakam.CreateOfferParams memory p = LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
+            offerType: LibVaipakam.OfferType.Lender,
+            lendingAsset: mockERC20,
+            amount: 1000,
+            interestRateBps: 500,
+            collateralAsset: positionCore,
+            collateralAmount: 1,
+            durationDays: 30,
+            assetType: LibVaipakam.AssetType.ERC20,
+            tokenId: 0,
+            quantity: 0,
+            creatorRiskAndTermsConsent: true,
+            prepayAsset: mockERC20,
+            collateralAssetType: LibVaipakam.AssetType.ERC721,
+            collateralTokenId: 1,
+            collateralQuantity: 0,
+            allowsPartialRepay: false,
+            allowsPrepayListing: false,
+            allowsParallelSale: false,
+            amountMax: 1000,
+            interestRateBpsMax: 500,
+            collateralAmountMax: 1,
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+            expiresAt: 0,
+            fillMode: LibVaipakam.FillMode.Aon,
+            refinanceTargetLoanId: 0,
+            useFullTermInterest: false
+        });
+        vm.prank(user1);
+        vm.expectRevert(IVaipakamErrors.PositionTokenNotAccepted.selector);
+        OfferCreateFacet(address(diamond)).createOffer(p, type(uint64).max);
+
+        p.offerType = LibVaipakam.OfferType.Lender;
+        p.lendingAsset = positionCore;
+        p.assetType = LibVaipakam.AssetType.ERC721;
+        p.tokenId = 1;
+        p.collateralAsset = address(0);
+        p.collateralAssetType = LibVaipakam.AssetType.ERC20;
+        p.collateralTokenId = 0;
+        p.collateralAmount = 0;
+        p.collateralAmountMax = 0;
+        p.interestRateBps = 0;
+        p.interestRateBpsMax = 0;
+        vm.prank(user1);
+        vm.expectRevert(IVaipakamErrors.PositionTokenNotAccepted.selector);
+        OfferCreateFacet(address(diamond)).createOffer(p, type(uint64).max);
+    }
+
     function testCreateNFTRentalLenderOffer() public {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(

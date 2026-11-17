@@ -2608,6 +2608,11 @@
   },
   {
     "type": "error",
+    "name": "PositionTokenNotAccepted",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RateShortfallTooHigh",
     "inputs": []
   },

@@ -2370,6 +2370,11 @@
   },
   {
     "type": "error",
+    "name": "PositionTokenNotAccepted",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "PrepayListingBufferNotConfigured",
     "inputs": []
   },

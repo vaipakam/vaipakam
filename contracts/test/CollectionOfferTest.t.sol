@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {CollectionOfferFacet} from "../src/facets/CollectionOfferFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
@@ -223,7 +224,10 @@ contract CollectionOfferTest is SetupTest {
 
     function test_positionTokenAsCollateralIsRefused() public {
         LibVaipakam.CreateOfferParams memory p = _params();
-        p.collateralAsset = address(diamond);
+        // The position tokens live on the PositionNFT core, not the Diamond
+        // (#3205); the refusal names the core.
+        p.collateralAsset = VaipakamNFTFacet(address(diamond)).positionNFT();
+        assertTrue(p.collateralAsset != address(0));
         uint256[] memory none;
         vm.prank(lender);
         vm.expectRevert(CollectionOfferFacet.CollectionOfferShape.selector);

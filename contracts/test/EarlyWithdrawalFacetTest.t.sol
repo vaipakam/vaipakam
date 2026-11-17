@@ -1044,6 +1044,24 @@ contract EarlyWithdrawalFacetTest is Test {
         nft.transferFrom(seller, makeAddr("marketBuyer"), oldToken);
     }
 
+    /// @dev Chained-attack B9: a position token may not move into a user
+    ///      vault. A vault cannot claim, so the position's payouts would be
+    ///      stranded in a vault created for the vault.
+    function testPositionTokenMayNotMoveIntoAVault() public {
+        uint256 token = LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lenderTokenId;
+        LibTestPositionNFT.waitOutCooldown(address(diamond), token);
+        PositionNFT nft = LibTestPositionNFT.core(address(diamond));
+        address holder = nft.ownerOf(token);
+        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(holder);
+        vm.expectRevert(abi.encodeWithSelector(VaipakamNFTFacet.PositionToVault.selector, vault));
+        vm.prank(holder);
+        nft.transferFrom(holder, vault, token);
+        // A wallet still receives it.
+        vm.prank(holder);
+        nft.transferFrom(holder, makeAddr("plainWallet"), token);
+        assertEq(nft.ownerOf(token), makeAddr("plainWallet"));
+    }
+
     /// @dev Protected account mode: a locked buyer opens no new position, and
     ///      taking over the lender position by a direct sale is one. The
     ///      refusal is in `LibLoan.migrateLenderPosition`, so it holds on

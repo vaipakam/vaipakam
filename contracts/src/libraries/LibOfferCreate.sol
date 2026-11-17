@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibTiming} from "./LibTiming.sol";
 import {LibProtectedAccount} from "./LibProtectedAccount.sol";
 import {LibLoanClock} from "./LibLoanClock.sol";
@@ -78,6 +79,19 @@ library LibOfferCreate {
             params.lendingAsset != address(0) &&
             params.lendingAsset == params.collateralAsset
         ) revert IVaipakamErrors.SelfCollateralizedOffer();
+
+        // A platform position token is neither lent nor pledged here. A
+        // pledged token would sit in a vault, and a position held by a vault
+        // has no wallet to claim it: its payouts would be stranded. Whether
+        // positions may ever be pledged inside the platform is an open owner
+        // decision, so the safe state is a refusal.
+        {
+            address positionCore = LibPositionNFT._storage().core;
+            if (
+                positionCore != address(0) &&
+                (params.collateralAsset == positionCore || params.lendingAsset == positionCore)
+            ) revert IVaipakamErrors.PositionTokenNotAccepted();
+        }
 
         // Per-asset pause (governance-controlled reserve pause).
         LibFacet.requireAssetNotPaused(params.lendingAsset);

@@ -2319,6 +2319,11 @@
   },
   {
     "type": "error",
+    "name": "PositionTokenNotAccepted",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "PriceGuardNumeraireMismatch",
     "inputs": [
       {

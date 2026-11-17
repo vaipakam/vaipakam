@@ -192,6 +192,9 @@ interface IVaipakamErrors {
     ///         via asset classification (the older USDT "always-Illiquid"
     ///         hack is retired).
     error SelfCollateralizedOffer();
+    /// @notice A platform position token may not be an offer's lent or
+    ///         collateral asset.
+    error PositionTokenNotAccepted();
 
     // ─── Oracle ──────────────────────────────────────────────────────────────
     error UpdateNotAllowed();

@@ -160,6 +160,9 @@ contract VaipakamNFTFacet is DiamondReentrancyGuard, DiamondAccessControl {
             revert PositionCoolingDown(tokenId, valueOutBlock, readyAt);
         }
         LibVaipakam.assertPositionMoveNotSanctioned(from, to);
+        // A position held by a user vault has no wallet that can claim it, so
+        // every payout to it would be stranded: no position moves into one.
+        if (LibVaipakam.storageSlot().vaultUserOf[to] != address(0)) revert PositionToVault(to);
         // #3526 — the retired wallet has lost every right over the account:
         // no transfer out of it, by the wallet or by any operator it approved,
         // except the recovery move to the replacement wallet (the core's
@@ -175,6 +178,9 @@ contract VaipakamNFTFacet is DiamondReentrancyGuard, DiamondAccessControl {
     /// @notice A position may not move in the block value last left it, nor
     ///         until `readyAt`.
     error PositionCoolingDown(uint256 tokenId, uint64 valueOutBlock, uint64 readyAt);
+    /// @notice A position token may not be moved into a user vault: a vault
+    ///         cannot claim, so the position's payouts would be stranded.
+    error PositionToVault(address vault);
     /// @notice A cooldown outside {LibPositionNFT.MIN_TRANSFER_COOLDOWN_SEC}..
     ///         {LibPositionNFT.MAX_TRANSFER_COOLDOWN_SEC}.
     error InvalidPositionTransferCooldown(uint32 sec);
