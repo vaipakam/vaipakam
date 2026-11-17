@@ -20,6 +20,7 @@ import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
+import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
@@ -312,8 +313,7 @@ contract PrecloseFacet is
             // Treasury fee transferred immediately (skipped when satisfied in VPFI).
             // #1281-011 — the one payer -> treasury pull (refuses a short arrival).
             LibFacet.transferFromPayerToTreasury(
-                msg.sender, loan.principalAsset, plan.treasuryShare, ITreasuryFeeHost.FeeKind.Interest, plan.interest + plan.lateFee
-            );
+                msg.sender, loan.principalAsset, plan.treasuryShare, LibFeeFloor.interest(plan.interest + plan.lateFee, LibVaipakam.effectiveTreasuryFeeBps(loan)));
 
             // T-037 — Lender's due: direct borrower → lender's vault.
             // Routed through the cross-payer chokepoint variant so the
@@ -854,7 +854,7 @@ contract PrecloseFacet is
 
         address payAsset = LibPreclose.paymentAsset(loan);
         // #1281-011 — the one payer -> treasury pull (refuses a short arrival).
-        LibFacet.transferFromPayerToTreasury(msg.sender, payAsset, treasuryFee, ITreasuryFeeHost.FeeKind.Interest, accruedInterest);
+        LibFacet.transferFromPayerToTreasury(msg.sender, payAsset, treasuryFee, LibFeeFloor.interest(accruedInterest, LibVaipakam.effectiveTreasuryFeeBps(loan)));
         // #1209 / #1808 — the open seller claims are paid first out of the
         // interest, straight from the payer into each seller's vault, and the
         // holder's part of it is recorded as held for the lender side, so a

@@ -166,7 +166,7 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
             uint256 treasuryCut = initiationFee - matcherCut;
             // #2440 — the treasury accrues what reached it.
             LibFacet.vaultFeeToTreasury(
-                lender, lendingAsset, treasuryCut, ITreasuryFeeHost.FeeKind.Initiation, effectivePrincipal
+                lender, lendingAsset, treasuryCut, LibFeeFloor.initiation(effectivePrincipal)
             );
             if (matcherCut > 0) {
                 LibVaultOutflow.toIncentive(

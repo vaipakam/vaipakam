@@ -12,6 +12,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {LibNumeraireValueRead} from "./LibNumeraireValueRead.sol";
 import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
+import {LibFeeFloor} from "./LibFeeFloor.sol";
 
 /// @title LibFacet
 /// @notice Shared facet-level helpers previously duplicated across
@@ -58,19 +59,18 @@ library LibFacet {
     ///      the host moves nothing and accrues all of `amount` (#2623).
     /// @return accrued What the treasury received and was credited with.
     function transferToTreasury(address asset, uint256 amount) internal returns (uint256 accrued) {
-        return transferToTreasury(asset, amount, ITreasuryFeeHost.FeeKind.Other, 0);
+        return transferToTreasury(asset, amount, LibFeeFloor.other());
     }
 
     /// @dev #3649 stage 3 — {transferToTreasury} for a fee that feeds the
-    ///      reserve: `kind` names it and `base` is its floor's base (the
-    ///      principal for an initiation fee, the interest for an interest
-    ///      share). The host splits what arrived at the floor
+    ///      reserve: `basis` names it and its floor's base (built with
+    ///      {LibFeeFloor.initiation}, {LibFeeFloor.interest} or
+    ///      {LibFeeFloor.extension}). The host splits what arrived at the floor
     ///      ({LibFeeFloor}).
     function transferToTreasury(
         address asset,
         uint256 amount,
-        ITreasuryFeeHost.FeeKind kind,
-        uint256 base
+        ITreasuryFeeHost.FeeBasis memory basis
     ) internal returns (uint256 accrued) {
         if (amount == 0) return 0;
         return abi.decode(
@@ -79,8 +79,7 @@ library LibFacet {
                     ITreasuryFeeHost.collectFeeFromDiamond.selector,
                     asset,
                     amount,
-                    kind,
-                    base
+                    basis
                 ),
                 IVaipakamErrors.TreasuryTransferFailed.selector
             ),
@@ -278,7 +277,7 @@ library LibFacet {
         address asset,
         uint256 amount
     ) internal {
-        transferFromPayerToTreasury(payer, asset, amount, ITreasuryFeeHost.FeeKind.Other, 0);
+        transferFromPayerToTreasury(payer, asset, amount, LibFeeFloor.other());
     }
 
     /// @dev #3649 stage 3 — {transferFromPayerToTreasury} for a fee that
@@ -287,8 +286,7 @@ library LibFacet {
         address payer,
         address asset,
         uint256 amount,
-        ITreasuryFeeHost.FeeKind kind,
-        uint256 base
+        ITreasuryFeeHost.FeeBasis memory basis
     ) internal {
         if (amount == 0) return;
         // #1281-011 / #2440 — hosted on TreasuryFeeFacet, which refuses the pull
@@ -303,8 +301,7 @@ library LibFacet {
                 payer,
                 asset,
                 amount,
-                kind,
-                base
+                basis
             ),
             IVaipakamErrors.TreasuryTransferFailed.selector
         );
@@ -321,7 +318,7 @@ library LibFacet {
         address asset,
         uint256 amount
     ) internal returns (uint256) {
-        return vaultFeeToTreasury(user, asset, amount, ITreasuryFeeHost.FeeKind.Other, 0);
+        return vaultFeeToTreasury(user, asset, amount, LibFeeFloor.other());
     }
 
     /// @dev #3649 stage 3 — {vaultFeeToTreasury} for a fee that feeds the
@@ -330,8 +327,7 @@ library LibFacet {
         address user,
         address asset,
         uint256 amount,
-        ITreasuryFeeHost.FeeKind kind,
-        uint256 base
+        ITreasuryFeeHost.FeeBasis memory basis
     ) internal returns (uint256) {
         if (amount == 0) return 0;
         return abi.decode(
@@ -341,8 +337,7 @@ library LibFacet {
                     user,
                     asset,
                     amount,
-                    kind,
-                    base
+                    basis
                 ),
                 IVaipakamErrors.TreasuryTransferFailed.selector
             ),

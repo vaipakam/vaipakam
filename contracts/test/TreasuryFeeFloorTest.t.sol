@@ -38,10 +38,21 @@ contract TreasuryFeeFloorTest is SetupTest {
         config = ConfigFacet(address(diamond));
     }
 
+    /// @dev The share a test loan opened with: the 10% default.
+    uint256 internal constant SHARE = 1000;
+
+    function _basis(ITreasuryFeeHost.FeeKind kind, uint256 base)
+        internal
+        pure
+        returns (ITreasuryFeeHost.FeeBasis memory)
+    {
+        return ITreasuryFeeHost.FeeBasis(kind, base, kind == ITreasuryFeeHost.FeeKind.Interest ? SHARE : 0);
+    }
+
     function _push(uint256 amount, ITreasuryFeeHost.FeeKind kind, uint256 base) internal returns (uint256 accrued) {
         ERC20Mock(mockERC20).mint(address(diamond), amount);
         vm.prank(address(diamond));
-        accrued = host.collectFeeFromDiamond(mockERC20, amount, kind, base);
+        accrued = host.collectFeeFromDiamond(mockERC20, amount, _basis(kind, base));
     }
 
     /// @dev {_push} with the split event expected from the host call itself
@@ -57,7 +68,7 @@ contract TreasuryFeeFloorTest is SetupTest {
         vm.expectEmit(true, true, false, true, address(diamond));
         emit TreasuryFeeSplit(mockERC20, kind, treasuryPart, reservePart);
         vm.prank(address(diamond));
-        host.collectFeeFromDiamond(mockERC20, amount, kind, base);
+        host.collectFeeFromDiamond(mockERC20, amount, _basis(kind, base));
     }
 
     function _held() internal view returns (uint256) {
@@ -127,18 +138,52 @@ contract TreasuryFeeFloorTest is SetupTest {
         address asset = address(other);
         other.mint(address(diamond), 100 ether);
         vm.startPrank(address(diamond));
-        host.collectFeeFromDiamond(asset, 20 ether, ITreasuryFeeHost.FeeKind.Initiation, 10_000 ether);
+        host.collectFeeFromDiamond(asset, 20 ether, _basis(ITreasuryFeeHost.FeeKind.Initiation, 10_000 ether));
         for (uint256 i; i < 8; ++i) {
-            host.collectFeeFromDiamond(asset, 10 ether, ITreasuryFeeHost.FeeKind.Extension, 0);
+            host.collectFeeFromDiamond(asset, 10 ether, _basis(ITreasuryFeeHost.FeeKind.Extension, 0));
         }
         vm.stopPrank();
         assertEq(host.getReservePartHeldByTreasury(asset), oneStep, "same reserve total");
     }
 
+    /// A loan keeps the share it opened with, so the setters' half rule
+    /// alone does not hold for an older loan. The host caps the interest
+    /// floor at half of that loan's own share: a loan opened at a 2% share,
+    /// collected after the share is raised to 10% and the floor to 5%,
+    /// still sends half its undiscounted fee to the reserve.
+    function test_interestFloor_cappedAtHalfTheLoansOwnShare() public {
+        levels.setTreasuryFeeFloors(10, 500);
+        // 1,000 interest at the loan's 2% share: a 20 fee. The floor in force
+        // would be 50; half the loan's share is 10.
+        ERC20Mock(mockERC20).mint(address(diamond), 20 ether);
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit TreasuryFeeSplit(mockERC20, ITreasuryFeeHost.FeeKind.Interest, 10 ether, 10 ether);
+        vm.prank(address(diamond));
+        host.collectFeeFromDiamond(
+            mockERC20, 20 ether, ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Interest, 1_000 ether, 200)
+        );
+        assertEq(_held(), 10 ether, "the reserve keeps half");
+    }
+
+    /// The cap rounds down, so the reserve's half is never short by rounding.
+    function test_interestFloorCap_roundsDown() public {
+        levels.setTreasuryFeeFloors(10, 500);
+        // 1,001 wei of interest at a 1% share: a 10 wei fee, half of it 5.005
+        // wei, so the treasury keeps 5 and the reserve 5.
+        _pushBasis(10, ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Interest, 1001, 100));
+        assertEq(_held(), 5);
+    }
+
+    function _pushBasis(uint256 amount, ITreasuryFeeHost.FeeBasis memory basis) internal {
+        ERC20Mock(mockERC20).mint(address(diamond), amount);
+        vm.prank(address(diamond));
+        host.collectFeeFromDiamond(mockERC20, amount, basis);
+    }
+
     /// The host stays Diamond-only.
     function test_hostIsDiamondOnly() public {
         vm.expectRevert(IVaipakamErrors.UnauthorizedCrossFacetCall.selector);
-        host.collectFeeFromDiamond(mockERC20, 1, ITreasuryFeeHost.FeeKind.Interest, 1);
+        host.collectFeeFromDiamond(mockERC20, 1, _basis(ITreasuryFeeHost.FeeKind.Interest, 1));
     }
 
     // ── Settings ─────────────────────────────────────────────────────────

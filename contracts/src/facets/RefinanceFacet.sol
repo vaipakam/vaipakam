@@ -14,6 +14,7 @@ import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
+import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
@@ -749,7 +750,7 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
         // The treasury's share, out of what the Diamond now holds (#2440: the
         // host accrues what the treasury received).
         // #3649 stage 3 — split at the floor on the interest it came from.
-        LibFacet.transferToTreasury(asset, treasuryFee, ITreasuryFeeHost.FeeKind.Interest, interestBase);
+        LibFacet.transferToTreasury(asset, treasuryFee, LibFeeFloor.interest(interestBase, LibVaipakam.effectiveTreasuryFeeBps(oldLoan)));
         emit RefinancePayoffSettled(
             oldLoanId,
             newLoanId,

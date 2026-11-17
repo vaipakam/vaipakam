@@ -65,8 +65,8 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *      revert, never a silently skipped fee).
  *
  *      THE FLOOR SPLIT (#3649 stage 3, `ShortfallReserveDesign.md` section
- *      8): each leg names what the fee is ({ITreasuryFeeHost.FeeKind}) and
- *      the floor's base, and the split of what ARRIVED runs here, once, by
+ *      8): each leg names what the fee is and the floor's base
+ *      ({ITreasuryFeeHost.FeeBasis}), and the split of what ARRIVED runs here, once, by
  *      {LibFeeFloor}: the treasury's part up to the floor, the reserve's part
  *      above it. No reserve is named yet, so both parts go to the treasury;
  *      the split is stated by {ITreasuryFeeHost.TreasuryFeeSplit} and the
@@ -85,7 +85,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  */
 contract TreasuryFeeFacet is ITreasuryFeeHost, IVaipakamErrors {
     /// @inheritdoc ITreasuryFeeHost
-    function collectFeeFromPayer(address payer, address asset, uint256 amount, FeeKind kind, uint256 base)
+    function collectFeeFromPayer(address payer, address asset, uint256 amount, FeeBasis calldata basis)
         external
     {
         if (msg.sender != address(this)) revert UnauthorizedCrossFacetCall();
@@ -93,11 +93,11 @@ contract TreasuryFeeFacet is ITreasuryFeeHost, IVaipakamErrors {
         address treasury = LibTreasury.current();
         LibDelivery.pullExact(asset, payer, treasury, amount);
         LibFacet.recordTreasuryAccrual(asset, amount, treasury);
-        _split(asset, amount, kind, base);
+        _split(asset, amount, basis);
     }
 
     /// @inheritdoc ITreasuryFeeHost
-    function collectFeeFromVault(address user, address asset, uint256 amount, FeeKind kind, uint256 base)
+    function collectFeeFromVault(address user, address asset, uint256 amount, FeeBasis calldata basis)
         external
         returns (uint256 accrued)
     {
@@ -108,11 +108,11 @@ contract TreasuryFeeFacet is ITreasuryFeeHost, IVaipakamErrors {
         address treasury;
         (accrued, treasury) = LibVaultOutflow.toTreasury(user, asset, amount, 0, OutflowReason.FEE);
         LibFacet.recordTreasuryAccrual(asset, accrued, treasury);
-        _split(asset, accrued, kind, base);
+        _split(asset, accrued, basis);
     }
 
     /// @inheritdoc ITreasuryFeeHost
-    function collectFeeFromDiamond(address asset, uint256 amount, FeeKind kind, uint256 base)
+    function collectFeeFromDiamond(address asset, uint256 amount, FeeBasis calldata basis)
         external
         returns (uint256 accrued)
     {
@@ -122,7 +122,7 @@ contract TreasuryFeeFacet is ITreasuryFeeHost, IVaipakamErrors {
         // The Diamond as its own treasury already holds the share (#2623).
         accrued = treasury == address(this) ? amount : LibDelivery.pushMeasured(asset, treasury, amount);
         LibFacet.recordTreasuryAccrual(asset, accrued, treasury);
-        _split(asset, accrued, kind, base);
+        _split(asset, accrued, basis);
     }
 
     /// @notice The reserve's part of the fees collected in `asset` that the
@@ -134,10 +134,10 @@ contract TreasuryFeeFacet is ITreasuryFeeHost, IVaipakamErrors {
     /// @dev Split what arrived of a reserve-feeding fee at its floor, count
     ///      the reserve's part the treasury now holds, and state both parts.
     ///      A fee the treasury keeps whole is not split.
-    function _split(address asset, uint256 arrived, FeeKind kind, uint256 base) private {
-        if (kind == FeeKind.Other || arrived == 0) return;
-        (uint256 treasuryPart, uint256 reservePart) = LibFeeFloor.split(kind, base, arrived);
+    function _split(address asset, uint256 arrived, FeeBasis calldata basis) private {
+        if (basis.kind == FeeKind.Other || arrived == 0) return;
+        (uint256 treasuryPart, uint256 reservePart) = LibFeeFloor.split(basis, arrived);
         if (reservePart > 0) LibVaipakam.storageSlot().reservePartHeldByTreasury[asset] += reservePart;
-        emit TreasuryFeeSplit(asset, kind, treasuryPart, reservePart);
+        emit TreasuryFeeSplit(asset, basis.kind, treasuryPart, reservePart);
     }
 }

@@ -27,6 +27,24 @@ interface ITreasuryFeeHost {
         Extension
     }
 
+    /// @notice What a fee leg is and what its floor is measured on (#3649
+    ///         stage 3). Built with the constructors in `LibFeeFloor`.
+    /// @param kind     What the fee is (the floor split's rule).
+    /// @param base     The floor's base: the loan's principal for
+    ///                 `Initiation`, the interest the share was taken from
+    ///                 for `Interest`; ignored otherwise.
+    /// @param shareBps For `Interest` only: the treasury share of interest
+    ///                 the loan was opened with (`treasuryFeeBpsAtInit`,
+    ///                 resolved). The floor is capped at half of that share
+    ///                 of the interest, so a loan opened at a lower share
+    ///                 still sends at least half its undiscounted fee to the
+    ///                 reserve after the share and the floor are raised.
+    struct FeeBasis {
+        FeeKind kind;
+        uint256 base;
+        uint256 shareBps;
+    }
+
     /// @notice A reserve-feeding fee arrived and was split: `treasuryPart` up
     ///         to the floor, `reservePart` above it. Until a registry names a
     ///         reserve, the reserve part is sent to the treasury as well and
@@ -45,11 +63,8 @@ interface ITreasuryFeeHost {
     /// @param payer  The wallet the fee is drawn from (it approved the Diamond).
     /// @param asset  The ERC-20 the fee is paid in.
     /// @param amount The fee.
-    /// @param kind   What the fee is (the floor split's rule).
-    /// @param base   The floor's base: the loan's principal for
-    ///               `Initiation`, the interest the share was taken from for
-    ///               `Interest`; ignored otherwise.
-    function collectFeeFromPayer(address payer, address asset, uint256 amount, FeeKind kind, uint256 base)
+    /// @param basis  What the fee is and its floor's base ({FeeBasis}).
+    function collectFeeFromPayer(address payer, address asset, uint256 amount, FeeBasis calldata basis)
         external;
 
     /// @notice Collect `amount` of `asset` from `user`'s vault into the
@@ -58,10 +73,9 @@ interface ITreasuryFeeHost {
     /// @param user   The vault owner the fee is drawn from.
     /// @param asset  The ERC-20 the fee is paid in.
     /// @param amount The fee requested from the vault.
-    /// @param kind   What the fee is (the floor split's rule).
-    /// @param base   The floor's base (see {collectFeeFromPayer}).
+    /// @param basis  What the fee is and its floor's base ({FeeBasis}).
     /// @return accrued What the treasury received and was credited with.
-    function collectFeeFromVault(address user, address asset, uint256 amount, FeeKind kind, uint256 base)
+    function collectFeeFromVault(address user, address asset, uint256 amount, FeeBasis calldata basis)
         external
         returns (uint256 accrued);
 
@@ -74,10 +88,9 @@ interface ITreasuryFeeHost {
     ///         Returns 0 without moving anything when `amount` is 0.
     /// @param asset  The ERC-20 the fee is paid in.
     /// @param amount The fee the Diamond pushes.
-    /// @param kind   What the fee is (the floor split's rule).
-    /// @param base   The floor's base (see {collectFeeFromPayer}).
+    /// @param basis  What the fee is and its floor's base ({FeeBasis}).
     /// @return accrued What the treasury received and was credited with.
-    function collectFeeFromDiamond(address asset, uint256 amount, FeeKind kind, uint256 base)
+    function collectFeeFromDiamond(address asset, uint256 amount, FeeBasis calldata basis)
         external
         returns (uint256 accrued);
 }

@@ -16,6 +16,7 @@ import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
+import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibFallbackCustody} from "../libraries/LibFallbackCustody.sol";
@@ -344,8 +345,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // #1281-011 — through the one payer -> treasury pull, which
             // refuses a short arrival by name.
             LibFacet.transferFromPayerToTreasury(
-                msg.sender, loan.principalAsset, plan.treasuryShare, ITreasuryFeeHost.FeeKind.Interest, plan.interest + plan.lateFee
-            );
+                msg.sender, loan.principalAsset, plan.treasuryShare, LibFeeFloor.interest(plan.interest + plan.lateFee, LibVaipakam.effectiveTreasuryFeeBps(loan)));
 
             // T-037 — Lender's due: borrower → lender's vault in ONE
             // transfer. The Diamond carries the borrower's allowance
@@ -825,7 +825,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // #1383 — a yield-fee discount can drive `treasuryShare` to 0 on the
             // VPFI-payment path; the shared pull is a no-op at zero.
             // #1281-011 — and it refuses a short arrival by name.
-            LibFacet.transferFromPayerToTreasury(msg.sender, loan.principalAsset, treasuryShare, ITreasuryFeeHost.FeeKind.Interest, accrued);
+            LibFacet.transferFromPayerToTreasury(msg.sender, loan.principalAsset, treasuryShare, LibFeeFloor.interest(accrued, LibVaipakam.effectiveTreasuryFeeBps(loan)));
 
             // #1808 — through the ledger's single writer (checkpoint first).
             // `partialAmount < loan.principal` is pinned above.

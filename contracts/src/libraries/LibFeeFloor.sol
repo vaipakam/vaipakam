@@ -14,7 +14,8 @@ import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
  *         - Initiation fee: the floor is a share of the loan's principal
  *           (default 0.1%), taken once, at acceptance.
  *         - Treasury share of an ERC-20 loan's interest: the floor is a share
- *           of the interest it was taken from (default 1%).
+ *           of the interest it was taken from (default 1%), capped at half
+ *           of the share the loan was opened with.
  *         - An extension's added initiation fee takes no floor: the reserve's
  *           whole, so a term reached in one step or in many sends the same
  *           totals to each side.
@@ -34,26 +35,70 @@ library LibFeeFloor {
         interestBps = c.interestBps == 0 ? LibVaipakam.FEE_FLOOR_INTEREST_BPS_DEFAULT : c.interestBps;
     }
 
-    /// @notice The treasury's floor on a fee of `kind` with floor base
-    ///         `base`: the principal for an initiation fee, the interest for
-    ///         an interest share. `type(uint256).max` for a fee the treasury
-    ///         keeps whole, 0 for an extension's added fee.
-    function floorOf(ITreasuryFeeHost.FeeKind kind, uint256 base) internal view returns (uint256) {
+    // ── Fee bases ────────────────────────────────────────────────────────
+
+    /// @notice A fee the treasury keeps whole (not split).
+    function other() internal pure returns (ITreasuryFeeHost.FeeBasis memory) {
+        return ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Other, 0, 0);
+    }
+
+    /// @notice An initiation fee on `principal`, charged at acceptance under
+    ///         the settings in force (so the setters' half rule holds it).
+    function initiation(uint256 principal) internal pure returns (ITreasuryFeeHost.FeeBasis memory) {
+        return ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Initiation, principal, 0);
+    }
+
+    /// @notice A treasury share of `interestAmount`, on a loan opened with
+    ///         the treasury share `shareBps` (its resolved
+    ///         `treasuryFeeBpsAtInit`).
+    function interest(uint256 interestAmount, uint256 shareBps)
+        internal
+        pure
+        returns (ITreasuryFeeHost.FeeBasis memory)
+    {
+        return ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Interest, interestAmount, shareBps);
+    }
+
+    /// @notice An extension's added initiation fee: the reserve's whole.
+    function extension() internal pure returns (ITreasuryFeeHost.FeeBasis memory) {
+        return ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Extension, 0, 0);
+    }
+
+    // ── The split ────────────────────────────────────────────────────────
+
+    /// @notice The treasury's floor on a fee with basis `basis`.
+    ///         `type(uint256).max` for a fee the treasury keeps whole, 0 for
+    ///         an extension's added fee.
+    /// @dev    An interest floor is the lesser of the floor in force on the
+    ///         interest (rounded up) and half of the share the loan was
+    ///         opened with on the interest (rounded down). A loan keeps its
+    ///         opening share, so the setters' half rule alone would not hold
+    ///         for an older loan: one opened at a 2% share would send its
+    ///         whole fee to the treasury once the floor is raised past 1%.
+    ///         The cap holds the rule per loan, before any discount, and is
+    ///         rounded so the reserve's half is never short.
+    function floorOf(ITreasuryFeeHost.FeeBasis memory basis) internal view returns (uint256) {
+        ITreasuryFeeHost.FeeKind kind = basis.kind;
         if (kind == ITreasuryFeeHost.FeeKind.Other) return type(uint256).max;
         if (kind == ITreasuryFeeHost.FeeKind.Extension) return 0;
         (uint256 initiationBps, uint256 interestBps) = floorsBps();
         uint256 bps = kind == ITreasuryFeeHost.FeeKind.Initiation ? initiationBps : interestBps;
-        return (base * bps + LibVaipakam.BASIS_POINTS - 1) / LibVaipakam.BASIS_POINTS;
+        uint256 floor = (basis.base * bps + LibVaipakam.BASIS_POINTS - 1) / LibVaipakam.BASIS_POINTS;
+        if (kind == ITreasuryFeeHost.FeeKind.Interest) {
+            uint256 halfShare = (basis.base * basis.shareBps) / (2 * LibVaipakam.BASIS_POINTS);
+            if (halfShare < floor) floor = halfShare;
+        }
+        return floor;
     }
 
-    /// @notice Split `amount` of a fee of `kind` (floor base `base`) into the
+    /// @notice Split `amount` of a fee with basis `basis` into the
     ///         treasury's part, up to the floor, and the reserve's part above.
-    function split(ITreasuryFeeHost.FeeKind kind, uint256 base, uint256 amount)
+    function split(ITreasuryFeeHost.FeeBasis memory basis, uint256 amount)
         internal
         view
         returns (uint256 treasuryPart, uint256 reservePart)
     {
-        uint256 floor = floorOf(kind, base);
+        uint256 floor = floorOf(basis);
         treasuryPart = amount < floor ? amount : floor;
         reservePart = amount - treasuryPart;
     }
@@ -61,7 +106,7 @@ library LibFeeFloor {
     /// @notice The part of an initiation fee `fee` on `principal` above the
     ///         treasury floor: the base the matcher's share is sized on.
     function aboveFloor(uint256 fee, uint256 principal) internal view returns (uint256) {
-        uint256 floor = floorOf(ITreasuryFeeHost.FeeKind.Initiation, principal);
+        uint256 floor = floorOf(initiation(principal));
         return fee > floor ? fee - floor : 0;
     }
 }

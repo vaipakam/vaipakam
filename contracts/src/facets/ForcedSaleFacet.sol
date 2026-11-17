@@ -7,6 +7,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
+import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibSaleSizing} from "../libraries/LibSaleSizing.sol";
@@ -499,7 +500,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
         // #3649 stage 3 — two legs: the handling fee is the treasury's whole,
         // the interest share is split at its floor.
         LibFacet.transferToTreasury(loan.principalAsset, sp.fee);
-        LibFacet.transferToTreasury(loan.principalAsset, treasuryInterest, ITreasuryFeeHost.FeeKind.Interest, interestRecovered);
+        LibFacet.transferToTreasury(loan.principalAsset, treasuryInterest, LibFeeFloor.interest(interestRecovered, LibVaipakam.effectiveTreasuryFeeBps(loan)));
 
         // #821 — through the receive-side exemption so a flagged stored lender
         // never blocks the close-out; the claim names what the vault received
