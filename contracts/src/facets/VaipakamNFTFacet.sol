@@ -69,7 +69,8 @@ contract VaipakamNFTFacet is DiamondReentrancyGuard, DiamondAccessControl {
      *         Image URIs: only the two per-side defaults seed here; granular
      *         per-(status, isLender) overrides are set afterwards via
      *         `setImageURIForStatus` (or `ConfigureNFTImageURIs.s.sol`). The
-     *         default IPFS URL is a placeholder operators swap before mainnet.
+     *         default IPFS URL is the Vaipakam logo; operators may rotate it
+     *         later through `setDefaultImage`.
      * @param core The PositionNFT contract.
      */
     // forge-lint: disable-next-line(mixed-case-function)
@@ -79,7 +80,7 @@ contract VaipakamNFTFacet is DiamondReentrancyGuard, DiamondAccessControl {
         LibPositionNFT.setCore(core);
         LibPositionNFT.ERC721Storage storage es = LibPositionNFT._storage();
         string memory defaultIpfs =
-            "https://ipfs.io/ipfs/QmahNt61bcS6dySxy2qszmXC3AsRMoUxapttrj4WLHNc7k";
+            "https://ipfs.io/ipfs/QmaejkrKx9e9AHZUVPojuANYRwzsskXbRcghvEX45N1dAn";
         es.defaultLenderImage = defaultIpfs;
         es.defaultBorrowerImage = defaultIpfs;
         es.initialized = true;
