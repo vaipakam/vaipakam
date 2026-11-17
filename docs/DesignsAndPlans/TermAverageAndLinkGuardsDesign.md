@@ -100,8 +100,10 @@ This is a prompt, not a price rule. A manipulated average can at most ask a user
 
 `InstantMarketDesign.md` section 8 is amended: the **declared** total counts only funded slots.
 
-- A permissionless step marks a slot **unfunded** when its owner's free balance in the lending asset is below the slot's smallest fill. The slot leaves the declared total, and its day-of-closing record with it.
-- The mark clears, and the slot rejoins the total, when the owner sets or refreshes the slot with the balance present, or a fill from it succeeds.
+- A permissionless step marks a slot **unfunded** when it has unused capacity of at least its smallest fill and its owner's free balance in the lending asset is below that smallest fill. A slot that is fully lent has no unused capacity and is never marked.
+- An unfunded slot counts in the declared total only for the principal lent out of it now, not for its largest exposure. Its unused capacity leaves the total, and the matching part of its day-of-closing record with it. So "how full" (principal lent out of slots divided by declared) can never pass 100% or lose a lent slot from its base: a slot with 100 declared and 100 lent counts 100 either way, and one with 100 declared, 40 lent and an empty vault counts 40.
+- While a slot is unfunded its counted amount follows its lent principal as loans close or are taken over.
+- The mark clears, and the slot counts for its full exposure again, when the owner sets or refreshes the slot with the balance present, or a fill from it succeeds.
 - The step pays nothing and changes nothing else: an unfunded slot can still be filled the moment funds arrive. A keeper pass backs it, shipped disarmed, with its row in the permissionless-steps ledger.
 - The app's depth and "how full" figures use the funded total and say so.
 
@@ -141,7 +143,7 @@ The settings above are read at the fill, for offers not yet loans. A loan's fixe
 4. Term average: each table row and a point between rows; unavailable when an average is; in a spike the one-year figure is below the 24-hour average, in a trough above.
 5. Term-average link: tightens only; never outside typed limits; unavailable average fills nothing.
 6. Band: inside needs no flag; outside without the flag is refused by name on create, accept and instant borrow; with the flag proceeds; a rate that leaves the band before landing is refused; no average means no check.
-7. Unfunded mark: set only below the smallest fill; leaves and rejoins the declared total exactly; a fill clears it.
+7. Unfunded mark: set only with unused capacity and a balance below the smallest fill, never on a fully lent slot; the slot then counts for its lent principal only and follows it as loans close; "how full" never passes 100%; clearing restores the full exposure exactly; a fill clears it.
 8. Previews agree with the transactions for every case above.
 
 ## 12. Alternatives considered
