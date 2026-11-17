@@ -6,6 +6,8 @@ Amounts in different assets are never added together, since no total across asse
 
 The figures always say they cover only the listed settings. The protocol drops a stopped Auto-lend with nothing left waiting from the wallet's list while its loans run on, and no on-chain list of those loans exists, so the page names that gap and points to each loan's own page instead of showing a share that quietly leaves them out.
 
+The figure is what the protocol counts against the Auto-lend's limits, not what the wallet owns. A loan the lender has sold keeps counting until its repayment is claimed, so the page says "counted in loans" and states that a sold loan still counts although it is no longer the lender's.
+
 This is the first part of #3664, the part its own recommendation says can ship for ordinary Auto-lend. The rest needs data the app cannot read today: the rate earned across the loans Auto-lend made (no per-owner list of those loans exists on-chain, and the indexer does not record intent fills yet), why the rest is waiting (#3623), what lower limits would have filled, the opt-in alerts, and the instant-market row (#3656).
 
 Advances #3664.

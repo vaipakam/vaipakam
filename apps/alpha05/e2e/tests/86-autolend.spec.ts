@@ -148,7 +148,7 @@ test('a lender sets up Auto-lend: one choice, an exact approval, terms and fundi
   // #3664 — how much is in loans, per asset: nothing yet, all 0.5 waiting.
   const share = page.getByTestId('autolend-share-row');
   await expect(share).toHaveAttribute('data-share-bps', '0');
-  await expect(share).toContainText('0% in loans');
+  await expect(share).toContainText('0% counted in loans');
   await expect(share).toContainText('0.5 WETH waiting in your vault');
   await expect(page.getByTestId('autolend-share-idle')).toHaveCount(0);
   await expect(page.getByTestId('autolend-share-scope')).toContainText('its loans run on');

@@ -4798,14 +4798,14 @@ export const copy = {
     sectionStale: A('These figures are as last read: the latest read failed ({{reason}}), so they may be out of date.'),
     sectionMore: B('Showing {{shown}} of {{total}}.'),
     // #3664 — how much of the money behind Auto-lend is lent, per asset.
-    shareTitle: B('How much is in loans'),
-    shareRow: B('{{asset}}: {{share}} in loans. {{lent}} in loans, {{waiting}} waiting in your vault.'),
+    shareTitle: B('How much is counted in loans'),
+    shareRow: B('{{asset}}: {{share}} counted in loans. {{lent}} counted in loans, {{waiting}} waiting in your vault.'),
     shareIdle: A('{{amount}} of the waiting money sits behind a stopped or ended Auto-lend, so it will not be lent. Take it back, or start that Auto-lend again.'),
     shareScope: A(
       'These figures cover only the Auto-lend settings listed here. A stopped Auto-lend with no money left waiting leaves this list, but its loans run on; each is on its own loan page under Positions, and is not counted here.',
     ),
     sharePartial: B('These figures cover the {{shown}} Auto-lend settings listed here, not all {{total}}.'),
-    shareNote: A('A loan counts in full until its repayment is claimed or lent again, even after part is repaid. Each asset is counted on its own; amounts in different assets are not added together. The rate on each loan is on that loan’s page.'),
+    shareNote: A('A loan counts in full until its repayment is claimed or lent again, even after part is repaid, and a loan you have sold keeps counting until then although it and its repayment are no longer yours. Each asset is counted on its own; amounts in different assets are not added together. The rate on each loan is on that loan’s page.'),
     cardTitle: B('{{lend}} against {{coll}}'),
     stateActive: B('Lending'),
     stateEnded: B('Ended: its end date has passed'),

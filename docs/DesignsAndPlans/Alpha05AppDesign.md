@@ -1874,7 +1874,11 @@ above. Each resolves here, so a route reviewer needs no private file:
   drops a stopped Auto-lend with nothing left waiting from the wallet's list
   while its loans run on, and no on-chain list of those loans exists, so the
   page names that gap and points to each loan's own page rather than
-  presenting a share that silently leaves them out.
+  presenting a share that silently leaves them out. The figure is what the
+  protocol counts against the Auto-lend's limits, not what the wallet owns:
+  a loan the lender has sold keeps counting until its repayment is claimed,
+  so the page says "counted in loans" and states that a sold loan still
+  counts though it is no longer the wallet's.
 - **RB-PRICE-GUARD** — the maker's price-move guard (#3358) is shown on the
   page of an open or ended loan offer of a token against token collateral.
   Read at the offer's own block, it states the limit, when it was set, and whether
