@@ -44,7 +44,19 @@ import {
   type ExtendCaps,
 } from './autoExtend';
 
-const DIAMOND = DEPLOYMENTS[84532]!.diamond as Address; // a legacy-mode record (#3205)
+// Keep the legacy ownership path covered independently of the live deployment.
+vi.mock('@vaipakam/contracts/deployments', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@vaipakam/contracts/deployments')>();
+  return {
+    ...actual,
+    DEPLOYMENTS: {
+      ...actual.DEPLOYMENTS,
+      84532: { ...actual.DEPLOYMENTS[84532], positionNFT: undefined },
+    },
+  };
+});
+
+const DIAMOND = DEPLOYMENTS[84532]!.diamond as Address;
 const ME = '0x00000000000000000000000000000000000000aA' as Address;
 const OTHER = '0x00000000000000000000000000000000000000bb' as Address;
 const USDC = '0x0000000000000000000000000000000000000001' as Address;

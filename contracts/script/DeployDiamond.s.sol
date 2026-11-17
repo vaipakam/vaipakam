@@ -1639,7 +1639,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
             require(e.orderProtocol.code.length != 0, "DeployDiamond: no code at the vault's order protocol");
         }
         if (e.seaport.code.length != 0) {
-            address controller = ISeaportOrderHash(e.seaport).conduitController();
+            (,, address controller) = ISeaportOrderHash(e.seaport).information();
             (address conduit, bool exists) = IConduitController(controller).getConduit(e.conduitKey);
             require(exists && conduit != address(0), "DeployDiamond: the vault's conduit key is not deployed on its Seaport");
             e.conduit = conduit;

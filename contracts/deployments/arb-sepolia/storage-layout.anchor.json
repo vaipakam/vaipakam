@@ -1,27 +1,29 @@
 {
   "_readme": "Binds storage-layout.json beside it to the chain it describes (#2092). Written with the record; an in-place change is refused unless the Diamond, the fingerprint of every code location the record governs (the Diamond and its diamondCut facet, facets, vault and adapter templates, every UUPS proxy the chain reaches, and the runtime code at each) and the record hash still match. The parts beside codeFingerprint are there to say which code moved. Do not edit by hand.",
   "adapterTemplate": "0x0000000000000000000000000000000000000000",
-  "codeFingerprint": "0x3e0266514eb73a7cbb185360e050a7f306cf86aa22a94b67ec446579c4bdd57a",
-  "codeHashes": "0xc087ca8549589c9db2ba612cfbb776678e329c9e1039ece273b32ebf1162acd5",
-  "cutFacet": "0xdB620bE6EE5349bfdfb0f229C84413158Dd9005f",
-  "diamond": "0x0ae80D88a867597CfB69A158f8f5b06b090ECE14",
-  "facetsFingerprint": "0x634e613ee725a9bf71da04328ce205bc1dc6126cb32103f4103f803fceff125f",
+  "codeFingerprint": "0x21d2a26ae84b21e52fc7d58289790832cb68fddb5edf6c83fdb2a460f41538cb",
+  "codeHashes": "0x9257c2627bce359e66c0ebb3d74b000c46d10f39425d236a3ce0b2946e02b500",
+  "cutFacet": "0x2F44950e8bbD2314568b423EF50F790EDf330263",
+  "diamond": "0x0EBd0536a698707958e1c327Ba1EB2b4f329A119",
+  "facetsFingerprint": "0x997878bed67a685b7efee55277a37eb79b72c62736d40380fea93f7c0ac5fe02",
   "implementations": [
-    "0xb090684BEb12AC7417b9a2fa56A3d09ABCffafA6",
-    "0xf8c4f92895683d770d7a5026fbE8FEc732cd29f3",
-    "0x47E7D11392a7a3bF6cab4cd44642B0809b067727",
-    "0x332923F296FA501e51c5e8B0002309cBD41Eea64",
-    "0x6D799894e61F2A8d60dEdA3bB4A96b8a7C177ba6",
-    "0x77a6790C9479B1101eC39303153767eEa99b9F6F"
+    "0x185028FDE2e88b1C09a6612153B5Ad6ad921505d",
+    "0xEC2a1a1762bE587661C8471b2e4A8139De2266fE",
+    "0xbFf5f9c892b1c9A9321c0069A2858064A9704549",
+    "0x0eA0672617981945e7faaB966586Cd5332974f8C",
+    "0x81fa9003B8bed797c5628F818E15d4cF19F27a44",
+    "0x6C03ddAC0250990ba325bE5dC0501D330aE0CE4B",
+    "0xab5dce4Bb26DDabFD101aF78f5e61f00AD753A12"
   ],
   "proxies": [
-    "0x519e77E9ed87046E4870fe7e137456a15B944F61",
-    "0x63d0D5eeb346cC3CfC3aeCbC3bC7c7083Fe0484b",
-    "0x892fDdD84198dF792e47a6fD670CcD2CEAB339C4",
-    "0x99b536d220Bf815F541371deacDC482f4995fdDC",
-    "0xb3bC8A6E471aB6302e4Fc25344C5B457AcC927e9",
-    "0xD74a4EE467C1F11CF5847A36F4D83632560949a4"
+    "0x066dB5eaE86052fB68A1eD59B8CE7f0f4B3e4AD1",
+    "0x63F2104Bb406a03d0Cb4bF66422da8a4e98a3A0d",
+    "0x83C9fE3b48CeE6763adbC4398A685ED82f78e5E7",
+    "0x98e20063fe799450cf7E4495aDc18585322C1E98",
+    "0x994A293cA09DBe1751A56Fb1F786E596FAE43c87",
+    "0xee96a89eA09c8f0b8d8e3305C65Dbe6dbDe852eF",
+    "0xF6429e6Bd1DC13E2268f8BfF9F3cb2d2d0C4Cdb4"
   ],
-  "recordHash": "0x8437359c57f619490b9f7739a9e7b8a85e08d0e0852ec7092318db6b23a2df37",
-  "vaultTemplate": "0xDc3653066c7D992D2f492564aca837a2733D4F4c"
+  "recordHash": "0xd60fdd6ceda402293acdea6f3440d6982c6574538dd25d343e3ee5adc261d7e4",
+  "vaultTemplate": "0xB4740e57a664D007Fd9A4ab183160e7b9d18ece6"
 }
