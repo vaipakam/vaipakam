@@ -468,6 +468,13 @@ library LibVaipakam {
     uint256 constant LIF_BASE_TERM_DAYS_DEFAULT = 30;
     uint256 constant LIF_YEARLY_BPS_DEFAULT = 100; // 1% a year (owner decision 2026-11-17)
     uint256 constant LIF_YEAR_DAYS_DEFAULT = 365;
+
+    /// @dev #3649 stage 3 — the treasury floors' defaults (owner decision
+    ///      2026-11-15, `ShortfallReserveDesign.md` section 8): 0.1% of the
+    ///      principal for the initiation fee, taken once at acceptance, and
+    ///      1% of the interest for the treasury's share of interest.
+    uint256 constant FEE_FLOOR_INITIATION_BPS_DEFAULT = 10;
+    uint256 constant FEE_FLOOR_INTEREST_BPS_DEFAULT = 100;
     // Fallback-path split (README §7): lender gets principal + accrued
     // interest + {FALLBACK_LENDER_BONUS_BPS} of principal; treasury gets
     // {FALLBACK_TREASURY_BPS} of principal; borrower gets the remainder.
@@ -3220,6 +3227,16 @@ library LibVaipakam {
         uint16 baseTermDays;
         uint16 yearlyBps;
         uint16 yearDays;
+    }
+
+    /// @dev #3649 stage 3 — the treasury floors (`ShortfallReserveDesign.md`
+    ///      section 8), in basis points. Zero in a field ⇒ its default:
+    ///      `initiationBps` ⇒ {FEE_FLOOR_INITIATION_BPS_DEFAULT} of the
+    ///      loan's principal, `interestBps` ⇒ {FEE_FLOOR_INTEREST_BPS_DEFAULT}
+    ///      of the interest the treasury's share is taken from.
+    struct FeeFloorConfig {
+        uint16 initiationBps;
+        uint16 interestBps;
     }
 
     struct Storage {
@@ -8440,6 +8457,17 @@ library LibVaipakam {
         ///      `FeeLevelsFacet.setLoanInitiationFeeTerms`; read only through
         ///      `LibInitiationFee`. Appended — append-only.
         LifTermConfig lifTermCfg;
+        /// @dev #3649 stage 3 — the treasury floors of the two fees that feed
+        ///      the reserve (`ShortfallReserveDesign.md` section 8). Zero in a
+        ///      field ⇒ its default. Written only by
+        ///      `FeeLevelsFacet.setTreasuryFeeFloors`; read only through
+        ///      `LibFeeFloor`. Appended — append-only.
+        FeeFloorConfig feeFloorCfg;
+        /// @dev #3649 stage 3 — per asset, the reserve's part of the fees
+        ///      collected that the treasury holds because no reserve is named
+        ///      yet. Only rises. Written only by `TreasuryFeeFacet`'s split.
+        ///      Appended — append-only.
+        mapping(address => uint256) reservePartHeldByTreasury;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.

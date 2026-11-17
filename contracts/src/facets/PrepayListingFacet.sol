@@ -8,6 +8,7 @@ import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
@@ -643,7 +644,9 @@ contract PrepayListingFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 lenderAmount = plan.lenderDue + lenderExtra;
         LibCloseoutFreeze.freezeLenderProceeds(s, loanId, loan, lenderAmount);
-        uint256 treasuryAmount = LibFacet.transferToTreasury(loan.principalAsset, treasuryNet);
+        uint256 treasuryAmount = LibFacet.transferToTreasury(
+            loan.principalAsset, treasuryNet, ITreasuryFeeHost.FeeKind.Interest, plan.interest + plan.lateFee
+        );
 
         // `lenderExtra + treasuryNet == plan.treasuryShare`, so this is
         // `proceeds - floor`, which the check above keeps non-negative.

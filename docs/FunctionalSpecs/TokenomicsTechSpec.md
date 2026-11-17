@@ -627,6 +627,15 @@ Testing requirements beyond §9:
 > order's fee cap) reads the loan's term rate; the paid fee tariff's `C*`
 > reads the base rate because it already scales with the term. Discount
 > percentages apply to these bases unchanged.
+>
+> **Treasury floor (#3649 stage 3).** From the initiation fee the treasury
+> keeps `0.1%` of the principal, and from its share of an ERC-20 loan's
+> interest `1%` of the interest; the part of each above that floor is the
+> shortfall reserve's. A discount therefore reduces the reserve's part
+> first, and the §5a matcher share is sized on the part above the floor.
+> An extension's added fee is the reserve's whole; every other fee stays
+> the treasury's. Until a reserve exists both parts go to the treasury,
+> reported separately and counted per asset.
 
 > **Fee freeze — M2 PR-1 supersession (recycling completion plan §M2; D1
 > decided (b) 2026-07-18; source of intent:

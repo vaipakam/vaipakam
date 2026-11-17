@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
@@ -378,7 +379,7 @@ contract RiskDiscountedLiquidationFacet is
         uint256 lenderProceeds = totalDebt - treasuryInterestFee;
 
         // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
-        LibFacet.transferToTreasury(loan.principalAsset, treasuryInterestFee);
+        LibFacet.transferToTreasury(loan.principalAsset, treasuryInterestFee, ITreasuryFeeHost.FeeKind.Interest, interestPortion);
 
         // Lender's proceeds to their vault. #821 — vault-lock for a flagged lender.
         // #2440 — the claim names what the vault received.

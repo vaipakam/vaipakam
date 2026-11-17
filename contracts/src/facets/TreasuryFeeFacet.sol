@@ -7,6 +7,8 @@ import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibTreasury} from "../libraries/LibTreasury.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
+import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
+import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
@@ -62,6 +64,17 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *      fee they charge reverts `FunctionDoesNotExist` at the self-call (a hard
  *      revert, never a silently skipped fee).
  *
+ *      THE FLOOR SPLIT (#3649 stage 3, `ShortfallReserveDesign.md` section
+ *      8): each leg names what the fee is ({ITreasuryFeeHost.FeeKind}) and
+ *      the floor's base, and the split of what ARRIVED runs here, once, by
+ *      {LibFeeFloor}: the treasury's part up to the floor, the reserve's part
+ *      above it. No reserve is named yet, so both parts go to the treasury;
+ *      the split is stated by {ITreasuryFeeHost.TreasuryFeeSplit} and the
+ *      reserve's part counted per asset in
+ *      `Storage.reservePartHeldByTreasury`, so the amount owed to a reserve
+ *      when one is named is on record. A fee the treasury keeps whole
+ *      (`FeeKind.Other`) is not split and emits nothing new.
+ *
  *      TRUST MODEL: the `address(this)` gate is the whole of it. A wallet pull
  *      spends an allowance the payer granted the Diamond, and a vault leg
  *      moves a user's vault balance, so neither may be reachable from outside
@@ -72,16 +85,19 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  */
 contract TreasuryFeeFacet is ITreasuryFeeHost, IVaipakamErrors {
     /// @inheritdoc ITreasuryFeeHost
-    function collectFeeFromPayer(address payer, address asset, uint256 amount) external {
+    function collectFeeFromPayer(address payer, address asset, uint256 amount, FeeKind kind, uint256 base)
+        external
+    {
         if (msg.sender != address(this)) revert UnauthorizedCrossFacetCall();
         if (amount == 0) return;
         address treasury = LibTreasury.current();
         LibDelivery.pullExact(asset, payer, treasury, amount);
         LibFacet.recordTreasuryAccrual(asset, amount, treasury);
+        _split(asset, amount, kind, base);
     }
 
     /// @inheritdoc ITreasuryFeeHost
-    function collectFeeFromVault(address user, address asset, uint256 amount)
+    function collectFeeFromVault(address user, address asset, uint256 amount, FeeKind kind, uint256 base)
         external
         returns (uint256 accrued)
     {
@@ -92,10 +108,11 @@ contract TreasuryFeeFacet is ITreasuryFeeHost, IVaipakamErrors {
         address treasury;
         (accrued, treasury) = LibVaultOutflow.toTreasury(user, asset, amount, 0, OutflowReason.FEE);
         LibFacet.recordTreasuryAccrual(asset, accrued, treasury);
+        _split(asset, accrued, kind, base);
     }
 
     /// @inheritdoc ITreasuryFeeHost
-    function collectFeeFromDiamond(address asset, uint256 amount)
+    function collectFeeFromDiamond(address asset, uint256 amount, FeeKind kind, uint256 base)
         external
         returns (uint256 accrued)
     {
@@ -105,5 +122,22 @@ contract TreasuryFeeFacet is ITreasuryFeeHost, IVaipakamErrors {
         // The Diamond as its own treasury already holds the share (#2623).
         accrued = treasury == address(this) ? amount : LibDelivery.pushMeasured(asset, treasury, amount);
         LibFacet.recordTreasuryAccrual(asset, accrued, treasury);
+        _split(asset, accrued, kind, base);
+    }
+
+    /// @notice The reserve's part of the fees collected in `asset` that the
+    ///         treasury holds because no reserve is named yet (#3649 stage 3).
+    function getReservePartHeldByTreasury(address asset) external view returns (uint256) {
+        return LibVaipakam.storageSlot().reservePartHeldByTreasury[asset];
+    }
+
+    /// @dev Split what arrived of a reserve-feeding fee at its floor, count
+    ///      the reserve's part the treasury now holds, and state both parts.
+    ///      A fee the treasury keeps whole is not split.
+    function _split(address asset, uint256 arrived, FeeKind kind, uint256 base) private {
+        if (kind == FeeKind.Other || arrived == 0) return;
+        (uint256 treasuryPart, uint256 reservePart) = LibFeeFloor.split(kind, base, arrived);
+        if (reservePart > 0) LibVaipakam.storageSlot().reservePartHeldByTreasury[asset] += reservePart;
+        emit TreasuryFeeSplit(asset, kind, treasuryPart, reservePart);
     }
 }

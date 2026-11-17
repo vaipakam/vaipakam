@@ -2144,13 +2144,16 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     /// @dev Selectors for `FeeLevelsFacet` (#3649) — the initiation fee's
-    ///      term schedule: its bounded setter, its getter and the quote.
+    ///      term schedule (its bounded setter, its getter and the quotes) and the
+    ///      treasury floors' bounded setter and getter (stage 3).
     function _getFeeLevelsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](6);
         s[0] = FeeLevelsFacet.setLoanInitiationFeeTerms.selector;
         s[1] = FeeLevelsFacet.getLoanInitiationFeeTerms.selector;
         s[2] = FeeLevelsFacet.quoteLoanInitiationFee.selector;
         s[3] = FeeLevelsFacet.quoteExtensionFee.selector;
+        s[4] = FeeLevelsFacet.setTreasuryFeeFloors.selector;
+        s[5] = FeeLevelsFacet.getTreasuryFeeFloors.selector;
     }
 
     function _getRepaySelectors() internal pure returns (bytes4[] memory s) {

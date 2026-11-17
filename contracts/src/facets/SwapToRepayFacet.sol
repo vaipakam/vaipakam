@@ -12,6 +12,7 @@ import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
@@ -358,7 +359,9 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // ── Settlement waterfall — diamond-held proceeds pattern
         //    (Codex round-1 P1 #3 — mirrors RiskFacet:702-712) ────────
         // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
-        LibFacet.transferToTreasury(loan.principalAsset, plan.treasuryShare);
+        LibFacet.transferToTreasury(
+            loan.principalAsset, plan.treasuryShare, ITreasuryFeeHost.FeeKind.Interest, plan.interest + plan.lateFee
+        );
 
         // #954 (§1.1) — deposit the lender proceeds behind the receive-side
         // sanctions exemption (so a lender flagged after init doesn't brick the

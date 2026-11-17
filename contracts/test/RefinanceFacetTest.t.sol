@@ -137,6 +137,13 @@ contract RefinanceFacetTest is SetupTest {
     uint256 internal constant LIF_BPS = 20;
     uint256 internal constant MATCHER_BPS = 100;
 
+    /// @dev #3649 stage 3 — the matcher's share is sized on the part of the
+    ///      initiation fee above the treasury floor (0.1% of P, rounded up).
+    function _aboveFloor(uint256 lif) internal pure returns (uint256) {
+        uint256 floor = (P * 10 + 9_999) / 10_000;
+        return lif > floor ? lif - floor : 0;
+    }
+
     address internal newLender;
     uint256 internal newLenderPk;
     uint256 internal oldLoanId;
@@ -286,7 +293,7 @@ contract RefinanceFacetTest is SetupTest {
         vm.warp(block.timestamp + 15 days);
         (uint256 interest, uint256 treasuryFee, uint256 lenderDue) = _expectedSettlement(15 days);
         uint256 lif = (P * LIF_BPS) / 10_000;
-        uint256 matcherCut = (lif * MATCHER_BPS) / 10_000;
+        uint256 matcherCut = (_aboveFloor(lif) * MATCHER_BPS) / 10_000;
         uint256 net = P - lif;
 
         uint256 oldLenderVaultBefore = _bal(_vault(lender));
@@ -571,7 +578,7 @@ contract RefinanceFacetTest is SetupTest {
 
         assertEq(_bal(_vault(lender)) - oldLenderVaultBefore, lenderDue, "old lender paid the due");
         assertEq(borrowerWalletBefore - _bal(borrower), interest + lif, "borrower pays only the difference");
-        assertEq(_bal(address(this)) - matcherBefore, (lif * MATCHER_BPS) / 10_000, "matcher share");
+        assertEq(_bal(address(this)) - matcherBefore, (_aboveFloor(lif) * MATCHER_BPS) / 10_000, "matcher share");
         assertEq(
             uint8(LoanFacet(address(diamond)).getLoanDetails(oldLoanId).status),
             uint8(LibVaipakam.LoanStatus.Repaid),

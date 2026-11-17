@@ -10,6 +10,8 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibFeeEntitlement} from "../libraries/LibFeeEntitlement.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
+import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
+import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
 import {LibRefinanceNetting} from "../libraries/LibRefinanceNetting.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
@@ -74,7 +76,8 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
     ///         `vaultWithdrawERC20` cross-facet calls it wraps. Computes the
     ///         HoldOnly-discounted lending-asset LIF (§F3, consent-gated
     ///         hold-tier direct reduction — no VPFI moved), charges it from the
-    ///         lender's funded principal split 99/1 treasury/matcher, and
+    ///         lender's funded principal split treasury/matcher (the
+    ///         matcher's share sized above the treasury floor, #3649), and
     ///         delivers `principal − fee` to the borrower — except on a
     ///         refinance accept, where it parks that amount in the new
     ///         lender's vault for the payoff instead (#3042,
@@ -153,10 +156,18 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
         );
 
         if (initiationFee > 0) {
-            uint256 matcherCut = LibOfferMatch.matcherShareOf(initiationFee);
+            // #3649 stage 3 — the matcher's share is sized on the part of
+            // the fee above the treasury floor (0.1% of the principal by
+            // default), so it never comes out of the floor; the treasury
+            // leg splits what arrives at the same floor, once per loan.
+            uint256 matcherCut = LibOfferMatch.matcherShareOf(
+                LibFeeFloor.aboveFloor(initiationFee, effectivePrincipal)
+            );
             uint256 treasuryCut = initiationFee - matcherCut;
             // #2440 — the treasury accrues what reached it.
-            LibFacet.vaultFeeToTreasury(lender, lendingAsset, treasuryCut);
+            LibFacet.vaultFeeToTreasury(
+                lender, lendingAsset, treasuryCut, ITreasuryFeeHost.FeeKind.Initiation, effectivePrincipal
+            );
             if (matcherCut > 0) {
                 LibVaultOutflow.toIncentive(
                     lender,

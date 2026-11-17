@@ -986,11 +986,13 @@ contract HelperTest {
     /// @dev #3649 — the initiation fee's term schedule.
     ///      Mirrors `DeployDiamond._getFeeLevelsSelectors`.
     function getFeeLevelsFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](6);
         selectors[0] = FeeLevelsFacet.setLoanInitiationFeeTerms.selector;
         selectors[1] = FeeLevelsFacet.getLoanInitiationFeeTerms.selector;
         selectors[2] = FeeLevelsFacet.quoteLoanInitiationFee.selector;
         selectors[3] = FeeLevelsFacet.quoteExtensionFee.selector;
+        selectors[4] = FeeLevelsFacet.setTreasuryFeeFloors.selector;
+        selectors[5] = FeeLevelsFacet.getTreasuryFeeFloors.selector;
     }
 
     function getRepayFacetSelectors()

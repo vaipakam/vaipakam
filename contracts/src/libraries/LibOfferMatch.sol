@@ -237,12 +237,15 @@ library LibOfferMatch {
         return true;
     }
 
-    /// @notice The 1% match-fee BPS slice of any totalFee. Pure.
+    /// @notice The matcher's share (default 1%) of `totalFee`.
     /// @dev    The LIF is charged in the lending asset at `_acceptOffer`
     ///         and split there; this is the single source of truth for
-    ///         the 99/1 split so its semantics never drift between call
+    ///         the matcher's rate so its semantics never drift between call
     ///         sites. (The VPFI path that deferred the split to settlement
-    ///         was removed in #1980.)
+    ///         was removed in #1980.) #3649 stage 3 — the caller passes the
+    ///         part of the fee ABOVE the treasury floor
+    ///         (`LibFeeFloor.aboveFloor`): the matcher is paid from the
+    ///         reserve's part, never from the treasury's floor.
     function matcherShareOf(uint256 totalFee) internal view returns (uint256) {
         // Reads governance-tunable BPS from storage so the kickback
         // can be dialed without a contract upgrade. Falls back to

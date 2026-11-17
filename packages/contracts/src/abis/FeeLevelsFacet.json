@@ -29,6 +29,24 @@
   },
   {
     "type": "function",
+    "name": "getTreasuryFeeFloors",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "initiationBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "interestBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "quoteExtensionFee",
     "inputs": [
       {
@@ -124,6 +142,24 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "setTreasuryFeeFloors",
+    "inputs": [
+      {
+        "name": "initiationBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "interestBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "LoanInitiationFeeTermsSet",
     "inputs": [
@@ -141,6 +177,25 @@
       },
       {
         "name": "yearDays",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TreasuryFeeFloorsSet",
+    "inputs": [
+      {
+        "name": "initiationBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "interestBps",
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
@@ -191,6 +246,22 @@
       },
       {
         "name": "yearDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidTreasuryFeeFloors",
+    "inputs": [
+      {
+        "name": "initiationBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "interestBps",
         "type": "uint256",
         "internalType": "uint256"
       }

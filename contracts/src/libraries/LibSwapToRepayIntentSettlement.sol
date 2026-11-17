@@ -6,6 +6,7 @@ import {LibVaultOutflow} from "./LibVaultOutflow.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibMetricsHooks} from "./LibMetricsHooks.sol";
 import {LibFacet} from "./LibFacet.sol";
+import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {LibCloseoutFreeze} from "./LibCloseoutFreeze.sol";
 import {LibSettlement} from "./LibSettlement.sol";
@@ -366,7 +367,9 @@ library LibSwapToRepayIntentSettlement {
         }
 
         // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
-        LibFacet.transferToTreasury(loan.principalAsset, plan.treasuryShare);
+        LibFacet.transferToTreasury(
+            loan.principalAsset, plan.treasuryShare, ITreasuryFeeHost.FeeKind.Interest, plan.interest + plan.lateFee
+        );
 
         // #658 PR-B — the intent fill is the LENDER-side close-out of this loan
         // (the borrower side was consolidated at COMMIT; its auction lot left

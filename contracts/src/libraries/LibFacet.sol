@@ -58,13 +58,29 @@ library LibFacet {
     ///      the host moves nothing and accrues all of `amount` (#2623).
     /// @return accrued What the treasury received and was credited with.
     function transferToTreasury(address asset, uint256 amount) internal returns (uint256 accrued) {
+        return transferToTreasury(asset, amount, ITreasuryFeeHost.FeeKind.Other, 0);
+    }
+
+    /// @dev #3649 stage 3 — {transferToTreasury} for a fee that feeds the
+    ///      reserve: `kind` names it and `base` is its floor's base (the
+    ///      principal for an initiation fee, the interest for an interest
+    ///      share). The host splits what arrived at the floor
+    ///      ({LibFeeFloor}).
+    function transferToTreasury(
+        address asset,
+        uint256 amount,
+        ITreasuryFeeHost.FeeKind kind,
+        uint256 base
+    ) internal returns (uint256 accrued) {
         if (amount == 0) return 0;
         return abi.decode(
             crossFacetCallReturn(
                 abi.encodeWithSelector(
                     ITreasuryFeeHost.collectFeeFromDiamond.selector,
                     asset,
-                    amount
+                    amount,
+                    kind,
+                    base
                 ),
                 IVaipakamErrors.TreasuryTransferFailed.selector
             ),
@@ -262,6 +278,18 @@ library LibFacet {
         address asset,
         uint256 amount
     ) internal {
+        transferFromPayerToTreasury(payer, asset, amount, ITreasuryFeeHost.FeeKind.Other, 0);
+    }
+
+    /// @dev #3649 stage 3 — {transferFromPayerToTreasury} for a fee that
+    ///      feeds the reserve (see the four-argument {transferToTreasury}).
+    function transferFromPayerToTreasury(
+        address payer,
+        address asset,
+        uint256 amount,
+        ITreasuryFeeHost.FeeKind kind,
+        uint256 base
+    ) internal {
         if (amount == 0) return;
         // #1281-011 / #2440 — hosted on TreasuryFeeFacet, which refuses the pull
         // unless the treasury received all of it, so the accrual never records
@@ -274,7 +302,9 @@ library LibFacet {
                 ITreasuryFeeHost.collectFeeFromPayer.selector,
                 payer,
                 asset,
-                amount
+                amount,
+                kind,
+                base
             ),
             IVaipakamErrors.TreasuryTransferFailed.selector
         );
@@ -291,6 +321,18 @@ library LibFacet {
         address asset,
         uint256 amount
     ) internal returns (uint256) {
+        return vaultFeeToTreasury(user, asset, amount, ITreasuryFeeHost.FeeKind.Other, 0);
+    }
+
+    /// @dev #3649 stage 3 — {vaultFeeToTreasury} for a fee that feeds the
+    ///      reserve (see the four-argument {transferToTreasury}).
+    function vaultFeeToTreasury(
+        address user,
+        address asset,
+        uint256 amount,
+        ITreasuryFeeHost.FeeKind kind,
+        uint256 base
+    ) internal returns (uint256) {
         if (amount == 0) return 0;
         return abi.decode(
             crossFacetCallReturn(
@@ -298,7 +340,9 @@ library LibFacet {
                     ITreasuryFeeHost.collectFeeFromVault.selector,
                     user,
                     asset,
-                    amount
+                    amount,
+                    kind,
+                    base
                 ),
                 IVaipakamErrors.TreasuryTransferFailed.selector
             ),

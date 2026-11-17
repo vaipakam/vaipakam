@@ -6,6 +6,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibSaleSizing} from "../libraries/LibSaleSizing.sol";
@@ -482,9 +483,10 @@ contract ForcedSaleFacet is IVaipakamErrors {
         // `sp.lender` is already capped at the debt ({_split}), so the
         // interest it recovers never exceeds the interest owed.
         uint256 treasuryInterest;
+        uint256 interestRecovered;
         uint256 lenderNet = sp.lender;
         if (sp.lender > loan.principal) {
-            uint256 interestRecovered = sp.lender - loan.principal;
+            interestRecovered = sp.lender - loan.principal;
             // #1832 — terminal seam of the lifetime interest counter: what the
             // sale recovered, not what was owed.
             LibMetricsHooks.onInterestPaid(loan, interestRecovered);
@@ -494,7 +496,10 @@ contract ForcedSaleFacet is IVaipakamErrors {
             );
             lenderNet = sp.lender - treasuryInterest;
         }
-        LibFacet.transferToTreasury(loan.principalAsset, sp.fee + treasuryInterest);
+        // #3649 stage 3 — two legs: the handling fee is the treasury's whole,
+        // the interest share is split at its floor.
+        LibFacet.transferToTreasury(loan.principalAsset, sp.fee);
+        LibFacet.transferToTreasury(loan.principalAsset, treasuryInterest, ITreasuryFeeHost.FeeKind.Interest, interestRecovered);
 
         // #821 — through the receive-side exemption so a flagged stored lender
         // never blocks the close-out; the claim names what the vault received

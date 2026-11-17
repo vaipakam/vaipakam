@@ -90,6 +90,9 @@ contract ReplaceStaleFacets is DeployDiamond {
     /// @notice #3410 - the target Diamond predates the sequencer-outage loan
     ///         clock; see {_requireSequencerOutageClock}.
     error PredatesSequencerOutageClock(address diamond);
+    /// @notice #3649 stage 3 - the target Diamond predates the treasury floor
+    ///         split; see {_requireTreasuryFeeFloor}.
+    error PredatesTreasuryFeeFloor(address diamond);
     /// @notice #1820 - the target Diamond predates the tier record seam; see
     ///         {_requireTierRecordSeam}.
     error PredatesTierRecordSeam(address diamond);
@@ -146,6 +149,7 @@ contract ReplaceStaleFacets is DeployDiamond {
         // #3410 - and one from before the sequencer-outage loan clock; see
         // {_requireSequencerOutageClock}.
         _requireSequencerOutageClock(diamond);
+        _requireTreasuryFeeFloor(diamond);
         // #1820 - and one from before the tier record seam; see
         // {_requireTierRecordSeam}.
         _requireTierRecordSeam(diamond);
@@ -568,6 +572,20 @@ contract ReplaceStaleFacets is DeployDiamond {
         if (IDiamondLoupe(diamond).facetAddress(LoanClockFacet.getSequencerOutageWindow.selector) == address(0)) {
             revert PredatesSequencerOutageClock(diamond);
         }
+    }
+
+    /// @dev #3649 stage 3 - refuse a Diamond whose treasury fee host predates
+    ///      the floor split. Every fee leg now names its kind and floor base,
+    ///      a new selector shape, and this script refreshes the host but not
+    ///      every facet that charges a fee, so against an older Diamond it
+    ///      would either leave those callers on the old host or break their
+    ///      fees. The crossing is a fresh deploy or `RefreshAllFacetsInPlace`.
+    ///      Called before the broadcast starts.
+    function _requireTreasuryFeeFloor(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(TreasuryFeeFacet.getReservePartHeldByTreasury.selector)
+                == address(0)
+        ) revert PredatesTreasuryFeeFloor(diamond);
     }
 
     /// @dev #668 / #935 (owner decision D2) - refuse a Diamond from before

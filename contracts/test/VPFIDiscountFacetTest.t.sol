@@ -14,6 +14,7 @@ import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
+import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
@@ -560,7 +561,10 @@ contract VPFIDiscountFacetTest is SetupTest {
         uint256 baseLif = (principal * LibVaipakam.LOAN_INITIATION_FEE_BPS) /
             10_000;
         uint256 discountedLif = (baseLif * (10_000 - dBorrower)) / 10_000;
-        uint256 matcherCut = (discountedLif *
+        // #3649 stage 3 — the matcher's share is sized above the treasury
+        // floor (0.1% of the principal, rounded up).
+        uint256 floorLif = (principal * LibVaipakam.FEE_FLOOR_INITIATION_BPS_DEFAULT + 9_999) / 10_000;
+        uint256 matcherCut = ((discountedLif > floorLif ? discountedLif - floorLif : 0) *
             LibVaipakam.LIF_MATCHER_FEE_BPS) / 10_000;
         uint256 expectedTreasuryLif = discountedLif - matcherCut;
 
@@ -634,12 +638,21 @@ contract VPFIDiscountFacetTest is SetupTest {
         // in the lending asset, MINUS the 1% Range Orders Phase 1 matcher
         // kickback that goes to msg.sender (the borrower in this test).
         uint256 expectedFee = (principal * 20) / 10_000;
-        uint256 expectedMatcherCut = (expectedFee * LibVaipakam.LIF_MATCHER_FEE_BPS) / 10_000;
+        uint256 expectedMatcherCut = ((expectedFee - (principal * LibVaipakam.FEE_FLOOR_INITIATION_BPS_DEFAULT + 9_999) / 10_000)
+            * LibVaipakam.LIF_MATCHER_FEE_BPS) / 10_000; // #3649 stage 3: above the floor
         uint256 expectedTreasuryCut = expectedFee - expectedMatcherCut;
         assertEq(
             IERC20(mockERC20).balanceOf(treasuryRecipient) - treasuryErc20Before,
             expectedTreasuryCut,
-            "treasury credited 99% of LIF on fallback (1% matcher kickback)"
+            "treasury credited the LIF less the matcher's share"
+        );
+        // #3649 stage 3 — the treasury keeps the floor (0.1% of the
+        // principal); the rest of what it received is the reserve's part,
+        // counted as held by the treasury until a reserve is named.
+        assertEq(
+            TreasuryFeeFacet(address(diamond)).getReservePartHeldByTreasury(mockERC20),
+            expectedTreasuryCut - (principal * LibVaipakam.FEE_FLOOR_INITIATION_BPS_DEFAULT + 9_999) / 10_000,
+            "the reserve's part of the initiation fee is counted"
         );
         // No VPFI moved when fallback fires.
         assertEq(
