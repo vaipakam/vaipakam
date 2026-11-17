@@ -148,6 +148,22 @@ always take surplus collateral out of a loan, as a holder paid into their
 vault could before this change, and the amount reaches a wallet later by an
 ordinary vault withdrawal.
 
+As built, the wallet step is one self-call that reverts unless the whole
+amount arrived, and the redirect emits `HolderWalletPaymentToVault` with the
+paying vault, the holder, the asset, the amount, what the wallet step
+delivered, the loan and the position token. The marks are taken before the
+payment, so they are the same whichever way the amount went.
+
+Through the partial collateral withdrawal this branch is close to
+unreachable today. The withdrawal first consolidates a transferred borrower
+side into the caller's vault, so the payee is normally the owner of the
+paying vault and is paid as an owner. Consolidation is skipped in three cases
+only: a loan waiting in fallback custody and a rental, both of which the
+withdrawal refuses, and a sanctioned holder, whom this payout refuses. The
+payout and its fallback therefore stand for any later route that pays a
+holder who does not own the paying vault, and the tests drive the policy
+directly.
+
 This gives what a claim step would give, that only the token's holder can
 receive a loan's collateral, in one transaction and with nothing parked in
 between.
@@ -380,11 +396,12 @@ The holder is screened for sanctions as an owner payout is. The class is
 ERC-20 only. A plain ERC-20 transfer calls no hook on the receiver, but the
 platform admits ERC-20-compatible tokens that do, and tokens that block
 addresses, so a delivery to the wallet can fail; the fallback of section 3.3
-credits the holder's own vault when it does (to be added to the build; the
-first build had none). A protected holder is credited to its own vault by the
-policy's redirect. The vault accepts the
-class only for the token's current holder or that holder's own vault, never
-for its own owner, which is the owner payout.
+credits the holder's own vault when it does (built; tested for a receiver
+hook that refuses, a blocked address and a short delivery). A protected
+holder is credited to its own vault by the policy's redirect. The vault
+accepts the class only for the token's current holder or that holder's own
+vault, never for its own owner, which is the owner payout. Section 3.3 states
+why the withdrawal rarely reaches this case.
 
 **Raw transfers outside the policy.** The static check of section 3.8 lists
 each with its reason (29 sites as built): cross-chain messenger fees, which
