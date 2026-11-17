@@ -100,8 +100,15 @@ export async function settled(scope: Locator): Promise<Locator> {
  * transaction the app asks for; anything else is left to the caller.
  */
 export async function clearGates(page: Page): Promise<void> {
+  // The gates render only once the review's reads land, so wait for the
+  // review (or a gate) to show before deciding there is nothing to pass.
+  await page
+    .locator('.receipt, dialog.terms-prompt[open], [data-testid="risk-gate"]')
+    .first()
+    .waitFor({ state: 'visible', timeout: 180_000 })
+    .catch(() => {});
   for (let i = 0; i < 4; i++) {
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(3000);
     const terms = page.locator('dialog.terms-prompt[open]');
     if (await terms.isVisible()) {
       const proceed = terms.getByRole('button', { name: /^Continue:/ });
