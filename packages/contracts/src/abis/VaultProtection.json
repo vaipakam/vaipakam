@@ -266,6 +266,45 @@
   },
   {
     "type": "function",
+    "name": "ROLE_OWNER",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "ROLE_RECOVERY_NOMINEE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "ROLE_SIGNER",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "SETTINGS_DELAY",
     "inputs": [],
     "outputs": [
@@ -924,6 +963,12 @@
     "name": "AllowlistAddCancelled",
     "inputs": [
       {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
         "name": "destination",
         "type": "address",
         "indexed": true,
@@ -942,6 +987,12 @@
     "type": "event",
     "name": "AllowlistAddRequested",
     "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
       {
         "name": "destination",
         "type": "address",
@@ -968,6 +1019,12 @@
     "name": "AllowlistAdded",
     "inputs": [
       {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
         "name": "destination",
         "type": "address",
         "indexed": true,
@@ -980,6 +1037,12 @@
     "type": "event",
     "name": "AllowlistRemoved",
     "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
       {
         "name": "destination",
         "type": "address",
@@ -1000,6 +1063,12 @@
     "name": "DestinationVerified",
     "inputs": [
       {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
         "name": "destination",
         "type": "address",
         "indexed": true,
@@ -1012,6 +1081,12 @@
     "type": "event",
     "name": "NonceBurned",
     "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
       {
         "name": "key",
         "type": "address",
@@ -1038,6 +1113,12 @@
     "name": "PrimaryReplaced",
     "inputs": [
       {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
         "name": "previousOwner",
         "type": "address",
         "indexed": true,
@@ -1061,13 +1142,26 @@
   {
     "type": "event",
     "name": "ProtectionDisabled",
-    "inputs": [],
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
     "anonymous": false
   },
   {
     "type": "event",
     "name": "ProtectionEnabled",
     "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
       {
         "name": "delay",
         "type": "uint32",
@@ -1085,8 +1179,45 @@
   },
   {
     "type": "event",
+    "name": "ProtectionRoleChanged",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "role",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "oldAddr",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "newAddr",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "ProtectionSettingApplied",
     "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
       {
         "name": "action",
         "type": "uint8",
@@ -1107,6 +1238,12 @@
     "name": "ProtectionSettingCancelled",
     "inputs": [
       {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
         "name": "action",
         "type": "uint8",
         "indexed": true,
@@ -1125,6 +1262,12 @@
     "type": "event",
     "name": "ProtectionSettingRequested",
     "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
       {
         "name": "action",
         "type": "uint8",
@@ -1157,6 +1300,12 @@
     "name": "ReplacementApproved",
     "inputs": [
       {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
         "name": "nominee",
         "type": "address",
         "indexed": true,
@@ -1188,6 +1337,12 @@
     "name": "ReplacementCancelled",
     "inputs": [
       {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
         "name": "nominee",
         "type": "address",
         "indexed": true,
@@ -1206,6 +1361,12 @@
     "type": "event",
     "name": "ReplacementProposed",
     "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
       {
         "name": "nominee",
         "type": "address",
@@ -1232,6 +1393,12 @@
     "name": "ReplacementScheduled",
     "inputs": [
       {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
         "name": "nominee",
         "type": "address",
         "indexed": true,
@@ -1251,6 +1418,12 @@
     "name": "SignerAccepted",
     "inputs": [
       {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
         "name": "signer",
         "type": "address",
         "indexed": true,
@@ -1263,6 +1436,12 @@
     "type": "event",
     "name": "SignerAddRequested",
     "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
       {
         "name": "signer",
         "type": "address",
@@ -1289,6 +1468,12 @@
     "name": "SignerAdded",
     "inputs": [
       {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
         "name": "signer",
         "type": "address",
         "indexed": true,
@@ -1301,6 +1486,12 @@
     "type": "event",
     "name": "SignerChangeCancelled",
     "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
       {
         "name": "signer",
         "type": "address",
@@ -1320,6 +1511,12 @@
     "type": "event",
     "name": "SignerRemoveRequested",
     "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
       {
         "name": "signer",
         "type": "address",
@@ -1346,6 +1543,12 @@
     "name": "SignerRemoved",
     "inputs": [
       {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
         "name": "signer",
         "type": "address",
         "indexed": true,
@@ -1358,6 +1561,12 @@
     "type": "event",
     "name": "VaultLocked",
     "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
       {
         "name": "by",
         "type": "address",

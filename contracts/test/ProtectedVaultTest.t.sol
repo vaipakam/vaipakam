@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibTestOutflow} from "./helpers/LibTestOutflow.sol";
 import {PositionNFT} from "../src/PositionNFT.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
@@ -788,6 +789,42 @@ contract ProtectedVaultTest is Test {
         vm.warp(block.timestamp + DELAY);
         _pay().releasePayout(id);
         assertEq(token.balanceOf(nominee), 4 ether);
+    }
+
+    /// @dev #3719 — every protection event names the account first, and each
+    ///      role change (signer added, nominee proposed, owner replaced,
+    ///      nominee cleared) also emits one ProtectionRoleChanged.
+    function testProtectionEventsNameTheAccountAndReportRoleChanges() public {
+        _enable();
+        vm.recordLogs();
+        _replaceWithNominee();
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        address vault = address(_v());
+        bytes32 roleTopic = keccak256("ProtectionRoleChanged(address,uint8,address,address)");
+        bytes32 accountTopic = bytes32(uint256(uint160(user)));
+        uint256 signers;
+        uint256 nominees;
+        uint256 owners;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter != vault) continue;
+            assertEq(logs[i].topics[1], accountTopic, "every vault event names the account");
+            if (logs[i].topics[0] != roleTopic) continue;
+            uint8 role = uint8(uint256(logs[i].topics[2]));
+            (address oldAddr, address newAddr) = abi.decode(logs[i].data, (address, address));
+            if (role == 1) {
+                ++signers;
+                assertEq(oldAddr, address(0));
+            } else if (role == 2) {
+                ++nominees;
+            } else {
+                ++owners;
+                assertEq(oldAddr, user, "the old owner");
+                assertEq(newAddr, nominee, "the new owner");
+            }
+        }
+        assertEq(signers, 3, "three signers added");
+        assertEq(nominees, 2, "nominee proposed, then cleared at completion");
+        assertEq(owners, 1, "one owner change");
     }
 
     function testReplacementDropsEveryPendingChangeTheOldKeyRequested() public {

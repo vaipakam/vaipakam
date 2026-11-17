@@ -137,30 +137,48 @@ contract VaultProtection {
     address private immutable SELF;
 
     // ─── Events (one per record write) ──────────────────────────────────
+    //
+    // #3719 — every event names the ACCOUNT (the vault's creation owner, the
+    // account's stable identity across a primary replacement) as its first,
+    // indexed field, so an alert service can filter one account's events
+    // without first mapping vault addresses to accounts.
 
-    event ProtectionEnabled(uint32 delay, address by);
-    event ProtectionSettingRequested(uint8 indexed action, uint256 value, uint64 at, address by);
-    event ProtectionSettingApplied(uint8 indexed action, uint256 value);
-    event ProtectionSettingCancelled(uint8 indexed action, address by);
-    event ProtectionDisabled();
-    event AllowlistAddRequested(address indexed destination, uint64 readyAt, address by);
-    event AllowlistAddCancelled(address indexed destination, address by);
-    event AllowlistAdded(address indexed destination);
-    event AllowlistRemoved(address indexed destination, address by);
-    event DestinationVerified(address indexed destination);
-    event SignerAddRequested(address indexed signer, uint64 readyAt, address by);
-    event SignerAccepted(address indexed signer);
-    event SignerAdded(address indexed signer);
-    event SignerRemoveRequested(address indexed signer, uint64 readyAt, address by);
-    event SignerChangeCancelled(address indexed signer, address by);
-    event SignerRemoved(address indexed signer);
-    event VaultLocked(address indexed by);
-    event ReplacementProposed(address indexed nominee, address indexed by, uint32 round);
-    event ReplacementApproved(address indexed nominee, address indexed signer, uint256 approvals, uint256 threshold);
-    event ReplacementScheduled(address indexed nominee, uint64 readyAt);
-    event ReplacementCancelled(address indexed nominee, address by);
-    event PrimaryReplaced(address indexed previousOwner, address indexed newOwner, uint64 cooldownUntil);
-    event NonceBurned(address indexed key, uint8 indexed purpose, uint256 nonce);
+    event ProtectionEnabled(address indexed account, uint32 delay, address by);
+    event ProtectionSettingRequested(address indexed account, uint8 indexed action, uint256 value, uint64 at, address by);
+    event ProtectionSettingApplied(address indexed account, uint8 indexed action, uint256 value);
+    event ProtectionSettingCancelled(address indexed account, uint8 indexed action, address by);
+    event ProtectionDisabled(address indexed account);
+    event AllowlistAddRequested(address indexed account, address indexed destination, uint64 readyAt, address by);
+    event AllowlistAddCancelled(address indexed account, address indexed destination, address by);
+    event AllowlistAdded(address indexed account, address indexed destination);
+    event AllowlistRemoved(address indexed account, address indexed destination, address by);
+    event DestinationVerified(address indexed account, address indexed destination);
+    event SignerAddRequested(address indexed account, address indexed signer, uint64 readyAt, address by);
+    event SignerAccepted(address indexed account, address indexed signer);
+    event SignerAdded(address indexed account, address indexed signer);
+    event SignerRemoveRequested(address indexed account, address indexed signer, uint64 readyAt, address by);
+    event SignerChangeCancelled(address indexed account, address indexed signer, address by);
+    event SignerRemoved(address indexed account, address indexed signer);
+    event VaultLocked(address indexed account, address indexed by);
+    event ReplacementProposed(address indexed account, address indexed nominee, address indexed by, uint32 round);
+    event ReplacementApproved(address indexed account, address indexed nominee, address indexed signer, uint256 approvals, uint256 threshold);
+    event ReplacementScheduled(address indexed account, address indexed nominee, uint64 readyAt);
+    event ReplacementCancelled(address indexed account, address indexed nominee, address by);
+    event PrimaryReplaced(address indexed account, address indexed previousOwner, address indexed newOwner, uint64 cooldownUntil);
+    event NonceBurned(address indexed account, address indexed key, uint8 indexed purpose, uint256 nonce);
+
+    /// @notice #3719 — a role on the account changed: the owner (primary
+    ///         wallet), a secondary signer, or the recovery nominee (a
+    ///         replacement proposed, then cleared by its cancellation or
+    ///         completion). `oldAddr` 0 = the role was added; `newAddr` 0 =
+    ///         removed. Emitted beside the specific event, so one filter on
+    ///         this topic catches every change an alert must report.
+    event ProtectionRoleChanged(address indexed account, uint8 indexed role, address oldAddr, address newAddr);
+
+    /// @notice {ProtectionRoleChanged} roles.
+    uint8 public constant ROLE_OWNER = 0;
+    uint8 public constant ROLE_SIGNER = 1;
+    uint8 public constant ROLE_RECOVERY_NOMINEE = 2;
 
     // ─── Errors ─────────────────────────────────────────────────────────
 
@@ -220,7 +238,7 @@ contract VaultProtection {
         _asOwner(auth, PURPOSE_SETTINGS, keccak256(abi.encode(SETTINGS_TYPEHASH, SETTINGS_ENABLE, uint256(delay), _nonce(auth.key, PURPOSE_SETTINGS), auth.expiry)));
         l.enabled = true;
         l.delay = delay;
-        emit ProtectionEnabled(delay, auth.key);
+        emit ProtectionEnabled(_account(), delay, auth.key);
         // Codex #3489 r16 / #3679 — the switch-on lands with its platform
         // side, like every other change of posture ({_applyPlatform}).
         _applyPlatform();
@@ -235,7 +253,7 @@ contract VaultProtection {
         if (delay >= l.delay) {
             l.delay = delay;
             l.pendingDelayAt = 0;
-            emit ProtectionSettingApplied(SETTINGS_DELAY, delay);
+            emit ProtectionSettingApplied(_account(), SETTINGS_DELAY, delay);
             // Codex #3489 r16 / #3679 — a raise lifts the code-pin and NFT-lock
             // delays with it, in the same transaction; a platform whose
             // delays are already as long has nothing to apply.
@@ -245,7 +263,7 @@ contract VaultProtection {
         _loosenable(l);
         l.pendingDelay = delay;
         l.pendingDelayAt = _later(l);
-        emit ProtectionSettingRequested(SETTINGS_DELAY, delay, l.pendingDelayAt, auth.key);
+        emit ProtectionSettingRequested(_account(), SETTINGS_DELAY, delay, l.pendingDelayAt, auth.key);
     }
 
     /// @notice Ask to switch protected mode off (the owner); waits the delay.
@@ -258,7 +276,7 @@ contract VaultProtection {
         _loosenable(l);
         _asOwner(auth, PURPOSE_SETTINGS, keccak256(abi.encode(SETTINGS_TYPEHASH, SETTINGS_DISABLE, uint256(0), _nonce(auth.key, PURPOSE_SETTINGS), auth.expiry)));
         l.pendingDisableAt = _later(l);
-        emit ProtectionSettingRequested(SETTINGS_DISABLE, 0, l.pendingDisableAt, auth.key);
+        emit ProtectionSettingRequested(_account(), SETTINGS_DISABLE, 0, l.pendingDisableAt, auth.key);
     }
 
     /// @notice Ask to unlock (the owner); waits the delay.
@@ -268,7 +286,7 @@ contract VaultProtection {
         _noCooldown(l);
         _asOwner(auth, PURPOSE_SETTINGS, keccak256(abi.encode(SETTINGS_TYPEHASH, SETTINGS_UNLOCK, uint256(0), _nonce(auth.key, PURPOSE_SETTINGS), auth.expiry)));
         l.pendingUnlockAt = _later(l);
-        emit ProtectionSettingRequested(SETTINGS_UNLOCK, 0, l.pendingUnlockAt, auth.key);
+        emit ProtectionSettingRequested(_account(), SETTINGS_UNLOCK, 0, l.pendingUnlockAt, auth.key);
     }
 
     /// @notice Cancel a pending delay lowering, unlock or switch-off (the owner
@@ -280,7 +298,7 @@ contract VaultProtection {
         else if (action == SETTINGS_UNLOCK) l.pendingUnlockAt = 0;
         else if (action == SETTINGS_DISABLE) l.pendingDisableAt = 0;
         else revert NotRequested();
-        emit ProtectionSettingCancelled(action, auth.key);
+        emit ProtectionSettingCancelled(_account(), action, auth.key);
     }
 
     /// @notice Apply every matured setting change. Permissionless.
@@ -293,7 +311,7 @@ contract VaultProtection {
             applied = true;
             l.delay = l.pendingDelay;
             l.pendingDelayAt = 0;
-            emit ProtectionSettingApplied(SETTINGS_DELAY, l.delay);
+            emit ProtectionSettingApplied(_account(), SETTINGS_DELAY, l.delay);
         }
         bool unlocked;
         if (l.pendingUnlockAt != 0 && nowTs >= l.pendingUnlockAt) {
@@ -303,7 +321,7 @@ contract VaultProtection {
             l.lockedBy = address(0);
             l.lockedAt = 0;
             l.pendingUnlockAt = 0;
-            emit ProtectionSettingApplied(SETTINGS_UNLOCK, 0);
+            emit ProtectionSettingApplied(_account(), SETTINGS_UNLOCK, 0);
         }
         if (l.pendingDisableAt != 0 && nowTs >= l.pendingDisableAt && !l.locked) {
             // A switch-off waits while any payout row is still queued (it
@@ -312,7 +330,7 @@ contract VaultProtection {
             // so a platform fault can only make the switch-off wait.
             if (_noOpenRows()) {
                 _clear(l);
-                emit ProtectionDisabled();
+                emit ProtectionDisabled(_account());
                 applied = true;
                 disabled = true;
             } else if (!applied) {
@@ -368,7 +386,7 @@ contract VaultProtection {
         // verification names the request number).
         e.verified = false;
         e.request = ++l.allowRequests;
-        emit AllowlistAddRequested(destination, e.readyAt, auth.key);
+        emit AllowlistAddRequested(_account(), destination, e.readyAt, auth.key);
     }
 
     /// @notice Cancel a pending addition (the owner or any signer).
@@ -380,7 +398,7 @@ contract VaultProtection {
         e.readyAt = 0;
         e.verified = false;
         _remove(l.pendingAllow[l.epoch], destination);
-        emit AllowlistAddCancelled(destination, auth.key);
+        emit AllowlistAddCancelled(_account(), destination, auth.key);
     }
 
     /// @notice Activate a matured addition. Permissionless; only in its window
@@ -399,7 +417,7 @@ contract VaultProtection {
         e.gen = ++l.allowGen;
         _remove(l.pendingAllow[l.epoch], destination);
         l.allowlist.push(destination);
-        emit AllowlistAdded(destination);
+        emit AllowlistAdded(_account(), destination);
     }
 
     /// @notice Remove `destination` at once (the owner or any signer).
@@ -408,7 +426,7 @@ contract VaultProtection {
         _asOwnerOrSigner(auth, PURPOSE_ALLOWLIST_CANCEL, keccak256(abi.encode(ALLOWLIST_REMOVE_TYPEHASH, destination, _nonce(auth.key, PURPOSE_ALLOWLIST_CANCEL), auth.expiry)));
         if (!l.allow[destination].active) revert BadDestination(destination);
         _dropAllow(l, destination);
-        emit AllowlistRemoved(destination, auth.key);
+        emit AllowlistRemoved(_account(), destination, auth.key);
     }
 
     /// @notice #3415 — the destination itself confirms it is a destination of
@@ -433,7 +451,7 @@ contract VaultProtection {
             keccak256(abi.encode(VERIFY_TYPEHASH, account, diamond, e.request, _nonce(destination, PURPOSE_VERIFY), auth.expiry))
         );
         e.verified = true;
-        emit DestinationVerified(destination);
+        emit DestinationVerified(_account(), destination);
     }
 
     // ─── Secondary signers ──────────────────────────────────────────────
@@ -463,19 +481,19 @@ contract VaultProtection {
             sg.addAt = _later(l);
             sg.epoch = l.epoch;
             sg.accepted = false;
-            emit SignerAddRequested(who, sg.addAt, auth.key);
+            emit SignerAddRequested(_account(), who, sg.addAt, auth.key);
         } else if (action == SIGNER_ACCEPT) {
             if (auth.key != who || sg.addAt == 0 || sg.epoch != l.epoch) revert NotRequested();
             _authorize(auth, PURPOSE_SIGNER_CHANGE, h);
             sg.accepted = true;
-            emit SignerAccepted(who);
+            emit SignerAccepted(_account(), who);
         } else if (action == SIGNER_REMOVE) {
             _loosenable(l);
             _asOwner(auth, PURPOSE_SIGNER_CHANGE, h);
             if (!sg.active) revert NotSigner(who);
             sg.removeAt = _later(l);
             sg.epoch = l.epoch;
-            emit SignerRemoveRequested(who, sg.removeAt, auth.key);
+            emit SignerRemoveRequested(_account(), who, sg.removeAt, auth.key);
         } else if (action == SIGNER_CANCEL) {
             // The nominee may withdraw its own pending nomination; anyone else
             // must be the owner or an active signer. A signer may never cancel
@@ -492,7 +510,7 @@ contract VaultProtection {
             sg.addAt = 0;
             sg.removeAt = 0;
             sg.accepted = false;
-            emit SignerChangeCancelled(who, auth.key);
+            emit SignerChangeCancelled(_account(), who, auth.key);
         } else {
             revert NotRequested();
         }
@@ -516,7 +534,8 @@ contract VaultProtection {
             sg.active = true;
             _remove(l.pendingSigners[l.epoch], who);
             l.signers.push(who);
-            emit SignerAdded(who);
+            emit SignerAdded(_account(), who);
+            emit ProtectionRoleChanged(_account(), ROLE_SIGNER, address(0), who);
         } else if (sg.removeAt != 0) {
             // The expiry window is for ADDITIONS only (spec; Codex #3489 r5):
             // a matured removal stays executable until it is applied or
@@ -526,7 +545,8 @@ contract VaultProtection {
             sg.active = false;
             sg.accepted = false;
             _dropSigner(l, who);
-            emit SignerRemoved(who);
+            emit SignerRemoved(_account(), who);
+            emit ProtectionRoleChanged(_account(), ROLE_SIGNER, who, address(0));
         } else {
             revert NotRequested();
         }
@@ -553,10 +573,11 @@ contract VaultProtection {
         l.lockCount += 1;
         _dropPending(l);
         if (l.nominee != address(0) && l.proposedBy == _owner()) {
-            emit ReplacementCancelled(l.nominee, auth.key);
+            emit ReplacementCancelled(_account(), l.nominee, auth.key);
+            emit ProtectionRoleChanged(_account(), ROLE_RECOVERY_NOMINEE, l.nominee, address(0));
             _clearProposal(l);
         }
-        emit VaultLocked(auth.key);
+        emit VaultLocked(_account(), auth.key);
         // Codex #3489 r9 — the lock's platform side lands with it: the Diamond's
         // permissionless application cancels the queued payouts and the
         // platform-held pending changes and holds the position NFTs. Strict
@@ -583,10 +604,11 @@ contract VaultProtection {
         l.lockCount += 1;
         _dropPending(l);
         if (l.nominee != address(0) && l.proposedBy == _owner()) {
-            emit ReplacementCancelled(l.nominee, by);
+            emit ReplacementCancelled(_account(), l.nominee, by);
+            emit ProtectionRoleChanged(_account(), ROLE_RECOVERY_NOMINEE, l.nominee, address(0));
             _clearProposal(l);
         }
-        emit VaultLocked(by);
+        emit VaultLocked(_account(), by);
     }
 
     // ─── Replacement of the primary ─────────────────────────────────────
@@ -617,14 +639,15 @@ contract VaultProtection {
             if (nominee == address(0) || nominee == address(this) || l.signer[nominee].active) {
                 revert BadNominee(nominee);
             }
+            emit ProtectionRoleChanged(_account(), ROLE_RECOVERY_NOMINEE, l.nominee, nominee);
             l.nominee = nominee;
             l.proposedBy = auth.key;
             l.round += 1;
             l.readyAt = 0;
-            emit ReplacementProposed(nominee, auth.key, l.round);
+            emit ReplacementProposed(_account(), nominee, auth.key, l.round);
             if (!bySigner) {
                 l.readyAt = _later(l);
-                emit ReplacementScheduled(nominee, l.readyAt);
+                emit ReplacementScheduled(_account(), nominee, l.readyAt);
             } else {
                 _approve(l, auth.key);
             }
@@ -636,7 +659,8 @@ contract VaultProtection {
             // A cancel acts only on the proposal it names (Codex #3489 r2):
             // the nominee is checked here, the round is in the signed hash.
             if (l.nominee == address(0) || l.nominee != nominee) revert NoProposal();
-            emit ReplacementCancelled(l.nominee, auth.key);
+            emit ReplacementCancelled(_account(), l.nominee, auth.key);
+            emit ProtectionRoleChanged(_account(), ROLE_RECOVERY_NOMINEE, l.nominee, address(0));
             _clearProposal(l);
         } else {
             revert NoProposal();
@@ -670,7 +694,9 @@ contract VaultProtection {
         l.cooldownUntil = _later(l);
         l.retired = true; // one-way (Codex #3489 r4)
         IProtectedVaultSelf(address(this)).setOwnerFromProtection(nominee);
-        emit PrimaryReplaced(previous, nominee, l.cooldownUntil);
+        emit PrimaryReplaced(_account(), previous, nominee, l.cooldownUntil);
+        emit ProtectionRoleChanged(_account(), ROLE_OWNER, previous, nominee);
+        emit ProtectionRoleChanged(_account(), ROLE_RECOVERY_NOMINEE, nominee, address(0));
         // Codex #3489 r10 — the platform side lands WITH the replacement, or
         // the replacement does not land: the retired wallet's positions are
         // held and its rows cancelled in this transaction, so there is no
@@ -684,7 +710,7 @@ contract VaultProtection {
     ///         signature it gave out with it. Direct call only.
     function burnNonce(uint8 purpose) external onlyDelegateCall {
         uint256 n = P.layout().nonces[msg.sender][purpose]++;
-        emit NonceBurned(msg.sender, purpose, n);
+        emit NonceBurned(_account(), msg.sender, purpose, n);
     }
 
     // ─── Internals ──────────────────────────────────────────────────────
@@ -725,6 +751,12 @@ contract VaultProtection {
     ///      payout destination.
     function _isAccountWallet(address a) private view returns (bool) {
         return a == _owner() || a == IProtectedVaultSelf(address(this)).vaultCreationOwner();
+    }
+
+    /// @dev #3719 — the account every event names: the vault's creation
+    ///      owner, which a primary replacement does not change.
+    function _account() private view returns (address) {
+        return IProtectedVaultSelf(address(this)).vaultCreationOwner();
     }
 
     function _owner() private view returns (address) {
@@ -808,10 +840,10 @@ contract VaultProtection {
         if (l.approved[l.round][signerKey]) revert AlreadyApproved();
         l.approved[l.round][signerKey] = true;
         (uint256 approvals, uint256 threshold) = _tally(l);
-        emit ReplacementApproved(l.nominee, signerKey, approvals, threshold);
+        emit ReplacementApproved(_account(), l.nominee, signerKey, approvals, threshold);
         if (l.readyAt == 0 && approvals >= threshold) {
             l.readyAt = _later(l);
-            emit ReplacementScheduled(l.nominee, l.readyAt);
+            emit ReplacementScheduled(_account(), l.nominee, l.readyAt);
         }
     }
 
