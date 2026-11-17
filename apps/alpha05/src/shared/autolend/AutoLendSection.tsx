@@ -6,7 +6,7 @@ import { useOwnRead } from '../reads/useOwnRead';
 import { useOwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
 import { OwnStamp } from '../ui/OwnStamp';
-import { autoLendState, readMyAutoLend, sortMyAutoLend, type MyAutoLend, type AutoLendState } from './myAutoLend';
+import { autoLendState, readMyAutoLend, shareLentByAsset, sortMyAutoLend, type MyAutoLend, type AutoLendState } from './myAutoLend';
 import { AutoLendManage, useManageOpen, useOpenManages, type OpenManage } from './AutoLendManage';
 import { manageOffers, type ManageKind } from './manage';
 import { AutoLendChange, useChangeOpen } from './AutoLendChange';
@@ -71,6 +71,7 @@ export function AutoLendSection() {
           {text(POSTURE_TEXT[posture])}
         </p>
       )}
+      <ShareLentBlock rows={rows} at={at} total={total} amt={amt} meta={meta ?? null} />
       <ul className="card-list">
         {sortMyAutoLend(rows, at).map((r) => {
           const i = r.intent;
@@ -196,5 +197,40 @@ function ManageRow({
         {text(state === 'stopped' ? 'autoLend.cStartLabel' : 'autoLend.cChangeLabel')}
       </button>
     </p>
+  );
+}
+
+/** #3664 — per lending asset, how much of the money behind Auto-lend is out
+ *  on loans and how much is waiting, with the waiting money a stopped or
+ *  ended setting will not lend named on its own. */
+function ShareLentBlock({ rows, at, total, amt, meta }: { rows: readonly MyAutoLend[]; at: bigint; total: bigint; amt: (v: bigint, a: Hex) => string; meta: TokenMetaMap | null }) {
+  const { text, format } = useCopy();
+  const shares = shareLentByAsset(rows, at);
+  if (shares.length === 0) return null;
+  return (
+    <div className="autolend-share" data-testid="autolend-share">
+      <h3>{text('autoLend.shareTitle')}</h3>
+      <ul className="autolend-share-list">
+        {shares.map((s) => (
+          <li key={s.lendingAsset} data-testid="autolend-share-row" data-asset={s.lendingAsset.toLowerCase()} data-share-bps={s.shareBps ?? ''}>
+            <p>
+              {format('autoLend.shareRow', {
+                asset: assetName(s.lendingAsset, meta),
+                share: s.shareBps === null ? '0%' : bpsPercent(s.shareBps),
+                lent: amt(s.lent, s.lendingAsset),
+                waiting: amt(s.waiting, s.lendingAsset),
+              })}
+            </p>
+            {s.idle > 0n && (
+              <p className="tier-a" data-testid="autolend-share-idle">
+                {format('autoLend.shareIdle', { amount: amt(s.idle, s.lendingAsset) })}
+              </p>
+            )}
+          </li>
+        ))}
+      </ul>
+      {BigInt(rows.length) < total && <p className="tier-b">{format('autoLend.sharePartial', { shown: String(rows.length), total: total.toString() })}</p>}
+      <p className="tier-a">{text('autoLend.shareNote')}</p>
+    </div>
   );
 }

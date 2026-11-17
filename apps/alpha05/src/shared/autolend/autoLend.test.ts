@@ -23,7 +23,7 @@ import {
   type SetupFacts,
 } from './autoLend';
 import { autoLendOption } from './lendChoice';
-import { autoLendState, sortMyAutoLend, type MyAutoLend } from './myAutoLend';
+import { autoLendState, shareLentByAsset, sortMyAutoLend, type MyAutoLend } from './myAutoLend';
 
 type Hex = `0x${string}`;
 const USDC = '0x1111111111111111111111111111111111111111' as Hex;
@@ -333,5 +333,19 @@ describe('the Auto-lend cards on Positions', () => {
   it('lists lending first, then ended, then stopped, the most waiting money first', () => {
     const rows = [row({ availableCapital: 5n }, false), row({ availableCapital: 1n }), row({ availableCapital: 9n, lendUntil: NOW }), row({ availableCapital: 3n })];
     expect(sortMyAutoLend(rows, NOW).map((r) => r.intent.availableCapital)).toEqual([3n, 1n, 9n, 5n]);
+  });
+
+  it('sums lent and waiting per lending asset, never across assets, and names waiting money that will not be lent', () => {
+    const rows = [
+      row({ livePrincipal: 300n, availableCapital: 700n }),
+      row({ collateralAsset: ME, livePrincipal: 200n, availableCapital: 0n }),
+      row({ collateralAsset: USDC, livePrincipal: 0n, availableCapital: 100n }, false),
+      row({ lendingAsset: WETH, livePrincipal: 1n, availableCapital: 2n, lendUntil: NOW }),
+      row({ lendingAsset: ME, livePrincipal: 0n, availableCapital: 0n }, false),
+    ];
+    expect(shareLentByAsset(rows, NOW)).toEqual([
+      { lendingAsset: USDC, lent: 500n, waiting: 800n, idle: 100n, shareBps: 3846, settings: 3 },
+      { lendingAsset: WETH, lent: 1n, waiting: 2n, idle: 2n, shareBps: 3333, settings: 1 },
+    ]);
   });
 });

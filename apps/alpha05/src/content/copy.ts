@@ -4797,6 +4797,12 @@ export const copy = {
     postureUnknown: A('Whether this network fills Auto-lend now could not be read, so these may not be lending.'),
     sectionStale: A('These figures are as last read: the latest read failed ({{reason}}), so they may be out of date.'),
     sectionMore: B('Showing {{shown}} of {{total}}.'),
+    // #3664 — how much of the money behind Auto-lend is lent, per asset.
+    shareTitle: B('How much is in loans'),
+    shareRow: B('{{asset}}: {{share}} in loans. {{lent}} in loans, {{waiting}} waiting in your vault.'),
+    shareIdle: A('{{amount}} of the waiting money sits behind a stopped or ended Auto-lend, so it will not be lent. Take it back, or start that Auto-lend again.'),
+    sharePartial: B('These figures cover the {{shown}} Auto-lend settings listed here, not all {{total}}.'),
+    shareNote: A('A loan counts in full until its repayment is claimed or lent again, even after part is repaid. Each asset is counted on its own; amounts in different assets are not added together. The rate on each loan is on that loan’s page.'),
     cardTitle: B('{{lend}} against {{coll}}'),
     stateActive: B('Lending'),
     stateEnded: B('Ended: its end date has passed'),

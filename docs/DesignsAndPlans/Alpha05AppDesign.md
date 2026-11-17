@@ -1861,6 +1861,15 @@ above. Each resolves here, so a route reviewer needs no private file:
   A 0% lowest rate is taken, as the protocol takes it, and shown as any
   rate. While the token's decimals are read, or when they cannot be, the
   change says so and can be closed, which keeps the card's other steps.
+  Above the cards, Positions states per lending asset how much of the money
+  behind Auto-lend is in loans (#3664): the share in loans, the amount in
+  loans and the amount waiting in the wallet's own vault, read at the same
+  block as the cards. A share is rounded down, never up. Amounts in
+  different assets are never added together, since no total across assets
+  exists without a price. Waiting money behind a stopped or ended Auto-lend
+  is named on its own, as money that will not be lent until it is taken
+  back or the Auto-lend starts again. When the wallet has more Auto-lend
+  settings than one read lists, the figures say they cover only those listed.
 - **RB-PRICE-GUARD** — the maker's price-move guard (#3358) is shown on the
   page of an open or ended loan offer of a token against token collateral.
   Read at the offer's own block, it states the limit, when it was set, and whether

@@ -145,6 +145,12 @@ test('a lender sets up Auto-lend: one choice, an exact approval, terms and fundi
   await expect(card).toContainText('Lowest rate 5% a year');
   await expect(card).toContainText('Also lends to borrowers who pay only for the time borrowed');
   await fitsWidth(page);
+  // #3664 — how much is in loans, per asset: nothing yet, all 0.5 waiting.
+  const share = page.getByTestId('autolend-share-row');
+  await expect(share).toHaveAttribute('data-share-bps', '0');
+  await expect(share).toContainText('0% in loans');
+  await expect(share).toContainText('0.5 WETH waiting in your vault');
+  await expect(page.getByTestId('autolend-share-idle')).toHaveCount(0);
 
   // Back on Lend, the pair already carries an Auto-lend, so the option is closed and says where it is.
   await openPair(page, tliq);
@@ -157,6 +163,13 @@ test('a lender sets up Auto-lend: one choice, an exact approval, terms and fundi
   await page.goto('/positions');
   await expect(page.getByTestId('autolend-posture')).toHaveAttribute('data-posture', 'off', { timeout: 60_000 });
   await expect(page.getByTestId('autolend-posture')).toContainText('switched off on this network now');
+
+  // Stopped with its money still set aside: that money will not be lent, and the share says so.
+  await sc.diamondWrite('lender', 'cancelLenderIntent', [WETH, tliq]);
+  await page.goto('/positions');
+  await expect(page.getByTestId('autolend-card')).toHaveAttribute('data-state', 'stopped', { timeout: 60_000 });
+  await expect(page.getByTestId('autolend-share-idle')).toContainText('0.5 WETH of the waiting money sits behind a stopped or ended Auto-lend');
+  await fitsWidth(page);
 });
 
 test('with Auto-lend switched off on the network, the option is closed and says why', async ({ launchWallet }) => {

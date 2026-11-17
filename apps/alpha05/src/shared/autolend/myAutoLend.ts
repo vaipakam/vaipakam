@@ -67,3 +67,47 @@ export function sortMyAutoLend(rows: readonly MyAutoLend[], at: bigint): MyAutoL
     return a.intent.availableCapital === b.intent.availableCapital ? 0 : a.intent.availableCapital > b.intent.availableCapital ? -1 : 1;
   });
 }
+
+/**
+ * #3664 — how much of the money behind the wallet's Auto-lend is lent, per
+ * lending asset. Amounts in different assets are never added together: no
+ * total is formed across assets without a price, so each asset stands alone.
+ *
+ * `lent` is the principal out on loans now; `waiting` is the money set aside
+ * in the wallet's own vault that is not lent. Part of the waiting money can
+ * sit behind a setting that will not lend it (stopped, or past its end date):
+ * that part is `idle`, counted in `waiting` and named on its own, so the share
+ * never reads as if the rest were all on offer.
+ */
+export interface ShareLent {
+  lendingAsset: Hex;
+  lent: bigint;
+  waiting: bigint;
+  /** The part of `waiting` behind a stopped or ended setting. */
+  idle: bigint;
+  /** Lent as basis points of lent plus waiting; null when both are zero. */
+  shareBps: number | null;
+  /** How many of the listed settings lend this asset. */
+  settings: number;
+}
+
+export function shareLentByAsset(rows: readonly MyAutoLend[], at: bigint): ShareLent[] {
+  const by = new Map<string, ShareLent>();
+  for (const r of rows) {
+    const i = r.intent;
+    const k = i.lendingAsset.toLowerCase();
+    const s = by.get(k) ?? { lendingAsset: i.lendingAsset, lent: 0n, waiting: 0n, idle: 0n, shareBps: null, settings: 0 };
+    s.lent += i.livePrincipal;
+    s.waiting += i.availableCapital;
+    if (autoLendState(r, at) !== 'active') s.idle += i.availableCapital;
+    s.settings += 1;
+    by.set(k, s);
+  }
+  const out = [...by.values()].map((s) => {
+    const all = s.lent + s.waiting;
+    // Rounded down, so a share is never shown higher than it is.
+    return { ...s, shareBps: all === 0n ? null : Number((s.lent * 10_000n) / all) };
+  });
+  // Amounts in different assets do not compare, so the order is the list's own.
+  return out.filter((s) => s.lent + s.waiting > 0n);
+}
