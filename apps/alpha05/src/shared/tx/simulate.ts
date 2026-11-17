@@ -50,6 +50,42 @@ export async function askSources<T>(sources: readonly OwnStateSource[], fn: (cli
   return { kind: 'unreadable', reason };
 }
 
+/**
+ * A question that must see a transaction this flow has just mined (the dry
+ * run after an approval): each source is asked AT a block no earlier than
+ * `since`, the block that transaction landed in. A source still behind it
+ * is passed over like an outage, never read as the chain's answer, because
+ * a node that has not seen the approval answers "insufficient allowance"
+ * for a call that would pass. When every source is behind, the walk waits
+ * and asks again, a few times, before it says the check could not be run.
+ * With no `since` (nothing was sent first) it is {@link askThrough}.
+ */
+export async function askAfter<T>(
+  own: Pick<OwnStateClient, 'sources'>,
+  since: bigint | null,
+  fn: (client: PublicClient, blockNumber: bigint | undefined) => Promise<T>,
+  opts: { tries?: number; waitMs?: number } = {},
+): Promise<Asked<T>> {
+  if (since === null) return askThrough(own, (c) => fn(c, undefined));
+  const tries = opts.tries ?? 10;
+  const waitMs = opts.waitMs ?? 1500;
+  let last: Asked<T> = { kind: 'unreadable', reason: 'no source has reached the block the approval landed in' };
+  for (let i = 0; i < tries; i++) {
+    let behind = 0;
+    last = await askSources(own.sources, async (c) => {
+      const head = await c.getBlockNumber({ cacheTime: 0 });
+      if (head < since) {
+        behind += 1;
+        throw new Error('this source has not reached the block the approval landed in');
+      }
+      return fn(c, head);
+    });
+    if (last.kind !== 'unreadable' || behind < own.sources.length) return last;
+    await new Promise((r) => setTimeout(r, waitMs));
+  }
+  return last;
+}
+
 export async function simulateCall(own: OwnStateClient, req: CallRequest): Promise<Recheck> {
   // Each source in the rail's order: a revert is the protocol's refusal; a
   // source that could not run the call is passed over, and only when none

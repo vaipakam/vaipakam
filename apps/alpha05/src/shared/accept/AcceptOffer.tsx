@@ -18,7 +18,7 @@ import { acceptFigures, lenderFigures } from '../offers/model';
 import { readVault } from '../offers/reads';
 import { exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { readTerms, termsUrl, type TermsState } from '../terms/terms';
-import { askThrough } from '../tx/simulate';
+import { askAfter } from '../tx/simulate';
 import { cleanUpLeg } from '../tx/cleanUp';
 import { useStoredValue, useTxNote } from '../tx/txStore';
 import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
@@ -215,13 +215,14 @@ export function AcceptOffer({ flowKey, source, chain, own, meta, terms, onClose 
           : signedFillCall(r.source.order, message, signature);
 
       // 3. The dry run with the real signature: the protocol's own verdict.
-      const dry = await askThrough(own, (c) =>
+      const dry = await askAfter(own, since, (c, blockNumber) =>
         c.simulateContract({
           address: diamond,
           abi: call.abi,
           functionName: call.functionName,
           args: call.args,
           account,
+          blockNumber,
         }),
       );
       if (dry.kind === 'reverted') {

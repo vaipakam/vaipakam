@@ -438,6 +438,16 @@ time, can change it. A replay that goes through says that one of those two
 changed what the call relied on, without claiming which; a replay that
 cannot run says so. The reason never changes the verdict.
 
+The protocol's dry run that follows an approval is asked only of a chain
+source that has reached the block the approval landed in, at that source's
+head, never at whatever latest a lagging or load-balanced node reports: a
+source still behind it would read the allowance as it stood before the
+approval and refuse a step the approval already allows, and the flow would
+then put a good approval back. A source that is behind is passed over for
+the next; when every source is behind, the flow waits briefly and asks
+again, and a check that still cannot run is stated as unread, never as a
+refusal.
+
 A token amount is written for reading: digit groups, and a fraction
 shortened to four places once there is a whole part, or to four significant
 digits below one, cut toward zero and never rounded up, so a small amount
