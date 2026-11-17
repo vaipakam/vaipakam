@@ -105,10 +105,10 @@ The review of a fixed-rate takeover tells the outgoing lender that the loan is h
 
 Running totals per lending asset (and per pair for the instant market), written by the steps that already change them:
 
-- **Declared:** the sum of the largest exposure of every Auto-lend slot that is active and whose fill window is still open. A slot with an end date leaves the total when its window closes without anyone acting: its exposure is also recorded against the UTC day its window closes, every write first removes the days that have fully passed, and the view applies the same subtraction. The figure is therefore stated "as of the start of today (UTC)": a slot whose window closes today still counts until the day ends.
+- **Declared:** the sum of the largest exposure of every Auto-lend slot that is active and whose fill window is still open. Declared is the limit lenders have set, not depth: depth is the **available** total of `TermAverageAndLinkGuardsDesign.md` section 7 (#3714), counted from the capital reserved in each slot under the definition and stated limits given there, and "how full" is principal lent out of slots divided by that principal plus available. A slot with an end date leaves the total when its window closes without anyone acting: its exposure is also recorded against the UTC day its window closes, every write first removes the days that have fully passed, and the view applies the same subtraction. The figure is therefore stated "as of the start of today (UTC)": a slot whose window closes today still counts until the day ends.
 - **Lent:** three figures, per asset and per pair. All open principal from every route, which the shortfall reserve's activation check reads. Open principal lent out of Auto-lend slots. Open principal opened through the instant market. Whether a loan was opened through the instant market is fixed when it opens. Whether it counts as lent out of a slot follows the slot it is held from now: it leaves the figure when that slot's exposure is released, and a loan taken over into a slot joins it. Otherwise "how full" would understate the exposure in use.
 
-They are exact and cost one counter update per change. What the ledger does **not** know is how much of the declared amount is in the lenders' vaults at this moment, since a vault balance changes without touching a slot. That figure, "available now", is computed by a paged view and by the indexer, and is always labelled as an estimate at the time of reading. The app's "how full" figure is the principal lent out of Auto-lend slots divided by declared; all-route principal is never divided by it.
+They are exact and cost one counter update per change. Amended 2026-11-17 (#3714): a slot lends only from capital its owner has reserved under the intent's own lien, which changes only through the intent's steps, so the capital reserved in fillable slots is also a ledger figure, **available**, with the day-based end-date cutoff and the other limits stated in `TermAverageAndLinkGuardsDesign.md` section 7; the borrow preview is the binding answer for any amount. Standing offers that serve as sources are not in it; the app adds those from the indexer and labels that part an estimate at the time of reading. The app's "how full" figure is the principal lent out of Auto-lend slots divided by that principal plus available; all-route principal is never divided by it.
 
 The totals set no rate. They also give the shortfall reserve the open-principal figure its activation checks read.
 
@@ -126,7 +126,7 @@ The totals set no rate. They also give the shortfall reserve the open-principal 
 
 - Name: "instant market". Never pool, pooled, shared fund, deposit rate or yield.
 - Always say that funds stay in the user's own vault and that each loan is with one lender.
-- "Available now" and "how full" are labelled estimates with their time of reading.
+- "Available" and "how full" for slots are ledger figures, shown "as of the start of today (UTC)" like declared; the part of depth that comes from standing offers is a labelled estimate with its time of reading. Declared is always called the limit lenders have set.
 - No promised return and no comparison to named third parties, as everywhere.
 
 ## 11. Contract and off-chain changes
