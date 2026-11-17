@@ -49,11 +49,12 @@ contract FeeLevelsFacet is DiamondAccessControl {
     uint256 private constant MIN_YEAR_DAYS = 180;
     uint256 private constant MAX_YEAR_DAYS = 730;
     uint256 private constant MAX_FEE_BPS = 5_000;
-    /// @dev The treasury floors' bounds (#3649 stage 3). The initiation
-    ///      floor may not pass 0.2% of the principal, the default base rate,
-    ///      and the interest floor may not pass 5% of the interest, half the
-    ///      default interest share, so the reserve's part is never closed by
-    ///      a floor setting alone.
+    /// @dev The treasury floors' outer bounds (#3649 stage 3): 0.2% of the
+    ///      principal and 5% of the interest. Inside them the half rule
+    ///      binds: a floor may not exceed half the rate it is taken from
+    ///      (checked here against the rates in force, and by
+    ///      `ConfigFacet.setFeesConfig` against the floors in force), so the
+    ///      part above the floor never closes.
     uint256 private constant MAX_INITIATION_FLOOR_BPS = 20;
     uint256 private constant MAX_INTEREST_FLOOR_BPS = 500;
 
@@ -92,7 +93,9 @@ contract FeeLevelsFacet is DiamondAccessControl {
      *         principal the treasury keeps from its initiation fee, and the
      *         share of the interest it keeps from its share of interest. The
      *         part of each fee above its floor is the reserve's. Pass 0 for a
-     *         field to restore its default (0.1% and 1%).
+     *         field to restore its default (0.1% and 1%). Refuses a floor
+     *         above half the rate it is taken from (the base initiation rate
+     *         and the interest share in force), or above 0.2% / 5%.
      * @dev    ADMIN_ROLE (the Timelock after handover). A change applies to
      *         fees collected after it and never touches one already
      *         collected; it moves no amount a user pays, only how the
@@ -108,6 +111,11 @@ contract FeeLevelsFacet is DiamondAccessControl {
         LibVaipakam.FeeFloorConfig storage c = LibVaipakam.storageSlot().feeFloorCfg;
         c.initiationBps = initiationBps;
         c.interestBps = interestBps;
+        (uint256 initiationFloor, uint256 interestFloor) = LibFeeFloor.floorsBps();
+        if (
+            2 * initiationFloor > LibVaipakam.cfgLoanInitiationFeeBps()
+                || 2 * interestFloor > LibVaipakam.cfgTreasuryFeeBps()
+        ) revert InvalidTreasuryFeeFloors(initiationFloor, interestFloor);
         emit TreasuryFeeFloorsSet(initiationBps, interestBps);
     }
 

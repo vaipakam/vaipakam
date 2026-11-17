@@ -5,6 +5,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {ITreasuryFeeHost} from "../src/interfaces/ITreasuryFeeHost.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
@@ -26,6 +27,7 @@ contract TreasuryFeeFloorTest is SetupTest {
     address internal treasury;
     TreasuryFeeFacet internal host;
     FeeLevelsFacet internal levels;
+    ConfigFacet internal config;
 
     function setUp() public {
         setupHelper();
@@ -33,6 +35,7 @@ contract TreasuryFeeFloorTest is SetupTest {
         LibTestVaultBeacon.setTreasury(address(diamond), treasury);
         host = TreasuryFeeFacet(address(diamond));
         levels = FeeLevelsFacet(address(diamond));
+        config = ConfigFacet(address(diamond));
     }
 
     function _push(uint256 amount, ITreasuryFeeHost.FeeKind kind, uint256 base) internal returns (uint256 accrued) {
@@ -163,7 +166,26 @@ contract TreasuryFeeFloorTest is SetupTest {
         levels.setTreasuryFeeFloors(21, 100);
         vm.expectRevert(abi.encodeWithSelector(FeeLevelsFacet.InvalidTreasuryFeeFloors.selector, 10, 501));
         levels.setTreasuryFeeFloors(10, 501);
-        levels.setTreasuryFeeFloors(20, 500);
+        levels.setTreasuryFeeFloors(10, 500); // half of the 10% share
+    }
+
+    /// The half rule (design thread 2026-11-17): a floor may not exceed half
+    /// the rate it is taken from, checked from both sides, so the part above
+    /// the floor never closes.
+    function test_halfRule_bothSides() public {
+        // Above half the 0.2% base rate.
+        vm.expectRevert(abi.encodeWithSelector(FeeLevelsFacet.InvalidTreasuryFeeFloors.selector, 11, 100));
+        levels.setTreasuryFeeFloors(11, 100);
+        // Above half a lowered interest share.
+        config.setFeesConfig(400, 0);
+        vm.expectRevert(abi.encodeWithSelector(FeeLevelsFacet.InvalidTreasuryFeeFloors.selector, 10, 201));
+        levels.setTreasuryFeeFloors(10, 201);
+        // The rates may not fall below twice the floors in force.
+        vm.expectRevert(abi.encodeWithSelector(ConfigFacet.InvalidFeeBps.selector, 19, 20));
+        config.setFeesConfig(1000, 19);
+        vm.expectRevert(abi.encodeWithSelector(ConfigFacet.InvalidFeeBps.selector, 199, 200));
+        config.setFeesConfig(199, 0);
+        config.setFeesConfig(200, 20);
     }
 
     function test_setFloors_adminOnly() public {

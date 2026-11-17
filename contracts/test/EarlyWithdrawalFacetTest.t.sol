@@ -7446,6 +7446,10 @@ contract EarlyWithdrawalFacetTest is Test {
     function test_1918_legacyLoanComparedAtTheFrozenFallbackNotAtTheRawZero() public {
         TestMutatorFacet(address(diamond)).setTreasuryFeeBpsAtInitRaw(activeLoanId, 0);
         uint16 belowLegacy = uint16(LibVaipakam.LEGACY_TREASURY_FEE_BPS - 50);
+        // #3649 stage 3 — an interest share must stay at least twice its
+        // treasury floor (1% of the interest by default); lower the floor
+        // first so the share can go below the legacy rate.
+        TestMutatorFacet(address(diamond)).setFeeFloorsRaw(0, 1);
         _setLiveTreasuryFeeBps(belowLegacy);
 
         (uint8 code, uint256 a, uint256 b) =

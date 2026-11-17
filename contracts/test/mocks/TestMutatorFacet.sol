@@ -497,6 +497,14 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().loans[loanId].treasuryFeeBpsAtInit = bps;
     }
 
+    /// @notice #3649 stage 3 — write the treasury floors directly, for a test
+    ///         Diamond that does not cut `FeeLevelsFacet`. Zero ⇒ default.
+    function setFeeFloorsRaw(uint16 initiationBps, uint16 interestBps) external {
+        LibVaipakam.FeeFloorConfig storage c = LibVaipakam.storageSlot().feeFloorCfg;
+        c.initiationBps = initiationBps;
+        c.interestBps = interestBps;
+    }
+
     /// @notice Write `s.offerIdToLoanId[offerId] = loanId` directly.
     ///         Used by `EarlyWithdrawalFacetTest` to scaffold the
     ///         loan-sale state without going through the full

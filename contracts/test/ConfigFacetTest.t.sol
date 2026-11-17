@@ -330,7 +330,7 @@ contract ConfigFacetTest is Test {
     // ─── Bundle getter ───────────────────────────────────────────────────
 
     function testGetProtocolConfigBundleReturnsEffectiveValues() public {
-        ConfigFacet(address(diamond)).setFeesConfig(150, 20);
+        ConfigFacet(address(diamond)).setFeesConfig(250, 20);
 
         (
             uint256 tFee,
@@ -360,7 +360,7 @@ contract ConfigFacetTest is Test {
         ) = ConfigFacet(address(diamond)).getProtocolConfigBundle();
 
         // Overridden:
-        assertEq(tFee, 150);
+        assertEq(tFee, 250);
         assertEq(lFee, 20);
         // Untouched — resolve to defaults:
         assertEq(h, DEFAULT_LIQ_HANDLING_FEE_BPS);
