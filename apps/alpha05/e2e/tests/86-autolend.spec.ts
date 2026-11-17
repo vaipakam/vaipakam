@@ -151,6 +151,7 @@ test('a lender sets up Auto-lend: one choice, an exact approval, terms and fundi
   await expect(share).toContainText('0% in loans');
   await expect(share).toContainText('0.5 WETH waiting in your vault');
   await expect(page.getByTestId('autolend-share-idle')).toHaveCount(0);
+  await expect(page.getByTestId('autolend-share-scope')).toContainText('its loans run on');
 
   // Back on Lend, the pair already carries an Auto-lend, so the option is closed and says where it is.
   await openPair(page, tliq);

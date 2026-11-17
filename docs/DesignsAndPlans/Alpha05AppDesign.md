@@ -1870,6 +1870,11 @@ above. Each resolves here, so a route reviewer needs no private file:
   is named on its own, as money that will not be lent until it is taken
   back or the Auto-lend starts again. When the wallet has more Auto-lend
   settings than one read lists, the figures say they cover only those listed.
+  The figures always say they cover only the listed settings: the protocol
+  drops a stopped Auto-lend with nothing left waiting from the wallet's list
+  while its loans run on, and no on-chain list of those loans exists, so the
+  page names that gap and points to each loan's own page rather than
+  presenting a share that silently leaves them out.
 - **RB-PRICE-GUARD** — the maker's price-move guard (#3358) is shown on the
   page of an open or ended loan offer of a token against token collateral.
   Read at the offer's own block, it states the limit, when it was set, and whether

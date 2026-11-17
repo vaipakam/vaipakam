@@ -229,6 +229,9 @@ function ShareLentBlock({ rows, at, total, amt, meta }: { rows: readonly MyAutoL
           </li>
         ))}
       </ul>
+      <p className="tier-a" data-testid="autolend-share-scope">
+        {text('autoLend.shareScope')}
+      </p>
       {BigInt(rows.length) < total && <p className="tier-b">{format('autoLend.sharePartial', { shown: String(rows.length), total: total.toString() })}</p>}
       <p className="tier-a">{text('autoLend.shareNote')}</p>
     </div>
