@@ -81,7 +81,7 @@ The inviter's share is a referral share of the platform's fee for bringing a use
 
 ### 6.1 The inviter's page
 
-An inviter sees what their invitations have paid, on a page in the app that needs only their connected wallet (an inviter needs no vault).
+An inviter sees what their invitations have paid, on a page in the app that needs only their connected wallet (an inviter needs no vault). Card #3727.
 
 - **The invite link**, with copy and share.
 - **Invited wallets:** for each wallet that bound this inviter, the date it bound, the loans counted out of its limit, and the days left. A wallet whose period has ended is shown as ended.
