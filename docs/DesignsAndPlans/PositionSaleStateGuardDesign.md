@@ -1,0 +1,227 @@
+# Position sale state guard
+
+Status: design, approved for build by the secured-vault thread. Card: #3710.
+
+A position token can be sold on any marketplace. Its price depends on the
+loan behind it: how much collateral backs a borrower position, how much is
+still owed to a lender position. This design makes sure a buyer never pays
+for a position whose value left it shortly before the sale, and says plainly
+where that protection ends.
+
+## 1. What the platform already does
+
+These were checked in the code on 2026-11-17 and are not changed here.
+
+- **A seller cannot remove collateral after selling.** A partial collateral
+  withdrawal authorises whoever holds the borrower position token at the
+  moment of the call. The original borrower has no standing once the token
+  has moved. A holder who is not the original borrower is paid into their own
+  vault.
+- **A sale cannot fill in the same moment value leaves** (#3413). Every
+  movement of value out of a loan's positions (a collateral withdrawal, a
+  payout to a holder, a terms change) stamps the loan. Neither side's token
+  can move in that block, or until a cooldown has passed. The cooldown is 5
+  seconds by default, governed between 1 second and 10 minutes.
+- **The token's metadata reports the live collateral amount.** It is computed
+  on every read from the loan.
+- **A protected vault's delay covers this payout.** Every payout to an owner's
+  wallet goes through the one outflow policy, which queues it behind the
+  delay. Every push from the Diamond to a protected wallet is credited to the
+  vault instead.
+
+## 2. What is still open
+
+1. **A stale view.** Marketplaces cache metadata. Nothing tells them a
+   position's figures changed, so a listing can show the collateral amount
+   from before a withdrawal for a long time.
+2. **A standing bid.** A buyer leaves a bid on a position. The holder removes
+   collateral, waits out the cooldown, and accepts the bid. The bid was priced
+   against the earlier position. No cooldown of any length fixes this, because
+   a bid can stand for days.
+3. **A listing filled late.** The same, the other way round: the holder lists
+   at a fixed price, removes collateral, waits, and a buyer who looked earlier
+   fills the listing.
+4. **No proof the protected-payout rule holds for future routes.** It holds
+   today by inspection only.
+
+## 3. Decisions
+
+### 3.1 A state number on every position
+
+Each loan carries a **state number**: a count of the times value has left its
+positions. It starts at 0 and goes up by one at every stamp of section 1's
+value-out mark, in the same storage word (the stamp uses 128 bits; the count
+takes the bits above it). An offer's own token carries the same count for
+changes to the offer.
+
+The number goes up only when value leaves. Collateral added or a debt reduced
+by the borrower makes a position worth more to its buyer, so it does not
+invalidate a price a buyer agreed to.
+
+One view on the position token facet returns, for a token: the state number,
+the block of the last value-out, and the time the token may next move. It
+replaces the present cooldown view. One more entry, `requirePositionState`,
+takes a token and an expected number and reverts
+`PositionStateChanged(tokenId, expected, current)` when they differ. Anyone
+may call either; neither changes state.
+
+This is the root of the fix. A price is always a price for one state number.
+Whoever commits to a price can commit to the number with it, and the fill can
+be refused when the number has moved.
+
+### 3.2 Marked at the seams, never path by path
+
+Today the value-out mark is placed partly at a seam and partly by hand. The
+outflow policy marks every payout to a position holder or a counterparty, and
+retiring a token marks it. A collateral withdrawal, a partial swap-to-repay, a
+terms change and the close-out freeze each place their own mark. A new route
+that forgets the mark is a silent hole, and a read of the code on 2026-11-17
+found candidates that reduce a loan's collateral with no mark of their own:
+the partial liquidation, the matched liquidation legs, the fallback custody
+split and the periodic forced sale. Each needs confirming, since some may be
+covered by the payout they end in.
+
+So the mark moves to the few places every such change must pass, and the hand
+placed marks are deleted:
+
+1. **The outflow policy.** Every outflow that names a loan marks it, except a
+   consolidation, which keeps the value under the lien. This covers every
+   payout, claim, fee and sale that takes assets out of a party's vault for a
+   loan.
+2. **One writer for a loan's collateral amount.** Every reduction goes through
+   one library function that marks the loan. A build check, of the same kind
+   as the one that already holds the loan-terms writer, refuses an assignment
+   to the collateral amount anywhere else.
+3. **The loan-terms writer.** It is already the only writer of a loan's
+   principal and rate. It marks any change that raises what the borrower owes
+   or lowers what the lender is owed.
+4. **Retiring a token.** Unchanged.
+
+Marking more often than strictly needed is safe: it costs a short wait and
+moves the state number, and never lets a stale price through.
+
+Two proofs ship with it:
+
+- **A table of every route**, produced by the builder and kept in this
+  document's build notes: each external entry that changes a loan, what it
+  takes out of which position, and which seam marks it.
+- **A property test** in the invariant suite: across any sequence of calls,
+  if a figure the metadata reports got worse for a token's holder, that
+  loan's state number went up in the same call. This is the check that does
+  not depend on anyone listing the routes correctly.
+
+### 3.3 A refresh signal for marketplaces
+
+The position token contract (the standalone core, not the Diamond) emits the
+standard metadata-update event, and reports the matching interface id. The
+core gains one Diamond-only entry that emits the event for one or two token
+ids, and does nothing else.
+
+The Diamond calls it through one helper beside the value-out mark, for both
+tokens of the loan, at:
+
+- every value-out (the seams of section 3.2);
+- every other change to a figure the metadata reports: collateral added, a
+  repayment, a status change, a change of terms.
+
+The builder lists these sites from the fields the metadata renderer reads, so
+the list follows the renderer and is not kept by hand. A test asserts that
+each renderer input has an emitting site.
+
+### 3.4 The cooldown default becomes 60 seconds
+
+The cooldown's job is the race around one transaction, and 5 seconds does
+that. A minute also gives a marketplace time to act on the refresh signal
+before the token can change hands. The bounds stay 1 second to 10 minutes.
+
+It is not set to the 10 minute maximum, because the cooldown also holds an
+honest holder's token after every routine payout, and because section 3.1,
+not the wait, is what protects a late fill.
+
+Builder to confirm before changing the default: the in-platform sale and
+handover routes replace a position's token and do not transfer it, so they do
+not wait on the cooldown. If any protocol route does transfer a token, it must
+be listed in the build notes with the effect of the longer wait.
+
+### 3.5 A sale guard for orders, built when the app offers position sales
+
+A small standalone contract with no owner, no settings and no storage acts as
+the order restriction for the order protocol the collateral listings already
+use (`contracts/src/seaport/`). An order that names it carries the expected
+state number of each position token in the order: from the order's maker in
+the order itself, or from the taker in the fill's extra data. At fill the
+guard reads section 3.1's view and refuses a fill whose number has moved.
+
+That covers both a standing bid (the bidder commits the number) and a late
+fill of a listing (the taker commits the number).
+
+It is the second step of this card. It needs no further contract change after
+step one, since it only reads the view, and it is worth building only when
+the app creates position orders. Until then, sections 3.1 to 3.4 ship and the
+app shows the state number.
+
+### 3.6 What is deliberately not done
+
+- **No delay on the withdrawal itself.** It would make every honest borrower
+  wait for their own surplus collateral, and it would not help a standing bid,
+  which outlasts any delay. Holding the token, not the money, puts the wait on
+  the sale.
+- **No claim step for a live loan.** Claims exist for amounts created when a
+  loan ends, collected later by whoever then holds the position. A live
+  holder is checked at the call. A claim would add a transaction and no
+  protection.
+- **No delay on moves from a protected vault into protocol positions.** That
+  is the Ready-balance decision of 2026-11-08 and is unchanged.
+
+### 3.7 The protected-payout rule gets a guard
+
+The rule: no route pays the owner wallet of a protected vault except through
+the outflow policy or the credit-if-protected helper. Under #3568 the builder
+adds a test that drives every payout route against a protected vault and
+asserts nothing reaches the wallet before the delay, and a static check that
+fails the build when a new raw transfer to a user address appears outside
+those two helpers. The four transfers that skip the check today (to protocol
+contracts and the keeper) are listed in the check with their reasons.
+
+## 4. What a user is told
+
+- The position page shows the state number and the time of the last value-out,
+  and says that a buyer should check both before paying.
+- On an outside marketplace, the platform cannot stop a sale at a stale price
+  once the cooldown has passed. The app says so wherever it links out to a
+  marketplace listing. Orders made through the app, once section 3.5 exists,
+  carry the guard and are refused if the position changed.
+- After removing collateral or receiving a payout, a holder is told their
+  token cannot be transferred for the cooldown, with the time it frees.
+
+## 5. Alternatives considered
+
+1. **Lengthen the cooldown only.** Simple, but a standing bid outlasts it, and
+   a long wait holds honest holders' tokens after every payout.
+2. **Delay the withdrawal.** Section 3.6.
+3. **Route withdrawals through claims.** Section 3.6.
+4. **A holder-set "for sale" lock that blocks value-out while set.** A buyer
+   would still have to check the lock at the fill, which needs the same order
+   guard as section 3.5, and an honest seller gains a step. The state number
+   gives the buyer the same assurance with nothing for the seller to do.
+5. **Block withdrawals while a listing exists.** The platform cannot see
+   orders signed on other marketplaces.
+
+## 6. Recommendation
+
+Build sections 3.1 to 3.4 and 3.7 now as step one. Build 3.5 when the app
+offers position sales. Keep withdrawals immediate and claims for loan-end
+amounts.
+
+## 7. Build notes
+
+- The position token core changes (the event, the interface id, the
+  Diamond-only entry), so this reaches a chain by fresh deploy.
+- The value-out mark, the count and the refresh call sit behind one helper in
+  the position token library, called only from the seams of section 3.2, so
+  nothing can stamp without counting or refreshing.
+- The route table of section 3.2 is added here by the builder.
+- New selectors need the usual registrations, the ABI exports and a row in the
+  permissionless-steps ledger for nothing here (both new Diamond entries are
+  views; the core entry is Diamond-only).
+- The indexer needs no change. The app change is section 4.
