@@ -529,3 +529,33 @@ describe('liquidity-tier asset discovery under the read cutoff (#2572 r8)', () =
     expect(calls).toEqual(['getActiveLoansCount']);
   });
 });
+
+describe('promotion settings floors (RateGuideAndLinkGuardsDesign §9)', () => {
+  it('reads unset settings as the floors', async () => {
+    const { promotionSettings } = await import('../src/liquidityConfidence');
+    expect(promotionSettings({})).toEqual({ minChecks: 5, minWindowSec: 3 * 86_400, refused: null });
+  });
+
+  it('accepts a setting at or above its floor', async () => {
+    const { promotionSettings } = await import('../src/liquidityConfidence');
+    expect(promotionSettings({ LIQ_CONFIDENCE_MIN_CHECKS: '8', LIQ_CONFIDENCE_MIN_WINDOW_DAYS: '3' })).toEqual({ minChecks: 8, minWindowSec: 3 * 86_400, refused: null });
+  });
+
+  it('refuses a setting below its floor, or not a whole number, by name', async () => {
+    const { promotionSettings } = await import('../src/liquidityConfidence');
+    const r = promotionSettings({ LIQ_CONFIDENCE_MIN_CHECKS: '2', LIQ_CONFIDENCE_MIN_WINDOW_DAYS: '1.5' });
+    expect(r.refused).toBe('LIQ_CONFIDENCE_MIN_CHECKS=2 is below its floor of 5; LIQ_CONFIDENCE_MIN_WINDOW_DAYS="1.5" is not a whole number');
+  });
+
+  it('gathers no promotion evidence while refused, and still demotes', async () => {
+    const { nextKeeperTier } = await import('../src/liquidityConfidence');
+    const base = { agg_tier: 1, on_chain_tier: 1, healthy_streak: 4, first_eligible_ts: 0, last_check_ts: 0 } as never;
+    const knobs = { minChecks: 5, minWindowSec: 0, submitGloballyEnabled: true, promotionRefused: 'LIQ_CONFIDENCE_MIN_CHECKS=1 is below its floor of 5' };
+    const up = nextKeeperTier(base, 3, 1, 10_000_000, knobs);
+    expect(up.target).toBeNull();
+    expect(up.row.healthy_streak).toBe(0);
+    expect(up.row.first_eligible_ts).toBeNull();
+    const down = nextKeeperTier({ ...(base as object), on_chain_tier: 2 } as never, 1, 2, 10_000_000, knobs);
+    expect(down.target).toBe(1);
+  });
+});

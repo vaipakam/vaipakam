@@ -130,6 +130,48 @@ interface RelayKnobs {
   /** when false, `getDepthTierConfigBundle` says the feature is off ⇒
    *  track confidence in D1 but don't submit `setKeeperTier` */
   submitGloballyEnabled: boolean;
+  /** Why promotions are refused this run (a promotion setting below its
+   *  floor, named), or null. Demotions run regardless. */
+  promotionRefused?: string | null;
+}
+
+/** The least a promotion may wait (RateGuideAndLinkGuardsDesign §9): a tier
+ *  is raised only on confirmations spread over several days, so depth added
+ *  for a short time cannot lift it. Floors, not defaults: an operator setting
+ *  below one is refused by name, never raised quietly. */
+export const MIN_PROMOTION_CHECKS = 5;
+export const MIN_PROMOTION_WINDOW_DAYS = 3;
+
+/**
+ * The promotion settings, from `LIQ_CONFIDENCE_MIN_CHECKS` and
+ * `LIQ_CONFIDENCE_MIN_WINDOW_DAYS`. Unset reads as the floor. A value that is
+ * not a whole number, or is below its floor, refuses every promotion this
+ * run and says which setting; demotions, the fail-safe direction, still run.
+ * Pure; exported for tests.
+ */
+export function promotionSettings(env: Pick<Env, 'LIQ_CONFIDENCE_MIN_CHECKS' | 'LIQ_CONFIDENCE_MIN_WINDOW_DAYS'>): {
+  minChecks: number;
+  minWindowSec: number;
+  refused: string | null;
+} {
+  const problems: string[] = [];
+  const read = (name: 'LIQ_CONFIDENCE_MIN_CHECKS' | 'LIQ_CONFIDENCE_MIN_WINDOW_DAYS', floor: number): number => {
+    const raw = env[name];
+    if (raw === undefined || raw.trim() === '') return floor;
+    const n = /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : Number.NaN;
+    if (!Number.isSafeInteger(n)) {
+      problems.push(`${name}="${raw}" is not a whole number`);
+      return floor;
+    }
+    if (n < floor) {
+      problems.push(`${name}=${n} is below its floor of ${floor}`);
+      return floor;
+    }
+    return n;
+  };
+  const minChecks = read('LIQ_CONFIDENCE_MIN_CHECKS', MIN_PROMOTION_CHECKS);
+  const days = read('LIQ_CONFIDENCE_MIN_WINDOW_DAYS', MIN_PROMOTION_WINDOW_DAYS);
+  return { minChecks, minWindowSec: days * 86_400, refused: problems.length === 0 ? null : problems.join('; ') };
 }
 
 function parsePosIntEnv(v: string | undefined, dflt: number): number {
@@ -175,13 +217,14 @@ async function loadConfig(
   const tier2SizePad = BigInt(bundle[6] as bigint);
   const tier3SizePad = BigInt(bundle[7] as bigint);
   if (slippageBps === 0n || floorSizePad === 0n) return null; // sanity
+  const promotion = promotionSettings(env);
   return {
     slippageBps,
     sizesPad: [floorSizePad, tier1SizePad, tier2SizePad, tier3SizePad],
     knobs: {
-      minChecks: parsePosIntEnv(env.LIQ_CONFIDENCE_MIN_CHECKS, 5),
-      minWindowSec:
-        parsePosIntEnv(env.LIQ_CONFIDENCE_MIN_WINDOW_DAYS, 3) * 86_400,
+      minChecks: promotion.minChecks,
+      minWindowSec: promotion.minWindowSec,
+      promotionRefused: promotion.refused,
       submitGloballyEnabled: depthTieredLtvEnabled,
     },
   };
@@ -849,7 +892,9 @@ export function nextKeeperTier(
   }
   // Eligible-to-promote: aggregator confirms strictly above the current
   // tier (and below the ceiling cap MAX_TIER). Count consecutive ticks.
-  if (aggTier > currentOnChainTier && currentOnChainTier < MAX_TIER) {
+  // A refused promotion setting gathers no evidence either, so a corrected
+  // setting starts a full window rather than finishing one begun under it.
+  if (aggTier > currentOnChainTier && currentOnChainTier < MAX_TIER && !knobs.promotionRefused) {
     const streak = prev.healthy_streak + 1;
     const firstEligible = prev.first_eligible_ts ?? nowSec;
     const windowOk = nowSec - firstEligible >= knobs.minWindowSec;
@@ -896,6 +941,9 @@ async function runRelayForChain(
   const diamond = chain.diamond as Address;
   const cfg = await loadConfig(client, diamond, env);
   if (!cfg) return; // facet not cut / RPC error / degenerate config
+  if (cfg.knobs.promotionRefused) {
+    console.warn(`[keeper] liq-confidence chain=${chain.name} promotions refused: ${cfg.knobs.promotionRefused}; demotions still run`);
+  }
 
   // The keeper EOA: the quotes' transaction origin (read-only here) and
   // the `setKeeperTier` signer. Reads work without the key (0x is then
