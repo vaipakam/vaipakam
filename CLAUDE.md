@@ -504,6 +504,29 @@ runs half of it on old code:
   Diamond lacks the route, a temporary bridge #3074 removes after the
   all-waves fresh deploy.
 
+- **MarketLedgerFacet + LenderIntentFacet + OfferMatchIntentFacet +
+  InstantFillFacet + InstantTakeoverFacet + BackstopFacet + every facet that
+  inlines `LibMarketLedger.syncLoan` (#3656, #3714).** The market ledger's
+  slot figures (Declared, Available and each slot's live principal) are
+  written only by MarketLedgerFacet. A slot write (set, cancel, fund,
+  withdraw, recommit) and the backstop seed self-call `syncSlot`; a fill
+  (`LibIntentFill.recordSlotLoan`) self-calls `onSlotFilled`; a release or
+  roll self-calls `onSlotReleased`; and every principal move of a slot-held
+  loan reaches `syncLoan`, which self-calls `onSlotLoanPrincipal`. That last
+  set is effectively every repay, default, claim, liquidation, sale and
+  consolidation facet, through `LibInterestLedger` and `LibMetricsHooks`. A
+  caller refreshed onto a Diamond that does not route the host reverts
+  `FunctionDoesNotExist` on that step (a hard revert, including on the
+  repay of a slot-held loan). An old caller beside a new host, or the
+  reverse, leaves live principal and Available out of step with the open
+  loans (a silent divergence, not a revert). The ledger's storage is new,
+  so this is a fresh-deploy crossing. Find the members with a grep for
+  `MarketLedgerFacet.`, `LibMarketLedger.syncLoan`, `recordSlotLoan`,
+  `LibMetricsHooks` and `LibInterestLedger`, not from this list. The host
+  never blocks a close-out for a ledger reason: a loan with no slot origin is
+  treated as held by no slot, and every subtraction saturates. Only the
+  opening path (`onSlotFilled`) refuses a missing origin.
+
 How the #1566 slices reach a chain is settled (owner, 2026-10-07, decision O1 = A): **every
 chain that runs slices 2–3 gets a fresh deploy.** Nothing is upgraded in place
 across this boundary and no pre-slice row is migrated; slices 2–3 make a

@@ -2,7 +2,6 @@
 pragma solidity ^0.8.29;
 
 import {MarketLedgerFacet} from "./MarketLedgerFacet.sol";
-import {LibMarketLedger} from "../libraries/LibMarketLedger.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
@@ -348,7 +347,7 @@ contract LenderIntentFacet is
         // membership on funded capital blocks arbitrary zero-capital registrations
         // from bloating the global feed (Codex WI-2a r1).
         LibVaipakam.syncIntentRegistry(msg.sender, lendingAsset, collateralAsset, slot);
-        _syncDeclared(msg.sender, lendingAsset, collateralAsset, slot);
+        _syncSlot(msg.sender, lendingAsset, collateralAsset, slot);
         // #2550 — every (re)write of the intent resets its priority-routing opt-in,
         // so a replacement intent never inherits the old one and never spends the
         // owner's paid credits without a fresh opt-in ({setLenderIntentPriority}).
@@ -390,7 +389,7 @@ contract LenderIntentFacet is
         intent.active = false;
         // #625 WI-2a — now inactive ⇒ drop it from the discovery registry.
         LibVaipakam.syncIntentRegistry(msg.sender, lendingAsset, collateralAsset, slot);
-        _syncDeclared(msg.sender, lendingAsset, collateralAsset, slot);
+        _syncSlot(msg.sender, lendingAsset, collateralAsset, slot);
         // #2550 — a cancelled intent carries no priority opt-in.
         LibPriorityRouting.writeFlag(s, msg.sender, lendingAsset, collateralAsset, slot, false);
         emit LenderIntentCancelled(msg.sender, lendingAsset, collateralAsset, slot);
@@ -517,6 +516,7 @@ contract LenderIntentFacet is
         );
         // #625 WI-2a — funded ⇒ the intent is now fillable; (re)list it in the feed.
         LibVaipakam.syncIntentRegistry(msg.sender, lendingAsset, collateralAsset, slot);
+        _syncSlot(msg.sender, lendingAsset, collateralAsset, slot); // #3714 Available
         emit LenderIntentFunded(
             msg.sender,
             lendingAsset,
@@ -583,6 +583,7 @@ contract LenderIntentFacet is
         }
         // #625 WI-2a — capital may now be 0 ⇒ de-list the intent if depleted.
         LibVaipakam.syncIntentRegistry(account, lendingAsset, collateralAsset, slot);
+        _syncSlot(account, lendingAsset, collateralAsset, slot); // #3714 Available
         emit LenderIntentCapitalWithdrawn(
             account,
             lendingAsset,
@@ -682,9 +683,11 @@ contract LenderIntentFacet is
         return LibVaipakam.cfgLenderIntentEnabled();
     }
 
-    /// @notice #393 v1-b — release the live-principal a `matchIntent` loan
-    ///         consumed, when its principal returns to the lender's vault at
-    ///         lender-claim time. Self-gated (diamond-internal cross-facet call
+    /// @notice #393 v1-b — release the slot's exposure for a loan it holds:
+    ///         at lender-claim time, a lender-position sale, a consolidation or
+    ///         a takeover out. Whatever of the loan's principal is still
+    ///         outstanding leaves the slot's live principal (#3714: a loan that
+    ///         has already left the active set has none left). Self-gated (diamond-internal cross-facet call
     ///         from ClaimFacet). Keyed off the per-loan ORIGINATING intent —
     ///         NOT the current `loan.lender` (a lender-position sale mutates it),
     ///         so a sold position still releases the original owner's counter,
@@ -692,23 +695,17 @@ contract LenderIntentFacet is
     ///         `delete` makes a second call a no-op.
     /// @dev    Lives here (not in the inlined `onLoanStatusChanged` hook) because
     ///         that hook inlines into every loan-transition facet and RiskFacet
-    ///         is at the EIP-170 ceiling — the heavy triple-mapping decrement
-    ///         must sit behind a single cross-facet boundary.
+    ///         is at the EIP-170 ceiling. The live-principal and ledger move is
+    ///         `MarketLedgerFacet.onSlotReleased`'s.
     function releaseIntentExposure(uint256 loanId) external {
         if (msg.sender != address(this)) revert OnlyDiamondInternal();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.IntentOrigin memory io = s.intentOrigin[loanId];
-        if (io.owner == address(0)) return; // not an intent-originated loan
-        // Release the ORIGINAL fill amount (`io.amount`), NOT `loan.principal`
-        // (a partial repayment reduces the latter, which would leave the
-        // partial-repaid slice permanently counted against the cap).
-        uint256 live =
-            s.lenderIntentLivePrincipal[io.owner][io.lendingAsset][io.collateralAsset][io.slot];
-        s.lenderIntentLivePrincipal[io.owner][io.lendingAsset][io.collateralAsset][io.slot] =
-            io.amount <= live ? live - io.amount : 0;
+        if (s.intentOrigin[loanId].owner == address(0)) return; // not an intent-originated loan
+        // #3714 — whatever of the loan's principal is still outstanding leaves
+        // the slot's live principal and the lent-from-slots figure, on the
+        // ledger's host, before the origin that names the slot is deleted.
+        _releaseFromSlot(loanId);
         delete s.intentOrigin[loanId];
-        // Instant market §8 — the loan leaves the slot figure with its origin.
-        LibMarketLedger.unmarkFromSlot(s, s.loans[loanId]);
         // #625 WI-2c — de-register from the roll-discovery set (the proceeds were
         // claimed/withdrawn through the normal path, not auto-rolled).
         LibVaipakam.removeIntentLoan(loanId);
@@ -880,15 +877,10 @@ contract LenderIntentFacet is
         // #625 WI-2a — re-lien re-funds the owner's intent ⇒ (re)list it (if active).
         LibVaipakam.syncIntentRegistry(io.owner, io.lendingAsset, io.collateralAsset, io.slot);
 
-        // Release the loan's live-principal exposure (the ORIGINAL fill amount)
-        // and clear the per-loan origin marker — the same decrement
-        // `releaseIntentExposure` performs, inlined since `io` is in hand.
-        uint256 live = s.lenderIntentLivePrincipal[io.owner][io.lendingAsset][
-            io.collateralAsset
-        ][io.slot];
-        s.lenderIntentLivePrincipal[io.owner][io.lendingAsset][
-            io.collateralAsset
-        ][io.slot] = io.amount <= live ? live - io.amount : 0;
+        // The loan leaves its slot (the same release `releaseIntentExposure`
+        // performs; a repaid loan has no outstanding principal left) and the
+        // slot's figures take in the re-liened capital; then clear the origin.
+        _releaseFromSlot(loanId);
         delete s.intentOrigin[loanId];
         // #625 WI-2c — de-register from the roll-discovery set (now rolled).
         LibVaipakam.removeIntentLoan(loanId);
@@ -982,6 +974,7 @@ contract LenderIntentFacet is
         ) revert LenderIntentLoanNotRollable();
         LibEncumbrance.lienIntentCapital(io.owner, asset, io.collateralAsset, io.slot, amount);
         LibVaipakam.syncIntentRegistry(io.owner, asset, io.collateralAsset, io.slot);
+        _syncSlot(io.owner, asset, io.collateralAsset, io.slot); // #3714 Available
         // Value left the position: a position token moved after this reads
         // the change (the cooldown rule a payout also stamps).
         LibPositionNFT.markLoanValueOut(loanId);
@@ -1011,8 +1004,10 @@ contract LenderIntentFacet is
     /// @notice Aggregate LIVE principal currently out from `owner`'s intent on
     ///         the `(lendingAsset, collateralAsset)` pair — the figure
     ///         `matchIntent` checks against `maxExposure` (#393 v1-b). Keyed by
-    ///         the full intent; decremented at each originated loan's terminal
-    ///         close.
+    ///         the full intent. Since #3714 it is exactly the outstanding
+    ///         principal of the open loans the intent holds: it falls as
+    ///         principal is repaid and drops to nothing when a loan closes,
+    ///         not at the lender's claim.
     function getLenderIntentLivePrincipal(
         address owner,
         address lendingAsset,
@@ -1233,19 +1228,28 @@ contract LenderIntentFacet is
         }
     }
 
-    /// @dev Instant market §8 — reconcile the slot's share of Declared on
-    ///      its one host, `MarketLedgerFacet`. A slot's declared figure
-    ///      depends only on `active`, `maxExposure` and `lendUntil`, and
-    ///      {setLenderIntent} and {cancelLenderIntent} are the only writers of
-    ///      those, so these are the only two callers. (Capital changes and
-    ///      fills move no declared figure.)
-    function _syncDeclared(address owner, address lendingAsset, address collateralAsset, uint8 slot)
-        private
-    {
+    /// @dev Instant market §8 / #3714 — reconcile the slot's Declared and
+    ///      Available shares on their one host, `MarketLedgerFacet`. Called by
+    ///      every writer here of a field they read: {setLenderIntent} and
+    ///      {cancelLenderIntent} (the terms), {fundLenderIntent},
+    ///      {withdrawLenderIntentCapital} and {recommitHeldToIntent} (the
+    ///      reserved capital). The live principal's writers reach the host
+    ///      through {_releaseFromSlot} and `LibIntentFill.recordSlotLoan`.
+    function _syncSlot(address owner, address lendingAsset, address collateralAsset, uint8 slot) private {
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                MarketLedgerFacet.syncDeclared.selector, owner, lendingAsset, collateralAsset, slot
+                MarketLedgerFacet.syncSlot.selector, owner, lendingAsset, collateralAsset, slot
             ),
+            IVaipakamErrors.CrossFacetCallFailed.selector
+        );
+    }
+
+    /// @dev The loan leaves the slot its origin names, on the ledger's host
+    ///      (`MarketLedgerFacet.onSlotReleased`). The caller deletes the origin
+    ///      afterwards.
+    function _releaseFromSlot(uint256 loanId) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(MarketLedgerFacet.onSlotReleased.selector, loanId),
             IVaipakamErrors.CrossFacetCallFailed.selector
         );
     }

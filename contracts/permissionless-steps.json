@@ -146,9 +146,9 @@
       "flag": "HELD_RECOMMIT_ENABLED",
       "evidence": "apps/keeper/src/matcher.ts"
     },
-    "MarketLedgerFacet.rollDeclaredLedger(address,address,uint256)": {
+    "MarketLedgerFacet.rollMarketLedger(address,address,uint256)": {
       "class": "user",
-      "why": "housekeeping a lender or app may run before a slot write after a long quiet gap; no keeper is owed because no figure depends on it: reads subtract the unrolled days themselves and every slot write rolls its own asset and pair"
+      "why": "housekeeping a lender or app may run before a slot write after a long quiet gap; no keeper is owed because no figure depends on it: reads subtract the unrolled days themselves (Declared and Available) and every slot write rolls its own asset and pair"
     },
     "InstantMarketFacet.borrowInstant(struct:InstantMarketFacet.InstantBorrowRequest,struct:InstantFillFacet.InstantSource[])": {
       "class": "user",

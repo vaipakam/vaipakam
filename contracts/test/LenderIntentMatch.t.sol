@@ -19,6 +19,7 @@ import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {LibOfferBounds} from "../src/libraries/LibOfferBounds.sol";
 import {LibEncumbrance} from "../src/libraries/LibEncumbrance.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
+import {MarketLedgerFacet} from "../src/facets/MarketLedgerFacet.sol";
 import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
@@ -539,14 +540,17 @@ contract LenderIntentMatchTest is SetupTest {
         );
         assertEq(_livePrincipal(), PRINCIPAL, "live after fill");
 
-        // Borrower repays in full → loan terminal, but exposure is HELD until the
-        // principal actually returns to the lender's vault at claim time.
+        // Borrower repays in full → the loan leaves the active set and its
+        // principal is no longer outstanding, so the slot's live principal
+        // (#3714: exactly the outstanding principal of its open loans) falls
+        // at once. The reserved capital is unchanged: the repaid principal
+        // waits in the lender's claim, not in the slot.
         vm.prank(b);
         RepayFacet(address(diamond)).repayLoan(loanId);
-        assertEq(_livePrincipal(), PRINCIPAL, "exposure held until claim");
+        assertEq(_livePrincipal(), 0, "nothing outstanding after the full repay");
 
-        // Lender (holds the loan lender-position NFT) claims → exposure
-        // released. In v1-d.1 the repaid proceeds are withdrawn to the lender's
+        // Lender (holds the loan lender-position NFT) claims → the origin is
+        // released; nothing more leaves live. In v1-d.1 the repaid proceeds are withdrawn to the lender's
         // WALLET via the Position-NFT claim (NOT re-liened into the intent —
         // that zero-gap re-credit is v1-d.2). The intent-capital lien stays at
         // 0 (drawn down by the fill, not refilled by the claim).
@@ -1661,6 +1665,14 @@ contract LenderIntentMatchTest is SetupTest {
             0,
             "cap released at SALE time, not at the buyer's eventual claim"
         );
+        {
+            // #3714 — the loan left the slot's live principal and the
+            // lent-from-slots figure with it, while it stays lent.
+            (, , uint256 lentAll, uint256 fromSlots, ) =
+                MarketLedgerFacet(address(diamond)).getMarketLedger(mockERC20);
+            assertEq(fromSlots, 0, "no longer lent from a slot");
+            assertEq(lentAll, PRINCIPAL, "still lent");
+        }
         assertFalse(
             LoanFacet(address(diamond)).getLoanDetails(loanId).lenderNotifBilled,
             "a genuine holder change resets the paid-notification flag"

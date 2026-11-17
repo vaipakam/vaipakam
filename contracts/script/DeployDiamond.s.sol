@@ -2486,13 +2486,18 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     /// @dev Selectors for `MarketLedgerFacet` — the instant market's common
-    ///      ledger (§8): its views, the Declared roll and the Declared host.
+    ///      ledger (§8, #3714): its views, the roll, and the Diamond-internal
+    ///      slot hosts.
     function _getMarketLedgerSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](8);
         s[0] = MarketLedgerFacet.getMarketLedger.selector;
         s[1] = MarketLedgerFacet.getPairLedger.selector;
-        s[2] = MarketLedgerFacet.rollDeclaredLedger.selector;
-        s[3] = MarketLedgerFacet.syncDeclared.selector;
+        s[2] = MarketLedgerFacet.getSlotLedger.selector;
+        s[3] = MarketLedgerFacet.rollMarketLedger.selector;
+        s[4] = MarketLedgerFacet.syncSlot.selector;
+        s[5] = MarketLedgerFacet.onSlotFilled.selector;
+        s[6] = MarketLedgerFacet.onSlotReleased.selector;
+        s[7] = MarketLedgerFacet.onSlotLoanPrincipal.selector;
     }
 
     /// @dev Selectors for `InstantMarketFacet` — the instant market (#3656):

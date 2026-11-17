@@ -1028,11 +1028,15 @@ contract HelperTest {
     /// @dev #3410 — the loan clock's disclosure, split off LoanFacet.
     ///      Mirrors `DeployDiamond._getLoanClockSelectors`.
     function getMarketLedgerFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](8);
         selectors[0] = MarketLedgerFacet.getMarketLedger.selector;
         selectors[1] = MarketLedgerFacet.getPairLedger.selector;
-        selectors[2] = MarketLedgerFacet.rollDeclaredLedger.selector;
-        selectors[3] = MarketLedgerFacet.syncDeclared.selector;
+        selectors[2] = MarketLedgerFacet.getSlotLedger.selector;
+        selectors[3] = MarketLedgerFacet.rollMarketLedger.selector;
+        selectors[4] = MarketLedgerFacet.syncSlot.selector;
+        selectors[5] = MarketLedgerFacet.onSlotFilled.selector;
+        selectors[6] = MarketLedgerFacet.onSlotReleased.selector;
+        selectors[7] = MarketLedgerFacet.onSlotLoanPrincipal.selector;
     }
 
     /// @dev #3656 — mirrors `DeployDiamond._getInstantMarketSelectors`.

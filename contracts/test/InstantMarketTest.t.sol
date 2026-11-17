@@ -114,7 +114,8 @@ abstract contract InstantMarketBase is SetupTest {
             allowsPartialRepay: false,
             minTotal: least,
             validUntil: uint64(vm.getBlockTimestamp() + 1 hours),
-            riskAndTermsConsent: true
+            riskAndTermsConsent: true,
+            rateFarFromAverageAcknowledged: false
         });
     }
 
@@ -173,7 +174,7 @@ contract InstantMarketTest is InstantMarketBase {
         assertEq(InstantMarketFacet(address(diamond)).getInstantGroup(fills[0].loanId), groupId);
         assertEq(InstantMarketFacet(address(diamond)).getInstantGroup(fills[1].loanId), groupId);
 
-        (, uint256 lent, uint256 fromSlots, uint256 instant) =
+        (, , uint256 lent, uint256 fromSlots, uint256 instant) =
             MarketLedgerFacet(address(diamond)).getPairLedger(mockERC20, mockCollateralERC20);
         assertEq(lent, 1500 ether, "lent");
         assertEq(fromSlots, 1500 ether, "from slots");
@@ -260,7 +261,7 @@ contract InstantMarketTest is InstantMarketBase {
         LibVaipakam.Loan memory l = _loan(fills[0].loanId);
         assertEq(l.lender, lender);
         assertEq(l.interestRateBps, 550);
-        (, , uint256 fromSlots, uint256 instant) =
+        (, , , uint256 fromSlots, uint256 instant) =
             MarketLedgerFacet(address(diamond)).getPairLedger(mockERC20, mockCollateralERC20);
         assertEq(fromSlots, 0, "an offer is not a slot");
         assertEq(instant, 500 ether);

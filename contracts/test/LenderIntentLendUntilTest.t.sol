@@ -490,7 +490,9 @@ contract LenderIntentLendUntilTest is SetupTest {
         assertEq(ERC20(mockERC20).balanceOf(lender), walletBefore, "nothing paid to the wallet");
         assertEq(_vaultHolding(lender) - vaultBefore, held, "held in the owner's vault");
         assertEq(_intentCapital(), capitalBefore, "nothing re-committed yet");
-        assertEq(_livePrincipal(), PRINCIPAL, "exposure unchanged until the loan closes");
+        // #3714 — live is the outstanding principal, so it fell by the slice.
+        assertEq(_livePrincipal(), LoanFacet(address(diamond)).getLoanDetails(loanId).principal, "live follows the outstanding principal");
+        assertLt(_livePrincipal(), PRINCIPAL, "it fell with the repaid slice");
 
         vm.warp(vm.getBlockTimestamp() + 5 days);
         vm.prank(b);
@@ -525,7 +527,11 @@ contract LenderIntentLendUntilTest is SetupTest {
         LenderIntentFacet(address(diamond)).recommitHeldToIntent(loanId);
         assertEq(_intentCapital() - capitalBefore, held, "the held part is intent capital again");
         assertEq(_lenderHeld(loanId), 0, "nothing left held");
-        assertEq(_livePrincipal(), PRINCIPAL, "exposure unchanged until the loan closes");
+        assertEq(
+            _livePrincipal(),
+            LoanFacet(address(diamond)).getLoanDetails(loanId).principal,
+            "a recommit moves capital, not live: live stays the outstanding principal"
+        );
         assertEq(
             uint256(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
             uint256(LibVaipakam.LoanStatus.Active),

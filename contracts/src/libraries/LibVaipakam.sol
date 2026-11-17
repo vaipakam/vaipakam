@@ -1565,10 +1565,13 @@ library LibVaipakam {
     }
 
     /// @dev What one Auto-lend slot last added to Declared, and the day its
-    ///      fill window closes (0 = no lend-until time).
+    ///      fill window closes (0 = no lend-until time). `available` (#3714):
+    ///      what it last added to Available, its fillable amount, in the same
+    ///      day's bucket.
     struct DeclaredRecord {
         uint256 amount;
         uint64 day;
+        uint256 available;
     }
 
     /// @dev Instant market §8 — the Lent figures: `all` is the open principal
@@ -5122,11 +5125,15 @@ library LibVaipakam {
         // the close-time decrement key — Codex #618 P2). Not scaffolded here.
         mapping(address => mapping(address => mapping(address => mapping(uint8 => LenderIntent))))
             lenderIntent;
-        // #393 v1-b — aggregate LIVE principal currently out in loans originated
+        // #393 v1-b — aggregate LIVE principal currently out in loans held
         // from `owner`'s intent on the `(lendingAsset, collateralAsset)` pair.
         // Keyed by the FULL intent (slot included, #3626) so two intents never
-        // share a cap. Incremented at `matchIntent`, decremented once at the
-        // loan's terminal close.
+        // share a cap. Since #3714 it is EXACTLY the sum of the outstanding
+        // principal of the slot's open loans (Active or FallbackPending): it
+        // moves only with each loan's Lent record (`LibMarketLedger`, through
+        // `MarketLedgerFacet`), so a partial repayment, a write-off, a loan
+        // leaving the active set, a takeover in or out, a sale and a roll all
+        // move it by exactly the principal they move.
         mapping(address => mapping(address => mapping(address => mapping(uint8 => uint256))))
             lenderIntentLivePrincipal;
         // #393 v1-b — per-loan ORIGINATING intent key, so the terminal-close
@@ -8651,6 +8658,13 @@ library LibVaipakam {
         ///      released, permissionlessly, to the treasury the vault code
         ///      names. Appended — append-only.
         mapping(address => mapping(address => uint256)) parkedTreasury;
+        /// @dev #3714 (TermAverageAndLinkGuardsDesign §7) — the common
+        ///      ledger's Available total, per lending asset and per pair: the
+        ///      sum of every Auto-lend slot's fillable amount, with the same
+        ///      per-day expiry buckets as Declared. Written only by
+        ///      `LibMarketLedger.syncIntent`. Appended — append-only.
+        mapping(address => DeclaredCounter) availableByAsset;
+        mapping(address => mapping(address => DeclaredCounter)) availableByPair;
     }
 
     /// @notice #3344 — a protected account's Ready settings. See

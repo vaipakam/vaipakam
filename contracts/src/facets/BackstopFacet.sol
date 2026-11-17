@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibTreasury} from "../libraries/LibTreasury.sol";
@@ -19,6 +20,7 @@ import {LibBackstopOracleGate} from "../libraries/LibBackstopOracleGate.sol";
 import {BackstopVaultImplementation} from "../BackstopVaultImplementation.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
+import {MarketLedgerFacet} from "./MarketLedgerFacet.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -309,6 +311,13 @@ contract BackstopFacet is
         // `fundLenderIntent`), so sync the discovery registry here too — else the
         // backstop's funded intent would never appear in the keeper feed.
         LibVaipakam.syncIntentRegistry(vault, lend, coll, LibVaipakam.PROTOCOL_INTENT_SLOT);
+        // #3714 — the slot's reserved capital moved, so its Available share does.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                MarketLedgerFacet.syncSlot.selector, vault, lend, coll, LibVaipakam.PROTOCOL_INTENT_SLOT
+            ),
+            IVaipakamErrors.CrossFacetCallFailed.selector
+        );
         emit BackstopSeeded(lend, coll, amount);
     }
 

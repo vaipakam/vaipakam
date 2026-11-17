@@ -16,6 +16,7 @@ import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
+import {MarketLedgerFacet} from "../src/facets/MarketLedgerFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
@@ -245,6 +246,21 @@ contract BackstopVaultTest is SetupTest {
     }
 
     // ─── 1. Provisioning ──────────────────────────────────────────────────────
+
+    /// @dev #3714 — seeding the backstop's slot moves its reserved capital,
+    ///      so the ledger's Available takes it in, in the same step.
+    function test_seedBackstopOrigination_movesAvailable() public {
+        (, uint256 before, , , ) = MarketLedgerFacet(address(diamond)).getMarketLedger(mockERC20);
+        (, uint256 fillable, , uint256 capital) = MarketLedgerFacet(address(diamond)).getSlotLedger(
+            vault, mockERC20, mockCollateralERC20, LibVaipakam.PROTOCOL_INTENT_SLOT
+        );
+        assertEq(before, fillable, "the backstop slot is the only slot");
+        _seed(1 ether);
+        (, uint256 afterSeed, , , ) = MarketLedgerFacet(address(diamond)).getMarketLedger(mockERC20);
+        uint256 expected = capital + 1 ether;
+        if (expected > MAX_EXPOSURE) expected = MAX_EXPOSURE;
+        assertEq(afterSeed, expected, "available follows the seeded capital");
+    }
 
     function test_provision_setsVault() public view {
         assertEq(BackstopFacet(address(diamond)).getBackstopVault(), vault, "vault set");

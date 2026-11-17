@@ -12,6 +12,7 @@ import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibMarketLedger} from "../src/libraries/LibMarketLedger.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {LibTestTiming} from "./helpers/LibTestTiming.sol";
@@ -121,15 +122,15 @@ abstract contract MarketLedgerBase is SetupTest {
     }
 
     function _asset() internal view returns (uint256 declared, uint256 lent) {
-        (declared, lent, , ) = MarketLedgerFacet(address(diamond)).getMarketLedger(mockERC20);
+        (declared, , lent, , ) = MarketLedgerFacet(address(diamond)).getMarketLedger(mockERC20);
     }
 
     function _pair(address coll) internal view returns (uint256 declared, uint256 lent) {
-        (declared, lent, , ) = MarketLedgerFacet(address(diamond)).getPairLedger(mockERC20, coll);
+        (declared, , lent, , ) = MarketLedgerFacet(address(diamond)).getPairLedger(mockERC20, coll);
     }
 
     function _fromSlots() internal view returns (uint256 f) {
-        (, , f, ) = MarketLedgerFacet(address(diamond)).getMarketLedger(mockERC20);
+        (, , , f, ) = MarketLedgerFacet(address(diamond)).getMarketLedger(mockERC20);
     }
 
     function _setUntil(uint8 slot, uint256 maxExposure, uint64 lendUntil) internal {
@@ -142,7 +143,7 @@ abstract contract MarketLedgerBase is SetupTest {
 
     /// @dev The stored total as a write would leave it, read through a roll.
     function _rollAll() internal {
-        MarketLedgerFacet(address(diamond)).rollDeclaredLedger(mockERC20, mockCollateralERC20, 10_000);
+        MarketLedgerFacet(address(diamond)).rollMarketLedger(mockERC20, mockCollateralERC20, 10_000);
     }
 
     function _principal(uint256 loanId) internal view returns (uint256) {
@@ -189,10 +190,21 @@ contract MarketLedgerTest is MarketLedgerBase {
         LenderIntentFacet(address(diamond)).cancelLenderIntent(mockERC20, mockCollateralERC20, 1);
     }
 
-    /// @dev The Declared host is Diamond-internal.
-    function test_syncDeclaredIsDiamondInternal() public {
+    /// @dev The slot hosts are Diamond-internal.
+    function test_slotHostsAreDiamondInternal() public {
         vm.expectRevert(MarketLedgerFacet.OnlyDiamondInternal.selector);
-        MarketLedgerFacet(address(diamond)).syncDeclared(lender, mockERC20, mockCollateralERC20, 0);
+        MarketLedgerFacet(address(diamond)).syncSlot(lender, mockERC20, mockCollateralERC20, 0);
+        vm.expectRevert(MarketLedgerFacet.OnlyDiamondInternal.selector);
+        MarketLedgerFacet(address(diamond)).onSlotFilled(1);
+        vm.expectRevert(MarketLedgerFacet.OnlyDiamondInternal.selector);
+        MarketLedgerFacet(address(diamond)).onSlotReleased(1);
+        vm.expectRevert(MarketLedgerFacet.OnlyDiamondInternal.selector);
+        MarketLedgerFacet(address(diamond)).onSlotLoanPrincipal(1, 0, 1);
+    }
+
+    /// @dev The library's literal selector is the facet's.
+    function test_slotLoanPrincipalSelectorPinned() public pure {
+        assertEq(LibMarketLedger.ON_SLOT_LOAN_PRINCIPAL, MarketLedgerFacet.onSlotLoanPrincipal.selector);
     }
 
     function setOther() external {

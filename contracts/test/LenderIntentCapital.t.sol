@@ -517,7 +517,7 @@ contract LenderIntentCapitalTest is SetupTest {
     function test_rollIntentLoan_compoundsAndReLiens() public {
         uint256 loanId = _fillAndRepay();
         assertEq(_capital(), 0, "capital drawn down by the fill");
-        assertEq(_livePrincipal(), PRINCIPAL, "live until roll");
+        assertEq(_livePrincipal(), 0, "#3714: a repaid loan is not outstanding, live fell at repay");
 
         // Owner rolls their own repaid loan (no keeper needed for self).
         vm.prank(lender);
@@ -525,7 +525,7 @@ contract LenderIntentCapitalTest is SetupTest {
 
         // Proceeds (principal + interest) re-liened as capital; exposure freed.
         assertGt(_capital(), PRINCIPAL, "compounded: principal + interest re-liened");
-        assertEq(_livePrincipal(), 0, "exposure released on roll");
+        assertEq(_livePrincipal(), 0, "the roll releases nothing more");
     }
 
     /// @dev The headline: rolled capital is immediately re-lendable with NO
