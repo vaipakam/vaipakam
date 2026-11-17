@@ -450,7 +450,10 @@ approval and refuse a step the approval already allows, and the flow would
 then put a good approval back. A source that is behind is passed over for
 the next; when every source is behind, the flow waits briefly and asks
 again, and a check that still cannot run is stated as unread, never as a
-refusal.
+refusal. Each source gets a bounded time to answer one question (fifteen
+seconds); one that has not answered by then is passed over like an outage,
+so a wallet provider that never answers cannot hold a review's re-check
+for minutes.
 
 A token amount is written for reading: digit groups, and a fraction
 shortened to four places once there is a whole part, or to four significant

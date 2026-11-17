@@ -8,6 +8,7 @@
  */
 import { BaseError, ContractFunctionRevertedError, type Abi, type PublicClient } from 'viem';
 import type { OwnStateClient, OwnStateSource } from '../../chain/ownRail';
+import { withinDeadline } from '../../chain/ownRail';
 import { refusalFromError } from '../eligibility/refusal';
 import type { Recheck } from '../ui/ActionFlow';
 
@@ -40,7 +41,7 @@ export async function askSources<T>(sources: readonly OwnStateSource[], fn: (cli
   let firstFailure: unknown = null;
   for (const source of sources) {
     try {
-      return { kind: 'answered', value: await fn(source.client) };
+      return { kind: 'answered', value: await withinDeadline(fn(source.client)) };
     } catch (e) {
       if (isRevert(e)) return { kind: 'reverted', error: e };
       firstFailure ??= e;

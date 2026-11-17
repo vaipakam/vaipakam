@@ -6,6 +6,8 @@ Every flow that approves a token or an NFT before its dry run now asks that dry 
 
 A second fix from the same live run: pressing "Confirm in wallet" on an accept review could leave the reader back at the review with the consent unticked and no explanation. The pre-send re-read had found new figures and cleared the consent itself, and the confirm then stopped quietly because the consent was gone. Now what the re-read found is always shown, and a consent cleared during the check is stated: the wallet was not opened, read the figures again and confirm.
 
+The same live run saw that re-check sit for about five minutes before the review reset, which is how long the wallet-connection library waits before it gives up on an unanswered pairing. Every read and check the app makes through the wallet's own provider now has fifteen seconds to answer. If it hasn't answered by then, the app asks the next source.
+
 Advances #3180.
 
 > Caveat: a second signer using the same wallet at the same moment can still use up or reset the allowance between the approval and the check; the flow then stops and states it, as before.

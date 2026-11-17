@@ -1,7 +1,7 @@
 import { ContractFunctionRevertedError, parseAbi, type PublicClient } from 'viem';
-import { describe, expect, it } from 'vitest';
-import type { OwnStateClient } from '../../chain/ownRail';
-import { askAfter, askThrough } from './simulate';
+import { describe, expect, it, vi } from 'vitest';
+import type { OwnStateClient, OwnStateSource } from '../../chain/ownRail';
+import { askAfter, askSources, askThrough } from './simulate';
 
 const abi = parseAbi(['function ownerOf(uint256) view returns (address)']);
 const revert = () => new ContractFunctionRevertedError({ abi, functionName: 'ownerOf', message: 'ERC721NonexistentToken' });
@@ -76,5 +76,20 @@ describe('askAfter', () => {
   it('with nothing sent first, asks at the latest block', async () => {
     const r = await askAfter(at([1n]), null, async (_c, b) => b);
     expect(r).toEqual({ kind: 'answered', value: undefined });
+  });
+});
+
+describe('a source that never answers', () => {
+  it('is passed over after the deadline and the next source answers', async () => {
+    vi.useFakeTimers();
+    try {
+      const hung = { via: 'wallet', client: {} } as unknown as OwnStateSource;
+      const live = { via: 'public', client: { ok: true } } as unknown as OwnStateSource;
+      const asked = askSources([hung, live], (c) => ((c as unknown as { ok?: boolean }).ok ? Promise.resolve(7) : new Promise<number>(() => {})));
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(await asked).toEqual({ kind: 'answered', value: 7 });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
