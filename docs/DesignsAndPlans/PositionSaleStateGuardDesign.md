@@ -233,6 +233,17 @@ contracts and the keeper) are listed in the check with their reasons.
 
 ## 4. What a user is told
 
+- **On any marketplace, in the token's own details.** Most marketplaces do
+  not show a contract's refusal reason, so a buyer would see only that a
+  purchase fails. The metadata therefore carries two traits: "Transfer hold
+  until", a date and time, present only while a wait of section 3.5 is
+  running, and "State number". The refresh signal of section 3.4 is sent when
+  either changes. The hold's end is a fixed time, so no second signal is
+  needed when it passes. The collection description says in one sentence that
+  a position cannot be sold for a short time after value leaves it.
+- A refused transfer keeps its named reason with the token and the time the
+  hold ends, which the app and block explorers show.
+
 - The position page shows the state number and the time of the last value-out,
   and says that a buyer should check both before paying.
 - On an outside marketplace, the platform cannot stop a sale at a stale price
