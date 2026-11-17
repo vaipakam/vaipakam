@@ -48,11 +48,20 @@ These were checked in the code on 2026-11-17 and are not changed here.
 
 ### 3.1 A state number on every position
 
-Each loan carries a **state number**: a count of the times value has left its
-positions. It starts at 0 and goes up by one at every stamp of section 1's
-value-out mark, in the same storage word (the stamp uses 128 bits; the count
-takes the bits above it). An offer's own token carries the same count for
-changes to the offer.
+Each position token carries a **state number**, kept per token id and never
+reset. It starts at 0 and goes up by one:
+
+- for both tokens of a loan, at every stamp of section 1's value-out mark on
+  that loan;
+- for an offer's own token, at every change to the offer;
+- for a token whose position changes kind, at that change. A direct accept
+  turns an offer's token into a loan's token under the same id, so the number
+  goes up there too.
+
+Because the number belongs to the token and only rises, it cannot repeat
+across that change of kind: a price agreed for an offer's token never matches
+the loan position the same token later stands for. The cooldown stamp stays
+per loan and per offer as it is today.
 
 The number goes up only when value leaves. Collateral added or a debt reduced
 by the borrower makes a position worth more to its buyer, so it does not
