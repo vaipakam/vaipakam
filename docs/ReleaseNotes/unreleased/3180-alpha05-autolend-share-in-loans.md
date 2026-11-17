@@ -1,4 +1,4 @@
-## Thread — alpha05: how much of an Auto-lend's money is in loans (PR #<n>)
+## Thread — alpha05: how much of an Auto-lend's money is in loans (PR #3708)
 
 Positions now shows, above the Auto-lend cards and for each lending asset, how much of the money behind Auto-lend is in loans and how much waits in the lender's own vault, with the share in loans. It is read at the same block as the cards. A loan counts in full until its repayment is claimed or lent again, as the cards already say.
 
