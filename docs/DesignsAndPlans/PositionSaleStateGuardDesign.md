@@ -270,6 +270,14 @@ approval is refused while the holder is locked and is retired by a later
 lock, as before. The platform's own alert (#3719) tells the holder when an
 approval is given.
 
+As built: granting an approval over all tokens is refused by name, and the
+token always answers that no such approval exists, so a marketplace or a
+wallet that asks sees none. Taking one away still succeeds and changes
+nothing, so a wallet's "revoke all approvals" tool keeps working against the
+token. A per-token approval emits the standard approval event (owner,
+approved address, token), and that event is what the alert reads; no
+separate event was added for it.
+
 ## 4. What a user is told
 
 - **On any marketplace, in the token's own details.** Most marketplaces do
