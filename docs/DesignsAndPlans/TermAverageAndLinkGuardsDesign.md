@@ -10,7 +10,7 @@ The owner asked whether a user could drag the fixed or the floating rate by movi
 
 - **No rate on this platform is computed from depth.** Every rate is typed and signed by the two parties, and a loan fills only where their limits overlap. Moving funds in and out moves no rate. That stays.
 - **The outside reference can be pushed**, and one use of it was too exposed: a fixed loan whose limit is linked to the reference read a one-day average whatever its term, so one day's push could be locked for a year.
-- **Two signals could be inflated at no cost:** depth declared by a slot with an empty vault, and any figure built from the platform's own loans.
+- **Two signals could be inflated at no cost:** depth read from a slot's declared limit when it has reserved no capital, and any figure built from the platform's own loans.
 - **A term average shown beside the rate field helps users and is safe** as long as it prices nothing. It is called an average because that is what it is: an average of rates already observed, never advice or a forecast (owner, 2026-11-17).
 
 ## 2. What does not change
@@ -96,16 +96,19 @@ A rate is **outside the band** when the term average is available and the rate i
 
 This is a prompt, not a price rule. A manipulated average can at most ask a user for one more confirmation, or fail to ask.
 
-## 7. Depth must be funded to be counted
+## 7. Depth is counted from reserved capital
 
-`InstantMarketDesign.md` section 8 is amended: the **declared** total counts only funded slots.
+A slot's **declared** exposure is a limit its owner typed. It is not money. What a slot can lend at this moment is bounded by the capital its owner has reserved for the intent, which is held under the intent's own lien and changes only through the intent's own steps (funding, a fill, an exit). That figure is exact on-chain, so depth is counted from it and nothing needs marking.
 
-- A permissionless step marks a slot **unfunded** when it has unused capacity of at least its smallest fill and its owner's free balance in the lending asset is below that smallest fill. A slot that is fully lent has no unused capacity and is never marked.
-- An unfunded slot counts in the declared total only for the principal lent out of it now, not for its largest exposure. Its unused capacity leaves the total, and the matching part of its day-of-closing record with it. So "how full" (principal lent out of slots divided by declared) can never pass 100% or lose a lent slot from its base: a slot with 100 declared and 100 lent counts 100 either way, and one with 100 declared, 40 lent and an empty vault counts 40.
-- While a slot is unfunded its counted amount follows its lent principal as loans close or are taken over.
-- The mark clears, and the slot counts for its full exposure again, when the owner sets or refreshes the slot with the balance present, or a fill from it succeeds.
-- The step pays nothing and changes nothing else: an unfunded slot can still be filled the moment funds arrive. A keeper pass backs it, shipped disarmed, with its row in the permissionless-steps ledger.
-- The app's depth and "how full" figures use the funded total and say so.
+`InstantMarketDesign.md` section 8 is amended:
+
+- The ledger gains **available**, per lending asset and per pair: the sum, over each owner's active slots for the pair whose fill window is open, of the lesser of the capital that owner has reserved for the pair and the unused exposure of those slots. Where several slots of one owner draw on the same reserved capital, that capital is counted once.
+- One helper recomputes an owner's amount for a pair and adjusts the total by the difference. It is called wherever reserved capital or unused exposure changes: funding and exit, a fill, a loan closing or being taken over into or out of a slot, a slot being set, changed, switched off, or reaching its end date (by the same day-of-closing record the declared total uses).
+- **"How full"** becomes principal lent out of slots divided by that principal plus available. It cannot pass 100%, and a fully lent slot stays in its base.
+- **Declared** stays as it is and is always labelled as the limit lenders have set, never as depth. The earlier text that "available now" could only be estimated is withdrawn for slots; it remains an estimate only for standing offers read off-chain.
+- There is no permissionless step and no keeper pass for this.
+
+A slot with a large declared exposure and no reserved capital therefore adds nothing to depth, and a slot whose capital is fully lent is neither dropped nor double counted.
 
 ## 8. Figures built from the platform's own loans
 
@@ -131,7 +134,7 @@ An asset's tier is the lower of the on-chain probe and the keeper-confirmed tier
 | Offer and intent slot | `linkKind` in place of `rateLinked`. Create and accept terms gain `rateFarFromAverageAcknowledged`. |
 | Match core and previews | The window by term, the unusual pause, the term-average link, the band fields in every preview; new named reasons appended. |
 | Create, direct accept, instant borrow | The acknowledgement check, in one shared place. |
-| Instant market ledger | The unfunded mark and its permissionless step (#3714). |
+| Instant market ledger | The available total and its one helper (#3714). No new permissionless step. |
 
 The settings above are read at the fill, for offers not yet loans. A loan's fixed rate, once set, depends on none of them.
 
@@ -143,7 +146,7 @@ The settings above are read at the fill, for offers not yet loans. A loan's fixe
 4. Term average: each table row and a point between rows; unavailable when an average is; in a spike the one-year figure is below the 24-hour average, in a trough above.
 5. Term-average link: tightens only; never outside typed limits; unavailable average fills nothing.
 6. Band: inside needs no flag; outside without the flag is refused by name on create, accept and instant borrow; with the flag proceeds; a rate that leaves the band before landing is refused; no average means no check.
-7. Unfunded mark: set only with unused capacity and a balance below the smallest fill, never on a fully lent slot; the slot then counts for its lent principal only and follows it as loans close; "how full" never passes 100%; clearing restores the full exposure exactly; a fill clears it.
+7. Available: a slot with declared exposure and no reserved capital adds nothing; reserved capital above unused exposure counts only up to the exposure; capital shared by an owner's slots is counted once; funding, exit, a fill, a closing, a takeover, a setting change and an end date each move the total by exactly the difference; "how full" never passes 100%.
 8. Previews agree with the transactions for every case above.
 
 ## 12. Alternatives considered
@@ -155,13 +158,14 @@ The settings above are read at the fill, for offers not yet loans. A loan's fixe
 5. **A figure from the platform's own loans only.** Thin at launch and the easiest figure to move.
 6. **A figure from outside fixed-rate markets.** Few have depth per asset and chain. Possible later as one more input.
 7. **Warning in the app only.** An integrator's screen would not carry it; the acknowledgement in the signed terms does.
-8. **A deposit to declare a slot.** Taxes honest lenders; posting fees were refused earlier.
+8. **A permissionless mark on slots whose owner's vault is short.** The first form of section 7. A slot's capital is reserved under its own lien, not free balance, so the mark tested the wrong figure, and an exact counter needs no mark and no keeper.
+9. **A deposit to declare a slot.** Taxes honest lenders; posting fees were refused earlier.
 
 ## 13. Recommendation and order of work
 
 1. With #3337 part 1: daily checkpoints, `averaged(asset, window)`, the unusual state, `termAverage`.
 2. With #3635 part A: the window by term, the pause, `linkKind`, the band fields in previews, the acknowledgement.
-3. With the instant market ledger: the unfunded mark (#3714).
+3. With the instant market ledger: the available total (#3714).
 4. App and indexer: #3715.
 
 ## 14. Open items for the builder to raise, not decide silently
