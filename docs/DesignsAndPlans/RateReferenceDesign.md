@@ -56,7 +56,7 @@ That order matters. Whoever sends the update chooses its moment, and a market's 
 
 ## 6. Checkpoints and the averaged reference
 
-> **Added 2026-11-17 (#3713, `RateGuideAndLinkGuardsDesign.md`).** The rate reference also records a daily checkpoint, takes the window as an argument (`averaged(asset, window)`), reports an "unusual" state in `status`, and serves `guide(asset, term)`. That design states each.
+> **Added 2026-11-17 (#3713, `TermAverageAndLinkGuardsDesign.md`).** The rate reference also records a daily checkpoint, takes the window as an argument (`averaged(asset, window)`), reports an "unusual" state in `status`, and serves `termAverage(asset, term)`. That design states each.
 
 - The first update in each UTC hour records a **checkpoint**: the index, the held time and the timestamp, keyed by the hour, as the hourly price checkpoints are. Each checkpoint also names the hour of the one before it, so a reader finds the checkpoint it needs in a few reads without scanning.
 - **`averaged(asset)`**, on the rate reference, returns the average reference over the window and whether it is **available**, exactly as `MarketLinkedRateLimitsDesign.md` section 4.3 defines: from the newest checkpoint at least the window old (24 hours by default, bounded 12 to 72); available only if the index was updated within the staleness limit, that checkpoint is at most twice the window old, and held time is no more than half of the window.

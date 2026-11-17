@@ -1,4 +1,4 @@
-# Rate guide and link guards — design
+# Term average and link guards — design
 
 **Status:** owner approved, 2026-11-17. Cards #3713 (contracts), #3714 (funded slots in the instant market), #3715 (app). Design first, no code yet.
 **Amends:** `MarketLinkedRateLimitsDesign.md` (#3635) before its part A is built; adds to `RateReferenceDesign.md` (#3337 part 1); amends `InstantMarketDesign.md` section 8.
@@ -6,12 +6,12 @@
 
 ## 1. Why
 
-The owner asked whether a user could drag the fixed or the floating rate by moving depth inside the platform or outside it, whether rates need a curve with caps, and whether fixed loans can have a guide rate.
+The owner asked whether a user could drag the fixed or the floating rate by moving depth inside the platform or outside it, whether rates need a curve with caps, and whether fixed loans can have a guide rate. The figure adopted is named the term average.
 
 - **No rate on this platform is computed from depth.** Every rate is typed and signed by the two parties, and a loan fills only where their limits overlap. Moving funds in and out moves no rate. That stays.
 - **The outside reference can be pushed**, and one use of it was too exposed: a fixed loan whose limit is linked to the reference read a one-day average whatever its term, so one day's push could be locked for a year.
 - **Two signals could be inflated at no cost:** depth declared by a slot with an empty vault, and any figure built from the platform's own loans.
-- **A guide rate helps users and is safe** as long as it prices nothing.
+- **A term average shown beside the rate field helps users and is safe** as long as it prices nothing. It is called an average because that is what it is: an average of rates already observed, never advice or a forecast (owner, 2026-11-17).
 
 ## 2. What does not change
 
@@ -50,7 +50,7 @@ When the 24-hour average differs from the 30-day average by more than the **unus
 - `status(asset)` reports the state. If the 30-day average is not available, the state is "not known" and long linked fills wait, as they do when the reference is unavailable.
 - A real change of level clears the state by itself as the 30-day average follows.
 
-## 6. The guide rate
+## 6. The term average
 
 ### 6.1 What a fixed rate is
 
@@ -58,7 +58,7 @@ A fixed rate for a term is roughly the floating rate expected on average over th
 
 ### 6.2 The figure
 
-`guide(asset, term) = w × A24 + (1 − w) × A90`
+`termAverage(asset, term) = w × A24 + (1 − w) × A90`
 
 `A24` is the 24-hour average, `A90` the 90-day average (or the longest available window of at least 30 days). `w` comes from a stated table, with straight-line steps between rows:
 
@@ -71,30 +71,30 @@ A fixed rate for a term is roughly the floating rate expected on average over th
 | 365 days and over | 10% |
 
 - The table is a setting changed only by a delayed change, with each weight bounded and non-increasing in the term.
-- The guide adds no premium for the term. Nothing on-chain measures one honestly.
+- The term average adds no premium for the term. Nothing on-chain measures one honestly.
 - **Available** when both averages it needs are available. A term of 7 days or less needs only `A24`.
-- One view on the rate reference, `guide(asset, term)`, returns the figure, the two averages, the weight and whether it is available. The Diamond reads it through `LibRateReference`. The app, the indexer and an integrator therefore show the same figure.
+- One view on the rate reference, `termAverage(asset, term)`, returns the figure, the two averages, the weight and whether it is available. The Diamond reads it through `LibRateReference`. The app, the indexer and an integrator therefore show the same figure.
 
-### 6.3 A maker may link to the guide
+### 6.3 A maker may link to the term average
 
-The link on an offer or an intent slot gains a **kind**: the averaged reference (section 3) or the guide. The single `rateLinked` flag of `MarketLinkedRateLimitsDesign.md` 4.6 becomes `linkKind` (none, reference, guide), with the same margin field.
+The link on an offer or an intent slot gains a **kind**: the averaged reference (section 3) or the term average. The single `rateLinked` flag of `MarketLinkedRateLimitsDesign.md` 4.6 becomes `linkKind` (none, reference, term average), with the same margin field.
 
-- A guide link's linked rate is `guide(asset, term of the loan being opened) + margin`, floored at zero.
-- Every rule of a link holds: it only tightens the typed limit; when the guide is unavailable the link fills nothing; the unusual state pauses fills over 30 days; a loan filled through any link is marked and left out of figures built from the platform's own loans.
-- A guide link is the safer choice for a long term: its long average carries most of the weight, so a short push moves it little.
+- A term-average link's linked rate is `termAverage(asset, term of the loan being opened) + margin`, floored at zero.
+- Every rule of a link holds: it only tightens the typed limit; when the term average is unavailable the link fills nothing; the unusual state pauses fills over 30 days; a loan filled through any link is marked and left out of figures built from the platform's own loans.
+- A term-average link is the safer choice for a long term: its long average carries most of the weight, so a short push moves it little.
 
 ### 6.4 The warning band and its acknowledgement
 
-A rate is **outside the band** when the guide is available and the rate is above `1.5 × guide` or below `0.5 × guide`, and at least 2 percentage points away from it. The three figures are settings with bounds.
+A rate is **outside the band** when the term average is available and the rate is above 1.5 times it or below half of it, and at least 2 percentage points away from it. The three figures are settings with bounds.
 
-- **Every preview** (create, accept, match, intent fill, instant borrow) returns the guide, whether the rate is outside the band, and by how much. An integrator reads the same answer the app does.
-- **A create, a direct accept and an instant borrow** at a rate outside the band are refused with a named reason unless the caller's signed terms carry `rateOutsideGuideAcknowledged`. The flag is part of what the user signs. It is never needed inside the band and it never blocks a user who sets it.
+- **Every preview** (create, accept, match, intent fill, instant borrow) returns the term average, whether the rate is outside the band, and by how much. An integrator reads the same answer the app does.
+- **A create, a direct accept and an instant borrow** at a rate outside the band are refused with a named reason unless the caller's signed terms carry `rateFarFromAverageAcknowledged`. The flag is part of what the user signs. It is never needed inside the band and it never blocks a user who sets it.
 - The band applies to fixed rates only. A floating loan's rate follows the reference by its signed formula, and its protection is its cap level.
 - A match of two standing offers by a third party asks for no flag: both makers acknowledged at creation if they needed to.
 - A rate inside the band when signed and outside when the transaction lands is refused; the app re-quotes. The app sets the flag only after the second confirmation of #3715.
-- When the guide is unavailable there is no band and no flag is asked for.
+- When the term average is unavailable there is no band and no flag is asked for.
 
-This is a prompt, not a price rule. A manipulated guide can at most ask a user for one more confirmation, or fail to ask.
+This is a prompt, not a price rule. A manipulated average can at most ask a user for one more confirmation, or fail to ask.
 
 ## 7. Depth must be funded to be counted
 
@@ -124,10 +124,10 @@ An asset's tier is the lower of the on-chain probe and the keeper-confirmed tier
 
 | Where | Change |
 | --- | --- |
-| Rate reference | Daily checkpoints; `averaged(asset, window)`; the unusual state in `status`; `guide(asset, term)`; the weight table, the windows, the unusual distance and the band figures as bounded settings under the existing delayed change. |
+| Rate reference | Daily checkpoints; `averaged(asset, window)`; the unusual state in `status`; `termAverage(asset, term)`; the weight table, the windows, the unusual distance and the band figures as bounded settings under the existing delayed change. |
 | `LibRateReference` | Thin reads of the above; the effective-bound helpers take the loan's term and the link kind. |
-| Offer and intent slot | `linkKind` in place of `rateLinked`. Create and accept terms gain `rateOutsideGuideAcknowledged`. |
-| Match core and previews | The window by term, the unusual pause, the guide link, the band fields in every preview; new named reasons appended. |
+| Offer and intent slot | `linkKind` in place of `rateLinked`. Create and accept terms gain `rateFarFromAverageAcknowledged`. |
+| Match core and previews | The window by term, the unusual pause, the term-average link, the band fields in every preview; new named reasons appended. |
 | Create, direct accept, instant borrow | The acknowledgement check, in one shared place. |
 | Instant market ledger | The unfunded mark and its permissionless step (#3714). |
 
@@ -138,32 +138,32 @@ The settings above are read at the fill, for offers not yet loans. A loan's fixe
 1. Window by term: a reference pushed for one day moves the 7-day and 30-day reads by the stated fraction; a fill reads the window of its own term; an intent's two fills of different terms read different windows.
 2. Daily checkpoints: found across a missed day; a long window continues into the previous series; a 24-hour window does not.
 3. Unusual: enters and leaves at the distance; long linked fills refused by name while short ones, unlinked ones and floating ones proceed; "not known" behaves as unavailable.
-4. Guide: each table row and a point between rows; unavailable when an average is; in a spike the one-year guide is below the 24-hour average, in a trough above.
-5. Guide link: tightens only; never outside typed limits; unavailable guide fills nothing.
-6. Band: inside needs no flag; outside without the flag is refused by name on create, accept and instant borrow; with the flag proceeds; a rate that leaves the band before landing is refused; no guide means no check.
+4. Term average: each table row and a point between rows; unavailable when an average is; in a spike the one-year figure is below the 24-hour average, in a trough above.
+5. Term-average link: tightens only; never outside typed limits; unavailable average fills nothing.
+6. Band: inside needs no flag; outside without the flag is refused by name on create, accept and instant borrow; with the flag proceeds; a rate that leaves the band before landing is refused; no average means no check.
 7. Unfunded mark: set only below the smallest fill; leaves and rejoins the declared total exactly; a fill clears it.
 8. Previews agree with the transactions for every case above.
 
 ## 12. Alternatives considered
 
 1. **A protocol curve that sets rates from how much is lent.** It makes the protocol the price setter and creates a depth lever to pump.
-2. **An on-chain band that refuses a rate far from the guide.** Two informed parties may agree any rate under the protocol maximum, and the band would lean on the reference.
+2. **An on-chain band that refuses a rate far from the average.** Two informed parties may agree any rate under the protocol maximum, and the band would lean on the reference.
 3. **Read both a short and a long average and use whichever protects the maker more.** Safer still, but in an honestly falling market a linked lender waits unfilled until the long average catches up.
-4. **Guide as floating plus a fixed premium per term.** Wrong in a spike, when a guide matters most.
-5. **Guide from the platform's own loans only.** Thin at launch and the easiest figure to move.
-6. **Guide from outside fixed-rate markets.** Few have depth per asset and chain. Possible later as one more input.
+4. **Floating plus a fixed premium per term as the displayed figure.** Wrong in a spike, when the figure matters most.
+5. **A figure from the platform's own loans only.** Thin at launch and the easiest figure to move.
+6. **A figure from outside fixed-rate markets.** Few have depth per asset and chain. Possible later as one more input.
 7. **Warning in the app only.** An integrator's screen would not carry it; the acknowledgement in the signed terms does.
 8. **A deposit to declare a slot.** Taxes honest lenders; posting fees were refused earlier.
 
 ## 13. Recommendation and order of work
 
-1. With #3337 part 1: daily checkpoints, `averaged(asset, window)`, the unusual state, `guide`.
+1. With #3337 part 1: daily checkpoints, `averaged(asset, window)`, the unusual state, `termAverage`.
 2. With #3635 part A: the window by term, the pause, `linkKind`, the band fields in previews, the acknowledgement.
 3. With the instant market ledger: the unfunded mark (#3714).
 4. App and indexer: #3715.
 
 ## 14. Open items for the builder to raise, not decide silently
 
-- Whether the rate reference still fits one contract with the guide and daily checkpoints added.
+- Whether the rate reference still fits one contract with the term average and daily checkpoints added.
 - The starting bounds of each new setting once real readings can be collected.
 - Where the acknowledgement check sits so the create, accept and instant-borrow hosts need no room of their own.

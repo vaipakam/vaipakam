@@ -55,7 +55,7 @@ If the averaged reference is unavailable (4.3), a linked offer or intent **fills
 
 ### 4.3 The averaged reference
 
-> **Amended 2026-11-17 (#3713, `RateGuideAndLinkGuardsDesign.md`).** The window is no longer 24 hours for every term: a fill reads 24 hours for a loan of up to 30 days, 7 days up to 365 days, and 30 days beyond. Linked fills over 30 days pause while the reference is "unusual". A link may name the guide for the loan's term instead of the averaged reference, so `rateLinked` becomes `linkKind`. Where this section and that design differ, that design holds.
+> **Amended 2026-11-17 (#3713, `TermAverageAndLinkGuardsDesign.md`).** The window is no longer 24 hours for every term: a fill reads 24 hours for a loan of up to 30 days, 7 days up to 365 days, and 30 days beyond. Linked fills over 30 days pause while the reference is "unusual". A link may name the term average for the loan's term instead of the averaged reference, so `rateLinked` becomes `linkKind`. Where this section and that design differ, that design holds.
 
 The linked rate must not be the latest reading. A fill is permissionless and its sender picks the moment; a single reading can be momentarily low or high even inside the per-update clamp.
 
