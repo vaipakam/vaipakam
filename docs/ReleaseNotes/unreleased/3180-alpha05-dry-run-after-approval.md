@@ -1,4 +1,4 @@
-## Thread — alpha05: the check after an approval waits for the approval (PR #<n>)
+## Thread — alpha05: the check after an approval waits for the approval (PR #3706)
 
 Posting a lending offer on Base Sepolia could ask for two wallet signatures and then stop with "the dry run after the approval was refused … ERC20 insufficient allowance", putting the approval back to zero. The approval had landed. The app's protocol check that follows it was asked of whichever chain source answered first, at that source's latest block, and a source a block or two behind still saw the allowance as it was before the approval.
 
