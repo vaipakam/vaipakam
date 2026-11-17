@@ -137,6 +137,17 @@ payee. The withdrawal uses it for every case, and its three-way choice is
 deleted. A route can then no more pay the wrong party than it can skip the
 mark.
 
+**A wallet the token refuses.** A token may refuse a recipient: some
+ERC-20-compatible tokens call a hook on the receiver, and some block
+addresses. The wallet payment is therefore one isolated step. If it fails, or
+delivers less than was sent, that step is undone and the whole amount is
+credited to the holder's own vault instead, in the same transaction, with an
+event saying so. The holder is the caller of the withdrawal, so a vault
+created for them here is created by their own act. A holder can therefore
+always take surplus collateral out of a loan, as a holder paid into their
+vault could before this change, and the amount reaches a wallet later by an
+ordinary vault withdrawal.
+
 This gives what a claim step would give, that only the token's holder can
 receive a loan's collateral, in one transaction and with nothing parked in
 between.
@@ -366,9 +377,12 @@ amounts.
 
 **The holder's-wallet payout when the holder does not own the paying vault.**
 The holder is screened for sanctions as an owner payout is. The class is
-ERC-20 only; an ERC-20 transfer has no receiver hook, so a contract holder
-cannot refuse it and no fallback to the vault is needed. A protected holder is
-credited to its own vault by the policy's redirect. The vault accepts the
+ERC-20 only. A plain ERC-20 transfer calls no hook on the receiver, but the
+platform admits ERC-20-compatible tokens that do, and tokens that block
+addresses, so a delivery to the wallet can fail; the fallback of section 3.3
+credits the holder's own vault when it does (to be added to the build; the
+first build had none). A protected holder is credited to its own vault by the
+policy's redirect. The vault accepts the
 class only for the token's current holder or that holder's own vault, never
 for its own owner, which is the owner payout.
 
