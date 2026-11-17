@@ -1,0 +1,119 @@
+# Referral share of the initiation fee: design
+
+**Status:** owner approved the shape on 2026-11-17. Card #3722. Design for review before build.
+**Related:** `IntegratorFeeShareDesign.md` (#3682, #3720), `FeeLevelsDesign.md` (#3649), `ShortfallReserveDesign.md` (#3641, the treasury floor). This replaces the deferred referral half of `VpfiUsagePerksAndReferralDesign.md`, which paid in fee credits.
+
+## 1. What is offered
+
+Any user may invite a new user with a link that carries the inviter's wallet address. When the new user binds that inviter on-chain, then **for the first 10 loans or 180 days, whichever comes first**:
+
+- the new user pays a lower loan initiation fee on the loans they open as borrower, and
+- the inviter receives a part of the platform's initiation fee on those loans, paid straight to the inviter's wallet.
+
+Both amounts come out of the fee the new user's own loan pays. Nothing is paid from a budget, so opening loans to collect the share always costs more than it returns.
+
+Scope of the first version: the initiation fee only, and loans the new user opens as **borrower** only, for the reasons `IntegratorFeeShareDesign.md` section 2 gives.
+
+## 2. How much, and from where
+
+The initiation fee divides in a fixed order: the treasury keeps its floor (0.1% of principal) and the rest, the **above-floor part**, goes to the reserve after any matcher and integrator share. Referral amounts come only from the above-floor part. The floor is never touched.
+
+Let **A** be the above-floor part of the fee after the borrower's hold discount.
+
+- **The new user's cut** is 20% of A. It is simply not charged.
+- **The inviter's share** is 20% of A, the same amount, paid from what is collected.
+- Both rates are bounded settings behind the usual delay (each 0 to 30%). The rates in force when a loan opens apply; nothing is repriced later because nothing is paid later.
+- The borrower's whole discount, hold discount and referral cut together, stays inside the existing ceiling on any party's fee discount.
+- A fee at or below the floor has no above-floor part, so there is no cut and no share.
+- The added fee an extension pays carries neither.
+
+Examples on 10,000 units of principal with no hold discount: a 30-day loan's fee is 20, of which 10 is above the floor; the new user pays 18 and the inviter receives 2. A one-year loan's fee is 50, of which 40 is above the floor; the new user pays 42 and the inviter receives 8.
+
+### 2.1 Order and ceiling
+
+Order of the above-floor part: the new user's cut (never collected), the matcher's share, the integrator's share, the inviter's share, the rest to the reserve.
+
+**The cut and the three shares together can never exceed a set part of A** (default 60%, a bounded setting, 40 to 70%). When they would, the inviter's share is reduced to fit, and after it the integrator's. The new user's cut is never reduced, so the preview a borrower sees is what they pay. The reserve therefore always receives at least the remaining part of A on every loan, whatever is named on it.
+
+## 3. Binding the inviter
+
+"The first time a wallet connects" happens in a browser and cannot be checked. The binding is on-chain:
+
+- The new user binds an inviter by their own direct call, **once**. It cannot be changed, removed and re-added, or set by anyone else. There is no signed or relayed form.
+- It is accepted only while the wallet has **never opened a loan as borrower**. A wallet that has borrowed before is not new.
+- The 180 days run from the binding. The 10 loans are the first ten loans the wallet opens as borrower after it, of any kind (accepted, matched, filled from an intent, instant, a refinance or a roll each count as one).
+- The inviter may be any address except the wallet itself and except an address on the integrator list (an integrator, its payout account or a contract it has declared). An inviter needs no vault and takes no step.
+- The app reads the address from the link, shows it, and offers the binding inside the user's first borrow flow with one sentence (section 6). The user may decline; declining is not recorded on-chain and a wallet that has still never borrowed may bind later.
+
+A view returns, for a wallet: its inviter, the loans left and the end time. Every borrow preview returns the cut as an amount.
+
+## 4. Payment
+
+- The inviter's share is paid when the fee is collected, in the lending asset, by the one fee host that already divides the fee, **directly to the inviter's wallet**. An inviter is an ordinary person who may hold no vault, and creating one inside someone else's loan would charge the borrower for it.
+- **The payment can never fail the loan.** It is one isolated step that is allowed to fail alone. If it fails for any reason, or delivers less than was sent, that step is undone and the whole share goes to the reserve in the same transaction, with an event saying so.
+- If the inviter is flagged by the sanctions list at that moment, the share goes to the reserve. The new user's cut is unaffected.
+- Nothing is ever held for an inviter in the platform. There is no balance and no claim step.
+- One event per loan states the loan, the new user, the inviter, the asset, the cut, the share and whether the share was redirected. A second event records a binding with its end time.
+
+## 5. What a self-invitation costs, stated plainly
+
+A person can invite their own second wallet. No on-chain rule can tell two wallets of one person apart, and the design does not pretend to.
+
+- It can never be turned into a profit: the cut and the share together are at most 40% of the above-floor part of a fee that person paid.
+- It lasts ten loans or 180 days per new wallet. A person who keeps making new wallets keeps a lower fee, at the price of moving their assets each time and of starting each wallet without its history, its hold discount tenure and its raised access (which waits its own delay, #3717).
+- The worst case for the platform is bounded by section 2.1: on every loan the treasury still receives its whole floor and the reserve still receives at least the set part of the above-floor amount. A referral can slow the reserve's funding; it can never take from it or from the treasury.
+- The two rates are settings and can be lowered to zero for new loans. Public counters (total cut, total share, loans counted, share redirected) show what the programme costs.
+
+## 6. What a user is told
+
+- In the invite flow: "You were invited by <address>. For your first 10 loans or 180 days, whichever comes first, your loan fee is lower, and the person who invited you receives part of the platform's fee. You pay nothing extra."
+- On each affected loan's review: the fee, the amount taken off, and loans and days left.
+- To the inviter: "You receive part of the platform's fee on loans your invited users open, for their first 10 loans or 180 days, whichever comes first. It is paid to your wallet when each loan opens."
+
+The inviter's share is a referral share of the platform's fee for bringing a user. It is never described as earnings, income, yield or a share of revenue, it is not tied to holding anything, and no rate of return is stated. User-facing copy follows the rewards wording checklist before it ships.
+
+## 7. Contract changes
+
+| Where | Change |
+| --- | --- |
+| A referral record per wallet | The inviter, the end time, the loans counted. One writer for the binding; the fee host moves the count. |
+| A "has opened a loan as borrower" mark per wallet | Set at the first loan; read by the binding. |
+| Treasury fee host | The cut and the inviter's share in the split, the ceiling of 2.1, the direct payment with its redirect. |
+| Settings | The two rates, the count, the period and the ceiling, each bounded, behind the usual delay. |
+| Views and previews | The wallet's referral status; the cut as an amount in every borrow preview; the public counters. |
+| Events | The binding; the per-loan share event; the integrator id and the warnings mask of #3719 are unaffected. |
+
+The accept facets are close to the size limit: everything is computed in the fee host, and the binding sits in its own small facet with the status view.
+
+## 8. Tests
+
+1. A bound wallet's loans one to ten pay the cut and the inviter receives the share; the eleventh pays the whole fee and the inviter nothing. The same at 180 days and one second.
+2. Each loan kind counts once: accept, match, intent fill, instant borrow, refinance, roll. An extension counts nothing and pays nothing.
+3. The amounts: default rates; a hold discount; a fee at the floor; a rate of zero; the borrower's discount ceiling.
+4. The ceiling of 2.1 with a matcher, with an integrator, with both: the cut is unchanged, the inviter's share is reduced first, and the reserve receives at least its part. The treasury's floor is identical with and without a referral.
+5. Binding: once only; refused after the wallet's first loan as borrower; refused for itself and for an integrator's addresses; no one else can bind for a wallet.
+6. A flagged inviter, a token that refuses the transfer, a short delivery: the loan opens, the reserve receives the share, the event says so, the new user's cut is unchanged.
+7. Nothing is held: after every case the platform's balance of the lending asset is unchanged by the referral.
+8. A rate change does not affect a loan already open. Previews agree with the transactions.
+
+## 9. Alternatives considered
+
+1. **2% of the fee after discount.** Safe, and too small to matter: 0.40 on a 10,000-unit, 30-day loan.
+2. **A share for the inviter only.** Links that benefit both sides are the ones people pass on.
+3. **Pay into the inviter's vault**, as the integrator share is. Needs a vault the inviter may not have.
+4. **Hold the share for a later claim.** Keeps users' money in the platform, which the platform avoids.
+5. **Fee credits to the inviter instead of the asset** (the earlier note). Less attractive to an inviter and needs a credit ledger.
+6. **Share the interest fee too.** Larger amounts, but it touches every settlement path and takes more from the reserve. Later, if at all.
+7. **Bind off-chain in the app.** Cannot be checked, and another front end could not honour it.
+8. **A budget per period for the programme.** Bounds the cost another way, but adds a ledger and makes a user's fee depend on what others did that month. The ceiling of 2.1 bounds it per loan instead.
+9. **No referral until after launch.** Costs nothing. The build is small because it reuses the fee host's integrator split.
+
+## 10. Recommendation
+
+The design above: a matching 20% of the above-floor part to each side, for the first 10 loans or 180 days, whichever comes first, bound once on-chain before the wallet's first loan, the inviter paid directly to their wallet, with the per-loan ceiling protecting the reserve.
+
+## 11. Open items for the builder to raise, not decide silently
+
+- Whether a mark for "has opened a loan as borrower" already exists per wallet or must be added.
+- The exact place in the fee host where the isolated wallet payment sits beside the integrator's vault delivery, so both redirect by one rule.
+- Whether the ceiling's default of 60% leaves the matcher's share whole in every case, with figures.
