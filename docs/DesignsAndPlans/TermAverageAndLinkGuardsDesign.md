@@ -88,9 +88,9 @@ The link on an offer or an intent slot gains a **kind**: the averaged reference 
 A rate is **outside the band** when the term average is available and the rate is above 1.5 times it or below half of it, and at least 2 percentage points away from it. The three figures are settings with bounds.
 
 - **Every preview** (create, accept, match, intent fill, instant borrow) returns the term average, whether the rate is outside the band, and by how much. An integrator reads the same answer the app does.
-- **A create, a direct accept and an instant borrow** at a rate outside the band are refused with a named reason unless the caller's signed terms carry `rateFarFromAverageAcknowledged`. The flag is part of what the user signs. It is never needed inside the band and it never blocks a user who sets it.
+- **Every step in which a user sets, changes or takes a fixed rate** is refused with a named reason when that rate is outside the band, unless the step's terms carry `rateFarFromAverageAcknowledged`. Those steps are: creating an offer, changing an existing offer's rate (the rate-only edit and the general edit), setting or changing an intent slot's rate, a direct accept, and an instant borrow. The rule is tied to the write of the rate, not to a list of entry points: one shared check is called by every writer of an offer's or a slot's fixed rate and by every taker step, so an edit can never put an unacknowledged rate on the book. Where the step is signed the flag is part of what is signed; where the user calls directly it is a field of their own call. It is never needed inside the band and it never blocks a user who sets it.
 - The band applies to fixed rates only. A floating loan's rate follows the reference by its signed formula, and its protection is its cap level.
-- A match of two standing offers by a third party asks for no flag: both makers acknowledged at creation if they needed to.
+- A match of two standing offers by a third party asks for no flag: each maker acknowledged when they last wrote their rate, if they needed to.
 - A rate inside the band when signed and outside when the transaction lands is refused; the app re-quotes. The app sets the flag only after the second confirmation of #3715.
 - When the term average is unavailable there is no band and no flag is asked for.
 
@@ -98,17 +98,24 @@ This is a prompt, not a price rule. A manipulated average can at most ask a user
 
 ## 7. Depth is counted from reserved capital
 
-A slot's **declared** exposure is a limit its owner typed. It is not money. What a slot can lend at this moment is bounded by the capital its owner has reserved for the intent, which is held under the intent's own lien and changes only through the intent's own steps (funding, a fill, an exit). That figure is exact on-chain, so depth is counted from it and nothing needs marking.
+A slot's **declared** exposure is a limit its owner typed. It is not money. A slot lends only from the capital reserved for it, which is held under the intent's own lien, per slot, and changes only through the intent's own steps (funding, a fill, a repayment returned to the slot, an exit). That figure is exact on-chain, so depth is counted from it and nothing needs marking.
 
 `InstantMarketDesign.md` section 8 is amended:
 
-- The ledger gains **available**, per lending asset and per pair: the sum, over each owner's active slots for the pair whose fill window is open, of the lesser of the capital that owner has reserved for the pair and the unused exposure of those slots. Where several slots of one owner draw on the same reserved capital, that capital is counted once.
-- One helper recomputes an owner's amount for a pair and adjusts the total by the difference. It is called wherever reserved capital or unused exposure changes: funding and exit, a fill, a loan closing or being taken over into or out of a slot, a slot being set, changed, switched off, or reaching its end date (by the same day-of-closing record the declared total uses).
-- **"How full"** becomes principal lent out of slots divided by that principal plus available. It cannot pass 100%, and a fully lent slot stays in its base.
-- **Declared** stays as it is and is always labelled as the limit lenders have set, never as depth. The earlier text that "available now" could only be estimated is withdrawn for slots; it remains an estimate only for standing offers read off-chain.
+- The ledger gains **available**, per lending asset and per pair: the sum of each slot's **fillable amount** over active slots whose fill window is open. A slot's fillable amount is the lesser of its reserved capital and its unused exposure, and it is zero when that lesser figure is below the slot's smallest fill, because no fill of it can succeed.
+- A slot's **unused exposure** is its largest exposure less the principal still outstanding on the loans made from it. A principal repayment reduces that outstanding figure in the same step, by the same amount, so repaid principal frees room; the sum of the outstanding figures is the "lent out of slots" figure below, so both sides of "how full" come from one record.
+- One helper recomputes a slot's fillable amount and adjusts the totals by the difference. It is called wherever reserved capital, outstanding principal or the slot's settings change: funding and exit, a fill, a repayment, a loan closing or being taken over into or out of a slot, a slot being set, changed or switched off.
+- **"How full"** is principal lent out of slots divided by that principal plus available. It cannot pass 100%, and a fully lent slot stays in its base.
+- **Declared** stays as it is and is always labelled as the limit lenders have set, never as depth.
 - There is no permissionless step and no keeper pass for this.
 
-A slot with a large declared exposure and no reserved capital therefore adds nothing to depth, and a slot whose capital is fully lent is neither dropped nor double counted.
+**What the figure is, and is not.** Available is the capital reserved in slots that the ledger counts as fillable. It is a stated ledger figure, not a promise that a given borrow will succeed; the binding answer for any amount is the borrow preview, which runs every check of the fill. Three limits are part of its definition and are stated wherever it is shown (the view's own description, and the app's label):
+
+- **End dates are counted by UTC day.** A slot with an end date leaves the totals through the same day-of-closing record the declared total uses, so a slot whose window closes today still counts until the day ends. Available and "how full" are therefore stated "as of the start of today (UTC)", exactly as declared is. Counting to the second would need a transaction at each closing, which is the permissionless step this design avoids.
+- **A slot too new to fill.** A slot just set, or just given instant consent, counts from that moment when the minimum age is under one hour; where the configured minimum age is one hour or longer it is held out until it can fill.
+- **The figure reads the lien, not the balance.** If a vault ever held less than its liens, a fill would refuse and never over-lend, and the total would overstate until the slot's next change. The asset rules exclude the tokens that could cause this.
+
+A slot with a large declared exposure and no reserved capital therefore adds nothing to depth, a slot holding less than its smallest fill adds nothing, and a slot whose capital is fully lent is neither dropped nor double counted. The earlier wording that slots' depth is what "can be lent at this moment" is withdrawn in favour of the definition above. Marking a slot unfunded by a permissionless call was considered and rejected: it tested the wrong balance and needed a keeper to stay current.
 
 ## 8. Figures built from the platform's own loans
 
@@ -131,10 +138,10 @@ An asset's tier is the lower of the on-chain probe and the keeper-confirmed tier
 | --- | --- |
 | Rate reference | Daily checkpoints; `averaged(asset, window)`; the unusual state in `status`; `termAverage(asset, term)`; the weight table, the windows, the unusual distance and the band figures as bounded settings under the existing delayed change. |
 | `LibRateReference` | Thin reads of the above; the effective-bound helpers take the loan's term and the link kind. |
-| Offer and intent slot | `linkKind` in place of `rateLinked`. Create and accept terms gain `rateFarFromAverageAcknowledged`. |
+| Offer and intent slot | `linkKind` in place of `rateLinked`. The terms of every step that sets, changes or takes a fixed rate gain `rateFarFromAverageAcknowledged`. |
 | Match core and previews | The window by term, the unusual pause, the term-average link, the band fields in every preview; new named reasons appended. |
-| Create, direct accept, instant borrow | The acknowledgement check, in one shared place. |
-| Instant market ledger | The available total and its one helper (#3714). No new permissionless step. |
+| Offer create, both offer rate edits, intent slot set and change, direct accept, instant borrow | The acknowledgement check, in one shared place, called at the write of the rate. |
+| Instant market ledger | The available total and its one helper; a slot's outstanding principal reduced at each principal repayment (#3714). No new permissionless step. |
 
 The settings above are read at the fill, for offers not yet loans. A loan's fixed rate, once set, depends on none of them.
 
@@ -145,8 +152,8 @@ The settings above are read at the fill, for offers not yet loans. A loan's fixe
 3. Unusual: enters and leaves at the distance; long linked fills refused by name while short ones, unlinked ones and floating ones proceed; "not known" behaves as unavailable.
 4. Term average: each table row and a point between rows; unavailable when an average is; in a spike the one-year figure is below the 24-hour average, in a trough above.
 5. Term-average link: tightens only; never outside typed limits; unavailable average fills nothing.
-6. Band: inside needs no flag; outside without the flag is refused by name on create, accept and instant borrow; with the flag proceeds; a rate that leaves the band before landing is refused; no average means no check.
-7. Available: a slot with declared exposure and no reserved capital adds nothing; reserved capital above unused exposure counts only up to the exposure; capital shared by an owner's slots is counted once; funding, exit, a fill, a closing, a takeover, a setting change and an end date each move the total by exactly the difference; "how full" never passes 100%.
+6. Band: inside needs no flag; outside without the flag is refused by name on offer create, on both offer rate edits, on an intent slot's set and change, on accept and on instant borrow; an offer edited from inside the band to outside it cannot be written without the flag; with the flag proceeds; a rate that leaves the band before landing is refused; no average means no check.
+7. Available: a slot with declared exposure and no reserved capital adds nothing; reserved capital above unused exposure counts only up to the exposure; a slot whose lesser figure is below its smallest fill adds nothing and adds again once it reaches it; for every slot the outstanding figure equals the sum of outstanding principal of its open loans, and a partial repayment frees exactly that much exposure; funding, exit, a fill, a repayment, a closing, a takeover and a setting change each move the totals by exactly the difference; a slot with an end date leaves the totals at the end of its closing day with no transaction; "how full" never passes 100%.
 8. Previews agree with the transactions for every case above.
 
 ## 12. Alternatives considered
@@ -172,4 +179,4 @@ The settings above are read at the fill, for offers not yet loans. A loan's fixe
 
 - Whether the rate reference still fits one contract with the term average and daily checkpoints added.
 - The starting bounds of each new setting once real readings can be collected.
-- Where the acknowledgement check sits so the create, accept and instant-borrow hosts need no room of their own.
+- Where the acknowledgement check sits so the create, edit, slot, accept and instant-borrow hosts need no room of their own.
