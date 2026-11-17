@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
@@ -1073,7 +1074,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // from `now`, and a full-term minimum runs to maturity to the second
         // (#3169). The pre-partial coupon was already settled interest-first
         // from the swap proceeds above.
-        loan.collateralAmount -= swappedCollateral;
+        LibLoanCollateral.reduce(loan, swappedCollateral);
         LibInterestLedger.reducePrincipal(s, loan, principalRepaid, principalRepaid);
         // #3169 — only the clock's start moves; the residual's full-term
         // minimum runs to the term's end to the second

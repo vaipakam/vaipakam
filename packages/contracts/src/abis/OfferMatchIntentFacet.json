@@ -282,6 +282,17 @@
   },
   {
     "type": "error",
+    "name": "CrossFacetCallFailed",
+    "inputs": [
+      {
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "DurationMismatch",
     "inputs": []
   },

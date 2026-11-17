@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibPriceRead} from "../libraries/LibPriceRead.sol";
 import {LibOfferShape} from "../libraries/LibOfferShape.sol";
@@ -208,7 +209,7 @@ contract AddCollateralFacet is DiamondReentrancyGuard, IVaipakamErrors {
         );
 
         // Update loan collateral amount
-        loan.collateralAmount += amount;
+        LibLoanCollateral.add(loan, amount);
 
         // #407 PR 4 round-1 Codex P2 #6 (2026-06-12) — keep the
         // collateral lien in parity with the collateral now sitting in

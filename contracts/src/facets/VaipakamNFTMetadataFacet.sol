@@ -239,7 +239,7 @@ contract VaipakamNFTMetadataFacet is DiamondAccessControl {
     ///      correct UI affordances (percentage badges, date formatters).
     function _buildAttributes(
         MetricsFacet.NFTPositionSummary memory s
-    ) internal pure returns (string memory) {
+    ) internal view returns (string memory) {
         // See `_buildDescription` for the encode-packed-collision rationale:
         // this output is the JSON `attributes` array baked into the ERC-721
         // token URI for marketplace display — not hashed, not signed, not
@@ -249,6 +249,7 @@ contract VaipakamNFTMetadataFacet is DiamondAccessControl {
         return string(
             abi.encodePacked(
                 _attributesIdentity(s),
+                _attributesState(s.tokenId),
                 _attributesEconomics(s),
                 _attributesVaultAndClaim(s)
             )
@@ -280,6 +281,28 @@ contract VaipakamNFTMetadataFacet is DiamondAccessControl {
                 '"},{"trait_type":"Governs Claim Rights","value":"',
                 _governsClaimRights(s.nftStatus) ? "Yes" : "No",
                 '"},'
+            )
+        );
+    }
+
+    /// @dev #3710 — the position's state: its state number (a buyer's price
+    ///      is a price for one number) and, only while a wait is running, the
+    ///      time the token may next move. The wait's end is a fixed time, so
+    ///      nothing needs refreshing when it passes.
+    function _attributesState(uint256 tokenId) internal view returns (string memory) {
+        (uint256 stateNumber,, uint64 readyAt) = LibPositionNFT.stateOf(tokenId);
+        string memory hold = readyAt > block.timestamp
+            ? string(
+                abi.encodePacked(
+                    '{"trait_type":"Transfer Hold Until","display_type":"date","value":',
+                    uint256(readyAt).toString(),
+                    "},"
+                )
+            )
+            : "";
+        return string(
+            abi.encodePacked(
+                '{"trait_type":"State Number","display_type":"number","value":', stateNumber.toString(), "},", hold
             )
         );
     }
@@ -585,7 +608,7 @@ contract VaipakamNFTMetadataFacet is DiamondAccessControl {
 
         string memory json = string(
             abi.encodePacked(
-                '{"name":"Vaipakam NFT","description":"Vaipakam P2P lending and rental position NFTs. Each token represents a live offer or loan on the Vaipakam protocol.",',
+                '{"name":"Vaipakam NFT","description":"Vaipakam P2P lending and rental position NFTs. Each token represents a live offer or loan on the Vaipakam protocol. A position cannot be transferred for a short time after value leaves it; check its State Number before paying.",',
                 '"image":"',
                 image,
                 '","external_link":"https://vaipakam.xyz"}'

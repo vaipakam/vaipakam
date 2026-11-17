@@ -17,7 +17,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 contract NftAttributesHarness is VaipakamNFTMetadataFacet {
     function attributes(MetricsFacet.NFTPositionSummary memory s)
         external
-        pure
+        view
         returns (string memory)
     {
         return _buildAttributes(s);

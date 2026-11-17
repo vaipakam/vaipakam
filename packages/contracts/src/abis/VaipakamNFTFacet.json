@@ -98,6 +98,24 @@
   },
   {
     "type": "function",
+    "name": "markOfferPositions",
+    "inputs": [
+      {
+        "name": "offerA",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "offerB",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "mintNFT",
     "inputs": [
       {
@@ -168,6 +186,29 @@
   },
   {
     "type": "function",
+    "name": "positionOwnMoveWaitSec",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "sec",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "minSec",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "maxSec",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "positionRoute",
     "inputs": [
       {
@@ -187,7 +228,7 @@
   },
   {
     "type": "function",
-    "name": "positionTransferCooldown",
+    "name": "positionState",
     "inputs": [
       {
         "name": "tokenId",
@@ -196,6 +237,11 @@
       }
     ],
     "outputs": [
+      {
+        "name": "stateNumber",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
       {
         "name": "valueOutBlock",
         "type": "uint64",
@@ -230,6 +276,24 @@
         "internalType": "uint32"
       }
     ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "requirePositionState",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expected",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
     "stateMutability": "view"
   },
   {
@@ -305,6 +369,19 @@
         "name": "royaltyBps",
         "type": "uint96",
         "internalType": "uint96"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setPositionOwnMoveWaitSec",
+    "inputs": [
+      {
+        "name": "sec",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "outputs": [],
@@ -399,6 +476,19 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PositionOwnMoveWaitSet",
+    "inputs": [
+      {
+        "name": "sec",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
       }
     ],
     "anonymous": false
@@ -508,6 +598,17 @@
   },
   {
     "type": "error",
+    "name": "InvalidPositionOwnMoveWait",
+    "inputs": [
+      {
+        "name": "sec",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidPositionTransferCooldown",
     "inputs": [
       {
@@ -573,6 +674,27 @@
     "type": "error",
     "name": "PositionNFTNotSet",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PositionStateChanged",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expected",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "current",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

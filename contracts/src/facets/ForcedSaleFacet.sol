@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -358,7 +359,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
         uint256 rest = j.unsold == 0
             ? 0
             : LibSanctionedLock.pullToDiamond(s, loan.borrower, loan.collateralAsset, j.unsold, j.loanId, OutflowReason.LIQUIDATION);
-        loan.collateralAmount = alreadyHere + rest;
+        LibLoanCollateral.set(loan, alreadyHere + rest);
     }
 
     // ─── Internals: divide and book ─────────────────────────────────────
@@ -376,7 +377,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
 
         if (j.kind == ForcedSaleKind.PeriodicSettlement) {
             _bookPeriodic(s, j.loanId, loan, sp, out, j.debt);
-            loan.collateralAmount = j.unsold;
+            LibLoanCollateral.set(loan, j.unsold);
         } else {
             _bookTerminal(s, j.loanId, loan, sp, out);
             _recordUnsold(s, j.loanId, loan, j.unsold, out.collateralSold);
@@ -557,6 +558,6 @@ contract ForcedSaleFacet is IVaipakamErrors {
         // #1132 (S10) — the borrower-side marker lands with its row, as the
         // lender's does in {_bookTerminal}.
         LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
-        loan.collateralAmount = unsold + sold;
+        LibLoanCollateral.set(loan, unsold + sold);
     }
 }

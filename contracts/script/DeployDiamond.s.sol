@@ -1938,7 +1938,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // transfer check and royalty). The token's metadata (tokenURI,
         // contractURI and their image / external_url configuration) is cut
         // to VaipakamNFTMetadataFacet (#2957), see {_getNftMetadataSelectors}.
-        s = new bytes4[](17);
+        s = new bytes4[](21);
         s[0] = VaipakamNFTFacet.mintNFT.selector;
         s[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         s[2] = VaipakamNFTFacet.retirePosition.selector;
@@ -1957,7 +1957,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #3413 — the transfer cooldown after a value-out.
         s[14] = VaipakamNFTFacet.setPositionTransferCooldownSec.selector;
         s[15] = VaipakamNFTFacet.positionTransferCooldownSec.selector;
-        s[16] = VaipakamNFTFacet.positionTransferCooldown.selector;
+        // #3710 — the position's state number and its fill check.
+        s[16] = VaipakamNFTFacet.positionState.selector;
+        s[17] = VaipakamNFTFacet.requirePositionState.selector;
+        s[18] = VaipakamNFTFacet.setPositionOwnMoveWaitSec.selector;
+        s[19] = VaipakamNFTFacet.positionOwnMoveWaitSec.selector;
+        s[20] = VaipakamNFTFacet.markOfferPositions.selector;
     }
 
     /// @dev #2957 - the position NFT's public metadata: the token and
@@ -2785,7 +2790,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev Selectors for `VaultOutflowFacet` (#3205 part 2) — the one vault
     ///      outflow policy host, reached only by self-call.
     function _getVaultOutflowSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](6);
+        s = new bytes4[](7);
         s[0] = VaultOutflowFacet.vaultOutflow.selector;
         s[1] = VaultOutflowFacet.vaultGrant.selector;
         s[2] = VaultOutflowFacet.vaultCloseGrant.selector;
@@ -2796,6 +2801,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[4] = VaultOutflowFacet.vaultOutflowArgs.selector;
         // The compact Diamond-transient ERC-20 entry (forced sales, pulls).
         s[5] = VaultOutflowFacet.vaultOutflowToDiamondERC20.selector;
+        // #3710 — the isolated wallet step of a holder's-wallet payout.
+        s[6] = VaultOutflowFacet.holderWalletAttempt.selector;
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {

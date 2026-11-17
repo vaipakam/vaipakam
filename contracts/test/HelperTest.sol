@@ -897,7 +897,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](17);
+        selectors = new bytes4[](21);
         selectors[0] = VaipakamNFTFacet.mintNFT.selector;
         selectors[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         selectors[2] = VaipakamNFTFacet.retirePosition.selector;
@@ -915,7 +915,12 @@ contract HelperTest {
         // #3413 — the transfer cooldown after a value-out.
         selectors[14] = VaipakamNFTFacet.setPositionTransferCooldownSec.selector;
         selectors[15] = VaipakamNFTFacet.positionTransferCooldownSec.selector;
-        selectors[16] = VaipakamNFTFacet.positionTransferCooldown.selector;
+        // #3710 — the position's state number and its fill check.
+        selectors[16] = VaipakamNFTFacet.positionState.selector;
+        selectors[17] = VaipakamNFTFacet.requirePositionState.selector;
+        selectors[18] = VaipakamNFTFacet.setPositionOwnMoveWaitSec.selector;
+        selectors[19] = VaipakamNFTFacet.positionOwnMoveWaitSec.selector;
+        selectors[20] = VaipakamNFTFacet.markOfferPositions.selector;
         return selectors;
     }
 

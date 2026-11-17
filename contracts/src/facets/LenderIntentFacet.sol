@@ -971,9 +971,6 @@ contract LenderIntentFacet is
         ) revert LenderIntentLoanNotRollable();
         LibEncumbrance.lienIntentCapital(io.owner, asset, io.collateralAsset, io.slot, amount);
         LibVaipakam.syncIntentRegistry(io.owner, asset, io.collateralAsset, io.slot);
-        // Value left the position: a position token moved after this reads
-        // the change (the cooldown rule a payout also stamps).
-        LibPositionNFT.markLoanValueOut(loanId);
         emit HeldRecommittedToIntent(
             io.owner,
             msg.sender,

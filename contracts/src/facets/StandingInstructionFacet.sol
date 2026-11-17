@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
+import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -472,7 +473,7 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
         // The reserve leaves the encumbrance and joins the loan's collateral
         // lien, in the same vault: no tokens move.
         LibEncumbrance.unlienLoanReserve(loanId, holder, RESERVE_COLLATERAL, loan.collateralAsset, amount);
-        loan.collateralAmount += amount;
+        LibLoanCollateral.add(loan, amount);
         LibFacet.crossFacetCall(
             abi.encodeCall(CollateralLienFacet.incrementCollateralLien, (loanId, amount)),
             bytes4(0)

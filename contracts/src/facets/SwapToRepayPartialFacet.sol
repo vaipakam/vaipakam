@@ -7,6 +7,7 @@ import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
+import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
@@ -367,7 +368,7 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
             // (above); subtracting the FULL `collateralSwapAmount`
             // here would double-count the loss and understate the
             // remaining backing for HF / default math.
-            loan.collateralAmount -= actualCollateralConsumed;
+            LibLoanCollateral.reduce(loan, actualCollateralConsumed);
         }
         // #408 / #410 / #413 (2026-06-12), Codex PR #559 round-1
         // P1: mirror `RepayFacet.repayPartial`'s Option A remaining-
@@ -437,10 +438,6 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
                 LibVaipakam.assetInitLtvCeilingBps(loan.collateralAsset)
             )
         ) revert LTVExceeded();
-
-        // #3413 — collateral left the borrower side: the loan's tokens cool
-        // down.
-        LibPositionNFT.markLoanValueOut(loanId);
 
         // Codex round-3 P2 #1 + round-4 P2 #1 — emit `msg.sender`
         // (current borrower-NFT owner, not stale `loan.borrower`)

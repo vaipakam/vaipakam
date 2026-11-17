@@ -172,6 +172,11 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
     event LockDelayLowerRequested(address indexed holder, uint256 newDelay, uint256 executableAt);
     /// @custom:event-category state-change/nft-mutation
     event LockDelayLowerCancelled(address indexed holder, uint256 newDelay, address indexed by);
+    /// @notice ERC-4906: token `_tokenId`'s metadata changed (#3710). Sent
+    ///         when a figure the token renders changed, so a marketplace
+    ///         reads it again before showing or filling it.
+    /// @custom:event-category informational/nft-metadata
+    event MetadataUpdate(uint256 _tokenId);
 
     // ─── Errors ──────────────────────────────────────────────────────────
 
@@ -303,8 +308,12 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
 
     /// @inheritdoc IERC165
     function supportsInterface(bytes4 interfaceId) public view override(ERC721Enumerable, IERC165) returns (bool) {
-        return interfaceId == type(IERC2981).interfaceId || super.supportsInterface(interfaceId);
+        return interfaceId == type(IERC2981).interfaceId || interfaceId == ERC4906_INTERFACE_ID
+            || super.supportsInterface(interfaceId);
     }
+
+    /// @notice ERC-4906's interface id (#3710).
+    bytes4 public constant ERC4906_INTERFACE_ID = 0x49064906;
 
     /// @inheritdoc ERC721
     /// @dev An operator approval granted before the holder's latest lock is
@@ -322,6 +331,17 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
     ///         minted to a locked holder is locked from the start.
     function mint(address to, uint256 tokenId) external onlyDiamond {
         _safeMint(to, tokenId);
+    }
+
+    // ─── Metadata refresh (the Diamond) ──────────────────────────────────
+
+    /// @notice Emit ERC-4906 {MetadataUpdate} for `tokenA` and `tokenB` (0 =
+    ///         none). The Diamond only; changes nothing (#3710). The Diamond
+    ///         sends it at every value-out and every other change to a figure
+    ///         the token renders.
+    function refreshMetadata(uint256 tokenA, uint256 tokenB) external onlyDiamond {
+        if (tokenA != 0) emit MetadataUpdate(tokenA);
+        if (tokenB != 0 && tokenB != tokenA) emit MetadataUpdate(tokenB);
     }
 
     // ─── Holder lock ─────────────────────────────────────────────────────

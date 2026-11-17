@@ -209,7 +209,7 @@ export class ScenarioChain<F extends ChainFixture = ChainFixture> {
    *  a token straight after one of those actions mines a block at the
    *  moment the cooldown ends. A token never stamped needs nothing. */
   async waitOutPositionCooldown(tokenId: bigint): Promise<void> {
-    const [valueOutBlock, readyAt] = await this.read<readonly [bigint, bigint]>('positionTransferCooldown', [tokenId]);
+    const [, valueOutBlock, readyAt] = await this.read<readonly [bigint, bigint, bigint]>('positionState', [tokenId]);
     if (valueOutBlock === 0n) return;
     if (Number(readyAt) > (await this.now())) await this.mineAt(Number(readyAt));
     else if ((await this.blockNumber()) <= valueOutBlock) await this.mineBlocks(1);

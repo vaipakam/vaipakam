@@ -11,7 +11,7 @@ import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
-import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
+import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibNumeraireValue} from "../libraries/LibNumeraireValue.sol";
@@ -183,47 +183,20 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
 
         // #569 round-10 P1 — withdraw from the STORED `loan.borrower`'s
         // vault (where the collateral physically sits and the lien is
-        // keyed) and deliver to `msg.sender` (the verified current
-        // borrower-NFT holder). Sourcing from `msg.sender` would pull the
-        // caller's own vault — wrong after a position transfer.
-        // Protected account mode: a release to the account's own manager is
-        // paid through the payout gate, so it is queued or refused, never
-        // held in the vault as a success that moved nothing. A release to
-        // another holder of the position is not gated.
-        if (msg.sender == LibProtectedAccount.manager(loan.borrower)) {
-            LibProtectedAccount.requirePayoutRoom(loan.borrower);
-        }
-        // #3205 part 2 — through the one policy. The side was consolidated
-        // above, so the caller is normally the stored borrower and is paid to
-        // its own wallet (Owner). A retired protected account's controller is
-        // an allowlisted payee; any other holder is paid into its vault.
-        if (msg.sender == loan.borrower) {
-            LibVaultOutflow.toOwner(
-                loan.borrower, LibVaultOutflow.ERC20, loan.collateralAsset, 0, amount, OutflowReason.PARTIAL_WITHDRAWAL
-            );
-        } else if (msg.sender == LibProtectedAccount.manager(loan.borrower)) {
-            LibVaultOutflow.toAllowlisted(
-                loan.borrower, LibVaultOutflow.ERC20, loan.collateralAsset, 0, amount, msg.sender, OutflowReason.PARTIAL_WITHDRAWAL
-            );
-        } else {
-            LibVaultOutflow.toPositionHolder(
-                loan.borrower,
-                LibVaultOutflow.ERC20,
-                loan.collateralAsset,
-                0,
-                amount,
-                loanId,
-                loan.borrowerTokenId,
-                OutflowReason.PARTIAL_WITHDRAWAL
-            );
-        }
+        // keyed). #3710 — the payee is read from the borrower token by the
+        // outflow policy, never chosen here: the holder that owns that vault
+        // (the side was consolidated above, so normally the caller) is paid
+        // as its own Owner payout, under protected mode's delay and lock and
+        // to a replaced account's manager; any other holder is paid at its
+        // wallet, or into its vault when it has protected mode on.
+        if (msg.sender == loan.borrower) LibProtectedAccount.requirePayoutRoom(loan.borrower);
+        LibVaultOutflow.toHolderWallet(
+            loan.borrower, loan.collateralAsset, amount, loanId, loan.borrowerTokenId, OutflowReason.PARTIAL_WITHDRAWAL
+        );
 
-        // Update loan collateral
-        loan.collateralAmount -= amount;
-        // #3413 — collateral left the position, whichever branch paid it:
-        // the loan's tokens cool down, so a sale cannot fill against it.
-        LibPositionNFT.markLoanValueOut(loanId);
-
+        // #3710 — the one collateral writer: it marks the loan (cooldown,
+        // state number, metadata refresh).
+        LibLoanCollateral.reduce(loan, amount);
 
         emit PartialCollateralWithdrawn(
             loanId,

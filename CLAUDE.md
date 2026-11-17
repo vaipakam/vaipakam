@@ -504,6 +504,27 @@ runs half of it on old code:
   refuse a Diamond that does not already route `newLoanInitLtvCapBps`
   (`PredatesCollateralConcentration`).
 
+- **The position state guard (#3710).** Every value-out marks the loan's
+  position tokens through `LibPositionNFT` (a per-token state number, a wait
+  before the token may move, an ERC-4906 refresh the core emits), and only
+  from the seams: the outflow policy (every class naming a loan but
+  Consolidation), `LibLoanCollateral` (the one writer of
+  `loan.collateralAmount`; `check-loan-collateral-writer.mjs`, pre-deploy step
+  1d2, refuses any other write), the loan-terms writer, `LibHeldForLender.take`,
+  `retire` and the offer-token marks. The offer-token mark runs once, on
+  `VaipakamNFTFacet.markOfferPositions` (an `address(this)`-gated self-call
+  host), so the match core does not compile it into its four hosts. Never
+  place a mark by hand on a route.
+  The holder's own move (the caller of the guarded action, recorded in
+  transient storage by `LibReentrancyGuard`, holds the paid token) takes the
+  long wait. A collateral withdrawal pays through the `HolderWallet` outflow
+  class: the policy reads the payee from the token. The core, the vault
+  implementation, `VaultOutflowFacet`, `VaipakamNFTFacet` and every facet
+  inlining those libraries change together, so it reaches a chain by fresh
+  deploy. `check-raw-payouts.mjs` (step 1d3) refuses a token or native
+  transfer in facets or libraries outside the policy and `LibDelivery` unless
+  listed with its reason.
+
 How the #1566 slices reach a chain is settled (owner, 2026-10-07, decision O1 = A): **every
 chain that runs slices 2–3 gets a fresh deploy.** Nothing is upgraded in place
 across this boundary and no pre-slice row is migrated; slices 2–3 make a

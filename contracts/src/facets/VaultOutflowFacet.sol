@@ -98,6 +98,21 @@ contract VaultOutflowFacet is IVaipakamErrors {
     /// @custom:event-category state-change/vault-mutation
     event VaultVpfiDebited(address indexed user, uint256 amount, address recipient);
 
+    /// @notice #3710 — a holder's-wallet payout could not be paid to the
+    ///         holder's wallet (the token refused it, blocks the address, or
+    ///         arrived short), so the whole amount was credited to the
+    ///         holder's own vault instead, as their free balance.
+    /// @custom:event-category state-change/vault-mutation
+    event HolderWalletPaymentToVault(
+        address indexed payer,
+        address indexed holder,
+        address indexed asset,
+        uint256 amount,
+        uint256 delivered,
+        uint256 loanId,
+        uint256 positionToken
+    );
+
     error OnlyDiamondInternal();
     /// @dev The vault's own (layer-2) refusals, re-declared byte-identical
     ///      from {VaipakamVaultImplementation} so this facet's ABI, and so
@@ -114,6 +129,9 @@ contract VaultOutflowFacet is IVaipakamErrors {
     error OutflowPositionMismatch(uint256 ref, uint256 positionToken);
     /// @dev The vault call failed without a reason of its own.
     error VaultOutflowFailed();
+    /// @notice #3710 — the isolated wallet step delivered less than it sent
+    ///         (raised only inside {holderWalletAttempt}, then undone).
+    error HolderWalletShort(uint256 sent, uint256 delivered);
     /// @dev `user` has no vault (a grant or its close needs an existing one).
     error NoVault();
     /// @dev A grant of nothing.
@@ -227,6 +245,21 @@ contract VaultOutflowFacet is IVaipakamErrors {
         // Nothing to move is a no-op, as a zero withdrawal always was.
         if (o.amount == 0) return 0;
         address proxy = LibFacet.getOrCreateVault(user);
+        // #3413 / #3710 — THE seam for payouts: every outflow that names a
+        // loan takes value out of its positions, so its tokens cool down and
+        // its state number goes up. A consolidation keeps the value under the
+        // lien and is no payout. Read before the recipient is resolved, which
+        // may turn a holder-wallet payout into the Owner class.
+        if (_namesLoan(o.class_)) {
+            LibPositionNFT.markLoanValueOut(o.ref);
+            // A payout to the position the caller itself holds is the
+            // holder's own move for itself: that token takes the long wait.
+            if (
+                o.class_ == VaultOutflowTypes.OutflowClass.PositionHolder
+                    || o.class_ == VaultOutflowTypes.OutflowClass.Counterparty
+                    || o.class_ == VaultOutflowTypes.OutflowClass.HolderWallet
+            ) LibPositionNFT.markHolderMove(o.positionToken);
+        }
         address payeeOwner = _resolveRecipient(user, o);
         // A listing's lot moving into the vault's own escrow stays under its
         // lien (the escrow counts as part of the vault), so it is not "free"
@@ -274,9 +307,16 @@ contract VaultOutflowFacet is IVaipakamErrors {
         // read it, so the event can never report an outflow the ledger did
         // not book (Codex #3387 r4).
         bool moved = o.to != proxy;
+        // #3710 — set when a holder's-wallet payment could not be made and the
+        // amount went to the holder's own vault: booked there as its free money.
+        bool holderVaultFallback;
         if (!moved) {
             if (_paysWallet(o.class_)) revert OutflowRecipientInvalid(o.class_, o.to);
             delivered = o.amount;
+        } else if (o.class_ == VaultOutflowTypes.OutflowClass.HolderWallet && creditTo == address(0)) {
+            address wallet = o.to;
+            (delivered, holderVaultFallback) = _payHolderWallet(user, proxy, o);
+            if (holderVaultFallback) payeeOwner = wallet;
         } else {
             delivered = _transfer(proxy, o);
         }
@@ -305,7 +345,9 @@ contract VaultOutflowFacet is IVaipakamErrors {
             // loan's principal; a stored party's custody, a consolidation, a
             // matched leg, the backstop's warehouse and a seller's share stay
             // under the settlement's own reservation.
-            if (_credits(o.class_)) LibDepositoryLedger.credit(payeeOwner, o.asset, o.tokenId, delivered);
+            if (_credits(o.class_) || holderVaultFallback) {
+                LibDepositoryLedger.credit(payeeOwner, o.asset, o.tokenId, delivered);
+            }
         }
 
         // A retention debit only when VPFI actually left the vault: a
@@ -409,10 +451,33 @@ contract VaultOutflowFacet is IVaipakamErrors {
             // A consolidation moves custody under the lien: the move books it.
             // A holder payout is free money for the holder: booked here.
             payeeOwner = holder;
-            // #3413 — value left the position: its tokens cool down, so a sale
-            // cannot fill against a position emptied just before it. A
-            // consolidation keeps the value under the lien and is no payout.
-            if (c != VaultOutflowTypes.OutflowClass.Consolidation) LibPositionNFT.markLoanValueOut(o.ref);
+        } else if (c == VaultOutflowTypes.OutflowClass.HolderWallet) {
+            // #3710 — the holder of the named token, at its wallet: the route
+            // names no payee. A holder that owns the paying vault is paid as
+            // that account's own Owner payout (the gate below then applies its
+            // delay and lock, and a replaced account pays its manager).
+            LibVaipakam.Loan storage loan = s.loans[o.ref];
+            if (
+                o.kind != VaultOutflowTypes.AssetKind.ERC20 || o.positionToken == 0
+                    || (o.positionToken != loan.lenderTokenId && o.positionToken != loan.borrowerTokenId)
+            ) revert OutflowPositionMismatch(o.ref, o.positionToken);
+            address holder = LibPositionNFT.holderOrZero(o.positionToken);
+            if (holder == address(0)) revert OutflowRecipientInvalid(c, address(0));
+            if (holder == user) {
+                o.class_ = VaultOutflowTypes.OutflowClass.Owner;
+                o.to = LibProtectedAccount.manager(user);
+                return payeeOwner;
+            }
+            // Any other holder: screened as an owner payout is, and paid at
+            // its wallet (credited to its own vault below when it has
+            // protected mode on). Some ERC-20s call the receiver or block
+            // addresses, so the wallet payment is one isolated step: if it
+            // fails or arrives short it is undone and the whole amount goes to
+            // the holder's own vault instead ({_payHolderWallet}).
+            // A wallet is no vault: nothing is booked for it unless the
+            // payment falls back to the holder's vault.
+            LibVaipakam._assertNotSanctioned(holder);
+            o.to = holder;
         } else if (c == VaultOutflowTypes.OutflowClass.ClaimCustody) {
             // The STORED party of the receiving side of THAT loan, from loan
             // state: `o.positionToken` names the side. Its vault must exist
@@ -511,6 +576,46 @@ contract VaultOutflowFacet is IVaipakamErrors {
         delivered = LibDelivery.measured(o.asset, proxy, o.to, toBefore, o.amount);
     }
 
+    /// @dev #3710 — the holder's-wallet payment as one isolated step. It runs
+    ///      in a self-call ({holderWalletAttempt}) that reverts unless the
+    ///      whole amount arrived, so a token whose receiver hook refuses it, a
+    ///      token that blocks the address, or a short delivery leaves nothing
+    ///      behind. Then the whole amount goes to the holder's own vault in
+    ///      this transaction (created now if needed: the holder is the caller,
+    ///      so it is by their own act), and {HolderWalletPaymentToVault} says
+    ///      so. The marks and waits were taken before, so they are the same
+    ///      either way.
+    function _payHolderWallet(address user, address proxy, VaultOutflowTypes.Outflow memory o)
+        private
+        returns (uint256 delivered, bool fellBack)
+    {
+        (bool ok, bytes memory ret) =
+            address(this).call(abi.encodeCall(this.holderWalletAttempt, (proxy, o)));
+        if (ok && ret.length == 32) return (abi.decode(ret, (uint256)), false);
+        address wallet = o.to;
+        o.to = LibFacet.getOrCreateVault(wallet);
+        delivered = _transfer(proxy, o);
+        emit HolderWalletPaymentToVault(user, wallet, o.asset, o.amount, delivered, o.ref, o.positionToken);
+        return (delivered, true);
+    }
+
+    /**
+     * @notice #3710 — the isolated wallet step of a holder's-wallet payout:
+     *         moves `o.amount` from the paying vault `proxy` to the holder's
+     *         wallet `o.to` and returns what arrived, or reverts (undoing the
+     *         move) unless all of it arrived.
+     * @dev    Diamond-internal: reached only by {_payHolderWallet}'s
+     *         self-call, inside an outflow the policy has already checked.
+     */
+    function holderWalletAttempt(address proxy, VaultOutflowTypes.Outflow calldata o)
+        external
+        onlyDiamondInternal
+        returns (uint256 delivered)
+    {
+        delivered = _transfer(proxy, o);
+        if (delivered < o.amount) revert HolderWalletShort(o.amount, delivered);
+    }
+
     function _callVault(address proxy, bytes memory data) private {
         (bool ok, bytes memory ret) = proxy.call(data);
         if (!ok) {
@@ -538,6 +643,18 @@ contract VaultOutflowFacet is IVaipakamErrors {
 
     function _paysWallet(VaultOutflowTypes.OutflowClass c) private pure returns (bool) {
         return c == VaultOutflowTypes.OutflowClass.OwnerAllowlisted || c == VaultOutflowTypes.OutflowClass.Incentive
+            || c == VaultOutflowTypes.OutflowClass.LiquidationBuyer || c == VaultOutflowTypes.OutflowClass.HolderWallet;
+    }
+
+    /// @dev #3710 — the classes whose `ref` is a loan the movement takes value
+    ///      out of. Consolidation names a loan but keeps the value under its
+    ///      lien. A class whose `ref` may be a loan or an offer (treasury,
+    ///      backstop, the Diamond, an incentive) is not here: when it carries
+    ///      a loan's collateral away, the collateral writer marks the loan.
+    function _namesLoan(VaultOutflowTypes.OutflowClass c) private pure returns (bool) {
+        return c == VaultOutflowTypes.OutflowClass.PositionHolder || c == VaultOutflowTypes.OutflowClass.Counterparty
+            || c == VaultOutflowTypes.OutflowClass.HolderWallet || c == VaultOutflowTypes.OutflowClass.MatchedCounterparty
+            || c == VaultOutflowTypes.OutflowClass.ClaimCustody || c == VaultOutflowTypes.OutflowClass.SellerClaim
             || c == VaultOutflowTypes.OutflowClass.LiquidationBuyer;
     }
 

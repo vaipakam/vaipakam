@@ -159,7 +159,7 @@ library FacetSelectors {
     ///         VaipakamNFTMetadataFacet (#2957); `RedeployFacets` refuses a
     ///         Diamond from before that split.
     function vaipakamNFT() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](17);
+        s = new bytes4[](21);
         s[0] = VaipakamNFTFacet.mintNFT.selector;
         s[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         s[2] = VaipakamNFTFacet.retirePosition.selector;
@@ -178,7 +178,12 @@ library FacetSelectors {
         // #3413 — the transfer cooldown after a value-out.
         s[14] = VaipakamNFTFacet.setPositionTransferCooldownSec.selector;
         s[15] = VaipakamNFTFacet.positionTransferCooldownSec.selector;
-        s[16] = VaipakamNFTFacet.positionTransferCooldown.selector;
+        // #3710 — the position's state number and its fill check.
+        s[16] = VaipakamNFTFacet.positionState.selector;
+        s[17] = VaipakamNFTFacet.requirePositionState.selector;
+        s[18] = VaipakamNFTFacet.setPositionOwnMoveWaitSec.selector;
+        s[19] = VaipakamNFTFacet.positionOwnMoveWaitSec.selector;
+        s[20] = VaipakamNFTFacet.markOfferPositions.selector;
     }
 
     /// @notice Full external selector surface of {RiskPreviewFacet} (11) —

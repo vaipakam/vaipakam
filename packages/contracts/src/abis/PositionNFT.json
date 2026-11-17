@@ -32,6 +32,19 @@
   },
   {
     "type": "function",
+    "name": "ERC4906_INTERFACE_ID",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MAX_DIAMOND_LOCK_DELAY",
     "inputs": [],
     "outputs": [
@@ -569,6 +582,24 @@
       },
       {
         "name": "delay",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "refreshMetadata",
+    "inputs": [
+      {
+        "name": "tokenA",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tokenB",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -1197,6 +1228,19 @@
       },
       {
         "name": "newDelay",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MetadataUpdate",
+    "inputs": [
+      {
+        "name": "_tokenId",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

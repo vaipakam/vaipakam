@@ -616,6 +616,22 @@
       "from": "extendReserve",
       "to": "paymentReserve",
       "reason": "#3681 (design approved 2026-11-15): the auto-extension reserve became the loan's payment reserve. Same record, same depositor-and-loan keys, same writer (LibEncumbrance); an automatic extension still draws it first, and the standing instructions now also pay interest and the due-date repayment from it."
+    },
+    {
+      "region": "erc721",
+      "slot": 28,
+      "offset": 0,
+      "from": "loanValueOut",
+      "to": "retiredLoanValueOut",
+      "reason": "#3710 (design approved 2026-11-17): the per-loan and per-offer value-out stamps were replaced by the per-token position state, so the mapping is retired; it keeps its slot and is no longer read or written."
+    },
+    {
+      "region": "erc721",
+      "slot": 29,
+      "offset": 0,
+      "from": "offerValueOut",
+      "to": "retiredOfferValueOut",
+      "reason": "#3710 (design approved 2026-11-17): the per-loan and per-offer value-out stamps were replaced by the per-token position state, so the mapping is retired; it keeps its slot and is no longer read or written."
     }
   ]
 }

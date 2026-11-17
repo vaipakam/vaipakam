@@ -1030,9 +1030,10 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(lender);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
         uint64 atBlock = uint64(vm.getBlockNumber());
-        uint64 readyAt = uint64(vm.getBlockTimestamp()) + 5;
+        // #3710 — the seller's own sale retires its token: the long wait.
+        uint64 readyAt = uint64(vm.getBlockTimestamp()) + 900;
 
-        (uint64 b2, uint64 r2) = VaipakamNFTFacet(address(diamond)).positionTransferCooldown(oldToken);
+        (, uint64 b2, uint64 r2) = VaipakamNFTFacet(address(diamond)).positionState(oldToken);
         assertEq(b2, atBlock, "the sale stamped the loan");
         assertEq(r2, readyAt);
         PositionNFT nft = LibTestPositionNFT.core(address(diamond));

@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibOfferPriceGuard} from "../libraries/LibOfferPriceGuard.sol";
+import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibPriceRead} from "../libraries/LibPriceRead.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
@@ -1092,7 +1093,7 @@ contract PrecloseFacet is
         // paid-notification flag on an obligation transfer.
         address previousBorrower = loan.borrower;
         loan.borrower = newBorrower;
-        loan.collateralAmount = offer.collateralAmount;
+        LibLoanCollateral.set(loan, offer.collateralAmount);
         // #569 Codex #572 P1 #2 (2026-06-13) — copy the incoming offer's
         // collateral IDENTITY too, not just the amount. `assertAssetContinuity`
         // pins only `collateralAsset` + `collateralAssetType`, so an
