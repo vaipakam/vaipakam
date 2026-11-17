@@ -173,7 +173,11 @@ only when the platform supplied it. A change of network, deployment,
 wallet, position or asset pair mid-flow clears every answer at once and
 holds signing until the new context has its own. Once a transaction has
 been handed to the wallet there is no silent retry that could leave it
-ambiguous whether the action may still confirm.
+ambiguous whether the action may still confirm. A Confirm that stops
+without opening the wallet always says why on the review: what the re-read
+found, or, when the consent was cleared while it ran (by the reader, or by
+a re-read that found new figures), that the consent was cleared and the
+wallet was not opened. A review never quietly resets.
 
 ### RB-GAS — every write carries the shared gas margin
 
