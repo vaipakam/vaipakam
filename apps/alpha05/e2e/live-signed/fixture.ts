@@ -100,36 +100,41 @@ export async function settled(scope: Locator): Promise<Locator> {
  * transaction the app asks for; anything else is left to the caller.
  */
 export async function clearGates(page: Page): Promise<void> {
-  // The gates render only once the review's reads land, so wait for the
-  // review (or a gate) to show before deciding there is nothing to pass.
-  await page
-    .locator('.receipt, dialog.terms-prompt[open], [data-testid="risk-gate"]')
-    .first()
-    .waitFor({ state: 'visible', timeout: 180_000 })
-    .catch(() => {});
-  for (let i = 0; i < 4; i++) {
-    await page.waitForTimeout(3000);
+  // A review's gates (Terms, risk level) render only once its reads land,
+  // which can take many seconds; keep looking until the review's own consent
+  // box is ready, handling each gate as it appears.
+  const consent = page.locator('[data-testid$="-consent"]').first();
+  const deadline = Date.now() + 240_000;
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(1500);
     const terms = page.locator('dialog.terms-prompt[open]');
     if (await terms.isVisible()) {
       const proceed = terms.getByRole('button', { name: /^Continue:/ });
       if (!(await proceed.isVisible())) {
-        const consent = terms.locator('input[type="checkbox"]');
-        if ((await consent.count()) > 0) await consent.first().check();
+        const box = terms.locator('input[type="checkbox"]');
+        if ((await box.count()) > 0) await box.first().check();
         await terms.getByRole('button', { name: 'Confirm in wallet' }).click();
         await proceed.waitFor({ state: 'visible', timeout: 300_000 });
       }
       await proceed.click();
       continue;
     }
+    // The gate renders for every plan, "met" included; only an action plan
+    // (raise, reaffirm, consent, ack) carries the risk-open button, and a plan
+    // can change as the reads land, so act on what the gate says now.
     const gate = page.getByTestId('risk-gate').first();
-    if (await gate.isVisible()) {
-      await gate.getByTestId('risk-open').click();
+    const plan = (await gate.isVisible()) ? await gate.getAttribute('data-risk-plan') : null;
+    if (plan === 'wait-tier' || plan === 'wait-pair') throw new Error(`risk gate says wait (${plan}): ${(await gate.textContent())?.slice(0, 300)}`);
+    if (plan !== null && plan !== 'met') {
+      const open = gate.getByTestId('risk-open');
+      if (!(await open.isVisible())) continue;
+      await open.click();
       const step = page.getByTestId('risk-step').first();
       await step.getByRole('button', { name: 'Confirm in wallet' }).click();
       const finish = await settled(step);
       await finish.getByTestId('risk-back').click();
       continue;
     }
-    return;
+    if (await consent.isVisible()) return;
   }
 }

@@ -127,7 +127,10 @@ test('a lender posts an offer and cancels it on Offers', async ({ launchWallet }
   await expect(l.page.getByTestId(`offer-state-${id}`)).toHaveText('Open', { timeout: 180_000 });
   await l.page.getByTestId(`offer-cancel-${id}`).click();
   const flow = l.page.getByTestId(`offer-cancel-panel-${id}`);
-  await flow.getByRole('button', { name: 'Confirm in wallet' }).click();
+  // The protocol refuses a cancel in an offer's first five minutes.
+  const confirm = flow.getByRole('button', { name: 'Confirm in wallet' });
+  await expect(confirm).toBeEnabled({ timeout: 420_000 });
+  await confirm.click();
   await settled(flow);
   await fitsWidth(l.page);
 });
