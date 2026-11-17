@@ -604,7 +604,7 @@ contract SignedOfferMatcherTest is SetupTest {
         uint256 lenderOfferId = _postLenderCounterparty(lender, PRINCIPAL);
         vm.prank(keeper);
         vm.expectRevert(abi.encodeWithSignature("LifecycleFlexNotAllowed()"));
-        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, lenderOfferId, PRINCIPAL, _noAuth());
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, _alone(), lenderOfferId, PRINCIPAL, _noAuth());
     }
 
     function test_3621_signedLenderUnknownBitsRefused() public {
@@ -616,7 +616,7 @@ contract SignedOfferMatcherTest is SetupTest {
         uint256 borrowerOfferId = _postBorrowerCounterparty(borrower, PRINCIPAL);
         vm.prank(keeper);
         vm.expectRevert(abi.encodeWithSignature("LifecycleFlexUnknownBits(uint8)", uint8(4)));
-        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, borrowerOfferId, PRINCIPAL, _noAuth());
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, _alone(), borrowerOfferId, PRINCIPAL, _noAuth());
     }
 
     /// @dev A signed lender order's marks reach its slice, and the match
@@ -634,7 +634,7 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.recordLogs();
         vm.prank(keeper);
         uint256 loanId = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
-            o, sig, borrowerOfferId, PRINCIPAL, _noAuth()
+            o, sig, _alone(), borrowerOfferId, PRINCIPAL, _noAuth()
         );
         assertEq(OfferCancelFacet(address(diamond)).getOffer(_lastSliceOfferId()).lifecycleFlex, 1, "slice carries the marks");
         assertTrue(LoanFacet(address(diamond)).getLoanDetails(loanId).allowsPartialRepay, "loan takes the borrower's choice");
