@@ -46,6 +46,11 @@ interface IPositionTransferCheck {
  *           requires it unchanged at completion, so a position that moved
  *           (even away and back) cannot complete a route its earlier holder
  *           opened. That replaces the route locks the Diamond used to hold.
+ *         - Approval is per token only (#3721): an approval over all of a
+ *           holder's tokens is refused, so one prompt from a dishonest site
+ *           cannot hand over every position a holder has. A token's approval
+ *           is cleared when it moves. Nothing in the platform relies on an
+ *           operator approval: its sales and handovers re-mint.
  *         - A holder may LOCK their own tokens (protected account mode's NFT
  *           protection): a locked holder's tokens do not move, they grant no
  *           approval, and approvals they gave before the lock are not honoured.
@@ -138,8 +143,6 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
     mapping(address => HolderLock) private _locks;
     /// @dev The approval epoch a per-token approval was granted in.
     mapping(uint256 => uint64) private _tokenApprovalEpoch;
-    /// @dev The approval epoch an operator approval was granted in.
-    mapping(address => mapping(address => uint64)) private _operatorApprovalEpoch;
     /// @dev Every holder with a pending unlock (`unlockAt` != 0). Kept in step
     ///      by {_setUnlockAt}, the one writer of `unlockAt`, so a keeper can
     ///      find every unlock that will mature without replaying events.
@@ -189,6 +192,8 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
     error NoProposal(Component kind);
     error TooEarly(uint256 executableAt);
     error HolderIsLocked(address holder);
+    /// @notice #3721 — position tokens are approved one token at a time.
+    error OperatorApprovalRefused();
     error HolderNotLocked(address holder);
     error UnlockPending(address holder);
     error NoUnlockPending(address holder);
@@ -316,12 +321,9 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
     bytes4 public constant ERC4906_INTERFACE_ID = 0x49064906;
 
     /// @inheritdoc ERC721
-    /// @dev An operator approval granted before the holder's latest lock is
-    ///      not honoured, and none is honoured while the holder is locked.
-    function isApprovedForAll(address holder, address operator) public view override(ERC721, IERC721) returns (bool) {
-        HolderLock storage l = _locks[holder];
-        if (l.locked) return false;
-        return super.isApprovedForAll(holder, operator) && _operatorApprovalEpoch[holder][operator] == l.epoch;
+    /// @dev #3721 — always false: no operator approval can be granted.
+    function isApprovedForAll(address, address) public pure override(ERC721, IERC721) returns (bool) {
+        return false;
     }
 
     // ─── Minting (the Diamond) ───────────────────────────────────────────
@@ -522,15 +524,12 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
         super._approve(to, tokenId, auth, emitEvent);
     }
 
-    /// @dev An operator approval is refused while the holder is locked and is
-    ///      stamped with the holder's epoch. Revoking is always allowed.
+    /// @dev #3721 — an approval over all of a holder's tokens is refused.
+    ///      Revoking (approved = false) is a no-op that still succeeds, so a
+    ///      wallet's routine "revoke all" clean-up never fails here.
     function _setApprovalForAll(address holder, address operator, bool approved) internal override {
-        if (approved) {
-            HolderLock storage l = _locks[holder];
-            if (l.locked) revert HolderIsLocked(holder);
-            _operatorApprovalEpoch[holder][operator] = l.epoch;
-        }
-        super._setApprovalForAll(holder, operator, approved);
+        if (approved) revert OperatorApprovalRefused();
+        super._setApprovalForAll(holder, operator, false);
     }
 
     /// @dev A per-token approval granted before the holder's latest lock, or

@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibPositionNFT} from "../src/libraries/LibPositionNFT.sol";
+import {PositionNFT} from "../src/PositionNFT.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
@@ -335,9 +336,11 @@ contract VaipakamNFTFacetTest is Test {
 
     function testSetApprovalForAll() public {
         address operator = makeAddr("operator");
+        // #3721 — refused: position tokens are approved one at a time.
         vm.prank(user);
+        vm.expectRevert(PositionNFT.OperatorApprovalRefused.selector);
         LibTestPositionNFT.core(address(diamond)).setApprovalForAll(operator, true);
-        assertTrue(LibTestPositionNFT.core(address(diamond)).isApprovedForAll(user, operator));
+        assertFalse(LibTestPositionNFT.core(address(diamond)).isApprovedForAll(user, operator));
 
         vm.prank(user);
         LibTestPositionNFT.core(address(diamond)).setApprovalForAll(operator, false);
@@ -347,6 +350,8 @@ contract VaipakamNFTFacetTest is Test {
     function testTransferFrom() public {
         address recipient = makeAddr("recipient");
         _mintViaProxy(user, TOKEN_ID_1, true, LibVaipakam.LoanPositionStatus.OfferCreated);
+        // #3710 — a loan token waits from its mint.
+        LibTestPositionNFT.waitOutCooldown(address(diamond), TOKEN_ID_1);
 
         vm.prank(user);
         LibTestPositionNFT.core(address(diamond)).transferFrom(user, recipient, TOKEN_ID_1);
@@ -356,6 +361,8 @@ contract VaipakamNFTFacetTest is Test {
     function testSafeTransferFrom() public {
         address recipient = address(new ERC721Receiver());
         _mintViaProxy(user, TOKEN_ID_1, true, LibVaipakam.LoanPositionStatus.OfferCreated);
+        // #3710 — a loan token waits from its mint.
+        LibTestPositionNFT.waitOutCooldown(address(diamond), TOKEN_ID_1);
 
         vm.prank(user);
         LibTestPositionNFT.core(address(diamond)).safeTransferFrom(user, recipient, TOKEN_ID_1);
@@ -365,6 +372,8 @@ contract VaipakamNFTFacetTest is Test {
     function testSafeTransferFromWithData() public {
         address recipient = address(new ERC721Receiver());
         _mintViaProxy(user, TOKEN_ID_1, true, LibVaipakam.LoanPositionStatus.OfferCreated);
+        // #3710 — a loan token waits from its mint.
+        LibTestPositionNFT.waitOutCooldown(address(diamond), TOKEN_ID_1);
 
         vm.prank(user);
         LibTestPositionNFT.core(address(diamond)).safeTransferFrom(user, recipient, TOKEN_ID_1, "test data");
@@ -455,6 +464,8 @@ contract VaipakamNFTFacetTest is Test {
         ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
 
         _mintViaProxy(user, TOKEN_ID_1, true, LibVaipakam.LoanPositionStatus.LoanInitiated);
+        // #3710 — a loan token waits from its mint.
+        LibTestPositionNFT.waitOutCooldown(address(diamond), TOKEN_ID_1);
         address cleanBuyer = makeAddr("clean-buyer");
 
         // 1. A flagged SENDER cannot move its position NFT out.

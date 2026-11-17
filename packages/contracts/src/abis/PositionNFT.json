@@ -267,12 +267,12 @@
     "name": "isApprovedForAll",
     "inputs": [
       {
-        "name": "holder",
+        "name": "",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "operator",
+        "name": "",
         "type": "address",
         "internalType": "address"
       }
@@ -284,7 +284,7 @@
         "internalType": "bool"
       }
     ],
-    "stateMutability": "view"
+    "stateMutability": "pure"
   },
   {
     "type": "function",
@@ -1570,6 +1570,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "OperatorApprovalRefused",
+    "inputs": []
   },
   {
     "type": "error",
