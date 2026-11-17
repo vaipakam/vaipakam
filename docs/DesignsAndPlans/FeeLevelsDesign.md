@@ -1,7 +1,8 @@
 # Fee levels: interest share at 5%, initiation fee by term — design
 
 **Status:** owner direction, 2026-11-15. Card #3649. Replaces the fee levels frozen in #1352 (0.2% flat initiation fee, 2% of interest). Reaches a chain by fresh deploy, before mainnet.
-**Related:** `ShortfallReserveDesign.md` (#3641: the treasury floor and the reserve's part of these two fees), the fee-discount rules in the tokenomics spec.
+**Related:** `ShortfallReserveDesign.md` (#3641: the treasury floor and the reserve's part of these two fees), `IntegratorFeeShareDesign.md` (#3682) and `ReferralFeeShareDesign.md` (#3722) for the amounts taken from the initiation fee's above-floor part, the fee-discount rules in the tokenomics spec.
+**Reviewed 2026-11-17:** the open items of section 10 are settled, and the referral cut and the per-loan ceiling are named where the fee is divided.
 
 ## 1. Why
 
@@ -37,7 +38,7 @@ Rules that follow:
 - **An automatic extension** (a keeper acting inside limits both holders set) collects the added fee from the borrower's own vault balance of the lending asset. The borrower's extension limits show the largest added fee they allow. If the balance is not there the extension does not happen and the loan stays on its existing due date; the keeper's advance alert names the amount needed. The fee is never added to the debt: that would put a platform charge into every settlement and liquidation path beside the lender's due.
 - **It cannot be avoided by chaining short loans:** twelve 30-day loans pay 2.4% in total against 0.5% for one year.
 - **A refinance and a new loan after a roll are new loans** and pay their own fee on their own term, as today.
-- **Discounts** apply to the whole fee as they do today, under the same ceiling.
+- **Discounts** apply to the whole fee as they do today, under the same ceiling. A new user's referral cut (`ReferralFeeShareDesign.md`) counts under that ceiling together with the hold discount: the two can never take more than half off the full fee.
 - The fee stays in the lending asset. Nothing here touches the retired token-custody path.
 
 ## 4. How the levels compare
@@ -58,7 +59,7 @@ Stated generically; no platform is named in the repository.
 | Extension | Charges the difference for the added time through the same fee host, marked as an extension fee so no treasury floor is taken from it. |
 | Loan record | The term the fee has been paid for, if the existing term field cannot serve. |
 | Views and previews | The fee as an amount and a rate for a given principal and term; the extension's added fee. |
-| Treasury fee host | The floor split of `ShortfallReserveDesign.md` section 8 (ships with the mainnet deploy). |
+| Treasury fee host | The floor split of `ShortfallReserveDesign.md` section 8 (ships with the mainnet deploy). The above-floor part of the initiation fee then carries the matcher's, the integrator's and the inviter's shares under one per-loan ceiling, and the rest goes to the reserve (`ReferralFeeShareDesign.md` 2.1). |
 
 Per-loan stamping of the interest share stays as it is, so a later retune never reprices an open loan. Run the storage-layout guard's `write`; check facet sizes with the deploy-sanity suite and split along a seam if needed.
 
@@ -92,8 +93,13 @@ Per-loan stamping of the interest share stays as it is, so a later retune never 
 
 The levels in section 2 with the term rule in section 3.
 
-## 10. Open items for the builder to raise, not decide silently
+## 10. Open items
 
-- Whether any charge derived from the initiation fee rate (a matcher's share, the paid tariff) should read the base rate or the loan's term rate.
-- Whether an obligation handover, which installs a new borrower's term, charges the difference as an extension does.
+Settled with the builder on 2026-11-16:
+
+- A charge taken from the fee that was collected (the matcher's share, and later the integrator's and the inviter's) follows the loan's term rate, because it is a part of the above-floor amount of the fee actually charged. The paid tariff, which is not a part of the collected fee, keeps the base rate.
+- An obligation handover that lengthens the term charges the difference for the added time, as an extension does. One that does not lengthen it charges nothing more.
+
+Still for the builder to raise, not decide silently:
+
 - Confirm no path assumes the fee is one fixed rate, and that the bound on the fee setting still holds for the longest term the platform admits.

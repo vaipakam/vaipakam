@@ -1,6 +1,6 @@
 # Position sale state guard
 
-Status: design, approved for build by the secured-vault thread. Card: #3710.
+Status: design, approved for build by the secured-vault thread. Card: #3710. Reviewed 2026-11-17: the builder's confirmations and route table are in sections 3.2, 3.5 and 7, and section 3.9 records the approval rule of #3721.
 
 A position token can be sold on any marketplace. Its price depends on the
 loan behind it: how much collateral backs a borrower position, how much is
@@ -87,8 +87,8 @@ terms change and the close-out freeze each place their own mark. A new route
 that forgets the mark is a silent hole, and a read of the code on 2026-11-17
 found candidates that reduce a loan's collateral with no mark of their own:
 the partial liquidation, the matched liquidation legs, the fallback custody
-split and the periodic forced sale. Each needs confirming, since some may be
-covered by the payout they end in.
+split and the periodic forced sale. The builder confirmed all four: none was
+marked, and each is now marked through the one collateral writer (section 7).
 
 So the mark moves to the few places every such change must pass, and the hand
 placed marks are deleted:
@@ -185,10 +185,11 @@ minutes in which a stale figure may still be shown) while an honest borrower
 receives surplus collateral at once and in one transaction. Section 5 records
 the comparison.
 
-Builder to confirm: the in-platform sale and handover routes replace a
-position's token and do not transfer it, so they do not wait. If any protocol
-route does transfer a token, it is listed in the build notes with the effect
-of the wait.
+Confirmed by the builder: no protocol route transfers a position token. The
+in-platform sale and handover routes retire a position's token and mint a new
+one, so they do not wait. The only transfer calls in contracts that can hold
+position tokens (the backstop vault and the aggregator adapter sweeps) refuse
+position tokens.
 
 ### 3.6 A sale guard for orders, built when the app offers position sales
 
@@ -231,6 +232,17 @@ fails the build when a new raw transfer to a user address appears outside
 those two helpers. The four transfers that skip the check today (to protocol
 contracts and the keeper) are listed in the check with their reasons.
 
+### 3.9 Approval is per token (#3721)
+
+A position token may be approved for transfer one token at a time. An approval
+over all of a holder's tokens is refused: nothing in the platform relies on
+one, marketplaces list a position with a per-token approval, and a single
+prompt from a dishonest website should not be able to hand over every
+position a holder has. A token's approval is cleared when the token moves. An
+approval is refused while the holder is locked and is retired by a later
+lock, as before. The platform's own alert (#3719) tells the holder when an
+approval is given.
+
 ## 4. What a user is told
 
 - **On any marketplace, in the token's own details.** Most marketplaces do
@@ -247,11 +259,12 @@ contracts and the keeper) are listed in the check with their reasons.
 - The position page shows the state number and the time of the last value-out,
   and says that a buyer should check both before paying.
 - On an outside marketplace, the platform cannot stop a sale at a stale price
-  once the cooldown has passed. The app says so wherever it links out to a
+  once the wait has passed. The app says so wherever it links out to a
   marketplace listing. Orders made through the app, once section 3.6 exists,
   carry the guard and are refused if the position changed.
 - After removing collateral or receiving a payout, a holder is told their
-  token cannot be transferred for the cooldown, with the time it frees.
+  token cannot be transferred for the wait of section 3.5, with the time it
+  frees.
 
 ## 5. Alternatives considered
 
@@ -287,8 +300,76 @@ amounts.
 - The value-out mark, the count and the refresh call sit behind one helper in
   the position token library, called only from the seams of section 3.2, so
   nothing can stamp without counting or refreshing.
-- The route table of section 3.2 is added here by the builder.
+- The one view of section 3.1 is `positionState(tokenId)`, returning the state
+  number, the block of the last value-out and the time the token may next
+  move.
 - New selectors need the usual registrations, the ABI exports and a row in the
   permissionless-steps ledger for nothing here (both new Diamond entries are
   views; the core entry is Diamond-only).
 - The indexer needs no change. The app change is section 4.
+
+### 7.1 Route table (from the builder, 2026-11-17)
+
+**The seams, which are the only places that mark:**
+
+- **A. The outflow policy.** Every outflow whose class names a loan marks both
+  of its tokens and raises their state numbers: a payout to a position holder,
+  to a counterparty, to a holder's wallet, to a matched counterparty, to claim
+  custody, to a prior seller, and to a liquidation buyer. A consolidation is
+  excluded. For the first three, the payee's token also takes the long wait
+  when the caller of the guarded action holds it. The caller is recorded by
+  the reentrancy guard for the length of the call.
+- **B. The one writer of a loan's collateral amount.** A reduction marks. A
+  set marks when the amount falls and refreshes otherwise. An addition
+  refreshes. The build check refuses any other writer; origination is the one
+  listed exception.
+- **C. The loan-terms writer.** A rate change always marks (an extension, a
+  handover). A principal write-off marks. A principal reduction marks when
+  less was delivered than was cleared, and refreshes otherwise.
+- **D. The one function that takes a held amount out of a lender position**
+  marks. The claim and both intent re-commits use it.
+- **E. Retiring a token** marks the loan, or the offer's token, and gives the
+  long wait when the caller holds the token.
+- **F. An offer's token.** A change to the offer, a match drawing on it and
+  its end each mark, with the long wait when the caller holds the token. An
+  offer's token becoming a loan's token marks the loan.
+- **Refresh only:** a status change, an increase in collateral, a principal
+  reduction delivered in full.
+
+| Route | What leaves which position | Seam |
+| --- | --- | --- |
+| Partial collateral withdrawal | Collateral leaves the borrower side | A (to the holder's wallet: long wait on the borrower token when the holder calls), B |
+| Add collateral, the standing top-up | Nothing; collateral rises | B, refresh only |
+| Repayment, partial or full | The lender is paid; principal falls | A, C. A full repayment changes status, which refreshes |
+| Standing interest payment and due-date repayment | The reserve pays the lender | A, C |
+| Partial swap-to-repay | Collateral is sold; a surplus goes to the holder | B, C, A. The hand mark was removed |
+| Full swap-to-repay | The loan ends | Status refresh; then claims and retire: A, D, E |
+| Partial health-factor liquidation | Collateral is sold | B (newly marked), C, A |
+| Matched liquidation legs | Collateral moves between loans | B on each leg (newly marked), A, C |
+| Discounted and split liquidation | The buyer takes collateral | A, and B where collateral is written |
+| Fallback entry and shortfall split | The custody figure falls | B (newly marked) |
+| Time-based default | Collateral goes to claim custody | B, A |
+| Periodic forced sale | Collateral is sold for interest | B (newly marked), A |
+| Terminal forced sale | The loan ends | B; claims later: A, D, E |
+| Obligation handover | The borrower and the terms change | B, C, E, then a new token |
+| Offset, listed sale, direct sale | The side moves to a new holder | E, then a new token. No transfer, so no wait |
+| Automatic extension | Terms change; interest is paid out | C, A. The hand mark was removed |
+| Claims | A side is paid out | A (long wait for the caller's own token), D, E |
+| Intent re-commit, both entries | Held funds leave the lender side | D. The hand mark was removed |
+| Consolidation | Custody moves under the lien | Not marked, except when less is credited than was sent: B |
+| Offer change, match, cancel, direct accept | The offer's token changes | F, E |
+| Payout to a prior seller | Paid to that seller | A |
+
+**The holder's-wallet payout when the holder does not own the paying vault.**
+The holder is screened for sanctions as an owner payout is. The class is
+ERC-20 only; an ERC-20 transfer has no receiver hook, so a contract holder
+cannot refuse it and no fallback to the vault is needed. A protected holder is
+credited to its own vault by the policy's redirect. The vault accepts the
+class only for the token's current holder or that holder's own vault, never
+for its own owner, which is the owner payout.
+
+**Raw transfers outside the policy.** The static check of section 3.8 lists
+each with its reason: messenger fees, refunds of a caller's own unspent fee,
+the broadcast-budget withdrawal, vault deposits and credits, consolidation
+legs into a vault, reward custody, the keeper reward, the repatriation return
+and the recycle release.

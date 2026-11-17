@@ -1,6 +1,6 @@
 # Term average and link guards — design
 
-**Status:** owner approved, 2026-11-17. Cards #3713 (contracts), #3714 (funded slots in the instant market), #3715 (app). Design first, no code yet.
+**Status:** owner approved, 2026-11-17. Cards #3713 (contracts), #3714 (funded slots in the instant market), #3715 (app). #3714 and the acknowledgement field on instant borrow are built on the batch branch; the rest follows with #3337 part 1 and #3635 part A. Reviewed 2026-11-17 after the build: sections 6.4 and 7 state what was built and the wording settled for the prompt.
 **Amends:** `MarketLinkedRateLimitsDesign.md` (#3635) before its part A is built; adds to `RateReferenceDesign.md` (#3337 part 1); amends `InstantMarketDesign.md` section 8.
 **Related:** `FloatingRateCapFloorLevelsDesign.md`, #3637 (rate-rise illustration, "fix my rate").
 
@@ -33,7 +33,7 @@ The gain from a pushed reference grows with the term it is locked for; the cost 
 
 - The term is the term of the loan being opened in that fill, so an intent or a flexible offer reads the window for each fill's own term.
 - **Available** keeps its meaning for each window: the index is fresh, a checkpoint at least the window old and at most twice the window old exists, and held time is no more than half of the window.
-- `averaged(asset)` becomes `averaged(asset, window)`, with the three windows as the only values a fill passes. The guidance figure of `MarketLinkedRateLimitsDesign.md` 5b keeps the 24-hour window.
+- `averaged(asset)` becomes `averaged(asset, window)`, with the three windows as the only values a fill passes. The figure shown for "today" beside a rate field (`MarketLinkedRateLimitsDesign.md` 5b) keeps the 24-hour window.
 
 ## 4. Daily checkpoints
 
@@ -93,6 +93,8 @@ A rate is **outside the band** when the term average is available and the rate i
 - A match of two standing offers by a third party asks for no flag: each maker acknowledged when they last wrote their rate, if they needed to.
 - A rate inside the band when signed and outside when the transaction lands is refused; the app re-quotes. The app sets the flag only after the second confirmation of #3715.
 - When the term average is unavailable there is no band and no flag is asked for.
+- **What the prompt says (#3715).** The second confirmation shows three plain figures and the user's own rate, not a formula: "Floating rate for <asset>: 8.2% today, 6.1% over 30 days, 5.4% over 90 days. Your fixed rate of 15% for 1 year is well above these. Continue?" The three figures are `averaged(asset, window)` for 24 hours, 30 days and 90 days; one that is unavailable is shown as "not available", never as a number. Where the blended figure itself is shown it has one label, "average for this term".
+- **The event states it (#3719).** The loan-opened, offer-created, offer-modified and intent-set events carry a `warnings` mask that the contract derives from this check (one bit for a fixed rate far above the term average, one for far below). It is never a caller input, so a website cannot send it empty, and the platform's own alert can say that a loan opened at a rate far from the average.
 
 This is a prompt, not a price rule. A manipulated average can at most ask a user for one more confirmation, or fail to ask.
 
@@ -103,7 +105,7 @@ A slot's **declared** exposure is a limit its owner typed. It is not money. A sl
 `InstantMarketDesign.md` section 8 is amended:
 
 - The ledger gains **available**, per lending asset and per pair: the sum of each slot's **fillable amount** over active slots whose fill window is open. A slot's fillable amount is the lesser of its reserved capital and its unused exposure, and it is zero when that lesser figure is below the slot's smallest fill, because no fill of it can succeed.
-- A slot's **unused exposure** is its largest exposure less the principal still outstanding on the loans made from it. A principal repayment reduces that outstanding figure in the same step, by the same amount, so repaid principal frees room; the sum of the outstanding figures is the "lent out of slots" figure below, so both sides of "how full" come from one record.
+- A slot's **unused exposure** is its largest exposure less the principal still outstanding on the loans made from it. A principal repayment reduces that outstanding figure in the same step, by the same amount, so repaid principal frees room; room returns at a partial repayment, a full repayment or a default, and never waits for the lender's claim; the sum of the outstanding figures is the "lent out of slots" figure below, so both sides of "how full" come from one record.
 - One helper recomputes a slot's fillable amount and adjusts the totals by the difference. It is called wherever reserved capital, outstanding principal or the slot's settings change: funding and exit, a fill, a repayment, a loan closing or being taken over into or out of a slot, a slot being set, changed or switched off.
 - **"How full"** is principal lent out of slots divided by that principal plus available. It cannot pass 100%, and a fully lent slot stays in its base.
 - **Declared** stays as it is and is always labelled as the limit lenders have set, never as depth.
@@ -112,7 +114,7 @@ A slot's **declared** exposure is a limit its owner typed. It is not money. A sl
 **What the figure is, and is not.** Available is the capital reserved in slots that the ledger counts as fillable. It is a stated ledger figure, not a promise that a given borrow will succeed; the binding answer for any amount is the borrow preview, which runs every check of the fill. Three limits are part of its definition and are stated wherever it is shown (the view's own description, and the app's label):
 
 - **End dates are counted by UTC day.** A slot with an end date leaves the totals through the same day-of-closing record the declared total uses, so a slot whose window closes today still counts until the day ends. Available and "how full" are therefore stated "as of the start of today (UTC)", exactly as declared is. Counting to the second would need a transaction at each closing, which is the permissionless step this design avoids.
-- **A slot too new to fill.** A slot just set, or just given instant consent, counts from that moment when the minimum age is under one hour; where the configured minimum age is one hour or longer it is held out until it can fill.
+- **A slot too new to fill.** A slot just set, or just given instant consent, counts from that moment. As built, the minimum terms age is bounded to 1 to 60 seconds (default 5), so no slot is held out of the totals for being new; the borrow preview still refuses a fill inside that age.
 - **The figure reads the lien, not the balance.** If a vault ever held less than its liens, a fill would refuse and never over-lend, and the total would overstate until the slot's next change. The asset rules exclude the tokens that could cause this.
 
 A slot with a large declared exposure and no reserved capital therefore adds nothing to depth, a slot holding less than its smallest fill adds nothing, and a slot whose capital is fully lent is neither dropped nor double counted. The earlier wording that slots' depth is what "can be lent at this moment" is withdrawn in favour of the definition above. Marking a slot unfunded by a permissionless call was considered and rejected: it tested the wrong balance and needed a keeper to stay current.

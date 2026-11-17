@@ -1,7 +1,8 @@
 # Fee share for integrators — design
 
 **Status:** owner approved the feature on 2026-11-15, before the feature freeze. Card #3682. Design for review before build.
-**Related:** `FeeLevelsDesign.md` (#3649), `ShortfallReserveDesign.md` (#3641, the treasury floor), the matcher's share of the initiation fee, `VaultOutflowPolicyDesign.md`.
+**Related:** `FeeLevelsDesign.md` (#3649), `ShortfallReserveDesign.md` (#3641, the treasury floor), `ReferralFeeShareDesign.md` (#3722, the order and the per-loan ceiling), the matcher's share of the initiation fee, `VaultOutflowPolicyDesign.md`.
+**Reviewed 2026-11-17:** the additions of #3720 (suspension, declared contracts, public record, a list anyone can check) are in sections 4, 6 and 7; the order of the split and the ceiling follow `ReferralFeeShareDesign.md` 2.1; the matcher's base is settled (section 12).
 
 ## 1. Why
 
@@ -37,6 +38,13 @@ An open scheme, in which any address may be named, was rejected: a borrower woul
 
 A registered integrator that is later flagged by the sanctions list is paid nothing (section 6).
 
+Added with #3720 (owner approved 2026-11-17):
+
+- **Suspension.** The guardian may suspend an integrator at once, without waiting for the delay. A suspended integrator is paid nothing; restoring it waits the delay. Removal stays a governance step. An integrator's status never blocks a user: the loan opens and the share goes to the reserve.
+- **Declared contracts.** An integrator declares the contracts it operates. The share is not paid on a loan whose borrower is the integrator, its payout account or one of those contracts, so an integrator earns nothing by standing between a user and the platform. Its terms forbid holding users' vaults or positions.
+- **Not an inviter.** None of an integrator's addresses may be bound as a referral inviter (`ReferralFeeShareDesign.md` section 3).
+- **What "registered" means.** It earns a share and has accepted the terms. It is never described as approved, verified or safe, on-chain or in copy.
+
 ## 5. How the integrator is named
 
 The borrower's own action names it:
@@ -51,10 +59,10 @@ A refinance and a roll open new loans with their own fee, and are credited by th
 
 ## 6. Payment
 
-- The share is paid when the fee is collected, in the lending asset, by the one fee host that already divides the fee. Order: the treasury floor, the matcher's share as today, the integrator's share, the rest to the reserve.
+- The share is paid when the fee is collected, in the lending asset, by the one fee host that already divides the fee. The treasury keeps its floor first. Order of the above-floor part: a new user's referral cut (never collected), the matcher's share, the integrator's share, the inviter's share, the rest to the reserve. One per-loan ceiling (default 60% of the above-floor part) bounds the cut and the three shares together; when it binds, the inviter's share is reduced first, then the integrator's, then the matcher's (`ReferralFeeShareDesign.md` 2.1).
 - It is delivered into the **integrator's own vault** on the platform, not pushed to an outside address. The integrator withdraws through the ordinary vault payout, which carries the sanctions gate and the outflow policy.
 - **The delivery can never fail the loan.** The vault's own code cannot refuse a transfer, but the token can: an issuer may block the vault's address. So the delivery is one isolated step that is allowed to fail alone. If it fails for any reason, or delivers less than was sent, that step is undone and the whole share goes to the reserve in the same transaction, with an event naming the integrator, the amount and that it was redirected. The loan opens either way.
-- If the integrator is flagged at the moment of payment, the share goes to the reserve.
+- If the integrator is flagged or suspended at the moment of payment, or the borrower is one of its declared addresses, the share goes to the reserve.
 - One event states the loan, the integrator, the asset and the amount. The loan-opened review in the app and the public analytics show it.
 
 Nothing is held for an integrator in the Diamond at any time.
@@ -65,15 +73,22 @@ Where an integrator is named, the borrower's review states: "Part of the platfor
 
 This is a payment to a business for bringing a user. It is not offered to users as an earning, it is not a share of platform revenue for holders of anything, and it must not be described either way in user-facing copy.
 
+Added with #3720 and #3719:
+
+- **A public record per integrator**, kept as counters: loans brought, loans opened with a warning in the loan's warnings mask, and loans defaulted or liquidated within 7 days of opening.
+- **A list anyone can check.** One view returns the platform's contracts on the chain and the registered integrators with their status, so a user or a wallet can check whether a site is registered and whether a contract is the platform's.
+- **The best standing rate in previews.** A borrow preview returns, beside the terms, the best standing rate on the book for the same pair and term where one can be read, so any front end can show that a better offer exists. How that rate is found on-chain within a bounded cost is an open item (section 12).
+- **The integrator is named in events.** The loan-opened details, offer-created details, offer-modified and intent-set events state the integrator id, so the platform's own alert can name the door the user came through. On a lender's action the id is attribution only and earns no share; section 5 is unchanged.
+
 ## 8. Contract changes
 
 | Where | Change |
 | --- | --- |
-| Integrator list | Address, payout account, rate; the default rate and the ceiling. Timelocked adds and changes, immediate removal. |
+| Integrator list | Address, payout account, rate, status and declared contracts; the default rate and the ceiling. Timelocked adds and changes, immediate removal, suspension by the guardian at once with a delayed restore. Counters per integrator. |
 | Offer record and creation | An optional integrator on a borrower's offer. |
 | Accept and match entries | An optional integrator on the borrower's direct accept; a fill reads the borrower offer's. |
-| Treasury fee host | The integrator's share in the split of the initiation fee, after the floor. |
-| Views and previews | The integrator's share as an amount for a given loan; the list. |
+| Treasury fee host | The integrator's share in the split of the initiation fee, after the floor, in the order and under the ceiling of section 6. |
+| Views and previews | The integrator's share as an amount for a given loan; the list with status and the platform's contracts; the best standing rate in a borrow preview. |
 | Signed offers | The integrator is part of what the borrower signs. |
 
 The accept facets are close to the size limit; the share is computed in the fee host, and the accept path only passes the address through.
@@ -87,6 +102,9 @@ The accept facets are close to the size limit; the share is computed in the fee 
 5. An extension pays no integrator share.
 6. The payment lands in the integrator's vault and leaves only through the ordinary payout.
 7. A rate change does not affect a loan already open.
+8. A suspended integrator: the loan opens and the share goes to the reserve; restoring waits the delay. A borrower that is the integrator, its payout account or a declared contract earns it nothing.
+9. With a matcher and an inviter on the same loan the ceiling holds and the reductions run in the stated order; the reserve receives at least its part.
+10. The counters move once per loan; the list view returns status and contracts.
 
 ## 10. Alternatives considered
 
@@ -103,5 +121,6 @@ Registered integrators, named by the borrower's own action, paid a bounded part 
 
 ## 12. Open items for the builder to raise, not decide silently
 
-- The exact base of the matcher's share next to the integrator's, so the two together can never exceed the above-floor amount.
+- Settled 2026-11-17: the matcher's share, like the integrator's, is a part of the above-floor amount, and the per-loan ceiling bounds them together with the referral amounts (section 6).
 - Whether the registration should also carry a display name on-chain or leave names to the app's list.
+- How the best standing rate is found for a preview within a bounded cost. The builder brings the options to the design thread before choosing.

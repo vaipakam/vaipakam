@@ -26,7 +26,7 @@ A is what makes the reference act like a "one-day offer": a waiting offer re-pri
 Two further uses fall out of A at no extra contract cost, and are part of this design:
 
 - **C. A market-tracking position built from fixed loans** (section 5a): a market-linked Auto-lend slot with a short longest term re-prices at every new fill, so a lender follows the market in steps before floating loans exist at all.
-- **D. The averaged reference as guidance** (section 5b): every maker, linked or not, sees "the market today" beside the rate field.
+- **D. The averaged reference shown beside the rate field** (section 5b): every maker, linked or not, sees the recent floating rate, and for a fixed rate the average for its term, beside the rate field.
 
 ## 4. A — market-linked limit
 
@@ -75,7 +75,7 @@ What this design needs from #3337's index, to be built with it:
 ### 4.5 Where it applies
 
 - **Matches of two offers** and **intent fills:** as in 4.1.
-- **Direct accept:** the acceptor signs exact terms, including the rate. For a linked offer the signed rate must sit inside the effective bounds at that moment; a rate that was valid when the screen loaded and is not when the transaction lands is refused, and the app re-quotes. The builder scouts how a direct accept picks the rate inside a ranged offer today and keeps that rule.
+- **Direct accept:** the acceptor signs exact terms, including the rate. For a linked offer the signed rate must sit inside the effective bounds at that moment; a rate that was valid when the screen loaded and is not when the transaction lands is refused, and the app re-quotes. The builder scouts how a direct accept picks the rate inside a ranged offer today and keeps that rule. Taking, setting or changing a fixed rate that is outside the warning band also needs the acknowledgement of `TermAverageAndLinkGuardsDesign.md` 6.4, linked or not.
 - **Signed (off-chain) offers:** the link fields join the signed offer type.
 - **Changing the link** (margin or on/off) is a change of terms: the terms-age wait (#3443) restarts. The reference moving is not a change of terms.
 - **Not offered** on NFT rentals, loan-sale offers or refinance requests in this build. They can follow once the lending case has run.
@@ -84,7 +84,7 @@ What this design needs from #3337's index, to be built with it:
 
 | Where | Change |
 | --- | --- |
-| `LibVaipakam.Offer` | Append `bool rateLinked`, `int16 linkMarginBps` at the tail (mapping value struct). |
+| `LibVaipakam.Offer` | Append `linkKind` (none, reference, term average; it replaces the `rateLinked` flag first written here, per the amendment in 4.3) and `int16 linkMarginBps` at the tail (mapping value struct). |
 | `LibVaipakam.LenderIntent` | Append the same two fields (per slot, after #3626). |
 | `LibRateReference` (new, beside #3337's index) | `averaged(asset)`; `effectiveLenderFloor`, `effectiveBorrowerCeiling`. One copy, hosted behind a self-call if the match hosts have no room. |
 | `LibOfferMatch` (match core and both previews) | Compute the overlap from effective bounds. New `MatchError.ReferenceUnavailable` and `IntentError.ReferenceUnavailable`, appended at the tail of each enum. |
@@ -123,11 +123,11 @@ A roll is not a re-pricing of an open loan: the old loan is repaid and closed fi
 
 This ships with step 2 of section 10, before floating loans, and covers most of what a lender wants from "lend at the market rate". Floating loans (#3337 part 2) remain the answer for a borrower who wants one long loan that tracks the market without re-borrowing.
 
-## 5b. D — the averaged reference as guidance
+## 5b. D — the averaged reference shown beside the rate field
 
-The same `LibRateReference.averaged(asset)` read is shown, never applied, on every rate field:
+The same reads the fills use are shown, never applied, on every rate field. The wording was settled on 2026-11-17 (#3715): the figures are averages of rates already observed, and are never called a guide, a recommended rate or an expected rate.
 
-- The post-offer and Auto-lend forms show "market today" for the lending asset, and how far the typed rate is from it. An offer typed far from the market is the commonest reason an offer sits idle, and today the maker has nothing to compare against on pairs the quote-time model does not cover.
+- The post-offer and Auto-lend forms show the floating rate for the lending asset as three plain figures (today, over 30 days, over 90 days) and, for a fixed rate, the average for this term (`termAverage`), with how far the typed rate is from it. An offer typed far from the market is the commonest reason an offer sits idle, and today the maker has nothing to compare against on pairs the quote-time model does not cover.
 - The quote-time rate model keeps its own rule and its own band. Where both exist for a pair the form shows both, labelled; neither overwrites a typed rate. Whether the model should take the averaged reference as one of its inputs is a separate decision and is not made here.
 - The "why isn't my offer matching" diagnostics (#3623) state the distance from the market when the reference is available.
 - Where the reference is unavailable or not configured, the field says so. It never shows a stale number as current.
@@ -138,7 +138,7 @@ No contract change beyond the view in 4.6.
 
 - **Consent.** Nothing here binds a party to a rule they did not choose. A link is opt-in per offer or intent; fixed-or-floating is opt-in per intent.
 - **Hard bounds.** A link can only tighten the maker's typed bound (4.1).
-- **No timing edge.** The linked rate is a 24-hour average; the per-update clamp of #3337 bounds how far one hour can move it.
+- **No timing edge.** The linked rate is an average over a window that grows with the loan's term (24 hours, 7 days or 30 days; `TermAverageAndLinkGuardsDesign.md` section 3); the per-update clamp of #3337 bounds how far one hour can move it.
 - **Fail closed for the linked maker only** (4.2).
 - **No middleman.** The protocol takes no spread and carries no rate risk; the treasury's usual share of interest is unchanged.
 - **Pricing rule unchanged.** The loan's rate is still the midpoint of the overlap; the protocol still does not rank counterparties.
