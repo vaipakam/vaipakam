@@ -16,7 +16,7 @@ import { allowanceMoved, approvalFlow } from '../tx/approvalFlow';
 import { cleanUpLeg } from '../tx/cleanUp';
 import type { LegOutcome } from '../tx/outcome';
 import { sendWrite } from '../tx/send';
-import { askThrough } from '../tx/simulate';
+import { askAfter } from '../tx/simulate';
 import { holdsFlow, useStoredValue, useTxEntry, useTxNote } from '../tx/txStore';
 import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
 import { useTrackedTx } from '../tx/useTrackedTx';
@@ -136,6 +136,8 @@ export function AutoLendManage({ kind, lending, collateral, unlent, chain, own, 
       const call = manageCall(d, account);
       approvalLeft.current = null;
       let putItBack: (() => Promise<{ sentence: string }>) | null = null;
+      // The block the approval landed in: the dry run is asked at or after it.
+      let approvedAt: bigint | null = null;
       let n = 0;
       const total = review.approvalSteps + 1;
       const say = (what: string) => setStep(format('accept.stepOf', { n: String(++n), total: String(total), what }));
@@ -148,6 +150,7 @@ export function AutoLendManage({ kind, lending, collateral, unlent, chain, own, 
         if (steps.length !== review.approvalSteps) throw allowanceMoved(copy);
         if (steps.length > 0) {
           const since = await approveExactly(io, lending, d.amount, prior);
+          approvedAt = since;
           approvalLeft.current = { prior, amount: d.amount, since };
           putItBack = () => putBack(lending, prior, d.amount, since);
         }
@@ -158,9 +161,9 @@ export function AutoLendManage({ kind, lending, collateral, unlent, chain, own, 
         const after = await putItBack();
         throw new StatedRefusal({ code: 'ManageStopped', reason: `${reason} ${after.sentence}`, reopensAt: null, remedy: null });
       };
-      let dry: Awaited<ReturnType<typeof askThrough>>;
+      let dry: Awaited<ReturnType<typeof askAfter>>;
       try {
-        dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, ...call, account }));
+        dry = await askAfter(own, approvedAt, (c, blockNumber) => c.simulateContract({ address: diamond, ...call, account, blockNumber }));
       } catch (e) {
         return stop(format('flow.unreadable', { reason: refusalFromError(e).reason }));
       }

@@ -77,8 +77,12 @@ async function session(b, opts, label) {
     const terms = p.getByRole('dialog', { name: 'Terms of Service' });
     const form = p.getByTestId('vault-deposit-form');
     await Promise.race([terms.waitFor({ timeout: 30000 }), form.waitFor({ timeout: 30000 })]).catch(() => {});
-    if (await terms.count()) console.log(`----- deposit asks for Terms first (unsigned)\n${await text(terms)}`);
-    else if (await form.count()) {
+    if (await terms.count()) {
+      console.log(`----- deposit asks for Terms first (unsigned)\n${await text(terms)}`);
+      // Decline it, so the dialog does not cover the cards read next.
+      await p.keyboard.press('Escape');
+      await terms.waitFor({ state: 'hidden', timeout: 10000 }).catch(() => {});
+    } else if (await form.count()) {
       await form.getByTestId('vault-deposit-asset').selectOption({ index: 1 });
       const amount = form.getByTestId('vault-deposit-amount');
       await amount.waitFor({ timeout: 30000 }).catch(() => {});

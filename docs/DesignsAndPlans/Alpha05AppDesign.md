@@ -173,7 +173,11 @@ only when the platform supplied it. A change of network, deployment,
 wallet, position or asset pair mid-flow clears every answer at once and
 holds signing until the new context has its own. Once a transaction has
 been handed to the wallet there is no silent retry that could leave it
-ambiguous whether the action may still confirm.
+ambiguous whether the action may still confirm. A Confirm that stops
+without opening the wallet always says why on the review: what the re-read
+found, or, when the consent was cleared while it ran (by the reader, or by
+a re-read that found new figures), that the consent was cleared and the
+wallet was not opened. A review never quietly resets.
 
 ### RB-GAS — every write carries the shared gas margin
 
@@ -437,6 +441,19 @@ since a transaction earlier in the same block, or the block's own later
 time, can change it. A replay that goes through says that one of those two
 changed what the call relied on, without claiming which; a replay that
 cannot run says so. The reason never changes the verdict.
+
+The protocol's dry run that follows an approval is asked only of a chain
+source that has reached the block the approval landed in, at that source's
+head, never at whatever latest a lagging or load-balanced node reports: a
+source still behind it would read the allowance as it stood before the
+approval and refuse a step the approval already allows, and the flow would
+then put a good approval back. A source that is behind is passed over for
+the next; when every source is behind, the flow waits briefly and asks
+again, and a check that still cannot run is stated as unread, never as a
+refusal. Each source gets a bounded time to answer one question (fifteen
+seconds); one that has not answered by then is passed over like an outage,
+so a wallet provider that never answers cannot hold a review's re-check
+for minutes.
 
 A token amount is written for reading: digit groups, and a fraction
 shortened to four places once there is a whole part, or to four significant

@@ -773,6 +773,7 @@ export const copy = {
     checking: B('Checking the latest state before your wallet opens…'),
     changed: A('{{what}} changed since this review opened. The review shows the new state: check it, then confirm again.'),
     unreadable: A('This could not be checked just now ({{reason}}), so your wallet was not opened. Try again in a moment.'),
+    consentCleared: A('Your consent was cleared while the review was checked again, so your wallet was not opened. If the figures changed, read them again, then give your consent and confirm.'),
     // #3412 — the protocol's `DeadlinePassed`: a price-exposed transaction
     // carries a deadline thirty minutes ahead of the chain's clock, and one
     // that lands later is refused whole.
