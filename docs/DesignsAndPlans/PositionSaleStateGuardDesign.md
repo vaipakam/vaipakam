@@ -332,7 +332,11 @@ amounts.
   long wait when the caller holds the token.
 - **F. An offer's token.** A change to the offer, a match drawing on it and
   its end each mark, with the long wait when the caller holds the token. An
-  offer's token becoming a loan's token marks the loan.
+  offer's token becoming a loan's token marks the loan. The marking for a
+  match runs in one place: a self-call host on the position token facet marks
+  both offers' tokens in one call with one refresh. The match core is compiled
+  into four facets, and writing the two calls into each put two of them over
+  the size limit.
 - **Refresh only:** a status change, an increase in collateral, a principal
   reduction delivered in full.
 
@@ -369,7 +373,8 @@ class only for the token's current holder or that holder's own vault, never
 for its own owner, which is the owner payout.
 
 **Raw transfers outside the policy.** The static check of section 3.8 lists
-each with its reason: messenger fees, refunds of a caller's own unspent fee,
+each with its reason (29 sites as built): cross-chain messenger fees, which
+pay a protocol contract and never a user, refunds of a caller's own unspent fee,
 the broadcast-budget withdrawal, vault deposits and credits, consolidation
 legs into a vault, reward custody, the keeper reward, the repatriation return
 and the recycle release.
