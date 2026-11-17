@@ -99,7 +99,8 @@ Everything else about a sale is the existing rule applied to the part sold:
 - **Rewards:** the seller's reward entry continues at the smaller share from the sale day and the buyer's starts at its share (#3670). The loan side's shared ceiling is unchanged.
 - **Fee-discount standing** is recorded for the new token as for any new holder.
 - **The holder epoch** of the lender side advances, so every standing permission on the side lapses.
-- **Sanctions, protected accounts, the cooldown:** each rule that guards a sale today guards a part sale, per token.
+- **Sanctions, protected accounts, the transfer wait:** each rule that guards a sale today guards a part sale, per token.
+- **State number (#3710, added 2026-11-17).** A part sale lowers what the seller's token stands for, so that token's state number goes up and any price agreed for it earlier no longer matches; the new token starts its own number. Approval is per token (#3721), so the new token carries none.
 
 ## 6. Lender choices on a divided loan
 
