@@ -33,7 +33,9 @@ Examples on 10,000 units of principal with no hold discount: a 30-day loan's fee
 
 Order of the above-floor part: the new user's cut (never collected), the matcher's share, the integrator's share, the inviter's share, the rest to the reserve.
 
-**The cut and the three shares together can never exceed a set part of A** (default 60%, a bounded setting, 40 to 70%). When they would, the inviter's share is reduced to fit, and after it the integrator's. The new user's cut is never reduced, so the preview a borrower sees is what they pay. The reserve therefore always receives at least the remaining part of A on every loan, whatever is named on it.
+This design relies on the fee split of #3649 and #3682, in which the matcher's share, like the integrator's, is taken from the above-floor part. On the code before that build the matcher's share is a rate of the whole fee and may be set as high as half of it; a referral must not be built on that base.
+
+**The cut and the three shares together can never exceed a set part of A** (default 60%, a bounded setting, 40 to 70%). The fee host applies it as one rule on every loan: when the sum would exceed it, the inviter's share is reduced first, then the integrator's, then the matcher's, until it fits. It always can fit, because the new user's cut alone (at most 30% of A) is below the lowest ceiling (40%). The new user's cut is never reduced, so the preview a borrower sees is what they pay. The reserve therefore receives at least the remaining part of A on every loan, whatever is named on it and whatever the three rates are set to.
 
 ## 3. Binding the inviter
 
@@ -66,9 +68,10 @@ A person can invite their own second wallet. No on-chain rule can tell two walle
 
 ## 6. What a user is told
 
-- In the invite flow: "You were invited by <address>. For your first 10 loans or 180 days, whichever comes first, your loan fee is lower, and the person who invited you receives part of the platform's fee. You pay nothing extra."
-- On each affected loan's review: the fee, the amount taken off, and loans and days left.
-- To the inviter: "You receive part of the platform's fee on loans your invited users open, for their first 10 loans or 180 days, whichever comes first. It is paid to your wallet when each loan opens."
+- In the invite flow, with the figures read from the chain at that moment: "You were invited by <address>. For your first 10 loans or 180 days, whichever comes first, the platform takes <cut rate> off the part of your loan fee above its base fee, and the person who invited you receives part of the platform's fee. On a <example loan> today that is <amount> off. You pay nothing extra. These rates are set by the platform and can change, including to zero; a loan whose fee is only the base fee gets nothing off. This choice cannot be changed later."
+- When either rate is zero at that moment, the flow says so in place of the benefit ("Nothing is taken off at present") and still asks before binding.
+- On each affected loan's review: the fee, the amount taken off for this loan (which may be zero), and loans and days left.
+- To the inviter: "You may receive part of the platform's fee on loans your invited users open, for their first 10 loans or 180 days, whichever comes first, paid to your wallet when each loan opens. The amount depends on each loan's fee and on the platform's current rates. It can be reduced or zero, for example when a loan's fee is only the base fee or when other shares on the loan reach the limit."
 
 The inviter's share is a referral share of the platform's fee for bringing a user. It is never described as earnings, income, yield or a share of revenue, it is not tied to holding anything, and no rate of return is stated. User-facing copy follows the rewards wording checklist before it ships.
 
@@ -90,7 +93,7 @@ The accept facets are close to the size limit: everything is computed in the fee
 1. A bound wallet's loans one to ten pay the cut and the inviter receives the share; the eleventh pays the whole fee and the inviter nothing. The same at 180 days and one second.
 2. Each loan kind counts once: accept, match, intent fill, instant borrow, refinance, roll. An extension counts nothing and pays nothing.
 3. The amounts: default rates; a hold discount; a fee at the floor; a rate of zero; the borrower's discount ceiling.
-4. The ceiling of 2.1 with a matcher, with an integrator, with both: the cut is unchanged, the inviter's share is reduced first, and the reserve receives at least its part. The treasury's floor is identical with and without a referral.
+4. The ceiling of 2.1 with a matcher, with an integrator, with both, and with each rate at its highest setting: the cut is unchanged, the inviter's share is reduced first, then the integrator's, then the matcher's, and the reserve receives at least its part in every case. The treasury's floor is identical with and without a referral.
 5. Binding: once only; refused after the wallet's first loan as borrower; refused for itself and for an integrator's addresses; no one else can bind for a wallet.
 6. A flagged inviter, a token that refuses the transfer, a short delivery: the loan opens, the reserve receives the share, the event says so, the new user's cut is unchanged.
 7. Nothing is held: after every case the platform's balance of the lending asset is unchanged by the referral.
@@ -116,4 +119,4 @@ The design above: a matching 20% of the above-floor part to each side, for the f
 
 - Whether a mark for "has opened a loan as borrower" already exists per wallet or must be added.
 - The exact place in the fee host where the isolated wallet payment sits beside the integrator's vault delivery, so both redirect by one rule.
-- Whether the ceiling's default of 60% leaves the matcher's share whole in every case, with figures.
+- At which settings of the three rates the ceiling starts to reduce the matcher's share, with figures, so the matcher's bounds can be set to make that rare.
