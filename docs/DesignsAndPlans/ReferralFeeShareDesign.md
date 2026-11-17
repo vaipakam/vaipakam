@@ -58,7 +58,7 @@ A view returns, for a wallet: its inviter, the loans left and the end time. Ever
 - **The payment can never fail the loan.** It is one isolated step that is allowed to fail alone. If it fails for any reason, or delivers less than was sent, that step is undone and the whole share goes to the reserve in the same transaction, with an event saying so.
 - If the inviter is flagged by the sanctions list at that moment, the share goes to the reserve. The new user's cut is unaffected.
 - Nothing is ever held for an inviter in the platform. There is no balance and no claim step.
-- One event per loan states the loan, the new user, the inviter, the asset, the cut, the share and whether the share was redirected. A second event records a binding with its end time.
+- One event per loan states the loan, the new user, the inviter, the asset, the cut, the share, which of the wallet's counted loans this is, and where the share went: to the inviter's wallet, or to the reserve with the reason (the inviter was flagged, the payment failed, or the payment delivered short). A second event records a binding with the new user, the inviter, the end time and the loan limit fixed for that wallet. The inviter's page (section 6.1) shows nothing these two events do not state.
 
 ## 5. What a self-invitation costs, stated plainly
 
@@ -90,7 +90,7 @@ An inviter sees what their invitations have paid, on a page in the app that need
 
 Rules:
 
-- The page is built from the binding event and the per-loan share event, read through the indexer. It adds no contract state: a list of invited wallets per inviter kept on-chain would grow without bound. The page states the block its figures are current to, and says so when the indexer is behind.
+- The page is built from the binding event and the per-loan share event, read through the indexer. Each wallet's loan limit and end time come from its binding event, and each redirect's reason from the share event (section 4), so the page never infers a limit from the current setting or a reason from anything else. It adds no contract state: a list of invited wallets per inviter kept on-chain would grow without bound. The page states the block its figures are current to, and says so when the indexer is behind.
 - It counts on-chain bindings only. Link opens and visits are not tracked.
 - It shows nothing about an invited user's loans beyond what the share event states.
 - Amounts are "received". The page never calls them earnings, income, yield or a share of revenue, states no rate of return, and shows no forecast of future amounts. It repeats the inviter's sentence above, including that an amount can be reduced or zero.
@@ -105,7 +105,7 @@ Rules:
 | Treasury fee host | The cut and the inviter's share in the split, the ceiling of 2.1, the direct payment with its redirect. |
 | Settings | The two rates, the count (default 50, bounded 1 to 100), the period (default 180 days) and the ceiling, each bounded, behind the usual delay. |
 | Views and previews | The wallet's referral status; the cut as an amount in every borrow preview; the public counters. |
-| Events | The binding; the per-loan share event, each with the inviter and the new user as indexed fields so the inviter's page can be read by inviter; the integrator id and the warnings mask of #3719 are unaffected. |
+| Events | The binding, with the end time and the loan limit fixed for the wallet; the per-loan share event, with the loan's number in the wallet's count and the reason for a redirect; each with the inviter and the new user as indexed fields so the inviter's page can be read by inviter; the integrator id and the warnings mask of #3719 are unaffected. |
 
 The accept facets are close to the size limit: everything is computed in the fee host, and the binding sits in its own small facet with the status view.
 
@@ -116,7 +116,7 @@ The accept facets are close to the size limit: everything is computed in the fee
 3. The amounts: default rates; a hold discount; a fee at the floor; a rate of zero; both rates at their highest setting. The discount ceiling: a borrower with a hold discount near the ceiling gets only the allowance left, one at the ceiling gets no cut, and the inviter's share is unchanged in both.
 4. The ceiling of 2.1 with a matcher, with an integrator, with both, and with each rate at its highest setting: the cut is unchanged, the inviter's share is reduced first, then the integrator's, then the matcher's, and the reserve receives at least its part in every case. The treasury's floor is identical with and without a referral.
 5. Binding: once only; refused after the wallet's first loan as borrower; refused for itself and for an integrator's addresses; no one else can bind for a wallet.
-6. A flagged inviter, a token that refuses the transfer, a short delivery: the loan opens, the reserve receives the share, the event says so, the new user's cut is unchanged.
+6. A flagged inviter, a token that refuses the transfer, a short delivery: the loan opens, the reserve receives the share, the event names which of the three it was, the new user's cut is unchanged. The binding event carries the limit and end time the record stores, and after the count setting changes an earlier wallet's events still state its own limit.
 7. Nothing is held: after every case the platform's balance of the lending asset is unchanged by the referral.
 8. A rate change does not affect a loan already open. Previews agree with the transactions.
 
