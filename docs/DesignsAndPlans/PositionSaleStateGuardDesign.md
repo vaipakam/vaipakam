@@ -21,7 +21,8 @@ These were checked in the code on 2026-11-17 and are not changed here.
   movement of value out of a loan's positions (a collateral withdrawal, a
   payout to a holder, a terms change) stamps the loan. Neither side's token
   can move in that block, or until a cooldown has passed. The cooldown is 5
-  seconds by default, governed between 1 second and 10 minutes.
+  seconds by default, governed between 1 second and 10 minutes, and is one
+  figure for every kind of value-out.
 - **The token's metadata reports the live collateral amount.** It is computed
   on every read from the loan.
 - **A protected vault's delay covers this payout.** Every payout to an owner's
@@ -60,8 +61,7 @@ reset. It starts at 0 and goes up by one:
 
 Because the number belongs to the token and only rises, it cannot repeat
 across that change of kind: a price agreed for an offer's token never matches
-the loan position the same token later stands for. The cooldown stamp stays
-per loan and per offer as it is today.
+the loan position the same token later stands for. The time the token may next move is kept with it (section 3.5).
 
 The number goes up only when value leaves. Collateral added or a debt reduced
 by the borrower makes a position worth more to its buyer, so it does not
@@ -159,20 +159,36 @@ The builder lists these sites from the fields the metadata renderer reads, so
 the list follows the renderer and is not kept by hand. A test asserts that
 each renderer input has an emitting site.
 
-### 3.5 The cooldown default becomes 60 seconds
+### 3.5 Two waits: 15 minutes after the holder's own move, 60 seconds otherwise
 
-The cooldown's job is the race around one transaction, and 5 seconds does
-that. A minute also gives a marketplace time to act on the refresh signal
-before the token can change hands. The bounds stay 1 second to 10 minutes.
+The wait is kept per token, in the same word as its state number, as the time
+the token may next move. Two lengths apply:
 
-It is not set to the 10 minute maximum, because the cooldown also holds an
-honest holder's token after every routine payout, and because section 3.1,
-not the wait, is what protects a late fill.
+- **The holder's own move: 15 minutes** (governed, 1 minute to 1 hour). When
+  the holder of a token makes a call that takes value out of that position
+  for themselves (a collateral withdrawal, a claim, a change to their own
+  offer), that token cannot move for 15 minutes. This is the case with a
+  motive to sell at a stale price, and 15 minutes gives marketplaces, wallets
+  and explorers time to act on the refresh signal before anyone can buy.
+- **Any other value-out: 60 seconds** (governed, 1 second to 10 minutes). A
+  repayment, a liquidation or a keeper step also changes the position, but
+  the holder did not choose its timing. The short wait covers the race around
+  the transaction. It is kept short so that the other side of a loan cannot
+  hold a token unsellable by making small payments.
 
-Builder to confirm before changing the default: the in-platform sale and
-handover routes replace a position's token and do not transfer it, so they do
-not wait on the cooldown. If any protocol route does transfer a token, it must
-be listed in the build notes with the effect of the longer wait.
+A new wait never shortens one already running. The same-block rule stays.
+
+The owner asked (2026-11-17) whether the money should wait 15 minutes instead,
+collected by a claim. The window is the right one; it is applied to the token
+because that gives a buyer the same protection (nobody can buy during the 15
+minutes in which a stale figure may still be shown) while an honest borrower
+receives surplus collateral at once and in one transaction. Section 5 records
+the comparison.
+
+Builder to confirm: the in-platform sale and handover routes replace a
+position's token and do not transfer it, so they do not wait. If any protocol
+route does transfer a token, it is listed in the build notes with the effect
+of the wait.
 
 ### 3.6 A sale guard for orders, built when the app offers position sales
 
@@ -228,15 +244,23 @@ contracts and the keeper) are listed in the check with their reasons.
 
 ## 5. Alternatives considered
 
-1. **Lengthen the cooldown only.** Simple, but a standing bid outlasts it, and
+1. **Hold the money for 15 minutes and pay it by a claim that follows the
+   token.** It has one real merit: the token stays sellable throughout and a
+   buyer in the window receives the parked amount. Against it: every payout
+   on every route becomes two steps, or needs a keeper pass to deliver it;
+   amounts sit parked for each loan; and a protected vault's own delay stacks
+   on top. Holding the token for the same 15 minutes protects the same buyer
+   and costs only a holder who wants to sell within 15 minutes of taking
+   value out.
+2. **Lengthen the cooldown only.** Simple, but a standing bid outlasts it, and
    a long wait holds honest holders' tokens after every payout.
-2. **Delay the withdrawal.** Section 3.7.
-3. **Route withdrawals through claims.** Sections 3.3 and 3.7.
-4. **A holder-set "for sale" lock that blocks value-out while set.** A buyer
+3. **Delay the withdrawal.** Section 3.7.
+4. **Route withdrawals through claims.** Sections 3.3 and 3.7.
+5. **A holder-set "for sale" lock that blocks value-out while set.** A buyer
    would still have to check the lock at the fill, which needs the same order
    guard as section 3.6, and an honest seller gains a step. The state number
    gives the buyer the same assurance with nothing for the seller to do.
-5. **Block withdrawals while a listing exists.** The platform cannot see
+6. **Block withdrawals while a listing exists.** The platform cannot see
    orders signed on other marketplaces.
 
 ## 6. Recommendation
