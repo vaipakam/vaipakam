@@ -20,6 +20,7 @@ import {InteractionRewardsFacet} from "../../src/facets/InteractionRewardsFacet.
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {VPFITokenFacet} from "../../src/facets/VPFITokenFacet.sol";
 import {IVaipakamErrors} from "../../src/interfaces/IVaipakamErrors.sol";
+import {RiskAccessFacet} from "../../src/facets/RiskAccessFacet.sol";
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
 import {LibAccessControl} from "../../src/libraries/LibAccessControl.sol";
 import {MockSanctionsList} from "../mocks/MockSanctionsList.sol";
@@ -536,6 +537,10 @@ contract LaunchTest is Test {
         _addAdapter(address(new LaunchAdapterStub()));
         VPFITokenFacet(diamond).setVPFIToken(VPFI);
         LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.Weth, weth);
+        // #3717 — the deploy sets the wait from the chain it runs on; this
+        // fixture deploys on the local chain (no wait) and then moves to the
+        // chain under test, so it sets the mainnet figure itself.
+        RiskAccessFacet(diamond).setRiskAccessUnlockCooldown(48 hours);
         vm.stopPrank();
     }
 
@@ -795,6 +800,7 @@ contract LaunchTest is Test {
         LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.EthNumeraireFeed, address(new LaunchFeedStub()));
         LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.Weth, weth);
         _addAdapter(adapter);
+        RiskAccessFacet(diamond).setRiskAccessUnlockCooldown(48 hours);
         vm.stopPrank();
     }
 
@@ -937,6 +943,7 @@ contract LaunchTest is Test {
         _addAdapter(adapter);
         VPFITokenFacet(diamond).setVPFIToken(VPFI);
         LibTestPriceGuard.setAddress(diamond, PriceGuardState.Kind.Weth, weth);
+        RiskAccessFacet(diamond).setRiskAccessUnlockCooldown(48 hours); // #3717
         vm.stopPrank();
         address registry = _registryWithLane();
         VaipakamTimelock tl = _realTimelock();
@@ -1847,6 +1854,27 @@ contract LaunchTest is Test {
             c[9].detail,
             "the reward role is Detached, but the launch declares Canonical: run the reward configure step (ConfigureRewardReporter)"
         );
+    }
+
+    /// @dev #3717 — a mainnet launch refuses a zero risk-access wait; a
+    ///      testnet may launch with none, and the detail states the figure.
+    function test_RiskAccessWait_ZeroIsNotMetOnAMainnetOnly() public {
+        _configure();
+        vm.prank(admin);
+        RiskAccessFacet(diamond).setRiskAccessUnlockCooldown(0); // on the local chain
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
+        assertEq(c[12].label, "risk access wait set");
+        assertTrue(c[12].checkable && c[12].met, "a testnet may run no wait");
+        vm.chainId(8453);
+        c = _gate().checks(diamond, _d(address(0)));
+        assertTrue(c[12].checkable);
+        assertFalse(c[12].met);
+        assertEq(c[12].detail, "getRiskAccessUnlockCooldown() is 0 seconds: a raised access level would be usable at once on a mainnet");
+        vm.prank(admin);
+        RiskAccessFacet(diamond).setRiskAccessUnlockCooldown(48 hours);
+        c = _gate().checks(diamond, _d(address(0)));
+        assertTrue(c[12].met);
+        assertEq(c[12].detail, "getRiskAccessUnlockCooldown() is 172800 seconds");
     }
 
     /// @dev #3360 part B — a Diamond that runs no reward days (Unconfigured,

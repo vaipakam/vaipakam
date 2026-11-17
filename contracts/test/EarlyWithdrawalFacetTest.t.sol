@@ -1676,6 +1676,24 @@ contract EarlyWithdrawalFacetTest is Test {
         ServiceCapacityFacet(address(diamond)).capacityChargeInternal(role, keeper);
     }
 
+    /// @dev #3353 keeper scope (G9) — a keeper may list the lender's loan at
+    ///      its own rate or below, never above: an above-rate listing makes the
+    ///      seller pay the difference out of the sale. The holder still may.
+    function test_keeperListing_AboveTheLoanRate_IsRefused_HolderMayChooseIt() public {
+        address keeper = makeAddr("ew-keeper-rate");
+        vm.startPrank(lender);
+        ProfileFacet(address(diamond)).setKeeperAccess(true);
+        ProfileFacet(address(diamond)).approveKeeper(keeper, LibVaipakam.KEEPER_ACTION_INIT_EARLY_WITHDRAW);
+        ProfileFacet(address(diamond)).setLoanKeeperEnabled(activeLoanId, keeper, true);
+        vm.stopPrank();
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(EarlyWithdrawalFacet.KeeperSaleRateAbove.selector, 501, 500));
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 501, true, 7 days, 0, type(uint256).max, type(uint64).max);
+        // The holder may choose an above-rate listing (it does not revert).
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 501, true, 7 days, 0, type(uint256).max, type(uint64).max);
+    }
+
     function test_ownerActing_IsNeverCapacityGated() public {
         uint8 role = uint8(LibVaipakam.ServiceCapacityRole.Keeper);
         ServiceCapacityFacet(address(diamond)).setCapacityCurve(role, 1e18, 1e16, 100e18, 1e18);

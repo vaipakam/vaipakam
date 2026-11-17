@@ -110,6 +110,10 @@ contract EarlyWithdrawalFacet is
     ///         its stored/economic identity unified, so it can't be safely sold
     ///         until the held VPFI is resolved. See LenderSaleVehicleRedesign.md D1.
     error SalePositionNotConsolidatable();
+    /// @notice A keeper listed a lender's loan above the loan's own rate
+    ///         (#3353 keeper scope, G9). The seller pays any above-rate
+    ///         shortfall out of the sale, so only the holder may choose one.
+    error KeeperSaleRateAbove(uint256 saleRateBps, uint256 loanRateBps);
     /// @notice Lender-sale lifecycle (design item 1 + borrower action window) —
     ///         the seller-chosen listing window is outside the permitted
     ///         [MIN_SALE_LISTING_SECONDS, MAX_SALE_LISTING_SECONDS] range, or,
@@ -270,6 +274,13 @@ contract EarlyWithdrawalFacet is
         // #3339 — a seller under the holder lock lists at the loan's own rate
         // or below (the completion re-checks the shortfall itself).
         LibProtectedAccount.requireLockedSaleRate(seller, interestRateBps, loan.interestRateBps);
+        // #3353 keeper scope (G9) — a listing above the loan's own rate makes
+        // the seller pay the difference to the buyer out of the sale, so that
+        // price is the holder's to choose, never a keeper's: a keeper-started
+        // listing is at the loan's own rate or below.
+        if (msg.sender != seller && interestRateBps > loan.interestRateBps) {
+            revert KeeperSaleRateAbove(interestRateBps, loan.interestRateBps);
+        }
 
         // #951 (redesign D1) — consolidate the lender position to its CURRENT
         // holder (the seller) BEFORE listing, re-anchoring both `loan.lender` and

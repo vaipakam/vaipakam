@@ -1286,6 +1286,12 @@ caller — and no admin or migration path stamps an existing loan. Existing
 unstamped loans are resolved by **waiting for close**, or a voluntary close and
 re-open. A true backfill needs a migration card that does not yet exist.
 
+**Risk access wait (#3717).** The launch check "risk access wait set" refuses
+a mainnet whose `getRiskAccessUnlockCooldown()` is zero. `DeployDiamond` sets
+48 hours on a mainnet (`RISK_ACCESS_UNLOCK_COOLDOWN_SEC` may only raise it),
+ten minutes on a public testnet and none on a local chain; the setter refuses
+a mainnet value under one hour.
+
 **Mainnet arms before launch (#3360, owner decision 2026-11-10).** The
 canonical chain's launch check ("the fee-linked reward cap is armed before any
 loan") refuses the first unpause until `D*` is set, the reward clock runs, and

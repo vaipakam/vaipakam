@@ -666,7 +666,10 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         uint64 expiryCap = lenderCaps.maxNewExpiry < borrowerCaps.maxNewExpiry
             ? lenderCaps.maxNewExpiry
             : borrowerCaps.maxNewExpiry;
-        if (expiryCap != 0 && newEndTimeUint > uint256(expiryCap)) {
+        // Each side states an explicit latest date: an enabled cap always
+        // carries one (the setters refuse a past or zero date), and a zero
+        // here is a cap never set, never "no limit" (#3353 keeper scope).
+        if (expiryCap == 0 || newEndTimeUint > uint256(expiryCap)) {
             revert AutoExtendExpiryExceedsCap();
         }
         // #3618 follow-up — an intent's lend-until time bounds an extension

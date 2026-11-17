@@ -642,6 +642,56 @@ contract RiskAccessFacetTest is SetupTest {
         );
     }
 
+    /// @dev #3717 — a mainnet never runs the wait below one hour; a testnet
+    ///      may run any value up to the ceiling, zero included.
+    function test_cooldown_mainnetFloor() public {
+        vm.chainId(8453);
+        vm.expectRevert(
+            abi.encodeWithSelector(RiskAccessFacet.RiskCooldownTooShort.selector, uint64(0), uint64(1 hours))
+        );
+        RiskAccessFacet(address(diamond)).setRiskAccessUnlockCooldown(0);
+        vm.expectRevert(
+            abi.encodeWithSelector(RiskAccessFacet.RiskCooldownTooShort.selector, uint64(59 minutes), uint64(1 hours))
+        );
+        RiskAccessFacet(address(diamond)).setRiskAccessUnlockCooldown(uint64(59 minutes));
+        RiskAccessFacet(address(diamond)).setRiskAccessUnlockCooldown(uint64(48 hours));
+        assertEq(RiskAccessFacet(address(diamond)).getRiskAccessUnlockCooldown(), 48 hours);
+        vm.chainId(84532);
+        RiskAccessFacet(address(diamond)).setRiskAccessUnlockCooldown(0);
+        assertEq(RiskAccessFacet(address(diamond)).getRiskAccessUnlockCooldown(), 0);
+    }
+
+    /// @dev #3717 / #3719 — the alert reads its subject from the events: a
+    ///      raise names the level before it and when the new one takes effect;
+    ///      a lowering takes effect at once; a pair grant names both assets
+    ///      and when it may first be used.
+    function test_events_nameTheirSubject() public {
+        RiskAccessFacet(address(diamond)).setRiskAccessUnlockCooldown(uint64(48 hours));
+        vm.expectEmit(true, false, false, true, address(diamond));
+        emit RiskAccessFacet.VaultRiskTierSet(lender, ILLIQUID, BLUECHIP, uint64(block.timestamp + 48 hours));
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
+
+        vm.expectEmit(true, false, false, true, address(diamond));
+        emit RiskAccessFacet.VaultRiskTierSet(lender, BLUECHIP, BLUECHIP, uint64(block.timestamp));
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(BLUECHIP);
+
+        address lendA = makeAddr("lend-asset");
+        address collA = makeAddr("coll-asset");
+        LibRiskAccess.PairId memory p = _erc20Pair(lendA, collA);
+        bytes32 pk = LibRiskAccess.pairKey(p);
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit RiskAccessFacet.IlliquidPairConsentSet(lender, pk, true, lendA, collA, uint64(block.timestamp + 48 hours));
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setIlliquidPairConsent(p, true);
+
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit RiskAccessFacet.IlliquidPairConsentSet(lender, pk, false, lendA, collA, 0);
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setIlliquidPairConsent(p, false);
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // F2 — re-submitting a LOCKED tier RE-ARMS the cooldown
     // ════════════════════════════════════════════════════════════════════════

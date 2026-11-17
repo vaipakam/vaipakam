@@ -741,6 +741,24 @@
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      },
+      {
+        "name": "lendAsset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "collAsset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "usableFrom",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
       }
     ],
     "anonymous": false
@@ -862,6 +880,18 @@
         "type": "uint8",
         "indexed": false,
         "internalType": "uint8"
+      },
+      {
+        "name": "previousLevel",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "usableFrom",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
       }
     ],
     "anonymous": false
@@ -940,6 +970,22 @@
       },
       {
         "name": "maxAllowed",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RiskCooldownTooShort",
+    "inputs": [
+      {
+        "name": "requested",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "minAllowed",
         "type": "uint64",
         "internalType": "uint64"
       }

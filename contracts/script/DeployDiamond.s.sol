@@ -48,6 +48,7 @@ import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
+import {TestnetChains} from "../src/compliance/TestnetChains.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {MulticallFacet} from "../src/facets/MulticallFacet.sol";
 import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
@@ -1291,6 +1292,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
         ConfigFacet(diamond).setPartialFillEnabled(true);
         console.log("Matcher enabled (partial-fill); ranged offers are always on.");
 
+        // 5g. #3717 — the risk-access wait: how long after a wallet raises its
+        //     own asset access (or consents to an illiquid pair) the first
+        //     deal may use it. The storage default is zero, which would let a
+        //     website walk a new user through "raise access, then deal" in
+        //     one sitting, so the deploy always sets it.
+        _setRiskAccessWait();
+
         // ── Step 6: Handover to admin (only when admin != deployer) ─────
         // Phase-1 testnet pattern: deployer EOA signs the deploy but the
         // long-lived privileged EOA is a separate admin address. After the
@@ -1646,6 +1654,29 @@ contract DeployDiamond is Script, ArtifactRootBase {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: selectors
         });
+    }
+
+    /// @dev #3717 — the risk-access wait, in seconds. A mainnet (any chain
+    ///      `TestnetChains` does not name) gets 48 hours, and
+    ///      `RISK_ACCESS_UNLOCK_COOLDOWN_SEC` may only raise it there. A public
+    ///      testnet gets 10 minutes, so a tester waits briefly and the flow is
+    ///      still the real one; a local chain (31337) gets none, so a scripted
+    ///      raise-then-deal runs in one go. Either may be overridden by the
+    ///      variable. The setter enforces its own bounds (at most 30 days, at
+    ///      least one hour on a mainnet), and the launch check refuses a
+    ///      mainnet whose wait is zero.
+    function _setRiskAccessWait() internal {
+        uint64 wait;
+        if (!TestnetChains.isTestnet(block.chainid)) {
+            wait = uint64(vm.envOr("RISK_ACCESS_UNLOCK_COOLDOWN_SEC", uint256(48 hours)));
+            require(wait >= 48 hours, "DeployDiamond: a mainnet's risk access wait is at least 48 hours (#3717)");
+        } else {
+            wait = uint64(
+                vm.envOr("RISK_ACCESS_UNLOCK_COOLDOWN_SEC", block.chainid == 31337 ? uint256(0) : uint256(10 minutes))
+            );
+        }
+        RiskAccessFacet(diamond).setRiskAccessUnlockCooldown(wait);
+        console.log("Risk access wait (seconds):", uint256(wait));
     }
 
     /// @dev #2752 — one empty `diamondCut` whose initializer,

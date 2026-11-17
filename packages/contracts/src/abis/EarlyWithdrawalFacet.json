@@ -1806,6 +1806,22 @@
   },
   {
     "type": "error",
+    "name": "KeeperSaleRateAbove",
+    "inputs": [
+      {
+        "name": "saleRateBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "loanRateBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "KeeperWhitelistFull",
     "inputs": []
   },
