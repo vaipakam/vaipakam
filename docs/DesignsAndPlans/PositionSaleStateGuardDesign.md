@@ -110,7 +110,29 @@ Two proofs ship with it:
   loan's state number went up in the same call. This is the check that does
   not depend on anyone listing the routes correctly.
 
-### 3.3 A refresh signal for marketplaces
+### 3.3 The payee of a live-loan payout is read from the token
+
+A collateral withdrawal checks that the caller holds the borrower position
+token, and then pays by one of three routes chosen in the withdrawal's own
+code: the caller's wallet when the caller is also the original borrower, an
+allowlisted address for a retired protected account, the holder's vault
+otherwise. The check and the payment are two steps, and the first route names
+the original borrower as payee.
+
+The outflow policy gains one payout for this: **to the holder of a named
+position token, at their wallet**. The policy reads the holder from the token
+itself and pays that holder under the same rules as any owner payout (the
+protected-mode delay, the lock, the allowlisted address of a retired
+protected account). The calling route passes the loan and the token, never a
+payee. The withdrawal uses it for every case, and its three-way choice is
+deleted. A route can then no more pay the wrong party than it can skip the
+mark.
+
+This gives what a claim step would give, that only the token's holder can
+receive a loan's collateral, in one transaction and with nothing parked in
+between.
+
+### 3.4 A refresh signal for marketplaces
 
 The position token contract (the standalone core, not the Diamond) emits the
 standard metadata-update event, and reports the matching interface id. The
@@ -128,7 +150,7 @@ The builder lists these sites from the fields the metadata renderer reads, so
 the list follows the renderer and is not kept by hand. A test asserts that
 each renderer input has an emitting site.
 
-### 3.4 The cooldown default becomes 60 seconds
+### 3.5 The cooldown default becomes 60 seconds
 
 The cooldown's job is the race around one transaction, and 5 seconds does
 that. A minute also gives a marketplace time to act on the refresh signal
@@ -143,7 +165,7 @@ handover routes replace a position's token and do not transfer it, so they do
 not wait on the cooldown. If any protocol route does transfer a token, it must
 be listed in the build notes with the effect of the longer wait.
 
-### 3.5 A sale guard for orders, built when the app offers position sales
+### 3.6 A sale guard for orders, built when the app offers position sales
 
 A small standalone contract with no owner, no settings and no storage acts as
 the order restriction for the order protocol the collateral listings already
@@ -157,10 +179,10 @@ fill of a listing (the taker commits the number).
 
 It is the second step of this card. It needs no further contract change after
 step one, since it only reads the view, and it is worth building only when
-the app creates position orders. Until then, sections 3.1 to 3.4 ship and the
+the app creates position orders. Until then, sections 3.1 to 3.5 ship and the
 app shows the state number.
 
-### 3.6 What is deliberately not done
+### 3.7 What is deliberately not done
 
 - **No delay on the withdrawal itself.** It would make every honest borrower
   wait for their own surplus collateral, and it would not help a standing bid,
@@ -168,12 +190,13 @@ app shows the state number.
   the sale.
 - **No claim step for a live loan.** Claims exist for amounts created when a
   loan ends, collected later by whoever then holds the position. A live
-  holder is checked at the call. A claim would add a transaction and no
-  protection.
+  holder is checked at the call, and section 3.3 makes the payee follow the
+  token. A claim would add a transaction, and a seller could collect it just
+  before selling, so it would need the same wait and state number anyway.
 - **No delay on moves from a protected vault into protocol positions.** That
   is the Ready-balance decision of 2026-11-08 and is unchanged.
 
-### 3.7 The protected-payout rule gets a guard
+### 3.8 The protected-payout rule gets a guard
 
 The rule: no route pays the owner wallet of a protected vault except through
 the outflow policy or the credit-if-protected helper. Under #3568 the builder
@@ -189,7 +212,7 @@ contracts and the keeper) are listed in the check with their reasons.
   and says that a buyer should check both before paying.
 - On an outside marketplace, the platform cannot stop a sale at a stale price
   once the cooldown has passed. The app says so wherever it links out to a
-  marketplace listing. Orders made through the app, once section 3.5 exists,
+  marketplace listing. Orders made through the app, once section 3.6 exists,
   carry the guard and are refused if the position changed.
 - After removing collateral or receiving a payout, a holder is told their
   token cannot be transferred for the cooldown, with the time it frees.
@@ -198,18 +221,18 @@ contracts and the keeper) are listed in the check with their reasons.
 
 1. **Lengthen the cooldown only.** Simple, but a standing bid outlasts it, and
    a long wait holds honest holders' tokens after every payout.
-2. **Delay the withdrawal.** Section 3.6.
-3. **Route withdrawals through claims.** Section 3.6.
+2. **Delay the withdrawal.** Section 3.7.
+3. **Route withdrawals through claims.** Sections 3.3 and 3.7.
 4. **A holder-set "for sale" lock that blocks value-out while set.** A buyer
    would still have to check the lock at the fill, which needs the same order
-   guard as section 3.5, and an honest seller gains a step. The state number
+   guard as section 3.6, and an honest seller gains a step. The state number
    gives the buyer the same assurance with nothing for the seller to do.
 5. **Block withdrawals while a listing exists.** The platform cannot see
    orders signed on other marketplaces.
 
 ## 6. Recommendation
 
-Build sections 3.1 to 3.4 and 3.7 now as step one. Build 3.5 when the app
+Build sections 3.1 to 3.5 and 3.8 now as step one. Build 3.6 when the app
 offers position sales. Keep withdrawals immediate and claims for loan-end
 amounts.
 
