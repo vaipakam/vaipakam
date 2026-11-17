@@ -45,6 +45,7 @@ Added with #3720 (owner approved 2026-11-17):
 - **Declared contracts.** An integrator declares the contracts it operates. The share is not paid on a loan whose borrower is the integrator, its payout account or one of those contracts, so an integrator earns nothing by standing between a user and the platform. Its terms forbid holding users' vaults or positions.
 - **Not an inviter.** None of an integrator's addresses may be bound as a referral inviter (`ReferralFeeShareDesign.md` section 3).
 - **What "registered" means.** It earns a share and has accepted the terms. It is never described as approved, verified or safe, on-chain or in copy.
+- **A display name on-chain (settled 2026-11-17).** Each entry carries a short name, set and changed only by the same delayed step as the entry, with an event stating the old and the new name. A name is 1 to 32 printable ASCII characters, and no two entries may carry the same name at once, compared without regard to letter case. The integrator cannot change it. The list anyone can check then says who each entry is without the platform's app. A name is not a verification, and a suspended entry keeps its name and shows as suspended.
 
 ## 5. How the integrator is named
 
@@ -78,18 +79,18 @@ Added with #3720 and #3719:
 
 - **A public record per integrator**, kept as counters: loans brought, loans opened with a warning in the loan's warnings mask, and loans defaulted or liquidated within 7 days of opening.
 - **A list anyone can check.** One view returns the platform's contracts on the chain and the registered integrators with their status, so a user or a wallet can check whether a site is registered and whether a contract is the platform's.
-- **The best standing rate in previews.** A borrow preview returns, beside the terms, the best standing rate on the book for the same pair and term where one can be read, so any front end can show that a better offer exists. How that rate is found on-chain within a bounded cost is an open item (section 12).
+- **A better standing offer, checked in previews (settled 2026-11-17).** A borrow preview accepts one standing offer that the caller points to (a front end finds it through the indexer). The platform checks that offer itself: the same lending asset and collateral asset, a term that fits, open amount for the borrower's amount, and that this borrower could take it now under the same refusal checks an acceptance runs. It returns the offer, its rate, the amount it covers and whether it beats the quoted terms. So any front end can show "a better standing offer exists" without trusting the platform's indexer for the figure. The preview speaks only for the offer it checked: it never says an offer is the best on the book, and when no offer is pointed to it answers "not checked", never "none better". Nothing that writes reads it.
 - **The integrator is named in events.** The loan-opened details, offer-created details, offer-modified and intent-set events state the integrator id, so the platform's own alert can name the door the user came through. On a lender's action the id is attribution only and earns no share; section 5 is unchanged.
 
 ## 8. Contract changes
 
 | Where | Change |
 | --- | --- |
-| Integrator list | Address, payout account, rate, status and declared contracts; the default rate and the ceiling. Timelocked adds and changes, immediate removal, suspension by the guardian at once with a delayed restore. Counters per integrator. |
+| Integrator list | Address, display name, payout account, rate, status and declared contracts; the default rate and the ceiling. Timelocked adds and changes, immediate removal, suspension by the guardian at once with a delayed restore. Counters per integrator. |
 | Offer record and creation | An optional integrator on a borrower's offer. |
 | Accept and match entries | An optional integrator on the borrower's direct accept; a fill reads the borrower offer's. |
 | Treasury fee host | The integrator's share in the split of the initiation fee, after the floor, in the order and under the ceiling of section 6. |
-| Views and previews | The integrator's share as an amount for a given loan; the list with status and the platform's contracts; the best standing rate in a borrow preview. |
+| Views and previews | The integrator's share as an amount for a given loan; the list with status and the platform's contracts; the check of one standing offer in a borrow preview. |
 | Signed offers | The integrator is part of what the borrower signs. |
 
 The accept facets are close to the size limit; the share is computed in the fee host, and the accept path only passes the address through.
@@ -123,5 +124,5 @@ Registered integrators, named by the borrower's own action, paid a bounded part 
 ## 12. Open items for the builder to raise, not decide silently
 
 - Settled 2026-11-17: the matcher's share, like the integrator's, is a part of the above-floor amount, and the per-loan ceiling bounds them together with the referral amounts (section 6).
-- Whether the registration should also carry a display name on-chain or leave names to the app's list.
-- How the best standing rate is found for a preview within a bounded cost. The builder brings the options to the design thread before choosing.
+- Settled 2026-11-17: the registration carries a display name on-chain (section 4). Names kept only in the app's list would leave another front end and the platform's alert unable to name an entry, and a name the integrator sets itself invites impersonation.
+- Settled 2026-11-17: a preview checks one standing offer the caller points to (section 7). Not chosen: a sorted index per pair and term, which is exact but slows every write to the book and adds code to facets near the size limit; a stored best rate per pair and term, which goes stale on a cancel or a fill unless rebuilt, which is the index again; a scan of the open list up to a fixed count, which is wrong without saying so once the book is longer than the count.
