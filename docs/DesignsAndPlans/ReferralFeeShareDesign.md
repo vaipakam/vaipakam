@@ -20,10 +20,10 @@ The initiation fee divides in a fixed order: the treasury keeps its floor (0.1% 
 
 Let **A** be the above-floor part of the fee after the borrower's hold discount.
 
-- **The new user's cut** is 20% of A. It is simply not charged.
-- **The inviter's share** is 20% of A, the same amount, paid from what is collected.
+- **The new user's cut** is 20% of A (less where the discount ceiling below binds). It is simply not charged.
+- **The inviter's share** is 20% of A, paid from what is collected.
 - Both rates are bounded settings behind the usual delay (each 0 to 30%). The rates in force when a loan opens apply; nothing is repriced later because nothing is paid later.
-- The borrower's whole discount, hold discount and referral cut together, stays inside the existing ceiling on any party's fee discount.
+- **The existing ceiling on a party's fee discount holds for the two together.** A borrower's hold discount and referral cut can never take more than that ceiling (half) off the full fee. The cut is therefore the lesser of 20% of A and whatever allowance the hold discount has left; a borrower already at the ceiling gets no cut. The inviter's share is not affected by this: it stays 20% of A, subject to 2.1. Previews show the cut after this rule.
 - A fee at or below the floor has no above-floor part, so there is no cut and no share.
 - The added fee an extension pays carries neither.
 
@@ -35,7 +35,7 @@ Order of the above-floor part: the new user's cut (never collected), the matcher
 
 This design relies on the fee split of #3649 and #3682, in which the matcher's share, like the integrator's, is taken from the above-floor part. On the code before that build the matcher's share is a rate of the whole fee and may be set as high as half of it; a referral must not be built on that base.
 
-**The cut and the three shares together can never exceed a set part of A** (default 60%, a bounded setting, 40 to 70%). The fee host applies it as one rule on every loan: when the sum would exceed it, the inviter's share is reduced first, then the integrator's, then the matcher's, until it fits. It always can fit, because the new user's cut alone (at most 30% of A) is below the lowest ceiling (40%). The new user's cut is never reduced, so the preview a borrower sees is what they pay. The reserve therefore receives at least the remaining part of A on every loan, whatever is named on it and whatever the three rates are set to.
+**The cut and the three shares together can never exceed a set part of A** (default 60%, a bounded setting, 40 to 70%). The fee host applies it as one rule on every loan: when the sum would exceed it, the inviter's share is reduced first, then the integrator's, then the matcher's, until it fits. It always can fit, because the new user's cut alone (at most 30% of A) is below the lowest ceiling (40%). The new user's cut is never reduced by this rule, so it does not depend on who else is named on the loan, and the preview a borrower sees is what they pay. The reserve therefore receives at least the remaining part of A on every loan, whatever is named on it and whatever the three rates are set to.
 
 ## 3. Binding the inviter
 
@@ -61,7 +61,7 @@ A view returns, for a wallet: its inviter, the loans left and the end time. Ever
 
 A person can invite their own second wallet. No on-chain rule can tell two wallets of one person apart, and the design does not pretend to.
 
-- It can never be turned into a profit: the cut and the share together are at most 40% of the above-floor part of a fee that person paid.
+- It can never be turned into a profit: the cut and the share together are part of a fee that person paid. At the default rates they are at most 40% of its above-floor part. At the highest rates the settings allow (30% each) they would be 60%, which is the default ceiling of 2.1, so no setting lets them pass the ceiling.
 - It lasts ten loans or 180 days per new wallet. A person who keeps making new wallets keeps a lower fee, at the price of moving their assets each time and of starting each wallet without its history, its hold discount tenure and its raised access (which waits its own delay, #3717).
 - The worst case for the platform is bounded by section 2.1: on every loan the treasury still receives its whole floor and the reserve still receives at least the set part of the above-floor amount. A referral can slow the reserve's funding; it can never take from it or from the treasury.
 - The two rates are settings and can be lowered to zero for new loans. Public counters (total cut, total share, loans counted, share redirected) show what the programme costs.
@@ -92,7 +92,7 @@ The accept facets are close to the size limit: everything is computed in the fee
 
 1. A bound wallet's loans one to ten pay the cut and the inviter receives the share; the eleventh pays the whole fee and the inviter nothing. The same at 180 days and one second.
 2. Each loan kind counts once: accept, match, intent fill, instant borrow, refinance, roll. An extension counts nothing and pays nothing.
-3. The amounts: default rates; a hold discount; a fee at the floor; a rate of zero; the borrower's discount ceiling.
+3. The amounts: default rates; a hold discount; a fee at the floor; a rate of zero; both rates at their highest setting. The discount ceiling: a borrower with a hold discount near the ceiling gets only the allowance left, one at the ceiling gets no cut, and the inviter's share is unchanged in both.
 4. The ceiling of 2.1 with a matcher, with an integrator, with both, and with each rate at its highest setting: the cut is unchanged, the inviter's share is reduced first, then the integrator's, then the matcher's, and the reserve receives at least its part in every case. The treasury's floor is identical with and without a referral.
 5. Binding: once only; refused after the wallet's first loan as borrower; refused for itself and for an integrator's addresses; no one else can bind for a wallet.
 6. A flagged inviter, a token that refuses the transfer, a short delivery: the loan opens, the reserve receives the share, the event says so, the new user's cut is unchanged.
