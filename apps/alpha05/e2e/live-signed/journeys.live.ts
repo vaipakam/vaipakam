@@ -176,6 +176,16 @@ test('a lender sets up Auto-lend and sees it on Positions', async ({ launchWalle
   await setup.getByRole('button', { name: 'Confirm in wallet' }).click();
   await settled(setup);
   await l.page.goto('/positions');
-  await expect(l.page.locator('[data-testid^="autolend-card"]').first()).toBeVisible({ timeout: 180_000 });
+  const card = l.page.locator('[data-testid^="autolend-card"]').first();
+  await expect(card).toBeVisible({ timeout: 180_000 });
   await fitsWidth(l.page);
+  // Stop it again, taking back what is still set aside, so the next run (the
+  // phone after the desktop, or a rerun) finds the pair open to set up.
+  await card.getByTestId('autolend-stop').click();
+  await expect(card.getByTestId('autolend-stop-takeback')).toBeChecked();
+  await card.getByTestId('autolend-manage-review').click();
+  const stop = card.getByTestId('autolend-manage-stop');
+  await expect(stop.locator('.receipt')).toContainText('No new loans from this Auto-lend', { timeout: 120_000 });
+  await stop.getByRole('button', { name: 'Confirm in wallet' }).click();
+  await settled(stop);
 });
