@@ -260,6 +260,21 @@ async function processChain(env: Env, chain: ChainConfig, deadlineMs: number, ru
   );
 }
 
+/**
+ * The extension's length in whole days inside both parties' expiry caps, or
+ * why there is none. A cap of 0 means "not set", never "no limit": the
+ * executor refuses it (AutoExtendExpiryExceedsCap), so the loan is not
+ * eligible. Pure; exported for tests.
+ */
+export function extensionDays(lenderCap: bigint, borrowerCap: bigint, nowSec: bigint): bigint | string {
+  if (lenderCap === 0n || borrowerCap === 0n) return 'an expiry cap is not set';
+  const cap = lenderCap < borrowerCap ? lenderCap : borrowerCap;
+  if (nowSec >= cap) return 'the expiry cap has passed';
+  const remaining = (cap - nowSec) / SECONDS_PER_DAY;
+  const days = remaining < DEFAULT_EXTEND_DAYS ? remaining : DEFAULT_EXTEND_DAYS;
+  return days === 0n ? 'no whole day fits inside the expiry cap' : days;
+}
+
 async function tryExtend(
   publicClient: PublicClient,
   wallet: import('viem').WalletClient,
@@ -295,20 +310,13 @@ async function tryExtend(
   const newRateBps = lenderCaps.minRateBps;
   if (newRateBps > ceiling) return false; // no intersection
 
-  // Compute the duration that fits inside the tightest expiry cap.
-  const expiryCap =
-    lenderCaps.maxNewExpiry < borrowerCaps.maxNewExpiry
-      ? lenderCaps.maxNewExpiry
-      : borrowerCaps.maxNewExpiry;
   const nowSec = BigInt(Math.floor(Date.now() / 1000));
-  if (expiryCap !== 0n && nowSec >= expiryCap) return false;
-
-  let newDurationDays = DEFAULT_EXTEND_DAYS;
-  if (expiryCap !== 0n) {
-    const remainingDays = (expiryCap - nowSec) / SECONDS_PER_DAY;
-    if (remainingDays < newDurationDays) newDurationDays = remainingDays;
-    if (newDurationDays === 0n) return false;
+  const fit = extensionDays(lenderCaps.maxNewExpiry, borrowerCaps.maxNewExpiry, nowSec);
+  if (typeof fit === 'string') {
+    console.log(`[keeper] autoLifecycle loan=${loanIdBig} not extended: ${fit}`);
+    return false;
   }
+  const newDurationDays = fit;
 
   // #2738 — only inside the window. Read after the caps: most loans carry
   // no consent and never reach this read.
