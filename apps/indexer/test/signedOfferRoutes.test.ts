@@ -592,6 +592,15 @@ describe('GET /signed-offers — per-side price-relevant caps (Codex #1145 r4)',
     expect(offers.map((o) => o.orderHash)).not.toContain('spam-149');
   });
 
+  it('#3734: every order carries its maker Terms standing, stated unknown until the record is read', async () => {
+    const rows: SeedRow[] = [
+      { orderHash: 'ask-1', offerType: 0, rateBps: 100, rateBpsMax: 100, createdAt: 1_000 },
+      { orderHash: 'bid-1', offerType: 1, rateBps: 0, rateBpsMax: 400, createdAt: 1_100 },
+    ];
+    const offers = (await getBook(seedBook(rows))) as { orderHash: string; makerTerms?: unknown }[];
+    expect(offers.map((o) => o.makerTerms)).toEqual([{ state: 'unknown' }, { state: 'unknown' }]);
+  });
+
   it('borrower bids rank highest-rate-first and are capped independently of lender spam', async () => {
     // 150 lender rows saturate THEIR side; the borrower side must still
     // return every bid, best (highest interestRateBpsMax) first.

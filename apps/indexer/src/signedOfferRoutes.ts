@@ -47,6 +47,7 @@ import { readJsonBody } from '@vaipakam/lib/requestBody';
 import { redactedError } from '@vaipakam/lib/errorDescription';
 import { canonicalOrderJson, signedOfferColumns } from '@vaipakam/lib/signedOfferWire';
 import { canonicalPlacementJson, placementProblem, type SignedOfferPlacement } from '@vaipakam/lib/signedOfferSet';
+import { makerStandings } from './termsStanding';
 
 /** A signed offer: the order struct and its signature, which for a smart
  *  account (ERC-6492) can run to a few kilobytes (#2756). */
@@ -1065,10 +1066,18 @@ export async function handleSignedOffersGet(
     const bidRows = bids.results ?? [];
     const truncated =
       askRows.length > perSideCap || bidRows.length > perSideCap;
-    const offers = [
-      ...askRows.slice(0, perSideCap),
-      ...bidRows.slice(0, perSideCap),
-    ].map((r) => ({
+    const kept = [...askRows.slice(0, perSideCap), ...bidRows.slice(0, perSideCap)];
+    // #3734 — every signed order is a lending or borrowing commitment, so
+    // each carries its maker's Terms standing. It is not fillable until the
+    // maker's own on-chain acceptance is indexed: the order is stored all the
+    // same (never refused) and reads `not-current` until then.
+    const standings = await makerStandings(
+      env,
+      chainId,
+      kept.map((r) => r.signer),
+      now,
+    );
+    const offers = kept.map((r) => ({
       orderHash: r.order_hash,
       signer: r.signer,
       order: JSON.parse(r.order_json) as unknown,
@@ -1080,6 +1089,8 @@ export async function handleSignedOffersGet(
       filledAmount: r.filled_amount,
       expiresAt: r.expires_at,
       deadline: r.deadline,
+      // #3734 — the maker's Terms standing; see /offers' `makerTerms`.
+      makerTerms: standings.get(r.signer.toLowerCase()) ?? { state: 'unknown' },
       // Present only while the order's state is being re-read after a reorg rebuild.
       ...(r.replay_pending_through !== null && r.replay_pending_through !== undefined ? { replayPending: true } : {}),
     }));

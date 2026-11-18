@@ -133,6 +133,8 @@ const CLASSIFICATION = {
   loan_participants: { class: 'replay-derived', reason: 'append-only chain history (#1450 r31)' },
   activity_participants: { class: 'replay-derived', reason: 'per-event participants, derived from activity_events (#3677)' },
   activity_participants_state: { class: 'replay-derived', reason: 'backfill watermark over activity_events (#3677)' },
+  terms_change: { class: 'replay-derived', reason: 'the Terms publications, announcements, withdrawals and comings-into-force, read off the Diamond (#3734)' },
+  terms_acceptance: { class: 'replay-derived', reason: 'each wallet\'s own on-chain Terms acceptances, read off the Diamond (#3734)' },
   loan_lifecycle_state: {
     class: 'replay-derived',
     reason: 'the status each loan last announced, read off LoanInitiated / LoanStatusChanged (#2337)',

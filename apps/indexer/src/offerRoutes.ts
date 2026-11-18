@@ -34,6 +34,7 @@ import { chainNotServed, requestedChainId } from './servedChain';
 import { EXPECTED_SCAN_CADENCE_SEC } from './chainIngestDO';
 import { redactedError } from '@vaipakam/lib/errorDescription';
 import { offerPositionFlows, type PositionFlowJson } from './positionFlowMoves';
+import { makerStandings, type MakerTermsJson } from './termsStanding';
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
@@ -135,17 +136,60 @@ interface OfferRow {
   updated_at: number;
 }
 
-/** Map rows with their #3205 `positionFlow` verdicts (one batched read). */
+/** Statuses under which an offer is still on the book (fillable in principle). */
+const OPEN_OFFER_STATUSES = new Set(['active', 'active_unknown_expiry']);
+
+/**
+ * #3734 — the maker's Terms standing an open offer carries. A lender's sale
+ * listing of its own loan is `exempt`: it only ends the lister's position,
+ * so its maker's standing never marks it (design section 3.2). Every other
+ * open offer gives its maker a new position (a lending, borrowing or rental
+ * offer, an offer to buy a loan, an offset offer) and carries the maker's
+ * standing. `null` = not an open offer, so there is nothing to fill.
+ */
+async function offerMakerTerms(
+  env: Env,
+  chainId: number,
+  rows: readonly OfferRow[],
+): Promise<Map<number, MakerTermsJson | null>> {
+  const out = new Map<number, MakerTermsJson | null>();
+  const marked: OfferRow[] = [];
+  for (const r of rows) {
+    if (!OPEN_OFFER_STATUSES.has(r.status)) out.set(r.offer_id, null);
+    else if (r.is_sale_vehicle === 1) out.set(r.offer_id, { state: 'exempt' });
+    else marked.push(r);
+  }
+  if (marked.length === 0) return out;
+  const standings = await makerStandings(
+    env,
+    chainId,
+    marked.map((r) => r.creator),
+  );
+  for (const r of marked) {
+    out.set(r.offer_id, standings.get(r.creator.toLowerCase()) ?? { state: 'unknown' });
+  }
+  return out;
+}
+
+/** Map rows with their #3205 `positionFlow` verdicts and #3734 maker
+ *  standings (one batched read each). */
 async function toJsonRows(
   env: Env,
   chainId: number,
   rows: readonly OfferRow[],
 ): Promise<Record<string, unknown>[]> {
-  const flows = await offerPositionFlows(env, chainId, rows);
-  return rows.map((r) => toJson(r, flows.get(r.offer_id) ?? null));
+  const [flows, terms] = await Promise.all([
+    offerPositionFlows(env, chainId, rows),
+    offerMakerTerms(env, chainId, rows),
+  ]);
+  return rows.map((r) => toJson(r, flows.get(r.offer_id) ?? null, terms.get(r.offer_id) ?? null));
 }
 
-function toJson(row: OfferRow, positionFlow: PositionFlowJson | null): Record<string, unknown> {
+function toJson(
+  row: OfferRow,
+  positionFlow: PositionFlowJson | null,
+  makerTerms: MakerTermsJson | null,
+): Record<string, unknown> {
   return {
     chainId: row.chain_id,
     offerId: row.offer_id,
@@ -191,6 +235,12 @@ function toJson(row: OfferRow, positionFlow: PositionFlowJson | null): Record<st
     // tell. `positionFlow: null` = bound to no position (or a refinance
     // target not read yet, which `refinanceTargetLoanId: null` states).
     positionFlow,
+    // #3734 — whether the maker is current on the Terms, as the indexer reads
+    // the on-chain record. `state: 'not-current'` = not fillable now, with
+    // the reason; `unknown` = the record cannot be read (treat as not
+    // fillable); `exempt` = a sale listing, never marked; `null` = not open.
+    // A hint for lists: the contract preview decides at fill time.
+    makerTerms,
     firstSeenBlock: row.first_seen_block,
     firstSeenAt: row.first_seen_at,
     updatedAt: row.updated_at,

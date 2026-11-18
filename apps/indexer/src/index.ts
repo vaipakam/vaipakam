@@ -36,7 +36,7 @@
  *       GET  /loans/by-lender/:address   GET /loans/by-borrower/:address
  *       GET  /loans/rate-candles  GET  /loans/by-participant
  *       GET  /activity            GET  /claimables/:address
- *       GET  /rewards/claimed
+ *       GET  /rewards/claimed      GET  /terms/:address
  *       GET  /claim-candidates/:address   GET /config/:chainId
  *
  * T-078 — both entry points call `resolveEnv()` first. `RPC_*` are
@@ -139,6 +139,7 @@ import {
   handleOffersPreflight,
 } from './offerRoutes';
 import { handleLoopClosure, handleRewardsClaimed } from './rewardRoutes';
+import { handleTermsWallet } from './termsRoutes';
 import { BACKING_SNAPSHOT_COST, captureBackingSnapshot, handleRecyclingSeries } from './recycleRoutes';
 import {
   handleSignedOfferPost,
@@ -605,6 +606,17 @@ export default {
       if (req.method === 'OPTIONS') return handleOffersPreflight();
       if (req.method === 'GET') return handleRewardsClaimed(req, resolved);
       return new Response('Not found', { status: 404 });
+    }
+
+    // ─── /terms/:address ────────────────────────────────────────
+    // #3734 — one wallet's Terms acceptances and standing on one network.
+    {
+      const terms = url.pathname.match(/^\/terms\/(0x[0-9a-fA-F]{40})$/);
+      if (terms) {
+        if (req.method === 'OPTIONS') return handleOffersPreflight();
+        if (req.method === 'GET') return handleTermsWallet(req, resolved, terms[1]);
+        return new Response('Not found', { status: 404 });
+      }
     }
 
     // ─── /offers/* ──────────────────────────────────────────────

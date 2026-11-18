@@ -213,7 +213,12 @@ describe('SQL-vs-schema guard (#1149)', () => {
     // `(?, ?, ?, ?)` group per row, so a page costs a few statements; every
     // value is bound. Executed against the REAL migrated schema by
     // `test/walletActivity.test.ts` (the backfill and its row budget).
-    expect(skipped.length).toBeLessThanOrEqual(32);
+    // Raised 32 → 33 for #3734: the makers' Terms acceptances on one page of
+    // the book are read through one chunked `IN (?, ?, …)` SELECT, one
+    // placeholder per wallet, values bound. Executed against the REAL
+    // migrated schema by `test/termsStanding.test.ts` (per network, and a
+    // database before migration 0100).
+    expect(skipped.length).toBeLessThanOrEqual(33);
   });
 
   it('every static SQL statement prepares against the migrated schema', () => {

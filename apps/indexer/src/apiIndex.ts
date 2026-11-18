@@ -39,6 +39,7 @@ const API_INDEX = {
     { method: 'GET', path: '/offers/by-creator/{address}', description: 'Offers created by a wallet.' },
     { method: 'GET', path: '/offers/by-current-holder/{address}', description: 'Open offers whose position NFT a wallet currently holds.' },
     { method: 'GET', path: '/offers/{id}', description: 'One offer by id.' },
+    { method: 'GET', path: '/terms/{address}', description: "One wallet's Terms of Service acceptances on one network (version, fingerprint, time, transaction), the network's versions in force with the minimum and the latest, and whether the wallet is current now. 503 with `standing.state: 'unknown'` when the record cannot be read: treat it as not current." },
     { method: 'GET', path: '/signed-offers', description: "One (pair, tenor) market's active gasless signed-offer book. `awaitingReplay` counts the market's orders whose fills and cancels a reorg rebuild is re-reading from the chain: left out of the shared book until it has, and listed with `replayPending: true` in a signer-scoped read so the maker can still cancel them." },
     { method: 'GET', path: '/loans/stats', description: 'Loan counts by status.' },
     { method: 'GET', path: '/loans/active', description: 'Active loans (paginated).' },
