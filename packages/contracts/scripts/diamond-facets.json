@@ -54,6 +54,7 @@
     "LoanClockFacet",
     "FeeLevelsFacet",
     "IntegratorFacet",
+    "StandingOfferCheckFacet",
     "ClaimFacet",
     "OracleFacet",
     "OracleAdminFacet",

@@ -65,6 +65,7 @@ import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
+import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {ISeaportOrderHash, IConduitController} from "../src/seaport/ISeaportOrderHash.sol";
@@ -553,6 +554,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #3649 — the initiation fee's term schedule.
         FeeLevelsFacet feeLevelsFacet = FeeLevelsFacet(ArtifactDeploy.deploy(type(FeeLevelsFacet).name));
         IntegratorFacet integratorFacet = IntegratorFacet(ArtifactDeploy.deploy(type(IntegratorFacet).name));
+        StandingOfferCheckFacet standingOfferCheckFacet =
+            StandingOfferCheckFacet(ArtifactDeploy.deploy(type(StandingOfferCheckFacet).name));
         // #1841 - the one sale-exit verdict: the lender exit chooser's view and
         // the guard both sale entries self-call.
         SaleExitVerdictFacet saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
@@ -601,7 +604,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](120);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](121);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -725,6 +728,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[118] = _buildCut(address(feeLevelsFacet), _getFeeLevelsSelectors());
         // #3682 — the integrator registry and the share's delivery.
         cuts[119] = _buildCut(address(integratorFacet), _getIntegratorSelectors());
+        cuts[120] = _buildCut(address(standingOfferCheckFacet), _getStandingOfferCheckSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1475,6 +1479,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("loanClockFacet", address(loanClockFacet));
         Deployments.writeFacet("feeLevelsFacet", address(feeLevelsFacet));
         Deployments.writeFacet("integratorFacet", address(integratorFacet));
+        Deployments.writeFacet("standingOfferCheckFacet", address(standingOfferCheckFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
         Deployments.writeFacet("refinancePayoffFacet", address(refinancePayoffFacet));
@@ -2181,6 +2186,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[10] = IntegratorFacet.getIntegratorShareSettings.selector;
         s[11] = IntegratorFacet.integratorRateFor.selector;
         s[12] = IntegratorFacet.nameLenderIntentIntegrator.selector;
+    }
+
+    /// @dev Selectors for `StandingOfferCheckFacet` (#3720) — the check of one
+    ///      standing lender offer a borrow preview points to.
+    function _getStandingOfferCheckSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = StandingOfferCheckFacet.checkAgainstRequest.selector;
+        s[1] = StandingOfferCheckFacet.checkForAmount.selector;
     }
 
     function _getRepaySelectors() internal pure returns (bytes4[] memory s) {

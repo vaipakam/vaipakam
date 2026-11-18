@@ -312,6 +312,7 @@ FACETS=(
   "LoanClockFacet"
   "FeeLevelsFacet"
   "IntegratorFacet"
+  "StandingOfferCheckFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"

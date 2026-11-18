@@ -119,6 +119,7 @@ import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
+import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -1014,6 +1015,12 @@ contract HelperTest {
         selectors[10] = IntegratorFacet.getIntegratorShareSettings.selector;
         selectors[11] = IntegratorFacet.integratorRateFor.selector;
         selectors[12] = IntegratorFacet.nameLenderIntentIntegrator.selector;
+    }
+
+    function getStandingOfferCheckFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](2);
+        selectors[0] = StandingOfferCheckFacet.checkAgainstRequest.selector;
+        selectors[1] = StandingOfferCheckFacet.checkForAmount.selector;
     }
 
     function getRepayFacetSelectors()

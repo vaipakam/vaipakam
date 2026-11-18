@@ -8,4 +8,6 @@ The registry is a new facet. Adding, changing and removing an entry wait the adm
 
 The signed acceptance terms, the signed offer and the offer-creation parameters each gained an integrator field, so front ends and the indexer need the new ABIs. Design and build notes: `docs/DesignsAndPlans/IntegratorFeeShareDesign.md`. Closes #3682; advances #3719 and #3720.
 
-> Caveat: the loans-opened-with-a-warning counter stays at zero until the loan warnings mask (#3685) exists, and the standing-offer check in borrow previews (#3720) is the next step, not part of this one.
+A borrow preview can now point to one standing lender offer and have the platform check it against the borrower's quote: not checked, not comparable, refused by name, or checked with the rate and amount and whether it beats the quote. A borrower with a posted request is checked through the match preview; one without, through the accept preview, which can take only an offer of exactly the borrower's amount. The check never claims an offer is the best available.
+
+> Caveat: the loans-opened-with-a-warning counter stays at zero until the loan warnings mask (#3685) exists; a test fails as soon as the mask appears, so the counter is connected in that change.

@@ -129,7 +129,7 @@ abstract contract DiamondFacetNames {
     ///      disclosure, split off LoanFacet).
     ///      118 → 119 with `FeeLevelsFacet` (#3649 — the initiation fee's
     ///      term schedule).
-    function cutFacetNames() internal pure returns (string[120] memory) {
+    function cutFacetNames() internal pure returns (string[121] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -298,6 +298,8 @@ abstract contract DiamondFacetNames {
             "FeeLevelsFacet",
             // The integrator registry and the share's delivery (#3682).
             "IntegratorFacet",
+            // The check of one standing offer a borrow preview points to (#3720).
+            "StandingOfferCheckFacet",
             "SwapToRepayFacet",
             "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",
