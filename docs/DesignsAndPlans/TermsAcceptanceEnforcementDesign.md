@@ -28,11 +28,16 @@ has agreed to anything.
 | 2026-11-18 | **The acceptance is the wallet's own paid transaction, sent right after it connects.** There is no free signature, and nobody else may record an acceptance for a wallet: not the keeper, not a counterparty, not a relayer. A paid step also keeps throwaway wallets out, and a record that someone else submitted could be questioned. |
 | 2026-11-18 | **A wallet accepts on each network by its own transaction there.** An acceptance is not carried from one network to another by a cross-chain message. |
 | 2026-11-18 | A new version is announced with a notice period. After it, a wallet that has not accepted takes on no new position; its commitments wait and are not cancelled (section 5). |
+| 2026-11-18 | **A small wording fix does not need re-acceptance.** Each network holds a minimum version beside the latest one. A typo fix or a clarification becomes the latest version and is what a new wallet accepts; existing wallets keep working and pay nothing. Only a material change raises the minimum, and it does so through the notice period (section 5). |
 
 ## 3. The rule
 
-**A wallet that takes on a new position must have accepted the Terms in
-force. A wallet that only reduces or leaves a position is never asked.**
+**A wallet that takes on a new position must be current on the Terms. A
+wallet that only reduces or leaves a position is never asked.**
+
+A wallet is **current** when it has accepted at least one version from the
+minimum version up to the latest version in force, both included (section 5).
+Usually those are the same version.
 
 This is the rule the app already follows (functional spec, "Terms of Service
 acceptance"). The change is that the contracts hold it, so it is true for
@@ -113,8 +118,8 @@ others accepts for itself.
 
 **A wallet accepts by its own transaction and in no other way.** The
 transaction names the version and the fingerprint of the exact text, and the
-contracts refuse it unless that pair is the version in force or the announced
-one. The sender is the wallet that accepts. There is no route by which a
+contracts refuse it unless that pair is the latest version in force or the
+announced one. A wallet never accepts an older version on purpose. The sender is the wallet that accepts. There is no route by which a
 signature, a keeper, a manager, an integrator or a counterparty records an
 acceptance for another address.
 
@@ -138,28 +143,57 @@ positions, which section 3.2 always allows.
 
 ## 5. A new version of the Terms
 
-A new version is **announced** with the time it comes into force.
+Each network holds two values: the **latest version**, which is the text
+shown at Connect and the one a new acceptance names, and the **minimum
+version**, the oldest acceptance that still lets a wallet take on a new
+position. A new version is one of two kinds, and its publication says which.
 
-- From the announcement, a wallet may accept the new version, by its own
-  transaction like any acceptance (section 4).
-- Until it comes into force, the version in force is the only one that makes
-  a wallet current. A position opened during the notice is opened under the
-  Terms in force that day, so its parties must have accepted those.
-- Accepting the announced version early does not make a wallet current by
+### 5.1 A small change
+
+A typo fix or a clarification that changes nobody's rights or duties. It
+becomes the latest version at once, with no notice, and the minimum stays
+where it is.
+
+- Nobody loses standing, which is why no notice is needed. Every wallet that
+  was current stays current, its offers and Auto-lend keep filling, and it
+  pays nothing.
+- A wallet that accepts from then on accepts the new text.
+- A wallet on an older version that still counts may accept the latest one
+  whenever it likes. It is never required to.
+
+Which kind a change is, is the platform's decision, taken on legal advice and
+stated in the publication's event. Each record names the exact version and
+fingerprint a wallet accepted, so what a wallet agreed to is never blurred.
+If a change is wrongly published as small, the wallets on the older text are
+not bound by what it added: that risk is the platform's, never the user's.
+
+### 5.2 A material change
+
+A change that the wallets already here must agree to. It raises the minimum,
+and it is **announced** with the time it comes into force. The minimum can be
+raised to a new version, or to a version that is already the latest.
+
+- From the announcement, a wallet may accept the version the minimum is
+  moving to, by its own transaction like any acceptance (section 4).
+- Until it comes into force, standing is unchanged: a wallet is current on
+  the old minimum. A position opened during the notice is opened under the
+  Terms in force that day, so its parties must be current on those.
+- Accepting an announced version early does not make a wallet current by
   itself. It is what keeps the wallet current, with no gap, from the moment
-  the new version comes into force.
-- A wallet that joins during the notice accepts both versions, in one
-  transaction.
-- From then on, only the new version counts. A wallet that has not accepted
-  it takes on no new position: its offers and its Auto-lend stop filling, and
-  an extension or a roll does not start a new term, so the loan runs to its
-  agreed end. Its open loans are not touched.
+  the new minimum comes into force.
+- A wallet that joins during the notice accepts both the latest version in
+  force and the announced one, in one transaction.
+- From then on, only the new minimum and later versions count. A wallet that
+  has accepted none of them takes on no new position: its offers and its
+  Auto-lend stop filling, and an extension or a roll does not start a new
+  term, so the loan runs to its agreed end. Its open loans are not touched.
 - The notice is at least 7 days, and 14 by **Default**. The first version on
   a network needs no notice.
 - An announcement can be withdrawn before it comes into force. The version
   number is then spent and never reused. A withdrawal changes no wallet's
-  standing, because an acceptance of the announced version never counted on
-  its own before the in-force time.
+  standing, because an acceptance of an announced version never counted on
+  its own before the in-force time. A wallet whose only acceptance is a
+  withdrawn version is not current.
 
 The announcement and the time are an event. Every alert channel carries it to
 wallets with an open offer, Auto-lend or a standing instruction, with the
@@ -173,8 +207,9 @@ date their commitments stop filling.
   its signed offers can be filled or shown as fillable. Signing offers stays
   free; taking a position on the platform does not start without the paid
   acceptance.
-- **After a new version**, the owner of an offer, Auto-lend or a standing
-  instruction sends a new acceptance to keep it filling. The notice period
+- **After a material change** (section 5.2), the owner of an offer, Auto-lend
+  or a standing instruction sends a new acceptance to keep it filling. A
+  small change (section 5.1) asks nothing of them. The notice period
   and the alerts of section 5 are what give time for that.
 - **The keeper records nothing.** Its fill passes read the preview and skip,
   with the reason, a fill that the rule refuses. It carries the
@@ -213,12 +248,16 @@ date their commitments stop filling.
 - **Where a wallet stands** is stated and never guessed: not accepted; sent
   and waiting for confirmation; or recorded, with the transaction. While the
   record cannot be read the app stays closed and offers a retry, as today.
-- **A new version.** From the announcement the app asks again at Connect,
+- **A small update.** A wallet that is current on an older version sees a
+  quiet line that the Terms were updated, with the link and what changed. It
+  is never a blocking prompt, and accepting the latest text is offered, not
+  required.
+- **A material change.** From the announcement the app asks again at Connect,
   shows the date, and says what stops on that date if the wallet does not
-  accept. For a wallet that is current on the version in force this request
+  accept. For a wallet that is current this request
   can be put off: declining it, or rejecting its transaction, leaves the
-  wallet connected with everything open until that date. Only the version in
-  force is required to be connected. A wallet connecting for the first time
+  wallet connected with everything open until that date. Being current is
+  all that is required to be connected. A wallet connecting for the first time
   during the notice is shown both versions and accepts both in the one
   transaction.
 - **Another network.** The first time a wallet uses another network the app
@@ -236,8 +275,9 @@ date their commitments stop filling.
 ## 8. Events and the record
 
 - An acceptance emits the wallet, the version, the fingerprint and the time.
-- An announcement, its withdrawal and a version coming into force each emit
-  an event with the version, the fingerprint and the time.
+- A publication, an announcement, its withdrawal and a version or a minimum
+  coming into force each emit an event with the version, the fingerprint, the
+  time, and whether the minimum moves.
 - The refusal names the wallet and the version it needs.
 
 ## 9. Tests (acceptance)
@@ -255,10 +295,11 @@ date their commitments stop filling.
    each try and are refused or have no route.
 4. An acceptance sent twice leaves the first acceptance time unchanged. One
    naming another version or another fingerprint is refused.
-5. During the notice a wallet that accepted the version in force is current,
-   and one that accepted only the announced version is refused. One second
-   after the new version comes into force, a wallet on the old one is refused
-   and its offer is still on the book; it accepts and the same offer fills.
+5. During the notice of a material change a wallet that accepted the version
+   in force is current, and one that accepted only the announced version is
+   refused. One second after the new minimum comes into force, a wallet on
+   the old one is refused and its offer is still on the book; it accepts and
+   the same offer fills.
 6. A notice shorter than the floor is refused. A withdrawn version number
    cannot be announced again.
 7. A maker who has not accepted has a signed offer refused at fill. It
@@ -290,12 +331,25 @@ date their commitments stop filling.
     version in force declines the announced one and stays connected, and is
     closed out of the app only from the in-force time.
 
+16. A small change is published with no notice. A wallet that accepted the
+    earlier version opens a loan the next block and its offer keeps filling.
+    A new wallet can accept only the new text; the earlier pair is refused.
+17. A material change raises the minimum to a later version after the notice.
+    Wallets on each earlier version are refused one second after it comes
+    into force, and each is current again once it accepts. Raising the
+    minimum to a version that is already the latest behaves the same.
+18. A wallet whose only acceptance is an announced version that was withdrawn
+    is refused, whatever its number.
+
 ## 10. Residuals
 
 - **A position token moved by a plain transfer** can reach a wallet that
   never accepted. That wallet can only claim and close.
 - **An owner who does not accept a new version in time.** Its offers and
   Auto-lend wait until it does. Nothing is lost, and nothing fills.
+- **A change published as small that was material.** Wallets on the older
+  text are not bound by what it added. The platform carries that, and can
+  correct it by raising the minimum with notice.
 - **A visitor who will not pay a network fee to look around** does not see
   the connected app. The public site is where the platform is explained.
 - **Another website** can show the platform's public data without any
@@ -318,11 +372,12 @@ date their commitments stop filling.
 5. **Check every step, close-outs included.** Declined: a new version would
    lock a wallet out of repaying or claiming until it agreed, which is
    leverage the platform must never hold over funds.
-6. **Commitments made under an older version keep filling.** Declined by the
-   owner (2026-11-18): a loan would open with a party who never accepted the
-   Terms in force that day. The notice period gives the same continuity
-   without that.
-7. **A new version in force at once.** Declined by the owner (2026-11-18):
+6. **Commitments made under an older version keep filling after a material
+   change.** Declined by the owner (2026-11-18): a loan would open with a
+   party who never agreed to what changed. The notice period gives the same
+   continuity without that. A small change is different by the later decision
+   (section 5.1): nothing a wallet must agree to has changed.
+7. **A material change in force at once.** Declined by the owner (2026-11-18):
    every Auto-lend and every standing offer would stop in the same block,
    with no time to accept.
 8. **One acceptance for all networks, carried to the others by a cross-chain
@@ -333,7 +388,14 @@ date their commitments stop filling.
    also make opening a position on one network depend on a message from
    another, and add a message fee and a delay to something the wallet can do
    itself in one step.
-9. **Require acceptance of matchers and liquidators.** Not taken: settling a
+9. **Every new version is re-accepted, even a typo fix.** Declined by the
+   owner (2026-11-18): every wallet would pay again on each network, and
+   every offer and Auto-lend would pause, for a change that binds nobody to
+   anything new.
+10. **Hold both values but always raise them together until a lawyer has
+    said what counts as material.** Not chosen. What counts as material is
+    still a question for the legal review before mainnet.
+11. **Require acceptance of matchers and liquidators.** Not taken: settling a
    loan must stay open to anyone, and they hold no position.
 
 ## 12. Recommendation
