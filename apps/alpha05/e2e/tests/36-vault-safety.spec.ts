@@ -1,7 +1,9 @@
 /**
  * The Vault page's safety card (matrix ACC-36 Basic face, ACC-37, ACC-43),
  * through the protocol's public entry points on the fixture chain. A wallet
- * without protected mode turns it on in Basic mode: the card offers the
+ * without protected mode creates its vault, sets a recovery address that a
+ * second wallet proves by its signature (#3246 part 2), then turns the mode
+ * on in Basic mode: the card offers the
  * shortest delay the protocol allows, the review says what waits and that
  * nothing owed to others is delayed, and the finish card states the delay
  * the protocol recorded. A protected wallet with one queued payout locks its
@@ -18,6 +20,7 @@ import { anvilRpc } from '../lib/anvil';
 import { scenario } from '../lib/chain';
 import { connectWallet, expect, test } from '../lib/wallet';
 import { enableProtection, protectionMode } from '../lib/protection';
+import { accountFor } from '../lib/wallets';
 
 type Hex = `0x${string}`;
 
@@ -28,38 +31,98 @@ async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }
 
-test('protected mode is turned on in Basic mode with the shortest delay, and the finish card states it', async ({ launchWallet }) => {
-  test.setTimeout(180_000);
+test('a recovery address another wallet proves comes first; then protected mode is turned on in Basic mode with the shortest delay', async ({ launchWallet }) => {
+  test.setTimeout(300_000);
   const sc = scenario({ lender: 'freshLender' });
   const me = sc.address('lender');
+  const recovery = accountFor('visitor').address;
 
   const { page, flags } = await launchWallet('freshLender');
   await page.goto('/vault');
   await connectWallet(page);
   const card = page.getByTestId('vault-safety');
   await expect(card.getByTestId('vault-safety-state')).toHaveAttribute('data-state', 'off', { timeout: 60_000 });
-  await card.getByTestId('vault-safety-turn-on').click();
+  // #3246 part 2: no recovery address yet, so switching on is not offered,
+  // and the vault that keeps the address comes first.
+  const section = card.getByTestId('vault-safety-recovery');
+  await expect(section.getByTestId('vault-safety-recovery-state')).toHaveAttribute('data-state', 'none', { timeout: 60_000 });
+  await expect(card.getByTestId('vault-safety-turn-on')).toHaveCount(0);
+  await expect(section).toContainText('Create your vault on this page first');
+  await fitsWidth(page);
+
+  let sent = flags.sentTransactions;
+  await page.getByTestId('vault-create').click();
+  const create = page.getByTestId('vault-create-panel');
+  await create.getByRole('button', { name: 'Confirm in wallet' }).click({ timeout: 60_000 });
+  const created = create.locator('[data-phase="measured"]');
+  await expect(created).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
+  expect(flags.sentTransactions).toBe(sent + 1);
+  await created.getByRole('button', { name: 'Close' }).click();
+
+  // The owner names the address; its own wallet is refused.
+  await section.getByTestId('vault-safety-recovery-choose').click({ timeout: 60_000 });
+  const address = section.getByTestId('vault-safety-recovery-address');
+  await address.fill(me);
+  await expect(section).toContainText('This is your own wallet');
+  await expect(section.getByTestId('vault-safety-recovery-link-make')).toBeDisabled();
+  await address.fill(recovery);
+  await section.getByTestId('vault-safety-recovery-link-make').click();
+  const link = await section.getByTestId('vault-safety-recovery-link').inputValue();
+  await fitsWidth(page);
+
+  // The recovery wallet signs its proof from its own key: nothing is sent.
+  const second = await launchWallet('visitor');
+  await second.page.goto(link);
+  await connectWallet(second.page);
+  const sign = second.page.getByTestId('recovery-sign-panel');
+  await expect(sign.getByTestId('recovery-sign-account')).toHaveText(me, { timeout: 60_000 });
+  await expect(sign).toContainText('Signing moves nothing and costs nothing.');
+  await sign.getByTestId('recovery-sign').click({ timeout: 60_000 });
+  const answer = await sign.getByTestId('recovery-answer-link').inputValue({ timeout: 60_000 });
+  expect(second.flags.sentTransactions).toBe(0);
+  await second.page.close();
+
+  // The owner opens the answer: the request is reviewed and sent.
+  await page.goto(answer);
+  await connectWallet(page);
+  let flow = card.getByTestId('vault-safety-panel');
+  let receipt = flow.locator('.receipt');
+  await expect(receipt).toContainText('Set your recovery address', { timeout: 60_000 });
+  await expect(receipt).toContainText(recovery);
+  await expect(receipt).toContainText('4 days after this is confirmed');
+  await expect(receipt).toContainText('a clawback moves its free funds to this address, and nowhere else');
+  await expect(receipt).toContainText('Wallet prompts: 1');
+  await fitsWidth(page);
+  sent = flags.sentTransactions;
+  await flow.getByRole('button', { name: 'Confirm in wallet' }).click();
+  let finish = flow.locator('[data-phase="measured"]');
+  await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 120_000 });
+  await expect(finish).toContainText('asked as your recovery address');
+  expect(flags.sentTransactions).toBe(sent + 1);
+  await finish.getByRole('button', { name: 'Close' }).click();
+  await expect(section.getByTestId('vault-safety-recovery-pending')).toContainText(recovery, { timeout: 60_000 });
+
+  await card.getByTestId('vault-safety-turn-on').click({ timeout: 60_000 });
   await expect(card.getByTestId('vault-safety-basic-choice')).toContainText('The delay is 2 days, the shortest allowed');
   await fitsWidth(page);
   await card.getByTestId('vault-safety-review').click();
 
-  const flow = card.getByTestId('vault-safety-panel');
-  const receipt = flow.locator('.receipt');
+  flow = card.getByTestId('vault-safety-panel');
+  receipt = flow.locator('.receipt');
   await expect(receipt).toContainText('Turn on protected mode', { timeout: 60_000 });
   await expect(receipt).toContainText('Every payout from your vault to this wallet');
   await expect(receipt).toContainText('It never delays what you owe others');
-  // #3379 B2: a wallet with no vault creates it, then the vault turns the
-  // mode on and applies the platform side in the same transaction (#3489
-  // r16): two prompts.
-  await expect(receipt).toContainText('Wallet prompts: 2');
+  // The vault exists now; it turns the mode on and applies the platform side
+  // in the same transaction (#3489 r16): one prompt.
+  await expect(receipt).toContainText('Wallet prompts: 1');
   await fitsWidth(page);
 
-  const sent = flags.sentTransactions;
+  sent = flags.sentTransactions;
   await flow.getByRole('button', { name: 'Confirm in wallet' }).click();
-  const finish = flow.locator('[data-phase="measured"]');
+  finish = flow.locator('[data-phase="measured"]');
   await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 120_000 });
   await expect(finish).toContainText('Protected mode is on: payouts to your wallet wait 2 days.');
-  expect(flags.sentTransactions).toBe(sent + 2);
+  expect(flags.sentTransactions).toBe(sent + 1);
   const mode = await protectionMode(sc, me);
   expect(mode.enabled).toBe(true);
   expect(Number(mode.delaySeconds)).toBe(2 * DAY);

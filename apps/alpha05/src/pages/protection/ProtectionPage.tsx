@@ -10,6 +10,8 @@ import { AcceptSigner } from '../../shared/protection/AcceptSigner';
 import { DestinationsSection } from '../../shared/protection/Destinations';
 import { readDestinationFacts } from '../../shared/protection/destinations';
 import { SignersSection } from '../../shared/protection/Signers';
+import { SignRecovery } from '../../shared/protection/SignRecovery';
+import { parseRecoveryRequest } from '../../shared/protection/recovery';
 import { readSignerFacts } from '../../shared/protection/signers';
 import { useOwnRead } from '../../shared/reads/useOwnRead';
 import { OwnStamp } from '../../shared/ui/OwnStamp';
@@ -23,7 +25,8 @@ const NO_BOOK_ACCOUNT = '0x0000000000000000000000000000000000000000' as Hex;
  * from, and the secondary signers. A link with `?prove=` opens the signing
  * side of an address proof, for the wallet that holds the address; a link
  * with `?signer=` opens the accepting side of a signer request, for the
- * wallet that was asked. Protected mode itself and locking stay on the
+ * wallet that was asked; a link with `rr_*` opens the signing side of a
+ * recovery address request (#3246 part 2). Protected mode itself and locking stay on the
  * Vault page.
  */
 export function ProtectionPage() {
@@ -31,6 +34,7 @@ export function ProtectionPage() {
   const [params] = useSearchParams();
   const prove = params.get('prove');
   const signerFor = params.get('signer');
+  const recoveryAsked = params.has('rr_chain') || params.has('rr_account') || params.has('rr_recovery');
   const { status, chainId } = useAccount();
   const connected = status === 'connected';
   const chain = connected ? getSupportedChain(chainId) : null;
@@ -53,6 +57,7 @@ export function ProtectionPage() {
       <h1 id="protection-title">{text('protection.title')}</h1>
       <p className="tier-b">{text('protection.lead')}</p>
       {prove !== null && <ProveControl code={prove} />}
+      {recoveryAsked && <SignRecovery request={parseRecoveryRequest(params)} />}
       {signerFor !== null && <AcceptSigner accountParam={signerFor} chainParam={params.get('chain')} />}
       {!connected && <p className="tier-b">{text('protection.connectPrompt')}</p>}
       {connected && chain === null && <p className="tier-b">{text('positions.unsupportedChain')}</p>}

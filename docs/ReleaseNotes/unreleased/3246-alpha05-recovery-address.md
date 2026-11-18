@@ -1,0 +1,7 @@
+## alpha05: a recovery address comes before protected mode (#3246 part 2)
+
+The protocol now refuses to switch protected mode on until the account has a recovery address, set or waiting. That address is the one place a clawback of a locked account can pay. The new app's Vault page now shows the account's recovery address in its safety card: the one in force, one still waiting and the date it comes into force, or none. "Turn on protected mode" is offered only once one is set or waiting, and the card says why when it is not. An account with no vault creates it first, because the vault keeps the address.
+
+Setting the address takes two wallets, because the vault needs both consents in one transaction: the owner asks, and the address proves that someone controls it. The owner types the address, and the card refuses the owner's own wallet, its vault, the protocol's contract and the current address. The card then gives a link. The recovery wallet opens it on the Protection page, sees which account asks and on which network, and signs a proof. Signing moves nothing and costs nothing. It gets a link back, valid for seven days. The owner opens that link, and the card reviews the request like any other safety action. The review states the address, when it comes into force (twice the delay for a first address, 30 days for a change), what it replaces, and that a clawback pays nowhere else. The request is sent only after the protocol's dry run passes.
+
+The connected app gets the same step, with the same link format.
