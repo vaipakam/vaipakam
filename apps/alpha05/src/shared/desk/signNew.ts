@@ -20,6 +20,7 @@
  * since nobody else holds its signature.
  */
 import type { Abi, PublicClient } from 'viem';
+import { zeroAddress as ZERO_ADDRESS } from 'viem';
 import { SignedOfferFacetABI, VaultDepositoryFacetABI } from '@vaipakam/contracts/abis';
 import { refusalFromError } from '../eligibility/refusal';
 import { readTreasuryFeeBps } from '../offers/reads';
@@ -151,6 +152,8 @@ export function signedOrderFrom(draft: PostDraft, signer: Hex, nonce: bigint, te
     useFullTermInterest: p.useFullTermInterest,
     // This app posts no lender "either" offers (#3621); the flag stays 0.
     lifecycleFlex: '0',
+    // #3682 — this app names no integrator on its own orders.
+    integrator: ZERO_ADDRESS,
     creatorFull: false,
     creatorMaxCStar: '0',
     creatorAllowFullDowngrade: false,

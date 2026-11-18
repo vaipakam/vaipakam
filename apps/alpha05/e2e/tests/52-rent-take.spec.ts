@@ -78,6 +78,8 @@ test('an owner takes a renter’s request: a token not held is refused in the re
       allowsParallelSale: false,
       refinanceTargetLoanId: 0n,
       useFullTermInterest: false,
+      lifecycleFlex: 0,
+      integrator: '0x0000000000000000000000000000000000000000',
     },
     await txDeadline(sc),
   ]);

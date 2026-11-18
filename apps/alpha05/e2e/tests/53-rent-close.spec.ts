@@ -75,6 +75,8 @@ test('a renter closes a rental: nothing from the wallet, the rent and claim stat
       allowsParallelSale: false,
       refinanceTargetLoanId: 0n,
       useFullTermInterest: false,
+      lifecycleFlex: 0,
+      integrator: '0x0000000000000000000000000000000000000000',
     },
     await txDeadline(sc),
   ]);

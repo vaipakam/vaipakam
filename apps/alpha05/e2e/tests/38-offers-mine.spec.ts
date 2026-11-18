@@ -115,6 +115,8 @@ test('an expired borrowing request is cleaned up, and its collateral returns to 
       allowsParallelSale: false,
       refinanceTargetLoanId: 0n,
       useFullTermInterest: false,
+      lifecycleFlex: 0,
+      integrator: '0x0000000000000000000000000000000000000000',
     },
     await txDeadline(sc),
   ]);

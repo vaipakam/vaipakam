@@ -63,6 +63,8 @@ export function listParams(d: ListDraft) {
     useFullTermInterest: d.fullTerm,
     // #3621 — a rental carries no "either" marks.
     lifecycleFlex: 0,
+    // #3682 — this app names no integrator on its own offers.
+    integrator: ZERO,
   } as const;
 }
 

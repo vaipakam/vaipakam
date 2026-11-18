@@ -394,6 +394,10 @@ export function createParams(p: ParsedPost, pair: PostPair, expiry: bigint, side
     allowsParallelSale: false,
     refinanceTargetLoanId: 0n,
     ...lifecycleTerms(p),
+    // #3621 — this app posts no lender "either" offers; #3682 — and names
+    // no integrator on its own offers.
+    lifecycleFlex: 0,
+    integrator: ZERO,
   } as const;
 }
 
