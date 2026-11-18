@@ -1,6 +1,7 @@
 /** Types for `signedOfferWire.mjs`. The field list is spelled out as literal
  *  types so viem can type the EIP-712 message from it; the runtime list is the
- *  `.mjs`, and the indexer's typehash test pins it to the contract. */
+ *  `.mjs`, and the indexer's typehash test pins it to the type string it
+ *  reads from `LibSignedOffer.sol`. */
 
 export type SignedOfferFields = readonly [
   { readonly name: 'offerType'; readonly type: 'uint8' },
@@ -29,6 +30,7 @@ export type SignedOfferFields = readonly [
   { readonly name: 'refinanceTargetLoanId'; readonly type: 'uint256' },
   { readonly name: 'useFullTermInterest'; readonly type: 'bool' },
   { readonly name: 'lifecycleFlex'; readonly type: 'uint8' },
+  { readonly name: 'integrator'; readonly type: 'address' },
   { readonly name: 'creatorFull'; readonly type: 'bool' },
   { readonly name: 'creatorMaxCStar'; readonly type: 'uint256' },
   { readonly name: 'creatorAllowFullDowngrade'; readonly type: 'bool' },

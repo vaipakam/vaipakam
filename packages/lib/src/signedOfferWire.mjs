@@ -1,7 +1,7 @@
 /**
  * A signed offer as the platform stores it (#1131, #1481).
  *
- * The maker signs a 45-field `SignedOffer` struct (EIP-712, struct order
+ * The maker signs a 46-field `SignedOffer` struct (EIP-712, struct order
  * exactly as `LibSignedOffer.SignedOffer` declares it). The indexer keeps
  * that order as `order_json` — the payload a taker replays on chain — beside
  * the market columns the book filters and sorts on, which are copies of
@@ -25,9 +25,10 @@
  * the indexer's `signedOfferEip712.ts`.
  */
 
-/** The 45 fields, in struct order, with their EIP-712 types. Field order is
+/** The 46 fields, in struct order, with their EIP-712 types. Field order is
  *  load-bearing: it fixes the typehash and so every signature and order hash.
- *  The indexer's typehash test pins this list to the contract's type string. */
+ *  The indexer's typehash test pins this list to the type string it reads
+ *  from `LibSignedOffer.sol`. */
 export const SIGNED_OFFER_FIELDS = Object.freeze([
   { name: 'offerType', type: 'uint8' },
   { name: 'lendingAsset', type: 'address' },
@@ -57,6 +58,9 @@ export const SIGNED_OFFER_FIELDS = Object.freeze([
   // #3621 — the lender's "either" marks for partial repay (bit 0) and
   // prepay listing (bit 1); 0 on every other offer.
   { name: 'lifecycleFlex', type: 'uint8' },
+  // #3682 — the integrator a borrower's signed offer names (zero = none),
+  // signed so neither a matcher nor a taker can set or change it.
+  { name: 'integrator', type: 'address' },
   // #1949 — the maker's Full tariff opt-in rides the artifact they sign.
   { name: 'creatorFull', type: 'bool' },
   { name: 'creatorMaxCStar', type: 'uint256' },
@@ -102,7 +106,7 @@ export const NO_COLLECTION = Object.freeze({
   startTime: '0',
 });
 
-/** The 45 field names in struct order. */
+/** The 46 field names in struct order. */
 export const SIGNED_OFFER_FIELD_NAMES = Object.freeze(SIGNED_OFFER_FIELDS.map((f) => f.name));
 
 /** The stored wire form of each EIP-712 type: an address lowercased, a bool
@@ -124,7 +128,7 @@ function wireValueProblem(type, value) {
   return `a known type (${type})`;
 }
 
-/** The canonical `order_json`: the 45 fields in struct order. Stable key
+/** The canonical `order_json`: the 46 fields in struct order. Stable key
  *  order makes the same order serialize to the same bytes, so two copies are
  *  comparable as strings. The order must already be in wire form. */
 export function canonicalOrderJson(order) {
@@ -135,7 +139,7 @@ export function canonicalOrderJson(order) {
 
 /**
  * Read a stored `order_json`. Returns `{ order }` only when the text is the
- * canonical serialization of an object carrying exactly the 45 fields, each
+ * canonical serialization of an object carrying exactly the 46 fields, each
  * in its wire form; otherwise `{ error }`, naming the first problem.
  */
 export function parseStoredOrderJson(json) {

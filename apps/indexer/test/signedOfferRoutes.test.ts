@@ -87,6 +87,7 @@ function makeOrder(overrides: Partial<SignedOrderWire> = {}): SignedOrderWire {
     refinanceTargetLoanId: '0',
     useFullTermInterest: false,
     lifecycleFlex: '0',
+    integrator: '0x0000000000000000000000000000000000000000',
     creatorFull: false,
     creatorMaxCStar: '0',
     creatorAllowFullDowngrade: false,

@@ -100,6 +100,10 @@ export const ACCEPT_TERMS_TYPES = {
     { name: 'acceptorFull', type: 'bool' },
     { name: 'acceptorMaxCStar', type: 'uint256' },
     { name: 'acceptorAllowFullDowngrade', type: 'bool' },
+    // #3682 — the integrator a BORROWER acceptor names (zero = none); the
+    // contract reads it only when the acceptor is the borrower. Last, as in
+    // `LibAcceptTerms.ACCEPT_TERMS_TYPEHASH`.
+    { name: 'integrator', type: 'address' },
   ],
 } as const;
 
@@ -139,12 +143,18 @@ export interface AcceptTerms {
   acceptorFull: boolean;
   acceptorMaxCStar: bigint;
   acceptorAllowFullDowngrade: boolean;
+  // #3682 — the integrator a borrower acceptor names (zero = none).
+  integrator: Address;
 }
 
 export interface AcceptTermsPayload {
   terms: AcceptTerms;
   signature: Hex;
 }
+
+/** #3682 — this app is the platform's own door, so it names no integrator
+ *  when its user accepts. */
+const NO_INTEGRATOR = '0x0000000000000000000000000000000000000000' as Address;
 
 const ASSET_TYPE_ERC20 = 0; // LibVaipakam.AssetType.ERC20
 const OFFER_TYPE_LENDER = 0; // LibVaipakam.OfferType.Lender
@@ -521,6 +531,7 @@ export function useAcceptTermsSigning() {
         // #1355 — the acceptor's Full VPFI tariff opt-in, from the
         // review screen's control (absent ⇒ non-Full).
         ...fullTariff,
+        integrator: NO_INTEGRATOR,
       };
 
       // #2728 — a leg that reads illiquid NOW but was not shown as illiquid
@@ -883,6 +894,7 @@ export function useSignedOfferAcceptTermsSigning() {
         riskTermsHash,
         // #1355 — the taker's Full VPFI tariff opt-in (absent ⇒ non-Full).
         ...fullTariff,
+        integrator: NO_INTEGRATOR,
       };
 
       // #2725 — the confirm showed every term this signs.
