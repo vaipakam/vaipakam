@@ -820,6 +820,20 @@ export const copy = {
     changedSettled: B('Your acceptance (recorded from another tab or session)'),
     changedVersion: B('The Terms version in force'),
   },
+  connectTerms: {
+    title: B('Before you connect'),
+    reading: B('Reading the Terms in force on {{chain}}…'),
+    failed: A('The Terms in force on {{chain}} could not be read ({{reason}}), so the app cannot show what you would accept, and connects no wallet until it can.'),
+    retry: B('Try again'),
+    lead: A(
+      'Using this app needs your acceptance of the Terms of Service in force on {{chain}}, version {{version}}. Read them and the key risks below, then tick the box. Without an acceptance no wallet is connected, and the app stays a read-only site.',
+    ),
+    guide: B('What accepting means, and what it never blocks'),
+    tick: B('I have read and accept the Terms of Service, version {{version}}.'),
+    next: B('Next, your wallet asks you to sign this acceptance. Signing is free, moves nothing, and is recorded on-chain.'),
+    choose: B('Agree and connect'),
+    cancel: B('Not now'),
+  },
   keyRisks: {
     title: B('Key risks'),
     lead: B('Read what can go wrong before you accept.'),
