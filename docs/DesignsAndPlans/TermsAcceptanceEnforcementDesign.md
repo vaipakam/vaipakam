@@ -35,9 +35,11 @@ has agreed to anything.
 **A wallet that takes on a new position must be current on the Terms. A
 wallet that only reduces or leaves a position is never asked.**
 
-A wallet is **current** when it has accepted at least one version from the
-minimum version up to the latest version in force, both included (section 5).
-Usually those are the same version.
+A wallet is **current** when it has accepted at least one version that has
+come into force, from the minimum version up to the latest version, both
+included (section 5). Usually those are the same version. A version that is
+only announced, or whose announcement was withdrawn, has not come into force
+and never counts, whatever its number.
 
 This is the rule the app already follows (functional spec, "Terms of Service
 acceptance"). The change is that the contracts hold it, so it is true for
@@ -147,6 +149,13 @@ Each network holds two values: the **latest version**, which is the text
 shown at Connect and the one a new acceptance names, and the **minimum
 version**, the oldest acceptance that still lets a wallet take on a new
 position. A new version is one of two kinds, and its publication says which.
+
+Only one change is open at a time. While an announcement is waiting to come
+into force, nothing else is published or announced on that network: no small
+change and no second announcement. A correction that cannot wait is made by
+withdrawing the announcement first (section 5.2). So the versions in force
+are always numbered in the order they came into force, and a pending version
+never sits inside the range of versions that count.
 
 ### 5.1 A small change
 
@@ -351,6 +360,11 @@ date their commitments stop filling.
     minimum to that version is announced and then withdrawn: the wallet is
     current before, during and after, the version is still the latest and
     can still be accepted, and the same raise can be announced again.
+20. While a material change is announced, a small change and a second
+    announcement are both refused. After the announcement is withdrawn the
+    small change is published. A wallet whose only acceptance is the
+    withdrawn version is not current, although its number now lies between
+    the minimum and the latest.
 
 ## 10. Residuals
 
