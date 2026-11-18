@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PRIVACY_URL, fingerprint, termsFrom, termsUrl, type TermsPosture } from './terms';
+import { PRIVACY_URL, countingVersion, fingerprint, termsFrom, updateTerms, termsUrl, type TermsPosture } from './terms';
 
 const HASH = `0x${'ab'.repeat(32)}` as const;
 
@@ -32,6 +32,40 @@ describe('termsFrom', () => {
   it('a wallet joining during a notice accepts the announced new version in the same step', () => {
     const announced = { version: 3, hash: H2, effectiveAt: 1_000, minVersion: 3, newVersion: true };
     expect(termsFrom(posture({ announced }), false, null)).toMatchObject({ kind: 'needed', version: 2, alsoAnnounced: announced });
+  });
+});
+
+describe('updateTerms', () => {
+  const ann = (p: Partial<NonNullable<TermsPosture['announced']>>) => ({ version: 3, hash: H2, effectiveAt: 100, minVersion: 3, newVersion: true, ...p });
+  const accepted = (p: Partial<TermsPosture>) => {
+    const t = termsFrom(posture(p), true, null);
+    if (t.kind !== 'accepted') throw new Error('not current');
+    return t;
+  };
+  it('offers nothing to a wallet on the latest version with nothing announced', () => {
+    expect(updateTerms(accepted({ accepted: [2] }))).toBeNull();
+  });
+  it('offers the latest after a small change, optionally', () => {
+    expect(updateTerms(accepted({ accepted: [1] }))).toMatchObject({ version: 2, alsoAnnounced: null });
+  });
+  it('offers the announced version alone when the latest is already accepted', () => {
+    expect(updateTerms(accepted({ accepted: [2], announced: ann({}) }))).toMatchObject({ version: 3, hash: H2, alsoAnnounced: null });
+  });
+  it('offers the latest with the announced version when neither is accepted', () => {
+    expect(updateTerms(accepted({ accepted: [1], announced: ann({}) }))).toMatchObject({ version: 2, alsoAnnounced: { version: 3 } });
+  });
+  it('a raised minimum asks for the latest', () => {
+    expect(updateTerms(accepted({ accepted: [1], announced: ann({ version: 2, hash: HASH, minVersion: 2, newVersion: false }) }))).toMatchObject({
+      version: 2,
+      alsoAnnounced: null,
+    });
+  });
+});
+
+describe('countingVersion', () => {
+  it('is the newest accepted version between the minimum and the latest', () => {
+    expect(countingVersion(posture({ latest: 4, minimum: 2, accepted: [1, 3] }))).toBe(3);
+    expect(countingVersion(posture({ latest: 4, minimum: 2, accepted: [1] }))).toBe(0);
   });
 });
 

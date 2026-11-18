@@ -142,6 +142,24 @@ export function termsFrom(posture: TermsPosture, current: boolean, previous: { v
   return { kind: 'needed', version: posture.latest, hash: posture.latestHash, previous, posture, alsoAnnounced };
 }
 
+/** What a current wallet is offered to accept: the announced version when
+ *  that is what is due and the latest is already accepted, otherwise the
+ *  latest (with an announced new version in the same transaction). */
+export function updateTerms(t: Extract<TermsState, { kind: 'accepted' }>): Extract<TermsState, { kind: 'needed' }> | null {
+  const a = t.posture.announced;
+  const alsoAnnounced = a && a.newVersion && !t.posture.accepted.includes(a.version) ? a : null;
+  if (t.latestAccepted && alsoAnnounced)
+    return { kind: 'needed', version: alsoAnnounced.version, hash: alsoAnnounced.hash, previous: null, posture: t.posture, alsoAnnounced: null };
+  if (t.latestAccepted && !t.due) return null;
+  return { kind: 'needed', version: t.version, hash: t.hash, previous: null, posture: t.posture, alsoAnnounced };
+}
+
+/** The newest version the wallet accepted that counts now (from the minimum
+ *  up to the latest); 0 when none does. */
+export function countingVersion(posture: TermsPosture): number {
+  return posture.accepted.filter((v) => v >= posture.minimum && v <= posture.latest).reduce((m, v) => Math.max(m, v), 0);
+}
+
 /** The wallet's own acceptance as one call: `acceptTerms` for the version
  *  asked, and, while a new version is announced and not yet accepted, a batch
  *  of two `acceptTerms` items (the latest, then the announced one), so the

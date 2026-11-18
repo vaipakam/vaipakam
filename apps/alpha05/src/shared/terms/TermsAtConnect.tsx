@@ -7,9 +7,9 @@ import { PAGES } from '../../routes/pageMap';
 import { useCopy } from '../copy/useCopy';
 import { useOwnRead } from '../reads/useOwnRead';
 import { useStoredValue } from '../tx/txStore';
-import { formatFigureText } from '../ui/format';
+import { formatFigureText, formatUtcDate } from '../ui/format';
 import { Notice } from '../ui/Notice';
-import { acceptTermsCall } from './terms';
+import { acceptTermsCall, updateTerms, type TermsState } from './terms';
 import { TermsPrompt } from './TermsPrompt';
 import { useTerms } from './useTerms';
 import { useTermsGate, type NeededTerms, type TermsGate } from './useTermsGate';
@@ -49,6 +49,11 @@ interface ConnectTerms {
   dismissed: string | null;
   setDismissed: (key: string | null) => void;
   setExits: (key: string | null) => void;
+  /** A current wallet's standing, when it has something to say: a newer
+   *  version it may accept, or an announced change it must accept by a date. */
+  update: { terms: NeededTerms; key: string; due: Extract<TermsState, { kind: 'accepted' }>['due'] } | null;
+  updateSeen: string | null;
+  setUpdateSeen: (key: string | null) => void;
 }
 
 function useConnectTerms(): ConnectTerms {
@@ -58,6 +63,7 @@ function useConnectTerms(): ConnectTerms {
   const gate = useTermsGate(CONNECT_TERMS_KEY, chain, own);
   const [exits, setExits] = useStoredValue<string>(`${CONNECT_TERMS_KEY}:exits`);
   const [dismissed, setDismissed] = useStoredValue<string>(`${CONNECT_TERMS_KEY}:dismissed`);
+  const [updateSeen, setUpdateSeen] = useStoredValue<string>(`${CONNECT_TERMS_KEY}:update-seen`);
 
   let access: TermsAccess;
   if (!own || !chain) access = { kind: 'none' };
@@ -68,7 +74,13 @@ function useConnectTerms(): ConnectTerms {
     const key = `${own.chainId}:${own.account.toLowerCase()}:${terms.data.version}:${terms.data.hash}`;
     access = exits === key ? { kind: 'exits', terms: terms.data, key } : { kind: 'locked', terms: terms.data, key };
   }
-  return { access, own, chain, gate, dismissed, setDismissed, setExits: (k) => setExits(k) };
+  let update: ConnectTerms['update'] = null;
+  if (own && chain && terms.data?.kind === 'accepted') {
+    const offered = updateTerms(terms.data);
+    if (offered)
+      update = { terms: offered, due: terms.data.due, key: `${own.chainId}:${own.account.toLowerCase()}:${offered.version}:${offered.hash}:${terms.data.due?.effectiveAt ?? 0}` };
+  }
+  return { access, own, chain, gate, dismissed, setDismissed, setExits: (k) => setExits(k), update, updateSeen, setUpdateSeen: (k) => setUpdateSeen(k) };
 }
 
 /** Whether the page at this location shows nothing of the connected app
@@ -121,7 +133,7 @@ function useAcceptFee(own: OwnStateClient | null, chain: SupportedChain | null, 
  */
 export function TermsAtConnect() {
   const { text, format } = useCopy();
-  const { access, own, chain, gate, dismissed, setDismissed, setExits } = useConnectTerms();
+  const { access, own, chain, gate, dismissed, setDismissed, setExits, update, updateSeen, setUpdateSeen } = useConnectTerms();
   const needed = access.kind === 'locked' ? access.terms : null;
   const key = access.kind === 'locked' ? access.key : null;
   const open = gate.session !== null;
@@ -168,6 +180,29 @@ export function TermsAtConnect() {
           gate.end();
         }}
       />
+    );
+  }
+
+  if (access.kind === 'open' && update && updateSeen !== update.key) {
+    const due = update.due;
+    return (
+      <Notice tone={due ? 'warn' : 'info'} tier={due ? 'A' : 'B'}>
+        <span data-testid="terms-update" data-due={due ? 'yes' : 'no'}>
+          {due
+            ? format(due.newVersion ? 'connectTerms.dueVersion' : 'connectTerms.dueMinimum', {
+                chain: chain.name,
+                version: String(due.newVersion ? due.version : due.minVersion),
+                date: formatUtcDate(due.effectiveAt),
+              })
+            : format('connectTerms.updated', { chain: chain.name, version: String(update.terms.version) })}
+        </span>{' '}
+        <button type="button" className="btn" onClick={() => gate.start(update.terms)} data-testid="terms-update-accept">
+          {text('connectTerms.acceptNow')}
+        </button>{' '}
+        <button type="button" className="btn" onClick={() => setUpdateSeen(update.key)} data-testid="terms-update-later">
+          {text(due ? 'connectTerms.later' : 'connectTerms.hide')}
+        </button>
+      </Notice>
     );
   }
 
