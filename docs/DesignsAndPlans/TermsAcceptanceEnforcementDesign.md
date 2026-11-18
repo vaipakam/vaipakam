@@ -204,8 +204,12 @@ date their commitments stop filling.
   record cannot be read the app stays closed and offers a retry, as today.
 - **A new version.** From the announcement the app asks again at Connect,
   shows the date, and says what stops on that date if the wallet does not
-  accept. A wallet connecting for the first time during the notice is shown
-  both versions and accepts both in the one transaction.
+  accept. For a wallet that is current on the version in force this request
+  can be put off: declining it, or rejecting its transaction, leaves the
+  wallet connected with everything open until that date. Only the version in
+  force is required to be connected. A wallet connecting for the first time
+  during the notice is shown both versions and accepts both in the one
+  transaction.
 - **Another network.** The first time a wallet uses another network the app
   asks for the acceptance there, before anything else on that network.
 - **The book.** The book applies the rule of section 3 and nothing wider. A
@@ -271,7 +275,9 @@ date their commitments stop filling.
     the Terms, and the keeper sends no acceptance for any wallet.
 15. In the app, a wallet that rejects the acceptance transaction is not
     connected; one that sends it reaches the app only after the record is
-    read back from the chain.
+    read back from the chain. During a notice, a wallet current on the
+    version in force declines the announced one and stays connected, and is
+    closed out of the app only from the in-force time.
 
 ## 10. Residuals
 
