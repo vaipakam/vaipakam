@@ -1850,6 +1850,7 @@
     "L|vaipakam|714|2|uint16|feeShareCfg.ceilingBps",
     "L|vaipakam|716|0|address|acceptAckIntegrator",
     "L|vaipakam|717|0|address|acceptIntegratorPending",
+    "L|vaipakam|718|0|uint256|acceptIntegratorLoanId",
     "L|vaipakam|7|0|address|retiredNumeraireChainlinkDenominator",
     "L|vaipakam|80|0|address|retiredSequencerUptimeFeed",
     "L|vaipakam|85|0|uint256|activeLoansCount",

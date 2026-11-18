@@ -156,6 +156,9 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     );
 
     // Facet-specific errors (shared errors inherited from IVaipakamErrors)
+    /// @dev #3682 — the integrator settlement named a different loan id than
+    ///      the loan being opened (an internal invariant; never expected).
+    error IntegratorLoanMismatch(uint256 settledFor, uint256 opened);
     error InvalidOffer();
     error MixedCollateralNotAllowed();
 
@@ -488,7 +491,11 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             LibVaipakam.Storage storage st = LibVaipakam.storageSlot();
             address integrator = st.acceptIntegratorPending;
             if (integrator != address(0)) {
+                // The charge's settlement event named the next loan id; it
+                // must be this loan, whatever the route.
+                if (st.acceptIntegratorLoanId != loanId) revert IntegratorLoanMismatch(st.acceptIntegratorLoanId, loanId);
                 delete st.acceptIntegratorPending;
+                delete st.acceptIntegratorLoanId;
                 LibIntegrator.recordLoan(loanId, integrator);
                 d.integrator = integrator;
             }

@@ -47,7 +47,7 @@
     "name": "IntegratorShareSettled",
     "inputs": [
       {
-        "name": "offerId",
+        "name": "loanId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
@@ -63,6 +63,12 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      },
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       },
       {
         "name": "amount",

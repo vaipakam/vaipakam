@@ -1862,6 +1862,22 @@
   },
   {
     "type": "error",
+    "name": "IntegratorLoanMismatch",
+    "inputs": [
+      {
+        "name": "settledFor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "opened",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "IntentPending",
     "inputs": [
       {

@@ -7,6 +7,7 @@ import {LibIntegrator} from "../libraries/LibIntegrator.sol";
 import {LibFeeShares} from "../libraries/LibFeeShares.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
@@ -194,19 +195,29 @@ contract IntegratorFacet is DiamondAccessControl, IVaipakamErrors {
     // ── Attribution ──────────────────────────────────────────────────────
 
     /**
-     * @notice #3719 — name the integrator the caller set its standing lender
-     *         intent through, so the platform's alert can name the door. Pure
-     *         attribution: a lender's action never earns a share, and nothing
-     *         reads it to move value. Called in the same batch as the intent's
-     *         set; address(0) states that none was used.
+     * @notice #3719 — name the integrator through which `owner` set its
+     *         standing lender intent, so the platform's alert can name the
+     *         door. Pure attribution: a lender's action never earns a share,
+     *         and nothing reads it to set a rate, an amount or a recipient.
+     *         Called by the intent's owner or the account's current manager,
+     *         in the same batch as the intent's set. `integrator` must be
+     *         registered, or address(0) to state that none was used.
      */
-    function nameLenderIntentIntegrator(address lendingAsset, address collateralAsset, uint8 slot, address integrator)
-        external
-    {
-        if (!LibVaipakam.storageSlot().lenderIntent[msg.sender][lendingAsset][collateralAsset][slot].active) {
-            revert LenderIntentNotActive();
+    function nameLenderIntentIntegrator(
+        address owner,
+        address lendingAsset,
+        address collateralAsset,
+        uint8 slot,
+        address integrator
+    ) external {
+        // The owner wallet, or its controller once a replacement retired it.
+        LibProtectedAccount.requireManager(owner);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!s.lenderIntent[owner][lendingAsset][collateralAsset][slot].active) revert LenderIntentNotActive();
+        if (integrator != address(0) && s.integrators[integrator].status == LibVaipakam.IntegratorStatus.None) {
+            revert IntegratorNotRegistered(integrator);
         }
-        emit LenderIntentIntegratorNamed(msg.sender, lendingAsset, collateralAsset, slot, integrator);
+        emit LenderIntentIntegratorNamed(owner, lendingAsset, collateralAsset, slot, integrator);
     }
 
     // ── Delivery ─────────────────────────────────────────────────────────

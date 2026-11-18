@@ -228,12 +228,14 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
     ///         integrator's vault. A refused integrator (`refusal` other than
     ///         None) is paid nothing, and a share that could not be delivered
     ///         went to the reserve in the same transaction. The loan opened
-    ///         either way; it is the one this accept of `offerId` created, whose
-    ///         `LoanInitiatedDetails` names the same integrator.
+    ///         either way: `loanId` is the loan this accept of `offerId`
+    ///         created, whose `LoanInitiatedDetails` names the same
+    ///         integrator (the loan's creation refuses any other id).
     event IntegratorShareSettled(
-        uint256 indexed offerId,
+        uint256 indexed loanId,
         address indexed integrator,
         address indexed asset,
+        uint256 offerId,
         uint256 amount,
         bool delivered,
         LibIntegrator.Refusal refusal
@@ -248,7 +250,12 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
     ///      a short delivery is undone and the share joins the treasury leg,
     ///      above the floor, so it is the reserve's.
     function _chargeFee(ChargeCtx memory c) private {
-        LibVaipakam.storageSlot().acceptIntegratorPending = c.integrator;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.acceptIntegratorPending = c.integrator;
+        // The loan this accept creates takes the next id; the loan's creation
+        // checks it, so this event joins exactly one loan on every route.
+        uint256 loanId = s.nextLoanId + 1;
+        s.acceptIntegratorLoanId = loanId;
         uint256 above = LibFeeFloor.aboveFloor(c.fee, c.principal);
         (uint256 rateBps, LibIntegrator.Refusal refusal) = LibIntegrator.rateFor(c.integrator, c.borrower);
         (uint256 matcherCut, uint256 integratorCut,) = LibFeeShares.bound(
@@ -265,7 +272,7 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
             );
         }
         if (c.integrator != address(0)) {
-            emit IntegratorShareSettled(c.offerId, c.integrator, c.lendingAsset, integratorCut, delivered, refusal);
+            emit IntegratorShareSettled(loanId, c.integrator, c.lendingAsset, c.offerId, integratorCut, delivered, refusal);
         }
 
         // #2440 — the treasury accrues what reached it; the host splits it at

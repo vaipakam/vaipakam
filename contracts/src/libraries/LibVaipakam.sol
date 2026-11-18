@@ -8561,6 +8561,10 @@ library LibVaipakam {
         ///      creation in the same transaction, which records it on the loan
         ///      and clears it.
         address acceptIntegratorPending;
+        /// @dev #3682 — the id of the loan that charge is for (the next loan
+        ///      id when the fee is charged), checked by the loan's creation
+        ///      so the settlement event and the loan always name one loan.
+        uint256 acceptIntegratorLoanId;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.
