@@ -15,20 +15,33 @@
  *   - after a write, the controls stay busy until a fresh read lands, so a
  *     second click cannot resubmit against the old state.
  */
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { ShieldCheck, LoaderCircle, Lock } from 'lucide-react';
-import { isAddress, type Abi } from 'viem';
-import { usePublicClient } from 'wagmi';
-import { VaipakamVaultImplementationABI } from '@vaipakam/contracts/abis';
+import { isAddress, recoverTypedDataAddress, type Abi } from 'viem';
+import { usePublicClient, useWalletClient } from 'wagmi';
+import { VaipakamVaultImplementationABI, VaultProtectionABI } from '@vaipakam/contracts/abis';
 import {
   directAuth,
   protectionCall,
+  recoveryCall,
   replacementArgs,
   VAULT_SETTING,
   VAULT_SIGNER,
 } from '@vaipakam/lib/protectedAccountView';
+import {
+  parseRecoveryProof,
+  parseRecoveryRequest,
+  RECOVERY_CHANGE_WAIT_SECONDS,
+  RECOVERY_LINK_PARAMS,
+  RECOVERY_PROOF_LIFETIME_SECONDS,
+  recoveryProofAuth,
+  recoveryProofParams,
+  recoveryProofTypedData,
+  recoveryRequestParams,
+  VAULT_PURPOSE_RECOVERY_PROOF,
+} from '@vaipakam/lib/vaultProtectionAuth';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
@@ -857,6 +870,347 @@ function HolderLockCard({
   );
 }
 
+// ─── #3246 part 2 — the recovery address ────────────────────────────────────
+//
+// The one place a clawback pays, and what protection needs before it can be
+// turned on. The owner names it and the address proves control by signing a
+// `RecoveryProof` (no transaction, so no gas on a cold wallet). The proof
+// travels as two links built in `@vaipakam/lib/vaultProtectionAuth`, shared
+// with alpha05: the owner's request link (`rr_*`) and the recovery wallet's
+// proof link (`rp_*`). Opening the proof link, the owner sends the request.
+
+/** The vault's write ABI plus protected mode's errors, so a refused recovery
+ *  write names its revert (`BadRecovery`, `NotRequested`, …). */
+const RECOVERY_WRITE_ABI = [
+  ...(VaipakamVaultImplementationABI as Abi),
+  ...(VaultProtectionABI as Abi).filter((e) => e.type === 'error'),
+] as Abi;
+
+/** A link to this page carrying `params`. */
+function protectionLink(params: Record<string, string>): string {
+  return `${window.location.origin}/vault/protection?${new URLSearchParams(params).toString()}`;
+}
+
+/** A read-only link with a copy button. */
+function LinkBox({ label, link, testId }: { label: string; link: string; testId: string }) {
+  const p = copy.protection;
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="stack">
+      <label className="muted" htmlFor={testId}>
+        {label}
+      </label>
+      <input id={testId} data-testid={testId} className="input" readOnly value={link} onFocus={(e) => e.target.select()} />
+      <div className="cluster">
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={() => {
+            // The clipboard can be refused (an insecure origin, a denied
+            // permission): the link stays selectable in the box above.
+            void navigator.clipboard?.writeText(link).then(
+              () => setCopied(true),
+              () => setCopied(false),
+            );
+          }}
+        >
+          {copied ? p.recoveryLinkCopied : p.recoveryCopyLink}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Why `candidate` cannot be this account's recovery address, as far as the
+ *  page can tell before sending (the vault checks every rule again). */
+function recoveryRefusal(
+  snap: ProtectedAccountSnapshot,
+  owner: `0x${string}`,
+  diamond: `0x${string}`,
+  candidate: `0x${string}`,
+): string | null {
+  const p = copy.protection;
+  const c = candidate.toLowerCase();
+  if (c === owner.toLowerCase()) return p.recoverySelf;
+  if (c === snap.vault?.toLowerCase() || c === diamond.toLowerCase()) return p.recoveryNotContract;
+  if (c === snap.recovery?.inForce?.toLowerCase()) return p.recoveryAlreadyInForce;
+  const roles = [
+    ...(snap.signers ?? []).map((s) => s.signer),
+    ...(snap.pendingSigners ?? []).map((s) => s.address),
+    ...(snap.allowlist ?? []),
+    ...(snap.pendingAllowlist ?? []).map((s) => s.address),
+  ];
+  if (roles.some((a) => a.toLowerCase() === c)) return p.recoveryHasRole;
+  return null;
+}
+
+/** The owner's recovery-address step. */
+function RecoveryAddressCard({ snap }: { snap: ProtectedAccountSnapshot }) {
+  const p = copy.protection;
+  const { address, walletChain } = useActiveChain();
+  const { write } = useDiamondWrite();
+  const publicClient = usePublicClient({ chainId: walletChain?.chainId });
+  const [searchParams, setSearchParams] = useSearchParams();
+  const proof = useMemo(() => parseRecoveryProof(searchParams), [searchParams]);
+  const { busy, error, done, run } = useRunner();
+  const nowSec = useNowSec();
+  const [named, setNamed] = useState<`0x${string}` | null>(null);
+  const [check, setCheck] = useState<string | null>(null);
+  if (!address || !walletChain || !snap.record) return null;
+  const record = snap.record;
+  const rec = snap.recovery;
+  const chainNow = chainNowOf(snap, nowSec);
+  const vault = snap.vault;
+
+  const dropLinkParams = () => {
+    const next = new URLSearchParams(searchParams);
+    for (const k of RECOVERY_LINK_PARAMS) next.delete(k);
+    setSearchParams(next, { replace: true });
+  };
+
+  // What a request asks the vault for, worded before the owner signs.
+  const firstWait = record.enabled
+    ? days(2 * record.delaySeconds)
+    : snap.delayBounds
+      ? days(2 * snap.delayBounds.min)
+      : null;
+  const waitNote = rec?.inForce
+    ? p.recoveryWaitChange(days(RECOVERY_CHANGE_WAIT_SECONDS))
+    : firstWait
+      ? p.recoveryWaitFirst(firstWait)
+      : p.recoveryWaitFirstUnknown;
+
+  async function createVault() {
+    await write('getOrCreateUserVault', [address]);
+  }
+
+  /** Check the proof link against this owner and vault, then ask. */
+  async function submitProof() {
+    if (!proof || !vault || !publicClient || !walletChain || !address) return;
+    setCheck(null);
+    const sameChainAndAccount =
+      proof.chainId === walletChain.chainId &&
+      proof.vault.toLowerCase() === vault.toLowerCase() &&
+      proof.account.toLowerCase() === address.toLowerCase() &&
+      proof.diamond.toLowerCase() === walletChain.diamondAddress.toLowerCase();
+    if (!sameChainAndAccount) return setCheck(p.recoveryProofWrongAccount);
+    const refusal = recoveryRefusal(snap, address, walletChain.diamondAddress, proof.recovery);
+    if (refusal) return setCheck(refusal);
+    if (proof.expiry <= chainNow) return setCheck(p.recoveryProofExpired);
+    let signer: string;
+    try {
+      signer = await recoverTypedDataAddress({ ...recoveryProofTypedData(proof), signature: proof.sig });
+    } catch {
+      return setCheck(p.recoveryProofBadSig);
+    }
+    if (signer.toLowerCase() !== proof.recovery.toLowerCase()) return setCheck(p.recoveryProofBadSig);
+    const nonce = (await publicClient.readContract({
+      address: vault,
+      abi: VaipakamVaultImplementationABI as Abi,
+      functionName: 'protectionNonce',
+      args: [proof.recovery, VAULT_PURPOSE_RECOVERY_PROOF],
+    })) as bigint;
+    if (nonce !== proof.nonce) return setCheck(p.recoveryProofUsed);
+    await run(async () => {
+      await write(
+        'protect',
+        [recoveryCall('requestRecoveryAddress', [proof.recovery, directAuth(address), recoveryProofAuth(proof)])],
+        { target: { address: vault, abi: RECOVERY_WRITE_ABI } },
+      );
+      dropLinkParams();
+    });
+  }
+
+  const cancel = () =>
+    run(() =>
+      write('protect', [recoveryCall('cancelRecoveryAddress', [directAuth(address)])], {
+        target: { address: vault!, abi: RECOVERY_WRITE_ABI },
+      }),
+    );
+
+  const requestLink = named
+    ? protectionLink(recoveryRequestParams({ chainId: walletChain.chainId, account: address, recovery: named }))
+    : null;
+  const namedRefusal = named ? recoveryRefusal(snap, address, walletChain.diamondAddress, named) : null;
+  // The vault refuses a request while the account is locked or cooling down,
+  // except on a recovered account, whose lock never lifts.
+  const frozen = !rec?.recovered && (record.locked || record.cooldownUntil > chainNow);
+
+  return (
+    <section className="card" data-testid="recovery-address">
+      <h2 className="card-title">{p.recoveryTitle}</h2>
+      <p>{p.recoveryBody}</p>
+      <p className="muted">{p.recoveryClawbackNotInApp}</p>
+      {!vault ? (
+        <div className="stack">
+          <p>{p.recoveryNoVault}</p>
+          <button type="button" className="btn btn-primary" disabled={busy} onClick={() => run(createVault)}>
+            {busy ? p.working : p.recoveryCreateVault}
+          </button>
+        </div>
+      ) : !rec ? (
+        <UnavailableState body={p.recoveryUnread} />
+      ) : (
+        <div className="stack">
+          {rec.recovered ? <p className="banner banner-danger">{p.recoveryRecovered(rec.inForce ?? '—')}</p> : null}
+          <p data-testid="recovery-in-force">
+            {rec.inForce ? p.recoveryInForce(rec.inForce) : p.recoveryNone}
+          </p>
+          {rec.pending ? (
+            <div className="item-row stack" data-testid="recovery-pending">
+              <p>{p.recoveryPending(rec.pending, when(rec.pendingAt))}</p>
+              {rec.inForce ? <p className="muted">{p.recoveryPendingKeepsCurrent}</p> : null}
+              <div className="cluster">
+                <button type="button" className="btn btn-secondary" disabled={busy} onClick={cancel}>
+                  {p.recoveryCancel}
+                </button>
+              </div>
+            </div>
+          ) : null}
+          {proof ? (
+            <div className="stack" data-testid="recovery-proof-received">
+              <h3>{p.recoveryProofReceivedTitle}</h3>
+              <p>{p.recoveryProofReceived(proof.recovery)}</p>
+              <p className="muted">{waitNote}</p>
+              {rec.pending ? <p className="muted">{p.recoveryReplacesPending}</p> : null}
+              {check ? (
+                <div className="banner banner-danger" role="alert">
+                  <span className="banner-body">{check}</span>
+                </div>
+              ) : null}
+              <div className="cluster">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={busy || frozen}
+                  onClick={() => void submitProof()}
+                >
+                  {busy ? p.working : p.recoverySubmit}
+                </button>
+                <button type="button" className="btn btn-secondary" disabled={busy} onClick={dropLinkParams}>
+                  {p.recoveryDiscardProof}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="stack">
+              <h3>{rec.inForce || rec.pending ? p.recoveryChangeTitle : p.recoveryStepName}</h3>
+              <AddressAction
+                placeholder={p.recoveryAddressPlaceholder}
+                label={p.recoveryMakeLink}
+                disabled={busy || frozen}
+                onSubmit={setNamed}
+              />
+              {namedRefusal ? (
+                <p className="banner banner-danger" role="alert">
+                  {namedRefusal}
+                </p>
+              ) : requestLink ? (
+                <>
+                  <p>{p.recoveryRequestLinkBody}</p>
+                  <LinkBox label={p.recoveryRequestLinkLabel} link={requestLink} testId="recovery-request-link" />
+                  <p className="muted">{waitNote}</p>
+                </>
+              ) : null}
+            </div>
+          )}
+          {frozen ? <p className="muted">{p.recoveryFrozen}</p> : null}
+        </div>
+      )}
+      <Feedback error={error} done={done} />
+    </section>
+  );
+}
+
+/** The recovery wallet's step: sign the proof for an account and hand back
+ *  the link. */
+function RecoveryProofCard() {
+  const p = copy.protection;
+  const { address, walletChain } = useActiveChain();
+  const { data: walletClient } = useWalletClient({ chainId: walletChain?.chainId });
+  const publicClient = usePublicClient({ chainId: walletChain?.chainId });
+  const [searchParams] = useSearchParams();
+  const request = useMemo(() => parseRecoveryRequest(searchParams), [searchParams]);
+  const [typed, setTyped] = useState<`0x${string}` | undefined>();
+  const account = request?.account ?? typed;
+  const snap = useProtectedAccount(account);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [proofLink, setProofLink] = useState<{ link: string; expiry: bigint } | null>(null);
+  if (!address || !walletChain) return null;
+  const vault = snap.data?.vault ?? null;
+  const wrongChain = request !== null && request.chainId !== walletChain.chainId;
+  const wrongWallet = request !== null && request.recovery.toLowerCase() !== address.toLowerCase();
+  const isSelf = account?.toLowerCase() === address.toLowerCase();
+
+  async function sign() {
+    if (!vault || !walletClient || !publicClient || !walletChain || !address) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const [creationOwner, diamond, nonce, block] = await Promise.all([
+        publicClient.readContract({ address: vault, abi: VaipakamVaultImplementationABI as Abi, functionName: 'vaultCreationOwner' }) as Promise<`0x${string}`>,
+        publicClient.readContract({ address: vault, abi: VaipakamVaultImplementationABI as Abi, functionName: 'vaultDiamond' }) as Promise<`0x${string}`>,
+        publicClient.readContract({
+          address: vault,
+          abi: VaipakamVaultImplementationABI as Abi,
+          functionName: 'protectionNonce',
+          args: [address, VAULT_PURPOSE_RECOVERY_PROOF],
+        }) as Promise<bigint>,
+        publicClient.getBlock(),
+      ]);
+      const expiry = block.timestamp + BigInt(RECOVERY_PROOF_LIFETIME_SECONDS);
+      const req = { chainId: walletChain.chainId, vault, account: creationOwner, diamond, nonce, expiry };
+      const sig = await walletClient.signTypedData({ account: address, ...recoveryProofTypedData(req) });
+      setProofLink({ link: protectionLink(recoveryProofParams({ ...req, recovery: address, sig })), expiry });
+    } catch (err) {
+      setError(captureTxError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="card" data-testid="recovery-proof">
+      <h2 className="card-title">{p.proofTitle}</h2>
+      <p>{p.proofBody}</p>
+      {request ? (
+        <p>{p.proofRequested(request.account)}</p>
+      ) : (
+        <AddressAction placeholder={p.accountPlaceholder} label={p.loadAccount} disabled={busy} onSubmit={setTyped} />
+      )}
+      {!account ? null : wrongChain ? (
+        <p className="banner banner-danger">{p.proofWrongChain}</p>
+      ) : wrongWallet ? (
+        <p className="banner banner-danger">{p.proofWrongWallet(request!.recovery)}</p>
+      ) : isSelf ? (
+        <p className="banner banner-danger">{p.recoverySelf}</p>
+      ) : snap.isLoading ? (
+        <p className="muted">{p.loading}</p>
+      ) : snap.isError || !snap.data || snap.data.recordFailed ? (
+        <UnavailableState body={p.unavailable} />
+      ) : !vault ? (
+        <p className="muted">{p.proofNoVault}</p>
+      ) : proofLink ? (
+        <div className="stack">
+          <p>{p.proofLinkBody}</p>
+          <LinkBox label={p.proofLinkLabel} link={proofLink.link} testId="recovery-proof-link" />
+          <p className="muted">{p.proofExpires(formatDateTime(Number(proofLink.expiry)))}</p>
+        </div>
+      ) : (
+        <button type="button" className="btn btn-primary" disabled={busy || !walletClient} onClick={() => void sign()}>
+          {busy ? p.working : p.proofSign}
+        </button>
+      )}
+      {error ? (
+        <div className="banner banner-danger" role="alert">
+          <span className="banner-body">{error}</span>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 /** Enable form for an account with protection off. */
 function EnableForm({ snap }: { snap: ProtectedAccountSnapshot }) {
   const { address, walletChain } = useActiveChain();
@@ -892,6 +1246,9 @@ function EnableForm({ snap }: { snap: ProtectedAccountSnapshot }) {
   for (let d = Math.ceil(bounds.min / DAY); d <= Math.floor(bounds.max / DAY); d++) dayOptions.push(d);
   const [delay, setDelay] = useState(dayOptions.includes(3) ? 3 : dayOptions[0]);
   const [nfts, setNfts] = useState(true);
+  // The vault refuses the switch-on until a recovery address is set, in
+  // force or still waiting (#3246 part 2).
+  const recoverySet = snap.recovery ? Boolean(snap.recovery.inForce || snap.recovery.pending) : null;
   return (
     <section className="card">
       <h2 className="card-title">{p.statusOff}</h2>
@@ -914,11 +1271,16 @@ function EnableForm({ snap }: { snap: ProtectedAccountSnapshot }) {
       <button
         type="button"
         className="btn btn-primary"
-        disabled={busy}
+        disabled={busy || recoverySet !== true}
         onClick={() => run(() => enable(delay * DAY, nfts))}
       >
         {busy ? p.working : p.enable}
       </button>
+      {recoverySet === null && snap.vault ? (
+        <p className="muted">{p.enableRecoveryUnknown}</p>
+      ) : recoverySet !== true ? (
+        <p className="muted">{p.enableNeedsRecovery}</p>
+      ) : null}
       <Feedback error={error} done={done} />
     </section>
   );
@@ -1023,6 +1385,10 @@ export function Protection() {
   const retired = useRetiredAccountsOf();
   const p = copy.protection;
   const data = snap.data;
+  // A recovery wallet opening an owner's request link sees its signing step
+  // first.
+  const [searchParams] = useSearchParams();
+  const hasRecoveryRequest = parseRecoveryRequest(searchParams) !== null;
   return (
     <div>
       <p>
@@ -1042,6 +1408,8 @@ export function Protection() {
         <UnavailableState body={p.unavailable} />
       ) : (
         <div className="stack">
+          {hasRecoveryRequest ? <RecoveryProofCard /> : null}
+          <RecoveryAddressCard snap={data} />
           {data.record.enabled ? <AccountView account={address} snap={data} asSigner={false} /> : <EnableForm snap={data} />}
           <OwnHolderLock snap={data} holder={address} />
           {(retired.data ?? []).map((account) => (
@@ -1049,6 +1417,7 @@ export function Protection() {
           ))}
           {retired.isError ? <UnavailableState body={p.managedAccountUnknown} /> : null}
           <SignerEntryCard />
+          {hasRecoveryRequest ? null : <RecoveryProofCard />}
         </div>
       )}
     </div>

@@ -8,6 +8,13 @@
  *
  *    1. a deposit through the card raises the account's free holding by
  *       exactly the typed amount;
+ *    1b. protection cannot be turned on before a recovery address is set
+ *       (#3246 part 2); the owner names one, a SECOND wallet signs the
+ *       proof from the link the page makes, and the owner sends the
+ *       request from the link that comes back; the vault then holds the
+ *       address as pending, with its time, and the page shows both. The
+ *       address is not seeded on chain, so the page's step is what is
+ *       driven;
  *    2. turning protection on from the page enables it with the chosen
  *       delay;
  *    3. a withdrawal through the card is QUEUED, not paid: the wallet's
@@ -55,7 +62,18 @@ const pendingAllowOf = async (who: `0x${string}`) =>
 // payouts — the same figure the contract's withdraw is bounded by.
 const freeOf = (who: `0x${string}`) => read<bigint>('withdrawableNow', [who, 0, TLIQ, 0n]);
 
-test('deposit, protect, queue, cancel, list a pending address and lock — all from the app', async ({ launchWallet }) => {
+/** `protectionRecovery()`: (inForce, pending, pendingAt, recovered, recoveredAt). */
+const recoveryOf = (who: `0x${string}`) =>
+  readVault<readonly [`0x${string}`, `0x${string}`, bigint, boolean, bigint]>(who, 'protectionRecovery');
+
+/** The path and query of a link the page shows, so the other wallet's page
+ *  opens it on the same origin. */
+const pathOf = (link: string) => {
+  const u = new URL(link);
+  return u.pathname + u.search;
+};
+
+test('deposit, set a recovery address, protect, queue, cancel, list a pending address and lock — all from the app', async ({ launchWallet }) => {
   const owner = await launchWallet('vaultOwner');
   const { page, account } = owner;
   const me = account.address;
@@ -74,8 +92,46 @@ test('deposit, protect, queue, cancel, list a pending address and lock — all f
   const [listed] = await read<readonly [readonly string[], bigint]>('getDepositoryAssets', [me, 0n, 50n]);
   expect(listed.map((a) => a.toLowerCase()), 'the deposit is listed').toContain(TLIQ.toLowerCase());
 
-  // ── 2. Turn protection on ────────────────────────────────────────────
+  // ── 1b. The recovery address, from the page, with a second wallet ────
   await page.goto('/vault/protection', { waitUntil: 'domcontentloaded' });
+  await expect(page.getByRole('heading', { name: /protection is off/i })).toBeVisible({ timeout: 60_000 });
+  // The switch-on is refused until a recovery address is set or waiting.
+  await expect(page.getByRole('button', { name: /turn on protection/i })).toBeDisabled();
+  await expect(page.getByText(/set a recovery address first/i)).toBeVisible();
+
+  const recoveryWallet = await launchWallet('vaultRecovery');
+  const recoveryAddr = recoveryWallet.account.address;
+  const recoveryCard = page.getByTestId('recovery-address');
+  await recoveryCard.getByLabel(/recovery wallet address/i).fill(recoveryAddr);
+  await recoveryCard.getByRole('button', { name: /make the signing link/i }).click();
+  const requestLink = await recoveryCard.getByTestId('recovery-request-link').inputValue();
+  expect(requestLink).toContain('rr_recovery=' + recoveryAddr.toLowerCase());
+
+  // The recovery wallet opens the link and signs (no transaction).
+  await recoveryWallet.page.goto(pathOf(requestLink), { waitUntil: 'domcontentloaded' });
+  const proofCard = recoveryWallet.page.getByTestId('recovery-proof');
+  await expect(proofCard).toContainText(me, { ignoreCase: true, timeout: 60_000 });
+  await proofCard.getByRole('button', { name: /sign the proof/i }).click();
+  const proofLink = await proofCard.getByTestId('recovery-proof-link').inputValue({ timeout: 60_000 });
+  expect(proofLink).toContain('rp_sig=0x');
+
+  // The owner opens the link that came back and asks for the address.
+  await page.goto(pathOf(proofLink), { waitUntil: 'domcontentloaded' });
+  await expect(recoveryCard.getByTestId('recovery-proof-received')).toContainText(recoveryAddr, {
+    ignoreCase: true,
+    timeout: 60_000,
+  });
+  await recoveryCard.getByRole('button', { name: /ask for this recovery address/i }).click();
+  await expect
+    .poll(async () => (await recoveryOf(me))[1].toLowerCase(), { timeout: 120_000 })
+    .toBe(recoveryAddr.toLowerCase());
+  const [, , pendingAt] = await recoveryOf(me);
+  expect(pendingAt, 'a first setting waits, so it has a time').toBeGreaterThan(0n);
+  const pendingRecovery = recoveryCard.getByTestId('recovery-pending');
+  await expect(pendingRecovery).toContainText(/comes into force on/i, { timeout: 60_000 });
+  await expect(pendingRecovery).toContainText(recoveryAddr, { ignoreCase: true });
+
+  // ── 2. Turn protection on ────────────────────────────────────────────
   await expect(page.getByRole('heading', { name: /protection is off/i })).toBeVisible({ timeout: 60_000 });
   await page.getByLabel(/payout delay/i).selectOption({ label: '3 days' });
   await page.getByRole('button', { name: /turn on protection/i }).click();

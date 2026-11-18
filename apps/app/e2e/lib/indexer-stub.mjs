@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { POSITION_ERC721_ABI } from '@vaipakam/lib/positionNft';
 import { SIGNED_OFFER_FIELDS } from '@vaipakam/lib/signedOfferWire';
+import { signedOfferMessage } from '@vaipakam/lib/signedOfferSet';
 import { fileURLToPath } from 'node:url';
 import {
   createPublicClient,
@@ -689,18 +690,13 @@ const signedOffers = new Map();
  *  an older type recovers the wrong signer for EVERY order the app signs. */
 const SIGNED_OFFER_TYPES = { SignedOffer: SIGNED_OFFER_FIELDS };
 
-/** Wire shape (decimal strings / bools) → the typed message viem's
- *  typed-data encoder expects, field by field from the shared list (small
- *  uints as numbers, the rest as bigints). Throws on malformed numerics —
- *  the handler's catch answers 500, which is honest for a body the desk
- *  (the only client) never produces. */
+/** Wire shape → the typed message viem's typed-data encoder expects, by the
+ *  ONE shared converter (`@vaipakam/lib/signedOfferSet`). This stub kept its
+ *  own copy, which sent every bytes32 (the #3328 collection fields) through
+ *  `BigInt`, so viem refused every order and the stub answered
+ *  `invalid-order`. Throws on malformed numerics; the handler answers 400. */
 function signedTypedMessage(o) {
-  const m = {};
-  for (const { name, type } of SIGNED_OFFER_FIELDS) {
-    const v = o[name];
-    m[name] = type === 'address' ? v : type === 'bool' ? Boolean(v) : /^uint(8|16)$/.test(type) ? Number(v) : BigInt(v ?? 0);
-  }
-  return m;
+  return signedOfferMessage(o);
 }
 
 /** The order hash — the EIP-712 STRUCT hash, matching

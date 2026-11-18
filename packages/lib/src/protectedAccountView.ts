@@ -4,7 +4,7 @@
  */
 
 import { encodeFunctionData, type Abi, type Address, type Hex } from 'viem';
-import { VaultProtectionABI, VaipakamVaultImplementationABI } from '@vaipakam/contracts/abis';
+import { VaultProtectionABI, VaultRecoveryABI, VaipakamVaultImplementationABI } from '@vaipakam/contracts/abis';
 
 // ─── #3379 Stage B2 — protected mode lives in the account's vault ──────────
 //
@@ -35,6 +35,27 @@ export {
 export function protectionCall(functionName: string, args: readonly unknown[] = []): Hex {
   return encodeFunctionData({ abi: VaultProtectionABI as Abi, functionName, args } as never);
 }
+
+/** The `data` argument of the vault's `protect(bytes)` for one recovery-address
+ *  call (#3246 part 2): `VaultProtection` delegatecalls `VaultRecovery` for
+ *  these selectors, so they are encoded from that contract's ABI. */
+export function recoveryCall(
+  functionName: 'requestRecoveryAddress' | 'cancelRecoveryAddress' | 'clearRecoveryAddress' | 'settleRecoveryAddress',
+  args: readonly unknown[] = [],
+): Hex {
+  return encodeFunctionData({ abi: VaultRecoveryABI as Abi, functionName, args } as never);
+}
+
+/** `vault.protectionRecovery()`, positional as viem decodes it: the address
+ *  in force (zero = none), a pending one and when it comes into force (0 =
+ *  none), and whether the account was clawed back. */
+export type VaultProtectionRecovery = readonly [
+  inForce: Address,
+  pending: Address,
+  pendingAt: bigint,
+  recovered: boolean,
+  recoveredAt: bigint,
+];
 
 /** `vault.protectionState()`, positional as viem decodes it. */
 export type VaultProtectionState = readonly [

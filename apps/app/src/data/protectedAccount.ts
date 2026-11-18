@@ -23,6 +23,7 @@ import {
   type VaultProtectionPending,
   type VaultProtectionState,
   type VaultReplacementTally,
+  type VaultProtectionRecovery,
 } from '@vaipakam/lib/protectedAccountView';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
@@ -122,6 +123,13 @@ export interface ReplacementState {
   threshold: number;
 }
 
+export interface RecoveryState {
+  inForce: `0x${string}` | null;
+  pending: `0x${string}` | null;
+  pendingAt: bigint;
+  recovered: boolean;
+}
+
 export interface ProtectedAccountSnapshot {
   supported: boolean;
   /** #3379 B2 — the account's vault, where its protected record lives and
@@ -141,6 +149,11 @@ export interface ProtectedAccountSnapshot {
   replacement: ReplacementState | null;
   escapeOpen: boolean | null;
   delayBounds: { min: number; max: number } | null;
+  /** #3246 part 2 — the recovery address (where a clawback pays): the one in
+   *  force (null = none), a pending one and when it comes into force (0 =
+   *  none), and whether the account was clawed back. Null when unread or the
+   *  account has no vault yet. */
+  recovery: RecoveryState | null;
   /** Block time of the pinned read. */
   chainNowSec: bigint;
   fetchedAtMs: number;
@@ -559,6 +572,7 @@ function useProtectedAccountQueryOptions() {
         replacement: null,
         escapeOpen: null,
         delayBounds: null,
+        recovery: null,
         chainNowSec: block.timestamp,
         fetchedAtMs,
       };
@@ -608,7 +622,7 @@ function useProtectedAccountQueryOptions() {
       const allowlist: `0x${string}`[] | null = state ? [...state[6]] : vault === null ? [] : null;
 
       const none = <T,>(v: T) => Promise.resolve(v);
-      const [payoutIds, holderLockRaw, repl, escapeOpen, bounds, pending, tally] = await Promise.all([
+      const [payoutIds, holderLockRaw, repl, escapeOpen, bounds, pending, tally, recoveryRaw] = await Promise.all([
         soft(read<bigint[]>('getPendingPayoutIds', [target])),
         soft(
           publicClient!.readContract({
@@ -628,6 +642,7 @@ function useProtectedAccountQueryOptions() {
           ? none([[], []] as unknown as readonly [readonly `0x${string}`[], readonly `0x${string}`[]])
           : soft(readVault<readonly [readonly `0x${string}`[], readonly `0x${string}`[]]>(vault, 'pendingAdditions')),
         vault === null ? none([0n, 0n] as VaultReplacementTally) : soft(readVaultViews<VaultReplacementTally>(vault, 'replacementTally')),
+        vault === null ? none(null) : soft(readVault<VaultProtectionRecovery>(vault, 'protectionRecovery')),
       ]);
 
       // A list is known only if EVERY entry under it read: a partial queue
@@ -732,6 +747,14 @@ function useProtectedAccountQueryOptions() {
           : null,
         escapeOpen,
         delayBounds: bounds ? { min: Number(bounds[0]), max: Number(bounds[1]) } : null,
+        recovery: recoveryRaw
+          ? {
+              inForce: recoveryRaw[0].toLowerCase() === ZERO ? null : recoveryRaw[0],
+              pending: recoveryRaw[1].toLowerCase() === ZERO ? null : recoveryRaw[1],
+              pendingAt: BigInt(recoveryRaw[2]),
+              recovered: recoveryRaw[3],
+            }
+          : null,
       };
     },
   });
