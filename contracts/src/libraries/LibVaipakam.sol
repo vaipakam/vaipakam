@@ -8554,6 +8554,12 @@ library LibVaipakam {
         ///      number inside the minimum-to-latest range never counts.
         ///      Written only by `LegalFacet`. Appended — append-only.
         mapping(uint32 => uint64) tosVersionInForceAt;
+        /// @dev #3734 — per aggregator adapter, its principal: the outside
+        ///      party whose own capital it lends and whose Terms standing is
+        ///      the adapter's. Written once, by the factory, beside
+        ///      `isAggregatorAdapter` (the adapter's principal is fixed at its
+        ///      initialize, so the two cannot drift). Appended — append-only.
+        mapping(address => address) adapterPrincipal;
     }
 
     /// @notice #3681 — one loan's standing instructions, set by the

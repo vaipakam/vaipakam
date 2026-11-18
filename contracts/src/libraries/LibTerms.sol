@@ -29,11 +29,14 @@ import {LibVaipakam} from "./LibVaipakam.sol";
  *         force, nothing is checked.
  *
  *         The platform's own backstop vault is exempt, identified by the
- *         registry pointer, never by a list.
+ *         registry pointer, never by a list. An aggregator adapter answers
+ *         with its principal's standing ({subject}): it never accepts and is
+ *         never exempt.
  */
 library LibTerms {
     /// @notice `wallet` has not accepted the Terms a new position needs:
     ///         `version` is the latest version in force, the one to accept.
+    ///         For an aggregator adapter, `wallet` names its principal.
     error TermsNotAccepted(address wallet, uint32 version);
 
     /// @notice The Terms values that count now.
@@ -88,6 +91,13 @@ library LibTerms {
         return at != 0 && block.timestamp >= at && s.announcedTosIsNew && s.announcedTosVersion == version;
     }
 
+    /// @notice Whose Terms standing answers for `wallet`: an aggregator
+    ///         adapter's principal for a registered adapter (the adapter never
+    ///         accepts and is never exempt), else the wallet itself.
+    function subject(LibVaipakam.Storage storage s, address wallet) internal view returns (address) {
+        return s.isAggregatorAdapter[wallet] ? s.adapterPrincipal[wallet] : wallet;
+    }
+
     /// @notice Whether `wallet` may take on a new position as far as the
     ///         Terms go, and the version it needs if not.
     /// @dev The wallet's latest acceptance first, then a bounded read from
@@ -107,6 +117,7 @@ library LibTerms {
         State memory t = state(s);
         if (t.latest == 0) return (true, 0);
         if (wallet != address(0) && wallet == s.backstopVault) return (true, 0);
+        wallet = subject(s, wallet);
         uint32 floor = t.minimum == 0 ? 1 : t.minimum;
         // The wallet's latest acceptance first: one read settles the usual
         // case. It may name a pending or withdrawn version, so it must also
