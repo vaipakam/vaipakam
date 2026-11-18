@@ -37,7 +37,7 @@ export interface ManageReview {
 
 export async function readManageReview(own: OwnStateClient, diamond: Hex, draft: ManageDraft, identity: string): Promise<ManageReview> {
   const account = own.account;
-  const facts = (await own.read((c) => readManageFacts(c, diamond, account, draft.lending, draft.collateral))).value;
+  const facts = (await own.read((c) => readManageFacts(c, diamond, account, draft.lending, draft.collateral, draft.slot))).value;
   const approvalSteps =
     draft.kind !== 'add' || facts.allowance >= draft.amount
       ? 0

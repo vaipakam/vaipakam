@@ -61,6 +61,7 @@ export const ACCEPT_TERMS_TYPES = {
     { name: 'acceptorFull', type: 'bool' },
     { name: 'acceptorMaxCStar', type: 'uint256' },
     { name: 'acceptorAllowFullDowngrade', type: 'bool' },
+    { name: 'integrator', type: 'address' },
   ],
 } as const;
 
@@ -145,6 +146,8 @@ export type AcceptTermsMessage = {
   acceptorFull: boolean;
   acceptorMaxCStar: bigint;
   acceptorAllowFullDowngrade: boolean;
+  /** The integrator named for a fee share (#3682); this app names none. */
+  integrator: Hex;
 };
 
 /** A direct offer's key: the offer id, ABI-encoded and hashed. */
@@ -222,6 +225,7 @@ export function buildAcceptTerms(o: StoredOffer, ctx: AcceptContext): AcceptTerm
     acceptorFull: false,
     acceptorMaxCStar: 0n,
     acceptorAllowFullDowngrade: false,
+    integrator: ZERO_ADDRESS,
   };
 }
 

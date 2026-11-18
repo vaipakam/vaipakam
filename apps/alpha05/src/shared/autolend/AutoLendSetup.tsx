@@ -156,7 +156,7 @@ export function AutoLendSetup({ draft, chain, own, meta, terms, onEdit, onClose,
       if (!review) return [];
       const d = review.draft;
       const legs: LegOutcome[] = [];
-      const logs = setupLogs(receipt.logs, diamond, account, d.lending, d.collateral);
+      const logs = setupLogs(receipt.logs, diamond, account, d.lending, d.collateral, d.slot);
       if (logs.set) {
         setDone(true);
         legs.push({ status: 'done', label: text(d.change ? 'autoLend.legChanged' : 'autoLend.legSet') });

@@ -15,7 +15,7 @@ import type { Page } from '@playwright/test';
 import { buildAlertSettingsMessage, buildTelegramLinkMessage, buildTelegramTestMessage, buildTelegramUnlinkMessage } from '@vaipakam/lib/alertsMessage';
 import { scenario } from '../lib/chain';
 import { agentState, controlAgent, type AgentRequest } from '../lib/stub';
-import { connectWallet, expect, test } from '../lib/wallet';
+import { closeOutOnly, connectWallet, expect, test } from '../lib/wallet';
 
 async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -212,7 +212,10 @@ test('with Terms in force, linking Telegram asks for them first; switching off n
   const sc = scenario({ lender: 'freshLender' });
   await sc.diamondWrite('admin', 'publishTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
   const { page, flags } = await launchWallet('freshLender');
-  await openChannels(page);
+  await page.goto('/alerts');
+  await connectWallet(page);
+  await closeOutOnly(page);
+  await expect(page.getByTestId('alert-channels')).toBeVisible({ timeout: 30_000 });
 
   // Switching reminders off is not a sign-up: no Terms asked.
   await page.getByTestId('alert-due-toggle').click();

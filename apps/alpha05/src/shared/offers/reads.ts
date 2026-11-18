@@ -89,6 +89,9 @@ export const ACCEPT_ERRORS = [
   // #3328 — a collection offer, which fills only through the collection-offer
   // route (one loan per token); `previewAccept` reports it for a direct take.
   'CollectionParent',
+  // #3734 — the taker or the offer's maker is not current on this
+  // network's Terms of Service; the preview does not say which.
+  'TermsNotAccepted',
 ] as const;
 export type AcceptErrorName = (typeof ACCEPT_ERRORS)[number] | 'Unrecognised';
 

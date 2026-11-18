@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { encodeAbiParameters, encodeEventTopics, parseAbi, type Abi, type Log } from 'viem';
+import { encodeAbiParameters, zeroAddress as ZERO_ADDRESS, encodeEventTopics, parseAbi, type Abi, type Log } from 'viem';
 import { OfferMutateFacetABI } from '@vaipakam/contracts/abis';
 import {
   currentTerms,
@@ -255,8 +255,8 @@ function modifiedLog(offerId: bigint, t: EditTerms): Log {
   const abi = OfferMutateFacetABI as Abi;
   const topics = encodeEventTopics({ abi, eventName: 'OfferModified', args: { offerId, creator: ME } });
   const data = encodeAbiParameters(
-    [{ type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }],
-    [t.amount, t.amountMax, t.interestRateBps, t.interestRateBpsMax, t.collateralAmount, t.collateralAmountMax],
+    [{ type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'address' }],
+    [t.amount, t.amountMax, t.interestRateBps, t.interestRateBpsMax, t.collateralAmount, t.collateralAmountMax, ZERO_ADDRESS],
   );
   return { address: DIAMOND, topics, data } as unknown as Log;
 }

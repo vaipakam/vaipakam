@@ -353,8 +353,12 @@ function jsonSafe(v: unknown): unknown {
  *  screen that holds no wallet entry at all. (`isVisible` takes no wait, so
  *  an earlier version raced exactly that.) Each retry after the first
  *  presses Escape, so a picker left on such a screen is closed and opened
- *  again. */
-export async function connectWallet(page: Page, buttonName: RegExp = /^connect wallet$/i): Promise<void> {
+ *  again.
+ *
+ *  `afterClick` runs after each press of the connect control, before the
+ *  picker is searched: an app that shows a step of its own first (alpha05
+ *  shows the Terms, #3734) passes it to go through that step. */
+export async function connectWallet(page: Page, buttonName: RegExp = /^connect wallet$/i, afterClick?: (page: Page) => Promise<void>): Promise<void> {
   const btn = page.getByRole('button', { name: buttonName }).first();
   const gone = async () => !(await btn.isVisible().catch(() => false));
   const shown = (name: RegExp, timeout: number) =>
@@ -371,6 +375,7 @@ export async function connectWallet(page: Page, buttonName: RegExp = /^connect w
     if (await gone()) return;
     if (attempt > 0) await page.keyboard.press('Escape').catch(() => {});
     await btn.click({ timeout: 2_000 }).catch(() => {});
+    if (afterClick) await afterClick(page);
     // Prefer the test wallet; fall back to generic entries only once it has
     // had time to appear (later attempts wait less).
     let picked: RegExp | null = (await shown(/vaipakam test wallet/i, attempt < 2 ? 5_000 : 1_000)) ? /vaipakam test wallet/i : null;

@@ -16,7 +16,7 @@ import { keccak256, toHex } from 'viem';
 import type { Page } from '@playwright/test';
 import { scenario } from '../lib/chain';
 import { controlAgent } from '../lib/stub';
-import { connectWallet, expect, test } from '../lib/wallet';
+import { closeOutOnly, connectWallet, expect, test } from '../lib/wallet';
 
 const BASE_SEPOLIA = 84532;
 const VPFI = 10n ** 18n;
@@ -168,7 +168,10 @@ test('with Terms in force, agreeing asks for them first; withdrawing never does'
   await sc.diamondWrite('borrower', 'setNotificationFeeConsent', [VPFI / 4n]);
   await sc.diamondWrite('admin', 'publishTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
   const { page } = await launchWallet('freshBorrower');
-  await openPaidPush(page);
+  await page.goto('/alerts');
+  await connectWallet(page);
+  await closeOutOnly(page);
+  await expect(page.getByTestId('paid-push-fee')).toContainText('The fee is 0.5 VPFI per loan side', { timeout: 60_000 });
   const card = page.getByTestId('paid-push');
   await expect(card.getByTestId('paid-push-consent')).toContainText('does not cover the fee now, so no fee can be charged at today’s fee. Your agreement stays stored', { timeout: 30_000 });
 
@@ -215,7 +218,9 @@ test('Terms published while an agreement review is open stop it before the walle
   await sc.diamondWrite('admin', 'publishTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
   const sent = flags.sentTransactions;
   await flow.getByRole('button', { name: 'Confirm in wallet' }).click();
-  await expect(flow).toContainText('A Terms version you have not accepted is now in force, so nothing was sent', { timeout: 60_000 });
+  // Either the review's own re-check or the app-wide hold stops it first;
+  // both send nothing.
+  await expect(page.getByRole('dialog', { name: 'Terms of Service' })).toContainText('Using this app with your wallet needs the Terms of Service', { timeout: 60_000 });
   expect(flags.sentTransactions).toBe(sent);
   await fitsWidth(page);
 });

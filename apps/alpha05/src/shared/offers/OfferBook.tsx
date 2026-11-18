@@ -177,6 +177,11 @@ function BookRowItem({ row: r, viewer, meta, copy, expired }: { row: BookRow; vi
         )}
         {kind !== undefined && <span className="badge">{text(kind)}</span>}
         {r.moved === true && <span className="badge">{text('offerBook.tagMoved')}</span>}
+        {r.makerTerms === 'not-current' && (
+          <span className="badge" data-testid={`book-maker-terms-${id}`}>
+            {text(mine ? 'offerBook.tagYouNotCurrent' : 'offerBook.tagMakerNotCurrent')}
+          </span>
+        )}
       </p>
     </li>
   );
