@@ -294,17 +294,21 @@ library LibMetricsHooks {
             from == LibVaipakam.LoanStatus.Settled;
         bool isTerminal = to == LibVaipakam.LoanStatus.Defaulted ||
             to == LibVaipakam.LoanStatus.Settled;
-        bool badEnd = to == LibVaipakam.LoanStatus.InternalMatched;
-        if (!wasTerminal && isTerminal) {
-            s.terminalBadOrSettledCount += 1;
-            badEnd = true;
-        }
+        if (!wasTerminal && isTerminal) s.terminalBadOrSettledCount += 1;
         // Instant market §8 — a loan leaving the active set stops counting
         // toward Lent (an Active <-> FallbackPending edge changes nothing).
         LibMarketLedger.syncLoan(s, loan);
         // #3720 — an integrator's public record counts a loan it brought that
-        // defaulted or was liquidated within 7 days of opening.
-        if (badEnd && from != LibVaipakam.LoanStatus.InternalMatched) LibIntegrator.onLoanBadEnd(loan);
+        // defaulted or was liquidated within 7 days of opening. Only the two
+        // edges that END a loan badly count: into Defaulted (a time-based
+        // default or a liquidation) and into InternalMatched (a match
+        // liquidation). Both are reachable only from the active set, so each
+        // loan counts at most once. Settled is NOT one of them: a repaid loan
+        // settles too, and Defaulted / InternalMatched -> Settled is the same
+        // bad end being claimed, already counted.
+        if (to == LibVaipakam.LoanStatus.Defaulted || to == LibVaipakam.LoanStatus.InternalMatched) {
+            LibIntegrator.onLoanBadEnd(loan);
+        }
     }
 
     // ───────────────────────── Offer hooks ────────────────────────

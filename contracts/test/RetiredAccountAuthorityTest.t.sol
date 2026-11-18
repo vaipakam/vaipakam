@@ -119,6 +119,79 @@ contract RetiredAccountAuthorityTest is SetupTest {
         _core().recover(ids);
     }
 
+    /// @dev An NFT rental of `mockNft721` #1 at 10 per day for 30 days,
+    ///      prepaid in `mockERC20` from the borrower's vault.
+    function _openRental() internal returns (uint256 loanId) {
+        vm.prank(lender);
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockNft721,
+                amount: 10,
+                interestRateBps: 500,
+                collateralAsset: address(0),
+                collateralAmount: 0,
+                durationDays: 30,
+                assetType: LibVaipakam.AssetType.ERC721,
+                tokenId: 1,
+                quantity: 1,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: true,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: 10,
+                interestRateBpsMax: 500,
+                collateralAmountMax: 0,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            }),
+            type(uint64).max
+        );
+        loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
+    }
+
+    function _prepayVaultBal() internal returns (uint256) {
+        return ERC20(mockERC20).balanceOf(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower));
+    }
+
+    /// After a replacement retires a rental's borrower, its controller may
+    /// repay, and the rent leaves the STORED borrower's vault, where the
+    /// prepay lives (a rental is never consolidated onto the replacement),
+    /// never the controller's own vault.
+    function test_controllerRepaysARentalFromTheStoredBorrowersPrepay() public {
+        uint256 loanId = _openRental();
+        address nominee = makeAddr("borrowerReplacement");
+        _retire(borrower, nominee);
+        uint256 before = _prepayVaultBal();
+        vm.warp(_loan(loanId).startTime + 5 days + 1);
+        vm.prank(nominee);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+        assertEq(before - _prepayVaultBal(), 60, "6 used days from the prepay");
+        assertEq(uint8(_loan(loanId).status), uint8(LibVaipakam.LoanStatus.Repaid));
+    }
+
+    /// The same for a partial rental repayment: the day's rent leaves the
+    /// stored borrower's vault.
+    function test_controllerPaysARentalDayFromTheStoredBorrowersPrepay() public {
+        uint256 loanId = _openRental();
+        address nominee = makeAddr("borrowerReplacement");
+        _retire(borrower, nominee);
+        uint256 before = _prepayVaultBal();
+        vm.prank(nominee);
+        RepayFacet(address(diamond)).repayPartial(loanId, 1);
+        assertEq(before - _prepayVaultBal(), 10, "one day from the prepay");
+        assertEq(_loan(loanId).lastDeductTime, _loan(loanId).startTime + 1 days, "one day paid");
+    }
+
     /// The core finds each holder's vault where the factory creates it.
     function test_coreFindsTheVaultTheFactoryCreates() public {
         address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
