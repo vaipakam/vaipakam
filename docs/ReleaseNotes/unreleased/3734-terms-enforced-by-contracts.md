@@ -10,5 +10,5 @@ Two smaller changes came with it. The borrower's offset now passes the real refu
 
 Design: [TermsAcceptanceEnforcementDesign.md](../../DesignsAndPlans/TermsAcceptanceEnforcementDesign.md). Closes #3734.
 
-> Caveat: the connected app and the website's Terms scripts still name the retired setter and need the new publish and announce entries.
 > Caveat: an aggregator adapter has no way to accept the Terms by its own call, so once a version is in force no adapter can be created or take new positions; the remedy is open with the design.
+> Caveat: a lender's listed sale is covered for the buyer by the loan-creation check, but no test drives a listed sale's fill end to end (the harness cannot run that fill; the direct sale is driven end to end).

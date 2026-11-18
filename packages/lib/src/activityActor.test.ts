@@ -45,7 +45,7 @@ describe('activityActor', () => {
   });
 
   it('files every step of an extension reserve under its depositor (#2814)', () => {
-    for (const kind of ['ExtendReserveFunded', 'ExtendReserveWithdrawn', 'ExtendChargeDrawn']) {
+    for (const kind of ['LoanReserveFunded', 'LoanReserveWithdrawn', 'ExtendChargeDrawn']) {
       expect(activityActor(kind, { loanId: 1n, holder: A })).toBe(A.toLowerCase());
     }
   });

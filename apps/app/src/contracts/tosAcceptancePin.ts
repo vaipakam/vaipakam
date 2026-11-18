@@ -36,8 +36,8 @@
  * old sequence counter with a scoped query key.
  *
  * Sound at the contract, not merely by convention: `LegalFacet`
- * records acceptance and offers no way to clear it, and `setCurrentTos`
- * refuses a version that does not strictly increase. So at a matching
+ * records acceptance and offers no way to clear it, and `publishTos` /
+ * `announceTos` refuse a version that does not strictly increase. So at a matching
  * version, `false` can only mean the node answering is behind — or
  * that the receipt was orphaned, which is what the bound is for.
  *

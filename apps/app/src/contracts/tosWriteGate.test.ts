@@ -32,7 +32,7 @@ describe('isExitWrite', () => {
       // #1209 — a past seller's interest claim.
       'claimAsSeller',
       // #2814 — the depositor's own unused extension reserve.
-      'withdrawExtendReserve',
+      'withdrawLoanReserve',
       'withdrawVPFIFromVault',
       'cancelOffer',
       'addCollateral',
@@ -66,7 +66,7 @@ describe('isExitWrite', () => {
       // #1219 — posting capacity is new business, unlike withdrawing it.
       'postCapacityDeposit',
       // #2814 — funding the reserve is new custody.
-      'fundExtendReserve',
+      'fundLoanReserve',
     ]) {
       expect(isExitWrite(fn, []), fn).toBe(false);
     }

@@ -2341,6 +2341,30 @@ a.item-row:hover {
   margin: 16px 0 0;
 }
 
+/* #3734 — the Terms notice above the page for a wallet past the gate. */
+.tos-notice {
+  margin: 0 0 16px;
+}
+
+.tos-notice-small {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.tos-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 8px;
+}
+
+.tos-notice-small .tos-notice-actions {
+  margin-top: 0;
+}
+
 .legal-gate-footnote {
   color: var(--text-muted);
   font-size: 0.875rem;
