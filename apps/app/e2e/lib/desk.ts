@@ -224,6 +224,7 @@ export async function seedDeskOffer(opts: {
     refinanceTargetLoanId: 0n,
     useFullTermInterest: opts.terms?.useFullTermInterest ?? false,
     lifecycleFlex: 0, // #3621
+    integrator: ZERO, // #3682 — none named
   };
   // The transaction deadline (#3412): the chain's latest block time plus
   // the shared window, never the host clock (the e2e chain's clock is warped).
@@ -394,6 +395,8 @@ const ACCEPT_TERMS_TYPES = {
     { name: 'acceptorFull', type: 'bool' },
     { name: 'acceptorMaxCStar', type: 'uint256' },
     { name: 'acceptorAllowFullDowngrade', type: 'bool' },
+    // #3682 — the integrator a borrower acceptor names, last in the typehash.
+    { name: 'integrator', type: 'address' },
   ],
 } as const;
 
@@ -526,6 +529,7 @@ export async function acceptOfferDirect(
     acceptorFull: false,
     acceptorMaxCStar: 0n,
     acceptorAllowFullDowngrade: false,
+    integrator: ZERO as `0x${string}`, // #3682 — none named
   };
   const signature = await account.signTypedData({
     domain: {

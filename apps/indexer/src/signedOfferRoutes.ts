@@ -182,6 +182,10 @@ const ADDRESS_FIELDS = [
   // #3327 — zero is meaningful for both: anyone may take / no co-signer.
   'allowedTaker',
   'coSigner',
+  // #3682 — zero is meaningful: no integrator named. A non-zero one on a
+  // lender's offer is attribution only; whether it earns a share is the
+  // fill's question, not the book's.
+  'integrator',
   'signer',
 ] as const;
 
@@ -242,7 +246,7 @@ function validateOrder(
   raw: Record<string, unknown>,
   now: number,
 ): { order: SignedOrderWire } | { error: string } {
-  // Exactly the 45 struct fields — unknown keys are rejected so order_json
+  // Exactly the 46 struct fields — unknown keys are rejected so order_json
   // stays the canonical replay payload (extra junk would survive into the
   // stored JSON otherwise).
   const keys = Object.keys(raw);
@@ -542,7 +546,7 @@ function validateOrder(
 /**
  * POST /signed-offers
  *
- * Body: `{ chainId: number, order: <45-field SignedOffer wire object>,
+ * Body: `{ chainId: number, order: <46-field SignedOffer wire object>,
  *          signature: 0x-hex, set?: { others: 0x-hash[], index: number } }` —
  * every uint as a decimal string, addresses 0x-40-hex, bools as booleans (the
  * same shape GET returns and takers replay on-chain). `set` is present only

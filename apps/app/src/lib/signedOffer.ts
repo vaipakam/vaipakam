@@ -34,14 +34,14 @@ import {
 } from '@vaipakam/lib/signedOfferWire';
 import { signedOfferMessage, type SignedOfferMessage } from '@vaipakam/lib/signedOfferSet';
 
-/** The 45-field SignedOffer typed-data description — struct order EXACTLY
+/** The 46-field SignedOffer typed-data description — struct order EXACTLY
  *  as `LibSignedOffer.SignedOffer` declares it (enums ⇒ uint8, GTT ⇒
  *  uint64). The list is `@vaipakam/lib/signedOfferWire`'s, the same one the
  *  indexer's ingest gate derives its typehash from (#3327: one statement,
  *  where the app used to carry its own copy). */
 export const SIGNED_OFFER_TYPES = { SignedOffer: SIGNED_OFFER_FIELDS } as const;
 
-/** The 45 field names in canonical struct order — the POST body /
+/** The 46 field names in canonical struct order — the POST body /
  *  `order_json` key order the indexer stores and replays. */
 export const SIGNED_OFFER_FIELD_NAMES: readonly string[] = SIGNED_OFFER_WIRE_FIELD_NAMES;
 
@@ -229,6 +229,8 @@ export function wireFromCreatePayload(
     refinanceTargetLoanId: payload.refinanceTargetLoanId.toString(),
     useFullTermInterest: payload.useFullTermInterest,
     lifecycleFlex: '0',
+    // #3682 — this app names no integrator.
+    integrator: ZERO_ADDRESS,
     creatorFull: makerFull?.full ?? false,
     creatorMaxCStar: (makerFull?.maxCStar ?? 0n).toString(),
     creatorAllowFullDowngrade: makerFull?.allowDowngrade ?? false,

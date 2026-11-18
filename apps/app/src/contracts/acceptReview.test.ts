@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import type { Address, Hex } from 'viem';
 import {
   ACCEPT_TERMS_FIELD_SOURCE,
@@ -57,6 +58,7 @@ function signedTerms(): AcceptTerms {
     acceptorFull: false,
     acceptorMaxCStar: 0n,
     acceptorAllowFullDowngrade: false,
+    integrator: ZERO,
   };
 }
 
@@ -80,6 +82,22 @@ function changed(v: unknown): unknown {
   }
   throw new Error(`unhandled value ${String(v)}`);
 }
+
+describe('AcceptTerms typed data matches the contract', () => {
+  it('lists the fields and types of the compiled AcceptTerms struct, in order', () => {
+    // The struct the Diamond's acceptOffer takes is the source of truth: the
+    // typehash lists the same fields in the same order. A hand-kept copy that
+    // lagged it (#3682's integrator) signs a digest the contract never
+    // recovers, so the whole list is pinned here, not only its tail.
+    const accept = DIAMOND_ABI_VIEM.find(
+      (e) => e.type === 'function' && e.name === 'acceptOffer',
+    ) as { inputs: readonly { components?: readonly { name: string; type: string }[] }[] };
+    const tuple = accept.inputs.find((i) => i.components)!.components!;
+    expect(ACCEPT_TERMS_TYPES.AcceptTerms.map((f) => `${f.type} ${f.name}`)).toEqual(
+      tuple.map((c) => `${c.type} ${c.name}`),
+    );
+  });
+});
 
 describe('#2725 accept-terms field classification', () => {
   it('classifies every signed EIP-712 field, and nothing else', () => {
