@@ -1465,15 +1465,9 @@ On a computer, connect through your wallet's browser extension, or scan the pick
 
 ### The Terms Prompt
 
-Where a Terms of Service version is in force, the app asks you to
-accept it before an action that starts something new, such as
-turning on the fee discount, and names the action that asked. It
-shows the version, a fingerprint of its text and a link to that
-exact version, whose text never changes. Accepting is one wallet
-confirmation and moves no funds. If the app cannot read whether you
-accepted, it says so and lets you try again instead of treating it
-as a no. Repaying, claiming, withdrawing your own assets, cancelling
-your own offers and turning a consent off are never held back.
+When you press Connect, the app first shows the Terms of Service in force on that network: the version, a fingerprint of its text, a link to that exact version, the privacy notice and the key risks. Connecting a wallet means agreeing to them. Once the wallet connects, it records its acceptance on that network with one transaction you pay for: it moves no funds, and its only cost is the network fee. Nothing of your wallet is shown until the acceptance is read back. If you do not accept, you can disconnect, or keep only what closes out what you have: repaying, closing, adding collateral, claiming, withdrawing and cancelling are never held back, and anything new asks for the Terms first. If the app cannot read whether you accepted, it says so and lets you try again instead of treating it as a no.
+
+Each network keeps its own record, so you accept once on each network you use. After a small update your acceptance still counts: a quiet line offers the new text, and accepting it is optional. Before a material change, the app shows the date it takes effect and what stops then unless you accept; you can put it off until that date. During that notice the app also lists your other networks where an open offer or Auto-lend would stop, and takes you through them one at a time.
 
 The prompt also shows a short list of key risks above the accept step, so you read what can go wrong before you accept. Every review that opens a loan or a rental adds one line, "If things go wrong", that says what happens to your side of that loan, with a link to the Key risks page. That page is also in the footer and needs no wallet.
 
@@ -1481,7 +1475,7 @@ The prompt also shows a short list of key risks above the accept step, so you re
 
 ### Settings
 
-Settings is at the foot of the menu. Mode, theme and language need no wallet and stay in this browser. The theme follows your device until you choose one, and a language not translated yet shows English until it is. With a wallet connected, Settings shows which Terms of Service version you accepted on this network, or that a version is in force and not accepted yet; you are asked at the first action that needs it, never there. The fee-discount setting is the same one as on Home. Settings also says what this browser keeps for the app, that nothing secret is stored, and that the app sends no error reports or diagnostics. Settings can also download the app's records in this browser as a file, or erase everything this site keeps here. Before you erase, it says how many items will go; erasing disconnects your wallet, resets mode, theme and language, and then shows what was removed. Your positions on chain, your alert settings with the alert service, the marketing site and your wallet app are not affected.
+Settings is at the foot of the menu. Mode, theme and language need no wallet and stay in this browser. The theme follows your device until you choose one, and a language not translated yet shows English until it is. With a wallet connected, Settings shows which Terms of Service version counts for it on this network, whether a newer one is optional, and any change you must accept by a date. The fee-discount setting is the same one as on Home. Settings also says what this browser keeps for the app, that nothing secret is stored, and that the app sends no error reports or diagnostics. Settings can also download the app's records in this browser as a file, or erase everything this site keeps here. Before you erase, it says how many items will go; erasing disconnects your wallet, resets mode, theme and language, and then shows what was removed. Your positions on chain, your alert settings with the alert service, the marketing site and your wallet app are not affected.
 
 Settings also shows your risk level on this network in words, whether this network enforces it, and whether strict mode is on. If new risk terms stopped your level from counting, you can confirm it again there in one wallet step. To raise or lower your level, or to turn strict mode on or off, switch to **Advanced** mode: each change is one wallet confirmation with its own receipt, and moves no funds. Lowering takes effect at once and closes pairs above the new level to new offers and requests, your own open ones included; loans you already have are not affected. Raising can wait out the protocol's period, and the app shows when it counts.
 
