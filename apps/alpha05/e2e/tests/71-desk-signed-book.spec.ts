@@ -76,6 +76,7 @@ test('a market’s signed orders are listed with the chain’s standing and each
     refinanceTargetLoanId: '0',
     useFullTermInterest: true,
     lifecycleFlex: '0',
+    integrator: '0x0000000000000000000000000000000000000000',
     creatorFull: false,
     creatorMaxCStar: '0',
     creatorAllowFullDowngrade: false,

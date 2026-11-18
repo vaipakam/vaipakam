@@ -24,6 +24,7 @@ import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
 import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.sol";
 import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {ITreasuryFeeHost} from "../src/interfaces/ITreasuryFeeHost.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
@@ -284,6 +285,12 @@ contract StandingInstructionTest is SetupTest {
         uint256 cut = (shortfall * TREASURY_BPS) / 10_000;
         uint256 treasury0 = IERC20(mockERC20).balanceOf(address(diamond));
         uint64 checkpoint0 = _loan().lastPeriodicInterestSettledAt;
+        uint256 reservePart0 = TreasuryFeeFacet(address(diamond)).getReservePartHeldByTreasury(mockERC20);
+        // The treasury share is an interest fee: split at the interest floor
+        // (rounded up, capped at half the loan's share), the rest the reserve's.
+        uint256 floor = (shortfall * LibVaipakam.FEE_FLOOR_INTEREST_BPS_DEFAULT + 9_999) / 10_000;
+        uint256 halfShare = (shortfall * TREASURY_BPS) / 20_000;
+        if (halfShare < floor) floor = halfShare;
 
         vm.expectEmit(true, true, false, true, address(diamond));
         emit LibInterestPayment.InterestPaymentBooked(
@@ -298,6 +305,12 @@ contract StandingInstructionTest is SetupTest {
         assertEq(l.interestSettled, shortfall, "the gross counts as settled");
         assertEq(_lenderHeld(), shortfall - cut, "the lender's net, held");
         assertEq(IERC20(mockERC20).balanceOf(address(diamond)) - treasury0, cut, "the treasury share");
+        assertEq(
+            TreasuryFeeFacet(address(diamond)).getReservePartHeldByTreasury(mockERC20) - reservePart0,
+            cut - floor,
+            "the share is split at the interest floor"
+        );
+        assertGt(cut - floor, 0);
         assertEq(_view().paymentReserve, 50 ether - shortfall);
         assertEq(l.principal, 1000 ether, "no principal moved");
 

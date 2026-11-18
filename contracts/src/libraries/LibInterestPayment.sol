@@ -7,6 +7,7 @@ import {LibCloseoutFreeze} from "./LibCloseoutFreeze.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibVPFIDiscount} from "./LibVPFIDiscount.sol";
+import {LibFeeFloor} from "./LibFeeFloor.sol";
 
 /// @notice The one host of {LibInterestPayment.book}, reached by self-call:
 ///         `RepayPeriodicFacet.bookInterestPayment`.
@@ -111,8 +112,13 @@ library LibInterestPayment {
         lenderPaid = LibCloseoutFreeze.holdActiveLenderResident(
             s, loanId, loan, asset, lenderAmount, recovered, lenderAmount
         );
-        // The one call to the fee host on this path.
-        LibFacet.transferToTreasury(asset, treasuryAmount);
+        // The one call to the fee host on this path. The share is cut from
+        // the interest recovered, so it carries the interest basis (#3649
+        // stage 3): the host splits it at the floor and the reserve's part is
+        // recorded, as on a full repayment or a forced sale.
+        LibFacet.transferToTreasury(
+            asset, treasuryAmount, LibFeeFloor.interest(recovered, LibVaipakam.effectiveTreasuryFeeBps(loan))
+        );
 
         settled = lenderPaid + treasuryAmount;
         loan.interestSettled += settled;

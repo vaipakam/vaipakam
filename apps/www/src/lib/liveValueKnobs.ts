@@ -57,9 +57,9 @@ export interface KnobDefault {
 }
 
 export const KNOB_DEFAULTS: Record<KnobName, KnobDefault> = {
-  // 5% since the #3649 fee levels (mirrors LibVaipakam.TREASURY_FEE_BPS;
-  // 2% under the #1352 freeze before that).
-  treasuryFeeBps: { defaultValue: 500, format: 'percent' },
+  // 10% since the revised #3649 fee levels (mirrors
+  // LibVaipakam.TREASURY_FEE_BPS; 2% under the #1352 freeze before that).
+  treasuryFeeBps: { defaultValue: 1000, format: 'percent' },
   // 0.2% since the #1352 fee freeze (LibVaipakam.LOAN_INITIATION_FEE_BPS).
   // Since #3649 this is the BASE rate of a term-scaled fee: it applies to
   // terms up to `lifBaseTermDays`, rises in a straight line to
@@ -72,7 +72,7 @@ export const KNOB_DEFAULTS: Record<KnobName, KnobDefault> = {
   // snapshot's labelled values when it carries all three; otherwise the
   // bundled default, badged as such — see KNOB_READS.
   lifBaseTermDays: { defaultValue: 30, format: 'count' },
-  lifYearlyBps: { defaultValue: 50, format: 'percent' },
+  lifYearlyBps: { defaultValue: 100, format: 'percent' },
   lifYearDays: { defaultValue: 365, format: 'count' },
   tier1Min: { defaultValue: 100, format: 'count' },
   tier2Min: { defaultValue: 1_000, format: 'count' },

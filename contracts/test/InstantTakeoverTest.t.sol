@@ -11,6 +11,8 @@ import {InstantTakeoverFacet} from "../src/facets/InstantTakeoverFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {LibTestCalmPair} from "./helpers/LibTestCalmPair.sol";
+import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /**
@@ -78,6 +80,7 @@ contract InstantTakeoverTest is InstantMarketBase {
         uint256 loanId = _openAndOffer(500, TERM, true);
         LibVaipakam.Loan memory before = _loan(loanId);
         vm.warp(vm.getBlockTimestamp() + 5 days);
+        LibTestCalmPair.checkpoint(address(diamond), mockERC20, mockCollateralERC20);
 
         uint256 holderVaultBefore = _vaultBal(lender, mockERC20);
         uint256 incomingVaultBefore = _vaultBal(lender2, mockERC20);
@@ -128,6 +131,20 @@ contract InstantTakeoverTest is InstantMarketBase {
         (, uint256 available, , , ) =
             MarketLedgerFacet(address(diamond)).getPairLedger(mockERC20, mockCollateralERC20);
         assertEq(available, outFillable + inFillable, "available is the sum of fillable amounts");
+    }
+
+    /// @dev A takeover is a fill of the incoming slot, so it runs the same
+    ///      calm-price check as any other fill of that slot: with no recent
+    ///      hourly checkpoints for the pair it is refused.
+    function test_refusedWithoutRecentPriceCheckpoints() public {
+        uint256 loanId = _openAndOffer(500, TERM, true);
+        vm.warp(vm.getBlockTimestamp() + 5 days);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                OfferPriceGuardFacet.IntentPairNoCheckpoint.selector, mockERC20, mockCollateralERC20
+            )
+        );
+        _takeover(lender, loanId, lender2);
     }
 
     function test_refusedWithoutTakeoverConsent() public {

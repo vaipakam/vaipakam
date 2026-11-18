@@ -24,6 +24,8 @@ import {LibMetricsTypes} from "../src/libraries/LibMetricsTypes.sol";
 import {LibEncumbrance} from "../src/libraries/LibEncumbrance.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
@@ -531,6 +533,41 @@ contract LenderIntentCapitalTest is SetupTest {
         // Proceeds (principal + interest) re-liened as capital; exposure freed.
         assertGt(_capital(), PRINCIPAL, "compounded: principal + interest re-liened");
         assertEq(_livePrincipal(), 0, "the roll releases nothing more");
+    }
+
+    /// @dev #3669 — a repayment whose delivery to the lender's vault was
+    ///      refused parks the lender leg in the borrower's vault. The roll
+    ///      moves it to the lender's vault first, as the claim does, so it
+    ///      re-liens the proceeds the lender actually holds and the parked row
+    ///      is gone.
+    function test_rollIntentLoan_releasesAParkedLenderLegFirst() public {
+        _setIntent();
+        _fund(PRINCIPAL);
+        address b = _newBorrower("parkB");
+        uint256 cp = _postBorrower(b);
+        vm.prank(solver);
+        uint256 loanId = OfferMatchIntentFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, 0, cp, PRINCIPAL
+        );
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultDepositERC20From.selector),
+            "refused"
+        );
+        vm.prank(b);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+        vm.clearMockedCalls();
+        LibVaipakam.ParkedLeg memory leg = SettlementLegFacet(address(diamond)).getParkedLenderLeg(loanId);
+        assertEq(leg.payer, b, "the lender leg parked with the borrower");
+        assertGt(leg.amount, PRINCIPAL, "principal and interest parked");
+
+        vm.prank(lender);
+        LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
+
+        assertEq(
+            SettlementLegFacet(address(diamond)).getParkedLenderLeg(loanId).payer, address(0), "parked row released"
+        );
+        assertEq(_capital(), leg.amount, "the released leg re-liened as capital");
     }
 
     /// @dev The headline: rolled capital is immediately re-lendable with NO

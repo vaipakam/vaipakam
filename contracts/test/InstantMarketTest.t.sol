@@ -13,6 +13,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {LibTestCalmPair} from "./helpers/LibTestCalmPair.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /**
@@ -86,8 +87,11 @@ abstract contract InstantMarketBase is SetupTest {
         }
     }
 
+    /// @dev Age the slots past the intent delay, then write the hourly price
+    ///      checkpoints a slot fill's calm-price check reads.
     function _age() internal {
         vm.warp(vm.getBlockTimestamp() + 1 days);
+        LibTestCalmPair.checkpoint(address(diamond), mockERC20, mockCollateralERC20);
     }
 
     function _src(address who) internal pure returns (InstantFillFacet.InstantSource memory) {

@@ -27,6 +27,7 @@ import {LibHeldForLender} from "../libraries/LibHeldForLender.sol";
 import {LibIntentTerms} from "../libraries/LibIntentTerms.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
+import {SettlementLegFacet} from "./SettlementLegFacet.sol";
 import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -810,6 +811,16 @@ contract LenderIntentFacet is
         // owner, so no keeper is named above; its keeper's action is charged to the
         // operator bound to the adapter (rule 2; rule 4 when unbound).
         else if (s.isAggregatorAdapter[msg.sender]) LibServiceCapacity.chargeKeeper();
+
+        // #3669 — a lender leg the token refused at settlement waits, liened,
+        // in the payer's vault, and the claim pays nothing until it reaches the
+        // lender side's vault. Move it first, as the claim does; while the token
+        // still refuses, this reverts and the loan stays rollable later. No-op
+        // when nothing is parked.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(SettlementLegFacet.releaseParkedLeg.selector, loanId),
+            IVaipakamErrors.InvalidLoanStatus.selector
+        );
 
         // The lender claim (principal + interest) must be present, unconsumed,
         // and the intent's plain ERC-20 lending asset.

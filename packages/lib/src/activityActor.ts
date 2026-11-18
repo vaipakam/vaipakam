@@ -211,8 +211,10 @@ const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<string, ActorRead
 
 /** The wallet one decoded event is filed under, or null for none. */
 export function activityActor(eventName: string, args: Record<string, unknown>): string | null {
+  // A Map lookup on a decoded event name: only the readers listed above can
+  // come back, and anything else names no actor.
   const read = ACTIVITY_ACTOR.get(eventName);
-  return read ? read(args) : null;
+  return typeof read === 'function' ? read(args) : null;
 }
 
 /** Every event kind filed under a wallet as its actor. */

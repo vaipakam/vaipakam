@@ -23,6 +23,7 @@ import {LenderIntentFacet} from "./LenderIntentFacet.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
+import {OfferPriceGuardFacet} from "./OfferPriceGuardFacet.sol";
 import {InstantMarketFacet} from "./InstantMarketFacet.sol";
 
 /**
@@ -193,6 +194,11 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
                     || (intent.lendUntil != 0 && maturity > intent.lendUntil)
             ) revert InstantTakeoverTermPastSlot(maturity);
         }
+        // The same calm-price check every other fill of a lender intent slot
+        // runs (on unless the slot's owner switched it off).
+        OfferPriceGuardFacet(address(this)).requireIntentPairCalm(
+            incoming, loan.principalAsset, loan.collateralAsset, slot
+        );
         if (loan.principal < intent.minFillAmount) revert LibIntentFill.LenderIntentFillBelowMin();
         if (
             s.lenderIntentLivePrincipal[incoming][loan.principalAsset][loan.collateralAsset][slot] + loan.principal
