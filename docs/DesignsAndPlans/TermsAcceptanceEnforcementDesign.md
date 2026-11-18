@@ -102,8 +102,10 @@ acceptance for another address.
 
 - A contract wallet sends the same transaction itself.
 - The record is kept per version. Accepting an announced version never
-  replaces the acceptance of the version in force, so a wallet that accepted
-  both stays current if the announcement is withdrawn.
+  replaces the acceptance of the version in force.
+- During a notice period (section 5) one transaction may name both the
+  version in force and the announced one, so a wallet that joins then pays
+  once.
 - Accepting a version twice changes nothing: the first acceptance time is
   kept.
 - One acceptance per network. Each network has its own record, and the wallet
@@ -122,8 +124,14 @@ A new version is **announced** with the time it comes into force.
 
 - From the announcement, a wallet may accept the new version, by its own
   transaction like any acceptance (section 4).
-- Until it comes into force, a wallet that accepted the current version or
-  the announced one is current.
+- Until it comes into force, the version in force is the only one that makes
+  a wallet current. A position opened during the notice is opened under the
+  Terms in force that day, so its parties must have accepted those.
+- Accepting the announced version early does not make a wallet current by
+  itself. It is what keeps the wallet current, with no gap, from the moment
+  the new version comes into force.
+- A wallet that joins during the notice accepts both versions, in one
+  transaction.
 - From then on, only the new version counts. A wallet that has not accepted
   it takes on no new position: its offers and its Auto-lend stop filling, and
   an extension or a roll does not start a new term, so the loan runs to its
@@ -131,7 +139,9 @@ A new version is **announced** with the time it comes into force.
 - The notice is at least 7 days, and 14 by **Default**. The first version on
   a network needs no notice.
 - An announcement can be withdrawn before it comes into force. The version
-  number is then spent and never reused.
+  number is then spent and never reused. A withdrawal changes no wallet's
+  standing, because an acceptance of the announced version never counted on
+  its own before the in-force time.
 
 The announcement and the time are an event. Every alert channel carries it to
 wallets with an open offer, Auto-lend or a standing instruction, with the
@@ -181,13 +191,19 @@ date their commitments stop filling.
   record cannot be read the app stays closed and offers a retry, as today.
 - **A new version.** From the announcement the app asks again at Connect,
   shows the date, and says what stops on that date if the wallet does not
-  accept.
+  accept. A wallet connecting for the first time during the notice is shown
+  both versions and accepts both in the one transaction.
 - **Another network.** The first time a wallet uses another network the app
   asks for the acceptance there, before anything else on that network.
-- **The book.** An offer whose maker is not current is shown as not fillable
-  now, with the reason, or left out of the fillable list. A signed offer is
-  not shown in the shared book as fillable until its maker has accepted
-  on-chain. Nothing is offered as an action that would fail.
+- **The book.** The book applies the rule of section 3 and nothing wider. A
+  commitment that would give its maker a new position (a lending, borrowing
+  or rental offer, an offer to buy a loan, an offset offer) is shown as not
+  fillable now, with the reason, or left out of the fillable list, while its
+  maker is not current. A signed offer of that kind is not shown in the
+  shared book as fillable until its maker has accepted on-chain. A listing
+  that sells the lister's own loan or collateral is never marked by its
+  maker's standing (section 3.2): it stays fillable, and the app checks the
+  wallet that would buy. Nothing is offered as an action that would fail.
 
 ## 8. Events and the record
 
@@ -209,9 +225,10 @@ date their commitments stop filling.
    each try and are refused or have no route.
 4. An acceptance sent twice leaves the first acceptance time unchanged. One
    naming another version or another fingerprint is refused.
-5. During the notice both versions count. One second after the new version
-   comes into force, a wallet on the old one is refused and its offer is
-   still on the book; it accepts and the same offer fills.
+5. During the notice a wallet that accepted the version in force is current,
+   and one that accepted only the announced version is refused. One second
+   after the new version comes into force, a wallet on the old one is refused
+   and its offer is still on the book; it accepts and the same offer fills.
 6. A notice shorter than the floor is refused. A withdrawn version number
    cannot be announced again.
 7. A maker who has not accepted has a signed offer refused at fill. It
@@ -222,13 +239,16 @@ date their commitments stop filling.
     normally.
 11. A wallet current on the version in force accepts the announced one during
     the notice. Its offer fills one second after the new version comes into
-    force. If the announcement is withdrawn instead, the wallet is still
-    current.
+    force. A wallet that joins during the notice accepts both in one
+    transaction and is current before and after that time. If the
+    announcement is withdrawn instead, both wallets are still current, and no
+    wallet's standing changes at the withdrawal.
 12. A wallet that has not accepted, with no position and no balance, cancels
     its own signed order and withdraws a keeper's authority through the app,
     and reaches nothing else.
-13. A lender whose acceptance is stale lists its loan for sale, and a buyer
-    who is current fills it. The same lender's offset offer is refused.
+13. A lender whose acceptance is stale lists its loan for sale, the book
+    shows the listing as fillable, and a buyer who is current fills it. The
+    same lender's offset offer is refused.
 14. The keeper's fill passes send nothing for a fill the preview refuses for
     the Terms, and the keeper sends no acceptance for any wallet.
 15. In the app, a wallet that rejects the acceptance transaction is not
