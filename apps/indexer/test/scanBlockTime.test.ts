@@ -65,7 +65,8 @@ function keeperLog(block: number, loanId: number, logIndex = 0) {
   return {
     address: bundle!.diamond.toLowerCase(),
     topics,
-    data: encodeAbiParameters([{ type: 'bool' }], [true]),
+    // `enabled` and the owner who set it (both unindexed).
+    data: encodeAbiParameters([{ type: 'bool' }, { type: 'address' }], [true, '0x00000000000000000000000000000000000000a1']),
     blockNumber: hex(block),
     blockHash: `0x${block.toString(16).padStart(64, '0')}`,
     transactionHash: `0x${(block * 7 + logIndex).toString(16).padStart(64, '0')}`,
