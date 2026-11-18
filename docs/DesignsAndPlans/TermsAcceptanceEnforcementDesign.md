@@ -189,11 +189,17 @@ raised to a new version, or to a version that is already the latest.
   term, so the loan runs to its agreed end. Its open loans are not touched.
 - The notice is at least 7 days, and 14 by **Default**. The first version on
   a network needs no notice.
-- An announcement can be withdrawn before it comes into force. The version
-  number is then spent and never reused. A withdrawal changes no wallet's
-  standing, because an acceptance of an announced version never counted on
-  its own before the in-force time. A wallet whose only acceptance is a
-  withdrawn version is not current.
+- An announcement can be withdrawn before it comes into force, and a
+  withdrawal changes no wallet's standing. What it undoes depends on what
+  was announced:
+  - **A new version.** The version was never in force. Its number is spent
+    and never reused, and an acceptance of it never counted on its own, so
+    a wallet whose only acceptance is that withdrawn version is not current.
+  - **A raise of the minimum to a version that is already the latest.**
+    Only the pending raise is dropped. The version stays published and stays
+    the latest, its number is not spent, every acceptance of it counts as it
+    did before the announcement, and the minimum stays where it was. The
+    same raise can be announced again later, with a full notice.
 
 The announcement and the time are an event. Every alert channel carries it to
 wallets with an open offer, Auto-lend or a standing instruction, with the
@@ -300,8 +306,8 @@ date their commitments stop filling.
    refused. One second after the new minimum comes into force, a wallet on
    the old one is refused and its offer is still on the book; it accepts and
    the same offer fills.
-6. A notice shorter than the floor is refused. A withdrawn version number
-   cannot be announced again.
+6. A notice shorter than the floor is refused. The number of a withdrawn
+   new version cannot be announced again.
 7. A maker who has not accepted has a signed offer refused at fill. It
    accepts by its own transaction and the same signed offer fills.
 8. A contract wallet accepts by its own call and opens a loan.
@@ -338,8 +344,13 @@ date their commitments stop filling.
     Wallets on each earlier version are refused one second after it comes
     into force, and each is current again once it accepts. Raising the
     minimum to a version that is already the latest behaves the same.
-18. A wallet whose only acceptance is an announced version that was withdrawn
-    is refused, whatever its number.
+18. A wallet whose only acceptance is an announced new version that was
+    withdrawn is refused, whatever its number.
+19. With the minimum at one version and a later one already the latest, a
+    wallet that accepted only the later one is current. A raise of the
+    minimum to that version is announced and then withdrawn: the wallet is
+    current before, during and after, the version is still the latest and
+    can still be accepted, and the same raise can be announced again.
 
 ## 10. Residuals
 
