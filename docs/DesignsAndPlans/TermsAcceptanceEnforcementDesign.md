@@ -41,11 +41,12 @@ While no Terms version is in force, the rule checks nothing, as today.
 
 ### 3.1 Where it is checked
 
-One rule, in one place, read from three kinds of step.
+One rule, in one place, read from four kinds of step.
 
 | Step | Who must be current | Why here |
 | --- | --- | --- |
-| **Opening a loan**, by any route: a direct accept, a match, a signed-offer fill, an Auto-lend fill, an instant-market borrow, a refinance, a rental, a roll or an extension that starts a new term | The two wallets the new loan records as lender and borrower. Where the record exists only to carry the sale of an existing loan, the seller is not checked and the buyer is (see below) | The one step every loan passes through. This is the rule; the rows below only refuse earlier. |
+| **Opening a loan**, by any route: a direct accept, a match, a signed-offer fill, an Auto-lend fill, an instant-market borrow, a refinance, a rental, a roll that opens a new loan | The two wallets the new loan records as lender and borrower. Where the record exists only to carry the sale of an existing loan, the seller is not checked and the buyer is (see below) | The one step every loan passes through. This is the rule; the rows below only refuse earlier. |
+| **Starting a new term on an existing loan in place**: an extension that resets the loan's start and term without opening a new loan | The wallets that hold the lender and the borrower position at that moment | It does not pass through the loan-opening step, so it asks the rule itself. A refused extension changes nothing: the loan runs to its agreed end. |
 | **Taking over a position** through the platform: buying a loan, or replacing a borrower | The wallet coming in | It takes on the position. The wallet going out is not checked (3.2). |
 | **Posting a standing commitment that would give the poster a new position**: a lending, borrowing or rental offer, an offer to buy a loan, an offer that offsets a loan with a new one, setting or funding Auto-lend, setting a standing instruction | The wallet posting | So the book never holds a commitment that cannot be filled. |
 
@@ -59,6 +60,11 @@ names the seller as one of its parties and then completes the sale. That
 record is not a new position for the seller. The shared check recognises it
 and checks only the incoming buyer, so the exit that section 3.2 protects is
 open at every step of the route, not only at posting.
+
+**No new term without the rule.** A loan's start and term are written only
+by a step in the table above. The build adds a check, beside the existing one
+for a loan's principal and rate, that fails when any other code writes them,
+so a later entry cannot start a term without asking the rule.
 
 A refused fill does not cancel anything. The offer or the Auto-lend setting
 stays as it is and fills again once its owner has accepted.
@@ -223,8 +229,10 @@ date their commitments stop filling.
 
 1. With a version in force, no route opens a loan while either party is not
    current: direct accept, match, signed-offer fill, Auto-lend fill, instant
-   market, refinance, rental, loan sale, borrower replacement, roll and
-   extension. Each is driven end to end, not only at the shared step.
+   market, refinance, rental, loan sale, borrower replacement and roll. Each
+   is driven end to end, not only at the shared step. An extension in place
+   is refused through its own entry while either holder is not current, and
+   the loan's start and term are unchanged.
 2. Every step of 3.2 succeeds for a wallet that never accepted, and for one
    whose acceptance went stale while it had an open loan.
 3. No entry records an acceptance for an address other than the sender. A
