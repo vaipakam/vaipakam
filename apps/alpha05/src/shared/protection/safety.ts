@@ -46,7 +46,7 @@ import { askThrough } from '../tx/simulate';
 import { formatSpan, formatUtc } from '../ui/format';
 import { positionNftForDiamond } from '../positions/positionNft';
 import { readProtectedRecord, VAULT } from './payout';
-import { answerFits, hasRecovery, readRecovery, recoveryCall, type RecoveryAnswer, type RecoveryState } from './recovery';
+import { answerFits, hasRecovery, readRecovery, recoveryCall, recoveryCancelCall, type RecoveryProof, type RecoveryState } from './recovery';
 
 type Hex = `0x${string}`;
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
@@ -58,7 +58,7 @@ const POSITION_NFT = PositionNFTABI as Abi;
 const FACTORY = VaultFactoryFacetABI as Abi;
 const VAULT_PROTECTION = [...(VaultProtectionABI as Abi), ...(VaultRecoveryABI as Abi)] as Abi;
 
-export type SafetyAction = 'enable' | 'lock' | 'unlock' | 'finalize' | 'recovery';
+export type SafetyAction = 'enable' | 'lock' | 'unlock' | 'finalize' | 'recovery' | 'recoveryCancel';
 
 /** The `VaultProtection` function (or, for a due co-sign switch-off only,
  *  the Diamond's) each action's main step calls. */
@@ -68,6 +68,7 @@ export const SAFETY_FUNCTION = {
   unlock: 'requestUnlock',
   finalize: 'finalizeSettings',
   recovery: 'requestRecoveryAddress',
+  recoveryCancel: 'cancelRecoveryAddress',
 } as const satisfies Record<SafetyAction, string>;
 
 /** `ProtectedAccountFacet.CHANGE_*` (3, NFT protection off, retired with
@@ -243,7 +244,7 @@ export interface SafetyReview {
   /** `enable` only. */
   draft: SafetyDraft | null;
   /** `recovery` only: the recovery wallet's signed answer. */
-  proof: RecoveryAnswer | null;
+  proof: RecoveryProof | null;
   facts: SafetyFacts;
   /** The changes due when read (`finalize` only). */
   due: PendingChange[];
@@ -276,10 +277,11 @@ export function safetySteps(
   vault: Hex | null,
   draft: SafetyDraft | null,
   due: readonly PendingChange[] = [],
-  proof: RecoveryAnswer | null = null,
+  proof: RecoveryProof | null = null,
 ): SafetyStep[] {
   const auth = directAuth(account);
   if (action === 'recovery') return proof === null ? [] : [{ to: 'vault', abi: VAULT, functionName: 'protect', args: [recoveryCall(proof, account)] }];
+  if (action === 'recoveryCancel') return [{ to: 'vault', abi: VAULT, functionName: 'protect', args: [recoveryCancelCall(account)] }];
   if (action === 'enable') {
     return [
       ...(vault === null ? [diamondStep(FACTORY, 'getOrCreateUserVault', [account])] : []),
@@ -308,7 +310,7 @@ export async function readSafetyReview(
   diamond: Hex,
   action: SafetyAction,
   draft: SafetyDraft | null,
-  proof: RecoveryAnswer | null,
+  proof: RecoveryProof | null,
   identity: string,
   copy: Copy,
 ): Promise<SafetyReview> {
@@ -336,15 +338,19 @@ export function safetyBlockers(r: SafetyReview, copy: Copy): string[] {
   const m = f.mode;
   if (m === 'absent') return [text('safety.unavailable')];
   if (m !== null && m.retired) return [text('safety.retired')];
-  const pauseCloses = r.action !== 'lock' && r.action !== 'recovery';
+  const pauseCloses = r.action !== 'lock' && r.action !== 'recovery' && r.action !== 'recoveryCancel';
   if (pauseCloses && f.paused === true) return [text('safety.paused')];
   if (r.action === 'recovery') {
     const p = r.proof;
     if (p === null || !answerFits(p, p.chainId, p.diamond, f.account, f.vault)) return [text('recovery.proofOther')];
     const now = safetyClock(f, Date.now());
-    if (now !== null && now > p.expiry) return [format('recovery.proofLapsed', { at: formatUtc(p.expiry) })];
+    if (now !== null && now > Number(p.expiry)) return [format('recovery.proofLapsed', { at: formatUtc(Number(p.expiry)) })];
     if (f.recovery !== null && f.recovery.inForce !== null && f.recovery.inForce.toLowerCase() === p.recovery.toLowerCase())
       return [text('recovery.alreadyInForce')];
+  } else if (r.action === 'recoveryCancel') {
+    // The vault takes a cancel whatever the mode, locked or not; only a
+    // pending address is needed. Unread is not none: the dry run decides.
+    if (f.vault === null || (f.recovery !== null && f.recovery.pending === null)) return [text('recovery.nothingPending')];
   } else if (r.action === 'enable') {
     if (f.frozen === 'flagged') return [text('safety.flagged')];
     if (m !== null && m.enabled) return [text('safety.alreadyOn')];
@@ -441,6 +447,11 @@ export function measureSafety(r: SafetyReview, logs: readonly Log[], diamond: He
     const asked = findVault('RecoveryAddressRequested').find((e) => r.proof !== null && String(e.args.recovery ?? '').toLowerCase() === r.proof.recovery.toLowerCase());
     if (!asked) return [{ status: 'not-done', label: text('recovery.title'), reason: text('recovery.notRecorded') }];
     return [{ status: 'done', label: format('recovery.legAsked', { address: String(asked.args.recovery), at: formatUtc(BigInt(asked.args.at as bigint)) }) }];
+  }
+  if (r.action === 'recoveryCancel') {
+    const cancelled = findVault('RecoveryAddressCancelled')[0];
+    if (!cancelled) return [{ status: 'not-done', label: text('recovery.cancelTitle'), reason: text('recovery.cancelNotRecorded') }];
+    return [{ status: 'done', label: format('recovery.legCancelled', { address: String(cancelled.args.recovery) }) }];
   }
   if (r.action === 'enable') {
     const on = applied.find((e) => e.args.enabled === true);

@@ -101,6 +101,8 @@ test('a recovery address another wallet proves comes first; then protected mode 
   expect(flags.sentTransactions).toBe(sent + 1);
   await finish.getByRole('button', { name: 'Close' }).click();
   await expect(section.getByTestId('vault-safety-recovery-pending')).toContainText(recovery, { timeout: 60_000 });
+  // A waiting address can be cancelled from the same line (not done here: turning on needs it).
+  await expect(section.getByTestId('vault-safety-recovery-cancel')).toBeVisible();
 
   await card.getByTestId('vault-safety-turn-on').click({ timeout: 60_000 });
   await expect(card.getByTestId('vault-safety-basic-choice')).toContainText('The delay is 2 days, the shortest allowed');

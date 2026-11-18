@@ -4,7 +4,7 @@ import { ProtectedAccountFacetABI, VaultFactoryFacetABI, VaultProtectionABI } fr
 import { directAuth, protectionCall } from '@vaipakam/lib/protectedAccountView';
 import { dueChanges, landedBeforeOutcome, measureSafety, pendingChanges, safetyBlockers, safetyChanged, safetyLogs, safetySteps, sendSafetySteps, type SafetyFacts, type SafetyMode, type SafetyReview } from './safety';
 import { safetyReceipt } from './safetyReceipt';
-import { recoveryCall, type RecoveryAnswer } from './recovery';
+import { recoveryCall, recoveryCancelCall, type RecoveryProof } from './recovery';
 
 type Hex = `0x${string}`;
 const DIAMOND = '0x00000000000000000000000000000000000000d1' as Hex;
@@ -336,15 +336,15 @@ describe('measureSafety: vault step landed, platform apply did not', () => {
 
 describe('the recovery address (#3246 part 2)', () => {
   const NEW = '0x00000000000000000000000000000000000000a2' as Hex;
-  const proof = (p: Partial<RecoveryAnswer> = {}): RecoveryAnswer => ({
+  const proof = (p: Partial<RecoveryProof> = {}): RecoveryProof => ({
     chainId: 31337,
     vault: VAULT,
     account: ME,
     diamond: DIAMOND,
     recovery: NEW,
     nonce: 0n,
-    expiry: Math.floor(Date.now() / 1000) + 7 * DAY,
-    signature: '0x1234',
+    expiry: BigInt(Math.floor(Date.now() / 1000) + 7 * DAY),
+    sig: '0x1234',
     ...p,
   });
   const none = { inForce: null, pending: null, pendingAt: 0, recovered: false };
@@ -368,7 +368,7 @@ describe('the recovery address (#3246 part 2)', () => {
     expect(safetyBlockers(review('recovery', {}, { proof: proof() }), copy)).toEqual([]);
     expect(safetyBlockers(review('recovery', {}, { proof: proof({ account: OTHER }) }), copy)).toEqual(['recovery.proofOther']);
     expect(safetyBlockers(review('recovery', {}, { proof: proof({ vault: OTHER }) }), copy)).toEqual(['recovery.proofOther']);
-    expect(safetyBlockers(review('recovery', {}, { proof: proof({ expiry: 1 }) }), copy)[0]).toMatch(/^recovery.proofLapsed/);
+    expect(safetyBlockers(review('recovery', {}, { proof: proof({ expiry: 1n }) }), copy)[0]).toMatch(/^recovery.proofLapsed/);
     expect(safetyBlockers(review('recovery', {}, { proof: proof({ recovery: RECOVERY }) }), copy)).toEqual(['recovery.alreadyInForce']);
     // A pause does not stop it.
     expect(safetyBlockers(review('recovery', { paused: true }, { proof: proof() }), copy)).toEqual([]);
@@ -396,5 +396,28 @@ describe('the recovery address (#3246 part 2)', () => {
     expect(first.rows[1]?.value).toEqual({ kind: 'text', text: 'recovery.afterWait:{"wait":"4 days"}' });
     expect(r.consequences).toContain('recovery.whatFor');
     expect(r.prompts).toBe(1);
+  });
+
+  it('cancels a waiting address in one vault write, and only when one is waiting', () => {
+    const waiting = { recovery: { ...none, inForce: RECOVERY, pending: NEW, pendingAt: NOW } };
+    expect(safetySteps('recoveryCancel', ME, VAULT, null)[0]?.args).toEqual([recoveryCancelCall(ME)]);
+    expect(safetyBlockers(review('recoveryCancel', waiting), copy)).toEqual([]);
+    // A pause, a lock or protected mode being off does not stop it.
+    expect(safetyBlockers(review('recoveryCancel', { ...waiting, paused: true, mode: LOCKED }), copy)).toEqual([]);
+    expect(safetyBlockers(review('recoveryCancel'), copy)).toEqual(['recovery.nothingPending']);
+    expect(safetyBlockers(review('recoveryCancel', { recovery: null }), copy)).toEqual([]);
+  });
+
+  it('the cancel receipt names the waiting address and what stays; the vault’s event measures it', () => {
+    const r = safetyReceipt(review('recoveryCancel', { recovery: { ...none, pending: NEW, pendingAt: NOW } }), copy);
+    expect(r.title).toBe('recovery.cancelTitle');
+    expect(r.rows.map((x) => x.value)).toEqual([
+      { kind: 'text', text: NEW },
+      { kind: 'text', text: 'recovery.noneAfterCancel' },
+    ]);
+    expect(r.consequences).toContain('recovery.cancelLeavesNone');
+    const gone = eventLog('RecoveryAddressCancelled', { recovery: NEW }, { types: [{ type: 'address' }], values: [ME] }, VAULT);
+    expect(measureSafety(review('recoveryCancel'), [gone], DIAMOND, copy)[0]?.status).toBe('done');
+    expect(measureSafety(review('recoveryCancel'), [], DIAMOND, copy)[0]?.status).toBe('not-done');
   });
 });

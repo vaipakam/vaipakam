@@ -50,12 +50,12 @@ export function SafetyCard({ own, chain }: { own: OwnStateClient; chain: Support
   const answerFitsHere = answer !== null && f !== null && f !== undefined && answerFits(answer, chain.chainId, diamond, wallet, f.vault);
   const openedAnswer = useRef<string | null>(null);
   useEffect(() => {
-    if (!answerFitsHere || answer === null || held.choice !== null || openedAnswer.current === answer.signature) return;
-    openedAnswer.current = answer.signature;
+    if (!answerFitsHere || answer === null || held.choice !== null || openedAnswer.current === answer.sig) return;
+    openedAnswer.current = answer.sig;
     held.open({ action: 'recovery', draft: null, proof: answer });
     // Opened once per answer; the held choice carries it from here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [answerFitsHere, answer?.signature]);
+  }, [answerFitsHere, answer?.sig]);
 
   const open = (action: SafetyAction, draft: SafetyDraft | null = null) => {
     setChoosing(false);
@@ -108,7 +108,7 @@ export function SafetyCard({ own, chain }: { own: OwnStateClient; chain: Support
           onChoose={() => setChoosing(true)}
           onAction={open}
         />
-        <RecoverySection facts={f} chainId={chain.chainId} diamond={diamond} enabled={m.enabled} busy={held.choice !== null} />
+        <RecoverySection facts={f} chainId={chain.chainId} diamond={diamond} enabled={m.enabled} busy={held.choice !== null} onCancel={() => open('recoveryCancel')} />
       </>
     );
   })();
@@ -299,7 +299,21 @@ function TurnOnForm({ bounds, onCancel, onChosen }: { bounds: { min: number; max
  * the owner names the address and gets the link that wallet signs from.
  * The vault keeps the address, so an account with no vault creates it first.
  */
-function RecoverySection({ facts: f, chainId, diamond, enabled, busy }: { facts: SafetyFacts; chainId: number; diamond: `0x${string}`; enabled: boolean; busy: boolean }) {
+function RecoverySection({
+  facts: f,
+  chainId,
+  diamond,
+  enabled,
+  busy,
+  onCancel,
+}: {
+  facts: SafetyFacts;
+  chainId: number;
+  diamond: `0x${string}`;
+  enabled: boolean;
+  busy: boolean;
+  onCancel: () => void;
+}) {
   const { text, format } = useCopy();
   const [asking, setAsking] = useState(false);
   const [typed, setTyped] = useState('');
@@ -333,6 +347,13 @@ function RecoverySection({ facts: f, chainId, diamond, enabled, busy }: { facts:
           {r.pending !== null && (
             <p className="tier-a" data-testid="vault-safety-recovery-pending" data-state="pending">
               {format('recovery.pending', { address: r.pending, at: formatUtc(r.pendingAt) })}
+            </p>
+          )}
+          {r.pending !== null && !busy && (
+            <p className="actions">
+              <button type="button" className="btn" onClick={onCancel} data-testid="vault-safety-recovery-cancel">
+                {text('recovery.cancel')}
+              </button>
             </p>
           )}
           {!hasRecovery(r) && (

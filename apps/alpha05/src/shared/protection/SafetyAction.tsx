@@ -16,7 +16,7 @@ import { useTrackedTx } from '../tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
 import { landedBeforeOutcome, measureSafety, readSafetyReview, safetyBlockers, safetyChanged, safetyLogs, safetySteps, sendSafetySteps, stepCall, type SafetyAction, type SafetyDraft, type SafetyReview, type SafetySend } from './safety';
-import type { RecoveryAnswer } from './recovery';
+import type { RecoveryProof } from './recovery';
 import { safetyReceipt } from './safetyReceipt';
 
 /** The store key the card's safety action keeps its state under: one at a
@@ -29,7 +29,7 @@ export interface SafetyChoice {
   action: SafetyAction;
   draft: SafetyDraft | null;
   /** `recovery` only: the recovery wallet's signed answer. */
-  proof?: RecoveryAnswer | null;
+  proof?: RecoveryProof | null;
 }
 
 export function useSafetyHeld(): { choice: SafetyChoice | null; inFlight: boolean; open: (c: SafetyChoice | null) => void } {
@@ -45,7 +45,7 @@ interface SafetyActionProps {
   onClose: () => void;
 }
 
-const STEP = { enable: 'safety.stepEnable', lock: 'safety.stepLock', unlock: 'safety.stepUnlock', finalize: 'safety.stepFinalize', recovery: 'recovery.step' } as const;
+const STEP = { enable: 'safety.stepEnable', lock: 'safety.stepLock', unlock: 'safety.stepUnlock', finalize: 'safety.stepFinalize', recovery: 'recovery.step', recoveryCancel: 'recovery.cancelStep' } as const;
 
 /**
  * ACC-37 / ACC-43 — one safety action on the wallet's own account: turn
@@ -65,11 +65,11 @@ export function SafetyActionFlow({ chain, own, choice, onClose }: SafetyActionPr
   const identity = reviewIdentity(own);
   const { action, draft } = choice;
   const proof = choice.proof ?? null;
-  const proofKey = proof === null ? null : `${proof.recovery}:${proof.nonce}:${proof.signature}`;
+  const proofKey = proof === null ? null : `${proof.recovery}:${proof.nonce}:${proof.sig}`;
   const [review, setReview] = useStoredValue<SafetyReview>(`${SAFETY_KEY}:review`);
   const [loadError, setLoadError] = useState<string | null>(null);
   const setStep = useTxNote(SAFETY_KEY);
-  const sameProof = (p: RecoveryAnswer | null) => (p === null ? null : `${p.recovery}:${p.nonce}:${p.signature}`) === proofKey;
+  const sameProof = (p: RecoveryProof | null) => (p === null ? null : `${p.recovery}:${p.nonce}:${p.sig}`) === proofKey;
   const sameChoice = (r: SafetyReview | null) => r !== null && r.action === action && JSON.stringify(r.draft) === JSON.stringify(draft) && sameProof(r.proof);
 
   // What the last send landed, for its measurement (Codex #3489 r1).
@@ -154,7 +154,7 @@ export function SafetyActionFlow({ chain, own, choice, onClose }: SafetyActionPr
     active: onReview,
     review,
     read: (before) => read(before.identity),
-    sameSubject: (a, b) => a.action === b.action && JSON.stringify(a.draft) === JSON.stringify(b.draft) && a.proof?.signature === b.proof?.signature,
+    sameSubject: (a, b) => a.action === b.action && JSON.stringify(a.draft) === JSON.stringify(b.draft) && a.proof?.sig === b.proof?.sig,
     changed: (before, next) => safetyChanged(before, next, copy) !== null,
     setReview,
     onChanged: () => undefined,

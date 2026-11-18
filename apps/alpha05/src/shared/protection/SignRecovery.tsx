@@ -21,7 +21,7 @@ import { refusalFromError } from '../eligibility/refusal';
 import { useOwnRead } from '../reads/useOwnRead';
 import { formatUtc } from '../ui/format';
 import { Notice } from '../ui/Notice';
-import { PROOF_LIFETIME_S, readProofNonce, recoveryAnswerLink, recoveryTypedData, type RecoveryAnswer, type RecoveryRequest } from './recovery';
+import { RECOVERY_PROOF_LIFETIME_SECONDS, readProofNonce, recoveryAnswerLink, recoveryProofTypedData, type RecoveryProof, type RecoveryRequest } from './recovery';
 
 type Hex = `0x${string}`;
 const ZERO = /^0x0{40}$/i;
@@ -47,7 +47,7 @@ export function SignRecovery({ request }: { request: RecoveryRequest | null }) {
   const config = useConfig();
   const { address, chainId, status } = useAccount();
   const own = useOwnStateClient();
-  const [answer, setAnswer] = useState<RecoveryAnswer | null>(null);
+  const [answer, setAnswer] = useState<RecoveryProof | null>(null);
   const [refused, setRefused] = useState<string | null>(null);
   const [signing, setSigning] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -83,7 +83,7 @@ export function SignRecovery({ request }: { request: RecoveryRequest | null }) {
     body = (
       <>
         <h3>{text('recovery.answerTitle')}</h3>
-        <p className="tier-b">{format('recovery.answerLead', { account: request.account, at: formatUtc(answer.expiry) })}</p>
+        <p className="tier-b">{format('recovery.answerLead', { account: request.account, at: formatUtc(Number(answer.expiry)) })}</p>
         <textarea readOnly value={link} rows={4} aria-label={text('recovery.answerTitle')} data-testid="recovery-answer-link" onFocus={(e) => e.currentTarget.select()} />
         <p className="actions">
           <button type="button" className="btn" onClick={() => void copyText(link).then(setCopied)}>
@@ -99,9 +99,9 @@ export function SignRecovery({ request }: { request: RecoveryRequest | null }) {
       setSigning(true);
       setRefused(null);
       try {
-        const base = { chainId: request.chainId, vault: f.vault, account: request.account, diamond, nonce: f.nonce, expiry: f.now + PROOF_LIFETIME_S };
-        const signature = await signTypedData(config, { account: address, ...recoveryTypedData(base) });
-        setAnswer({ ...base, recovery: request.recovery, signature });
+        const base = { chainId: request.chainId, vault: f.vault, account: request.account, diamond, nonce: f.nonce, expiry: BigInt(f.now + RECOVERY_PROOF_LIFETIME_SECONDS) };
+        const sig = await signTypedData(config, { account: address, ...recoveryProofTypedData(base) });
+        setAnswer({ ...base, recovery: request.recovery, sig });
       } catch (e) {
         setRefused(format('prove.refused', { reason: refusalFromError(e).reason }));
       } finally {

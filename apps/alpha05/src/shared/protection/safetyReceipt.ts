@@ -21,7 +21,7 @@ export function safetyReceipt(r: SafetyReview, copy: Copy): Receipt {
   const consequences: string[] = [];
   const unread: string[] = [];
   if (f.mode === null) unread.push(text('safety.modeUnread'));
-  if (f.paused === null && r.action !== 'lock') unread.push(text('safety.pauseUnread'));
+  if (f.paused === null && r.action !== 'lock' && r.action !== 'recovery' && r.action !== 'recoveryCancel') unread.push(text('safety.pauseUnread'));
   if (r.dryRun === 'unread') unread.push(text('safety.dryRunUnread'));
 
   if (r.action === 'recovery') {
@@ -41,6 +41,17 @@ export function safetyReceipt(r: SafetyReview, copy: Copy): Receipt {
     consequences.push(text('recovery.whatFor'), text('recovery.onlyPlace'), text('recovery.cancelWhilePending'), text('recovery.changeWaits'));
     if (rec === null) unread.push(text('recovery.unread'));
     if (f.bounds === null) unread.push(text('safety.boundsUnread'));
+  } else if (r.action === 'recoveryCancel') {
+    const rec = f.recovery;
+    rows.push({ label: text('recovery.rowCancels'), value: rec === null || rec.pending === null ? unknown : { kind: 'text', text: rec.pending }, binding: true });
+    rows.push({
+      label: text('recovery.rowAfterCancel'),
+      value: rec === null ? unknown : { kind: 'text', text: rec.inForce === null ? text('recovery.noneAfterCancel') : rec.inForce },
+      binding: true,
+    });
+    consequences.push(text('recovery.cancelKeeps'));
+    if (rec !== null && rec.inForce === null) consequences.push(text('recovery.cancelLeavesNone'));
+    if (rec === null) unread.push(text('recovery.unread'));
   } else if (r.action === 'enable') {
     const d = r.draft;
     rows.push({ label: text('safety.rowDelay'), value: d === null ? unknown : { kind: 'text', text: formatSpan(d.delaySeconds) }, binding: true });
@@ -108,7 +119,7 @@ export function safetyReceipt(r: SafetyReview, copy: Copy): Receipt {
   }
   consequences.push(...unread, text('vaultWithdraw.noApproval'));
   const title = text(
-    r.action === 'recovery' ? 'recovery.title' : r.action === 'enable' ? 'safety.titleEnable' : r.action === 'lock' ? 'safety.titleLock' : r.action === 'unlock' ? 'safety.titleUnlock' : 'safety.titleFinalize',
+    r.action === 'recovery' ? 'recovery.title' : r.action === 'recoveryCancel' ? 'recovery.cancelTitle' : r.action === 'enable' ? 'safety.titleEnable' : r.action === 'lock' ? 'safety.titleLock' : r.action === 'unlock' ? 'safety.titleUnlock' : 'safety.titleFinalize',
   );
   // #3379 B2: an action can be several transactions (the vault's write, then
   // the Diamond applying it), each its own wallet prompt.

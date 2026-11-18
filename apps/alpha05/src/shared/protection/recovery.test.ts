@@ -10,7 +10,7 @@ import {
   recoveryCall,
   recoveryRequestLink,
   recoveryWaitSeconds,
-  type RecoveryAnswer,
+  type RecoveryProof,
 } from './recovery';
 
 type Hex = `0x${string}`;
@@ -27,7 +27,7 @@ describe('the recovery links', () => {
   it('a request carries the network, the account and the address, and reads back strictly', () => {
     const link = recoveryRequestLink({ chainId: 31337, account: ME, recovery: REC });
     expect(link).toContain('/protection?');
-    expect(parseRecoveryRequest(params(link))).toEqual({ chainId: 31337, account: getAddress(ME), recovery: getAddress(REC) });
+    expect(parseRecoveryRequest(params(link))).toEqual({ chainId: 31337, account: ME, recovery: REC });
     const q = params(link);
     q.set('rr_recovery', 'nope');
     expect(parseRecoveryRequest(q)).toBeNull();
@@ -36,10 +36,10 @@ describe('the recovery links', () => {
   });
 
   it('an answer carries everything the signature names, and refuses any field of the wrong shape', () => {
-    const a: RecoveryAnswer = { chainId: 31337, vault: VAULT, account: ME, diamond: DIAMOND, recovery: REC, nonce: 3n, expiry: 1_800_000_000, signature: '0xabcd' };
+    const a: RecoveryProof = { chainId: 31337, vault: VAULT, account: ME, diamond: DIAMOND, recovery: REC, nonce: 3n, expiry: 1_800_000_000n, sig: '0xabcd' };
     const link = recoveryAnswerLink(a);
     expect(link).toContain('/vault?');
-    expect(parseRecoveryProof(params(link))).toEqual({ ...a, vault: getAddress(VAULT), diamond: getAddress(DIAMOND), account: getAddress(ME), recovery: getAddress(REC) });
+    expect(parseRecoveryProof(params(link))).toEqual(a);
     for (const [k, v] of [
       ['rp_nonce', '-1'],
       ['rp_expiry', 'soon'],
@@ -53,7 +53,7 @@ describe('the recovery links', () => {
   });
 
   it('the owner’s call asks directly and proves with the recovery wallet’s signature', () => {
-    const a: RecoveryAnswer = { chainId: 31337, vault: VAULT, account: ME, diamond: DIAMOND, recovery: REC, nonce: 0n, expiry: 1_800_000_000, signature: '0xabcd' };
+    const a: RecoveryProof = { chainId: 31337, vault: VAULT, account: ME, diamond: DIAMOND, recovery: REC, nonce: 0n, expiry: 1_800_000_000n, sig: '0xabcd' };
     const d = decodeFunctionData({ abi: VaultRecoveryABI as Abi, data: recoveryCall(a, ME) });
     expect(d.functionName).toBe('requestRecoveryAddress');
     expect(d.args).toEqual([getAddress(REC), { key: getAddress(ME), expiry: 0n, sig: '0x' }, { key: getAddress(REC), expiry: 1_800_000_000n, sig: '0xabcd' }]);
