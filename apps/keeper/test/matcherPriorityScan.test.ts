@@ -19,7 +19,7 @@ const CAPACITY = 22;
 
 function intentRow(o: `0x${string}`) {
   return {
-    owner: o, lendingAsset: LEND, collateralAsset: COLL, maxExposure: 10n ** 24n, minRateBps: 0n,
+    owner: o, lendingAsset: LEND, collateralAsset: COLL, slot: 0, maxExposure: 10n ** 24n, minRateBps: 0n,
     maxInitLtvBps: 8000, maxDurationDays: 365, minFillAmount: 1n, requiresKeeperAuth: false, lendUntil: 0n, acceptsProRata: false,
     livePrincipal: 0n, availableCapital: 10n ** 24n,
   };
@@ -97,7 +97,8 @@ const PRIORITY_FILL_EVENT = {
   type: 'event', name: 'IntentPriorityFill', anonymous: false,
   inputs: [
     { name: 'owner', type: 'address', indexed: true }, { name: 'lendingAsset', type: 'address', indexed: true },
-    { name: 'collateralAsset', type: 'address', indexed: true }, { name: 'loanId', type: 'uint256', indexed: false },
+    { name: 'collateralAsset', type: 'address', indexed: true }, { name: 'slot', type: 'uint8', indexed: false },
+    { name: 'loanId', type: 'uint256', indexed: false },
     { name: 'solver', type: 'address', indexed: false }, { name: 'creditsLeft', type: 'uint256', indexed: false },
   ],
 } as const;
@@ -105,7 +106,7 @@ function priorityFillLog(o: string) {
   return {
     address: DIAMOND,
     topics: encodeEventTopics({ abi: [PRIORITY_FILL_EVENT], eventName: 'IntentPriorityFill', args: { owner: o as `0x${string}`, lendingAsset: LEND, collateralAsset: COLL } }),
-    data: encodeAbiParameters([{ type: 'uint256' }, { type: 'address' }, { type: 'uint256' }], [1n, SOLVER, 0n]),
+    data: encodeAbiParameters([{ type: 'uint8' }, { type: 'uint256' }, { type: 'address' }, { type: 'uint256' }], [0, 1n, SOLVER, 0n]),
   };
 }
 
@@ -229,10 +230,10 @@ describe('priorityState', () => {
     const f = fakeCtx({ intents: [], preview: {}, unlocks: { [owner(5)]: true } });
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      const intent = { owner: owner(5), lendingAsset: LEND, collateralAsset: COLL } as const;
+      const intent = { owner: owner(5), lendingAsset: LEND, collateralAsset: COLL, slot: 3 } as const;
       expect(await priorityState(f.ctx, intent, SOLVER)).toBe('credit');
       const req = (f.ctx as { client: { readContract: { mock: { calls: { args: unknown[] }[][] } } } }).client.readContract.mock.calls[0][0];
-      expect(req.args).toEqual([owner(5), LEND, COLL, SOLVER, SOLVER]);
+      expect(req.args).toEqual([owner(5), LEND, COLL, 3, SOLVER, SOLVER]);
       const broken = fakeCtx({ intents: [], preview: {}, getter: false });
       expect(await priorityState(broken.ctx, intent, SOLVER)).toBe('blocked');
     } finally {

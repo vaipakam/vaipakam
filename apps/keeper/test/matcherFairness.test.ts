@@ -193,7 +193,7 @@ describe('runIntentFillPass — the honest borrower is filled with the last prev
   it('fills the honest borrower although 50 refused spam offers are ahead of it in the book', async () => {
     const owner = addr(0xa);
     const intentRow = {
-      owner, lendingAsset: LEND, collateralAsset: COLL, maxExposure: 10n ** 24n, minRateBps: 0n,
+      owner, lendingAsset: LEND, collateralAsset: COLL, slot: 0, maxExposure: 10n ** 24n, minRateBps: 0n,
       maxInitLtvBps: 8000, maxDurationDays: 365, minFillAmount: 1n, requiresKeeperAuth: false, lendUntil: 0n, acceptsProRata: false,
       livePrincipal: 0n, availableCapital: 10n ** 24n,
     };
@@ -208,7 +208,7 @@ describe('runIntentFillPass — the honest borrower is filled with the last prev
             return [[intentRow].slice(Number(offset), Number(offset + limit)), 1n];
           }
           case 'previewIntent': {
-            const id = req.args[5] as bigint;
+            const id = req.args[6] as bigint;
             // A borrower-specific refusal (BelowMinFill) for every spam offer.
             const e = id >= 1000n ? 9 : 0;
             return {

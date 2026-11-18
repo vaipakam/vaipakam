@@ -33,12 +33,13 @@ describe('previewMatchRequest', () => {
 });
 
 describe('previewIntentRequest', () => {
-  it('names the keeper as both the solver and the initiator of its own fill', () => {
+  it('names the keeper as both the solver and the initiator of its own fill, and the intent slot', () => {
     const solver = '0x00000000000000000000000000000000000000aa' as const;
     const intent = {
       owner: '0x00000000000000000000000000000000000000b1',
       lendingAsset: '0x00000000000000000000000000000000000000c1',
       collateralAsset: '0x00000000000000000000000000000000000000c2',
+      slot: 2,
     } as const;
     const req = previewIntentRequest('0x00000000000000000000000000000000000000d1', solver, intent, 7n, 9n);
     expect(req.functionName).toBe('previewIntent');
@@ -48,6 +49,7 @@ describe('previewIntentRequest', () => {
       intent.owner,
       intent.lendingAsset,
       intent.collateralAsset,
+      2,
       7n,
       9n,
     ]);
