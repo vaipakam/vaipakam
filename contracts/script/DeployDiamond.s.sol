@@ -3961,11 +3961,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      clear on a posted offer, the view, and the check loan creation
     ///      and the accept and match previews self-call.
     function _getOfferPriceGuardSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](7);
         s[0] = OfferPriceGuardFacet.armOfferPriceGuard.selector;
         s[1] = OfferPriceGuardFacet.setOfferPriceGuard.selector;
         s[2] = OfferPriceGuardFacet.getOfferPriceGuard.selector;
         s[3] = OfferPriceGuardFacet.requireOfferPriceGuardsClear.selector;
+        s[4] = OfferPriceGuardFacet.setIntentCalmCheck.selector;
+        s[5] = OfferPriceGuardFacet.intentCalmStatus.selector;
+        s[6] = OfferPriceGuardFacet.requireIntentPairCalm.selector;
     }
 
     function _getForcedSaleSelectors() internal pure returns (bytes4[] memory s) {

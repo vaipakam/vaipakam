@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {OfferPriceGuardFacet} from "./OfferPriceGuardFacet.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
@@ -385,6 +386,11 @@ contract LenderIntentFacet is
         LibVaipakam.syncIntentRegistry(msg.sender, lendingAsset, collateralAsset, slot);
         // #2550 — a cancelled intent carries no priority opt-in.
         LibPriorityRouting.writeFlag(s, msg.sender, lendingAsset, collateralAsset, slot, false);
+        // A new intent in the slot starts with the calm-price check on.
+        if (s.intentCalmCheckOff[msg.sender][lendingAsset][collateralAsset][slot]) {
+            delete s.intentCalmCheckOff[msg.sender][lendingAsset][collateralAsset][slot];
+            emit OfferPriceGuardFacet.IntentCalmCheckSet(msg.sender, lendingAsset, collateralAsset, slot, true);
+        }
         emit LenderIntentCancelled(msg.sender, lendingAsset, collateralAsset, slot);
     }
 

@@ -2869,11 +2869,14 @@ contract HelperTest {
     /// #3358 — the maker's price-move guard. Mirrors
     /// `DeployDiamond._getOfferPriceGuardSelectors`.
     function getOfferPriceGuardFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](7);
         selectors[0] = OfferPriceGuardFacet.armOfferPriceGuard.selector;
         selectors[1] = OfferPriceGuardFacet.setOfferPriceGuard.selector;
         selectors[2] = OfferPriceGuardFacet.getOfferPriceGuard.selector;
         selectors[3] = OfferPriceGuardFacet.requireOfferPriceGuardsClear.selector;
+        selectors[4] = OfferPriceGuardFacet.setIntentCalmCheck.selector;
+        selectors[5] = OfferPriceGuardFacet.intentCalmStatus.selector;
+        selectors[6] = OfferPriceGuardFacet.requireIntentPairCalm.selector;
     }
 
     /// #3359 - the forced-sale floor rule. Mirrors

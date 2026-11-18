@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestCalmPair} from "./helpers/LibTestCalmPair.sol";
+import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
@@ -137,6 +139,8 @@ contract AggregatorAdapterTest is SetupTest {
             );
         vm.stopPrank();
         adapter = AggregatorAdapterImplementation(a);
+        // Intent fills run the calm-price check: two hourly checkpoints.
+        LibTestCalmPair.checkpoint(address(diamond), mockCollateralERC20, mockERC20);
     }
 
     // ─── helpers ──────────────────────────────────────────────────────────────
@@ -292,6 +296,23 @@ contract AggregatorAdapterTest is SetupTest {
     }
 
     // ─── 4. Match → idle→live, conservative-haircut NAV ─────────────────────────
+
+    /// The adapter's fill runs its slot's calm-price check like any intent
+    /// fill, and the adapter cannot switch it off.
+    function test_match_movingPair_isRefused() public {
+        _deposit(DEPOSIT);
+        uint256 cp = _postBorrower(500 ether);
+        mockOraclePrice(mockCollateralERC20, 1.5e8, 8);
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(OfferPriceGuardFacet.IntentPairNotCalm.selector, mockERC20, mockCollateralERC20)
+        );
+        adapter.matchLoan(cp, 500 ether);
+
+        vm.prank(address(adapter));
+        vm.expectRevert(abi.encodeWithSelector(OfferPriceGuardFacet.IntentCalmCheckRequired.selector, address(adapter)));
+        OfferPriceGuardFacet(address(diamond)).setIntentCalmCheck(mockERC20, mockCollateralERC20, 0, false);
+    }
 
     function test_match_movesIdleToLive_haircutNav() public {
         _deposit(DEPOSIT);

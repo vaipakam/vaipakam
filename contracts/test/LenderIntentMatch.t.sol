@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestCalmPair} from "./helpers/LibTestCalmPair.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -102,6 +103,8 @@ contract LenderIntentMatchTest is SetupTest {
         // (the kill-switch case re-disables it in its own scope).
         vm.prank(owner);
         LenderIntentFacet(address(diamond)).setLenderIntentEnabled(true);
+        // Intent fills run the calm-price check: two hourly checkpoints.
+        LibTestCalmPair.checkpoint(address(diamond), mockCollateralERC20, mockERC20);
     }
 
     // ─── Setup helpers ──────────────────────────────────────────────────────
@@ -1193,6 +1196,11 @@ contract LenderIntentMatchTest is SetupTest {
         uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
         vm.prank(b);
         OfferPriceGuardFacet(address(diamond)).setOfferPriceGuard(cp, 500);
+        // The borrower's own guard is what refuses here: the lender's slot
+        // check is off, and the newest hour has no checkpoint.
+        vm.prank(lender);
+        OfferPriceGuardFacet(address(diamond)).setIntentCalmCheck(mockERC20, mockCollateralERC20, 0, false);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
 
         LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
         assertFalse(r.ok, "a refusing guard previews not-ok");

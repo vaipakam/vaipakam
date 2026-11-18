@@ -8565,6 +8565,13 @@ library LibVaipakam {
         ///      id when the fee is charged), checked by the loan's creation
         ///      so the settlement event and the loan always name one loan.
         uint256 acceptIntegratorLoanId;
+        /// @dev The calm-price check on a lender intent slot's fills, keyed
+        ///      like `lenderIntent`: true = the slot's owner switched it OFF.
+        ///      Default (false) = on. Written only by
+        ///      `OfferPriceGuardFacet.setIntentCalmCheck` and cleared when the
+        ///      intent is cancelled, so a new intent in the slot starts with
+        ///      the check on.
+        mapping(address => mapping(address => mapping(address => mapping(uint8 => bool)))) intentCalmCheckOff;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.

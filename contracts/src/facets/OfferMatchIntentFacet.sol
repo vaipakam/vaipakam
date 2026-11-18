@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {OfferPriceGuardFacet} from "./OfferPriceGuardFacet.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibRiskMath} from "../libraries/LibRiskMath.sol";
@@ -189,6 +190,10 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
                 revert LenderIntentPartialRepayNotAllowed();
             }
         }
+        // The calm-price check (on unless the slot's owner switched it off):
+        // no fill while the pair moved past the calm bound in the last two
+        // hours, a checkpoint is missing, or a price cannot be read.
+        OfferPriceGuardFacet(address(this)).requireIntentPairCalm(lender, lendingAsset, collateralAsset, slot);
         // Derive the collateral the intent's init-LTV ceiling requires for this
         // fill. The materialized lender offer demands it; `previewMatch` enforces
         // the borrower posts ≥ it. Unresolvable (missing oracle / illiquid

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {OfferPriceGuardFacet} from "../facets/OfferPriceGuardFacet.sol";
+import {LibOfferPriceGuard} from "./LibOfferPriceGuard.sol";
 import {LibOfferAdmission} from "./LibOfferAdmission.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibTiming} from "./LibTiming.sol";
@@ -183,7 +185,16 @@ library LibOfferMatch {
         // after the intent's lend-until time (`LenderIntentPastLendUntil`).
         // Checked right after `DurationTooLong`, where `matchIntent` checks it.
         // APPENDED.
-        PastLendUntil
+        PastLendUntil,
+        // The intent slot's calm-price check refuses the fill
+        // (`OfferPriceGuardFacet.requireIntentPairCalm`): a checkpoint for one
+        // of the last two hours is missing, the pair moved past the calm
+        // bound, or a price cannot be read. Checked right after
+        // `PastLendUntil` and the lifecycle rule, where `matchIntent` checks
+        // it. APPENDED.
+        PairNoCheckpoint,
+        PairNotCalm,
+        PairUnpriced
     }
 
     /// @notice Structured outcome of `RiskPreviewFacet.previewIntent`. `ok` is
@@ -936,6 +947,13 @@ library LibOfferMatch {
             if (verdict == LibIntentTerms.Lifecycle.PartialRepayNotAllowed) {
                 return _intentFail(res, IntentError.PartialRepayNotAllowed);
             }
+        }
+        {
+            LibOfferPriceGuard.Status calm = OfferPriceGuardFacet(address(this))
+                .intentCalmStatus(lender, lendingAsset, collateralAsset, slot);
+            if (calm == LibOfferPriceGuard.Status.NoCheckpoint) return _intentFail(res, IntentError.PairNoCheckpoint);
+            if (calm == LibOfferPriceGuard.Status.NotCalm) return _intentFail(res, IntentError.PairNotCalm);
+            if (calm == LibOfferPriceGuard.Status.Unpriced) return _intentFail(res, IntentError.PairUnpriced);
         }
 
         uint256 reqColl = LibRiskMath.minCollateralForLtvCap(

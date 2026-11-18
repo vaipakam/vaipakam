@@ -3,6 +3,8 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
+import {LibTestCalmPair} from "./helpers/LibTestCalmPair.sol";
+import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {BackstopVaultImplementation} from "../src/BackstopVaultImplementation.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
@@ -72,6 +74,7 @@ contract BackstopVaultTest is SetupTest {
         vm.prank(borrower);
         BackstopFacet(address(diamond)).setOfferBackstopEligible(offerId2, base + 2 days);
         vm.warp(base + 3 days);
+        LibTestCalmPair.checkpoint(address(diamond), mockCollateralERC20, mockERC20);
         uint8 role = uint8(LibVaipakam.ServiceCapacityRole.Solver);
         vm.prank(owner);
         ServiceCapacityFacet(address(diamond)).setCapacityCurve(role, 1e18, 1e16, 100e18, 1e18);
@@ -105,6 +108,7 @@ contract BackstopVaultTest is SetupTest {
         vm.prank(borrower);
         BackstopFacet(address(diamond)).setOfferBackstopEligible(offerId2, base + 2 days);
         vm.warp(base + 3 days);
+        LibTestCalmPair.checkpoint(address(diamond), mockCollateralERC20, mockERC20);
         uint8 role = uint8(LibVaipakam.ServiceCapacityRole.Solver);
         vm.prank(owner);
         ServiceCapacityFacet(address(diamond)).setCapacityCurve(role, 1e18, 1e16, 100e18, 1e18);
@@ -243,6 +247,9 @@ contract BackstopVaultTest is SetupTest {
             base + 2 days
         );
         vm.warp(base + 3 days); // past eligibleAfter, before expiresAt
+        // The backstop slot's fills run the calm-price check: two hourly
+        // checkpoints, then the hour after.
+        LibTestCalmPair.checkpoint(address(diamond), mockCollateralERC20, mockERC20);
     }
 
     // ─── 1. Provisioning ──────────────────────────────────────────────────────
@@ -283,6 +290,24 @@ contract BackstopVaultTest is SetupTest {
         assertEq(loan.lender, vault, "loan.lender == backstop vault");
         assertEq(loan.principal, PRINCIPAL, "principal");
         assertEq(loan.principalAsset, mockERC20, "principal asset");
+    }
+
+    /// The backstop fill runs the slot's calm-price check like any intent
+    /// fill: the collateral reads 50% above both checkpoints, refused by name.
+    function test_backstopFill_movingPair_isRefused() public {
+        (uint256 offerId, ) = _eligibleOffer();
+        mockOraclePrice(mockCollateralERC20, 1.5e8, 8);
+        vm.expectRevert(
+            abi.encodeWithSelector(OfferPriceGuardFacet.IntentPairNotCalm.selector, mockERC20, mockCollateralERC20)
+        );
+        BackstopFacet(address(diamond)).backstopFill(offerId);
+    }
+
+    /// The backstop vault's slot cannot switch the check off.
+    function test_backstopVault_cannotSwitchTheCalmCheckOff() public {
+        vm.prank(vault);
+        vm.expectRevert(abi.encodeWithSelector(OfferPriceGuardFacet.IntentCalmCheckRequired.selector, vault));
+        OfferPriceGuardFacet(address(diamond)).setIntentCalmCheck(mockERC20, mockCollateralERC20, 0, false);
     }
 
     // ─── #954 (§1.5) — re-screen the offer creator at FILL ──────────────────
@@ -534,6 +559,7 @@ contract BackstopVaultTest is SetupTest {
     function test_backstopFill_notOptedIn_reverts() public {
         (uint256 offerId, ) = _postBorrowerOffer(base + 7 days); // no opt-in
         vm.warp(base + 3 days);
+        LibTestCalmPair.checkpoint(address(diamond), mockCollateralERC20, mockERC20);
         vm.expectRevert(BackstopFacet.OfferNotBackstopFillable.selector);
         BackstopFacet(address(diamond)).backstopFill(offerId);
     }
@@ -911,6 +937,7 @@ contract BackstopVaultTest is SetupTest {
         BackstopFacet(address(diamond)).backstopFill(offerId);
 
         vm.warp(now_ + 2 days + 1);
+        LibTestCalmPair.checkpoint(address(diamond), mockCollateralERC20, mockERC20);
         vm.prank(makeAddr("poker"));
         uint256 loanId = BackstopFacet(address(diamond)).backstopFill(offerId);
         assertEq(LoanFacet(address(diamond)).getLoanDetails(loanId).lender, vault, "filled after the new delay");
