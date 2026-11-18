@@ -26,7 +26,7 @@ type ActorRead = (args: Record<string, unknown>) => string | null;
  *  malformed field must read as no actor, never throw (#2708 r2). */
 function str(args: Record<string, unknown>, name: string): string | null {
   const v = args[name];
-  return typeof v === "string" ? v.toLowerCase() : null;
+  return typeof v === 'string' ? v.toLowerCase() : null;
 }
 
 /** The actor is the lower-cased address in `name`. */
@@ -35,18 +35,15 @@ const arg =
   (args) =>
     str(args, name);
 
-const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
-const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<
-  string,
-  ActorRead
->([
-  ["OfferCreated", arg("creator")],
-  ["OfferAccepted", arg("acceptor")],
+const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<string, ActorRead>([
+  ['OfferCreated', arg('creator')],
+  ['OfferAccepted', arg('acceptor')],
   // The row's offer is the LENDER offer (#600) — see `intendedAlias` in
   // activityRefsPolicy.json. The actor is the matcher.
-  ["OfferMatched", arg("matcher")],
-  ["OfferCanceled", arg("creator")],
+  ['OfferMatched', arg('matcher')],
+  ['OfferCanceled', arg('creator')],
   // T-086 Round-8 (#358) §19.7 + Codex round-19 P2 #3 — Scenario A
   // terminal. The event carries (offerId, executor); `executor` is
   // the protocol's Seaport-conformant executor singleton (never a
@@ -58,7 +55,7 @@ const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<
   // the same batch), the row is filed with no actor rather than under
   // the executor contract (#2708 r1): its offer reference still files
   // it on the offer's timeline.
-  ["OfferConsumedBySale", arg("creator")],
+  ['OfferConsumedBySale', arg('creator')],
   // #193 / Codex round-2 P2 — denormalize the actor (= creator;
   // OfferMutateFacet's access gate guarantees msg.sender ==
   // offer.creator) + offerId so per-offer and per-wallet
@@ -66,9 +63,9 @@ const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<
   // offer-mutation rows. Without this mapping the event lands
   // in activity_events with NULL refs and falls out of the
   // dashboard's offer-timeline + wallet-history queries.
-  ["OfferModified", arg("creator")],
-  ["LoanInitiated", arg("borrower")],
-  ["LoanRepaid", arg("repayer")],
+  ['OfferModified', arg('creator')],
+  ['LoanInitiated', arg('borrower')],
+  ['LoanRepaid', arg('repayer')],
   // T-092 Phase 3 (#503) Codex round-4 P2 — `caller` is the
   // address that initiated the extension (the keeper, or the
   // borrower-NFT owner extending directly). Indexed on-chain so
@@ -76,15 +73,15 @@ const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<
   // Without this, `?actor=...` filters would miss direct
   // borrower self-extensions because `DecodedLog` doesn't store
   // `msg.sender`.
-  ["LoanExtended", arg("caller")],
+  ['LoanExtended', arg('caller')],
   // T-090 Sub 2 — `borrower` is `msg.sender` (current borrower-NFT
   // owner), the load-bearing authority root for the swap-to-repay
   // surface (see SwapToRepayFacet round-3 P2 #1).
-  ["SwapToRepayExecuted", arg("borrower")],
-  ["SwapToRepayPartialExecuted", arg("borrower")],
+  ['SwapToRepayExecuted', arg('borrower')],
+  ['SwapToRepayPartialExecuted', arg('borrower')],
   // T-090 v1.1 (#389) Sub 2 (#417) — borrower-attributed events.
-  ["SwapToRepayIntentCommitted", arg("committedBy")],
-  ["SwapToRepayIntentCancelled", arg("cancelledBy")],
+  ['SwapToRepayIntentCommitted', arg('committedBy')],
+  ['SwapToRepayIntentCancelled', arg('cancelledBy')],
   // `Filled` attributed to the borrower who originated the
   // commit, NOT the Fusion solver who actually submitted the
   // fill tx (Codex round-1 PR #421 P2 — the Activity feed's
@@ -93,76 +90,76 @@ const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<
   // `committedBy` field on `args` is stashed by the indexer
   // dispatcher BEFORE the row delete that releases it — see the
   // `SwapToRepayIntentFilled` branch in `processLoanLogs`.
-  ["SwapToRepayIntentFilled", arg("committedBy")],
+  ['SwapToRepayIntentFilled', arg('committedBy')],
   // #1566 slice 3 — the fill's pre-hook took the committed lot out of the
   // borrower's vault, inside the fill. Actor = the borrower whose vault it
   // left; the fill's own `SwapToRepayIntentFilled` represents the transaction.
-  ["SwapToRepayIntentLotPulled", arg("borrower")],
+  ['SwapToRepayIntentLotPulled', arg('borrower')],
   // #1566 slice 2 — one row per move of a loan's vault-held fallback
   // custody (entry, each settlement slice, a retry's pull and restore, a
   // match leg, the return to the pledge). Actor = the counterparty the move
   // names; the action that moved it (liquidation, claim, cure, match)
   // represents the transaction.
-  ["FallbackCustodyMoved", arg("counterparty")],
+  ['FallbackCustodyMoved', arg('counterparty')],
   // #630 backstop Role B — surface the cash buyout on the loan timeline and
   // the lender's activity feed. Actor = the paid lender-NFT owner.
-  ["BackstopAbsorbedLoan", arg("lenderNftOwner")],
+  ['BackstopAbsorbedLoan', arg('lenderNftOwner')],
   // #393 v1-d.2 auto-roll. When the borrower hasn't claimed yet the loan
   // stays Repaid, so this is the only signal the lender side closed (the
   // proceeds were re-liened into the owner's intent capital and the lender
   // NFT burned). Actor = the intent owner whose loan rolled, so it surfaces
   // on `/activity?actor=<wallet>`.
-  ["IntentLoanRolled", arg("owner")],
+  ['IntentLoanRolled', arg('owner')],
   // Leg A is the row's loan (see `intendedAlias` in
   // activityRefsPolicy.json). Actor is the matcher (msg.sender of the
   // entry-point call).
-  ["InternalMatchExecuted", arg("matcher")],
-  ["LenderFundsClaimed", arg("claimant")],
-  ["BorrowerFundsClaimed", arg("claimant")],
+  ['InternalMatchExecuted', arg('matcher')],
+  ['LenderFundsClaimed', arg('claimant')],
+  ['BorrowerFundsClaimed', arg('claimant')],
   // T-034 PR2 — settler / advancer is the meaningful actor.
-  ["PeriodicInterestSettled", arg("settler")],
-  ["PeriodicInterestAutoLiquidated", arg("settler")],
+  ['PeriodicInterestSettled', arg('settler')],
+  ['PeriodicInterestAutoLiquidated', arg('settler')],
   // #2795 — the forced-sale breakdown is filed under whoever submitted the
   // sale (and received the bonus); a held extra paid on a handover under
   // the exiting holder it was paid to.
-  ["ForcedSaleSettled", arg("keeper")],
-  ["BorrowerHeldExtraPaid", arg("to")],
+  ['ForcedSaleSettled', arg('keeper')],
+  ['BorrowerHeldExtraPaid', arg('to')],
   // #1209 — the seller of a lender position keeps a claim on the interest
   // they earned. Every step of that claim is filed under the seller, who is
   // no longer a party to the loan, so the Claims page can find the loans
   // they hold a claim on (`/activity?actor=<seller>&kind=…`) and their feed
   // shows each payment.
-  ["SellerInterestClaimRecorded", arg("seller")],
-  ["SellerInterestPaid", arg("seller")],
-  ["SellerInterestWithdrawn", arg("seller")],
-  ["SellerInterestClaimClosed", arg("seller")],
+  ['SellerInterestClaimRecorded', arg('seller')],
+  ['SellerInterestPaid', arg('seller')],
+  ['SellerInterestWithdrawn', arg('seller')],
+  ['SellerInterestClaimClosed', arg('seller')],
   // #2814 / #3681 — a loan reserve (the payment reserve an extension draws
   // first, or the collateral reserve) is its depositor's own money, and they may
   // no longer be a party to the loan (the borrower position moved on, or the
   // loan ended). Every step of it is filed under them, so the Claims page can
   // find the loans they hold a reserve on (`/activity?actor=…&kind=…`).
-  ["LoanReserveFunded", arg("holder")],
-  ["LoanReserveWithdrawn", arg("holder")],
+  ['LoanReserveFunded', arg('holder')],
+  ['LoanReserveWithdrawn', arg('holder')],
   // #3681 — each run of a standing instruction draws the holder's reserve:
   // filed under that holder, not under whoever ran it (the caller is a party).
-  ["InterestPaidFromReserve", arg("holder")],
-  ["DueRepaymentRun", arg("holder")],
-  ["CollateralTopUpRun", arg("holder")],
-  ["ExtendChargeDrawn", arg("holder")],
-  ["RepayPartialPeriodAdvanced", arg("advancedBy")],
-  ["VPFIDepositedToVault", arg("user")],
-  ["VPFIWithdrawnFromVault", arg("user")],
+  ['InterestPaidFromReserve', arg('holder')],
+  ['DueRepaymentRun', arg('holder')],
+  ['CollateralTopUpRun', arg('holder')],
+  ['ExtendChargeDrawn', arg('holder')],
+  ['RepayPartialPeriodAdvanced', arg('advancedBy')],
+  ['VPFIDepositedToVault', arg('user')],
+  ['VPFIWithdrawnFromVault', arg('user')],
   // RL-2 (#1303) — reward loop-closure events: actor = the wallet whose
   // claim / vault the VPFI moved through, so the Activity feed's
   // per-wallet filter surfaces them (the ledger itself lives in the
   // dedicated reward_* tables, not args_json).
-  ["InteractionRewardsClaimed", arg("user")],
-  ["RewardDeliveredToVault", arg("user")],
-  ["VaultVpfiDebited", arg("user")],
+  ['InteractionRewardsClaimed', arg('user')],
+  ['RewardDeliveredToVault', arg('user')],
+  ['VaultVpfiDebited', arg('user')],
   // #1566 — one settled chunk of a forfeited reward entry (the loan sweep or
   // the flagged-owner sweep). Actor = the entry's owner; loan = the loan it
   // accrued on, so the forfeit shows on that loan's timeline.
-  ["RewardEntryForfeitSettled", arg("user")],
+  ['RewardEntryForfeitSettled', arg('user')],
   // Position-NFT lifecycle. The "actor" for activity-feed filter
   // purposes is the recipient (`to`) — that's the wallet that
   // gained ownership and most likely cares to see the event in
@@ -170,7 +167,7 @@ const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<
   // future enhancement could surface a second row per Transfer
   // keyed on `from` if the per-wallet feed needs to show
   // "outgoing" transfers explicitly.
-  ["Transfer", arg("to")],
+  ['Transfer', arg('to')],
   // T-086 step 12 — prepay-listing events. The on-chain payloads
   // use slightly different field names: Posted carries `lister`,
   // Updated carries `lister`, Canceled carries `caller`. The loan_id is
@@ -178,26 +175,26 @@ const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<
   // `PrepayCollateralSaleSettled` carries only `executor`, the protocol's
   // sale executor contract (its `msg.sender`), so it has no actor (#2708
   // r1); the loan reference files it on the loan's timeline.
-  ["PrepayListingPosted", arg("lister")],
-  ["PrepayListingUpdated", arg("lister")],
-  ["PrepayListingCanceled", arg("caller")],
+  ['PrepayListingPosted', arg('lister')],
+  ['PrepayListingUpdated', arg('lister')],
+  ['PrepayListingCanceled', arg('caller')],
   // T-086 Round-6 / Block D (#345) — atomic match-rotation event.
   // The borrower (msg.sender) clicked Match; `matcher` is the
   // canonical actor for activity-feed purposes.
-  ["PrepayListingMatched", arg("matcher")],
+  ['PrepayListingMatched', arg('matcher')],
   // #2550 / #2559 — a fill the solver's capacity would have refused went
   // through on the intent owner's priority-routing credit. The row belongs on
   // the loan the fill opened and on the owner's feed, whose credit it spent.
-  ["IntentPriorityFill", arg("owner")],
+  ['IntentPriorityFill', arg('owner')],
   // #2342 — a closed loan's owed VPFI entering or leaving a vault owner's
   // fee-tier exclusion. The row belongs on the loan's timeline, and on
   // the vault owner's feed while it charges them. `vaultOwner` is the zero
   // address when the side stops excluding anything, which names no wallet,
   // so the actor is left NULL rather than filed under 0x0.
   [
-    "TierExclusionUpdated",
+    'TierExclusionUpdated',
     (args) => {
-      const owner = str(args, "vaultOwner");
+      const owner = str(args, 'vaultOwner');
       return owner && owner !== ZERO_ADDRESS ? owner : null;
     },
   ],
@@ -213,10 +210,7 @@ const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<
 ]);
 
 /** The wallet one decoded event is filed under, or null for none. */
-export function activityActor(
-  eventName: string,
-  args: Record<string, unknown>,
-): string | null {
+export function activityActor(eventName: string, args: Record<string, unknown>): string | null {
   const read = ACTIVITY_ACTOR.get(eventName);
   return read ? read(args) : null;
 }
