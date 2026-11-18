@@ -142,7 +142,7 @@ export function releaseReplayedRows<S>(
 }
 
 /**
- * `replay_reason` values (migration 0097): why the chain's rows are being
+ * `replay_reason` values (migration 0099): why the chain's rows are being
  * replayed from the deploy block. Set together with the reset that starts the
  * replay, and cleared by the scan once its cursor first comes within
  * one scan pass of the safe head (`replayState.ts`).

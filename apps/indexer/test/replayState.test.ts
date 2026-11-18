@@ -212,7 +212,7 @@ describe('the replay latch', () => {
     });
   });
 
-  it('a chain without a record, or a database before migration 0097, is unknown, never "not replaying"', async () => {
+  it('a chain without a record, or a database before migration 0099, is unknown, never "not replaying"', async () => {
     const h = fresh();
     expect(await readReplayState(h.d1 as never, BASE)).toEqual(unknownReplayState());
     const old = createSqliteD1([

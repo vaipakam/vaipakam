@@ -98,7 +98,7 @@ export interface ChainIngestState {
    * Row 3.9 — whether the chain's rows are being replayed (and why), the
    * cursor, the safe head the last pass read and the lag between them in
    * blocks (replayState.ts). `replaying` is null and the rest unknown for a
-   * chain without a deployment record or on a database before migration 0097.
+   * chain without a deployment record or on a database before migration 0099.
    */
   replay: ReplayState;
 }

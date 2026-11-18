@@ -68,7 +68,7 @@ describe('readIngestHealth', () => {
           scannedAt: 1_000,
           ageSeconds: 100,
           deployment: { diamond: DIAMOND, deployBlock: 400, adoptedAt: 950, resetPending: false, resetKind: null, adoptedBlind: false },
-          // This DDL predates migration 0097, so the replay state is unknown, not "not replaying".
+          // This DDL predates migration 0099, so the replay state is unknown, not "not replaying".
           replay: unknownAt(500),
         },
       ],

@@ -31,7 +31,7 @@
  *  - No settled head read: the pass records the head as NULL, and the lag
  *    is null (unknown), never 0.
  *  - No cursor yet (a reset just cleared it): the lag is null.
- *  - No deployment record, or a database without migration 0097: `replaying`
+ *  - No deployment record, or a database without migration 0099: `replaying`
  *    is null (unknown), not false.
  *
  * The safe head lives on the deployment record, not in a chain-scoped table,
@@ -39,7 +39,7 @@
  * against.
  *
  * Read paths run on every request and must tolerate the previous schema
- * (CLAUDE.md, D1 schema discipline). So the read treats a missing 0097
+ * (CLAUDE.md, D1 schema discipline). So the read treats a missing 0099
  * column as "unknown", never as an error and never as "not
  * replaying".
  */
@@ -150,7 +150,7 @@ function fromRow(r: Row): ReplayState {
   };
 }
 
-/** True for the errors a database without migration 0097 (or 0063) raises. */
+/** True for the errors a database without migration 0099 (or 0063) raises. */
 function isPreMigration(err: unknown): boolean {
   return /no such (table|column)/i.test((err as Error)?.message ?? '');
 }
@@ -158,7 +158,7 @@ function isPreMigration(err: unknown): boolean {
 /**
  * Read the replay state of every chain with a deployment record, or of one
  * chain. A chain without a record is absent from the map. Callers state it
- * as {@link unknownReplayState}. On a database that predates migration 0097
+ * as {@link unknownReplayState}. On a database that predates migration 0099
  * the map is empty. Any other failure propagates, so a broken read is never
  * reported as "not replaying".
  */
