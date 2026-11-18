@@ -11,3 +11,4 @@ Two smaller changes came with it. The borrower's offset now passes the real refu
 Design: [TermsAcceptanceEnforcementDesign.md](../../DesignsAndPlans/TermsAcceptanceEnforcementDesign.md). Closes #3734.
 
 > Caveat: an aggregator adapter whose principal is a contract that cannot call the Terms acceptance cannot be created while a version is in force.
+> Caveat: a lender's listed sale is covered for the buyer by the loan-creation check, but no test drives a listed sale's fill end to end (the harness cannot run that fill; the direct sale is driven end to end).

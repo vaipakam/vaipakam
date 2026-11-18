@@ -238,15 +238,17 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   StandingInstructionSkipped: { label: 'Standing instruction skipped', category: 'loan-modify', priority: 40 },
   InterestPaymentBooked: { label: 'Interest payment booked', category: 'loan-repay', priority: 15 },
   HolderWalletPaymentToVault: { label: 'Payment credited to vault', category: 'other', priority: 30 },
+  // #3681 / #3682 / #3722 / #3246 — reserve legs, Auto-lend settings, fee
+  // shares, invitations and recovery moves.
   RepaymentLegsFromReserve: { label: 'Repayment paid from loan reserve', category: 'loan-repay', priority: 15 },
-  InterestPaymentAttemptFailed: { label: 'Interest payment from reserve did not run', category: 'loan-modify', priority: 40 },
-  IntentCalmCheckSet: { label: 'Calm-price check changed', category: 'loan-modify', priority: 40 },
-  LenderIntentIntegratorNamed: { label: 'Integrator named for auto-lend', category: 'loan-modify', priority: 40 },
-  IntegratorShareSettled: { label: 'Integrator fee share settled', category: 'other', priority: 15 },
-  InviterBound: { label: 'Invitation linked', category: 'other', priority: 40 },
-  ReferralShareSettled: { label: 'Referral fee share settled', category: 'other', priority: 15 },
-  AccountClawedBack: { label: 'Account moved to recovery address', category: 'other', priority: 30 },
-  RecoveredBalanceSwept: { label: 'Remaining balance moved to recovery address', category: 'other', priority: 30 },
+  InterestPaymentAttemptFailed: { label: 'Interest payment from reserve did not go through', category: 'loan-repay', priority: 20 },
+  IntentCalmCheckSet: { label: 'Auto-lend price check changed', category: 'loan-modify', priority: 40 },
+  LenderIntentIntegratorNamed: { label: 'Auto-lend integrator named', category: 'loan-modify', priority: 40 },
+  IntegratorShareSettled: { label: 'Integrator fee share settled', category: 'loan-open', priority: 15 },
+  ReferralShareSettled: { label: 'Referral fee share settled', category: 'loan-open', priority: 15 },
+  InviterBound: { label: 'Invitation accepted', category: 'other', priority: 40 },
+  AccountClawedBack: { label: 'Balance moved to the recovery address', category: 'other', priority: 60 },
+  RecoveredBalanceSwept: { label: 'Remaining balance moved to the recovery address', category: 'other', priority: 60 },
   // #1558 — the borrower's signed payoff permit on a refinance request. The
   // pull is the companion of `LoanRefinanced` in the same transaction, so it
   // rides inside that row and states where the payoff came from.

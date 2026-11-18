@@ -110,14 +110,16 @@ function signedTerms(over = {}) {
 }
 
 describe('refinanceExpected — complete payloads, closed in both directions', () => {
-  it('reads the AcceptTerms field list from the ABI, Full-tariff trio last', () => {
+  it('reads the AcceptTerms field list from the ABI, Full-tariff trio then integrator last', () => {
     const types = acceptTermsTypes(ABI);
-    expect(types).toHaveLength(34);
+    expect(types).toHaveLength(35);
     const names = types.map((t) => t.name);
-    expect([names.at(-3), names.at(-2), names.at(-1)]).toEqual([
+    // The Full-tariff trio, then the integrator the acceptor names (#3682).
+    expect([names.at(-4), names.at(-3), names.at(-2), names.at(-1)]).toEqual([
       'acceptorFull',
       'acceptorMaxCStar',
       'acceptorAllowFullDowngrade',
+      'integrator',
     ]);
     // Every expected-terms field is a typed field and vice versa.
     expect(Object.keys(expectedAcceptTerms(TERMS_ARGS)).sort()).toEqual(types.map((t) => t.name).sort());
@@ -181,7 +183,7 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
     ).toEqual(['accessList: unexpected field []']);
   });
 
-  it('builds the createOffer request over all 26 params, with the 0..ceiling band', () => {
+  it('builds the createOffer request over all 27 params, with the 0..ceiling band', () => {
     const call = expectedCreateOfferCall({ loan: LOAN, loanId: 22n, rateBps: 1200n, days: 30n, anchor: () => NOW });
     const fn = ABI.find((e) => e.type === 'function' && e.name === 'createOffer');
     expect(Object.keys(call.args.params).sort()).toEqual(fn.inputs[0].components.map((c) => c.name).sort());
@@ -241,6 +243,7 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
       refinanceTargetLoanId: 22n,
       useFullTermInterest: true,
       lifecycleFlex: 0,
+      integrator: '0x0000000000000000000000000000000000000000', // #3682: no integrator named
     };
     const createReq = decodeTxForComparison(
       {
@@ -473,6 +476,7 @@ describe('refinanceExpected — the payoff-permit route (#3295)', () => {
         refinanceTargetLoanId: 22n,
         useFullTermInterest: true,
         lifecycleFlex: 0,
+        integrator: '0x0000000000000000000000000000000000000000', // #3682: no integrator named
       },
       // The app's chain read at the send, 2 s after the anchor (#3412).
       ANCHOR + 2n + TX_DEADLINE_SEC,

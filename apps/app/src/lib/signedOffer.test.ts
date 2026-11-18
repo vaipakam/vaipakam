@@ -64,6 +64,7 @@ function payload(p: Partial<CreateOfferPayload> = {}): CreateOfferPayload {
     refinanceTargetLoanId: 0n,
     useFullTermInterest: false,
     lifecycleFlex: 0,
+    integrator: '0x0000000000000000000000000000000000000000',
     ...p,
   };
 }

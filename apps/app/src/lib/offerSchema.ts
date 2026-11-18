@@ -276,6 +276,9 @@ export interface CreateOfferPayload {
   /** #3621 — the lender's "either" bits for partial repay (1) and
    *  prepay listing (2). This app posts none, so it is always 0. */
   lifecycleFlex: number;
+  /** #3682 — the integrator the offer names (zero = none). This app names
+   *  none, so it is always the zero address. */
+  integrator: string;
 }
 
 /**
@@ -667,6 +670,8 @@ export function toCreateOfferPayload(
     useFullTermInterest: s.useFullTermInterest,
     // #3621 — the lender's "either" marks; this form posts exact terms.
     lifecycleFlex: 0,
+    // #3682 — this app names no integrator.
+    integrator: ZERO_ADDRESS,
   };
 }
 
@@ -748,6 +753,8 @@ export function toRefinanceOfferPayload(
     refinanceTargetLoanId: BigInt(oldLoanId),
     useFullTermInterest: oldLoan.useFullTermInterest,
     lifecycleFlex: 0,
+    // #3682 — this app names no integrator.
+    integrator: ZERO_ADDRESS,
   };
 }
 

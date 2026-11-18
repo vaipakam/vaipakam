@@ -152,6 +152,7 @@ export function requestParams(intent) {
     refinanceTargetLoanId: 0n,
     useFullTermInterest: true,
     lifecycleFlex: 0, // #3621
+    integrator: '0x0000000000000000000000000000000000000000', // #3682: no integrator named
   };
 }
 
@@ -289,6 +290,7 @@ export function expectedRequestAcceptTerms({ requestId, stored, lender, riskTerm
     acceptorFull: false,
     acceptorMaxCStar: 0n,
     acceptorAllowFullDowngrade: false,
+    integrator: '0x0000000000000000000000000000000000000000', // #3682
   };
 }
 
