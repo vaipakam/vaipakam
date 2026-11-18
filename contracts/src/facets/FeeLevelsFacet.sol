@@ -44,6 +44,17 @@ contract FeeLevelsFacet is DiamondAccessControl {
     event TreasuryFeeFloorsSet(uint16 initiationBps, uint16 interestBps);
     /// @notice #3682 — the per-loan fee-share ceiling changed (0 = default).
     event FeeShareCeilingSet(uint16 ceilingBps);
+    /// @notice The matcher's rate changed (0 = the 1% default), in basis
+    ///         points of the initiation fee's part above the treasury floor.
+    ///         Same signature as before #3722 moved it here from ConfigFacet.
+    /// @custom:event-category informational/config
+    event LifMatcherFeeBpsSet(uint16 newBps);
+    /// @notice A matcher's rate above the 50% fee ceiling. Same signature as
+    ///         ConfigFacet's.
+    error InvalidFeeBps(uint256 bps, uint256 maxAllowed);
+
+    /// @dev The matcher's rate's outer bound, ConfigFacet's `MAX_FEE_BPS`.
+    uint16 private constant MAX_MATCHER_FEE_BPS = 5_000;
 
     /// @dev The settings' bounds. The base term is a short loan; the one-year
     ///      point is about a year; the yearly rate may not push the fee at the
@@ -130,9 +141,12 @@ contract FeeLevelsFacet is DiamondAccessControl {
      *         user's referral cut and the matcher's, integrator's and inviter's
      *         shares together), in basis points of that part. 0 restores the
      *         60% default; otherwise 40% to 70% (`ReferralFeeShareDesign.md`
-     *         2.1). When the sum would exceed it, the inviter's share is
-     *         reduced first, then the integrator's, then the matcher's; the
-     *         reserve receives the rest. Applies to fees collected after it.
+     *         2.1). Refused with `LibFeeShares.MatcherAndCutAboveCeiling`
+     *         when it would sit below the matcher's rate plus the referral cut
+     *         rate, which are never reduced at a loan. When the sum would
+     *         exceed it, the inviter's share is reduced first, then the
+     *         integrator's; the reserve receives the rest. Applies to fees
+     *         collected after it.
      */
     function setFeeShareCeiling(uint16 ceilingBps) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         if (
@@ -140,7 +154,28 @@ contract FeeLevelsFacet is DiamondAccessControl {
                 && (ceilingBps < LibVaipakam.FEE_SHARE_CEILING_BPS_MIN || ceilingBps > LibVaipakam.FEE_SHARE_CEILING_BPS_MAX)
         ) revert InvalidFeeShareCeiling(ceilingBps);
         LibVaipakam.storageSlot().feeShareCfg.ceilingBps = ceilingBps;
+        LibFeeShares.requireMatcherAndCutFit();
         emit FeeShareCeilingSet(ceilingBps);
+    }
+
+    /**
+     * @notice Set the matcher's share of the initiation fee, in basis points
+     *         of the fee's part above the treasury floor. 0 restores the
+     *         default (1%); at most 50%.
+     * @dev    ADMIN_ROLE. Moved here from ConfigFacet in #3722 (ConfigFacet
+     *         had no room left under EIP-170), beside the per-loan ceiling it
+     *         is checked against: refused with
+     *         `LibFeeShares.MatcherAndCutAboveCeiling` when the new rate plus
+     *         the referral cut rate would pass that ceiling, so a matcher's
+     *         share is never reduced at a loan. Read it with
+     *         `ConfigFacet.getLifMatcherFeeBps`. Applies to fees collected
+     *         after it.
+     */
+    function setLifMatcherFeeBps(uint16 newBps) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        if (newBps > MAX_MATCHER_FEE_BPS) revert InvalidFeeBps(newBps, MAX_MATCHER_FEE_BPS);
+        LibVaipakam.storageSlot().protocolCfg.lifMatcherFeeBps = newBps;
+        LibFeeShares.requireMatcherAndCutFit();
+        emit LifMatcherFeeBpsSet(newBps);
     }
 
     /// @notice The per-loan ceiling in force, default resolved, in basis

@@ -146,6 +146,19 @@
   },
   {
     "type": "function",
+    "name": "setLifMatcherFeeBps",
+    "inputs": [
+      {
+        "name": "newBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setLoanInitiationFeeTerms",
     "inputs": [
       {
@@ -191,6 +204,19 @@
     "inputs": [
       {
         "name": "ceilingBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "LifMatcherFeeBpsSet",
+    "inputs": [
+      {
+        "name": "newBps",
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
@@ -271,6 +297,22 @@
   },
   {
     "type": "error",
+    "name": "InvalidFeeBps",
+    "inputs": [
+      {
+        "name": "bps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxAllowed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidFeeShareCeiling",
     "inputs": [
       {
@@ -312,6 +354,27 @@
       },
       {
         "name": "interestBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "MatcherAndCutAboveCeiling",
+    "inputs": [
+      {
+        "name": "matcherBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cutBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "ceilingBps",
         "type": "uint256",
         "internalType": "uint256"
       }

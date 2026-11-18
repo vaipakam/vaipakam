@@ -6,6 +6,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibReferral} from "../src/libraries/LibReferral.sol";
+import {LibFeeShares} from "../src/libraries/LibFeeShares.sol";
 import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
 import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
 import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
@@ -259,6 +260,91 @@ contract ReferralShareTest is SetupTest {
         vm.expectRevert();
         ref.setReferralPeriodDays(60);
         vm.stopPrank();
+    }
+
+    // ── Matcher rate + cut rate <= ceiling (owner decision 2026-11-18) ──
+
+    function _fitErr(uint256 m, uint256 c, uint256 ceil) private pure returns (bytes memory) {
+        return abi.encodeWithSelector(LibFeeShares.MatcherAndCutAboveCeiling.selector, m, c, ceil);
+    }
+
+    function test_fit_matcherSetterAtTheEdge() public {
+        FeeLevelsFacet(address(diamond)).setFeeShareCeiling(4000);
+        FeeLevelsFacet levels = FeeLevelsFacet(address(diamond));
+        vm.expectRevert(_fitErr(3001, 1000, 4000));
+        levels.setLifMatcherFeeBps(3001);
+        vm.expectRevert(abi.encodeWithSelector(FeeLevelsFacet.InvalidFeeBps.selector, uint256(5001), uint256(5000)));
+        levels.setLifMatcherFeeBps(5001);
+        levels.setLifMatcherFeeBps(3000);
+        assertEq(ConfigFacet(address(diamond)).getLifMatcherFeeBps(), 3000, "exactly the ceiling is admitted");
+    }
+
+    function test_fit_cutSetterAtTheEdge() public {
+        FeeLevelsFacet(address(diamond)).setFeeShareCeiling(4000);
+        FeeLevelsFacet(address(diamond)).setLifMatcherFeeBps(1500);
+        vm.expectRevert(_fitErr(1500, 2501, 4000));
+        ref.setReferralRates(2501, 0);
+        ref.setReferralRates(2500, 3000);
+        (uint256 cutBps,,,) = ref.getReferralSettings();
+        assertEq(cutBps, 2500, "exactly the ceiling is admitted");
+        // The inviter's share is not part of the rule: the ceiling reduces it.
+    }
+
+    function test_fit_ceilingSetterAtTheEdge() public {
+        FeeLevelsFacet(address(diamond)).setLifMatcherFeeBps(3000);
+        ref.setReferralRates(2000, 1000);
+        FeeLevelsFacet levels = FeeLevelsFacet(address(diamond));
+        vm.expectRevert(_fitErr(3000, 2000, 4999));
+        levels.setFeeShareCeiling(4999);
+        levels.setFeeShareCeiling(5000);
+        assertEq(levels.getFeeShareCeiling(), 5000, "exactly the sum is admitted");
+        levels.setFeeShareCeiling(0);
+        assertEq(levels.getFeeShareCeiling(), 6000, "0 restores the default, checked too");
+    }
+
+    function test_fit_tightestSettings() public {
+        // The tightest allowed ceiling (40%) with the highest cut (30%):
+        // the matcher's rate may go to 10% and no further; 0 (the 1% default)
+        // is admitted and reads as 100.
+        FeeLevelsFacet levels = FeeLevelsFacet(address(diamond));
+        levels.setFeeShareCeiling(4000);
+        ref.setReferralRates(3000, 3000);
+        levels.setLifMatcherFeeBps(1000);
+        vm.expectRevert(_fitErr(1001, 3000, 4000));
+        levels.setLifMatcherFeeBps(1001);
+        levels.setLifMatcherFeeBps(0);
+        assertEq(ConfigFacet(address(diamond)).getLifMatcherFeeBps(), 100);
+    }
+
+    /// Any order of admitted changes keeps the rule, and then the cut and
+    /// the matcher's share, each its rate of A rounded down, never pass the
+    /// ceiling's amount of A.
+    function testFuzz_fit_holdsAfterAnyAdmittedSettings(
+        uint16[6] memory vals,
+        uint8[6] memory which,
+        uint256 above
+    ) public {
+        above = bound(above, 0, 1e36);
+        ConfigFacet cfg = ConfigFacet(address(diamond));
+        FeeLevelsFacet levels = FeeLevelsFacet(address(diamond));
+        for (uint256 i; i < 6; ++i) {
+            uint8 w = which[i] % 3;
+            if (w == 0) {
+                try levels.setLifMatcherFeeBps(uint16(bound(vals[i], 0, 5000))) {} catch {}
+            } else if (w == 1) {
+                uint16 c = uint16(bound(vals[i], 0, 3000));
+                try ref.setReferralRates(c, c) {} catch {}
+            } else {
+                uint256 v = bound(vals[i], 3999, 7000);
+                try levels.setFeeShareCeiling(v == 3999 ? 0 : uint16(v)) {} catch {}
+            }
+            uint256 m = cfg.getLifMatcherFeeBps();
+            (uint256 cutBps,,, uint256 ceil) = ref.getReferralSettings();
+            assertLe(m + cutBps, ceil, "rates fit");
+            assertLe(
+                (above * cutBps) / 10_000 + (above * m) / 10_000, (above * ceil) / 10_000, "amounts fit after rounding"
+            );
+        }
     }
 
     function test_pay_isDiamondOnly() public {

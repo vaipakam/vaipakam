@@ -2016,6 +2016,27 @@
   },
   {
     "type": "error",
+    "name": "MatcherAndCutAboveCeiling",
+    "inputs": [
+      {
+        "name": "matcherBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cutBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "ceilingBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "NFTBurnFailed",
     "inputs": []
   },

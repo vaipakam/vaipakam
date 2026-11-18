@@ -1076,7 +1076,7 @@ contract HelperTest {
     /// @dev #3649 — the initiation fee's term schedule.
     ///      Mirrors `DeployDiamond._getFeeLevelsSelectors`.
     function getFeeLevelsFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](9);
         selectors[0] = FeeLevelsFacet.setLoanInitiationFeeTerms.selector;
         selectors[1] = FeeLevelsFacet.getLoanInitiationFeeTerms.selector;
         selectors[2] = FeeLevelsFacet.quoteLoanInitiationFee.selector;
@@ -1085,6 +1085,7 @@ contract HelperTest {
         selectors[5] = FeeLevelsFacet.getTreasuryFeeFloors.selector;
         selectors[6] = FeeLevelsFacet.setFeeShareCeiling.selector;
         selectors[7] = FeeLevelsFacet.getFeeShareCeiling.selector;
+        selectors[8] = FeeLevelsFacet.setLifMatcherFeeBps.selector;
     }
 
     function getIntegratorFacetSelectors() public pure returns (bytes4[] memory selectors) {
@@ -2153,7 +2154,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](87);
+        selectors = new bytes4[](86);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -2173,8 +2174,9 @@ contract HelperTest {
         selectors[13] = ConfigFacet.setFallbackSplit.selector;
         selectors[14] = ConfigFacet.getFallbackSplit.selector;
         selectors[15] = ConfigFacet.getProtocolConstants.selector;
-        // Range Orders Phase 1 — governance-tunable matcher BPS.
-        selectors[16] = ConfigFacet.setLifMatcherFeeBps.selector;
+        // #3722 — the matcher's rate setter moved to FeeLevelsFacet; the
+        // last entry fills its slot.
+        selectors[16] = ConfigFacet.getMinTermsAgeSec.selector;
         // Phase 1 follow-up — auto-pause window duration setter.
         selectors[17] = ConfigFacet.setAutoPauseDurationSeconds.selector;
         // Findings 00025 — governance-tunable max loan duration.
@@ -2303,7 +2305,6 @@ contract HelperTest {
         selectors[84] = ConfigFacet.getMaxOpenOffersPerWallet.selector;
         // #3443 — the minimum age of an offer's terms at fill.
         selectors[85] = ConfigFacet.setMinTermsAgeSec.selector;
-        selectors[86] = ConfigFacet.getMinTermsAgeSec.selector;
         // #1222 (M3 B1) — cross-chain recycled ledger transparency reads.
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` MOVED to RewardAggregatorFacet
