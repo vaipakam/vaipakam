@@ -261,7 +261,7 @@ library LibOfferMatch {
         // Reads governance-tunable BPS from storage so the kickback
         // can be dialed without a contract upgrade. Falls back to
         // LIF_MATCHER_FEE_BPS (100 = 1%) when unset; capped at 50%
-        // by the setter (`ConfigFacet.setLifMatcherFeeBps`).
+        // by the setter (`FeeLevelsFacet.setLifMatcherFeeBps`).
         return (totalFee * LibVaipakam.cfgLifMatcherFeeBps()) / LibVaipakam.BASIS_POINTS;
     }
 

@@ -272,9 +272,10 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
 
     /// @dev Divide the fee: the treasury's floor first (taken by the
     ///      treasury leg's split), then from the part above it the matcher's
-    ///      the integrator's and the inviter's shares under the per-loan
-    ///      ceiling, after the borrower's referral cut, which was never
-    ///      charged ({LibFeeShares}); the rest of the fee is the treasury
+    ///      share at its rate (the settings keep it and the cut under the
+    ///      ceiling), then the integrator's and the inviter's shares under
+    ///      the per-loan ceiling, after the borrower's referral cut, which
+    ///      was never charged ({LibFeeShares}); the rest of the fee is the treasury
     ///      leg, whose part above the floor is the reserve's. The
     ///      integrator's and the inviter's shares are each paid as one
     ///      isolated step that may fail alone: a failure or a short delivery
@@ -288,8 +289,9 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
         uint256 loanId = s.nextLoanId + 1;
         s.acceptChargeLoanId = loanId;
         (uint256 rateBps, LibIntegrator.Refusal refusal) = LibIntegrator.rateFor(c.integrator, c.borrower);
-        (uint256 matcherCut, uint256 integratorCut, uint256 share) = LibFeeShares.bound(
-            c.above, c.cut, LibOfferMatch.matcherShareOf(c.above), (c.above * rateBps) / LibVaipakam.BASIS_POINTS, c.share
+        uint256 matcherCut = LibOfferMatch.matcherShareOf(c.above);
+        (uint256 integratorCut, uint256 share) = LibFeeShares.bound(
+            c.above, c.cut, matcherCut, (c.above * rateBps) / LibVaipakam.BASIS_POINTS, c.share
         );
 
         bool delivered;

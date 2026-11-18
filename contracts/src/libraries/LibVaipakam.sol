@@ -10568,7 +10568,7 @@ library LibVaipakam {
 
     /// @dev Range Orders Phase 1 — matcher's slice of any LIF that
     ///      flows to treasury, in BPS. Governance-tunable via
-    ///      `ConfigFacet.setLifMatcherFeeBps`; falls back to the
+    ///      `FeeLevelsFacet.setLifMatcherFeeBps`; falls back to the
     ///      LIF_MATCHER_FEE_BPS constant (100 = 1%) when unset.
     function cfgLifMatcherFeeBps() internal view returns (uint256) {
         uint16 v = storageSlot().protocolCfg.lifMatcherFeeBps;

@@ -18,7 +18,10 @@ import {LibVPFIDiscount} from "./LibVPFIDiscount.sol";
  *         allowance the hold discount leaves under the fee-discount ceiling
  *         (`MAX_FEE_DISCOUNT_BPS` of the full fee), so the two discounts
  *         together never pass it. The inviter's share is bounded later, with
- *         the other shares, by {LibFeeShares.bound}.
+ *         the integrator's, by {LibFeeShares.bound}. The settings keep the
+ *         cut rate plus the matcher's rate under the per-loan ceiling
+ *         ({LibFeeShares.requireMatcherAndCutFit}), so the cut is never
+ *         reduced there.
  *
  *         The acceptance charge and every borrow preview read this one rule;
  *         the vault outflow policy reads {activeInviter} to derive the payee.

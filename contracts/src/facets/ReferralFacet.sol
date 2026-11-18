@@ -113,6 +113,9 @@ contract ReferralFacet is DiamondAccessControl, DiamondPausable, IVaipakamErrors
      *         Zero is a rate (nothing taken off, or nothing paid).
      * @dev    ADMIN_ROLE (the Timelock after handover). Applies to loans
      *         opened after it; nothing already collected is touched.
+     *         Refused with `LibFeeShares.MatcherAndCutAboveCeiling` when the
+     *         cut rate plus the matcher's rate would pass the per-loan
+     *         ceiling.
      */
     function setReferralRates(uint16 cutBps, uint16 shareBps) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         if (cutBps > LibVaipakam.REFERRAL_RATE_BPS_MAX || shareBps > LibVaipakam.REFERRAL_RATE_BPS_MAX) {
@@ -122,6 +125,7 @@ contract ReferralFacet is DiamondAccessControl, DiamondPausable, IVaipakamErrors
         c.cutBps = cutBps;
         c.shareBps = shareBps;
         c.ratesSet = true;
+        LibFeeShares.requireMatcherAndCutFit();
         emit ReferralRatesSet(cutBps, shareBps);
     }
 

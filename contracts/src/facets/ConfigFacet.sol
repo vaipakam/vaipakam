@@ -192,36 +192,9 @@ contract ConfigFacet is DiamondAccessControl {
         emit FeesConfigSet(treasuryFeeBps, loanInitiationFeeBps);
     }
 
-    /// @notice Emitted when the matcher's slice of the LIF kickback is
-    ///         rotated. Default 100 BPS (1%); the design allows up to
-    ///         5–10% if community bot operators need a stronger
-    ///         incentive.
-    /// @custom:event-category informational/config
-    event LifMatcherFeeBpsSet(uint16 newBps);
-
-    /**
-     * @notice Update the Range Orders matcher's BPS slice of any LIF
-     *         that flows to treasury. Tunable so governance can dial
-     *         the kickback up to attract more third-party matchers
-     *         (or down to redirect more of the LIF to treasury).
-     * @dev ADMIN_ROLE-only. Pass `0` to reset to the library default
-     *      (`LIF_MATCHER_FEE_BPS = 100` ≡ 1%). Capped at
-     *      {MAX_FEE_BPS} (50%) so a misfire can't starve treasury.
-     *      The kickback applies on both the lender-asset path
-     *      (synchronous, paid at match) and the VPFI path (deferred
-     *      to terminal via `LibVPFIDiscount`).
-     * @param newBps New matcher BPS, 0–MAX_FEE_BPS. Stored on
-     *               `ProtocolConfig.lifMatcherFeeBps` and consumed
-     *               by `LibVaipakam.cfgLifMatcherFeeBps()`.
-     */
-    function setLifMatcherFeeBps(uint16 newBps)
-        external
-        onlyRole(LibAccessControl.ADMIN_ROLE)
-    {
-        if (newBps > MAX_FEE_BPS) revert InvalidFeeBps(newBps, MAX_FEE_BPS);
-        LibVaipakam.storageSlot().protocolCfg.lifMatcherFeeBps = newBps;
-        emit LifMatcherFeeBpsSet(newBps);
-    }
+    // #3722 — `setLifMatcherFeeBps` (and its `LifMatcherFeeBpsSet` event)
+    // moved to FeeLevelsFacet, beside the per-loan ceiling the matcher's rate
+    // is checked against. `getLifMatcherFeeBps` stays here.
 
     // ── T-086 step 6 — prepay-listing buffer knob ───────────────────────
 

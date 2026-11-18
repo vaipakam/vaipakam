@@ -2160,9 +2160,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// @dev Selectors for `FeeLevelsFacet` (#3649) — the initiation fee's
     ///      term schedule (its bounded setter, its getter and the quotes) and the
-    ///      treasury floors' bounded setter and getter (stage 3).
+    ///      treasury floors' bounded setter and getter (stage 3), the per-loan
+    ///      ceiling, and the matcher's rate setter (#3722).
     function _getFeeLevelsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](8);
+        s = new bytes4[](9);
         s[0] = FeeLevelsFacet.setLoanInitiationFeeTerms.selector;
         s[1] = FeeLevelsFacet.getLoanInitiationFeeTerms.selector;
         s[2] = FeeLevelsFacet.quoteLoanInitiationFee.selector;
@@ -2171,6 +2172,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[5] = FeeLevelsFacet.getTreasuryFeeFloors.selector;
         s[6] = FeeLevelsFacet.setFeeShareCeiling.selector;
         s[7] = FeeLevelsFacet.getFeeShareCeiling.selector;
+        s[8] = FeeLevelsFacet.setLifMatcherFeeBps.selector;
     }
 
     /// @dev Selectors for `IntegratorFacet` (#3682) — the integrator registry
@@ -3436,7 +3438,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](87);
+        s = new bytes4[](86);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -3473,8 +3475,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[18] = ConfigFacet.setPartialFillEnabled.selector;
         // #1347 (M2 PR-5a/5b) — Full VPFI tariff knobs.
         s[19] = ConfigFacet.getFeeEntitlementConfig.selector;
-        // Range Orders Phase 1 — governance-tunable matcher BPS.
-        s[20] = ConfigFacet.setLifMatcherFeeBps.selector;
+        // #3722 — the matcher's rate setter moved to FeeLevelsFacet beside
+        // the per-loan ceiling it is checked against; the getter stays here.
+        s[20] = ConfigFacet.getMinTermsAgeSec.selector;
         // Auto-pause window duration setter (Phase 1 follow-up).
         s[21] = ConfigFacet.setAutoPauseDurationSeconds.selector;
         // Findings 00025 — governance-tunable max loan duration.
@@ -3615,7 +3618,6 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[84] = ConfigFacet.getMaxOpenOffersPerWallet.selector;
         // #3443 — the minimum age of an offer's terms at fill.
         s[85] = ConfigFacet.setMinTermsAgeSec.selector;
-        s[86] = ConfigFacet.getMinTermsAgeSec.selector;
         // #1222 (M3 B1) — cross-chain recycled ledger transparency reads.
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` MOVED to RewardAggregatorFacet
