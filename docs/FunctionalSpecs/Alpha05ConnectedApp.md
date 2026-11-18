@@ -570,8 +570,11 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   both liquid and illiquid outcomes because liquidity is checked at fill.
   The public Key risks page also covers depegs, delayed or wrong prices, local
   tax and law responsibility, and third-party wallets and networks.
-- Published Terms version 2 takes effect for acceptance only after configured
-  on the network. Earlier frozen versions remain unchanged. The approved
+- A published Terms version takes effect for acceptance only after it is
+  configured on the network. Earlier frozen versions remain unchanged.
+  Version 3 rewords the software and network risk line, which now ends
+  "These risks come with every blockchain system"; the app's key-risk list
+  carries the same sentence as the Terms text. The approved
   clauses describe the interface's non-party role, non-custody, eligibility,
   as-is service, indemnity, and a liability ceiling of the prior twelve months'
   fees bounded between $10 and $1,000; governing law and dispute handling are

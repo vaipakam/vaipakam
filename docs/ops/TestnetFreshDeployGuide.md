@@ -602,7 +602,7 @@ handover). Order matters: §5.1–§5.4 before launch; §5.5 governs launch timi
 A fresh Diamond has `currentTosVersion==0`, which **disables the ToS gate**
 (LegalFacet.sol `isTermsAccepted` notes). Not required for launch. To enable
 it, publish version N in `apps/www/src/pages/terms/versions.ts` (latest entry
-today: version 2), deploy `apps/www` first, then
+today: version 3), deploy `apps/www` first, then
 `setCurrentTos(N, <keccak hash from versions.ts>)` (ADMIN_ROLE; version must
 strictly increase; hash non-zero) (GovernanceRunbook "Bumping the Terms of
 Service"). **On this deploy: arm it with version 2 on all three chains**
@@ -1058,6 +1058,10 @@ then take `main` at that point as the deploy's commit (§1.1).
    `0xecbdf420b0b626087e8549f00c68c663ebac79c220eb1f65c55f11b4b3c2605e`.
    Recompute it at deploy time; if the file changed, stop and ask. Read
    `getCurrentTos()` before (expect 0) and after (expect 2 and the hash).
+   Version 3 was published on 2026-11-18 (it rewords one risk line; hash
+   `0xcb4518feedc5580707caccaf5c42024ff8cc4f111d60ef10135094e67b7f8245`).
+   A deploy after that date arms the latest published version instead, and
+   an existing chain moves to it only by the owner's own `setCurrentTos`.
 6. **Keeper: arm the same passes as are armed now, plus the hourly price
    checkpoint (`PRICE_CHECKPOINT_ENABLED`); grant `WATCHER_ROLE` and
    `NOTIF_BILLER_ROLE`.** Before the deploy, record the flags currently set
