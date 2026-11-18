@@ -74,6 +74,12 @@ left without one. Two things make that safe:
   force" counts a pending one only while its epoch is still the vault's
   current one, so a setting that was dropped can never come into force by
   the passing of time.
+- An address that has already matured is never dropped. Every step that
+  advances the epoch, and every cancellation, first writes a pending address
+  whose wait has passed into the record as the address in force, and only
+  then invalidates what is still waiting. So a first setting that matured, let
+  a signer be finalized, and was followed by that signer's lock is still the
+  address the clawback pays.
 - The identity rules of 3.1 are checked from both sides at every request.
   Because a signer, a nominee or a destination equal to a pending recovery
   address is refused during the wait, nothing can have become one by the
@@ -142,8 +148,9 @@ payout, at once. It can be called again for further assets.
 
 It does not move what is not free. Collateral under a lien and amounts held
 for an open position stay where they are until the loan or the position ends;
-what is released then pays the recovery address. Position NFTs stay held
-under their lock, and what they pay out follows the same rule.
+what is released then pays the recovery address. Position tokens stay with
+the account and cannot leave it (4.4); what they pay out follows the same
+rule.
 
 **Default.** The build states whether the backing of an open offer counts as
 free (and moves at once) or held (and follows on release). Either way a
@@ -154,6 +161,15 @@ recovered account's open offers cannot be filled.
 After a clawback the account is locked and stays locked. It opens nothing
 new. Every later payout it would have paid its owner goes to the recovery
 address. Open positions stay open and settle normally.
+
+The recovered state never clears, and an unlock of a recovered account is
+refused. The position tokens the account holds can no longer be transferred,
+sold or handed over. The platform's own transfer check refuses the move, and
+each sale and handover refuses at fill, from the account's recovered record.
+This does not rest on the token contract's holder lock, which belongs to the
+holder's key and follows that contract's own delay. Without this rule a
+position could be moved to another wallet and its proceeds claimed there
+instead of reaching the recovery address.
 
 Whenever a recovery address is in force, recovered or not, the
 paused-platform escape route pays it and not the owner wallet. The vault-side
@@ -211,6 +227,13 @@ every amount that went to the recovery address.
    refused.
 9. The authority-order suite (#3568) includes the recovery address among the
    records whose changes it orders against locks, replacements and delays.
+10. An address matures and a lock, a replacement or a cancellation follows in
+    the next block: the address is still in force and a clawback pays it. A
+    change still waiting at that moment is dropped.
+11. After a clawback, the holder lifts the token contract's holder lock after
+    its delay. A transfer, a sale and a handover of the account's positions
+    are each refused, and what the positions pay out reaches the recovery
+    address.
 
 ## 8. Residuals
 
