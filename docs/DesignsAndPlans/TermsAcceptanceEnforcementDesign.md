@@ -59,6 +59,12 @@ The previews that the app and the keeper read before sending (accept, match,
 Auto-lend fill, sale) ask the same rule and name the wallet that is not
 current, so a refusal is known before a transaction is sent.
 
+"Not current on-chain" is not the same as "cannot be filled". A wallet whose
+signed acceptance is held in the store (section 6) is made current by the
+same transaction that fills its commitment. The app and the keeper treat a
+commitment as unfillable for the Terms only when its owner is not current
+on-chain **and** no valid stored signature can be carried with the fill.
+
 A refused fill does not cancel anything. The offer or the Auto-lend setting
 stays as it is and fills again once its owner has accepted.
 
@@ -109,12 +115,18 @@ Rules for the signature:
 - It is good only for the version and fingerprint it names, and only while
   that version is in force or announced (section 5).
 - The expiry may be at most 180 days after it is submitted (**Default**).
-- Submitting it for a wallet that is already current changes nothing: the
-  first acceptance time is kept.
+- Submitting it for a wallet that has already accepted **that version and
+  fingerprint** changes nothing: the first acceptance time is kept. A wallet
+  that is current on the version in force and signs the announced one is
+  recorded for the announced one too.
 - It gives the submitter nothing. It moves no funds, grants no authority and
   opens no position. That is the difference from the relayed consents removed
   earlier (#3238): the worst a hostile website can obtain is a true record
   that the wallet signed the acceptance.
+
+The record is kept per version. Accepting an announced version never
+replaces the acceptance of the version in force, so a wallet that accepted
+both stays current if the announcement is withdrawn.
 
 There is nothing to revoke. A wallet that no longer agrees closes its
 positions, which section 3.2 always allows.
@@ -158,15 +170,16 @@ Connect would charge every visitor. The shape:
    - the wallet's first transaction that needs it, which carries the
      acceptance in the same transaction through the platform's batch entry;
    - anyone who needs the wallet to be current, in the same way: the taker
-     filling a maker's signed offer submits the maker's stored signature in
-     the same transaction;
+     filling a maker's signed offer, or the keeper filling an Auto-lend or a
+     match, submits the owner's stored signature in the same transaction;
    - the keeper, which submits stored signatures on its own (below).
 3. **No position can exist without it.** The rule of section 3 refuses the
    first position until the record is on-chain, so there is never a loan
    whose parties have no on-chain acceptance.
 
-**The keeper pass.** It submits stored, unexpired signatures of wallets that
-are not yet current on-chain. Its scope is a setting:
+**The keeper pass.** It submits stored, unexpired signatures whose version is
+not yet recorded for the wallet, the announced version included. Its scope is
+a setting:
 
 - *Commitments only*: wallets with an open offer, a signed offer in the
   shared book, Auto-lend or a standing instruction. This is what keeps those
@@ -192,11 +205,16 @@ transaction.
   key risks, with a box to tick. The wallet list opens only after the box is
   ticked. Once the wallet is chosen, it is asked for the signature at once,
   and the request says the acceptance will be recorded on-chain.
-- **Not accepted means not connected.** If the signature is refused, the app
-  drops the connection and stays a public, read-only site. One exception, and
-  it is the rule of 3.2: a wallet that already has positions or balances is
-  let through to the surfaces that close, claim and withdraw, and nothing
-  else, with the reason shown.
+- **Not accepted means not connected.** If the signature is refused, the
+  wallet gets nothing that creates a position: no market actions, no posting,
+  no Auto-lend. What it keeps is every action of section 3.2, and only those:
+  repaying and closing, adding collateral, claiming, withdrawing, cancelling
+  its own offers and signed orders, and withdrawing a keeper's or a fee
+  consent's authority. The app does not test for a position or a balance
+  first, because a wallet with neither can still hold a signed order or a
+  permission it needs to withdraw. For a wallet with nothing to wind down
+  those surfaces are empty, and the app says that accepting is what opens the
+  rest.
 - **A contract wallet** that cannot sign on the spot accepts by its own
   transaction and is treated as not connected until the record is on-chain.
 - **A new version.** From the announcement the app asks again at Connect,
@@ -204,9 +222,11 @@ transaction.
   accept.
 - **Another network.** The first time a wallet uses another network the app
   asks for that network's signature.
-- **The book.** An offer whose maker is not current is shown as not fillable
-  now, with the reason, or left out of the fillable list. It is never offered
-  as an action that would fail.
+- **The book.** An offer whose maker is current on-chain, or whose maker's
+  valid signature is in the store, is fillable; in the second case the fill
+  carries the signature in the same transaction. Only an offer whose maker
+  is neither is shown as not fillable now, with the reason, or left out of
+  the fillable list. Nothing is offered as an action that would fail.
 
 ## 8. Events and the record
 
@@ -241,6 +261,16 @@ transaction.
 9. With no version in force, nothing is checked.
 10. A loan whose parties are both stale is repaid, defaulted and liquidated
     normally.
+11. A wallet current on the version in force signs the announced one during
+    the notice. The signature is recorded, and the wallet's offer fills one
+    second after the new version comes into force. If the announcement is
+    withdrawn instead, the wallet is still current.
+12. With the keeper pass disarmed, the app lists as fillable an offer whose
+    maker signed at Connect and is not yet recorded, and the fill succeeds.
+    An offer whose maker has neither a record nor a stored signature is not
+    listed as fillable.
+13. A wallet that refused, with no position and no balance, cancels its own
+    signed order and withdraws a keeper's authority through the app.
 
 ## 10. Residuals
 
