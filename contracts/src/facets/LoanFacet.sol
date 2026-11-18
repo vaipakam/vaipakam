@@ -14,6 +14,7 @@ import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
 import {RiskAccessFacet} from "./RiskAccessFacet.sol";
 import {LibInitRiskGate} from "../libraries/LibInitRiskGate.sol";
+import {LibNewLoanRisk} from "../libraries/LibNewLoanRisk.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
@@ -804,7 +805,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             .storageSlot()
             .loans[ctx.loanId]
             .collateralAsset;
-        _checkInitialLtvAndHf(ctx.loanId, collateralAsset);
+        LibNewLoanRisk.requireAdmissible(ctx.loanId, collateralAsset);
     }
 
     /**
@@ -882,82 +883,6 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         );
     }
 
-    /**
-     * @dev Runs the initial LTV and HF gates via cross-facet staticcalls.
-     *      Kept as a dedicated frame to isolate ltv/maxLtv/hf locals.
-     *
-     *      Two regimes, switched by `depthTieredLtvEnabled` (Piece B —
-     *      docs/DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md §4.2):
-     *
-     *        • OFF (the default — and the state during the testnet bake):
-     *          today's gate, unchanged — `LTV ≤ assetRiskParams.loanInitMaxLtvBps`
-     *          and `HF ≥ 1.5e18`. Effectively ~53% LTV on an ~82%
-     *          liq-threshold.
-     *
-     *        • ON: cap the init-LTV at `min(assetRiskParams.loanInitMaxLtvBps,
-     *          tierMaxInitLtvBps[effectiveTier(collateral)])` — the
-     *          depth-graded ceiling (50% / 60% / 65% for Tier 1/2/3;
-     *          `0` for a Tier-0 / untierable collateral, which makes any
-     *          positive LTV revert). The `HF ≥ 1.5e18` floor is relaxed
-     *          to `HF ≥ 1e18` (not-born-already-liquidatable) because the
-     *          tier cap is the binding safety constraint and — given the
-     *          protocol invariant `loanInitMaxLtvBps ≤ liqThresholdBps` — it
-     *          already implies a positive init buffer (`HF_init =
-     *          liqThreshold / cap ≥ 1`). Per-asset `liqThresholdBps` (the
-     *          liquidation trigger) is untouched in either regime.
-     *
-     *      `effectiveTier` = `OracleFacet.getEffectiveLiquidityTier`
-     *      = `min(on-chain slippage tier, keeperTier)` — so a brand-new
-     *      asset stays at today's `HF ≥ 1.5` baseline (Tier 1) until the
-     *      off-chain confidence relay promotes it; a compromised keeper
-     *      can only lower a tier, never raise it above the on-chain
-     *      ceiling. The view never reverts (fail-closed to `0`).
-     */
-    function _checkInitialLtvAndHf(
-        uint256 loanId,
-        address collateralAsset
-    ) private view {
-        (bool ltvSuccess, bytes memory ltvResult) = address(this).staticcall(
-            abi.encodeWithSelector(RiskFacet.calculateLTV.selector, loanId)
-        );
-        if (!ltvSuccess) revert LTVCalculationFailed();
-        uint256 ltv = abi.decode(ltvResult, (uint256));
-        // #3685 — the ONE loan-opening cap rule, hosted by
-        // CollateralConcentrationFacet: depth-tiered ⇒ min(per-asset ceiling,
-        // the tier cap for the collateral's effective liquidity tier; tier 0
-        // ⇒ cap 0 ⇒ any positive LTV reverts); untiered ⇒ the per-asset
-        // ceiling. Either regime is held to the lowered tier cap while the
-        // collateral is at the High concentration level. The tier cap is the
-        // autonomous tier-LTV cache while fresh and peer reads are not paused,
-        // else the tier default, never above the tier's governance ceiling
-        // (#3547). Same refusals as before: the tiered regime names the cap.
-        (uint256 cap,,,) =
-            CollateralConcentrationFacet(address(this)).newLoanInitLtvCapBps(collateralAsset);
-        bool tieredOn = LibVaipakam.cfgDepthTieredLtvEnabled();
-        if (tieredOn) {
-            if (ltv > cap) revert InitLtvAboveTier(ltv, cap);
-        } else if (ltv > cap) {
-            revert LTVExceeded();
-        }
-
-        bytes memory hfResult = LibFacet.crossFacetStaticCall(
-            abi.encodeWithSelector(
-                RiskFacet.calculateHealthFactor.selector,
-                loanId
-            ),
-            HealthFactorCalculationFailed.selector
-        );
-        uint256 hf = abi.decode(hfResult, (uint256));
-        // Switch ON ⇒ HF ≥ 1.0 (not born already-liquidatable; the tier
-        // cap is the binding buffer). Switch OFF ⇒ the runtime admission
-        // floor (#394 Lever A — `minHealthFactor()`, default 1.5e18, tunable
-        // in `[1.2e18, 2.0e18]`). Branch-aware by construction: only the
-        // non-tiered floor moves; the tiered regime keeps the 1e18 trigger.
-        uint256 hfFloor = tieredOn
-            ? LibVaipakam.HF_LIQUIDATION_THRESHOLD
-            : LibVaipakam.minHealthFactor();
-        if (hf < hfFloor) revert HealthFactorTooLow();
-    }
 
     /**
      * @dev Copies the full set of offer fields into a new loan. Extracted
@@ -1229,16 +1154,14 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // #394 Lever A (Codex #647 P1 + round-2 P2) — snapshot the admission
         // HF floor THIS loan is actually gated at, so every post-admission HF
         // check keeps that floor and a later `setMinHealthFactor` retune is
-        // prospective only. BRANCH-AWARE: it must mirror `_checkInitialLtvAndHf`
+        // prospective only. BRANCH-AWARE: it must mirror `LibNewLoanRisk.requireAdmissible`
         // exactly — the depth-tiered regime admits at `HF_LIQUIDATION_THRESHOLD`
         // (1e18), only the non-tiered regime uses the tunable `minHealthFactor()`
         // knob. Snapshotting the non-tiered knob for a tiered loan would saddle
         // it with a stricter post-admission floor than it was born under. Fits
         // uint64 (ceiling 2e18).
         loan.minHealthFactorAtInit = uint64(
-            LibVaipakam.cfgDepthTieredLtvEnabled()
-                ? LibVaipakam.HF_LIQUIDATION_THRESHOLD
-                : LibVaipakam.minHealthFactor()
+            LibVaipakam.admissionHealthFactorFloor()
         );
         // Snapshot the effective per-tier LIQUIDATION threshold (PR2 of
         // internal-match work, 2026-05-14). Replaces the retired
@@ -1274,7 +1197,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             loan.liquidationLtvBpsAtInit = uint16(LibVaipakam.cfgTierLiquidationLtvBps(effTier));
             // #394 Lever A (Codex #647 round-3 P1) — snapshot the EFFECTIVE
             // init-LTV cap this loan is admitted under, identical to the
-            // `_checkInitialLtvAndHf` gate: depth-tiered ⇒ min(per-asset cap,
+            // `LibNewLoanRisk.requireAdmissible` gate: depth-tiered ⇒ min(per-asset cap,
             // tier cap); non-tiered ⇒ the per-asset cap. Post-admission
             // withdrawal / cure enforce this snapshot so the tier buffer can't
             // be shed later (the branch-aware HF snapshot alone doesn't bound LTV).

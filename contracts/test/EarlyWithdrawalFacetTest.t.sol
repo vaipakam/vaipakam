@@ -7654,7 +7654,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
     /// @dev Equal cap snapshots say nothing about where the position actually
     ///      sits. A loan can drift above its init-LTV cap while its health
-    ///      factor still clears the floor, and `LoanFacet._checkInitialLtvAndHf`
+    ///      factor still clears the floor, and `LibNewLoanRisk.requireAdmissible`
     ///      would reject that collateralisation as a fresh admission — which is
     ///      the standard a sale must meet.
     function test_sale_refusedWhenLiveLtvExceedsTheAdmissionCap() public {

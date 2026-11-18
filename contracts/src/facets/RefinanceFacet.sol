@@ -926,7 +926,7 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
         if (!LibInitRiskGate.applies(newLoan.principalLiquidity, newLoan.collateralLiquidity)) return;
 
         // Mirrors
-        // `LoanFacet._checkInitialLtvAndHf` exactly so refinance can't
+        // `LibNewLoanRisk.requireAdmissible` exactly so refinance can't
         // admit a position that would have been rejected at init —
         // both regimes (depth-tiered ON / OFF) must agree.
         //

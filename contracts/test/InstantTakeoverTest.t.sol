@@ -10,6 +10,8 @@ import {InstantFillFacet} from "../src/facets/InstantFillFacet.sol";
 import {InstantTakeoverFacet} from "../src/facets/InstantTakeoverFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {LibTestCalmPair} from "./helpers/LibTestCalmPair.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
@@ -145,6 +147,33 @@ contract InstantTakeoverTest is InstantMarketBase {
             )
         );
         _takeover(lender, loanId, lender2);
+    }
+
+    /// @dev The takeover runs the one new-loan check the accept runs, read
+    ///      live and branch-aware, not a fixed 1.5 default: in the
+    ///      depth-tiered regime a new loan is admitted at health factor 1.0
+    ///      (the tier cap is the binding buffer), so a tiered loan at 1.2 is
+    ///      taken on as new.
+    function test_tieredLoanIsTakenOnAtTheTieredFloor() public {
+        address[] memory paa = new address[](2);
+        paa[0] = mockERC20;
+        paa[1] = mockCollateralERC20;
+        ConfigFacet(address(diamond)).setPaaAssets(paa);
+        ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(true);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(CollateralConcentrationFacet.newLoanInitLtvCapBps.selector),
+            abi.encode(uint256(6500), uint8(3), uint8(0), false)
+        );
+        _mockLtv(MAX_INIT_LTV_BPS);
+        uint256 loanId = _openAndOffer(500, TERM, true);
+        vm.warp(vm.getBlockTimestamp() + 5 days);
+        LibTestCalmPair.checkpoint(address(diamond), mockERC20, mockCollateralERC20);
+        vm.mockCall(
+            address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(1.2e18)
+        );
+        _takeover(lender, loanId, lender2);
+        assertEq(_loan(loanId).lender, lender2, "taken on as new");
     }
 
     function test_refusedWithoutTakeoverConsent() public {

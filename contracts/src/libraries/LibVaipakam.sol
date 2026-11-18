@@ -2518,7 +2518,7 @@ library LibVaipakam {
         uint64 minHealthFactorAtInit;
         // #394 Lever A (Codex #647 round-3 P1) — the EFFECTIVE loan-admission
         // init-LTV cap (bps) THIS loan was gated at, snapshotted at init.
-        // Mirrors `_checkInitialLtvAndHf`: depth-tiered ⇒ `min(per-asset
+        // Mirrors `LibNewLoanRisk.requireAdmissible`: depth-tiered ⇒ `min(per-asset
         // loanInitMaxLtvBps, effectiveTierMaxInitLtvBps(tier))`; non-tiered ⇒
         // the per-asset `loanInitMaxLtvBps`. Post-admission collateral
         // withdrawal / max-withdrawable / fallback-cure enforce THIS cap (via
@@ -11135,6 +11135,17 @@ library LibVaipakam {
     function minHealthFactor() internal view returns (uint256) {
         uint64 v = storageSlot().minHealthFactorOverride;
         return v == 0 ? MIN_HEALTH_FACTOR : uint256(v);
+    }
+
+    /// @dev The admission HF floor a NEW loan is held to now, branch-aware:
+    ///      the depth-tiered regime admits at `HF_LIQUIDATION_THRESHOLD`
+    ///      (1e18; the tier LTV cap is the binding buffer), the untiered
+    ///      regime at the tunable {minHealthFactor}. The one rule for every
+    ///      admission check, preview and init snapshot, so the knob never
+    ///      leaks into the tiered regime and no path holds a new loan to a
+    ///      fixed default.
+    function admissionHealthFactorFloor() internal view returns (uint256) {
+        return cfgDepthTieredLtvEnabled() ? HF_LIQUIDATION_THRESHOLD : minHealthFactor();
     }
 
     /// @dev #394 Lever A (Codex #647 P1) — the admission HF floor a SPECIFIC

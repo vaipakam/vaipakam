@@ -160,9 +160,7 @@ library LibRiskMath {
         // HF ≥ hfFloor ⟺ ⌊C·liq/BPS⌋ ≥ R with R = ⌈D·hfFloor / HF_SCALE⌉
         // ⟸ C ≥ ⌈R·BPS / liq⌉. Both ceilings are exact: the smallest C the
         // gate admits.
-        uint256 hfFloor = LibVaipakam.cfgDepthTieredLtvEnabled()
-            ? LibVaipakam.HF_LIQUIDATION_THRESHOLD
-            : LibVaipakam.minHealthFactor();
+        uint256 hfFloor = LibVaipakam.admissionHealthFactorFloor();
         uint256 riskAdjustedNeeded =
             Math.mulDiv(principalValue, hfFloor, LibVaipakam.HF_SCALE, Math.Rounding.Ceil);
         uint256 collateralValue = Math.mulDiv(
@@ -181,12 +179,12 @@ library LibRiskMath {
         // BELOW the per-asset init-LTV cap once the (non-tiered) admission floor
         // is lowered (e.g. cap 50%, liq-LTV 80%, floor 1.2). A range offer sized
         // to the HF floor would then exceed the LTV cap and revert later at
-        // `_checkInitialLtvAndHf` with `LTVExceeded`. Clamp the create-time floor
+        // `LibNewLoanRisk.requireAdmissible` with `LTVExceeded`. Clamp the create-time floor
         // UP to the init-LTV-cap floor so it never under-sizes vs the binding
         // admission gate. (`capBps == 0` ⇒ no per-asset cap configured ⇒ skip.)
         // #394 Lever A (Codex #647 round-3 + round-4) — the binding init-LTV cap
         // is `min(per-asset cap, tier cap)` in the depth-tiered regime (the same
-        // `min` `_checkInitialLtvAndHf` applies), else the per-asset cap. Using
+        // `min` `LibNewLoanRisk.requireAdmissible` applies), else the per-asset cap. Using
         // only the per-asset cap would still under-size a tiered range offer
         // that the tier gate later rejects with `InitLtvAboveTier`. In the
         // depth-tiered regime a tier-0 (thin-but-liquid, #1007) asset resolves
@@ -212,7 +210,7 @@ library LibRiskMath {
     ///         lending amount — the depth-tiered-LTV analog of
     ///         {minCollateralForLending}, used by `LibOfferMatch.previewMatch`
     ///         when `depthTieredLtvEnabled` so a bot's preview matches the
-    ///         binding `LoanFacet._checkInitialLtvAndHf` gate. `capBps` is
+    ///         binding `LibNewLoanRisk.requireAdmissible` gate. `capBps` is
     ///         the effective cap = `min(assetRiskParams.loanInitMaxLtvBps,
     ///         cfgTierMaxInitLtvBps(effectiveTier(collateral)))`.
     /// @dev    `LTV = ⌊debtValue × BASIS_POINTS / collateralValue⌋` (the loan-level
@@ -225,7 +223,7 @@ library LibRiskMath {
     ///         involve `liqThresholdBps` (the LTV cap is on the *borrow*
     ///         ratio, not the liquidation trigger; and since the invariant
     ///         `capBps ≤ loanInitMaxLtvBps ≤ liqThresholdBps` holds, this floor
-    ///         dominates the `HF ≥ 1e18` floor `_checkInitialLtvAndHf`
+    ///         dominates the `HF ≥ 1e18` floor `LibNewLoanRisk.requireAdmissible`
     ///         also keeps). The pair-level `OracleFacet.calculateLTV`
     ///         preview prices in the same units but floors only the final
     ///         ratio, so it is NOT a substitute for this binding rounding;
@@ -310,9 +308,7 @@ library LibRiskMath {
         // A = ⌊C·liq/BPS⌋, so HF ≥ hfFloor ⟸ D ≤ ⌊A·HF_SCALE / hfFloor⌋:
         // the largest debt value the gate admits, computed in the gate's
         // own two steps.
-        uint256 hfFloor = LibVaipakam.cfgDepthTieredLtvEnabled()
-            ? LibVaipakam.HF_LIQUIDATION_THRESHOLD
-            : LibVaipakam.minHealthFactor();
+        uint256 hfFloor = LibVaipakam.admissionHealthFactorFloor();
         uint256 riskAdjusted =
             Math.mulDiv(collateralValue, liqThresholdBps, LibVaipakam.BASIS_POINTS);
         uint256 principalValue =
@@ -333,7 +329,7 @@ library LibRiskMath {
         // debtValue ≤ ⌊collateralValue × cap / BASIS_POINTS⌋`, at most one
         // basis point stricter than the gate, see the library header).
         // #394 Lever A (Codex #647 round-3 + round-4) — `min(per-asset cap,
-        // tier cap)` in the depth-tiered regime (mirrors `_checkInitialLtvAndHf`).
+        // tier cap)` in the depth-tiered regime (mirrors `LibNewLoanRisk.requireAdmissible`).
         // #1007 — for a tier-0 (thin-but-liquid) asset in the depth-tiered
         // regime `effectiveTierMaxInitLtvBps(0) == 0` collapses `capBps` to 0 and
         // the LTV clamp is skipped, leaving the finite HF-derived ceiling (still
@@ -360,7 +356,7 @@ library LibRiskMath {
     ///         the canonical-limit-order GTC default can derive the
     ///         borrower's effective `amountMax` at match-time using the
     ///         SAME init-LTV cap admission consults at
-    ///         `LoanFacet._checkInitialLtvAndHf`.
+    ///         `LibNewLoanRisk.requireAdmissible`.
     /// @dev    Distinct from `maxLendingForCollateral` (which uses tier
     ///         LIQUIDATION LTV — the post-creation safety threshold ~80% —
     ///         and solves for HF >= 1.5). This helper takes the INIT-LTV
@@ -391,7 +387,7 @@ library LibRiskMath {
     ///                         is expected to pass `min(asset
     ///                         loanInitMaxLtvBps,
     ///                         effectiveTierMaxInitLtvBps(tier))` to match
-    ///                         `_checkInitialLtvAndHf`.
+    ///                         `LibNewLoanRisk.requireAdmissible`.
     /// @return ceiling         Max lending wei the borrower may accept at
     ///                         the given cap.
     function maxLendingForLtvCap(

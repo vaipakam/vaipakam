@@ -214,6 +214,11 @@
   },
   {
     "type": "error",
+    "name": "HealthFactorTooLow",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "IlliquidPairNotConsented",
     "inputs": [
       {
@@ -225,6 +230,22 @@
         "name": "pairKey",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InitLtvAboveTier",
+    "inputs": [
+      {
+        "name": "ltv",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tierCapBps",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },
@@ -243,22 +264,6 @@
     "type": "error",
     "name": "InstantMarketDisabled",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InstantTakeoverHealthBelowNew",
-    "inputs": [
-      {
-        "name": "healthFactor",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "minimum",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
   },
   {
     "type": "error",
@@ -390,6 +395,16 @@
   {
     "type": "error",
     "name": "KYCRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LTVCalculationFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LTVExceeded",
     "inputs": []
   },
   {

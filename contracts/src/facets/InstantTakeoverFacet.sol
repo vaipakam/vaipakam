@@ -16,6 +16,7 @@ import {LibIntentFill} from "../libraries/LibIntentFill.sol";
 import {LibIntentTerms} from "../libraries/LibIntentTerms.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
+import {LibNewLoanRisk} from "../libraries/LibNewLoanRisk.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {SaleExitVerdictFacet} from "./SaleExitVerdictFacet.sol";
@@ -74,9 +75,6 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
     /// @notice The loan's loan-to-value now is above the incoming slot's
     ///         largest initial loan-to-value.
     error InstantTakeoverLtvAboveSlot(uint256 ltvBps, uint256 maxInitLtvBps);
-    /// @notice The loan's health factor now is below the minimum for a new
-    ///         loan.
-    error InstantTakeoverHealthBelowNew(uint256 healthFactor, uint256 minimum);
     /// @notice The loan's remaining term is longer than the incoming slot's
     ///         longest term, or its due date is past the slot's lend-until.
     error InstantTakeoverTermPastSlot(uint256 maturity);
@@ -206,10 +204,9 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
         ) revert LibIntentFill.LenderIntentExposureExceeded();
         uint256 ltv = RiskFacet(address(this)).calculateLTV(loan.id);
         if (ltv > intent.maxInitLtvBps) revert InstantTakeoverLtvAboveSlot(ltv, intent.maxInitLtvBps);
-        uint256 hf = RiskFacet(address(this)).calculateHealthFactor(loan.id);
-        if (hf < LibVaipakam.MIN_HEALTH_FACTOR) {
-            revert InstantTakeoverHealthBelowNew(hf, LibVaipakam.MIN_HEALTH_FACTOR);
-        }
+        // The incoming lender takes the loan on as new: the one new-loan
+        // check (live cap and admission floor, branch-aware) the accept runs.
+        LibNewLoanRisk.requireAdmissible(loan.id, loan.collateralAsset);
     }
 
     /// @dev The incoming lender is screened as a standing participant:

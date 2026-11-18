@@ -858,9 +858,7 @@ contract RiskPreviewFacet {
         // 1.5e18 by default) would classify EVERY such loan as weaker and
         // block it from both sale paths, which is a false positive rather
         // than a tightening.
-        uint256 currentHf = LibVaipakam.cfgDepthTieredLtvEnabled()
-            ? LibVaipakam.HF_LIQUIDATION_THRESHOLD
-            : LibVaipakam.minHealthFactor();
+        uint256 currentHf = LibVaipakam.admissionHealthFactorFloor();
         if (floor < currentHf) return (2, floor, currentHf);
 
         uint8 effTier = _effectiveTierOrZero(loan.collateralAsset);
@@ -931,7 +929,7 @@ contract RiskPreviewFacet {
         // the health factor stays above the floor. The tiered regime makes
         // that stark — floor 1e18, Tier-3 init cap 73%, liquidation
         // threshold 90% — so a position near 90% LTV would otherwise be
-        // assignable even though `LoanFacet._checkInitialLtvAndHf` would
+        // assignable even though `LibNewLoanRisk.requireAdmissible` would
         // reject the same collateralisation as a fresh admission, which is
         // the standard a sale is meant to meet.
         //
@@ -1014,7 +1012,7 @@ contract RiskPreviewFacet {
      *      ({LibOfferMatch}) is compiled into four facets; it asks here by
      *      self-call so the rule, and its bytecode, live once. Under
      *      depth-tiered LTV the cap is min(per-asset init-LTV ceiling, the
-     *      collateral tier's cap), as `LoanFacet._checkInitialLtvAndHf`
+     *      collateral tier's cap), as `LibNewLoanRisk.requireAdmissible`
      *      applies it; a Tier-0 collateral caps at 0, so the floor is
      *      `type(uint256).max` and the cap 0. Otherwise the floor is the
      *      HF admission floor. Reverts when a liquid leg has no usable price
