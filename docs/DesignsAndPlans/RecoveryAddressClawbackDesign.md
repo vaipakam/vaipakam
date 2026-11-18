@@ -65,10 +65,19 @@ While it is pending, the owner or any signer may cancel it, and a lock or a
 replacement drops it, like an allowlist addition.
 
 **Default.** An address comes into force when its wait has passed, with no
-second transaction. The identity rules of 3.1 are held from the other side
-(the refusals on signers, nominees and destinations), so nothing needs
-re-checking at a finalize step, and an owner who sets an address and walks
-away is not left without one.
+second transaction, so an owner who sets an address and walks away is not
+left without one. Two things make that safe:
+
+- A pending setting or change is stored with the vault's epoch at the
+  request, like an allowlist or signer request. A lock, a replacement and a
+  clawback advance the epoch. The read that answers "which address is in
+  force" counts a pending one only while its epoch is still the vault's
+  current one, so a setting that was dropped can never come into force by
+  the passing of time.
+- The identity rules of 3.1 are checked from both sides at every request.
+  Because a signer, a nominee or a destination equal to a pending recovery
+  address is refused during the wait, nothing can have become one by the
+  time the address comes into force, and no check is needed at that moment.
 
 ### 3.3 Changing it
 
