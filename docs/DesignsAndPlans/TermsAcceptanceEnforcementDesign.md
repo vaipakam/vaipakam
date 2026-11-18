@@ -91,7 +91,11 @@ stays as it is and fills again once its owner has accepted.
   the keeper. **Default.**
 - Opening a vault, depositing into it and account-safety settings.
   **Default.** No rule here may stand between a wallet and its own funds or
-  its own protection; the commitment the Terms govern is the position.
+  its own protection; the commitment the Terms govern is the position. A
+  deposit binds the wallet to nobody, and a wallet whose acceptance went
+  stale may need to fund its vault to repay or to add collateral, so the
+  contracts must not refuse it. The app is stricter and may be (section 7):
+  it offers a free-standing deposit only to a wallet that is current.
 - Receiving a position token by a plain transfer. The holder can claim and
   close; it cannot sell or hand over through the platform into a wallet that
   is not current.
@@ -200,6 +204,12 @@ date their commitments stop filling.
   neither can still hold a signed order or a permission it needs to withdraw.
   For a wallet with nothing to wind down those surfaces are empty, and the
   app says that accepting is what opens the rest.
+- **Deposits.** A free-standing deposit is not a wind-down action, so the app
+  offers it only to a wallet that is current, as it does today. Funding that
+  a wind-down action needs (the amount of a repayment, the collateral being
+  added) is part of that action and stays open. The contracts do not check a
+  deposit (section 3.2); the app's stricter rule is a choice of what to
+  offer, not a second gate on funds.
 - **Where a wallet stands** is stated and never guessed: not accepted; sent
   and waiting for confirmation; or recorded, with the transaction. While the
   record cannot be read the app stays closed and offers a retry, as today.
