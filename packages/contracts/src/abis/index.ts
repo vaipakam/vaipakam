@@ -84,6 +84,10 @@ import ForcedSalePreviewFacetABI from './ForcedSalePreviewFacet.json';
 import OfferPriceGuardFacetABI from './OfferPriceGuardFacet.json';
 import SignedOfferMatchFacetABI from './SignedOfferMatchFacet.json';
 import LoanClockFacetABI from './LoanClockFacet.json';
+import FeeLevelsFacetABI from './FeeLevelsFacet.json';
+import CollateralConcentrationFacetABI from './CollateralConcentrationFacet.json';
+import CollateralLienFacetABI from './CollateralLienFacet.json';
+import StandingInstructionFacetABI from './StandingInstructionFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
 import OracleAdminFacetABI from './OracleAdminFacet.json';
@@ -278,6 +282,10 @@ export {
   OfferPriceGuardFacetABI,
   SignedOfferMatchFacetABI,
   LoanClockFacetABI,
+  FeeLevelsFacetABI,
+  CollateralConcentrationFacetABI,
+  CollateralLienFacetABI,
+  StandingInstructionFacetABI,
   ClaimFacetABI,
   OracleFacetABI,
   OracleAdminFacetABI,

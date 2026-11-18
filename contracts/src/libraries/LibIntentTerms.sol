@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibTiming} from "./LibTiming.sol";
+import {LibPositionNFT} from "./LibPositionNFT.sol";
 
 /**
  * @title  LibIntentTerms
@@ -22,6 +23,9 @@ import {LibTiming} from "./LibTiming.sol";
  *           AGREED maturity only. Late repayment in grace, a default or
  *           liquidation, and a protocol pause (which extends every open loan's
  *           deadlines, {LibLoanClock}) can all end a loan after it.
+ *           The same time also caps an automatic extension of a loan the
+ *           intent made, while the intent's owner still holds the lender
+ *           position ({extensionBound}).
  *         - `acceptsProRata` (default false): off, the intent fills full-term,
  *           full-repay requests only (the committed-interest deal). On, it also
  *           fills pro-rata requests, including ones that allow partial
@@ -87,6 +91,26 @@ library LibIntentTerms {
     function validLendUntil(uint64 lendUntil) internal view returns (bool) {
         return lendUntil == 0
             || uint256(lendUntil) >= LibTiming.termsReadyAt(uint64(block.timestamp)) + MIN_LEND_WINDOW;
+    }
+
+    /// @notice The latest new end an extension may give `loan`, set by the
+    ///         lend-until time of the intent that made it; 0 = no bound.
+    /// @dev    Bound only while all three hold: the loan was made by an intent
+    ///         (`intentOrigin` set), that intent (read live, so the owner's
+    ///         latest choice counts) has a lend-until time, and the intent's
+    ///         owner still holds the lender position (both `loan.lender` and
+    ///         the position NFT, the pair `rollIntentLoan` checks). A lender
+    ///         who sold the position is no longer the intent's owner, and the
+    ///         buyer agreed to no lend-until time, so a sold loan is unbound.
+    ///         A sale through an intent owner's own buy offer keeps the origin
+    ///         and the owner, so it stays bound.
+    function extensionBound(LibVaipakam.Loan storage loan) internal view returns (uint64) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.IntentOrigin storage io = s.intentOrigin[loan.id];
+        address owner = io.owner;
+        if (owner == address(0) || loan.lender != owner) return 0;
+        if (LibPositionNFT.ownerOf(loan.lenderTokenId) != owner) return 0;
+        return s.lenderIntent[owner][io.lendingAsset][io.collateralAsset][io.slot].lendUntil;
     }
 
     /// @notice Whether the intent admits the borrower request's interest mode

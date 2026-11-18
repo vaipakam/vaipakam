@@ -186,6 +186,7 @@ export function storedOfferFrom(raw: Raw): StoredOffer {
     refinanceTargetLoanId: raw.refinanceTargetLoanId as bigint,
     parallelSaleOrderHash: raw.parallelSaleOrderHash as Hex,
     periodicInterestCadence: Number(raw.periodicInterestCadence),
+    lifecycleFlex: Number(raw.lifecycleFlex ?? 0),
     expiresAt: BigInt(raw.expiresAt as bigint | number),
     accepted: Boolean(raw.accepted),
     creatorFull: Boolean(raw.creatorFull),

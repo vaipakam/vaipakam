@@ -3,10 +3,18 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibReentrancyGuard} from "./LibReentrancyGuard.sol";
+import {LibRevert} from "./LibRevert.sol";
 
 /// @dev The PositionNFT surface the Diamond reaches (#3205). Declared here
 ///      rather than imported from the contract so every facet that reads a
 ///      holder links only this narrow interface.
+/// @notice #3710 — the one runtime home of the offer-token mark
+///         ({VaipakamNFTFacet.markOfferPositions}).
+interface IPositionMarkHost {
+    function markOfferPositions(uint256 offerA, uint256 offerB) external;
+}
+
 interface IPositionNFTCore {
     function holderOf(uint256 tokenId) external view returns (address);
     function transferCount(uint256 tokenId) external view returns (uint256);
@@ -23,6 +31,7 @@ interface IPositionNFTCore {
         returns (bool locked, uint256 delay, uint256 unlockAt, uint256 lowerDelay, uint256 lowerAt);
     function diamond() external view returns (address);
     function MAX_DIAMOND_LOCK_DELAY() external view returns (uint256);
+    function refreshMetadata(uint256 tokenA, uint256 tokenB) external;
 }
 
 /**
@@ -109,31 +118,52 @@ library LibPositionNFT {
         /// @dev The token's transfer count when its open route started.
         mapping(uint256 => uint256) routeTransferCount;
         // ─── #3413 ───────────────────────────────────────────────────────
-        /// @dev When value last left each loan's positions (a payout to a
-        ///      holder, a collateral withdrawal, a terms change): the block
-        ///      number in the high bits, the timestamp in the low 64 bits
-        ///      ({_stampNow}). One word, so each stamp is one cheap write.
-        mapping(uint256 => uint256) loanValueOut;
-        /// @dev When each offer's terms last changed, packed the same way.
-        mapping(uint256 => uint256) offerValueOut;
-        /// @dev The transfer cooldown in seconds after a value-out; 0 = the
-        ///      default ({DEFAULT_TRANSFER_COOLDOWN_SEC}).
+        /// @dev RETIRED by #3710: the per-loan value-out stamp, replaced by
+        ///      the per-token record {tokenState}. No longer read or written.
+        mapping(uint256 => uint256) retiredLoanValueOut;
+        /// @dev RETIRED by #3710: the per-offer stamp, as above.
+        mapping(uint256 => uint256) retiredOfferValueOut;
+        /// @dev The wait in seconds after any value-out; 0 = the default
+        ///      ({DEFAULT_TRANSFER_COOLDOWN_SEC}).
         uint32 transferCooldownSec;
+        // ─── #3710 ───────────────────────────────────────────────────────
+        /// @dev Each token's position state, one word: its state number in
+        ///      bits 128.. (how many times value left its position; never
+        ///      reset, so it cannot repeat when an offer's token becomes a
+        ///      loan's), the block of its latest value-out in bits 64..127,
+        ///      and the time it may next move in bits 0..63.
+        mapping(uint256 => uint256) tokenState;
+        /// @dev The wait in seconds after the holder's own move; 0 = the
+        ///      default ({DEFAULT_OWN_MOVE_WAIT_SEC}).
+        uint32 ownMoveWaitSec;
     }
 
-    /// @notice #3413 — the transfer cooldown when none is set.
-    uint32 internal constant DEFAULT_TRANSFER_COOLDOWN_SEC = 5;
+    /// @notice #3413 / #3710 — the transfer cooldown when none is set. A
+    ///         minute: long enough for a marketplace to act on the metadata
+    ///         refresh a value-out sends before the token can change hands.
+    uint32 internal constant DEFAULT_TRANSFER_COOLDOWN_SEC = 60;
     /// @notice #3413 — the bounds of a set cooldown. At least one second;
     ///         at most ten minutes, so a position paid regularly is never
     ///         held for long.
     uint32 internal constant MIN_TRANSFER_COOLDOWN_SEC = 1;
     uint32 internal constant MAX_TRANSFER_COOLDOWN_SEC = 600;
+    /// @notice #3710 — the wait after the holder's own move (a payout to the
+    ///         caller's own position: a collateral withdrawal, a claim, a
+    ///         change to its own offer) when none is set, and its bounds. Long
+    ///         enough for marketplaces, wallets and explorers to act on the
+    ///         metadata refresh before anyone can buy at a stale figure.
+    uint32 internal constant DEFAULT_OWN_MOVE_WAIT_SEC = 900;
+    uint32 internal constant MIN_OWN_MOVE_WAIT_SEC = 60;
+    uint32 internal constant MAX_OWN_MOVE_WAIT_SEC = 3600;
 
     error PositionNFTNotSet();
     error PositionNFTAlreadySet();
     error ERC721NonexistentToken(uint256 tokenId);
     /// @dev A route is already open on the token for another reason.
     error RouteConflict(uint256 tokenId, RouteReason current, RouteReason attempted);
+    /// @dev #3710 — the position's state number is not the one the caller
+    ///      priced: value left it since.
+    error PositionStateChanged(uint256 tokenId, uint256 expected, uint256 current);
     /// @dev The route's completion found the position moved since it opened.
     error PositionMovedSinceRouteOpened(uint256 tokenId, uint256 countAtOpen, uint256 countNow);
     /// @dev Completion of a route that is not the one open on the token.
@@ -146,48 +176,166 @@ library LibPositionNFT {
         }
     }
 
-    // ─── #3413 transfer cooldown ─────────────────────────────────────────
+    // ─── #3413 transfer cooldown, #3710 state number ─────────────────────
 
-    /// @notice Record that value left loan `loanId`'s positions now: a payout
-    ///         to a holder, a collateral withdrawal or a terms change. Neither
-    ///         side's token may then move in this block, nor until the
-    ///         cooldown has passed, so a sale cannot fill against a position
-    ///         emptied just before it.
+    /// @dev Where each field of a {ERC721Storage.tokenState} word sits.
+    uint256 private constant STATE_SHIFT = 128;
+    uint256 private constant BLOCK_SHIFT = 64;
+
+    /// @notice Record that value left loan `loanId`'s positions now: a payout,
+    ///         a collateral reduction or a terms change. Both of its tokens'
+    ///         state numbers go up by one, neither may move in this block nor
+    ///         until the short wait has passed (a running longer wait is kept),
+    ///         and both tokens' metadata is flagged for refresh.
+    /// @dev    #3710 — called only from the seams (the outflow policy,
+    ///         {LibLoanCollateral}, the loan-terms writer, the held-for-lender
+    ///         taker, retiring a token and an offer's token becoming a
+    ///         loan's), never path by path.
     function markLoanValueOut(uint256 loanId) internal {
-        _storage().loanValueOut[loanId] = _stampNow();
+        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
+        uint256 lenderToken = loan.lenderTokenId;
+        uint256 borrowerToken = loan.borrowerTokenId;
+        uint64 wait = transferCooldownSec();
+        _markToken(lenderToken, wait);
+        _markToken(borrowerToken, wait);
+        _refresh(lenderToken, borrowerToken);
     }
 
-    /// @notice As {markLoanValueOut}, for offer `offerId`'s own token: a
-    ///         change to its terms, a match drawing on it, or its end
-    ///         (stamped by {retire}).
+    /// @notice One token's value-out (#3710): a loan token minted, or an
+    ///         offer's token becoming a loan's, before the loan records its
+    ///         token ids. Its state number goes up, it takes the short wait
+    ///         and its metadata is flagged for refresh.
+    function markTokenValueOut(uint256 tokenId) internal {
+        _markToken(tokenId, transferCooldownSec());
+        _refresh(tokenId, 0);
+    }
+
+    /// @notice Offer `offerId`'s own token: a change to its terms, a match
+    ///         drawing on it, or its end. Its state number goes up and it
+    ///         waits; the long wait when the caller holds it (its holder
+    ///         changed its own offer).
+    /// @dev    Reached through one self-call to its host on VaipakamNFTFacet:
+    ///         the match core is inlined in four facets near EIP-170, and the
+    ///         mark (two core calls) would otherwise be compiled into each.
     function markOfferValueOut(uint256 offerId) internal {
-        _storage().offerValueOut[offerId] = _stampNow();
+        markOffersValueOut(offerId, 0);
     }
 
-    /// @notice The transfer cooldown in force, in seconds.
+    /// @notice As {markOfferValueOut}, for two offers at once (a match draws
+    ///         on both). Offer id 0 is skipped.
+    function markOffersValueOut(uint256 offerA, uint256 offerB) internal {
+        (bool ok, bytes memory ret) = address(this).call(
+            abi.encodeCall(IPositionMarkHost.markOfferPositions, (offerA, offerB))
+        );
+        LibRevert.bubbleOnFailure(ok, ret, "markOfferPositions");
+    }
+
+    /// @notice The body of the offer-token mark, run only by its host
+    ///         ({VaipakamNFTFacet.markOfferPositions}): both tokens marked,
+    ///         the long wait for a token the caller holds, one refresh call.
+    function markOffersValueOutHere(uint256 offerA, uint256 offerB) internal {
+        mapping(uint256 => LibVaipakam.Offer) storage offers = LibVaipakam.storageSlot().offers;
+        uint256 tokenA = offerA == 0 ? 0 : offers[offerA].positionTokenId;
+        uint256 tokenB = offerB == 0 ? 0 : offers[offerB].positionTokenId;
+        _markOfferToken(tokenA);
+        _markOfferToken(tokenB);
+        _refresh(tokenA, tokenB);
+    }
+
+    /// @dev One offer token's mark: the short wait, then the long one when
+    ///      the caller holds it. One body for both tokens of a match.
+    function _markOfferToken(uint256 token) private {
+        _markToken(token, transferCooldownSec());
+        markHolderMove(token);
+    }
+
+    /// @notice #3710 — when the caller of the guarded action in progress holds
+    ///         `tokenId`, the value-out is the holder's own move for itself:
+    ///         the token waits the long wait. Never shortens a running wait
+    ///         and does not move the state number (the value-out's mark did).
+    function markHolderMove(uint256 tokenId) internal {
+        if (tokenId == 0) return;
+        address a = LibReentrancyGuard.actor();
+        if (a == address(0) || _storage().retired[tokenId] || _storage().core == address(0)) return;
+        if (IPositionNFTCore(_storage().core).holderOf(tokenId) != a) return;
+        ERC721Storage storage es = _storage();
+        uint256 w = es.tokenState[tokenId];
+        uint64 ready = uint64(block.timestamp) + ownMoveWaitSec();
+        if (uint64(w) < ready) es.tokenState[tokenId] = (w >> BLOCK_SHIFT << BLOCK_SHIFT) | ready;
+    }
+
+    /// @notice The short wait in force (after any value-out), in seconds.
     function transferCooldownSec() internal view returns (uint32 sec) {
         sec = _storage().transferCooldownSec;
         if (sec == 0) sec = DEFAULT_TRANSFER_COOLDOWN_SEC;
     }
 
-    /// @notice The latest value-out on `tokenId`'s position, and the earliest
-    ///         time the token may move after it. Both 0 when none. The token
-    ///         may not move in block `valueOutBlock` either.
-    /// @dev    A loan token reads its loan's stamp only. A loan slice's token
-    ///         also records the offer it came from, but that offer's later
-    ///         changes or cancel move nothing out of the slice's loan, so only
-    ///         an offer's own token (no loan) reads the offer's stamp.
-    function cooldownOf(uint256 tokenId) internal view returns (uint64 valueOutBlock, uint64 readyAt) {
-        ERC721Storage storage es = _storage();
-        uint256 loanId = es.loanIds[tokenId];
-        uint256 st = loanId != 0 ? es.loanValueOut[loanId] : es.offerValueOut[es.offerIds[tokenId]];
-        if (st == 0) return (0, 0);
-        return (uint64(st >> 64), uint64(st) + uint64(transferCooldownSec()));
+    /// @notice The long wait in force (after the holder's own move), in seconds.
+    function ownMoveWaitSec() internal view returns (uint32 sec) {
+        sec = _storage().ownMoveWaitSec;
+        if (sec == 0) sec = DEFAULT_OWN_MOVE_WAIT_SEC;
     }
 
-    /// @dev The block number above the timestamp, in one word.
-    function _stampNow() private view returns (uint256) {
-        return (block.number << 64) | block.timestamp;
+    /// @notice `tokenId`'s position state (#3710): its state number (how
+    ///         many times value has left its position; never reset), the block
+    ///         of the latest value-out (the token may not move in it) and the
+    ///         time it may next move. All 0 when nothing has left it.
+    function stateOf(uint256 tokenId)
+        internal
+        view
+        returns (uint256 stateNumber, uint64 valueOutBlock, uint64 readyAt)
+    {
+        uint256 w = _storage().tokenState[tokenId];
+        return (w >> STATE_SHIFT, uint64(w >> BLOCK_SHIFT), uint64(w));
+    }
+
+    /// @notice Revert {PositionStateChanged} unless `tokenId`'s state number
+    ///         is `expected` (#3710). A price agreed for one state is a price
+    ///         for that state only.
+    function requireState(uint256 tokenId, uint256 expected) internal view {
+        (uint256 current,,) = stateOf(tokenId);
+        if (current != expected) revert PositionStateChanged(tokenId, expected, current);
+    }
+
+    /// @dev One more value-out on `tokenId`: its state number goes up by one,
+    ///      the block becomes this one, and the time it may move becomes
+    ///      `wait` from now unless a longer wait is already running.
+    function _markToken(uint256 tokenId, uint64 wait) private {
+        if (tokenId == 0) return;
+        ERC721Storage storage es = _storage();
+        uint256 w = es.tokenState[tokenId];
+        uint64 ready = uint64(block.timestamp) + wait;
+        if (uint64(w) > ready) ready = uint64(w);
+        es.tokenState[tokenId] = (((w >> STATE_SHIFT) + 1) << STATE_SHIFT) | (block.number << BLOCK_SHIFT) | ready;
+    }
+
+    // ─── #3710 metadata refresh ──────────────────────────────────────────
+
+    /// @notice Ask the core to emit the ERC-4906 refresh for both of loan
+    ///         `loanId`'s tokens: a figure its metadata renders changed. Sent
+    ///         at every value-out and at every other change to a rendered
+    ///         figure (collateral added, a repayment, a status, the terms).
+    /// @dev    Skipped while the core is unset (a minimal test Diamond), so a
+    ///         refresh never decides whether a step runs.
+    function refreshLoan(uint256 loanId) internal {
+        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
+        _refresh(loan.lenderTokenId, loan.borrowerTokenId);
+    }
+
+    /// @notice As {refreshLoan}, for offer `offerId`'s own token.
+    function refreshOffer(uint256 offerId) internal {
+        _refresh(LibVaipakam.storageSlot().offers[offerId].positionTokenId, 0);
+    }
+
+    /// @notice As {refreshLoan}, for one or two token ids (0 = none).
+    function refreshTokens(uint256 tokenA, uint256 tokenB) internal {
+        _refresh(tokenA, tokenB);
+    }
+
+    function _refresh(uint256 tokenA, uint256 tokenB) private {
+        address a = _storage().core;
+        if (a == address(0) || (tokenA == 0 && tokenB == 0)) return;
+        IPositionNFTCore(a).refreshMetadata(tokenA, tokenB);
     }
 
     // ─── The core ────────────────────────────────────────────────────────
@@ -273,8 +421,14 @@ library LibPositionNFT {
         ERC721Storage storage es = _storage();
         if (!es.retired[tokenId]) {
             uint256 loanId = es.loanIds[tokenId];
-            if (loanId != 0) es.loanValueOut[loanId] = _stampNow();
-            else if (es.offerIds[tokenId] != 0) es.offerValueOut[es.offerIds[tokenId]] = _stampNow();
+            if (loanId != 0) {
+                markLoanValueOut(loanId);
+            } else {
+                _markToken(tokenId, transferCooldownSec());
+                _refresh(tokenId, 0);
+            }
+            // A claim or a cancel by the token's own holder is its own move.
+            markHolderMove(tokenId);
         }
         es.retired[tokenId] = true;
         delete es.routes[tokenId];

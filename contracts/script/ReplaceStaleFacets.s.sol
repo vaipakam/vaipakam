@@ -17,6 +17,7 @@ import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
+import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
@@ -99,6 +100,9 @@ contract ReplaceStaleFacets is DeployDiamond {
     /// @notice #3242 - the target Diamond predates the offer-book bounds; see
     ///         {_requireOfferBook}.
     error PredatesOfferBook(address diamond);
+    /// @notice #3685 - the target Diamond predates the collateral pledged
+    ///         total; see {_requireCollateralConcentration}.
+    error PredatesCollateralConcentration(address diamond);
     /// @notice #3204 - the target Diamond predates the VaultBeacon (fresh deploy only).
     error PredatesVaultBeacon(address diamond);
     /// @notice #3205 - the target Diamond predates the PositionNFT core. Fresh deploy only.
@@ -158,6 +162,9 @@ contract ReplaceStaleFacets is DeployDiamond {
         // #3242 - and one from before the offer-book bounds; see
         // {_requireOfferBook}.
         _requireOfferBook(diamond);
+        // #3685 - and one from before the collateral pledged total; see
+        // {_requireCollateralConcentration}.
+        _requireCollateralConcentration(diamond);
         // #3204 - a Diamond from before the VaultBeacon is fresh-deploy only.
         if (IDiamondLoupe(diamond).facetAddress(VaultFactoryFacet.getVaultBeacon.selector) == address(0)) {
             revert PredatesVaultBeacon(diamond);
@@ -529,6 +536,25 @@ contract ReplaceStaleFacets is DeployDiamond {
         if (IDiamondLoupe(diamond).facetAddress(SellerClaimFacet.getInterestLedger.selector) == address(0)) {
             revert PredatesInterestLedger(diamond);
         }
+    }
+
+    /// @dev #3685 - refuse a Diamond from before the collateral pledged
+    ///      total. Every collateral lien change now moves a per-asset pledged
+    ///      total (LibEncumbrance, inlined in many facets), the four lien
+    ///      entries moved from EncumbranceMutateFacet to CollateralLienFacet,
+    ///      and loan creation, the previews and the offer book read their
+    ///      init-LTV cap from CollateralConcentrationFacet. This curated set
+    ///      carries only some of those facets, so crossing here would leave
+    ///      lien entries on old code that moves no total, and a pre-#3685
+    ///      loan's release would underflow the total. Crossing the boundary is
+    ///      a fresh deploy, never this refresh. The marker is the routing of
+    ///      `CollateralConcentrationFacet.newLoanInitLtvCapBps`. Called before
+    ///      the broadcast starts, so a refused run sends nothing.
+    function _requireCollateralConcentration(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(CollateralConcentrationFacet.newLoanInitLtvCapBps.selector)
+                == address(0)
+        ) revert PredatesCollateralConcentration(diamond);
     }
 
     /// @dev #3242 (Codex #3283 r1) - refuse a Diamond from before the

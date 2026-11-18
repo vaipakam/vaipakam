@@ -99,6 +99,10 @@ export interface StoredOffer {
   refinanceTargetLoanId: bigint;
   parallelSaleOrderHash: Hex;
   periodicInterestCadence: number;
+  /** A lender offer's "either" marks (#3621): bit 1 = partial repay either
+   *  way, bit 2 = the prepay listing either way. Not in the acceptance
+   *  signature: a direct accept takes the stored options as they are. */
+  lifecycleFlex: number;
   expiresAt: bigint;
   accepted: boolean;
   /** Whether the creator opted into the Full fee tariff (OFF-22). Not in

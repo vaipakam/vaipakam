@@ -38,6 +38,7 @@ contract AcceptTermBindingTest is SetupTest {
         vm.prank(lender);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: lendAsset,
                 amount: 1000 ether,

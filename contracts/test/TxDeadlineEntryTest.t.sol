@@ -46,7 +46,7 @@ contract TxDeadlineEntryTest is SetupTest {
         else if (i == 5) OfferMutateFacet(d).modifyOffer(1, mp, validUntil);
         else if (i == 6) {
             LenderIntentFacet(d).setLenderIntent(
-                address(1), address(2), 1, 1, 1, 1, 1, false, 0, false, true, validUntil
+                address(1), address(2), 0, 1, 1, 1, 1, 1, false, 0, false, true, validUntil
             );
         } else if (i == 7) SwapToRepayFacet(d).swapToRepayFull(1, calls, 1, validUntil);
         else if (i == 8) SwapToRepayPartialFacet(d).swapToRepayPartial(1, 1, calls, validUntil);

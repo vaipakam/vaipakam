@@ -4958,6 +4958,12 @@ const copySource = {
     rateLender: 'Lowest rate you accept (% a year)',
     latestEnd: 'Latest new end date',
     latestEndHint: tmpl('Counted to the end of that day: {{at}}.', ['at']),
+    extensionFee: tmpl(
+      'An extension to that date adds {{fee}} to your loan initiation fee, for the added term, taken from your vault. This is the most your limits will allow; if the fee moves above it, the extension does not happen until you save new limits.',
+      ['fee'],
+    ),
+    extensionFeeNone: 'An extension to that date adds no initiation fee: the term is already paid for.',
+    extensionFeeUnknown: 'The added initiation fee for that date could not be read, so the limits cannot be saved yet.',
     save: 'Save limits',
     turnOff: 'Turn off',
     saving: 'Saving…',

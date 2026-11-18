@@ -25,7 +25,7 @@
  *     `freezeOrPayActiveLender{Resident,FromPayer,FromVault}`, or a
  *     `recordFrozenClaimant*` / `recordSanctionsFrozenClaimant` /
  *     `_recordFrozenClaimant` call whose side arg is `true`
- *   - a borrower-lane register `freezeOrPayBorrowerSurplus` or such a call whose
+ *   - a borrower-lane register `holdBorrowerSurplus` or such a call whose
  *     side arg is `false`
  *
  * Side-match rule:
@@ -98,11 +98,11 @@ const BOTH_TOKENS = ['terminalize', 'recordSanctionsFrozenClaimantBoth'];
 const LENDER_HELPERS = [
   'freezeLenderProceeds',
   'parkLenderPayoffAndFreeze',
-  'freezeOrPayActiveLenderResident',
-  'freezeOrPayActiveLenderFromPayer',
-  'freezeOrPayActiveLenderFromVault',
+  'holdActiveLenderResident',
+  'holdActiveLenderFromPayer',
+  'holdActiveLenderFromVault',
 ];
-const BORROWER_HELPERS = ['freezeOrPayBorrowerSurplus'];
+const BORROWER_HELPERS = ['holdBorrowerSurplus'];
 // Side-parameterised registers — the boolean arg selects the lane.
 const SIDED_REGISTERS = [
   'recordFrozenClaimantForLoan',
@@ -306,7 +306,7 @@ function structRhsIsArtifact(rhs) {
 // DEFERRED-claim writes above, S10 also requires that an INLINE "pay
 // `ownerOf(positionTokenId)` now" payout be sanctions-aware: it must route
 // through the fail-closed `LibCloseoutFreeze.freezeOrPayActiveLender*` /
-// `freezeOrPayBorrowerSurplus` helpers (park-or-pay) or carry an
+// `holdBorrowerSurplus` helpers (park-or-pay) or carry an
 // `assertNotFrozenParty` / `mustFreezeParty` guard — NOT a bare fail-open
 // `_assertNotSanctioned` (which returns false during an oracle outage, the exact
 // gap Invariant B targets).
@@ -366,7 +366,7 @@ const FREEZE_GUARD_TOKENS = [
   'assertNotFrozenParty',
   'depositLocked',
   'freezeLenderProceeds',
-  'freezeOrPayBorrowerSurplus',
+  'holdBorrowerSurplus',
   'freezeOrPayActiveLender',
   'recordFrozenClaimant',
   'recordSanctionsFrozenClaimant',
@@ -598,7 +598,7 @@ if (violations.length > 0 || violationsB.length > 0 || deadAllow.length > 0) {
     console.error(
       '\n  Each function above resolves a position holder via ownerOf and pays it raw.\n' +
         '  Route the payout through LibCloseoutFreeze.freezeOrPayActiveLender* /\n' +
-        '  freezeOrPayBorrowerSurplus (park-or-pay), or guard it with assertNotFrozenParty /\n' +
+        '  holdBorrowerSurplus (park-or-pay), or guard it with assertNotFrozenParty /\n' +
         '  mustFreezeParty, OR — if it is a deliberate discretionary hard-block or a\n' +
         '  prepay-sale vehicle covered by syncPrepaySale* — add it to ALLOWLIST_B with a\n' +
         '  one-line reason. See docs/DesignsAndPlans/S10CentralEnforcement.md §2 Invariant B.',

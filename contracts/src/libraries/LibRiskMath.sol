@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
+import {CollateralConcentrationFacet} from "../facets/CollateralConcentrationFacet.sol";
 import {NumeraireValueFacet} from "../facets/NumeraireValueFacet.sol";
 
 /**
@@ -193,11 +194,9 @@ library LibRiskMath {
         // the clamp is skipped — the floor stays at the HF-derived value, which
         // is still finite and positive (tighter than the old `return 0`); the
         // runtime init-LTV gate blocks the tier-0 borrow itself.
-        uint256 capBps = LibVaipakam.assetInitLtvCeilingBps(collateralAsset);
-        if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
-            uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(tier));
-            if (tierCap < capBps) capBps = tierCap;
-        }
+        // #3685 — the cap is read from the one host of the new-loan cap,
+        // which adds the concentration step on top of the rule above.
+        (uint256 capBps,,,) = CollateralConcentrationFacet(address(this)).newLoanInitLtvCapBps(collateralAsset);
         if (capBps != 0) {
             uint256 ltvFloor = _amount(
                 collateralAsset,
@@ -340,11 +339,9 @@ library LibRiskMath {
         // the LTV clamp is skipped, leaving the finite HF-derived ceiling (still
         // far tighter than the old `return type(uint256).max`); the runtime gate
         // blocks the tier-0 borrow itself.
-        uint256 capBps = LibVaipakam.assetInitLtvCeilingBps(collateralAsset);
-        if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
-            uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(tier));
-            if (tierCap < capBps) capBps = tierCap;
-        }
+        // #3685 — the cap is read from the one host of the new-loan cap,
+        // which adds the concentration step on top of the rule above.
+        (uint256 capBps,,,) = CollateralConcentrationFacet(address(this)).newLoanInitLtvCapBps(collateralAsset);
         if (capBps != 0) {
             uint256 ltvCeiling = _amount(
                 principalAsset,

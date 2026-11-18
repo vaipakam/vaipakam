@@ -1,6 +1,6 @@
 import { encodeAbiParameters, encodeEventTopics, parseAbi, type Abi, type Log } from 'viem';
 import { describe, expect, it } from 'vitest';
-import { AutoLifecycleFacetABI } from '@vaipakam/contracts/abis';
+import { StandingInstructionFacetABI } from '@vaipakam/contracts/abis';
 import { OPEN } from '../eligibility/types';
 import type { LoanDetails } from '../positions/loanView';
 import { discoverReserveLoans, RESERVE_KINDS, reserveDrawable, reserveLogs, reserveRowKey, reserveRowShown, reserveVerdict, type ReserveRow } from './reserve';
@@ -57,9 +57,7 @@ describe('extension reserve rules', () => {
     // The caller screen lets an outage through: the dry run decides.
     expect(code(reserveVerdict(row(), false, copy, 1, 'outage'))).toBe('open');
     expect(code(reserveVerdict(row({ funding: null }), false, copy, 1))).toBe('unknown');
-    expect(code(reserveVerdict(row({ funding: { asset: WETH, reserved: 0n, otherFree: 0n, chargeNow: 0n, chargeAtGraceEnd: 0n } }), false, copy, 1))).toBe(
-      'ExtendReserveZeroAmount',
-    );
+    expect(code(reserveVerdict(row({ funding: { asset: WETH, reserved: 0n, otherFree: 0n, chargeNow: 0n, chargeAtGraceEnd: 0n } }), false, copy, 1))).toBe('LoanReserveZeroAmount');
     // Open whatever the loan's state, and whoever holds the position now.
     expect(code(reserveVerdict(row({ borrowerHolder: OTHER }, { status: 1 }), false, copy, 1))).toBe('open');
   });
@@ -90,9 +88,10 @@ function log(abi: Abi, address: Hex, eventName: string, args: Record<string, unk
   );
   return { address, topics: topics as [Hex, ...Hex[]], data } as unknown as Log;
 }
-const AUTO = AutoLifecycleFacetABI as Abi;
+const STANDING = StandingInstructionFacetABI as Abi;
 const ERC20 = parseAbi(['event Transfer(address indexed from, address indexed to, uint256 value)']) as Abi;
-const withdrawn = (amount: bigint, reserved = 0n, loanId = 7n) => log(AUTO, DIAMOND, 'ExtendReserveWithdrawn', { loanId, holder: ME, asset: WETH, amount, reserved });
+const withdrawn = (amount: bigint, reserved = 0n, loanId = 7n, kind = 0) =>
+  log(STANDING, DIAMOND, 'LoanReserveWithdrawn', { loanId, holder: ME, kind, asset: WETH, amount, reserved });
 const transfer = (amount: bigint) => log(ERC20, WETH, 'Transfer', { from: OTHER, to: ME, value: amount });
 
 function review(r: ReserveRow, over: Partial<ReserveReview> = {}): ReserveReview {
@@ -102,6 +101,8 @@ function review(r: ReserveRow, over: Partial<ReserveReview> = {}): ReserveReview
 describe('reserve withdrawal record', () => {
   it('reads only this wallet’s withdrawal on this loan', () => {
     expect(reserveLogs([withdrawn(500n), withdrawn(9n, 0n, 8n)], DIAMOND, 7n, ME)).toEqual([{ asset: WETH, amount: 500n, reserved: 0n }]);
+    // The collateral reserve (kind 1) is not this list's.
+    expect(reserveLogs([withdrawn(3n, 0n, 7n, 1)], DIAMOND, 7n, ME)).toEqual([]);
   });
 
   it('measures the withdrawal where it landed, and says what stays reserved', () => {

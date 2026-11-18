@@ -81,7 +81,7 @@ library LibVaipakam {
     ///      `MIN_HEALTH_FACTOR` (1.5e18) sits inside the band as the default.
     uint256 constant MIN_ADMISSION_HEALTH_FACTOR = 120 * 1e16; // 1.2e18
     uint256 constant MAX_ADMISSION_HEALTH_FACTOR = 200 * 1e16; // 2.0e18
-    uint256 constant TREASURY_FEE_BPS = 200; // 2% of interest (rev-8 fee freeze, #1352; was 100 = 1%)
+    uint256 constant TREASURY_FEE_BPS = 500; // 5% of interest (#3649 fee levels; was 200 = 2% under the #1352 freeze)
     /// @dev Pre-freeze 1% yield fee. The FROZEN grandfather fallback for a
     ///      snapshot-0 (pre-#957) open loan in {effectiveTreasuryFeeBps} — a
     ///      snapshot-0 loan resolves to this, NOT the live 200-bps default, so
@@ -103,6 +103,13 @@ library LibVaipakam {
     ///      clamp keeps a high hold-tier from crossing 50% after the bump.
     uint256 constant FULL_MODE_FEE_DISCOUNT_BONUS_BPS = 1000;
     uint256 constant BASIS_POINTS = 10000;
+
+    /// @notice #3621 — {Offer.lifecycleFlex} bits: a lender offer marks an
+    ///         option "either" (it takes both borrower settings in a match).
+    uint8 constant LIFECYCLE_FLEX_PARTIAL_REPAY = 1;
+    uint8 constant LIFECYCLE_FLEX_PREPAY_LISTING = 2;
+    /// @notice Every defined {Offer.lifecycleFlex} bit; any other is refused.
+    uint8 constant LIFECYCLE_FLEX_MASK = 3;
     uint256 constant HF_SCALE = 1e18; // Health Factor precision
     uint256 constant HF_LIQUIDATION_THRESHOLD = 1e18; // HF < 1 for liquidation
     uint256 constant SECONDS_PER_YEAR = 365 days;
@@ -160,6 +167,45 @@ library LibVaipakam {
     uint256 constant MIN_TWAP_WINDOW_SEC = 5 minutes; // too short ⇒ trivially flash-manipulable
     uint256 constant MAX_TWAP_WINDOW_SEC = 1 days; // too long ⇒ stale, blocks legit fast moves
     // Simulated-swap test sizes for the floor + the three graded tiers.
+    // ─── #3685 — collateral concentration ────────────────────────────
+    // The pledged amount of a collateral asset, valued at the oracle, over
+    // the sale size its effective liquidity tier is measured at. Defaults
+    // and bounds (hundredths of a multiple; the step in bps). Changed only
+    // by ADMIN_ROLE, the Timelock after handover.
+    uint16 constant CONCENTRATION_CAUTION_X100_DEFAULT = 500;
+    uint16 constant CONCENTRATION_CAUTION_X100_MIN = 200;
+    uint16 constant CONCENTRATION_CAUTION_X100_MAX = 2000;
+    uint16 constant CONCENTRATION_HIGH_X100_DEFAULT = 1000;
+    uint16 constant CONCENTRATION_HIGH_X100_MAX = 5000;
+    uint16 constant CONCENTRATION_STEP_BPS_DEFAULT = 1000;
+    uint16 constant CONCENTRATION_STEP_BPS_MIN = 500;
+    uint16 constant CONCENTRATION_STEP_BPS_MAX = 2500;
+    /// @dev Concentration levels, as `Storage.loanConcentrationAtInit` and
+    ///      the views report them.
+    uint8 constant CONCENTRATION_NORMAL = 0;
+    uint8 constant CONCENTRATION_CAUTION = 1;
+    uint8 constant CONCENTRATION_HIGH = 2;
+
+    // ─── #3681 — standing instructions ──────────────────────────────
+    // Defaults and outer bounds for the governed settings (health factors
+    // 1e18-scaled). Changed only by ADMIN_ROLE, the Timelock after handover.
+    uint64 constant STANDING_TRIGGER_MIN_HF_DEFAULT = 1.05e18;
+    uint64 constant STANDING_TRIGGER_MAX_HF_DEFAULT = 1.45e18;
+    uint64 constant STANDING_TARGET_MAX_HF_DEFAULT = 2e18;
+    uint64 constant STANDING_MIN_MARGIN_HF_DEFAULT = 0.05e18;
+    uint32 constant STANDING_TOPUP_INTERVAL_DEFAULT = 1 hours;
+    /// @dev No governed value may set a trigger at or below 1.0 (the
+    ///      liquidation line) or a target above 3.0.
+    uint64 constant STANDING_HF_FLOOR = 1e18;
+    uint64 constant STANDING_TARGET_CEILING = 3e18;
+    uint64 constant STANDING_MIN_MARGIN_FLOOR = 0.01e18;
+    uint64 constant STANDING_MIN_MARGIN_CEILING = 0.5e18;
+    uint32 constant STANDING_TOPUP_INTERVAL_MIN = 5 minutes;
+    uint32 constant STANDING_TOPUP_INTERVAL_MAX = 1 days;
+    /// @dev The due-date repayment may run at most this long before the due
+    ///      date (the holder's own setting, 0 = at the due date).
+    uint32 constant STANDING_REPAY_LEAD_MAX = 1 days;
+
     uint256 constant FLOOR_SIZE_PAD_DEFAULT = 5_000 * 1e6; // clear ⇒ `Liquid`; fail ⇒ `Illiquid`
     uint256 constant TIER1_SIZE_PAD_DEFAULT = 50_000 * 1e6; // → Tier 1 (50% init-LTV)
     uint256 constant TIER2_SIZE_PAD_DEFAULT = 500_000 * 1e6; // → Tier 2 (60% init-LTV)
@@ -450,6 +496,17 @@ library LibVaipakam {
     uint256 constant MAX_OPEN_OFFERS_PER_WALLET_FLOOR = 5;
     uint256 constant MAX_OPEN_OFFERS_PER_WALLET_CEIL = 1_000;
     uint256 constant LOAN_INITIATION_FEE_BPS = 20; // 0.2% fee deducted from ERC-20 principal at loan initiation (rev-8 fee freeze, #1352; was 10 = 0.1%). Charged once at accept — no post-init reader, so the bump affects new originations only (open loans already paid their LIF)
+    /// @dev #3649 — the loan initiation fee by term (`FeeLevelsDesign.md` §3).
+    ///      A loan of up to {LIF_BASE_TERM_DAYS_DEFAULT} days pays the base
+    ///      rate ({LOAN_INITIATION_FEE_BPS}); from there the rate rises in a
+    ///      straight line to {LIF_YEARLY_BPS_DEFAULT} at {LIF_YEAR_DAYS_DEFAULT}
+    ///      days; a longer loan pays {LIF_YEARLY_BPS_DEFAULT} per year of term,
+    ///      in proportion to its days. Each is a bounded setting
+    ///      (`FeeLevelsFacet.setLoanInitiationFeeTerms`); the rate is read only
+    ///      through `LibInitiationFee`.
+    uint256 constant LIF_BASE_TERM_DAYS_DEFAULT = 30;
+    uint256 constant LIF_YEARLY_BPS_DEFAULT = 50;
+    uint256 constant LIF_YEAR_DAYS_DEFAULT = 365;
     // Fallback-path split (README §7): lender gets principal + accrued
     // interest + {FALLBACK_LENDER_BONUS_BPS} of principal; treasury gets
     // {FALLBACK_TREASURY_BPS} of principal; borrower gets the remainder.
@@ -1175,7 +1232,7 @@ library LibVaipakam {
      */
     struct ProtocolConfig {
         // ── Packed BPS slot (14 × uint16 = 224 bits; 32 bits of headroom) ──
-        uint16 treasuryFeeBps; // 0 ⇒ TREASURY_FEE_BPS (200)
+        uint16 treasuryFeeBps; // 0 ⇒ TREASURY_FEE_BPS (500)
         uint16 loanInitiationFeeBps; // 0 ⇒ LOAN_INITIATION_FEE_BPS (20)
         uint16 liquidationHandlingFeeBps; // 0 ⇒ LIQUIDATION_HANDLING_FEE_BPS (200)
         uint16 maxLiquidationSlippageBps; // 0 ⇒ MAX_LIQUIDATION_SLIPPAGE_BPS (600)
@@ -1528,8 +1585,10 @@ library LibVaipakam {
     ///         intent owner), so every downstream claim / VPFI / KYC / sanctions
     ///         site is unchanged — the vault is NOT the lender. See
     ///         docs/DesignsAndPlans/LenderIntentVaultV1Design.md §1.
-    /// @dev    ERC-20-on-ERC-20 only (v1). One intent per (owner, lendingAsset,
-    ///         collateralAsset) — keyed by `lenderIntent[owner][lendingAsset][collateralAsset]`.
+    /// @dev    ERC-20-on-ERC-20 only (v1). Up to {MAX_INTENT_SLOTS} intents per
+    ///         (owner, lendingAsset, collateralAsset), one per slot (#3626) —
+    ///         keyed by `lenderIntent[owner][lendingAsset][collateralAsset][slot]`.
+    ///         Each slot is a full, independent intent: nothing is shared.
     ///         Bounds are a HARD band a solver's concrete `matchIntent` terms
     ///         must fall within; the protocol HF/LTV init gate still applies on
     ///         top. Reservation of in-flight principal reuses the encumbrance
@@ -1559,25 +1618,38 @@ library LibVaipakam {
         bool acceptsProRata;
     }
 
-    /// @dev #625 WI-2a — the (owner, lendingAsset, collateralAsset) triple that keys a
+    /// @notice #3626 — how many standing intents one owner may hold on one
+    ///         (lendingAsset, collateralAsset) pair: slots `0 … MAX_INTENT_SLOTS − 1`.
+    ///         Enough for a rate ladder, and bounded so the per-pair views and the
+    ///         keeper's per-lender walk stay bounded. Protocol-run intents (the
+    ///         backstop vault, the aggregator adapters) use slot 0 only.
+    uint8 internal constant MAX_INTENT_SLOTS = 8;
+
+    /// @notice #3626 — the one slot protocol-run intents use (the backstop vault
+    ///         and the aggregator adapters).
+    uint8 internal constant PROTOCOL_INTENT_SLOT = 0;
+
+    /// @dev #625 WI-2a — the (owner, lendingAsset, collateralAsset, slot) key of a
     ///      `LenderIntent`, stored so the `activeIntentKeys` enumerable set can be resolved
-    ///      back to a concrete intent by `getActiveLenderIntents`.
+    ///      back to a concrete intent by `getActiveLenderIntents`. `slot` (#3626) appended.
     struct IntentKey {
         address owner;
         address lendingAsset;
         address collateralAsset;
+        uint8 slot;
     }
 
     /// @dev #625 WI-2a — canonical key hash for the active-intent registry. The ONE place
-    ///      the (owner, lend, coll) → bytes32 mapping is defined, so the maintenance sites
-    ///      (`setLenderIntent` add / `cancelLenderIntent` remove) and the read view can
-    ///      never disagree on the key.
+    ///      the (owner, lend, coll, slot) → bytes32 mapping is defined, so the maintenance
+    ///      sites (`setLenderIntent` add / `cancelLenderIntent` remove) and the read view
+    ///      can never disagree on the key.
     function intentKeyHash(
         address owner,
         address lendingAsset,
-        address collateralAsset
+        address collateralAsset,
+        uint8 slot
     ) internal pure returns (bytes32) {
-        return keccak256(abi.encode(owner, lendingAsset, collateralAsset));
+        return keccak256(abi.encode(owner, lendingAsset, collateralAsset, slot));
     }
 
     /// @dev #625 WI-2a — keep the active-intent discovery registry
@@ -1595,14 +1667,15 @@ library LibVaipakam {
     function syncIntentRegistry(
         address owner,
         address lendingAsset,
-        address collateralAsset
+        address collateralAsset,
+        uint8 slot
     ) internal {
         Storage storage s = storageSlot();
         LenderIntent storage intent =
-            s.lenderIntent[owner][lendingAsset][collateralAsset];
-        bytes32 ik = intentKeyHash(owner, lendingAsset, collateralAsset);
+            s.lenderIntent[owner][lendingAsset][collateralAsset][slot];
+        bytes32 ik = intentKeyHash(owner, lendingAsset, collateralAsset, slot);
         uint256 capital =
-            s.lenderIntentCapital[owner][lendingAsset][collateralAsset];
+            s.lenderIntentCapital[owner][lendingAsset][collateralAsset][slot];
 
         // #755 — per-OWNER registry: list while the intent EXISTS for the
         // lender to manage in the dapp — `active` OR carrying reserved capital
@@ -1616,7 +1689,8 @@ library LibVaipakam {
                 s.intentKeyTuple[ik] = IntentKey({
                     owner: owner,
                     lendingAsset: lendingAsset,
-                    collateralAsset: collateralAsset
+                    collateralAsset: collateralAsset,
+                    slot: slot
                 });
             }
         } else {
@@ -1805,6 +1879,9 @@ library LibVaipakam {
         // unreachable dead code, so `settlementInterest` always
         // returned pro-rata regardless of intent.
         bool useFullTermInterest;
+        // #3621 — lender-only "either" marks for the partial-repay and
+        // prepay-listing options ({Offer.lifecycleFlex}). 0 = both exact.
+        uint8 lifecycleFlex;
     }
 
     /// @notice #193 — input bundle for `OfferMutateFacet.modifyOffer`.
@@ -2068,6 +2145,16 @@ library LibVaipakam {
         // filled. Written only through `LibTiming.stampOfferTerms`.
         // Appended — append-only.
         uint64 termsSetAt;
+        // #3621 — a LENDER offer's "either" marks for lifecycle options the
+        // borrower offer decides: bit 0 (`LIFECYCLE_FLEX_PARTIAL_REPAY`) = the
+        // lender also takes a borrower offer whose partial-repay setting
+        // differs from its own; bit 1 (`LIFECYCLE_FLEX_PREPAY_LISTING`) = the
+        // same for the prepay listing. Read only by the match rule
+        // (`LibOfferMatch`); the loan still copies the borrower offer, and a
+        // direct accept takes the stored values. 0 on every borrower offer,
+        // sale vehicle and NFT rental (refused at posting). Immutable after
+        // creation (no edit changes it). Appended.
+        uint8 lifecycleFlex;
     }
 
     /**
@@ -2338,7 +2425,7 @@ library LibVaipakam {
         // pre-#957 rate — NOT the live knob. That distinction is the whole
         // point of the field. The live knob is `cfgTreasuryFeeBps()`, which
         // returns the governance override in `protocolCfg.treasuryFeeBps`
-        // when set and otherwise `TREASURY_FEE_BPS` (200, the rev-8 freeze
+        // when set and otherwise `TREASURY_FEE_BPS` (500 since #3649; 200 under the rev-8 freeze
         // default, #1352) — so resolving a grandfathered loan against it
         // would reprice it at repay from 1% to WHATEVER IS LIVE THEN, in
         // EITHER DIRECTION. `setFeesConfig` bounds the override only from
@@ -2384,6 +2471,16 @@ library LibVaipakam {
         // the slot above.
         uint8 liqDiscountTierAtInit;
         uint16 liqDiscountBpsAtInit;
+        // #3649 — the term the initiation fee has been paid for. The fee
+        // depends only on a loan's total term, so an extension pays the fee
+        // at the new total term less the fee at `lifPaidDays`.
+        // `lifTermOrigin` is the start the total term is counted from (the
+        // origination start, never moved by an extension or a handover);
+        // the count excludes paused time, as the loan clock does. Both are 0
+        // on a loan that paid no initiation fee (a rental, a sale vehicle),
+        // and such a loan pays none on extension either.
+        uint64 lifTermOrigin;
+        uint32 lifPaidDays;
     }
 
     /**
@@ -2592,15 +2689,11 @@ library LibVaipakam {
         int256 minValidAnswer;
     }
 
-    /// @notice Per-user acceptance of the protocol's Terms of Service.
-    ///         Written once per user per ToS version by
-    ///         `LegalFacet.acceptTerms`. Frontends gate app entry until
-    ///         `version == currentTosVersion` AND `hash == currentTosHash`.
-    /// @dev `version == 0` is the "never accepted" marker — first-time
-    ///      visitors always need to sign to enter the app.
-    ///      `acceptedAt` is the block timestamp at acceptance; used by
-    ///      audit / compliance queries asking "when did this wallet
-    ///      accept version X?".
+    /// @notice A wallet's acceptance of one Terms of Service version: the
+    ///         version, its fingerprint and when it was first recorded.
+    ///         Written only by `LegalFacet` (#3734: by the wallet's own
+    ///         transaction or by its signature, submitted by anyone).
+    /// @dev `version == 0` is the "never accepted" marker.
     struct TosAcceptance {
         uint32 version;
         bytes32 hash;
@@ -3154,6 +3247,16 @@ library LibVaipakam {
         uint256 refPrincipalPrice1e18;
     }
 
+    /// @dev #3649 — the initiation fee's term settings (`FeeLevelsDesign.md`
+    ///      §3). Zero in a field ⇒ its default: `baseTermDays` ⇒
+    ///      {LIF_BASE_TERM_DAYS_DEFAULT}, `yearlyBps` ⇒
+    ///      {LIF_YEARLY_BPS_DEFAULT}, `yearDays` ⇒ {LIF_YEAR_DAYS_DEFAULT}.
+    struct LifTermConfig {
+        uint16 baseTermDays;
+        uint16 yearlyBps;
+        uint16 yearDays;
+    }
+
     struct Storage {
         uint256 nextOfferId;
         uint256 nextLoanId;
@@ -3653,16 +3756,15 @@ library LibVaipakam {
         // check entirely (fail-open); a retail deploy must not route real
         // value while it is zero.
         address sanctionsOracle;
-        // ─── Legal: Terms of Service acceptance (Phase 4.1) ──────────────
-        // On-chain record of every wallet's acceptance of the current ToS
-        // version. `currentTosVersion` starts at 0 (no ToS in force), which
-        // the frontend treats as "gate disabled — app is still pre-launch
-        // / testnet"; once governance sets `currentTosVersion >= 1` via
-        // `LegalFacet.setCurrentTos`, every user wallet must sign an
-        // `acceptTerms(version, hash)` tx before the frontend unlocks
-        // `/app/*` routes. The version+hash pair in storage lets audit
-        // tooling reconstruct exactly which ToS text a given user agreed
-        // to and when.
+        // ─── Legal: Terms of Service acceptance (Phase 4.1, #3734) ───────
+        // The LATEST Terms version in force and its fingerprint (0 = none in
+        // force, and nothing is checked). The minimum version, the pending
+        // announcement and the per-version marks are the #3734 fields at the
+        // tail. A pending announcement counts from its time without any call
+        // and is folded into these fields by the next `LegalFacet` write.
+        // `tosAcceptance` is each wallet's LATEST acceptance, kept for
+        // readers; the gate reads the per-version record
+        // `tosAcceptedVersion`. Read through `LibTerms`.
         uint32 currentTosVersion;
         bytes32 currentTosHash;
         mapping(address => TosAcceptance) tosAcceptance;
@@ -4915,21 +5017,22 @@ library LibVaipakam {
         // in the same call; a non-zero value at rest is a bug.
         address signedOfferAcceptor;
         // #393 v1 — LenderIntentVault. APPEND-ONLY.
-        // `lenderIntent[owner][lendingAsset][collateralAsset]` — the owner's
-        // standing lending terms for that asset-pair (one per pair in v1).
+        // `lenderIntent[owner][lendingAsset][collateralAsset][slot]` — the owner's
+        // standing lending terms for that asset-pair, one per slot (#3626: up to
+        // MAX_INTENT_SLOTS per pair; the slot level is the innermost key).
         // The exposure-counter (`maxExposure` enforcement) + per-loan origin
         // marker land with the v1-b fill path that writes them — keyed by the
         // FULL intent (owner, lend, coll) and storing the ORIGINATING owner per
         // loan (loan.lender is mutated on a lender-position sale, so it can't be
         // the close-time decrement key — Codex #618 P2). Not scaffolded here.
-        mapping(address => mapping(address => mapping(address => LenderIntent)))
+        mapping(address => mapping(address => mapping(address => mapping(uint8 => LenderIntent))))
             lenderIntent;
         // #393 v1-b — aggregate LIVE principal currently out in loans originated
         // from `owner`'s intent on the `(lendingAsset, collateralAsset)` pair.
-        // Keyed by the FULL intent so two intents sharing a lending asset but
-        // different collateral never share a cap. Incremented at `matchIntent`,
-        // decremented once at the loan's terminal close.
-        mapping(address => mapping(address => mapping(address => uint256)))
+        // Keyed by the FULL intent (slot included, #3626) so two intents never
+        // share a cap. Incremented at `matchIntent`, decremented once at the
+        // loan's terminal close.
+        mapping(address => mapping(address => mapping(address => mapping(uint8 => uint256))))
             lenderIntentLivePrincipal;
         // #393 v1-b — per-loan ORIGINATING intent key, so the terminal-close
         // decrement releases the right (owner, lend, coll) counter even after a
@@ -4944,12 +5047,11 @@ library LibVaipakam {
         // withdraw door. `fundLenderIntent` adds; `matchIntent` releases each
         // fill slice (→ free, consumed by the existing materialize path);
         // `withdrawLenderIntentCapital` releases the remainder back to the
-        // wallet (the cancel-offer pattern). Keyed by the FULL intent so two
-        // intents sharing a lending asset but different collateral never share
-        // a capital pool. Repaid proceeds NEVER land here — they return as a
+        // wallet (the cancel-offer pattern). Keyed by the FULL intent (slot
+        // included, #3626) so two intents never share capital. Repaid proceeds NEVER land here — they return as a
         // separate free-balance + Position-NFT claim — so the exit door can
         // never double-spend them.
-        mapping(address => mapping(address => mapping(address => uint256)))
+        mapping(address => mapping(address => mapping(address => mapping(uint8 => uint256))))
             lenderIntentCapital;
         // #398 v1.5 — ERC-4626 aggregator-adapter factory state. Mirrors the
         // per-user vault version machinery user vaults had before #3204 (one
@@ -7810,7 +7912,7 @@ library LibVaipakam {
         ///      Kept beside the record rather than in `ServiceCapacityDeposit` so
         ///      that struct's getter ABI is unchanged. Appended — append-only.
         mapping(uint8 => mapping(address => mapping(uint64 => uint256))) armingFeePrepaid;
-        /// @dev #2550 — per lender intent (`owner → lendingAsset → collateralAsset`,
+        /// @dev #2550 — per lender intent (`owner → lendingAsset → collateralAsset → slot`,
         ///      the `lenderIntent` key), whether its owner opted it into priority
         ///      routing: a fill the solver's capacity would refuse may then spend
         ///      one of the owner's priority credits instead. Written ONLY through
@@ -7818,7 +7920,7 @@ library LibVaipakam {
         ///      false by every `setLenderIntent` (a replacement intent never
         ///      inherits an old opt-in), cleared by `cancelLenderIntent`, toggled by
         ///      the owner on a live intent. Appended — append-only.
-        mapping(address => mapping(address => mapping(address => bool))) lenderIntentPriority;
+        mapping(address => mapping(address => mapping(address => mapping(uint8 => bool)))) lenderIntentPriority;
         /// @dev #2559 (Codex #2563 r5) — set ONCE, by this version's
         ///      `PerkFacet.setPerkConfig`, on the first priced counted write of the
         ///      priority-routing perk (id 1): the explicit arming of its effect. A
@@ -8040,7 +8142,7 @@ library LibVaipakam {
         ///      extension draws it first, and the depositor may withdraw what is
         ///      left at any time. Written only by `LibEncumbrance`. Appended —
         ///      append-only.
-        mapping(uint256 => mapping(address => uint256)) extendReserve;
+        mapping(uint256 => mapping(address => uint256)) paymentReserve;
         /// @dev #1558 — per refinance request (a borrower offer, by id): the
         ///      borrower's single-use Permit2 authorisation to pay off the loan
         ///      that request refinances. Whoever completes the refinance uses
@@ -8373,6 +8475,130 @@ library LibVaipakam {
         ///      the retired one-account `protectedRetiredAccountOf`.
         ///      Appended — append-only.
         mapping(address => EnumerableSet.AddressSet) protectedManagedAccounts;
+        /// @dev #3649 — the initiation fee's term settings beside the base
+        ///      rate (`protocolCfg.loanInitiationFeeBps`). Zero in a field ⇒
+        ///      its default. Written only by
+        ///      `FeeLevelsFacet.setLoanInitiationFeeTerms`; read only through
+        ///      `LibInitiationFee`. Appended — append-only.
+        LifTermConfig lifTermCfg;
+        /// @dev #3685 — per ERC-20 collateral asset, the amount pledged under
+        ///      live collateral liens (open loans and fallback custody).
+        ///      Written only by `LibEncumbrance` alongside every collateral
+        ///      lien change; read by `CollateralConcentrationFacet`.
+        ///      Appended — append-only.
+        mapping(address => uint256) collateralPledged;
+        /// @dev #3685 — the platform's concentration thresholds. Zero fields
+        ///      read as their defaults; written only by
+        ///      `CollateralConcentrationFacet.setConcentrationConfig`.
+        ///      Appended — append-only.
+        ConcentrationConfig concentrationCfg;
+        /// @dev #3685 — per collateral asset, tighter thresholds than the
+        ///      platform's (zero fields = the platform value). Written only by
+        ///      `CollateralConcentrationFacet.setAssetConcentrationConfig`.
+        ///      Appended — append-only.
+        mapping(address => ConcentrationConfig) concentrationAssetCfg;
+        /// @dev #3685 — per loan, its collateral's concentration level when
+        ///      it opened (`LibVaipakam.CONCENTRATION_*`). Written once, by
+        ///      `LoanFacet` at origination; a loan opened at Caution or above
+        ///      is not eligible for the shortfall reserve. Appended —
+        ///      append-only.
+        mapping(uint256 => uint8) loanConcentrationAtInit;
+        /// @dev #3681 — per loan and depositor, the collateral reserve: the
+        ///      loan's collateral asset the depositor placed in their own
+        ///      vault for the "keep my loan healthy" instruction. Not
+        ///      collateral until that instruction moves it into the lien, so
+        ///      no liquidation, default or health factor reads it. Encumbered
+        ///      like the payment reserve; written only by `LibEncumbrance`.
+        ///      Appended — append-only.
+        mapping(uint256 => mapping(address => uint256)) collateralReserve;
+        /// @dev #3681 — per loan, the borrower-position holder's standing
+        ///      instructions. Written only by `StandingInstructionFacet`.
+        ///      Appended — append-only.
+        mapping(uint256 => StandingInstructions) standingInstructions;
+        /// @dev #3681 — the platform's bounds for the instructions. Zero
+        ///      fields read as their defaults; written only by
+        ///      `StandingInstructionFacet.setStandingInstructionConfig`.
+        ///      Appended — append-only.
+        StandingInstructionConfig standingInstructionCfg;
+        /// @dev #3734 — the MINIMUM Terms version in force: a wallet is
+        ///      current when it accepted a version that came into force,
+        ///      numbered from this one to the latest. A small change leaves it
+        ///      where it is; a material change raises it, after a notice.
+        ///      Appended — append-only.
+        uint32 minTosVersion;
+        /// @dev #3734 — the one pending announcement (its time is zero when
+        ///      none is pending): the version it concerns and that version's
+        ///      fingerprint, the time it comes into force, the minimum it sets
+        ///      then, and whether it introduces a NEW version (false when it
+        ///      only raises the minimum to the version already latest). Read
+        ///      through `LibTerms`, which counts it from its time without any
+        ///      call; written only by `LegalFacet`. Appended — append-only.
+        uint32 announcedTosVersion;
+        bytes32 announcedTosHash;
+        uint64 announcedTosEffectiveAt;
+        uint32 announcedTosMinVersion;
+        bool announcedTosIsNew;
+        /// @dev #3734 — the highest Terms version number ever used. A
+        ///      withdrawn new version's number is spent: the next must exceed
+        ///      it. Appended — append-only.
+        uint32 highestTosVersionAnnounced;
+        /// @dev #3734 — per wallet and Terms version, that wallet's
+        ///      acceptance of that version (zero when it never accepted it).
+        ///      Kept per version so accepting an announced version never
+        ///      overwrites the acceptance of the one in force. Written only by
+        ///      `LegalFacet`. Appended — append-only.
+        mapping(address => mapping(uint32 => TosAcceptance)) tosAcceptedVersion;
+        /// @dev #3734 — per Terms version, the time it came into force (zero
+        ///      for a version that never did: pending, or withdrawn). Only a
+        ///      version with this mark can make a wallet current, so a spent
+        ///      number inside the minimum-to-latest range never counts.
+        ///      Written only by `LegalFacet`. Appended — append-only.
+        mapping(uint32 => uint64) tosVersionInForceAt;
+        /// @dev #3734 — per aggregator adapter, its principal: the outside
+        ///      party whose own capital it lends and whose Terms standing is
+        ///      the adapter's. Written once, by the factory, beside
+        ///      `isAggregatorAdapter` (the adapter's principal is fixed at its
+        ///      initialize, so the two cannot drift). Appended — append-only.
+        mapping(address => address) adapterPrincipal;
+    }
+
+    /// @notice #3681 — one loan's standing instructions, set by the
+    ///         borrower-position holder `owner`. An instruction runs only
+    ///         while `owner` still holds the position and spends only
+    ///         `owner`'s reserves for the loan.
+    /// @dev    Health factors are 1e18-scaled. `topUpTriggerHf == 0` means
+    ///         the top-up is off. `lastTopUpAt` spaces two top-ups by the
+    ///         configured interval.
+    struct StandingInstructions {
+        address owner;
+        uint64 topUpTriggerHf;
+        uint64 topUpTargetHf;
+        uint64 lastTopUpAt;
+        bool payInterest;
+        bool repayAtDue;
+        uint32 repayLeadSeconds;
+    }
+
+    /// @notice #3681 — the governed bounds for the standing instructions.
+    ///         Every field reads 0 as its default (see the
+    ///         `STANDING_*` constants).
+    struct StandingInstructionConfig {
+        uint64 triggerMinHf;
+        uint64 triggerMaxHf;
+        uint64 targetMaxHf;
+        uint64 minMarginHf;
+        uint32 topUpIntervalSeconds;
+    }
+
+    /// @notice #3685 — collateral concentration thresholds. The two
+    ///         multiples are in hundredths (500 = 5 times the depth
+    ///         reference); `lowestTierStepBps` is the cut to the lowest
+    ///         liquid tier's loan-opening cap at the High level. Every field
+    ///         reads 0 as its default.
+    struct ConcentrationConfig {
+        uint16 cautionMultipleX100;
+        uint16 highMultipleX100;
+        uint16 lowestTierStepBps;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.
@@ -9811,6 +10037,9 @@ library LibVaipakam {
         address lendingAsset;
         address collateralAsset;
         uint256 amount;
+        // #3626 — the slot the loan was filled from: the roll returns the
+        // proceeds there and the exposure release decrements that slot.
+        uint8 slot;
     }
 
     /// @notice T-092 — per-loan borrower-side refinance caps.
@@ -9835,6 +10064,11 @@ library LibVaipakam {
         uint16 maxRateBps;   //
         uint64 maxNewExpiry; // both sides store an outer bound; executor picks min(both)
         address setter;      // same NFT-transfer-staleness fence as AutoRefinanceCaps
+        // #3649 — borrower side only: the largest added initiation fee an
+        // extension may charge the borrower-position holder, in the lending
+        // asset. 0 admits only an extension that adds no fee. The lender
+        // side stores 0 and it is not read.
+        uint256 maxExtensionFee;
     }
 
     /// @notice #407 (2026-06-12) — vault encumbrance record. One row per

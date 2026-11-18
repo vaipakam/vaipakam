@@ -240,6 +240,13 @@ export interface DeploymentFacets {
   signedOfferMatchFacet?: HexAddress;
   /** #3410 — the loan clock's disclosure, split off LoanFacet. */
   loanClockFacet?: HexAddress;
+  feeLevelsFacet?: HexAddress;
+  /** #3685 — the new-loan init-LTV cap host and collateral concentration. */
+  collateralConcentrationFacet?: HexAddress;
+  /** #3685 — the collateral-lien entries, split off EncumbranceMutateFacet. */
+  collateralLienFacet?: HexAddress;
+  /** #3681 — standing instructions and the loan reserve. */
+  standingInstructionFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */

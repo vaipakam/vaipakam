@@ -43,11 +43,7 @@ describe('the accept refusals', () => {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
-    // #3734: the contract change that appends TermsNotAccepted lands before
-    // this app change; until it is on this branch, the app's list is the
-    // contract's plus that one name. Drop the fallback once it is.
-    const expected = names.includes('TermsNotAccepted') ? names : [...names, 'TermsNotAccepted'];
-    expect([...ACCEPT_ERRORS]).toEqual(expected);
+    expect([...ACCEPT_ERRORS]).toEqual(names);
   });
 });
 

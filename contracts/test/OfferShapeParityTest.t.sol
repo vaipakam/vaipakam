@@ -39,6 +39,7 @@ contract OfferShapeParityTest is SetupTest {
         uint256 collateralMax
     ) internal view returns (LibVaipakam.CreateOfferParams memory) {
         return LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
             offerType: side,
             lendingAsset: mockERC20,
             amount: amount,

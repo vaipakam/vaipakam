@@ -78,6 +78,7 @@ export function typedMessage(o: SignedOrderWire) {
     periodicInterestCadence: Number(o.periodicInterestCadence),
     refinanceTargetLoanId: BigInt(o.refinanceTargetLoanId),
     useFullTermInterest: o.useFullTermInterest,
+    lifecycleFlex: Number(o.lifecycleFlex),
     creatorFull: o.creatorFull,
     creatorMaxCStar: BigInt(o.creatorMaxCStar),
     creatorAllowFullDowngrade: o.creatorAllowFullDowngrade,

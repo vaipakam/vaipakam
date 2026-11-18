@@ -1,0 +1,16 @@
+## Thread — Standing instructions from your own vault (#3681)
+
+A borrower can now set up a loan reserve in their own vault and switch on up to three standing instructions for a loan: keep my loan healthy (move collateral from the reserve into the loan when the health factor falls below a chosen trigger, back up to a chosen target), pay my interest (pay a periodic interest payment from the reserve when it falls due), and repay at the due date (repay the whole loan from the reserve shortly before the due date). Anyone may run an instruction, but nobody chooses an amount or earns anything by it: every figure comes from the loan, the borrower's setting and the reserve, which is the most an instruction can ever spend.
+
+The reserve has two parts, the payment reserve in the lending asset and the collateral reserve in the collateral asset. The payment reserve is the former extension reserve under a new name, and an automatic extension still draws its charge from it first. Funding and withdrawal moved to the new instructions facet and take the reserve kind. The collateral reserve is not collateral: liquidation and default cannot take it, and it counts for nothing in the health factor until the top-up moves it. The reserve belongs to whoever deposited it and stays withdrawable whatever happens to the loan.
+
+Interest paid in the middle of a loan is now booked by one shared function, whichever way it is paid. The periodic settlement's forced sale and the pay-my-interest instruction both go through it: the treasury takes its share at the loan's stamped rate, the lender side receives the rest (sellers' claims first), and the whole amount counts as settled on the loan. This changes the forced sale. Before, it paid the lender the whole recovered interest and the treasury took no share of it, while the same interest paid by a partial repayment or at the final repayment did bear the share. The lender's payout from a periodic sale is now the interest less the treasury share, and on a sale that recovers less than is owed the lender is paid first. The divergence is recorded in the code-versus-docs audit as resolved toward intent (design decision 2026-11-16).
+
+Full repayment from the reserve runs through the ordinary repayment, with the reserve as the payer: the same amounts, splits and events as a manual repayment. A loan's due date has one plan: the repay instruction cannot stand together with automatic-extension or automatic-refinance limits.
+
+Each executor needs a keeper pass; those passes ship unarmed and come with the keeper work. Design: `docs/DesignsAndPlans/StandingInstructionsDesign.md`. Advances #3681.
+
+> Caveat: funding a reserve from an existing protected-mode balance (which would wait the account's delay) is not built; funding is from the wallet only.
+> Caveat: the app and indexer still show the former extension-reserve names until their consumer update lands.
+
+The loan's reserve view also states, per instruction, the reason a run would be skipped right now (holder changed, paused, account locked, loan busy) and whether the position must first be consolidated, so the keeper never pays gas for a run that would only be skipped and the app can show the reason in advance.

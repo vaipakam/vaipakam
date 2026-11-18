@@ -17,7 +17,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 contract NftAttributesHarness is VaipakamNFTMetadataFacet {
     function attributes(MetricsFacet.NFTPositionSummary memory s)
         external
-        pure
+        view
         returns (string memory)
     {
         return _buildAttributes(s);
@@ -53,6 +53,7 @@ contract PositionNftMetadataUnitsTest is SetupTest {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNft721,
                 amount: DAILY_FEE,

@@ -647,15 +647,16 @@ contract PrepayListingFacet is
 
         // `lenderExtra + treasuryNet == plan.treasuryShare`, so this is
         // `proceeds - floor`, which the check above keeps non-negative.
-        (bool borrowerHeld, uint256 borrowerAmount) = LibCloseoutFreeze.payOrHoldBorrowerExtra(
-            s, loanId, loan, borrower, proceeds - lenderAmount - treasuryNet
+        // #3629 — held for the borrower position's claim, never paid to a wallet.
+        uint256 borrowerAmount = LibCloseoutFreeze.holdBorrowerExtra(
+            s, loanId, loan, borrower, loan.principalAsset, proceeds - lenderAmount - treasuryNet
         );
 
         emit CollateralSaleProceedsSplit(
             loanId, offerId, loan.principalAsset, proceeds,
             lender, lenderAmount, lenderExtra,
             treasuryAmount,
-            borrower, borrowerAmount, borrowerHeld
+            borrower, borrowerAmount
         );
     }
 
@@ -739,14 +740,10 @@ contract PrepayListingFacet is
     /// @param  treasuryAmount  What the treasury received.
     /// @param  borrower        The borrower-position holder the remainder
     ///                         is owed to.
-    /// @param  borrowerAmount  The remainder above the floor: what the
-    ///                         holder's wallet was sent, or what the stored
-    ///                         borrower's vault received when it was held.
-    /// @param  borrowerHeld    True when the remainder was held for the
-    ///                         holder's `claimAsBorrower` (the holder is
-    ///                         flagged, or their wallet refused it); false
-    ///                         when it was paid to the wallet or there was
-    ///                         none.
+    /// @param  borrowerAmount  The remainder above the floor, as the stored
+    ///                         borrower's vault received it, held for the
+    ///                         holder's `claimAsBorrower` (#3629: never paid
+    ///                         to a wallet). 0 when there was none.
     /// @custom:event-category state-change/loan-mutation
     event CollateralSaleProceedsSplit(
         uint256 indexed loanId,
@@ -758,8 +755,7 @@ contract PrepayListingFacet is
         uint256 lenderDiscount,
         uint256 treasuryAmount,
         address borrower,
-        uint256 borrowerAmount,
-        bool borrowerHeld
+        uint256 borrowerAmount
     );
 
     /// @notice #2876 — a collateral sale's proceeds do not cover what a

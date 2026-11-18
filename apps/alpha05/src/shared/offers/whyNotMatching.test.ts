@@ -104,6 +104,14 @@ describe('why an offer is not matching (#3623)', () => {
     expect(gapOf(mine, req(), MATCH_CODE.terms)).toEqual({ kind: 'code', code: MATCH_CODE.terms });
     expect(gapOf(mine, req(), 6)).toEqual({ kind: 'code', code: 6 });
   });
+  it('skips an option the lender takes either way (#3621)', () => {
+    const either = offer({ offerType: 0, lifecycleFlex: 1 });
+    expect(optionGap(either, req({ allowsPartialRepay: true }))).toBeNull();
+    expect(optionGap(either, req({ allowsPartialRepay: true, allowsPrepayListing: true }))).toBe('prepay');
+    expect(optionGap(offer({ offerType: 0, lifecycleFlex: 3 }), req({ allowsPartialRepay: true, allowsPrepayListing: true }))).toBeNull();
+    // The marks are the lender's alone: a request's own field does nothing.
+    expect(optionGap(mine, req({ allowsPartialRepay: true, lifecycleFlex: 1 }))).toBe('partial');
+  });
   it('prefers a pair the protocol would match, then the closest open refusal', () => {
     const matchable = cp(req({ id: 3n }), MATCH_CODE.ok, 'open', 650n, 1);
     expect(whyOf(ranked(2), read([cp(req(), MATCH_CODE.rate), matchable]))).toEqual({ kind: 'matchable', with: matchable });

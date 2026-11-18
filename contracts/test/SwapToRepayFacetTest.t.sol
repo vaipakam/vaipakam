@@ -451,16 +451,16 @@ contract SwapToRepayFacetTest is SetupTest {
     // Test #15 — Surplus principal routes to borrower vault
     // ── ─────────────────────────────────────────────────────── ──
 
-    function test_swapToRepayFull_SurplusPrincipalToBorrowerEoa() public {
+    function test_swapToRepayFull_SurplusPrincipalHeldForBorrowerClaim() public {
         _scaffoldLoan(1, /* allowsPartialRepay */ false, /* useFullTermInterest */ false);
         // 1:1 quote. #2317: the bound of 1500 only BOUNDS the sale, which is
         // sized to the ~1000 debt at the 3% slippage floor, so the surplus is
-        // that floor's headroom (~31 ether), not 1500 − debt. It goes
-        // direct-to-EOA (Codex round-4 P1 #2 — vault routing leaves the
-        // surplus unclaimable because ClaimFacet only releases the
-        // collateral asset).
+        // that floor's headroom (~31 ether), not 1500 − debt. #3629: the
+        // surplus is no longer pushed to the wallet; it is held on the
+        // borrower surplus row and the borrower-NFT holder claims it into
+        // their vault.
         adapter1.setOutputMultiplierBps(10_000);
-        uint256 borrowerEoaPrincipalBefore = IERC20(address(principalAsset)).balanceOf(borrowerEoa);
+        uint256 walletBefore = IERC20(address(principalAsset)).balanceOf(borrowerEoa);
         uint256 maxCollateralIn = 1_500 ether;
 
         vm.prank(borrowerEoa);
@@ -471,11 +471,24 @@ contract SwapToRepayFacetTest is SetupTest {
             type(uint64).max
         );
 
-        uint256 borrowerEoaPrincipalAfter = IERC20(address(principalAsset)).balanceOf(borrowerEoa);
-        assertGt(
-            borrowerEoaPrincipalAfter,
-            borrowerEoaPrincipalBefore,
-            "borrower EOA must receive surplus principal directly"
+        assertEq(
+            IERC20(address(principalAsset)).balanceOf(borrowerEoa),
+            walletBefore,
+            "nothing is pushed to the borrower's wallet"
+        );
+        (address sAsset, uint256 surplus, bool claimed) =
+            ClaimFacet(address(diamond)).getBorrowerSurplusClaim(1);
+        assertEq(sAsset, address(principalAsset), "surplus held in the principal asset");
+        assertGt(surplus, 0, "the surplus is held for the borrower's claim");
+        assertFalse(claimed, "not yet claimed");
+
+        uint256 ownedBefore = _owned(borrowerEoa, address(principalAsset));
+        vm.prank(borrowerEoa);
+        ClaimFacet(address(diamond)).claimAsBorrower(1);
+        assertEq(
+            _owned(borrowerEoa, address(principalAsset)) - ownedBefore,
+            surplus,
+            "the claim pays the held surplus to the holder"
         );
     }
 
@@ -581,7 +594,6 @@ contract SwapToRepayFacetTest is SetupTest {
         assertLt(_floorAtParity(toSell - 1), required, "one wei less would not cover the debt");
         assertLt(toSell, LOAN_COLLATERAL / 2 + 100 ether, "far below the 2,000 bound");
 
-        uint256 eoaBefore = IERC20(address(principalAsset)).balanceOf(borrowerEoa);
         vm.prank(borrowerEoa);
         SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), LOAN_COLLATERAL, type(uint64).max);
 
@@ -590,11 +602,13 @@ contract SwapToRepayFacetTest is SetupTest {
             LOAN_COLLATERAL - toSell,
             "only the sized amount left the vault; the rest stays pledged"
         );
-        // 1:1 venue: proceeds == toSell, so the wallet surplus is exactly the
+        // 1:1 venue: proceeds == toSell, so the held surplus is exactly the
         // slippage headroom the sale was sized against — a favourable-quote
-        // surplus, not a user-chosen conversion.
+        // surplus, not a user-chosen conversion. #3629: it is held for the
+        // borrower's claim, not pushed to the wallet.
+        (, uint256 heldSurplus, ) = ClaimFacet(address(diamond)).getBorrowerSurplusClaim(1);
         assertEq(
-            IERC20(address(principalAsset)).balanceOf(borrowerEoa) - eoaBefore,
+            heldSurplus,
             toSell - required,
             "surplus is the fill's headroom over the debt, nothing more"
         );
@@ -945,21 +959,32 @@ contract SwapToRepayFacetTest is SetupTest {
     }
 
     // ── ─────────────────────────────────────────────────────── ──
-    // #954 (§1.3) — swapToRepayPartial hard-SCREENS the direct payees
+    // #3629 — swapToRepayPartial no longer pays the lender side directly,
+    //         so a flagged holder no longer blocks the borrower's repayment:
+    //         the share is held for the position and the claim screens.
     // ── ─────────────────────────────────────────────────────── ──
 
-    function test_swapToRepayPartial_RevertWhen_LenderHolderSanctioned() public {
+    function test_swapToRepayPartial_LenderHolderSanctioned_ShareHeld() public {
         _scaffoldLoan(1, /* allowsPartialRepay */ true, /* useFullTermInterest */ false);
         adapter1.setOutputMultiplierBps(10_000);
 
         _wireSanctionsAndFlag(lenderEoa);
 
-        // Discretionary path → Tier-1 screen on the lender payee, hard revert.
+        uint256 walletBefore = IERC20(address(principalAsset)).balanceOf(lenderEoa);
         vm.prank(borrowerEoa);
-        vm.expectRevert(
-            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, lenderEoa)
-        );
         SwapToRepayPartialFacet(address(diamond)).swapToRepayPartial(1, 250 ether, _adapterTryList(1), type(uint64).max);
+
+        (, , , , , , uint256 held, ) = ClaimFacet(address(diamond)).getClaimable(1, true);
+        assertGt(held, 0, "the flagged holder's share is held for the position");
+        assertEq(
+            IERC20(address(principalAsset)).balanceOf(lenderEoa),
+            walletBefore,
+            "nothing reaches the flagged holder's wallet"
+        );
+
+        vm.prank(lenderEoa);
+        vm.expectRevert(abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, lenderEoa));
+        ClaimFacet(address(diamond)).claimHeldForLender(1);
     }
 
     // ── ─────────────────────────────────────────────────────── ──
@@ -1181,18 +1206,28 @@ contract SwapToRepayFacetTest is SetupTest {
         adapter1.setOutputMultiplierBps(10_000);
 
         uint256 t0 = IERC20(address(principalAsset)).balanceOf(treasury);
-        uint256 newLenderBefore = IERC20(address(principalAsset)).balanceOf(newLender);
         vm.prank(borrowerEoa);
         SwapToRepayPartialFacet(address(diamond)).swapToRepayPartial(2, swapAmt, _adapterTryList(1), type(uint64).max);
 
         // Full stamp (loan-scoped) honored on the transferred position — the
-        // treasury cut is discounted — AND the CURRENT holder (not the stale
-        // `loan.lender`) receives the lender proceeds.
+        // treasury cut is discounted — AND the lender proceeds are held for
+        // the position, which only the CURRENT holder (not the stale
+        // `loan.lender`) can claim (#3629).
         uint256 disc = IERC20(address(principalAsset)).balanceOf(treasury) - t0;
         assertEq(disc, base - (base * 1000) / 10_000, "Full honored on transferred position");
-        assertGt(
-            IERC20(address(principalAsset)).balanceOf(newLender),
-            newLenderBefore,
+        (, , , , , , uint256 held, ) = ClaimFacet(address(diamond)).getClaimable(2, true);
+        assertGt(held, 0, "the lender proceeds are held for the position");
+
+        vm.prank(lenderEoa);
+        vm.expectRevert();
+        ClaimFacet(address(diamond)).claimHeldForLender(2);
+
+        uint256 newLenderBefore = _owned(newLender, address(principalAsset));
+        vm.prank(newLender);
+        ClaimFacet(address(diamond)).claimHeldForLender(2);
+        assertEq(
+            _owned(newLender, address(principalAsset)) - newLenderBefore,
+            held,
             "current lender-NFT holder receives the payout"
         );
     }

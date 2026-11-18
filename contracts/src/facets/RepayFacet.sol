@@ -17,6 +17,7 @@ import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibStandingInstructions} from "../libraries/LibStandingInstructions.sol";
 import {LibFallbackCustody} from "../libraries/LibFallbackCustody.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
@@ -199,6 +200,15 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
      * @param loanId The loan ID to repay.
      */
     function repayLoan(uint256 loanId) external nonReentrant {
+        // #3681 — the "repay at the due date" standing instruction reaches
+        // this same entry by self-call, having bound the holder whose payment
+        // reserve pays (StandingInstructionFacet.runDueRepayment). The
+        // reserve then pays exactly what a wallet would: same amounts,
+        // splits and events, the holder named as payer. Any other caller,
+        // a self-call with no binding included, pays from its wallet.
+        address reserveHolder =
+            msg.sender == address(this) ? LibStandingInstructions.takeReserveRepayer(loanId) : address(0);
+        address payer = reserveHolder == address(0) ? msg.sender : reserveHolder;
         // T-090 v1.1 (#389) §5.8 — block voluntary close while an
         // intent-based swap-to-repay commit is live: its lot is promised
         // to a live LOP order that may still fill, so closing the loan
@@ -261,9 +271,9 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
         // there since rental fees are deducted from a borrower-funded
         // prepay vault regardless of caller.
         if (loan.assetType == LibVaipakam.AssetType.ERC20) {
-            if (msg.sender == loan.lender) revert LenderCannotRepayOwnLoan();
+            if (payer == loan.lender) revert LenderCannotRepayOwnLoan();
             if (
-                LibPositionNFT.ownerOf(loan.lenderTokenId) == msg.sender
+                LibPositionNFT.ownerOf(loan.lenderTokenId) == payer
             ) revert LenderCannotRepayOwnLoan();
         }
 
@@ -342,37 +352,53 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // Skipped entirely when the VPFI discount path satisfied it.
             // #1281-011 — through the one payer -> treasury pull, which
             // refuses a short arrival by name.
-            LibFacet.transferFromPayerToTreasury(msg.sender, loan.principalAsset, plan.treasuryShare);
+            if (reserveHolder == address(0)) {
+                LibFacet.transferFromPayerToTreasury(msg.sender, loan.principalAsset, plan.treasuryShare);
 
-            // T-037 — Lender's due: borrower → lender's vault in ONE
-            // transfer. The Diamond carries the borrower's allowance
-            // (granted by the prior `approve()`) so the chokepoint's
-            // cross-payer variant pushes the asset from the borrower's
-            // wallet into the lender's vault without ever residing
-            // on the Diamond. Routing through `vaultDepositERC20From`
-            // ensures the protocolTrackedVaultBalance counter ticks
-            // up under the LENDER (the owner of the receiving vault,
-            // not the borrower who's the payer).
-            // #821 — vault-lock: a flagged stored lender would otherwise brick
-            // this deposit (the receiving-vault screen reverts). Pin the
-            // receive-side exemption to `loan.lender` so the close-out completes
-            // and the borrower's debt clears; the proceeds land in the lender's
-            // OWN (protocol-tracked) vault, frozen behind the Tier-1 claim gate
-            // (the `claimAsLender` stored-owner screen) until the flag clears.
-            LibSanctionedLock.begin(s, loan.lender);
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultDepositERC20From.selector,
-                    msg.sender,        // payer — borrower
-                    loan.lender,       // user — lender, owns the receiving vault
-                    loan.principalAsset,
-                    plan.lenderDue
-                ),
-                VaultDepositFailed.selector
-            );
-            LibSanctionedLock.end(
-                s, loan.lender, loanId, loan.principalAsset, plan.lenderDue
-            );
+                // T-037 — Lender's due: borrower → lender's vault in ONE
+                // transfer. The Diamond carries the borrower's allowance
+                // (granted by the prior `approve()`) so the chokepoint's
+                // cross-payer variant pushes the asset from the borrower's
+                // wallet into the lender's vault without ever residing
+                // on the Diamond. Routing through `vaultDepositERC20From`
+                // ensures the protocolTrackedVaultBalance counter ticks
+                // up under the LENDER (the owner of the receiving vault,
+                // not the borrower who's the payer).
+                // #821 — vault-lock: a flagged stored lender would otherwise brick
+                // this deposit (the receiving-vault screen reverts). Pin the
+                // receive-side exemption to `loan.lender` so the close-out completes
+                // and the borrower's debt clears; the proceeds land in the lender's
+                // OWN (protocol-tracked) vault, frozen behind the Tier-1 claim gate
+                // (the `claimAsLender` stored-owner screen) until the flag clears.
+                LibSanctionedLock.begin(s, loan.lender);
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        VaultFactoryFacet.vaultDepositERC20From.selector,
+                        msg.sender,        // payer — borrower
+                        loan.lender,       // user — lender, owns the receiving vault
+                        loan.principalAsset,
+                        plan.lenderDue
+                    ),
+                    VaultDepositFailed.selector
+                );
+                LibSanctionedLock.end(
+                    s, loan.lender, loanId, loan.principalAsset, plan.lenderDue
+                );
+            } else {
+                // #3681 — the reserve's legs live with the reserve, on
+                // StandingInstructionFacet: release and draw exactly
+                // treasuryShare + lenderDue, then pay both, each in full.
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSignature(
+                        "payRepaymentFromReserve(uint256,address,uint256,uint256)",
+                        loanId,
+                        reserveHolder,
+                        plan.treasuryShare,
+                        plan.lenderDue
+                    ),
+                    bytes4(0)
+                );
+            }
             // #998 S10 (#1006 / #1132) — both holders' fail-closed markers are
             // recorded centrally at the `Repaid` transition (terminalizeFromAny).
 
@@ -653,7 +679,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
         // library just transitioned to (typically `Repaid`).
         emit LoanRepaid(
             loanId,
-            msg.sender,
+            payer,
             interest,
             lateFee,
             /* outstandingPrincipal */ 0,
@@ -797,34 +823,17 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             if (partialAmount >= loan.principal)
                 revert PartialWouldRetireFullPrincipal();
 
-            // Pay accrued + partial to the CURRENT lender-position holder.
-            //
-            // Codex #659 P2 — the both-side consolidation hook above re-anchors
-            // `loan.lender` to `ownerOf(lenderTokenId)` in the common case, but
-            // it is deliberately SKIPPED when the lender side carries unreserved
-            // `heldForLender` VPFI (`_isExcludedLive`, #597 dependency). In that
-            // narrow case `loan.lender` can still be stale, and unlike the full
-            // repay path (vault deposit + claim + #592 encumbrance) this partial
-            // pays the lender DIRECTLY, so a stale anchor would hand the departed
-            // lender the principal+interest while the current NFT holder's owed
-            // principal is reduced. Resolve the recipient from NFT ownership —
-            // the canonical authority (see the self-repay guard's rationale in
-            // `repayLoan`) — so the payout is correct regardless of whether the
-            // consolidation ran or was skipped. The loan is Active here, so the
-            // lender NFT is live (never burned pre-terminal) and `ownerOf` holds.
-            // #998 S10 (#1006) Class B — this is a DIRECT inline payout (no
-            // vault+claim deferral like full repay). Pay the CURRENT lender-position
-            // holder inline when clean, or FREEZE fail-closed (park payer → stored
-            // lender vault + `heldForLender` + encumber + marker) when the holder is
-            // registry-flagged. Replaces the prior fail-open `_assertNotSanctioned`,
-            // which would pay a previously-confirmed-flagged holder during an oracle
-            // outage. Hosted on `EncumbranceMutateFacet`: the host resolves
-            // `ownerOf(lenderTokenId)` and, on the clean path, pays the combined
-            // principal-repayment + interest share via `safeTransferFrom(msg.sender)`
-            // exactly as before.
+            // #3629 — hold accrued + partial for the lender position: from the
+            // payer into the STORED `loan.lender`'s vault, on the loan's held
+            // ledger, reserved, for the position holder's claim
+            // (`ClaimFacet.claimHeldForLender`, or the final lender claim).
+            // Nothing is paid to a wallet. The held balance follows the
+            // position, so a stale `loan.lender` (consolidation skipped, #659)
+            // only names the custody vault: the claim pays whoever holds the
+            // lender token then. Hosted on `EncumbranceMutateFacet` for size.
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EncumbranceMutateFacet.freezeOrPayActiveLenderFromPayer.selector,
+                    EncumbranceMutateFacet.holdActiveLenderFromPayer.selector,
                     loan.id,
                     msg.sender,
                     loan.principalAsset,
@@ -951,19 +960,14 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // lien (the prepay pool is drained by this very mechanism,
             // not protected by a lien), so no decrement here.
 
-            // #998 S10 (#1006) Class B — the lender's prepay share is pulled from
-            // the payer's (`msg.sender`) own rental prepay vault. NFT-rental loans
-            // skip the eager consolidation at this function's start, so `loan.lender`
-            // can be stale; the host resolves the LIVE `ownerOf(lenderTokenId)`.
-            // Pay that current holder inline when clean, or FREEZE fail-closed (park
-            // payer-vault → stored-lender vault + `heldForLender` + encumber +
-            // marker) when they are registry-flagged, replacing the fail-open
-            // `_assertNotSanctioned`. The host arms the from-side move-out exemption
-            // around the withdraw so a borrower flagged after init can still service
-            // the partial rental (Tier-2 stays open) — the payer loses custody.
+            // #3629 — the lender's prepay share moves from the payer's own
+            // rental prepay vault into the STORED `loan.lender`'s vault, held
+            // for the lender position's claim. The host arms the from-side
+            // move-out exemption so a borrower flagged after init can still
+            // service the partial rental (Tier-2 stays open).
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector,
+                    EncumbranceMutateFacet.holdActiveLenderFromVault.selector,
                     loan.id,
                     msg.sender,
                     loan.prepayAsset,

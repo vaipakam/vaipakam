@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestCollateralCut} from "./helpers/LibTestCollateralCut.sol";
+import {LibTestTermsCut} from "./helpers/LibTestTermsCut.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {LibTestVaultEndpoints} from "./helpers/LibTestVaultEndpoints.sol";
 import {Test} from "forge-std/Test.sol";
@@ -47,6 +49,7 @@ import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
+import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {TestOfferFloor} from "./helpers/TestOfferFloor.sol";
@@ -342,6 +345,8 @@ contract LoanFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
+        cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
+        cuts = LibTestTermsCut.withTermsHost(cuts); // #3734
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         _cutFeeEntitlement();
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
@@ -549,6 +554,7 @@ contract LoanFacetTest is Test {
         vm.prank(lender);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: lendingAsset,
                 amount: amount,
@@ -815,6 +821,7 @@ contract LoanFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockIlliquidERC20,
                 amount: 1000 ether,
@@ -963,6 +970,7 @@ contract LoanFacetTest is Test {
         vm.prank(borrower);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: 1000 ether,
@@ -1012,6 +1020,7 @@ contract LoanFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000 ether,
@@ -1065,6 +1074,7 @@ contract LoanFacetTest is Test {
         vm.prank(borrower);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockNft721,
                 amount: 10 ether, // daily rental fee
@@ -1182,7 +1192,7 @@ contract LoanFacetTest is Test {
         );
         assertEq(
             loan.treasuryFeeBpsAtInit,
-            200,
+            500, // #3649 5% default
             "treasury fee is still snapshotted on the sale vehicle"
         );
     }
@@ -1242,6 +1252,7 @@ contract LoanFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000 ether,
@@ -1289,6 +1300,7 @@ contract LoanFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockIlliquidERC20,
                 amount: 1000 ether,
@@ -1344,6 +1356,7 @@ contract LoanFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000 ether,
@@ -1498,6 +1511,90 @@ contract LoanFacetTest is Test {
             uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
             uint8(LibVaipakam.LoanStatus.Active)
         );
+    }
+
+    /// @dev #3685 — opens a first tier-2 loan (2000 ether of collateral
+    ///      pledged), then prices that pledged amount at 10x tier 2's measured
+    ///      size, putting the collateral at High for the next loan.
+    function _openFirstLoanThenHighConcentration() internal returns (uint256 firstLoanId) {
+        _enableDepthTiers();
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getEffectiveLiquidityTier.selector, mockCollateralERC20),
+            abi.encode(uint8(2))
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateLTV.selector),
+            abi.encode(uint256(4800))
+        );
+        uint256 offerId = createOffer(
+            mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20, 1000 ether, 2000 ether, 30, 0, 0
+        );
+        firstLoanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
+        assertEq(CollateralConcentrationFacet(address(diamond)).loanConcentrationAtInit(firstLoanId), 0);
+    }
+
+    function _mockPledgedHigh() internal {
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                NumeraireValueFacet.getNumeraireValue.selector, mockCollateralERC20, uint256(2000 ether), false
+            ),
+            abi.encode(uint256(5_000_000e18)) // 10x tier 2's $500k
+        );
+    }
+
+    /// @dev #3685 — at High the loan-opening cap is tier 1's 50%, so 55%
+    ///      (inside tier 2's 60%) is refused with the existing reason, naming
+    ///      the lowered cap. The first loan is untouched.
+    function testConcentration_highLowersCapForNewLoan() public {
+        uint256 firstLoanId = _openFirstLoanThenHighConcentration();
+        uint256 offerId = createOffer(
+            mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20, 1000 ether, 2000 ether, 30, 0, 0
+        );
+        _mockPledgedHigh();
+        (uint256 cap,, uint8 level, bool binds) =
+            CollateralConcentrationFacet(address(diamond)).newLoanInitLtvCapBps(mockCollateralERC20);
+        assertEq(cap, 5000);
+        assertEq(level, LibVaipakam.CONCENTRATION_HIGH);
+        assertTrue(binds);
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateLTV.selector),
+            abi.encode(uint256(5500))
+        );
+        LibAcceptTerms.AcceptTerms memory _t =
+            LibAcceptTestSigner.buildTerms(address(diamond), borrower, offerId, true, 0);
+        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, borrowerPk);
+        vm.expectRevert(
+            abi.encodeWithSelector(IVaipakamErrors.InitLtvAboveTier.selector, uint256(5500), uint256(5000))
+        );
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
+
+        // The open loan keeps the cap and level it was opened under.
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(firstLoanId).initLtvCapBpsAtInit, 6000);
+        assertEq(CollateralConcentrationFacet(address(diamond)).loanConcentrationAtInit(firstLoanId), 0);
+    }
+
+    /// @dev #3685 — a loan inside the lowered cap opens, records the High
+    ///      level and the lowered cap it was admitted under.
+    function testConcentration_highRecordsLevelAndCap() public {
+        _openFirstLoanThenHighConcentration();
+        uint256 offerId = createOffer(
+            mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20, 1000 ether, 2000 ether, 30, 0, 0
+        );
+        _mockPledgedHigh();
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
+        assertEq(
+            CollateralConcentrationFacet(address(diamond)).loanConcentrationAtInit(loanId),
+            LibVaipakam.CONCENTRATION_HIGH
+        );
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(loanId).initLtvCapBpsAtInit, 5000);
+        // Both loans' collateral is now in the pledged total.
+        assertEq(CollateralConcentrationFacet(address(diamond)).getConcentration(mockCollateralERC20).pledged, 4000 ether);
     }
 
     /// @dev Switch on, Tier 3 (cap 65%), LTV 60% (passes), HF 1.2e18 —

@@ -61,6 +61,8 @@ export function listParams(d: ListDraft) {
     allowsParallelSale: false,
     refinanceTargetLoanId: 0n,
     useFullTermInterest: d.fullTerm,
+    // #3621 — a rental carries no "either" marks.
+    lifecycleFlex: 0,
   } as const;
 }
 

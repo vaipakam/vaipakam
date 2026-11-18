@@ -379,6 +379,9 @@ export interface LenderIntentSummary {
   owner: Address;
   lendingAsset: Address;
   collateralAsset: Address;
+  /** #3626 — which of the owner's intents on the pair (0-7). Every intent
+   *  read and fill names it. */
+  slot: number;
   maxExposure: bigint;
   minRateBps: bigint;
   maxInitLtvBps: number;
@@ -423,12 +426,18 @@ interface IntentPreview {
 const ROLL_SCAN_PAGE = 100n;
 
 /** One row of `LenderIntentFacet.getRollableIntentLoans` (`RollableIntentLoan`). */
-interface RollableIntentLoan {
+export interface RollableIntentLoan {
   loanId: bigint;
   owner: Address;
   lendingAsset: Address;
   collateralAsset: Address;
   amount: bigint;
+  /** #3629 — an OPEN loan with payments held for the lender position (a
+   *  `recommitHeldToIntent` candidate); false for a fully repaid loan (a
+   *  `rollIntentLoan` candidate). */
+  open: boolean;
+  /** #3629 — what is held for the lender position now. */
+  held: bigint;
 }
 
 function bucketKey(o: OfferLite): string {
@@ -632,21 +641,53 @@ export function* offerMatchUnits(
 }
 
 /**
- * The intent fill's units (#3242 part 2): one per intent and borrower creator,
- * holding that intent against that creator's borrower offers. Walked by
- * {@link fairPairs} like the offer match, so a wallet with many borrower
- * offers gets one candidate per intent per round, the same as a wallet with
- * one. Round 0 starts at a point in the intent × creator space that moves with
- * the run, like {@link offerMatchUnits}. Lazy.
+ * One lender's intents on one pair (#3626: up to eight slots), cheapest
+ * floor first. The protocol fills from whichever slot the caller names and
+ * never ranks a lender's slots; the keeper's policy is that a ladder fills
+ * from its lowest rung up, so a borrower both rungs could serve takes the
+ * lower-floor slot and the higher one stays for borrowers who pay more. Ties
+ * go to the lower slot number. The groups keep the order the first slot of
+ * each appears in `intents`.
+ */
+export function groupIntentLadders(
+  intents: readonly LenderIntentSummary[],
+): LenderIntentSummary[][] {
+  const ladders = new Map<string, LenderIntentSummary[]>();
+  for (const i of intents) {
+    const key = `${i.owner.toLowerCase()}|${i.lendingAsset.toLowerCase()}|${i.collateralAsset.toLowerCase()}`;
+    let rungs = ladders.get(key);
+    if (!rungs) {
+      rungs = [];
+      ladders.set(key, rungs);
+    }
+    rungs.push(i);
+  }
+  const out = [...ladders.values()];
+  for (const rungs of out) {
+    rungs.sort((a, b) => (a.minRateBps === b.minRateBps ? a.slot - b.slot : a.minRateBps < b.minRateBps ? -1 : 1));
+  }
+  return out;
+}
+
+/**
+ * The intent fill's units (#3242 part 2): one per lender ladder (#3626, see
+ * {@link groupIntentLadders}) and borrower creator, holding that lender's
+ * slots on the pair, lowest floor first, against that creator's borrower
+ * offers. Walked by {@link fairPairs} like the offer match, so a wallet with
+ * many borrower offers gets one candidate per ladder per round, the same as a
+ * wallet with one, and a lender with several slots gets no more turns than a
+ * lender with one. Round 0 starts at a point in the ladder × creator space
+ * that moves with the run, like {@link offerMatchUnits}. Lazy.
  */
 export function* intentFillUnits(
   intents: readonly LenderIntentSummary[],
   borrowers: readonly OfferLite[],
   run: number,
 ): Generator<FairUnit<LenderIntentSummary, OfferLite>> {
+  const ladders = groupIntentLadders(intents);
   const groups = [...groupByCreator(borrowers).values()];
-  for (const [, i, j] of pairSpaceFrom([[intents.length, groups.length]], walkStart(run, intents.length * groups.length))) {
-    yield { as: [intents[i]], bs: groups[j] };
+  for (const [, i, j] of pairSpaceFrom([[ladders.length, groups.length]], walkStart(run, ladders.length * groups.length))) {
+    yield { as: ladders[i], bs: groups[j] };
   }
 }
 
@@ -706,7 +747,7 @@ export function previewMatchRequest(
 export function previewIntentRequest(
   diamond: Address,
   solver: Address,
-  intent: { owner: Address; lendingAsset: Address; collateralAsset: Address },
+  intent: { owner: Address; lendingAsset: Address; collateralAsset: Address; slot: number },
   borrowerId: bigint,
   fillAmount: bigint,
 ) {
@@ -720,6 +761,7 @@ export function previewIntentRequest(
       intent.owner,
       intent.lendingAsset,
       intent.collateralAsset,
+      intent.slot,
       borrowerId,
       fillAmount,
     ] as const,
@@ -871,6 +913,7 @@ function liftIntent(raw: Record<string, unknown>): LenderIntentSummary {
     owner: raw['owner'] as Address,
     lendingAsset: raw['lendingAsset'] as Address,
     collateralAsset: raw['collateralAsset'] as Address,
+    slot: Number(raw['slot']),
     maxExposure: BigInt(raw['maxExposure'] as bigint | number),
     minRateBps: BigInt(raw['minRateBps'] as bigint | number),
     maxInitLtvBps: Number(raw['maxInitLtvBps']),
@@ -992,6 +1035,7 @@ async function submitIntentFill(
         intent.owner,
         intent.lendingAsset,
         intent.collateralAsset,
+        intent.slot,
         borrowerId,
         fillAmount,
       ],
@@ -1010,7 +1054,7 @@ async function submitIntentFill(
       }
     } else {
       reportSendError(
-        `[matcher] chain=${ctx.chainId} matchIntent lender=${intent.owner} borrower=${Number(borrowerId)}`,
+        `[matcher] chain=${ctx.chainId} matchIntent lender=${intent.owner} slot=${intent.slot} borrower=${Number(borrowerId)}`,
         err,
         `broadcast failed: ${summarizeFailure(err)}`,
         console.log,
@@ -1026,19 +1070,19 @@ async function submitIntentFill(
     });
     if (receipt.status !== 'success') {
       console.log(
-        `[matcher] chain=${ctx.chainId} matchIntent lender=${intent.owner} borrower=${Number(borrowerId)} reverted on-chain tx=${hash}`,
+        `[matcher] chain=${ctx.chainId} matchIntent lender=${intent.owner} slot=${intent.slot} borrower=${Number(borrowerId)} reverted on-chain tx=${hash}`,
       );
       return null;
     }
     creditSpent = receiptSpentPriorityCredit(receipt.logs ?? [], ctx.diamond);
   } catch (err) {
     console.log(
-      `[matcher] chain=${ctx.chainId} matchIntent lender=${intent.owner} borrower=${Number(borrowerId)} receipt wait failed tx=${hash}: ${summarizeFailure(err, 200)}`,
+      `[matcher] chain=${ctx.chainId} matchIntent lender=${intent.owner} slot=${intent.slot} borrower=${Number(borrowerId)} receipt wait failed tx=${hash}: ${summarizeFailure(err, 200)}`,
     );
     return null;
   }
   console.log(
-    `[matcher] chain=${ctx.chainId} intent-filled lender=${intent.owner} borrower=${Number(borrowerId)} tx=${hash} amount=${fillAmount.toString()} rateBps=${Number(preview.matchRateBps)}${creditSpent ? ' on a priority credit' : ''}`,
+    `[matcher] chain=${ctx.chainId} intent-filled lender=${intent.owner} slot=${intent.slot} borrower=${Number(borrowerId)} tx=${hash} amount=${fillAmount.toString()} rateBps=${Number(preview.matchRateBps)}${creditSpent ? ' on a priority credit' : ''}`,
   );
   return { creditSpent };
 }
@@ -1080,7 +1124,7 @@ export type PriorityState = 'capacity' | 'credit' | 'blocked';
  */
 export async function priorityState(
   ctx: Pick<KeeperContext, 'client' | 'diamond' | 'chainId'>,
-  intent: Pick<LenderIntentSummary, 'owner' | 'lendingAsset' | 'collateralAsset'>,
+  intent: Pick<LenderIntentSummary, 'owner' | 'lendingAsset' | 'collateralAsset' | 'slot'>,
   solver: Address,
 ): Promise<PriorityState> {
   try {
@@ -1088,7 +1132,7 @@ export async function priorityState(
       address: ctx.diamond,
       abi: MATCHER_ABI,
       functionName: 'getLenderIntentPriority',
-      args: [intent.owner, intent.lendingAsset, intent.collateralAsset, solver, solver],
+      args: [intent.owner, intent.lendingAsset, intent.collateralAsset, intent.slot, solver, solver],
     })) as readonly [boolean, bigint, boolean, boolean];
     if (r[2] === true) return 'capacity';
     return r[3] === true ? 'credit' : 'blocked';
@@ -1432,7 +1476,17 @@ function liftRollable(raw: Record<string, unknown>): RollableIntentLoan {
     lendingAsset: raw['lendingAsset'] as Address,
     collateralAsset: raw['collateralAsset'] as Address,
     amount: BigInt(raw['amount'] as bigint | number),
+    open: Boolean(raw['open']),
+    held: BigInt((raw['held'] as bigint | number | undefined) ?? 0),
   };
+}
+
+/** #3629 — which step a registry row asks for: the roll of a fully repaid
+ *  loan, the re-commit of an open loan's held payments (only when that step
+ *  is armed), or nothing. Pure; pinned by the tests. */
+export function rollStepFor(loan: RollableIntentLoan, recommitArmed: boolean): 'roll' | 'recommit' | 'skip' {
+  if (!loan.open) return 'roll';
+  return recommitArmed && loan.held > 0n ? 'recommit' : 'skip';
 }
 
 /**
@@ -1459,6 +1513,7 @@ const ROLL_LEFT_TO_CLAIM = new Set([
   'LenderIntentLoanNotRollable',
   'LenderIntentPositionTransferred',
   'LenderIntentNothingToRoll',
+  'LenderIntentEnded', // #3618 — the intent's lend-until time leaves no room
 ]);
 
 /** The roll pass's verdict on a failed `rollIntentLoan` estimate. Pure;
@@ -1490,6 +1545,7 @@ async function readVpfiToken(ctx: KeeperContext): Promise<string | null> {
 async function submitRoll(
   ctx: KeeperContext,
   loanId: bigint,
+  functionName: 'rollIntentLoan' | 'recommitHeldToIntent' = 'rollIntentLoan',
 ): Promise<{ ok: boolean; unauthorized: boolean }> {
   const account = ctx.wallet.account;
   if (!account) return { ok: false, unauthorized: false };
@@ -1498,7 +1554,7 @@ async function submitRoll(
     hash = await ctx.wallet.writeContract({
       address: ctx.diamond,
       abi: MATCHER_ABI,
-      functionName: 'rollIntentLoan',
+      functionName,
       args: [loanId],
       account,
       chain: ctx.wallet.chain,
@@ -1511,7 +1567,7 @@ async function submitRoll(
     const unauthorized = errStr.includes('KeeperAccessRequired');
     if (!unauthorized) {
       reportSendError(
-        `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loanId)}`,
+        `[matcher] chain=${ctx.chainId} ${functionName} loan=${Number(loanId)}`,
         err,
         `broadcast failed: ${summarizeFailure(err)}`,
         console.log,
@@ -1526,18 +1582,18 @@ async function submitRoll(
     });
     if (receipt.status !== 'success') {
       console.log(
-        `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loanId)} reverted on-chain tx=${hash}`,
+        `[matcher] chain=${ctx.chainId} ${functionName} loan=${Number(loanId)} reverted on-chain tx=${hash}`,
       );
       return { ok: false, unauthorized: false };
     }
   } catch (err) {
     console.log(
-      `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loanId)} receipt wait failed tx=${hash}: ${summarizeFailure(err, 200)}`,
+      `[matcher] chain=${ctx.chainId} ${functionName} loan=${Number(loanId)} receipt wait failed tx=${hash}: ${summarizeFailure(err, 200)}`,
     );
     return { ok: false, unauthorized: false };
   }
   console.log(
-    `[matcher] chain=${ctx.chainId} intent-rolled loan=${Number(loanId)} tx=${hash}`,
+    `[matcher] chain=${ctx.chainId} ${functionName === 'rollIntentLoan' ? 'intent-rolled' : 'held-recommitted'} loan=${Number(loanId)} tx=${hash}`,
   );
   return { ok: true, unauthorized: false };
 }
@@ -1556,6 +1612,7 @@ async function runIntentRollPass(
   overBudget: () => boolean,
   submitsUsed: number,
   run = 0,
+  recommitArmed = false,
 ): Promise<void> {
   if (overBudget() || submitsUsed >= MAX_SUBMITS_PER_TICK) return;
   if (!ctx.wallet.account) return;
@@ -1585,10 +1642,16 @@ async function runIntentRollPass(
   let rolled = 0;
   let declinedDust = 0;
   let leftToClaim = 0;
+  let recommitted = 0;
   const unauthorizedOwners = new Set<string>();
   for (const loan of rollable) {
     if (submits >= MAX_SUBMITS_PER_TICK || overBudget()) break;
     if (unauthorizedOwners.has(loan.owner.toLowerCase())) continue;
+    // #3629 — an open loan's held payments are re-committed only when that
+    // step is armed; a repaid loan is rolled as before.
+    const step = rollStepFor(loan, recommitArmed);
+    if (step === 'skip') continue;
+    const functionName = step === 'roll' ? 'rollIntentLoan' : 'recommitHeldToIntent';
     if (vpfiToken !== null && loan.lendingAsset.toLowerCase() === vpfiToken) {
       leftToClaim += 1;
       continue;
@@ -1609,7 +1672,7 @@ async function runIntentRollPass(
       feeWei = await estimateTxFeeWei(ctx.client, ctx.chainId, {
         address: ctx.diamond,
         abi: MATCHER_ABI,
-        functionName: 'rollIntentLoan',
+        functionName,
         args: [loan.loanId],
         account: ctx.wallet.account,
       });
@@ -1621,28 +1684,32 @@ async function runIntentRollPass(
         leftToClaim += 1;
       } else {
         console.log(
-          `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loan.loanId)} not rolled: fee estimate failed: ${summarizeFailure(err, 200)}`,
+          `[matcher] chain=${ctx.chainId} ${functionName} loan=${Number(loan.loanId)} not run: fee estimate failed: ${summarizeFailure(err, 200)}`,
         );
       }
       continue;
     }
-    // The roll re-lends the lender's recorded claim (principal plus interest),
-    // not the original fill the registry row reports, so that is what is valued.
-    let rolledAmount: bigint;
-    try {
-      const [, amount, claimed] = (await ctx.client.readContract({
-        address: ctx.diamond,
-        abi: ClaimFacetABI as Abi,
-        functionName: 'getClaimableAmount',
-        args: [loan.loanId, true],
-      })) as readonly [Address, bigint, boolean];
-      if (claimed) continue; // already paid out: nothing left to roll
-      rolledAmount = amount;
-    } catch (err) {
-      console.log(
-        `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loan.loanId)} not rolled: claim read failed: ${summarizeFailure(err, 200)}`,
-      );
-      continue;
+    // The roll re-lends the lender's recorded claim (principal plus interest)
+    // plus anything held for the position (#3629), not the original fill the
+    // registry row reports, so that is what is valued. A re-commit moves only
+    // the held part.
+    let rolledAmount: bigint = loan.held;
+    if (step === 'roll') {
+      try {
+        const [, amount, claimed] = (await ctx.client.readContract({
+          address: ctx.diamond,
+          abi: ClaimFacetABI as Abi,
+          functionName: 'getClaimableAmount',
+          args: [loan.loanId, true],
+        })) as readonly [Address, bigint, boolean];
+        if (claimed) continue; // already paid out: nothing left to roll
+        rolledAmount = amount + loan.held;
+      } catch (err) {
+        console.log(
+          `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loan.loanId)} not rolled: claim read failed: ${summarizeFailure(err, 200)}`,
+        );
+        continue;
+      }
     }
     const verdict = await judgeRollValue(
       ctx.client,
@@ -1661,7 +1728,7 @@ async function runIntentRollPass(
     }
     if (verdict.kind === 'assetUnpriced') {
       console.log(
-        `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loan.loanId)} not rolled: ${verdict.reason}`,
+        `[matcher] chain=${ctx.chainId} ${functionName} loan=${Number(loan.loanId)} not run: ${verdict.reason}`,
       );
       continue;
     }
@@ -1670,16 +1737,17 @@ async function runIntentRollPass(
       continue;
     }
     submits += 1;
-    const res = await submitRoll(ctx, loan.loanId);
+    const res = await submitRoll(ctx, loan.loanId, functionName);
     if (res.ok) {
-      rolled += 1;
+      if (step === 'roll') rolled += 1;
+      else recommitted += 1;
     } else if (res.unauthorized) {
       unauthorizedOwners.add(loan.owner.toLowerCase());
     }
   }
-  if (rolled > 0 || declinedDust > 0 || leftToClaim > 0) {
+  if (rolled > 0 || recommitted > 0 || declinedDust > 0 || leftToClaim > 0) {
     console.log(
-      `[matcher] chain=${ctx.chainId} roll pass: ${rolled} loan(s) rolled, ${declinedDust} worth less than ${ROLL_MIN_VALUE_TO_GAS}x their gas left for their owners, ${leftToClaim} that settle through their owner's claim (${rollable.length} repaid candidate(s))`,
+      `[matcher] chain=${ctx.chainId} roll pass: ${rolled} loan(s) rolled, ${recommitted} open loan(s) re-committed their held payments, ${declinedDust} worth less than ${ROLL_MIN_VALUE_TO_GAS}x their gas left for their owners, ${leftToClaim} that settle through their owner's claim (${rollable.length} candidate(s))`,
     );
   }
 }
@@ -1909,7 +1977,12 @@ export async function runMatchWalks(args: MatchWalkArgs): Promise<MatchWalkResul
 }
 
 /** One pass over a chain's order book. */
-async function runOfferMatcherTickForChain(ctx: KeeperContext, run: number, share: number): Promise<void> {
+async function runOfferMatcherTickForChain(
+  ctx: KeeperContext,
+  run: number,
+  share: number,
+  recommitArmed = false,
+): Promise<void> {
   // Codex #176 round-2 P2 — bound the chain's wall-time so a congested
   // chain can't starve later chains in the same cron tick. Each call
   // site checks `overBudget()` before doing more work.
@@ -1927,7 +2000,7 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext, run: number, shar
   if (listed === 0) {
     // No open offers to match/fill, but there may still be fully-repaid intent
     // loans to AUTO-ROLL (independent of the offer book) — #625 WI-2c part 2b.
-    if (!overBudget()) await runIntentRollPass(ctx, overBudget, 0, run);
+    if (!overBudget()) await runIntentRollPass(ctx, overBudget, 0, run, recommitArmed);
     return;
   }
   const { lenders, borrowers } = partitionByBucket(offers);
@@ -2020,7 +2093,7 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext, run: number, shar
   // #625 WI-2c part 2b — auto-roll fully-repaid intent loans, sharing the
   // per-tick submit + wall-time budget carried through the match + fill passes.
   if (!overBudget()) {
-    await runIntentRollPass(ctx, overBudget, submits, run);
+    await runIntentRollPass(ctx, overBudget, submits, run, recommitArmed);
   }
 
   if (overBudget()) {
@@ -2043,6 +2116,8 @@ export async function runMatcher(env: Env, tick: PassTick): Promise<void> {
   const chains: ChainConfig[] = getChainConfigs(env);
   const run = runIndex(tick, 60_000);
   const share = freshLaneShare(env.MATCHER_FRESH_LANE_SHARE);
+  // #3629 — the roll pass's held-payment re-commit step ships disarmed.
+  const recommitArmed = passIsArmed(env, 'matcher.heldRecommit', 'HELD_RECOMMIT_ENABLED');
   // Chains side by side (#2572 r5, `runWindow.ts` rule 1): one deadline covers
   // the pass, so in series a slow chain would spend every later chain's window.
   await Promise.all(
@@ -2051,7 +2126,7 @@ export async function runMatcher(env: Env, tick: PassTick): Promise<void> {
         const publicClient = createPublicClient({ transport: http(chain.rpc) });
         const ctx = buildKeeperContext(env, chain, publicClient, { notAfterMs: tick.deadlineMs });
         if (!ctx) return;
-        await runOfferMatcherTickForChain(ctx, run, share);
+        await runOfferMatcherTickForChain(ctx, run, share, recommitArmed);
       } catch (err) {
         console.error(
           `[matcher] chain=${chain.id} (${chain.name}) tick failed: ${summarizeFailure(err, 250)}`,

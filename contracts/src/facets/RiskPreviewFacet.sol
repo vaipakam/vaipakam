@@ -12,6 +12,7 @@ import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
+import {OfferPriceGuardFacet} from "./OfferPriceGuardFacet.sol";
 import {OfferPreviewFacet} from "./OfferPreviewFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 
@@ -305,7 +306,8 @@ contract RiskPreviewFacet {
     ///         `eth_call`'s originator need not be. For a solver that sends its own
     ///         transaction, the solver.
     /// @param  lender  Intent owner (slice creator).
-    /// @param  lendingAsset / collateralAsset  Intent key.
+    /// @param  lendingAsset / collateralAsset / slot  Intent key (#3626: the slot
+    ///         the fill would draw from).
     /// @param  counterpartyOfferId  The stored borrower offer to fill against.
     /// @param  fillAmount  Principal the solver intends to lend this fill.
     function previewIntent(
@@ -314,6 +316,7 @@ contract RiskPreviewFacet {
         address lender,
         address lendingAsset,
         address collateralAsset,
+        uint8 slot,
         uint256 counterpartyOfferId,
         uint256 fillAmount
     ) external view returns (LibOfferMatch.IntentPreviewResult memory res) {
@@ -322,6 +325,7 @@ contract RiskPreviewFacet {
             lender,
             lendingAsset,
             collateralAsset,
+            slot,
             counterpartyOfferId,
             fillAmount
         );
@@ -457,12 +461,14 @@ contract RiskPreviewFacet {
         // guard a view could read. Same entry the accept and match previews
         // use, so the three cannot disagree about a refusal.
         {
-            OfferPreviewFacet.OriginationRefusal refusal = OfferPreviewFacet(address(this))
-                .previewOriginationRefusal(counterpartyOfferId, res.matchAmount, 0);
-            if (refusal != OfferPreviewFacet.OriginationRefusal.None) {
-                res.matchError = refusal == OfferPreviewFacet.OriginationRefusal.CadenceNotAdmitted
+            OfferPriceGuardFacet.OriginationRefusal refusal = OfferPriceGuardFacet(address(this))
+                .previewOriginationRefusal(counterpartyOfferId, res.matchAmount, 0, lender, s.offers[counterpartyOfferId].creator);
+            if (refusal != OfferPriceGuardFacet.OriginationRefusal.None) {
+                res.matchError = refusal == OfferPriceGuardFacet.OriginationRefusal.CadenceNotAdmitted
                     ? LibOfferMatch.MatchError.CadenceNotAdmitted
-                    : LibOfferMatch.MatchError.PriceGuardRefused;
+                    : refusal == OfferPriceGuardFacet.OriginationRefusal.TermsNotAccepted
+                        ? LibOfferMatch.MatchError.TermsNotAccepted
+                        : LibOfferMatch.MatchError.PriceGuardRefused;
                 res.ok = false;
                 return res;
             }
@@ -478,7 +484,7 @@ contract RiskPreviewFacet {
         // clear case applies (`spendsPriorityCredit`), so the one pre-check tells a
         // solver whether the fill charges its capacity or spends the owner's credit.
         if (res.ok && !LibServiceCapacity.fillCovered(s, solver, initiator)) {
-            if (LibPriorityRouting.covers(s, lender, lendingAsset, collateralAsset)) {
+            if (LibPriorityRouting.covers(s, lender, lendingAsset, collateralAsset, slot)) {
                 res.spendsPriorityCredit = true;
             } else {
                 res.intentError = LibOfferMatch.IntentError.CapacityExhausted;

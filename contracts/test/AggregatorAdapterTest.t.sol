@@ -2,6 +2,8 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {LegalFacet} from "../src/facets/LegalFacet.sol";
+import {LibTerms} from "../src/libraries/LibTerms.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
@@ -161,7 +163,12 @@ contract AggregatorAdapterTest is SetupTest {
         vm.prank(b);
         ProfileFacet(address(diamond)).setUserCountry("US");
         vm.prank(owner);
-        ProfileFacet(address(diamond)).updateKYCTier(b, LibVaipakam.KYCTier.Tier2);
+        ProfileFacet(address(diamond)).updateKYCTier(b, LibVaipakam.KYCTier.Tier2);        // #3734 — a borrower posting an offer must be current on the Terms.
+        (uint32 v, bytes32 h) = LegalFacet(address(diamond)).getCurrentTos();
+        if (v != 0) {
+            vm.prank(b);
+            LegalFacet(address(diamond)).acceptTerms(v, h);
+        }
     }
 
     function _postBorrower(uint256 principal) internal returns (uint256 offerId) {
@@ -173,6 +180,7 @@ contract AggregatorAdapterTest is SetupTest {
         vm.prank(b);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: principal,
@@ -232,7 +240,7 @@ contract AggregatorAdapterTest is SetupTest {
         assertEq(adapter.haircutBps(), HAIRCUT_BPS, "haircut");
         // The adapter registered its standing intent (keeper-gated) as itself.
         LibVaipakam.LenderIntent memory it = LenderIntentFacet(address(diamond))
-            .getLenderIntent(address(adapter), mockERC20, mockCollateralERC20);
+            .getLenderIntent(address(adapter), mockERC20, mockCollateralERC20, 0);
         assertTrue(it.active, "intent active");
         assertTrue(it.requiresKeeperAuth, "keeper-gated");
         assertEq(it.maxExposure, MAX_EXPOSURE, "bounds");
@@ -308,7 +316,7 @@ contract AggregatorAdapterTest is SetupTest {
         assertApproxEqAbs(idle, DEPOSIT - fill, 0.01 ether, "idle ~ deposit - fill + kickback");
         uint256 live = LenderIntentFacet(address(diamond))
             .getLenderIntentLivePrincipal(
-                address(adapter), mockERC20, mockCollateralERC20
+                address(adapter), mockERC20, mockCollateralERC20, 0
             );
         // totalAssets = idle + risk-adjusted live (exact, from live state).
         assertEq(
@@ -379,7 +387,7 @@ contract AggregatorAdapterTest is SetupTest {
         adapter.windDownIntent();
         assertFalse(
             LenderIntentFacet(address(diamond))
-                .getLenderIntent(address(adapter), mockERC20, mockCollateralERC20)
+                .getLenderIntent(address(adapter), mockERC20, mockCollateralERC20, 0)
                 .active,
             "intent cancelled"
         );
@@ -512,7 +520,7 @@ contract AggregatorAdapterTest is SetupTest {
         uint256 idle = _idle();
         uint256 live = LenderIntentFacet(address(diamond))
             .getLenderIntentLivePrincipal(
-                address(adapter), mockERC20, mockCollateralERC20
+                address(adapter), mockERC20, mockCollateralERC20, 0
             );
         assertEq(
             adapter.totalAssets(),
@@ -624,6 +632,7 @@ contract AggregatorAdapterTest is SetupTest {
         vm.prank(aggregator);
         uint256 selfOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: fill,
@@ -728,5 +737,123 @@ contract AggregatorAdapterTest is SetupTest {
         vm.prank(aggregator);
         vm.expectRevert(AggregatorAdapterImplementation.CannotSweepProtocolNFT.selector);
         adapter.sweepNFTToPrincipal(core, tokenId);
+    }
+
+    // ─── #3734: the adapter's Terms standing is its principal's ─────────────
+
+    bytes32 internal constant TOS1 = keccak256("adapter ToS v1");
+    bytes32 internal constant TOS2 = keccak256("adapter ToS v2");
+
+    function _create(address principal) internal returns (address) {
+        vm.prank(owner);
+        return AggregatorAdapterFactoryFacet(address(diamond)).createAggregatorAdapter(
+            principal, mockERC20, mockCollateralERC20, HAIRCUT_BPS, keeper, "T", "T",
+            MAX_EXPOSURE, MIN_RATE, MAX_LTV, MAX_DUR, MIN_FILL
+        );
+    }
+
+    /// Creation is refused until the principal accepts with its own wallet;
+    /// the refusal names the principal, and the adapter answers with the
+    /// principal's standing.
+    function test_terms_creationNeedsThePrincipal() public {
+        LegalFacet(address(diamond)).publishTos(1, TOS1);
+        address p = makeAddr("termsPrincipal");
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(LibTerms.TermsNotAccepted.selector, p, uint32(1)));
+        AggregatorAdapterFactoryFacet(address(diamond)).createAggregatorAdapter(
+            p, mockERC20, mockCollateralERC20, HAIRCUT_BPS, keeper, "T", "T",
+            MAX_EXPOSURE, MIN_RATE, MAX_LTV, MAX_DUR, MIN_FILL
+        );
+        vm.prank(p);
+        LegalFacet(address(diamond)).acceptTerms(1, TOS1);
+        address a = _create(p);
+        assertTrue(LegalFacet(address(diamond)).isTermsCurrent(a), "the adapter answers with its principal");
+    }
+
+    /// Funding and fills stop while the principal is behind on the Terms and
+    /// resume once it accepts; the refusal names the principal.
+    function test_terms_fundingAndFillsFollowThePrincipal() public {
+        LegalFacet(address(diamond)).publishTos(1, TOS1);
+        assertFalse(LegalFacet(address(diamond)).isTermsCurrent(address(adapter)));
+        assertEq(adapter.maxDeposit(aggregator), 0, "funding advertised closed");
+        (address w, uint32 v) = LegalFacet(address(diamond)).termsBlocker(address(adapter), address(0));
+        assertEq(w, aggregator, "the blocker names the principal");
+        assertEq(v, 1);
+        vm.prank(aggregator);
+        LegalFacet(address(diamond)).acceptTerms(1, TOS1);
+        _deposit(DEPOSIT);
+        _match(100 ether);
+
+        // A material change comes into force: fills stop, then resume.
+        LegalFacet(address(diamond)).announceTos(2, TOS2, uint64(vm.getBlockTimestamp() + 7 days));
+        vm.warp(vm.getBlockTimestamp() + 7 days);
+        address b = makeAddr("adapterBorrower");
+        vm.prank(b);
+        LegalFacet(address(diamond)).acceptTerms(2, TOS2);
+        uint256 cp = _postBorrowerAs(b, 100 ether);
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(LibTerms.TermsNotAccepted.selector, aggregator, uint32(2)));
+        adapter.matchLoan(cp, 100 ether);
+        vm.prank(aggregator);
+        LegalFacet(address(diamond)).acceptTerms(2, TOS2);
+        vm.prank(keeper);
+        assertGt(adapter.matchLoan(cp, 100 ether), 0);
+    }
+
+    /// Deposit and mint are refused naming the principal while it is behind;
+    /// the max views stay 0 as the standard requires.
+    function test_terms_depositAndMintNameThePrincipal() public {
+        LegalFacet(address(diamond)).publishTos(1, TOS1);
+        assertEq(adapter.maxDeposit(aggregator), 0);
+        assertEq(adapter.maxMint(aggregator), 0);
+        ERC20Mock(mockERC20).mint(aggregator, 10 ether);
+        vm.startPrank(aggregator);
+        ERC20(mockERC20).approve(address(adapter), 10 ether);
+        vm.expectRevert(abi.encodeWithSelector(LibTerms.TermsNotAccepted.selector, aggregator, uint32(1)));
+        adapter.deposit(10 ether, aggregator);
+        vm.expectRevert(abi.encodeWithSelector(LibTerms.TermsNotAccepted.selector, aggregator, uint32(1)));
+        adapter.mint(10 ether, aggregator);
+        LegalFacet(address(diamond)).acceptTerms(1, TOS1);
+        adapter.deposit(10 ether, aggregator);
+        vm.stopPrank();
+    }
+
+    /// The reordered creation: a failed initialize reverts the registration
+    /// with it, and nobody but the Diamond can initialize a proxy over the
+    /// template, so the uninitialized step cannot be reached from outside.
+    function test_terms_failedCreationLeavesNoRegistration() public {
+        LegalFacet(address(diamond)).publishTos(1, TOS1);
+        address p = makeAddr("termsPrincipal2");
+        address predicted = vm.computeCreateAddress(address(diamond), vm.getNonce(address(diamond)));
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(LibTerms.TermsNotAccepted.selector, p, uint32(1)));
+        AggregatorAdapterFactoryFacet(address(diamond)).createAggregatorAdapter(
+            p, mockERC20, mockCollateralERC20, HAIRCUT_BPS, keeper, "T", "T",
+            MAX_EXPOSURE, MIN_RATE, MAX_LTV, MAX_DUR, MIN_FILL
+        );
+        assertFalse(AggregatorAdapterFactoryFacet(address(diamond)).isAggregatorAdapter(predicted), "no registration");
+        assertEq(predicted.code.length, 0, "no proxy");
+
+        ERC1967Proxy proxy = new ERC1967Proxy(AggregatorAdapterFactoryFacet(address(diamond)).aggregatorAdapterTemplate(), "");
+        vm.expectRevert(AggregatorAdapterImplementation.NotDiamond.selector);
+        AggregatorAdapterImplementation(address(proxy)).initialize(
+            address(diamond), p, mockERC20, mockCollateralERC20, HAIRCUT_BPS, keeper, "x", "x",
+            MAX_EXPOSURE, MIN_RATE, MAX_LTV, MAX_DUR, MIN_FILL
+        );
+    }
+
+    /// A claim never waits on the Terms: with the principal behind, the
+    /// claim succeeds and the re-fund (new lending) is skipped.
+    function test_terms_claimSucceedsAndSkipsTheReFund() public {
+        _deposit(DEPOSIT);
+        uint256 loanId = _match(500 ether);
+        address b = LoanFacet(address(diamond)).getLoanDetails(loanId).borrower;
+        vm.prank(b);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+        LegalFacet(address(diamond)).publishTos(1, TOS1);
+        uint256 rawBefore = IERC20(mockERC20).balanceOf(address(adapter));
+        vm.prank(keeper);
+        adapter.claimAndCompound(loanId, new LibSwap.AdapterCall[](0));
+        assertGt(IERC20(mockERC20).balanceOf(address(adapter)), rawBefore, "proceeds held in the adapter, sweepable");
     }
 }

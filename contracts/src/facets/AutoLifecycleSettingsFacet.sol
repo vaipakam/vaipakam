@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibStandingInstructions} from "../libraries/LibStandingInstructions.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
@@ -78,7 +79,8 @@ contract AutoLifecycleSettingsFacet is DiamondReentrancyGuard, DiamondPausable {
         bool enabled,
         uint16 minRateBps,
         uint16 maxRateBps,
-        uint64 maxNewExpiry
+        uint64 maxNewExpiry,
+        uint256 maxExtensionFee
     );
 
     /// @notice Emitted when the lender side updates per-loan extend caps.
@@ -95,6 +97,10 @@ contract AutoLifecycleSettingsFacet is DiamondReentrancyGuard, DiamondPausable {
     // ─── Errors ──────────────────────────────────────────────────────
 
     /// @notice Returned when caps are nonsensical (min > max, expiry in past, etc.).
+    /// @notice #3681 — the loan's due date already has a plan: the
+    ///         holder's "repay at the due date" standing instruction. Clear it
+    ///         first (`StandingInstructionFacet.clearStandingInstructions`).
+    error DueDatePlanExists(uint256 loanId);
     error InvalidCaps();
     /// @notice Returned when the loan isn't Active.
     error LoanNotActive();
@@ -218,6 +224,9 @@ contract AutoLifecycleSettingsFacet is DiamondReentrancyGuard, DiamondPausable {
         LibAuth.requireBorrowerNftOwner(loan);
 
         if (enabled) {
+            // #3681 — one plan for the due date: refused while the holder's
+            // "repay at the due date" standing instruction stands.
+            if (LibStandingInstructions.repayAtDueLive(s, loan)) revert DueDatePlanExists(loanId);
             // maxRateBps == 0 permitted — borrower may consent only
             // to a 0% refinance. But values above MAX_INTEREST_BPS
             // make the cap meaningless; reject them.
@@ -262,13 +271,18 @@ contract AutoLifecycleSettingsFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         up). When enabled, the executor picks `newRateBps` in
     ///         `[lender.minRateBps, borrower.maxRateBps]` and
     ///         `newEndTime ≤ min(borrower.maxNewExpiry,
-    ///         lender.maxNewExpiry)`.
+    ///         lender.maxNewExpiry)`. #3649 — `maxExtensionFee` is the
+    ///         largest added initiation fee, in the lending asset, an
+    ///         extension may charge this holder's vault; 0 admits only an
+    ///         extension that adds no fee (FeeLevelsFacet.quoteExtensionFee
+    ///         prices one).
     function setAutoExtendBorrowerCaps(
         uint256 loanId,
         bool enabled,
         uint16 minRateBps,
         uint16 maxRateBps,
-        uint64 maxNewExpiry
+        uint64 maxNewExpiry,
+        uint256 maxExtensionFee
     ) external nonReentrant whenNotPaused {
         LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -277,16 +291,19 @@ contract AutoLifecycleSettingsFacet is DiamondReentrancyGuard, DiamondPausable {
         LibAuth.requirePositionManager(loan.borrowerTokenId);
 
         _validateExtendCaps(enabled, minRateBps, maxRateBps, maxNewExpiry);
+        // #3681 — one plan for the due date (see {setAutoRefinanceCaps}).
+        if (enabled && LibStandingInstructions.repayAtDueLive(s, loan)) revert DueDatePlanExists(loanId);
 
         s.autoExtendBorrowerCaps[loanId] = LibVaipakam.AutoExtendCaps({
             enabled: enabled,
             minRateBps: minRateBps,
             maxRateBps: maxRateBps,
             maxNewExpiry: maxNewExpiry,
-            setter: msg.sender
+            setter: msg.sender,
+            maxExtensionFee: maxExtensionFee
         });
         emit AutoExtendBorrowerCapsChanged(
-            loanId, msg.sender, enabled, minRateBps, maxRateBps, maxNewExpiry
+            loanId, msg.sender, enabled, minRateBps, maxRateBps, maxNewExpiry, maxExtensionFee
         );
     }
 
@@ -324,7 +341,8 @@ contract AutoLifecycleSettingsFacet is DiamondReentrancyGuard, DiamondPausable {
             minRateBps: minRateBps,
             maxRateBps: maxRateBps,
             maxNewExpiry: maxNewExpiry,
-            setter: msg.sender
+            setter: msg.sender,
+            maxExtensionFee: 0
         });
         emit AutoExtendLenderCapsChanged(
             loanId, msg.sender, enabled, minRateBps, maxRateBps, maxNewExpiry

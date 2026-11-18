@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
@@ -170,10 +171,16 @@ contract AggregatorAdapterFactoryFacet is
                 intentMinFillAmount
             )
         );
-        adapter = address(
-            new ERC1967Proxy(s.aggregatorAdapterTemplate, data)
-        );
+        // #3734 — register the adapter and its principal BEFORE it
+        // initializes: its initialize registers the standing intent, which
+        // asks the Terms rule, and an adapter's standing is its principal's.
+        // The proxy is deployed uninitialized and initialized in the same
+        // transaction (initialize accepts only the Diamond as caller), so
+        // nobody can reach it in between.
+        adapter = address(new ERC1967Proxy(s.aggregatorAdapterTemplate, ""));
         s.isAggregatorAdapter[adapter] = true;
+        s.adapterPrincipal[adapter] = principal;
+        Address.functionCall(adapter, data);
         s.adapterVersion[adapter] = s.currentAdapterVersion;
         // #1219 (S-4) — the adapter's fills are charged to the keeper it names
         // (actor rule 2: the operator bound at registration, never the adapter

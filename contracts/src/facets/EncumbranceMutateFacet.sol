@@ -28,6 +28,12 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
  *         `PrecloseFacet.precloseDirect`, `RefinanceFacet`'s
  *         old-loan close, and `ClaimFacet`'s Settled transitions).
  *
+ *         #3685 — the four collateral-lien entries (release, decrement,
+ *         increment, re-create) moved to `CollateralLienFacet` when the
+ *         platform-wide pledged total joined every lien change and this
+ *         facet ran out of EIP-170 room. The offer-principal lock and the
+ *         close-out freeze surface stay here.
+ *
  * @dev    Every MUTATING selector is gated to `msg.sender == address(this)`
  *         so an external EOA cannot reach the lien mutate surface
  *         directly — only the diamond itself (via `crossFacetCall`)
@@ -50,19 +56,6 @@ contract EncumbranceMutateFacet is DiamondReentrancyGuard {
     modifier onlyDiamondInternal() {
         _checkDiamondInternal();
         _;
-    }
-
-    /// @notice Release a per-loan collateral lien in full. Idempotent
-    ///         (already-released or empty rows are no-ops). Callers
-    ///         (loan-lifecycle terminal facets) invoke this via
-    ///         `LibFacet.crossFacetCall` so the heavy lifting (the
-    ///         aggregate decrement + tombstone) lives in this facet's
-    ///         bytecode, not the caller's.
-    function releaseCollateralLien(uint256 loanId)
-        external
-        onlyDiamondInternal
-    {
-        LibEncumbrance.releaseCollateralLien(loanId);
     }
 
     /// @notice #954 (§1.1) — freeze a full swap-to-repay's LENDER proceeds into
@@ -90,54 +83,16 @@ contract EncumbranceMutateFacet is DiamondReentrancyGuard {
     ///         principal SURPLUS: direct EOA payout for a clean current holder,
     ///         freeze-at-source into the stored borrower's vault (+ surplus claim
     ///         row + encumber-all + VPFI tier-exclude) for a sanctioned one. See
-    ///         {LibCloseoutFreeze.freezeOrPayBorrowerSurplus}. Hosted here for
+    ///         {LibCloseoutFreeze.holdBorrowerSurplus}. Hosted here for
     ///         the same EIP-170 reason as {freezeLenderProceeds}.
-    function freezeOrPayBorrowerSurplus(
+    function holdBorrowerSurplus(
         uint256 loanId,
         address currentHolder,
         uint256 surplus
     ) external onlyDiamondInternal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibCloseoutFreeze.freezeOrPayBorrowerSurplus(
+        LibCloseoutFreeze.holdBorrowerSurplus(
             s, loanId, s.loans[loanId], currentHolder, surplus
-        );
-    }
-
-    /// @notice #407 PR 4 round-1 Codex P1 #1 (2026-06-12) — decrement
-    ///         an active lien by `consumed`. See
-    ///         {LibEncumbrance.decrementCollateralLien}.
-    function decrementCollateralLien(uint256 loanId, uint256 consumed)
-        external
-        onlyDiamondInternal
-    {
-        LibEncumbrance.decrementCollateralLien(loanId, consumed);
-    }
-
-    /// @notice #407 PR 4 round-1 Codex P2 #6 (2026-06-12) — increment
-    ///         an active lien by `added`. See
-    ///         {LibEncumbrance.incrementCollateralLien}.
-    function incrementCollateralLien(uint256 loanId, uint256 added)
-        external
-        onlyDiamondInternal
-    {
-        LibEncumbrance.incrementCollateralLien(loanId, added);
-    }
-
-    /// @notice #569 §4.4 (2026-06-13) — re-create the lien from the
-    ///         loan row's CURRENT `(borrower, collateralAsset, amount)`
-    ///         state. Used as the create-leg of an obligation-transfer
-    ///         rekey (`PrecloseFacet.transferObligationViaOffer`):
-    ///         after the old borrower's lien is released and the loan
-    ///         is rewritten to the new borrower, this locks the new
-    ///         borrower's collateral. No-op on NFT-rental loans (D-1).
-    ///         See {LibEncumbrance.recreateCollateralLien}.
-    function recreateCollateralLien(uint256 loanId)
-        external
-        onlyDiamondInternal
-    {
-        LibEncumbrance.recreateCollateralLien(
-            loanId,
-            LibVaipakam.storageSlot().loans[loanId]
         );
     }
 
@@ -417,29 +372,20 @@ contract EncumbranceMutateFacet is DiamondReentrancyGuard {
         }
     }
 
-    /// @notice #998 S10 (#1006) Class B — pay-or-freeze an ACTIVE-loan inline
-    ///         lender share whose funds sit in the DIAMOND (periodic-interest
-    ///         auto-liquidation proceeds). A clean/never-confirmed holder is paid
-    ///         directly; a registry-frozen holder's share is parked into the stored
-    ///         lender's vault + `heldForLender` + encumbered + marked. See
-    ///         {LibCloseoutFreeze.freezeOrPayActiveLenderResident}.
-    /// @dev    Hosted here (not inlined into `RepayPeriodicFacet`) so that
-    ///         EIP-170-tight servicing facet stays under the size ceiling — the
-    ///         registry-aware `mustFreezeParty` + park machinery is heavy. Runs in
-    ///         the diamond's storage context, so it reads the live loan and the
-    ///         diamond-held proceeds exactly as an inline call would.
+    /// @notice #3629 — hold an open-loan lender share whose funds sit in the
+    ///         Diamond for the lender position. See
+    ///         {LibCloseoutFreeze.holdActiveLenderResident}.
+    /// @dev    Hosted here (not inlined into the servicing facets) so those
+    ///         EIP-170-tight facets stay under the size ceiling.
     /// @param amount        The lender side's whole payout (principal and net
     ///                      interest).
-    /// @param interestGross #1209 / #1808 — the gross interest in `amount`,
-    ///                      before the fee. Open seller claims are paid first
-    ///                      out of it; 0 for a payout that carries no interest.
+    /// @param interestGross The gross interest in `amount`, before the fee;
+    ///                      open seller claims are paid first out of it.
     /// @param interestNet   The net interest in `amount`, after the fee.
-    /// @return delivered #2440 — `amount` when the clean holder's wallet was
-    ///         paid (a short arrival there is refused, since a wallet reading
-    ///         is trusted only to refuse); the sellers' part plus what the
-    ///         stored lender's vault received when the share was frozen, never
-    ///         more than `amount`. The caller credits the loan by this figure.
-    function freezeOrPayActiveLenderResident(
+    /// @return delivered The sellers' part plus what the stored lender's vault
+    ///         received, never more than `amount`. The caller credits the loan
+    ///         by this figure.
+    function holdActiveLenderResident(
         uint256 loanId,
         address asset,
         uint256 amount,
@@ -447,20 +393,15 @@ contract EncumbranceMutateFacet is DiamondReentrancyGuard {
         uint256 interestNet
     ) external onlyDiamondInternal returns (uint256 delivered) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        delivered = LibCloseoutFreeze.freezeOrPayActiveLenderResident(
+        delivered = LibCloseoutFreeze.holdActiveLenderResident(
             s, loanId, s.loans[loanId], asset, amount, interestGross, interestNet
         );
     }
 
-    /// @notice #998 S10 (#1006) Class B — pay-or-freeze an ACTIVE-loan inline
-    ///         lender share funded by a `payer` via `approve` (the ERC-20
-    ///         partial-repay principal+interest payout). Direct
-    ///         `safeTransferFrom(payer → holder)` for a clean holder; park into the
-    ///         stored lender's vault for a frozen one. See
-    ///         {LibCloseoutFreeze.freezeOrPayActiveLenderFromPayer}.
-    ///         `interestGross` / `interestNet` name the interest in `amount`
-    ///         (#1209 / #1808), as on {freezeOrPayActiveLenderResident}.
-    function freezeOrPayActiveLenderFromPayer(
+    /// @notice #3629 — hold an open-loan lender share a `payer` funds through
+    ///         an approval (the ERC-20 partial repayment). See
+    ///         {LibCloseoutFreeze.holdActiveLenderFromPayer}.
+    function holdActiveLenderFromPayer(
         uint256 loanId,
         address payer,
         address asset,
@@ -469,25 +410,22 @@ contract EncumbranceMutateFacet is DiamondReentrancyGuard {
         uint256 interestNet
     ) external onlyDiamondInternal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibCloseoutFreeze.freezeOrPayActiveLenderFromPayer(
+        LibCloseoutFreeze.holdActiveLenderFromPayer(
             s, loanId, s.loans[loanId], payer, asset, amount, interestGross, interestNet
         );
     }
 
-    /// @notice #998 S10 (#1006) Class B — pay-or-freeze an ACTIVE-loan inline
-    ///         lender share funded from a loan party's VAULT (the NFT-rental
-    ///         prepay pool). Withdraw `fromUser`'s vault → holder for a clean
-    ///         holder; vault → stored-lender-vault park for a frozen one. Both
-    ///         branches arm the move-out exemption. See
-    ///         {LibCloseoutFreeze.freezeOrPayActiveLenderFromVault}.
-    function freezeOrPayActiveLenderFromVault(
+    /// @notice #3629 — hold an open-loan lender share funded from a loan
+    ///         party's vault (the NFT rental's prepay pool). See
+    ///         {LibCloseoutFreeze.holdActiveLenderFromVault}.
+    function holdActiveLenderFromVault(
         uint256 loanId,
         address fromUser,
         address asset,
         uint256 amount
     ) external onlyDiamondInternal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibCloseoutFreeze.freezeOrPayActiveLenderFromVault(
+        LibCloseoutFreeze.holdActiveLenderFromVault(
             s, loanId, s.loans[loanId], fromUser, asset, amount
         );
     }

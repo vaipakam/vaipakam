@@ -50,13 +50,14 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
         address indexed matcher,
         address lendingAsset,
         address collateralAsset,
+        uint8 slot,
         uint256 sliceOfferId,
         uint256 counterpartyOfferId,
         uint256 loanId,
         uint256 fillAmount
     );
 
-    /// @notice No active standing intent for `(lender, lendingAsset, collateralAsset)`.
+    /// @notice No active standing intent for `(lender, lendingAsset, collateralAsset, slot)`.
     error LenderIntentInactive();
     /// @notice `fillAmount` is below the intent's `minFillAmount`, or zero.
     error LenderIntentFillBelowMin();
@@ -101,6 +102,9 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
     /// @param lender              The standing-intent owner (= loan lender).
     /// @param lendingAsset        ERC-20 the lender supplies (intent key).
     /// @param collateralAsset     ERC-20 collateral the lender accepts (intent key).
+    /// @param slot                #3626 — which of the lender's intents on the pair
+    ///                            fills (intent key). The caller names it; the
+    ///                            protocol does not choose between a lender's slots.
     /// @param counterpartyOfferId The on-chain BORROWER offer to fill against.
     /// @param fillAmount          Principal this match fills.
     /// @return loanId             The initiated loan.
@@ -108,6 +112,7 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
         address lender,
         address lendingAsset,
         address collateralAsset,
+        uint8 slot,
         uint256 counterpartyOfferId,
         uint256 fillAmount
     ) external nonReentrant whenNotPaused returns (uint256 loanId) {
@@ -126,7 +131,7 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
         ) revert AggregatorAdaptersPaused();
 
         LibVaipakam.LenderIntent memory intent =
-            s.lenderIntent[lender][lendingAsset][collateralAsset];
+            s.lenderIntent[lender][lendingAsset][collateralAsset][slot];
         if (!intent.active) revert LenderIntentInactive();
         // #3443 — the intent's terms must have stood the minimum age, so an
         // intent cannot be set (or re-priced) and filled in the same block.
@@ -142,7 +147,7 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
         }
 
         if (fillAmount < intent.minFillAmount) revert LenderIntentFillBelowMin();
-        uint256 live = s.lenderIntentLivePrincipal[lender][lendingAsset][collateralAsset];
+        uint256 live = s.lenderIntentLivePrincipal[lender][lendingAsset][collateralAsset][slot];
         if (live + fillAmount > intent.maxExposure) {
             revert LenderIntentExposureExceeded();
         }
@@ -204,11 +209,11 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
         // a fill can never lend more than the lender has funded. (This is the
         // hard funding guard; `maxExposure` checked above is the declared cap.)
         LibEncumbrance.unlienIntentCapital(
-            lender, lendingAsset, collateralAsset, fillAmount
+            lender, lendingAsset, collateralAsset, slot, fillAmount
         );
         // #625 WI-2a — the draw-down may have depleted the intent's funded capital ⇒
         // re-sync the discovery registry (de-lists it from the keeper feed if now 0).
-        LibVaipakam.syncIntentRegistry(lender, lendingAsset, collateralAsset);
+        LibVaipakam.syncIntentRegistry(lender, lendingAsset, collateralAsset, slot);
 
         // Materialize the single-fill lender slice (creator = lender; consumes
         // the just-freed slice from the lender's vault + creates the
@@ -238,17 +243,18 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
         // #2550 — when the solver's capacity would REFUSE it, an opted-in intent
         // whose owner holds a priority credit spends that credit instead
         // (`LibPriorityRouting.chargeFill`; otherwise this is `chargeSolver()`).
-        LibPriorityRouting.chargeFill(s, lender, lendingAsset, collateralAsset, loanId);
+        LibPriorityRouting.chargeFill(s, lender, lendingAsset, collateralAsset, slot, loanId);
 
         // Record exposure + the originating intent key (so the terminal-close
         // release survives a lender-position sale that mutates `loan.lender`).
-        s.lenderIntentLivePrincipal[lender][lendingAsset][collateralAsset] =
+        s.lenderIntentLivePrincipal[lender][lendingAsset][collateralAsset][slot] =
             live + fillAmount;
         s.intentOrigin[loanId] = LibVaipakam.IntentOrigin({
             owner: lender,
             lendingAsset: lendingAsset,
             collateralAsset: collateralAsset,
-            amount: fillAmount // release the ORIGINAL fill, not a partial-repaid remainder
+            amount: fillAmount, // release the ORIGINAL fill, not a partial-repaid remainder
+            slot: slot
         });
         // #625 WI-2c — register the loan in the roll-discovery set (removed when
         // its intentOrigin is cleared at terminal release / roll).
@@ -270,6 +276,7 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
             msg.sender,
             lendingAsset,
             collateralAsset,
+            slot,
             sliceOfferId,
             counterpartyOfferId,
             loanId,

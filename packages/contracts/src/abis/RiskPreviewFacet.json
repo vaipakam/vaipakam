@@ -179,6 +179,11 @@
         "internalType": "address"
       },
       {
+        "name": "slot",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
         "name": "counterpartyOfferId",
         "type": "uint256",
         "internalType": "uint256"
@@ -426,6 +431,11 @@
             "name": "useFullTermInterest",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "lifecycleFlex",
+            "type": "uint8",
+            "internalType": "uint8"
           },
           {
             "name": "creatorFull",

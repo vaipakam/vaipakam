@@ -25,6 +25,9 @@ import { OFFER_TYPE_LENDER } from '../positions/model';
 type Hex = `0x${string}`;
 
 const MATCH = OfferMatchFacetABI as Abi;
+/** #3621 — `Offer.lifecycleFlex` bits, as `LibVaipakam` defines them. */
+const LIFECYCLE_FLEX_PARTIAL_REPAY = 1;
+const LIFECYCLE_FLEX_PREPAY_LISTING = 2;
 
 /** How many of the closest counterparties are asked for and read. */
 export const NEAREST_ASKED = 5;
@@ -151,11 +154,16 @@ export type Why =
   | { kind: 'unread' };
 
 /** The first lifecycle option the two offers differ on, in the order the
- *  protocol lists them; null when they agree on all four. */
+ *  protocol lists them; null when they agree on all four. A lender offer
+ *  that takes partial repay or the prepay listing "either way" (#3621,
+ *  `lifecycleFlex`) agrees with the request on that option whatever it
+ *  says, as the protocol's match rule does. */
 export function optionGap(a: StoredOffer, b: StoredOffer): OptionGap | null {
+  const lender = a.offerType === OFFER_TYPE_LENDER ? a : b.offerType === OFFER_TYPE_LENDER ? b : null;
+  const flex = lender?.lifecycleFlex ?? 0;
   if (a.useFullTermInterest !== b.useFullTermInterest) return 'interest-mode';
-  if (a.allowsPartialRepay !== b.allowsPartialRepay) return 'partial';
-  if (a.allowsPrepayListing !== b.allowsPrepayListing) return 'prepay';
+  if (a.allowsPartialRepay !== b.allowsPartialRepay && (flex & LIFECYCLE_FLEX_PARTIAL_REPAY) === 0) return 'partial';
+  if (a.allowsPrepayListing !== b.allowsPrepayListing && (flex & LIFECYCLE_FLEX_PREPAY_LISTING) === 0) return 'prepay';
   if (a.periodicInterestCadence !== b.periodicInterestCadence) return 'cadence';
   return null;
 }

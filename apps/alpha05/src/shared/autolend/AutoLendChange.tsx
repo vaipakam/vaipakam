@@ -15,13 +15,13 @@ type Hex = `0x${string}`;
 
 /** The store key one pair's change of limits lives under (the typed form,
  *  the draft, the review and its tracker), so it outlives the page. */
-export function changeKeyFor(lending: Hex, collateral: Hex): string {
-  return `autolend.change.${lending.toLowerCase()}.${collateral.toLowerCase()}`;
+export function changeKeyFor(lending: Hex, collateral: Hex, slot: number): string {
+  return `autolend.change.${lending.toLowerCase()}.${collateral.toLowerCase()}.${slot}`;
 }
 
 /** Whether a pair's change panel is open, held in the store with the flow. */
-export function useChangeOpen(lending: Hex, collateral: Hex): [boolean, (open: boolean) => void] {
-  const [open, setOpen] = useStoredValue<boolean>(`${changeKeyFor(lending, collateral)}:open`);
+export function useChangeOpen(lending: Hex, collateral: Hex, slot: number): [boolean, (open: boolean) => void] {
+  const [open, setOpen] = useStoredValue<boolean>(`${changeKeyFor(lending, collateral, slot)}:open`);
   return [open === true, (v) => setOpen(v ? true : null)];
 }
 
@@ -48,7 +48,7 @@ interface AutoLendChangeProps {
  * accepted first, through the same prompt, before the review opens.
  */
 export function AutoLendChange({ intent, restart, chain, own, meta, onClose }: AutoLendChangeProps) {
-  const key = changeKeyFor(intent.lendingAsset, intent.collateralAsset);
+  const key = changeKeyFor(intent.lendingAsset, intent.collateralAsset, intent.slot);
   const { text } = useCopy();
   const terms = useTerms();
   const termsGate = useTermsGate(`${key}.terms`, chain, own);
@@ -115,7 +115,7 @@ export function AutoLendChange({ intent, restart, chain, own, meta, onClose }: A
       collateral={intent.collateralAsset}
       meta={meta}
       flowKey={key}
-      change={{ initial: inputFromIntent(intent, decimals), restart }}
+      change={{ initial: inputFromIntent(intent, decimals), restart, slot: intent.slot }}
       onReview={review}
       onCancel={finish}
     />

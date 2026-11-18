@@ -33,7 +33,8 @@ test('a borrower’s extension reserve is listed, drawable while the loan runs, 
   const reserve = parseEther('0.05');
   await sc.write('borrower', WETH, TOKEN_ABI, 'deposit', [], reserve);
   await sc.write('borrower', WETH, erc20Abi, 'approve', [sc.diamond, reserve]);
-  await sc.diamondWrite('borrower', 'fundExtendReserve', [loanId, reserve]);
+  // The payment reserve is the loan reserve of kind 0 (#3681).
+  await sc.diamondWrite('borrower', 'fundLoanReserve', [loanId, 0, reserve]);
   const [, reserved] = await sc.read<Funding>('getExtendFunding', [loanId, borrowerAddr]);
   expect(reserved).toBe(reserve);
 

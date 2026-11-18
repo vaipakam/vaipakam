@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestCollateralCut} from "../helpers/LibTestCollateralCut.sol";
+import {LibTestTermsCut} from "../helpers/LibTestTermsCut.sol";
 import {LibTestProtectedCut} from "../helpers/LibTestProtectedCut.sol";
 import {LibTestPositionNFT} from "../helpers/LibTestPositionNFT.sol";
 import {LibTestVaultEndpoints} from "../helpers/LibTestVaultEndpoints.sol";
@@ -77,7 +79,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
     address mockZeroExProxy;
 
     uint256 constant BASIS_POINTS = 10000;
-    uint256 constant TREASURY_FEE_BPS = 200; // 2% (rev-8 freeze #1352; loans snapshot the live default at origination)
+    uint256 constant TREASURY_FEE_BPS = 500; // 5% (#3649; loans snapshot the live default at origination)
     uint256 constant RENTAL_BUFFER_BPS = 500; // 5%
 
     uint256 constant DAILY_FEE = 10 ether; // daily fee for the 5-token bundle
@@ -285,6 +287,8 @@ contract Scenario2b_ERC1155RentalLending is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
+        cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
+        cuts = LibTestTermsCut.withTermsHost(cuts); // #3734
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         LibTestForcedSalePreview.install(address(diamond));
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
@@ -363,6 +367,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(mockNft1155),
                 amount: DAILY_FEE,

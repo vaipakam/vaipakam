@@ -134,6 +134,11 @@
             "internalType": "bool"
           },
           {
+            "name": "lifecycleFlex",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
             "name": "creatorFull",
             "type": "bool",
             "internalType": "bool"
@@ -414,6 +419,17 @@
     "type": "error",
     "name": "CollateralBelowRequired",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CrossFacetCallFailed",
+    "inputs": [
+      {
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
   },
   {
     "type": "error",

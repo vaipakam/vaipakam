@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
+import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
@@ -13,6 +14,7 @@ import {LibLenderYieldFeeHost} from "../libraries/LibLenderYieldFeeHost.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
+import {CollateralLienFacet} from "./CollateralLienFacet.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
@@ -321,14 +323,14 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 // #2440: the loan's collateral becomes what arrived) and the
                 // loan enters the fallback exactly as a failed swap would.
                 _releaseLienAtDefault(loanId);
-                loan.collateralAmount = LibSanctionedLock.pullToDiamond(
+                LibLoanCollateral.set(loan, LibSanctionedLock.pullToDiamond(
                     s,
                     loan.borrower,
                     loan.collateralAsset,
                     loan.collateralAmount,
                     loanId,
                     OutflowReason.LIQUIDATION
-                );
+                ));
                 _enterFallback(loanId);
                 emit LoanFallbackPending(
                     loanId,
@@ -417,7 +419,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                     // the lender's claim below names, what it received. The
                     // loan's collateral becomes that figure (one transfer, so
                     // a token that charges on transfer charges once).
-                    loan.collateralAmount = LibVaultOutflow.toClaimCustody(loan.borrower, LibVaultOutflow.ERC20, loan.collateralAsset, 0, loan.collateralAmount, loanId, loan.lenderTokenId, OutflowReason.DEFAULT_TRANSFER);
+                    LibLoanCollateral.set(loan, LibVaultOutflow.toClaimCustody(loan.borrower, LibVaultOutflow.ERC20, loan.collateralAsset, 0, loan.collateralAmount, loanId, loan.lenderTokenId, OutflowReason.DEFAULT_TRANSFER));
                     // The policy books the lender vault's tracked arrival
                     // (#3205 part 2: one place books both sides of a vault move).
                 } else if (loan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
@@ -729,7 +731,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // limit, and hosting this substantial lib call is the cheapest reclaim.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.releaseCollateralLien.selector,
+                CollateralLienFacet.releaseCollateralLien.selector,
                 loanId
             ),
             bytes4(0)

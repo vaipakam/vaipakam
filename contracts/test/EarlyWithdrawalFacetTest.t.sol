@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestCollateralCut} from "./helpers/LibTestCollateralCut.sol";
+import {LibTestTermsCut} from "./helpers/LibTestTermsCut.sol";
 import {LibTiming} from "../src/libraries/LibTiming.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestProtection} from "./helpers/LibTestProtection.sol";
@@ -87,6 +89,16 @@ import {LibTestTiming} from "./helpers/LibTestTiming.sol";
  * @notice Tests EarlyWithdrawalFacet: sellLoanViaBuyOffer and createLoanSaleOffer.
  */
 contract EarlyWithdrawalFacetTest is Test {
+
+    /// @dev What `who` owns of `token`: the wallet plus the depository
+    ///      holding in their vault. #3629 pays sale proceeds into the
+    ///      seller's vault, so a wallet balance alone no longer shows them.
+    ///      This suite's Diamond carries no depository facet, so the vault's
+    ///      own balance stands in for the depository holding.
+    function _owned(address who, address token) internal view returns (uint256) {
+        address vault = VaultFactoryFacet(address(diamond)).getUserVaultAddress(who);
+        return ERC20(token).balanceOf(who) + (vault == address(0) ? 0 : ERC20(token).balanceOf(vault));
+    }
     VaipakamDiamond diamond;
     address owner;
     address lender;
@@ -443,6 +455,8 @@ contract EarlyWithdrawalFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getLoanClockFacetSelectors()
         });
+        cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
+        cuts = LibTestTermsCut.withTermsHost(cuts); // #3734
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
@@ -499,6 +513,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -535,6 +550,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         buyOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -788,6 +804,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(borrower);
         uint256 borrowerBuyOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -1015,9 +1032,10 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(lender);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
         uint64 atBlock = uint64(vm.getBlockNumber());
-        uint64 readyAt = uint64(vm.getBlockTimestamp()) + 5;
+        // #3710 — the seller's own sale retires its token: the long wait.
+        uint64 readyAt = uint64(vm.getBlockTimestamp()) + 900;
 
-        (uint64 b2, uint64 r2) = VaipakamNFTFacet(address(diamond)).positionTransferCooldown(oldToken);
+        (, uint64 b2, uint64 r2) = VaipakamNFTFacet(address(diamond)).positionState(oldToken);
         assertEq(b2, atBlock, "the sale stamped the loan");
         assertEq(r2, readyAt);
         PositionNFT nft = LibTestPositionNFT.core(address(diamond));
@@ -1061,22 +1079,22 @@ contract EarlyWithdrawalFacetTest is Test {
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
     }
 
-    /// @dev #2440 (Codex r2) — the direct sale is voluntary: the seller's net
-    ///      (`toLiam`) is refused unless it all arrives, so the seller floor is
-    ///      what the seller actually receives. Only transfers out of the Diamond
-    ///      are charged, so the refusal names exactly that payout. Kills: an
-    ///      unmeasured payout that completes the sale with the seller short.
+    /// @dev #2440 / #3629 — the direct sale credits the seller's own vault,
+    ///      measured, and the least net the seller reviewed is checked against
+    ///      what arrived. Only transfers out of the Diamond are charged, so the
+    ///      refusal names exactly that payout. Kills: an unmeasured payout that
+    ///      completes the sale with the seller short.
     function testSellLoanViaBuyOffer_SellerNetShort_Refused() public {
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.retirePosition.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
         uint256 snap = vm.snapshotState();
-        uint256 seller0 = ERC20(mockERC20).balanceOf(lender);
+        uint256 seller0 = _owned(lender, mockERC20);
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
         vm.prank(lender);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
-        uint256 net = ERC20(mockERC20).balanceOf(lender) - seller0;
+        uint256 net = _owned(lender, mockERC20) - seller0;
         assertGt(net, 0, "fixture: the seller is paid a net");
         vm.revertToState(snap);
 
@@ -1084,11 +1102,11 @@ contract EarlyWithdrawalFacetTest is Test {
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
         vm.expectRevert(
             abi.encodeWithSelector(
-                IVaipakamErrors.TokenDeliveryShort.selector, mockERC20, net, net - (net * 100) / 10_000
+                EarlyWithdrawalDirectFacet.SaleNetBelowReviewed.selector, net - (net * 100) / 10_000, net
             )
         );
         vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, net, type(uint256).max, type(uint64).max);
     }
 
     /// @dev The fee-on-transfer switch for the two seller-net cells: etched
@@ -1194,14 +1212,14 @@ contract EarlyWithdrawalFacetTest is Test {
         assertGt(earned, 0, "fixture: the seller earned interest");
 
         _mockSaleSideEffects();
-        uint256 openingSeller = ERC20(mockERC20).balanceOf(lender);
+        uint256 openingSeller = _owned(lender, mockERC20);
         LibTestTiming.backdateTerms(address(diamond), buyOfferId); // #3443
         vm.prank(lender);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
         vm.clearMockedCalls();
 
         assertEq(
-            ERC20(mockERC20).balanceOf(lender) - openingSeller,
+            _owned(lender, mockERC20) - openingSeller,
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId).principal,
             "the seller is paid the whole principal"
         );
@@ -1216,13 +1234,13 @@ contract EarlyWithdrawalFacetTest is Test {
         uint256 earned = _earned(activeLoanId, block.timestamp - start);
 
         _mockSaleSideEffects();
-        uint256 openingSeller = ERC20(mockERC20).balanceOf(lender);
+        uint256 openingSeller = _owned(lender, mockERC20);
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
         vm.clearMockedCalls();
 
         assertEq(
-            ERC20(mockERC20).balanceOf(lender) - openingSeller,
+            _owned(lender, mockERC20) - openingSeller,
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId).principal,
             "the seller is paid the whole principal on the listed route too"
         );
@@ -1777,6 +1795,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 lenderOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -3226,6 +3245,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -3336,9 +3356,9 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
-    /// @dev #2440 (audit sweep) — the listed sale's completion is voluntary
-    ///      too: the seller's net is refused unless it all arrives, as the
-    ///      direct sale's is. Kills: an unmeasured payout that settles the sale
+    /// @dev #2440 / #3629 — the listed sale credits the seller's own vault,
+    ///      measured, and the floor recorded at listing is checked against
+    ///      what arrived. Kills: an unmeasured payout that settles the sale
     ///      with the seller below the floor they listed at.
     function testListedSale_SellerNetShort_Refused() public {
         uint256 saleOfferId = _listSaleOffer();
@@ -3349,19 +3369,17 @@ contract EarlyWithdrawalFacetTest is Test {
         bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
 
         uint256 snap = vm.snapshotState();
-        uint256 seller0 = ERC20(mockERC20).balanceOf(lender);
+        uint256 seller0 = _owned(lender, mockERC20);
+        uint256 wallet0 = ERC20(mockERC20).balanceOf(lender);
         vm.prank(buyer);
         OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
-        uint256 net = ERC20(mockERC20).balanceOf(lender) - seller0;
+        uint256 net = _owned(lender, mockERC20) - seller0;
         assertGt(net, 0, "fixture: the seller is paid a net");
+        assertEq(ERC20(mockERC20).balanceOf(lender), wallet0, "into the seller's vault, not the wallet");
         vm.revertToState(snap);
 
         _chargeFeeOutOfDiamond();
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.TokenDeliveryShort.selector, mockERC20, net, net - (net * 100) / 10_000
-            )
-        );
+        vm.expectPartialRevert(IVaipakamErrors.SaleBelowSellerFloor.selector);
         vm.prank(buyer);
         OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
     }
@@ -3538,6 +3556,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 localBuyOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -3611,6 +3630,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 highRateBuyOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -3667,6 +3687,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 slightlyHigherOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -3719,6 +3740,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 sameRateOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -3782,6 +3804,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 buyOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -3827,6 +3850,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 buyOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -3873,6 +3897,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 buyOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -3932,6 +3957,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 wrongOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: differentAsset,
                 amount: PRINCIPAL,
@@ -3973,6 +3999,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 lowOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL / 2,
@@ -4032,6 +4059,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 shortOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -4088,6 +4116,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 longOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -4272,6 +4301,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 highCollOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -4381,6 +4411,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 lowRateOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -4430,6 +4461,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 localBuyOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -4499,6 +4531,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 wrongPrepay = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -4550,6 +4583,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 wrongColl = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -4596,6 +4630,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 excessOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL + 100 ether,
@@ -5488,6 +5523,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 buyOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -5547,6 +5583,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 highRateOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -5900,10 +5937,12 @@ contract EarlyWithdrawalFacetTest is Test {
             storedLenderStart != 0,
             "the STORED lender - whose vault lost the held VPFI - is restamped"
         );
-        assertEq(
-            holderStart,
-            0,
-            "the NFT holder's untouched vault records no stake start"
+        // #3629 — the selling holder's net is credited to their OWN vault, so
+        // that vault is stamped too (it received VPFI); what this test pins is
+        // that the stored lender's is, since that is where the held VPFI left.
+        assertTrue(
+            holderStart != 0,
+            "the selling holder's vault received the net and is stamped"
         );
     }
 
@@ -5997,6 +6036,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(lender);
         uint256 selfOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -6043,15 +6083,13 @@ contract EarlyWithdrawalFacetTest is Test {
 
         (uint40 start1, , , ) =
             TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(lender);
-        assertEq(
-            start1,
-            uint40(block.timestamp),
-            "self-sale stake start RESET - the held-withdrawal zero was observed"
-        );
-        assertTrue(
-            start1 != start0,
-            "pre-sale tenure does not survive the held-migration zero"
-        );
+        // #3629 — the seller's net is credited to the seller's own vault
+        // BEFORE the held migration, so on a self-sale that vault never
+        // reaches zero: the holding is continuous and its tenure survives,
+        // which is the tier rule (continuous non-zero holding). The
+        // held-withdrawal checkpoint still runs; it observes a positive
+        // balance.
+        assertEq(start1, start0, "self-sale: the vault never emptied, tenure kept");
     }
 
     /// @notice #1817, Codex #1819 r6 P2 — a completion that moves NOTHING of

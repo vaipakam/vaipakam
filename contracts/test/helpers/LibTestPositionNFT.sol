@@ -67,7 +67,7 @@ library LibTestPositionNFT {
     ///         something other than the cooldown that move a token right after
     ///         a loan opened or paid out.
     function waitOutCooldown(address diamond, uint256 tokenId) internal {
-        try VaipakamNFTFacet(diamond).positionTransferCooldown(tokenId) returns (uint64 atBlock, uint64 readyAt) {
+        try VaipakamNFTFacet(diamond).positionState(tokenId) returns (uint256, uint64 atBlock, uint64 readyAt) {
             if (atBlock == 0) return;
             if (VM.getBlockNumber() <= atBlock) VM.roll(uint256(atBlock) + 1);
             if (VM.getBlockTimestamp() < readyAt) VM.warp(readyAt);

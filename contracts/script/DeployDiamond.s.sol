@@ -63,6 +63,10 @@ import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
+import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
+import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
+import {CollateralLienFacet} from "../src/facets/CollateralLienFacet.sol";
+import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {VaultProtection} from "../src/vault/VaultProtection.sol";
@@ -571,6 +575,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
             SignedOfferMatchFacet(ArtifactDeploy.deploy(type(SignedOfferMatchFacet).name));
         // #3410 — the loan clock's disclosure, split off LoanFacet (EIP-170).
         LoanClockFacet loanClockFacet = LoanClockFacet(ArtifactDeploy.deploy(type(LoanClockFacet).name));
+        // #3649 — the initiation fee's term schedule.
+        FeeLevelsFacet feeLevelsFacet = FeeLevelsFacet(ArtifactDeploy.deploy(type(FeeLevelsFacet).name));
+        CollateralConcentrationFacet collateralConcentrationFacet =
+            CollateralConcentrationFacet(ArtifactDeploy.deploy(type(CollateralConcentrationFacet).name));
+        CollateralLienFacet collateralLienFacet = CollateralLienFacet(ArtifactDeploy.deploy(type(CollateralLienFacet).name));
+        StandingInstructionFacet standingInstructionFacet =
+            StandingInstructionFacet(ArtifactDeploy.deploy(type(StandingInstructionFacet).name));
         // #1841 - the one sale-exit verdict: the lender exit chooser's view and
         // the guard both sale entries self-call.
         SaleExitVerdictFacet saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
@@ -591,11 +602,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // carved off `ConfigFacet` to keep it under EIP-170. Sibling
         // facet sharing LibVaipakam storage.
         NumeraireConfigFacet numeraireConfigFacet = NumeraireConfigFacet(ArtifactDeploy.deploy(type(NumeraireConfigFacet).name));
-        // LegalFacet — Phase 4.1 Terms-of-Service acceptance gate. The
-        // gate stays disabled until governance writes a non-zero
-        // `currentTosVersion` via `LegalFacet.setCurrentTos`; cutting
-        // the facet now keeps that surface reachable on the deployed
-        // Diamond instead of leaving it as dead code.
+        // LegalFacet — Terms of Service acceptance and (#3734) the rule every
+        // opening step self-calls. Nothing is checked until governance
+        // announces a first version (`LegalFacet.announceTos`).
         LegalFacet legalFacet = LegalFacet(ArtifactDeploy.deploy(type(LegalFacet).name));
 
         console.log("All 35 facets deployed.");
@@ -619,7 +628,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](118);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](122);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -740,6 +749,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[115] = _buildCut(address(autoLifecycleSettingsFacet), _getAutoLifecycleSettingsSelectors());
         cuts[116] = _buildCut(address(precloseOffsetFacet), _getPrecloseOffsetSelectors());
         cuts[117] = _buildCut(address(loanClockFacet), _getLoanClockSelectors());
+        cuts[118] = _buildCut(address(feeLevelsFacet), _getFeeLevelsSelectors());
+        // #3685 — the new-loan cap host and collateral concentration.
+        cuts[119] = _buildCut(address(collateralConcentrationFacet), _getCollateralConcentrationSelectors());
+        // #3685 — the collateral-lien entries, split off EncumbranceMutateFacet.
+        cuts[120] = _buildCut(address(collateralLienFacet), _getCollateralLienSelectors());
+        // #3681 — standing instructions and the loan reserve.
+        cuts[121] = _buildCut(address(standingInstructionFacet), _getStandingInstructionSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1493,6 +1509,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("offerPriceGuardFacet", address(offerPriceGuardFacet));
         Deployments.writeFacet("signedOfferMatchFacet", address(signedOfferMatchFacet));
         Deployments.writeFacet("loanClockFacet", address(loanClockFacet));
+        Deployments.writeFacet("feeLevelsFacet", address(feeLevelsFacet));
+        Deployments.writeFacet("collateralConcentrationFacet", address(collateralConcentrationFacet));
+        Deployments.writeFacet("collateralLienFacet", address(collateralLienFacet));
+        Deployments.writeFacet("standingInstructionFacet", address(standingInstructionFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
         Deployments.writeFacet("refinancePayoffFacet", address(refinancePayoffFacet));
@@ -1916,7 +1936,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // transfer check and royalty). The token's metadata (tokenURI,
         // contractURI and their image / external_url configuration) is cut
         // to VaipakamNFTMetadataFacet (#2957), see {_getNftMetadataSelectors}.
-        s = new bytes4[](17);
+        s = new bytes4[](21);
         s[0] = VaipakamNFTFacet.mintNFT.selector;
         s[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         s[2] = VaipakamNFTFacet.retirePosition.selector;
@@ -1935,7 +1955,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #3413 — the transfer cooldown after a value-out.
         s[14] = VaipakamNFTFacet.setPositionTransferCooldownSec.selector;
         s[15] = VaipakamNFTFacet.positionTransferCooldownSec.selector;
-        s[16] = VaipakamNFTFacet.positionTransferCooldown.selector;
+        // #3710 — the position's state number and its fill check.
+        s[16] = VaipakamNFTFacet.positionState.selector;
+        s[17] = VaipakamNFTFacet.requirePositionState.selector;
+        s[18] = VaipakamNFTFacet.setPositionOwnMoveWaitSec.selector;
+        s[19] = VaipakamNFTFacet.positionOwnMoveWaitSec.selector;
+        s[20] = VaipakamNFTFacet.markOfferPositions.selector;
     }
 
     /// @dev #2957 - the position NFT's public metadata: the token and
@@ -2085,17 +2110,15 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      #3025 adds the origination check loan creation and the accept and
     ///      match previews call.
     function _getOfferPreviewSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](6);
         s[0] = OfferPreviewFacet.previewAccept.selector;
         s[1] = OfferPreviewFacet.requireCadenceAdmitted.selector;
         s[2] = OfferPreviewFacet.previewCadenceAdmission.selector;
         s[3] = OfferPreviewFacet.requireOriginationCadenceAdmitted.selector;
-        // #3358 — the match preview's origination checks (cadence, then guards).
-        s[4] = OfferPreviewFacet.previewOriginationRefusal.selector;
         // #3552 — the signed-order accept preview.
-        s[5] = OfferPreviewFacet.previewSignedOfferAccept.selector;
+        s[4] = OfferPreviewFacet.previewSignedOfferAccept.selector;
         // #3326 — the initiation risk bounds the match core reads by self-call.
-        s[6] = OfferPreviewFacet.initRiskBounds.selector;
+        s[5] = OfferPreviewFacet.initRiskBounds.selector;
     }
 
     /// @dev OfferMatchFacet — Range Orders Phase 1 bot-driven offer
@@ -2160,6 +2183,47 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // `getLoanDeadlines` moved to LoanClockFacet in #3410.
     }
 
+    /// @dev Selectors for `CollateralConcentrationFacet` (#3685) — the
+    ///      one host of the new-loan init-LTV cap and the per-asset
+    ///      collateral concentration it steps down at the High level.
+    function _getCollateralConcentrationSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](7);
+        s[0] = CollateralConcentrationFacet.setConcentrationConfig.selector;
+        s[1] = CollateralConcentrationFacet.setAssetConcentrationConfig.selector;
+        s[2] = CollateralConcentrationFacet.getConcentrationConfig.selector;
+        s[3] = CollateralConcentrationFacet.getAssetConcentrationThresholds.selector;
+        s[4] = CollateralConcentrationFacet.getConcentration.selector;
+        s[5] = CollateralConcentrationFacet.newLoanInitLtvCapBps.selector;
+        s[6] = CollateralConcentrationFacet.loanConcentrationAtInit.selector;
+    }
+
+    /// @dev Selectors for `CollateralLienFacet` (#3685) — the collateral-lien
+    ///      entries, split off EncumbranceMutateFacet for EIP-170.
+    function _getCollateralLienSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](4);
+        s[0] = CollateralLienFacet.releaseCollateralLien.selector;
+        s[1] = CollateralLienFacet.decrementCollateralLien.selector;
+        s[2] = CollateralLienFacet.incrementCollateralLien.selector;
+        s[3] = CollateralLienFacet.recreateCollateralLien.selector;
+    }
+
+    /// @dev Selectors for `StandingInstructionFacet` (#3681) — the loan
+    ///      reserve, the standing instructions, their executors and views.
+    function _getStandingInstructionSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](11);
+        s[0] = StandingInstructionFacet.fundLoanReserve.selector;
+        s[1] = StandingInstructionFacet.withdrawLoanReserve.selector;
+        s[2] = StandingInstructionFacet.setStandingInstructions.selector;
+        s[3] = StandingInstructionFacet.clearStandingInstructions.selector;
+        s[4] = StandingInstructionFacet.runCollateralTopUp.selector;
+        s[5] = StandingInstructionFacet.runInterestPayment.selector;
+        s[6] = StandingInstructionFacet.runDueRepayment.selector;
+        s[7] = StandingInstructionFacet.getLoanReserve.selector;
+        s[8] = StandingInstructionFacet.getStandingInstructionConfig.selector;
+        s[9] = StandingInstructionFacet.setStandingInstructionConfig.selector;
+        s[10] = StandingInstructionFacet.payRepaymentFromReserve.selector;
+    }
+
     /// @dev Selectors for `LoanClockFacet` (#3410) — the loan clock's
     ///      disclosure: a loan's deadlines (#668 / #935, moved off LoanFacet)
     ///      and the sequencer outage that moves them.
@@ -2169,11 +2233,22 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[1] = LoanClockFacet.getSequencerOutageWindow.selector;
     }
 
+    /// @dev Selectors for `FeeLevelsFacet` (#3649) — the initiation fee's
+    ///      term schedule: its bounded setter, its getter and the quote.
+    function _getFeeLevelsSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](4);
+        s[0] = FeeLevelsFacet.setLoanInitiationFeeTerms.selector;
+        s[1] = FeeLevelsFacet.getLoanInitiationFeeTerms.selector;
+        s[2] = FeeLevelsFacet.quoteLoanInitiationFee.selector;
+        s[3] = FeeLevelsFacet.quoteExtensionFee.selector;
+    }
+
     function _getRepaySelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](3);
         s[0] = RepayFacet.repayLoan.selector;
         s[1] = RepayFacet.repayPartial.selector;
         s[2] = RepayFacet.calculateRepaymentAmount.selector;
+        // #3681 — the repayment paid from the holder's payment reserve.
     }
 
     /// @dev Issue #66 — the NFT-rental daily-deduction loop and the
@@ -2186,11 +2261,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](4);
+        s = new bytes4[](5);
         s[0] = RepayPeriodicFacet.autoDeductDaily.selector;
         s[1] = RepayPeriodicFacet.previewPeriodicSettle.selector;
         s[2] = RepayPeriodicFacet.nextPeriodCheckpoint.selector;
         s[3] = RepayPeriodicFacet.settlePeriodicInterest.selector;
+        // #3681 — the one interest booking (sale and standing instruction).
+        s[4] = RepayPeriodicFacet.bookInterestPayment.selector;
     }
 
     /// T-090 — Borrower-initiated swap-to-repay facet selectors.
@@ -2254,15 +2331,16 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         extension reserve. The consent and caps setters and readers
     ///         moved to {AutoLifecycleSettingsFacet} in #3410.
     function _getAutoLifecycleFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](4);
         // T-092 Phase 3 (#503) — extendLoanInPlace executor.
         s[0] = AutoLifecycleFacet.extendLoanInPlace.selector;
         // #2738 — when a loan may be extended (the keeper reads it).
         s[1] = AutoLifecycleFacet.getAutoExtendWindow.selector;
-        // #2814 — the extension reserve: fund, withdraw, and what is ready.
-        s[2] = AutoLifecycleFacet.fundExtendReserve.selector;
-        s[3] = AutoLifecycleFacet.withdrawExtendReserve.selector;
-        s[4] = AutoLifecycleFacet.getExtendFunding.selector;
+        // #2814 — what an extension has ready (the payment reserve is funded
+        // and withdrawn on StandingInstructionFacet since #3681).
+        s[2] = AutoLifecycleFacet.getExtendFunding.selector;
+        // #3618 follow-up — the intent lend-until bound on an extension.
+        s[3] = AutoLifecycleFacet.getAutoExtendLendUntil.selector;
     }
 
     /// @notice T-092 Phase 1 (#499) — the auto-lifecycle consent surface:
@@ -2290,49 +2368,43 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         offer-principal-lock impl PR adds the lock create /
     ///         decrement / release surface.
     function _getEncumbranceMutateFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](25);
-        s[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
-        // #407 PR 4 round-1 (2026-06-12) — decrement/increment cross-
-        // facet entries used by active-loan slice flows + addCollateral.
-        s[1] = EncumbranceMutateFacet.decrementCollateralLien.selector;
-        s[2] = EncumbranceMutateFacet.incrementCollateralLien.selector;
-        // #569 §4.4 (2026-06-13) — rekey create-leg for obligation transfer.
-        s[3] = EncumbranceMutateFacet.recreateCollateralLien.selector;
+        s = new bytes4[](21);
+        // The collateral-lien entries moved to CollateralLienFacet (#3685).
         // T-407-C (#566, 2026-06-13) — offer-principal lock selectors.
-        s[4] = EncumbranceMutateFacet.createOfferPrincipalLien.selector;
-        s[5] = EncumbranceMutateFacet.decrementOfferPrincipalLien.selector;
-        s[6] = EncumbranceMutateFacet.releaseOfferPrincipalLien.selector;
-        s[7] = EncumbranceMutateFacet.incrementOfferPrincipalLien.selector;
+        s[0] = EncumbranceMutateFacet.createOfferPrincipalLien.selector;
+        s[1] = EncumbranceMutateFacet.decrementOfferPrincipalLien.selector;
+        s[2] = EncumbranceMutateFacet.releaseOfferPrincipalLien.selector;
+        s[3] = EncumbranceMutateFacet.incrementOfferPrincipalLien.selector;
         // #954 — swap-to-repay close-out freeze helpers hosted here (EIP-170).
-        s[8] = EncumbranceMutateFacet.freezeLenderProceeds.selector;
-        s[9] = EncumbranceMutateFacet.freezeOrPayBorrowerSurplus.selector;
+        s[4] = EncumbranceMutateFacet.freezeLenderProceeds.selector;
+        s[5] = EncumbranceMutateFacet.holdBorrowerSurplus.selector;
         // #998 S10 (#1006) — fail-closed frozen-claimant markers (EIP-170 host).
-        s[10] = EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector;
-        s[11] = EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector;
+        s[6] = EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector;
+        s[7] = EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector;
         // #998 S10 (#1006) — one-call lender-payoff park+freeze (PrecloseFacet EIP-170).
-        s[12] = EncumbranceMutateFacet.parkLenderPayoffAndFreeze.selector;
+        s[8] = EncumbranceMutateFacet.parkLenderPayoffAndFreeze.selector;
         // #998 S10 (#1006, r4) — registry-aware fail-closed gate host (ClaimFacet backstop).
-        s[13] = EncumbranceMutateFacet.assertNotFrozenParty.selector;
+        s[9] = EncumbranceMutateFacet.assertNotFrozenParty.selector;
         // #998 S10 (#1006) Class B — Active-loan inline lender-share pay-or-freeze
         // hosts (RepayPeriodicFacet + RepayFacet servicing paths, EIP-170).
-        s[14] = EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector;
-        s[15] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromPayer.selector;
-        s[16] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector;
+        s[10] = EncumbranceMutateFacet.holdActiveLenderResident.selector;
+        s[11] = EncumbranceMutateFacet.holdActiveLenderFromPayer.selector;
+        s[12] = EncumbranceMutateFacet.holdActiveLenderFromVault.selector;
         // #1132 (S10 central enforcement) — terminal-transition + both-holder
         // frozen-claimant register host (hosted here, not a separate facet, so it
         // is cut into every diamond that already cuts this mutate host).
-        s[17] = EncumbranceMutateFacet.terminalize.selector;
-        s[18] = EncumbranceMutateFacet.terminalizeFromAny.selector;
+        s[13] = EncumbranceMutateFacet.terminalize.selector;
+        s[14] = EncumbranceMutateFacet.terminalizeFromAny.selector;
         // #2342 — ledger-anchored VPFI fee-tier exclusion host + its views.
-        s[19] = EncumbranceMutateFacet.syncTierExclusion.selector;
-        s[20] = EncumbranceMutateFacet.getTierExclusion.selector;
-        s[21] = EncumbranceMutateFacet.getVpfiOwedToOthers.selector;
+        s[15] = EncumbranceMutateFacet.syncTierExclusion.selector;
+        s[16] = EncumbranceMutateFacet.getTierExclusion.selector;
+        s[17] = EncumbranceMutateFacet.getVpfiOwedToOthers.selector;
         // #2342 r1 — permissionless backfill / re-derive entry.
-        s[22] = EncumbranceMutateFacet.refreshTierExclusion.selector;
+        s[18] = EncumbranceMutateFacet.refreshTierExclusion.selector;
         // #2795 — pay a held borrower extra out on an obligation handover
         // (PrecloseFacet EIP-170 host).
-        s[23] = EncumbranceMutateFacet.payHeldBorrowerExtra.selector;
-        s[24] = EncumbranceMutateFacet.settleRentalPrecloseShares.selector;
+        s[19] = EncumbranceMutateFacet.payHeldBorrowerExtra.selector;
+        s[20] = EncumbranceMutateFacet.settleRentalPrecloseShares.selector;
     }
 
     /// @notice #396 v0.5 — gasless signed off-chain offer book selectors.
@@ -2358,7 +2430,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getLenderIntentFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](18);
+        s = new bytes4[](19);
         s[0] = LenderIntentFacet.setLenderIntent.selector;
         s[1] = LenderIntentFacet.cancelLenderIntent.selector;
         s[2] = LenderIntentFacet.setLenderIntentEnabled.selector;
@@ -2380,6 +2452,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #625 WI-2a / WI-2c — the keeper discovery feeds, moved off MetricsFacet (#3618).
         s[16] = LenderIntentFacet.getActiveLenderIntents.selector;
         s[17] = LenderIntentFacet.getRollableIntentLoans.selector;
+        // #3629 — re-commit an open intent loan's held payments.
+        s[18] = LenderIntentFacet.recommitHeldToIntent.selector;
     }
 
     function _getRiskAccessFacetSelectors() internal pure returns (bytes4[] memory s) {
@@ -2712,7 +2786,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev Selectors for `VaultOutflowFacet` (#3205 part 2) — the one vault
     ///      outflow policy host, reached only by self-call.
     function _getVaultOutflowSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](6);
+        s = new bytes4[](7);
         s[0] = VaultOutflowFacet.vaultOutflow.selector;
         s[1] = VaultOutflowFacet.vaultGrant.selector;
         s[2] = VaultOutflowFacet.vaultCloseGrant.selector;
@@ -2723,10 +2797,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[4] = VaultOutflowFacet.vaultOutflowArgs.selector;
         // The compact Diamond-transient ERC-20 entry (forced sales, pulls).
         s[5] = VaultOutflowFacet.vaultOutflowToDiamondERC20.selector;
+        // #3710 — the isolated wallet step of a holder's-wallet payout.
+        s[6] = VaultOutflowFacet.holderWalletAttempt.selector;
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](11);
+        s = new bytes4[](13);
         s[0] = ClaimFacet.claimAsLender.selector;
         s[1] = ClaimFacet.claimAsBorrower.selector;
         s[2] = ClaimFacet.getClaimableAmount.selector;
@@ -2739,6 +2815,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[8] = ClaimFacet.getBorrowerSurplusClaim.selector;
         s[9] = ClaimFacet.getOwedAtDefault.selector; // #2374
         s[10] = ClaimFacet.getOwedAtInternalMatch.selector; // #2427
+        // #3629 — the mid-loan claims of held payments.
+        s[11] = ClaimFacet.claimHeldForLender.selector;
+        s[12] = ClaimFacet.claimHeldForBorrower.selector;
     }
 
     function _getAddCollateralSelectors() internal pure returns (bytes4[] memory s) {
@@ -3911,11 +3990,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      clear on a posted offer, the view, and the check loan creation
     ///      and the accept and match previews self-call.
     function _getOfferPriceGuardSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](5);
         s[0] = OfferPriceGuardFacet.armOfferPriceGuard.selector;
         s[1] = OfferPriceGuardFacet.setOfferPriceGuard.selector;
         s[2] = OfferPriceGuardFacet.getOfferPriceGuard.selector;
         s[3] = OfferPriceGuardFacet.requireOfferPriceGuardsClear.selector;
+        s[4] = OfferPriceGuardFacet.previewOriginationRefusal.selector;
     }
 
     function _getForcedSaleSelectors() internal pure returns (bytes4[] memory s) {
@@ -4333,17 +4413,29 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[8] = bytes4(keccak256("MAX_BATCH_IDS()"));
     }
 
-    /// Phase 4.1 — Terms-of-Service acceptance gate. The gate stays
-    /// disabled while `currentTosVersion == 0` (default at deploy);
-    /// once governance writes a non-zero version + content hash via
-    /// `setCurrentTos`, the frontend requires every wallet to call
-    /// `acceptTerms(version, hash)` before reaching `/app/*` routes.
+    /// Phase 4.1 / #3734 — Terms of Service: acceptance (own transaction or
+    /// signature), announced versions, and the rule every opening step
+    /// self-calls (`requireCurrentTerms`). Nothing is checked while no
+    /// version is in force (the default at deploy).
     function _getLegalSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](18);
         s[0] = LegalFacet.acceptTerms.selector;
-        s[1] = LegalFacet.setCurrentTos.selector;
-        s[2] = LegalFacet.hasAcceptedCurrentTerms.selector;
-        s[3] = LegalFacet.getCurrentTos.selector;
-        s[4] = LegalFacet.getUserTosAcceptance.selector;
+        s[1] = LegalFacet.announceTos.selector;
+        s[2] = LegalFacet.withdrawTosAnnouncement.selector;
+        s[3] = LegalFacet.requireCurrentTerms.selector;
+        s[4] = LegalFacet.isTermsCurrent.selector;
+        s[5] = LegalFacet.termsBlocker.selector;
+        s[6] = LegalFacet.hasAcceptedCurrentTerms.selector;
+        s[7] = LegalFacet.getCurrentTos.selector;
+        s[8] = LegalFacet.getAnnouncedTos.selector;
+        s[9] = LegalFacet.getUserTosAcceptance.selector;
+        s[10] = LegalFacet.getUserTosAcceptanceOf.selector;
+        s[11] = bytes4(keccak256("MIN_TOS_NOTICE()"));
+        s[12] = LegalFacet.publishTos.selector;
+        s[13] = LegalFacet.announceTosMinimum.selector;
+        s[14] = LegalFacet.getTosVersions.selector;
+        s[15] = LegalFacet.getTosVersionInForceAt.selector;
+        s[16] = LegalFacet.getUserAcceptedTosVersions.selector;
+        s[17] = bytes4(keccak256("MAX_TOS_WINDOW()"));
     }
 }

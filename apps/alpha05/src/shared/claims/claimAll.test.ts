@@ -100,9 +100,9 @@ describe('the Claim everything list', () => {
       inputs({
         intents: {
           rows: [
-            { lendingAsset: WETH, collateralAsset: TLIQ, available: 40n, active: false },
-            { lendingAsset: TLIQ, collateralAsset: WETH, available: 9n, active: true },
-            { lendingAsset: WETH, collateralAsset: VPFI, available: 0n, active: false },
+            { lendingAsset: WETH, collateralAsset: TLIQ, slot: 0, available: 40n, active: false },
+            { lendingAsset: TLIQ, collateralAsset: WETH, slot: 0, available: 9n, active: true },
+            { lendingAsset: WETH, collateralAsset: VPFI, slot: 0, available: 0n, active: false },
           ],
           complete: true,
         },
@@ -112,8 +112,8 @@ describe('the Claim everything list', () => {
       copy,
       1,
     );
-    expect(keys(list.legs)).toEqual(['loan:lender:7', `intent:${WETH}:${TLIQ}`, `intent:${TLIQ}:${WETH}`, 'vpfi', 'payroll:2']);
-    expect([...defaultPicked(list.legs)]).toEqual(['loan:lender:7', `intent:${WETH}:${TLIQ}`, 'payroll:2']);
+    expect(keys(list.legs)).toEqual(['loan:lender:7', `intent:${WETH}:${TLIQ}:0`, `intent:${TLIQ}:${WETH}:0`, 'vpfi', 'payroll:2']);
+    expect([...defaultPicked(list.legs)]).toEqual(['loan:lender:7', `intent:${WETH}:${TLIQ}:0`, 'payroll:2']);
   });
 
   it('offers a rewards claim whose preview completes paying nothing, since it walks days to reach later paying ones', () => {
@@ -135,7 +135,7 @@ describe('the Claim everything list', () => {
 
   it('keeps a standing offer’s capital off, and says why, when the VPFI token could not be read', () => {
     const list = claimAllList(
-      inputs({ vpfiToken: null, intents: { rows: [{ lendingAsset: WETH, collateralAsset: TLIQ, available: 9n, active: false }], complete: true } }),
+      inputs({ vpfiToken: null, intents: { rows: [{ lendingAsset: WETH, collateralAsset: TLIQ, slot: 0, available: 9n, active: false }], complete: true } }),
       copy,
       1,
     );
@@ -154,7 +154,7 @@ describe('the Claim everything list', () => {
   });
 
   it('leaves a VPFI standing offer’s capital off, since it counts toward the fee-discount tier, and says so', () => {
-    const list = claimAllList(inputs({ intents: { rows: [{ lendingAsset: VPFI, collateralAsset: WETH, available: 9n, active: false }], complete: true } }), copy, 1);
+    const list = claimAllList(inputs({ intents: { rows: [{ lendingAsset: VPFI, collateralAsset: WETH, slot: 0, available: 9n, active: false }], complete: true } }), copy, 1);
     const intent = list.legs.find((l) => l.subject.kind === 'intent')!;
     expect(intent.optIn).toBe(true);
     expect(optInText(intent, copy)).toBe('claimAll.vpfiOptIn');
@@ -191,7 +191,7 @@ describe('the batch', () => {
     const list = claimAllList(
       inputs({
         rewards: { kind: 'exact', amount: 5n, fromDay: 1n, toDay: 2n, atBlock: 10n },
-        intents: { rows: [{ lendingAsset: WETH, collateralAsset: TLIQ, available: 40n, active: false }], complete: true },
+        intents: { rows: [{ lendingAsset: WETH, collateralAsset: TLIQ, slot: 0, available: 40n, active: false }], complete: true },
         vpfiFree: 70n,
         payroll: { rows: [{ streamId: 2n, asset: WETH, withdrawable: 6n }], complete: true },
       }),
@@ -202,7 +202,7 @@ describe('the batch', () => {
     expect(calls.every((c) => c.allowFailure)).toBe(true);
     const decoded = calls.map((c) => decodeFunctionData({ abi: DIAMOND_ABI_VIEM as Abi, data: c.callData }));
     expect(decoded.map((d) => d.functionName)).toEqual(['claimAsLender', 'claimInteractionRewardsTo', 'withdrawLenderIntentCapital', 'withdrawVPFIFromVault', 'withdrawSalary']);
-    expect((decoded[2]!.args as readonly unknown[]).map((a) => (typeof a === 'string' ? a.toLowerCase() : a))).toEqual([ME, WETH, TLIQ, 40n]);
+    expect((decoded[2]!.args as readonly unknown[]).map((a) => (typeof a === 'string' ? a.toLowerCase() : a))).toEqual([ME, WETH, TLIQ, 0, 40n]);
     expect(decoded[3]!.args).toEqual([70n]);
     // The gas limit is sized on the same calls each required to succeed.
     const required = batchCalls(list.legs, ME, false);
@@ -225,7 +225,7 @@ describe('the batch', () => {
 });
 
 const LEG_EVENTS = parseAbi([
-  'event LenderIntentCapitalWithdrawn(address indexed owner, address indexed lendingAsset, address indexed collateralAsset, uint256 amount, uint256 remainingCapital)',
+  'event LenderIntentCapitalWithdrawn(address indexed owner, address indexed lendingAsset, address indexed collateralAsset, uint8 slot, uint256 amount, uint256 remainingCapital)',
   'event InteractionRewardsClaimed(address indexed user, uint256 fromDay, uint256 toDay, uint256 amount)',
   'event RewardDeliveredToVault(address indexed user, uint256 amount, uint256 claimDayId)',
 ]) as Abi;
@@ -260,7 +260,7 @@ describe('the finish card', () => {
     inputs({
       loans: { paused: false, rows: [loanRow(7n), loanRow(8n)], complete: true },
       rewards: { kind: 'exact', amount: 5n, fromDay: 1n, toDay: 2n, atBlock: 10n },
-      intents: { rows: [{ lendingAsset: WETH, collateralAsset: TLIQ, available: 40n, active: false }], complete: true },
+      intents: { rows: [{ lendingAsset: WETH, collateralAsset: TLIQ, slot: 0, available: 40n, active: false }], complete: true },
     }),
     copy,
     1,
@@ -273,7 +273,7 @@ describe('the finish card', () => {
       credit(7n, WETH, 100n),
       log(DIAMOND, LEG_EVENTS, 'RewardDeliveredToVault', { user: ME, amount: 5n, claimDayId: 3n }),
       log(DIAMOND, LEG_EVENTS, 'InteractionRewardsClaimed', { user: ME, fromDay: 1n, toDay: 2n, amount: 5n }),
-      log(DIAMOND, LEG_EVENTS, 'LenderIntentCapitalWithdrawn', { owner: ME, lendingAsset: WETH, collateralAsset: TLIQ, amount: 40n, remainingCapital: 0n }),
+      log(DIAMOND, LEG_EVENTS, 'LenderIntentCapitalWithdrawn', { owner: ME, lendingAsset: WETH, collateralAsset: TLIQ, slot: 0, amount: 40n, remainingCapital: 0n }),
       transfer(WETH, 40n),
     ];
     const legs = measureClaimAll(r, logs, DIAMOND, ME, MY_VAULT, words, copy, true);
@@ -282,7 +282,7 @@ describe('the finish card', () => {
       'not-done:claimAll.loanLender{"id":"8"}',
       'done:claimAll.legRewards{"what":"claimAll.rewards","amount":"5"}',
       'done:claimAll.legRewardsMore',
-      `done:claimAll.legCollected{"what":"claimAll.intent{\\"lend\\":\\"e1\\",\\"collateral\\":\\"e2\\"}"}`,
+      `done:claimAll.legCollected{"what":"claimAll.intent{\\"n\\":\\"1\\",\\"lend\\":\\"e1\\",\\"collateral\\":\\"e2\\"}"}`,
       'done:payout.legCredit{"what":"100"}',
       'done:loanClaim.legArrived{"amount":"40"}',
     ]);
@@ -325,7 +325,7 @@ describe('the finish card', () => {
 
   it('credits a loan claim to the vault whatever the protected mode, and reads a queued payout’s new delay or secondary signer as a changed review', () => {
     const guard = { enabled: true, locked: false, delaySeconds: 3600, requireCosign: false, retired: false, controller: '0x0000000000000000000000000000000000000000' as const };
-    const intents = { rows: [{ lendingAsset: WETH, collateralAsset: TLIQ, available: 40n, active: false }], complete: true };
+    const intents = { rows: [{ lendingAsset: WETH, collateralAsset: TLIQ, slot: 0, available: 40n, active: false }], complete: true };
     const a = claimAllList(inputs({ protection: guard, intents }), copy, 1);
     expect(a.legs.map((l) => l.route)).toEqual(['credit', 'queued']);
     expect(claimAllList(inputs({ protection: null }), copy, 1).legs[0]!.route).toBe('credit');
@@ -388,7 +388,7 @@ describe('the finish card', () => {
   });
 
   it('reads a selected standing offer starting to lend again as a changed review', () => {
-    const row = (active: boolean) => ({ rows: [{ lendingAsset: WETH, collateralAsset: TLIQ, available: 40n, active }], complete: true });
+    const row = (active: boolean) => ({ rows: [{ lendingAsset: WETH, collateralAsset: TLIQ, slot: 0, available: 40n, active }], complete: true });
     const a = claimAllList(inputs({ intents: row(false) }), copy, 1);
     const b = claimAllList(inputs({ intents: row(true) }), copy, 1);
     expect(claimAllChanged(review(a.legs, { list: a }), review(b.legs, { list: b }), copy)).toBe('claimAll.changed');

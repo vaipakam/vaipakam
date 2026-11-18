@@ -105,6 +105,7 @@ const NEUTRAL_FLAGS: Readonly<Record<string, string>> = {
   CollateralSaleProceedsSplit: 'the flag is whether part is held for the borrower',
   DefaultAutoRefinanceCapsChanged: 'says the limits changed, not which way',
   ForcedSaleSettled: 'the flags are what the sale held and covered, shown with its rows',
+  InterestPaidFromReserve: 'the flag is whether the payment closed the period, a detail of the payment',
   LenderFundsClaimed: 'the flag is whether both sides have now claimed',
   LenderIntentSet: 'the flags are order terms',
   LoanDefaulted: 'the flag is a consent record, not the outcome',
@@ -119,6 +120,7 @@ const NEUTRAL_FLAGS: Readonly<Record<string, string>> = {
   PrepaySaleOfferSynced: 'says the offer was brought up to date',
   ProtectionApplied: 'says the platform applied the vault’s settings; the flags are the whole posture, not one switch',
   ProtectedModeEnabled: 'the flag is a setting inside a mode that was switched on',
+  StandingInstructionsSet: 'the flags are the instructions set, not one switch',
   TierExclusionUpdated: 'the flag names the side',
 };
 

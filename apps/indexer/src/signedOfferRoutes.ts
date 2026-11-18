@@ -170,6 +170,9 @@ const ENUM_FIELDS: Record<string, number> = {
   collateralAssetType: 2,
   fillMode: 2,
   periodicInterestCadence: 4,
+  // #3621 — the lender's "either" marks: bit 0 partial repay, bit 1 prepay
+  // listing, nothing else (`LifecycleFlexUnknownBits`).
+  lifecycleFlex: 3,
 };
 
 const ADDRESS_FIELDS = [
@@ -239,7 +242,7 @@ function validateOrder(
   raw: Record<string, unknown>,
   now: number,
 ): { order: SignedOrderWire } | { error: string } {
-  // Exactly the 35 struct fields — unknown keys are rejected so order_json
+  // Exactly the 36 struct fields — unknown keys are rejected so order_json
   // stays the canonical replay payload (extra junk would survive into the
   // stored JSON otherwise).
   const keys = Object.keys(raw);
@@ -387,6 +390,11 @@ function validateOrder(
   if (BigInt(out.refinanceTargetLoanId as string) !== 0n) {
     return { error: 'unsupported-refinance' };
   }
+  // (b1) #3621 `LifecycleFlexNotAllowed` — only a LENDER offer may carry
+  // "either" marks (the ERC-20 shape is guaranteed above).
+  if (out.lifecycleFlex !== '0' && out.offerType !== '0') {
+    return { error: 'lifecycle-flex-not-allowed' };
+  }
   // (b) `_createOfferSetup` self-lending guard: principal and collateral
   // must be distinct contracts (`SelfCollateralizedOffer`). The contract
   // exempts a zero lendingAsset from this guard, but the zero-address gate
@@ -523,7 +531,7 @@ function validateOrder(
 /**
  * POST /signed-offers
  *
- * Body: `{ chainId: number, order: <35-field SignedOffer wire object>,
+ * Body: `{ chainId: number, order: <36-field SignedOffer wire object>,
  *          signature: 0x-hex, set?: { others: 0x-hash[], index: number } }` —
  * every uint as a decimal string, addresses 0x-40-hex, bools as booleans (the
  * same shape GET returns and takers replay on-chain). `set` is present only
@@ -989,7 +997,7 @@ export async function handleSignedOffersGet(
     // One query per side so each cap is applied within a PRICE-ordered
     // slice (see MAX_BOOK_ROWS_PER_SIDE). `orderBy` is a whitelisted
     // literal chosen here, never caller input. Every stored order is the
-    // 35-field shape: the route writes nothing else, and migrations 0078
+    // 36-field shape: the route writes nothing else, and migrations 0078
     // and 0093 removed the older shapes (#1481, #3327).
     const perSideCap =
       signer !== null ? SIGNER_BOOK_ROWS_PER_SIDE : MAX_BOOK_ROWS_PER_SIDE;

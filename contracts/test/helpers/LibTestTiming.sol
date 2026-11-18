@@ -51,15 +51,26 @@ library LibTestTiming {
         waitOutTermsAge(diamond, offerB);
     }
 
-    /// @notice The same, for `owner`'s lender intent on the pair.
+    /// @notice The same, for `owner`'s lender intent on the pair (slot 0).
     function waitOutIntentAge(
         address diamond,
         address owner,
         address lendingAsset,
         address collateralAsset
     ) internal {
+        waitOutIntentAge(diamond, owner, lendingAsset, collateralAsset, 0);
+    }
+
+    /// @notice The same, for `owner`'s lender intent in `slot` on the pair (#3626).
+    function waitOutIntentAge(
+        address diamond,
+        address owner,
+        address lendingAsset,
+        address collateralAsset,
+        uint8 slot
+    ) internal {
         uint64 setAt;
-        try LenderIntentFacet(diamond).getLenderIntent(owner, lendingAsset, collateralAsset)
+        try LenderIntentFacet(diamond).getLenderIntent(owner, lendingAsset, collateralAsset, slot)
             returns (LibVaipakam.LenderIntent memory i)
         {
             setAt = i.termsSetAt;

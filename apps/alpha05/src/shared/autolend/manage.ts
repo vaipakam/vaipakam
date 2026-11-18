@@ -34,13 +34,14 @@ const DAY = 86_400n;
 
 export type ManageKind = 'add' | 'takeBack' | 'stop';
 
-/** One management step as confirmed: the pair, and the amount added or
- *  taken back (for a stop, what it takes back with it: 0 leaves the money
- *  set aside). */
+/** One management step as confirmed: the pair and its slot (#3626), and the
+ *  amount added or taken back (for a stop, what it takes back with it: 0
+ *  leaves the money set aside). */
 export interface ManageDraft {
   kind: ManageKind;
   lending: Hex;
   collateral: Hex;
+  slot: number;
   amount: bigint;
 }
 
@@ -67,14 +68,14 @@ export interface ManageFacts {
 
 const orNull = <T>(p: Promise<T>): Promise<T | null> => p.catch(() => null);
 
-export async function readManageFacts(c: PublicClient, diamond: Hex, account: Hex, lending: Hex, collateral: Hex): Promise<ManageFacts> {
+export async function readManageFacts(c: PublicClient, diamond: Hex, account: Hex, lending: Hex, collateral: Hex, slot: number): Promise<ManageFacts> {
   const block = await c.getBlock({ blockTag: 'latest' });
   const blockNumber = block.number;
   const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => c.readContract({ address: diamond, abi, functionName, args, blockNumber }) as Promise<T>;
   const [intent, unlent, lent, gates, lendingPaused, collateralPaused, balance, allowance, protection] = await Promise.all([
-    readIntent(c, diamond, account, lending, collateral, blockNumber),
-    read<bigint>(INTENT, 'getLenderIntentCapital', [account, lending, collateral]),
-    read<bigint>(INTENT, 'getLenderIntentLivePrincipal', [account, lending, collateral]),
+    readIntent(c, diamond, account, lending, collateral, slot, blockNumber),
+    read<bigint>(INTENT, 'getLenderIntentCapital', [account, lending, collateral, slot]),
+    read<bigint>(INTENT, 'getLenderIntentLivePrincipal', [account, lending, collateral, slot]),
     readIntentGates(c, diamond, blockNumber),
     orNull(read<boolean>(ADMIN, 'isAssetPaused', [lending])),
     orNull(read<boolean>(ADMIN, 'isAssetPaused', [collateral])),
@@ -144,19 +145,19 @@ export function manageBlocks(d: ManageDraft, f: ManageFacts): ManageBlock[] {
  *  failing silently, nor the money taken back with the instruction left
  *  running. */
 export function manageCall(d: ManageDraft, account: Hex) {
-  const withdraw = { abi: INTENT, functionName: 'withdrawLenderIntentCapital', args: [account, d.lending, d.collateral, d.amount] as const };
+  const withdraw = { abi: INTENT, functionName: 'withdrawLenderIntentCapital', args: [account, d.lending, d.collateral, d.slot, d.amount] as const };
   switch (d.kind) {
     case 'add':
-      return { abi: INTENT, functionName: 'fundLenderIntent', args: [d.lending, d.collateral, d.amount] as const };
+      return { abi: INTENT, functionName: 'fundLenderIntent', args: [d.lending, d.collateral, d.slot, d.amount] as const };
     case 'takeBack':
       return withdraw;
     case 'stop':
-      if (d.amount === 0n) return { abi: INTENT, functionName: 'cancelLenderIntent', args: [d.lending, d.collateral] as const };
-      return batchCall([{ abi: INTENT, functionName: 'cancelLenderIntent', args: [d.lending, d.collateral] }, withdraw]);
+      if (d.amount === 0n) return { abi: INTENT, functionName: 'cancelLenderIntent', args: [d.lending, d.collateral, d.slot] as const };
+      return batchCall([{ abi: INTENT, functionName: 'cancelLenderIntent', args: [d.lending, d.collateral, d.slot] }, withdraw]);
   }
 }
 
-/** What a management step's own logs record, for this wallet and pair: the
+/** What a management step's own logs record, for this wallet, pair and slot: the
  *  amount set aside, the amount taken back, and whether it was stopped. */
 export interface ManageLogs {
   funded: bigint | null;
@@ -164,14 +165,14 @@ export interface ManageLogs {
   stopped: boolean;
 }
 
-export function manageLogs(logs: readonly Log[], diamond: Hex, account: Hex, lending: Hex, collateral: Hex): ManageLogs {
+export function manageLogs(logs: readonly Log[], diamond: Hex, account: Hex, lending: Hex, collateral: Hex, slot: number): ManageLogs {
   const same = (a: unknown, b: Hex) => typeof a === 'string' && a.toLowerCase() === b.toLowerCase();
   const mine = logs.filter((l) => l.address.toLowerCase() === diamond.toLowerCase());
   const events = parseEventLogs({ abi: INTENT, logs: mine as Log[], strict: false }) as unknown as { eventName: string; args: Record<string, unknown> }[];
   const out: ManageLogs = { funded: null, withdrawn: null, stopped: false };
   for (const e of events) {
     const a = e.args;
-    if (!same(a.owner, account) || !same(a.lendingAsset, lending) || !same(a.collateralAsset, collateral)) continue;
+    if (!same(a.owner, account) || !same(a.lendingAsset, lending) || !same(a.collateralAsset, collateral) || Number(a.slot) !== slot) continue;
     if (e.eventName === 'LenderIntentFunded' && typeof a.amount === 'bigint') out.funded = (out.funded ?? 0n) + a.amount;
     if (e.eventName === 'LenderIntentCapitalWithdrawn' && typeof a.amount === 'bigint') out.withdrawn = (out.withdrawn ?? 0n) + a.amount;
     if (e.eventName === 'LenderIntentCancelled') out.stopped = true;

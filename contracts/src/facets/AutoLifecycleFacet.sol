@@ -5,9 +5,11 @@ import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
+import {LibTerms} from "../libraries/LibTerms.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
+import {LibIntentTerms} from "../libraries/LibIntentTerms.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
@@ -20,6 +22,7 @@ import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibKeeperReward} from "../libraries/LibKeeperReward.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
+import {LibInitiationFee} from "../libraries/LibInitiationFee.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -71,30 +74,10 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     // The consent events (`AutoLendConsentChanged` and the five caps events)
     // moved with their setters to `AutoLifecycleSettingsFacet` in #3410.
 
-    /// @notice #2814 — the borrower-position holder deposited `amount` of
-    ///         the loan's principal asset into their own vault, reserved for
-    ///         the loan's auto-extensions.
-    /// @param reserved What the holder has reserved for the loan after it.
-    /// @custom:event-category state-change/vault-mutation
-    event ExtendReserveFunded(
-        uint256 indexed loanId,
-        address indexed holder,
-        address asset,
-        uint256 amount,
-        uint256 reserved
-    );
-
-    /// @notice #2814 — a depositor withdrew `amount` of their unused
-    ///         extension reserve for the loan to their wallet.
-    /// @param reserved What the depositor still has reserved for the loan.
-    /// @custom:event-category state-change/vault-mutation
-    event ExtendReserveWithdrawn(
-        uint256 indexed loanId,
-        address indexed holder,
-        address asset,
-        uint256 amount,
-        uint256 reserved
-    );
+    // #3681 — the reserve's funding and withdrawal (and their events) moved
+    // to `StandingInstructionFacet`, which owns the loan reserve now that it
+    // also pays the standing instructions. An extension still draws it here
+    // ({_drawFromHolder}) and states the draw in {ExtendChargeDrawn}.
 
     /// @notice #2814 — an extension charged the borrower-position holder's
     ///         vault: `fromReserve` out of their reserve for the loan, and
@@ -110,7 +93,27 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         uint256 reserved
     );
 
+    /// @notice #3649 — an extension added to the term the initiation fee is
+    ///         paid for, and the borrower-position holder paid the added fee
+    ///         to the treasury out of their vault.
+    /// @param fee         The added fee, after the holder's discount.
+    /// @param paidDays    The term paid for before the extension.
+    /// @param newPaidDays The term paid for after it.
+    /// @custom:event-category state-change/loan-mutation
+    event ExtensionFeeCharged(
+        uint256 indexed loanId,
+        address indexed payer,
+        address asset,
+        uint256 fee,
+        uint256 paidDays,
+        uint256 newPaidDays
+    );
+
     // ─── Errors ──────────────────────────────────────────────────────
+
+    /// @notice #3649 — the extension's added initiation fee is above the
+    ///         largest the borrower's extension limits allow.
+    error ExtensionFeeAboveCap(uint256 fee, uint256 cap);
 
     /// @notice Returned when the caller is not the borrower-NFT owner.
     error NotBorrowerNftOwner();
@@ -141,6 +144,13 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         intersection of `borrower.maxNewExpiry` and
     ///         `lender.maxNewExpiry`.
     error AutoExtendExpiryExceedsCap();
+    /// @notice #3618 follow-up — the loan was made by a standing lender intent
+    ///         whose owner still holds the lender position, and the new end
+    ///         falls after that intent's lend-until time
+    ///         ({LibIntentTerms.extensionBound}).
+    /// @param newEnd    The end the extension would give the loan.
+    /// @param lendUntil The intent's lend-until time.
+    error AutoExtendPastLendUntil(uint256 newEnd, uint64 lendUntil);
     /// @notice T-092 Phase 3 — `newDurationDays` is zero or exceeds the
     ///         protocol's `cfgMaxOfferDurationDays` ceiling. Mirrors
     ///         the duration bound `OfferCreateFacet` enforces on
@@ -188,9 +198,6 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     /// @notice T-092 #508 — the admin auto-extend kill switch is off (the
     ///         auto-lend one moved to `AutoLifecycleSettingsFacet`, #3410).
     error AutoExtendDisabled();
-    /// @notice #2814 — a reserve deposit or withdrawal of zero.
-    error ExtendReserveZeroAmount();
-
     /// @notice #1384 — the fee-entitlement reprice cross-facet call on
     ///         extension reverted (should be unreachable: the target is a
     ///         diamond-internal storage write).
@@ -261,6 +268,19 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         return (uint64(o), uint64(c));
     }
 
+    /// @notice #3618 follow-up — the latest new end an extension may give
+    ///         `loanId` because of the lend-until time of the intent that made
+    ///         it, or 0 when none binds (not an intent loan, no lend-until
+    ///         time, or the intent's owner no longer holds the lender
+    ///         position). `extendLoanInPlace` refuses a later end with
+    ///         {AutoExtendPastLendUntil}; a keeper folds this into the caps'
+    ///         expiry bound when it sizes an extension.
+    /// @param  loanId The loan.
+    /// @return lendUntil The bound, or 0.
+    function getAutoExtendLendUntil(uint256 loanId) external view returns (uint64 lendUntil) {
+        return LibIntentTerms.extensionBound(LibVaipakam.storageSlot().loans[loanId]);
+    }
+
     /// @dev The one statement of the extension window (#2738), read by the
     ///      executor and by {getAutoExtendWindow}. Maturity and grace end come
     ///      from {LibLoanClock}, so a pause moves the window with the loan.
@@ -276,101 +296,11 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         closesAt = LibLoanClock.graceEnd(loan);
     }
 
-    // ─── Extension reserve — #2814 ────────────────────────────────────
-
-    /// @notice #2814 — deposit `amount` of `loanId`'s principal asset from the
-    ///         caller's wallet into their own vault, reserved for that loan's
-    ///         auto-extensions. An extension charges the current
-    ///         borrower-position holder's vault, and this is the route by
-    ///         which that holder puts the principal asset there. The reserve
-    ///         is not free balance: only an extension's charge and
-    ///         {withdrawExtendReserve} take it out.
-    /// @dev    Only the current borrower-position holder may fund, because an
-    ///         extension draws only on that holder's vault. The reserve stays
-    ///         the depositor's if the position later moves: a new holder funds
-    ///         their own, and the depositor can withdraw theirs. Refused while
-    ///         the loan could not be extended at all (the loan not Active, not
-    ///         an ERC-20 loan, or on a periodic cadence), so no deposit sits
-    ///         behind an extension that cannot run. The auto-extend switch
-    ///         does not refuse it: the borrower's own direct extension stays
-    ///         open while the switch is off, and draws on this reserve too
-    ///         (#3175). Tier-1 sanctions-gated and refused for a paused asset (new
-    ///         custody), like {LenderIntentFacet.fundLenderIntent}. The caller
-    ///         approves the Diamond for exactly `amount` first.
-    /// @param loanId The loan whose extensions the reserve pays.
-    /// @param amount The amount of the loan's principal asset to deposit.
-    function fundExtendReserve(uint256 loanId, uint256 amount)
-        external
-        nonReentrant
-        whenNotPaused
-    {
-        LibVaipakam._assertNotSanctioned(msg.sender);
-        LibProtectedAccount.requireManager(msg.sender); // a retired wallet funds nothing
-        if (amount == 0) revert ExtendReserveZeroAmount();
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.Loan storage loan = s.loans[loanId];
-        // #3175 — no auto-extend switch check: the switch stops only the
-        // keeper-driven extension, and the reserve is the borrower's own
-        // money for their own direct extension too (owner decision
-        // 2026-11-05, "Free borrower").
-        if (loan.startTime == 0 || loan.status != LibVaipakam.LoanStatus.Active) {
-            revert LoanNotActive();
-        }
-        if (loan.assetType != LibVaipakam.AssetType.ERC20) {
-            revert UnsupportedAssetTypeForExtend();
-        }
-        if (loan.periodicInterestCadence != LibVaipakam.PeriodicInterestCadence.None) {
-            revert PeriodicCadenceMustSettleFirst();
-        }
-        if (LibPositionNFT.ownerOf(loan.borrowerTokenId) != msg.sender) revert NotBorrowerNftOwner();
-        address asset = loan.principalAsset;
-        LibFacet.requireAssetNotPaused(asset);
-        // Wallet -> the caller's own vault through the protocol chokepoint,
-        // which records the tracked balance and refuses a short arrival, then
-        // reserved for this loan.
-        LibFacet.crossFacetCall(
-            abi.encodeCall(VaultFactoryFacet.vaultDepositERC20, (msg.sender, asset, amount)),
-            IVaipakamErrors.VaultDepositFailed.selector
-        );
-        LibEncumbrance.lienExtendReserve(loanId, msg.sender, asset, amount);
-        emit ExtendReserveFunded(loanId, msg.sender, asset, amount, s.extendReserve[loanId][msg.sender]);
-    }
-
-    /// @notice #2814 — withdraw `amount` of `account`'s unused extension
-    ///         reserve for `loanId` from its vault to the caller, who must be
-    ///         the account's manager (its own wallet, or its controller once
-    ///         a replacement retired it).
-    /// @dev    Open whatever the loan's state, and whether or not the caller
-    ///         still holds the borrower position: the reserve is the
-    ///         depositor's own money. Tier-1 sanctions-gated (funds leave to
-    ///         the caller), like {LenderIntentFacet.withdrawLenderIntentCapital}.
-    ///         Reverts {LibEncumbrance.ExtendReserveInsufficient} past what is
-    ///         reserved.
-    function withdrawExtendReserve(address account, uint256 loanId, uint256 amount)
-        external
-        nonReentrant
-        whenNotPaused
-    {
-        // The account's manager: its own wallet, or its controller once a
-        // replacement retired it, so a recovered account's reserve is never
-        // stranded behind the lost key. Paid to the manager (a protected
-        // account's payout queues behind the delay).
-        LibProtectedAccount.requireManager(account);
-        LibVaipakam._assertNotSanctioned(msg.sender);
-        if (amount == 0) revert ExtendReserveZeroAmount();
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address asset = s.loans[loanId].principalAsset;
-        // Released BEFORE the withdraw, so the chokepoint's guard sees it free.
-        LibEncumbrance.unlienExtendReserve(loanId, account, asset, amount);
-        // The reserve back to the account's own wallet, or to its controller
-        // once a replacement retired it (#3205 part 2: the owner classes).
-        if (msg.sender == account) {
-            LibVaultOutflow.toOwner(account, LibVaultOutflow.ERC20, asset, 0, amount, OutflowReason.WITHDRAW);
-        } else {
-            LibVaultOutflow.toAllowlisted(account, LibVaultOutflow.ERC20, asset, 0, amount, msg.sender, OutflowReason.WITHDRAW);
-        }
-        emit ExtendReserveWithdrawn(loanId, account, asset, amount, s.extendReserve[loanId][account]);
-    }
+    // ─── Extension funding view — #2814 ──────────────────────────────
+    //
+    // The payment reserve an extension draws first is funded and withdrawn
+    // through `StandingInstructionFacet.fundLoanReserve` /
+    // `withdrawLoanReserve` (kind 0) since #3681.
 
     /// @notice #2814 — what `holder` has ready for `loanId`'s next
     ///         auto-extension, and what that extension would charge.
@@ -406,7 +336,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         asset = loan.principalAsset;
-        reserved = s.extendReserve[loanId][holder];
+        reserved = s.paymentReserve[loanId][holder];
         // Only an ERC-20 principal has a fungible balance to read: a rental's
         // principal is the NFT contract, whose `balanceOf` takes a token id.
         bool erc20 = loan.assetType == LibVaipakam.AssetType.ERC20;
@@ -573,6 +503,11 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         address lenderNftOwner = LibPositionNFT.ownerOf(loan.lenderTokenId);
         LibVaipakam._assertNotSanctioned(borrowerNftOwner);
         LibVaipakam._assertNotSanctioned(lenderNftOwner);
+        // #3734 — an extension starts a new term, so both sides must have
+        // accepted the Terms in force: the wallet that manages each position
+        // (its holder, or the holder's replacement once one retired it).
+        LibTerms.requireCurrent(LibProtectedAccount.manager(borrowerNftOwner));
+        LibTerms.requireCurrent(LibProtectedAccount.manager(lenderNftOwner));
 
         // ── Both-side cap consent + staleness fence ──────────────────
         LibVaipakam.AutoExtendCaps storage borrowerCaps =
@@ -618,6 +553,16 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             : borrowerCaps.maxNewExpiry;
         if (expiryCap != 0 && newEndTimeUint > uint256(expiryCap)) {
             revert AutoExtendExpiryExceedsCap();
+        }
+        // #3618 follow-up — an intent's lend-until time bounds an extension
+        // too, while the intent's owner still holds the lender position: the
+        // owner's caps alone could otherwise carry an intent loan past the
+        // date the money was lent until. The one rule is in LibIntentTerms.
+        {
+            uint64 lendUntil = LibIntentTerms.extensionBound(loan);
+            if (lendUntil != 0 && newEndTimeUint > lendUntil) {
+                revert AutoExtendPastLendUntil(newEndTimeUint, lendUntil);
+            }
         }
         // Codex round-4 P2 — refuse to SHORTEN the loan. Without
         // this, a compromised keeper could pass `newDurationDays = 1`
@@ -703,6 +648,9 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
                 treasuryShare
             );
         }
+        // #3649 — the initiation fee for the added term, from the same vault,
+        // within the borrower's limit. Priced before the row changes.
+        _chargeExtensionFee(loan, borrowerNftOwner, newEndTimeUint, borrowerCaps.maxExtensionFee);
         // Codex round-2 P1 — clear any active prepay-collateral
         // Seaport listing BEFORE the loan row is mutated. Mirrors
         // RefinanceFacet's `LibPrepayCleanup.clearActiveListing` call
@@ -794,9 +742,9 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             FeeEntitlementRepriceFailed.selector
         );
 
-        // #3413 — terms changed and accrued interest was paid out: the
-        // loan's tokens cool down.
-        LibPositionNFT.markLoanValueOut(loanId);
+        // #3413 / #3710 — the terms change is marked by the loan-terms writer
+        // (`LibInterestLedger.setRate` above) and any payout by the outflow
+        // policy: no mark of its own here.
 
         emit LoanExtended(
             loanId,
@@ -896,19 +844,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         //    split. #2440 — a consented extension, not a forced close-out:
         //    refused unless all of it arrived, so the lender and the treasury
         //    are never paid out of the Diamond's other balance.
-        uint256 charge = lenderShare + treasuryShare;
-        {
-            uint256 reserved = s.extendReserve[loan.id][borrowerNftOwner];
-            uint256 fromReserve = reserved < charge ? reserved : charge;
-            LibEncumbrance.unlienExtendReserve(loan.id, borrowerNftOwner, principalAsset, fromReserve);
-            // The rest is the holder's other free vault balance: the depository
-            // ledger (what of it they may withdraw) pays first.
-            LibDepositoryLedger.spend(borrowerNftOwner, principalAsset, 0, charge - fromReserve);
-            emit ExtendChargeDrawn(
-                loan.id, borrowerNftOwner, principalAsset, fromReserve, charge - fromReserve, reserved - fromReserve
-            );
-        }
-        LibVaultOutflow.toDiamondExact(borrowerNftOwner, principalAsset, charge, loan.id, OutflowReason.INTEREST);
+        _drawFromHolder(loan, borrowerNftOwner, lenderShare + treasuryShare, OutflowReason.INTEREST);
         // 2. Forward treasury share + record accrual. #2440 — measured,
         //    accrued as it arrived (TreasuryFeeFacet).
         LibFacet.transferToTreasury(principalAsset, treasuryShare);
@@ -931,4 +867,54 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         LibInterestLedger.holderPaid(s, loan, interestGross - sellersGross);
     }
 
+
+    /// @dev #2814 — the one way an extension takes money from the
+    ///      borrower-position holder: their reserve for this loan first
+    ///      (released here so the vault guard sees it free), then their other
+    ///      free balance of the asset, the depository ledger's withdrawable
+    ///      part first. Refused unless all of it arrives at the Diamond: an
+    ///      extension is consented, not forced, so nobody is ever paid out of
+    ///      the Diamond's other balance. The event states the split.
+    function _drawFromHolder(
+        LibVaipakam.Loan storage loan,
+        address holder,
+        uint256 amount,
+        uint8 reason
+    ) private {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address asset = loan.principalAsset;
+        uint256 reserved = s.paymentReserve[loan.id][holder];
+        uint256 fromReserve = reserved < amount ? reserved : amount;
+        LibEncumbrance.unlienLoanReserve(loan.id, holder, 0, asset, fromReserve);
+        LibDepositoryLedger.spend(holder, asset, 0, amount - fromReserve);
+        emit ExtendChargeDrawn(loan.id, holder, asset, fromReserve, amount - fromReserve, reserved - fromReserve);
+        LibVaultOutflow.toDiamondExact(holder, asset, amount, loan.id, reason);
+    }
+
+    /// @dev #3649 — charge the initiation fee for the term the extension
+    ///      adds ({LibInitiationFee.extensionFee}), after the holder's
+    ///      discount. The hold-tier discount applies as at acceptance; the
+    ///      Full bonus does not, since an extension pays no fresh tariff.
+    ///      Refused above the borrower's limit. The fee goes to the treasury
+    ///      whole: an extension's added fee carries no matcher share.
+    function _chargeExtensionFee(
+        LibVaipakam.Loan storage loan,
+        address holder,
+        uint256 newEndTime,
+        uint256 cap
+    ) private {
+        (uint256 gross, uint256 paidDays, uint256 newPaidDays) =
+            LibInitiationFee.extensionFee(loan, newEndTime);
+        if (newPaidDays == paidDays) return;
+        uint256 fee = LibVPFIDiscount.borrowerLifDiscounted(
+            holder, gross, loan.principalLiquidity == LibVaipakam.LiquidityStatus.Liquid, false
+        );
+        if (fee > cap) revert ExtensionFeeAboveCap(fee, cap);
+        loan.lifPaidDays = uint32(newPaidDays);
+        if (fee > 0) {
+            _drawFromHolder(loan, holder, fee, OutflowReason.FEE);
+            LibFacet.transferToTreasury(loan.principalAsset, fee);
+        }
+        emit ExtensionFeeCharged(loan.id, holder, loan.principalAsset, fee, paidDays, newPaidDays);
+    }
 }

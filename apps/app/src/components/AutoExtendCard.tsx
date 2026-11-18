@@ -41,6 +41,7 @@ import {
   setByEarlierHolder,
   useAutoExtendState,
   useExtendFunding,
+  useExtensionFeeQuote,
   useRecordReserveOutcome,
   useReserveOutcomes,
   windowPhase,
@@ -465,12 +466,15 @@ function LimitsEditor({
   loanId,
   side,
   state,
+  meta,
   busy,
   setBusy,
 }: {
   loanId: number;
   side: 'borrower' | 'lender';
   state: AutoExtendState;
+  /** The loan asset's metadata, to state the added fee. */
+  meta: Meta;
   busy: boolean;
   setBusy: (b: boolean) => void;
 }) {
@@ -490,6 +494,12 @@ function LimitsEditor({
   const rateOk = rateBps !== null && rateBps >= 0 && rateBps <= MAX_INTEREST_BPS;
   const endAt = endOfLocalDay(end);
   const endOk = endAt !== null && endAt > state.now;
+  // #3649 — the borrower's limits carry the largest added initiation fee an
+  // extension may charge. It is the fee for an extension to the chosen
+  // latest end, quoted now, and the card states it before saving.
+  const feeQuote = useExtensionFeeQuote(loanId, side === 'borrower' && endOk ? endAt : null);
+  const extensionFee = side === 'borrower' ? feeQuote.data : 0n;
+  const feeReady = side === 'lender' || extensionFee !== undefined;
 
   async function save(enabled: boolean) {
     if (!address || !walletChain || !publicClient) return;
@@ -502,7 +512,7 @@ function LimitsEditor({
       const args = capsArgs(
         side,
         loanId,
-        { enabled, rateBps: rateBps ?? 0, latestEnd: endAt ?? 0 },
+        { enabled, rateBps: rateBps ?? 0, latestEnd: endAt ?? 0, maxExtensionFee: extensionFee ?? 0n },
         MAX_INTEREST_BPS,
       );
       await write(side === 'borrower' ? 'setAutoExtendBorrowerCaps' : 'setAutoExtendLenderCaps', args);
@@ -546,6 +556,17 @@ function LimitsEditor({
       {endAt !== null ? (
         <p className="muted">{endOk ? a.latestEndHint(formatDateTime(endAt)) : a.invalidEnd}</p>
       ) : null}
+      {side === 'borrower' && endOk ? (
+        <p className="muted">
+          {extensionFee === undefined
+            ? feeQuote.isError
+              ? a.extensionFeeUnknown
+              : null
+            : extensionFee === 0n
+              ? a.extensionFeeNone
+              : a.extensionFee(exactAmountText(extensionFee, meta))}
+        </p>
+      ) : null}
       {confirming && rateOk && endOk && rateBps !== null && endAt !== null ? (
         <ConfirmReceipt
           busy={busy}
@@ -560,7 +581,7 @@ function LimitsEditor({
         <button
           type="button"
           className="btn btn-primary btn-sm"
-          disabled={busy || confirming || state.paused || !onSupportedChain || !rateOk || !endOk}
+          disabled={busy || confirming || state.paused || !onSupportedChain || !rateOk || !endOk || !feeReady}
           onClick={() => setConfirming(true)}
         >
           {busy ? a.saving : a.review}
@@ -816,6 +837,7 @@ function AutoExtendCardBody({
           loanId={loanId}
           side={side}
           state={s}
+          meta={meta}
           busy={busy}
           setBusy={setBusy}
         />

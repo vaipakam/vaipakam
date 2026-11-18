@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibOfferPriceGuard} from "../libraries/LibOfferPriceGuard.sol";
+import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibPriceRead} from "../libraries/LibPriceRead.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
@@ -22,6 +23,7 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
+import {CollateralLienFacet} from "./CollateralLienFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
@@ -971,9 +973,9 @@ contract PrecloseFacet is
             if (rentDue > 0) {
                 // Treasury takes its cut only on the accrued (elapsed) rent,
                 // matching the ERC-20 path (the shortfall goes fully to the
-                // lender). Lender share → current lender-position holder from the
-                // prepay vault (fail-closed park if the holder is flagged),
-                // mirroring the daily deduction path.
+                // lender). The lender share moves from the prepay vault into
+                // the stored lender's vault, held for the lender position's
+                // claim (#3629), mirroring the daily deduction path.
                 (uint256 rentTreasury, uint256 rentLenderOnAccrued) =
                     LibEntitlement.splitTreasury(loan, accruedRent);
 
@@ -983,9 +985,8 @@ contract PrecloseFacet is
                 // which the quote path now prices against (Codex #1389 P2).
                 //
                 // Keyed on the CURRENT lender-NFT holder, NOT `loan.lender`: this
-                // leg deliberately forwards the catch-up rent to the current
-                // position holder (`freezeOrPayActiveLenderFromVault` resolves the
-                // holder), and rentals are excluded from the eager consolidation,
+                // catch-up rent is held for the current position holder's claim
+                // (#3629), and rentals are excluded from the eager consolidation,
                 // so the stored `loan.lender` can be stale here. Resolving the
                 // discount — or a VPFI vault debit — against a party who is not
                 // receiving the proceeds would charge the wrong account.
@@ -1006,7 +1007,7 @@ contract PrecloseFacet is
                 uint256 lenderTotal = (rentDue - accruedRent) + rentLenderOnAccrued;
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector,
+                        EncumbranceMutateFacet.holdActiveLenderFromVault.selector,
                         loanId,
                         loan.borrower,
                         loan.prepayAsset,
@@ -1032,7 +1033,7 @@ contract PrecloseFacet is
         // below (rekey create-leg).
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.releaseCollateralLien.selector,
+                CollateralLienFacet.releaseCollateralLien.selector,
                 loanId
             ),
             bytes4(0)
@@ -1092,7 +1093,7 @@ contract PrecloseFacet is
         // paid-notification flag on an obligation transfer.
         address previousBorrower = loan.borrower;
         loan.borrower = newBorrower;
-        loan.collateralAmount = offer.collateralAmount;
+        LibLoanCollateral.set(loan, offer.collateralAmount);
         // #569 Codex #572 P1 #2 (2026-06-13) — copy the incoming offer's
         // collateral IDENTITY too, not just the amount. `assertAssetContinuity`
         // pins only `collateralAsset` + `collateralAssetType`, so an
@@ -1206,7 +1207,7 @@ contract PrecloseFacet is
         // protected. No-op on NFT rentals (D-1).
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.recreateCollateralLien.selector,
+                CollateralLienFacet.recreateCollateralLien.selector,
                 loanId
             ),
             bytes4(0)

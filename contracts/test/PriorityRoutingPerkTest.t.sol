@@ -67,13 +67,13 @@ contract PriorityRoutingPerkTest is SetupTest {
     uint256 internal constant MIN_FILL = 100 ether;
 
     event LenderIntentPrioritySet(
-        address indexed owner, address indexed lendingAsset, address indexed collateralAsset, bool enabled
+        address indexed owner, address indexed lendingAsset, address indexed collateralAsset, uint8 slot, bool enabled
     );
     event PerkCreditConsumed(address indexed user, uint256 indexed perkId, uint256 creditsLeft);
 
-    bytes32 internal constant T_PRIORITY_SET = keccak256("LenderIntentPrioritySet(address,address,address,bool)");
+    bytes32 internal constant T_PRIORITY_SET = keccak256("LenderIntentPrioritySet(address,address,address,uint8,bool)");
     bytes32 internal constant T_PRIORITY_FILL =
-        keccak256("IntentPriorityFill(address,address,address,uint256,address,uint256)");
+        keccak256("IntentPriorityFill(address,address,address,uint8,uint256,address,uint256)");
     bytes32 internal constant T_CREDIT_CONSUMED = keccak256("PerkCreditConsumed(address,uint256,uint256)");
     bytes32 internal constant T_CAPACITY_SPENT = keccak256("CapacitySpent(uint8,address,uint256,uint256)");
 
@@ -147,7 +147,7 @@ contract PriorityRoutingPerkTest is SetupTest {
     function _setIntent() internal {
         vm.prank(lender);
         _intentFacet().setLenderIntent(
-            mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL, false, 0, false, true,
+            mockERC20, mockCollateralERC20, 0, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL, false, 0, false, true,
             type(uint64).max
         );
         LibTestTiming.waitOutIntentAge(address(diamond), lender, mockERC20, mockCollateralERC20); // #3443
@@ -158,12 +158,12 @@ contract PriorityRoutingPerkTest is SetupTest {
         vm.prank(lender);
         ERC20(mockERC20).approve(address(diamond), amount);
         vm.prank(lender);
-        _intentFacet().fundLenderIntent(mockERC20, mockCollateralERC20, amount);
+        _intentFacet().fundLenderIntent(mockERC20, mockCollateralERC20, 0, amount);
     }
 
     function _setPriority(bool enabled) internal {
         vm.prank(lender);
-        _intentFacet().setLenderIntentPriority(mockERC20, mockCollateralERC20, enabled);
+        _intentFacet().setLenderIntentPriority(mockERC20, mockCollateralERC20, 0, enabled);
     }
 
     function _priority() internal view returns (bool enabled) {
@@ -173,7 +173,7 @@ contract PriorityRoutingPerkTest is SetupTest {
     /// @dev The snapshot view for the direct solver (the initiator is ignored on a
     ///      direct route, so the transaction originator is passed).
     function _view() internal view returns (bool enabled, uint256 credits, bool capacityCovers, bool creditUnlocks) {
-        return _intentFacet().getLenderIntentPriority(lender, mockERC20, mockCollateralERC20, solver, tx.origin);
+        return _intentFacet().getLenderIntentPriority(lender, mockERC20, mockCollateralERC20, 0, solver, tx.origin);
     }
 
     function _assertView(bool enabled, uint256 credits, bool capacityCovers, bool creditUnlocks, string memory tag)
@@ -216,6 +216,7 @@ contract PriorityRoutingPerkTest is SetupTest {
         vm.prank(creator);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -250,7 +251,7 @@ contract PriorityRoutingPerkTest is SetupTest {
 
     function _fill(uint256 cp) internal returns (uint256 loanId) {
         vm.prank(solver);
-        loanId = OfferMatchIntentFacet(address(diamond)).matchIntent(lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL);
+        loanId = OfferMatchIntentFacet(address(diamond)).matchIntent(lender, mockERC20, mockCollateralERC20, 0, cp, PRINCIPAL);
     }
 
     function _expectExhausted() internal {
@@ -348,7 +349,7 @@ contract PriorityRoutingPerkTest is SetupTest {
                 assertEq(address(uint160(uint256(logs[i].topics[1]))), lender, "owner");
                 assertEq(address(uint160(uint256(logs[i].topics[2]))), mockERC20, "lendingAsset");
                 assertEq(address(uint160(uint256(logs[i].topics[3]))), mockCollateralERC20, "collateralAsset");
-                (uint256 lid, address slv, uint256 left) = abi.decode(logs[i].data, (uint256, address, uint256));
+                (, uint256 lid, address slv, uint256 left) = abi.decode(logs[i].data, (uint8, uint256, address, uint256));
                 assertEq(lid, loanId, "loanId");
                 assertEq(slv, solver, "solver");
                 assertEq(left, 0, "creditsLeft");
@@ -435,12 +436,12 @@ contract PriorityRoutingPerkTest is SetupTest {
         // No intent at all: refused.
         vm.prank(lender);
         vm.expectRevert(LenderIntentFacet.LenderIntentNotActive.selector);
-        _intentFacet().setLenderIntentPriority(mockERC20, mockCollateralERC20, true);
+        _intentFacet().setLenderIntentPriority(mockERC20, mockCollateralERC20, 0, true);
 
         // Active intent: accepted, one event.
         _setIntent();
         vm.expectEmit(true, true, true, true, address(diamond));
-        emit LenderIntentPrioritySet(lender, mockERC20, mockCollateralERC20, true);
+        emit LenderIntentPrioritySet(lender, mockERC20, mockCollateralERC20, 0, true);
         _setPriority(true);
         assertTrue(_priority(), "opted in");
 
@@ -452,7 +453,7 @@ contract PriorityRoutingPerkTest is SetupTest {
 
         // Opt out: one event; again: one more.
         vm.expectEmit(true, true, true, true, address(diamond));
-        emit LenderIntentPrioritySet(lender, mockERC20, mockCollateralERC20, false);
+        emit LenderIntentPrioritySet(lender, mockERC20, mockCollateralERC20, 0, false);
         _setPriority(false);
         vm.recordLogs();
         _setPriority(false);
@@ -468,7 +469,7 @@ contract PriorityRoutingPerkTest is SetupTest {
         assertTrue(_priority(), "fixture-live: opted in");
 
         vm.expectEmit(true, true, true, true, address(diamond));
-        emit LenderIntentPrioritySet(lender, mockERC20, mockCollateralERC20, false);
+        emit LenderIntentPrioritySet(lender, mockERC20, mockCollateralERC20, 0, false);
         _setIntent();
         assertFalse(_priority(), "a replacement intent never inherits the opt-in");
 
@@ -498,14 +499,14 @@ contract PriorityRoutingPerkTest is SetupTest {
         _setPriority(true);
 
         vm.expectEmit(true, true, true, true, address(diamond));
-        emit LenderIntentPrioritySet(lender, mockERC20, mockCollateralERC20, false);
+        emit LenderIntentPrioritySet(lender, mockERC20, mockCollateralERC20, 0, false);
         vm.prank(lender);
-        _intentFacet().cancelLenderIntent(mockERC20, mockCollateralERC20);
+        _intentFacet().cancelLenderIntent(mockERC20, mockCollateralERC20, 0);
         assertFalse(_priority(), "a cancelled intent carries no opt-in");
 
         vm.prank(lender);
         vm.expectRevert(LenderIntentFacet.LenderIntentNotActive.selector);
-        _intentFacet().setLenderIntentPriority(mockERC20, mockCollateralERC20, true);
+        _intentFacet().setLenderIntentPriority(mockERC20, mockCollateralERC20, 0, true);
 
         vm.recordLogs();
         _setPriority(false); // inactive intent: allowed
@@ -513,7 +514,7 @@ contract PriorityRoutingPerkTest is SetupTest {
 
         // Opting out of a pair that never had an intent is allowed too.
         vm.prank(lender);
-        _intentFacet().setLenderIntentPriority(mockERC20, address(0xC0FFEE), false);
+        _intentFacet().setLenderIntentPriority(mockERC20, address(0xC0FFEE), 0, false);
     }
 
     // ─── 6. protocol owners refused ─────────────────────────────────────────
@@ -529,7 +530,7 @@ contract PriorityRoutingPerkTest is SetupTest {
         TestMutatorFacet(address(diamond)).setAggregatorAdapterRaw(lender, address(0));
         vm.prank(lender);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.LenderIntentPriorityProtocolOwner.selector, lender));
-        _intentFacet().setLenderIntentPriority(mockERC20, mockCollateralERC20, true);
+        _intentFacet().setLenderIntentPriority(mockERC20, mockCollateralERC20, 0, true);
         assertFalse(_priority(), "not opted in");
 
         _setPriority(false); // opting out is always allowed
@@ -548,10 +549,10 @@ contract PriorityRoutingPerkTest is SetupTest {
 
         vm.prank(vault);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.LenderIntentPriorityProtocolOwner.selector, vault));
-        _intentFacet().setLenderIntentPriority(mockERC20, mockCollateralERC20, true);
+        _intentFacet().setLenderIntentPriority(mockERC20, mockCollateralERC20, 0, true);
 
         vm.prank(vault);
-        _intentFacet().setLenderIntentPriority(mockERC20, mockCollateralERC20, false); // opt-out allowed
+        _intentFacet().setLenderIntentPriority(mockERC20, mockCollateralERC20, 0, false); // opt-out allowed
     }
 
     /// @dev Opting in is Tier-1 sanctions-gated; opting out is not, so a flagged
@@ -564,12 +565,12 @@ contract PriorityRoutingPerkTest is SetupTest {
         m.setFlagged(lender, true);
 
         vm.expectEmit(true, true, true, true, address(diamond));
-        emit LenderIntentPrioritySet(lender, mockERC20, mockCollateralERC20, false);
+        emit LenderIntentPrioritySet(lender, mockERC20, mockCollateralERC20, 0, false);
         _setPriority(false); // withdraw consent while flagged
 
         vm.prank(lender);
         vm.expectRevert(abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, lender));
-        _intentFacet().setLenderIntentPriority(mockERC20, mockCollateralERC20, true);
+        _intentFacet().setLenderIntentPriority(mockERC20, mockCollateralERC20, 0, true);
 
         m.setFlagged(lender, false);
         _setPriority(true); // straddle: cleared, accepted
@@ -585,12 +586,12 @@ contract PriorityRoutingPerkTest is SetupTest {
         AdminFacet(address(diamond)).pause();
 
         vm.expectEmit(true, true, true, true, address(diamond));
-        emit LenderIntentPrioritySet(lender, mockERC20, mockCollateralERC20, false);
+        emit LenderIntentPrioritySet(lender, mockERC20, mockCollateralERC20, 0, false);
         _setPriority(false); // revoke during the pause
 
         vm.prank(lender);
         vm.expectRevert(LibPausable.EnforcedPause.selector);
-        _intentFacet().setLenderIntentPriority(mockERC20, mockCollateralERC20, true);
+        _intentFacet().setLenderIntentPriority(mockERC20, mockCollateralERC20, 0, true);
         assertFalse(_priority(), "no opt-in written while paused");
 
         AdminFacet(address(diamond)).unpause();
@@ -804,19 +805,19 @@ contract PriorityRoutingPerkTest is SetupTest {
         _optedInFixture(1);
         uint256 cp = _postBorrower("b-preview");
         LibOfferMatch.IntentPreviewResult memory r = RiskPreviewFacet(address(diamond)).previewIntent(
-            solver, solver, lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+            solver, solver, lender, mockERC20, mockCollateralERC20, 0, cp, PRINCIPAL
         );
         assertTrue(r.ok, "capacity covers: Ok");
         assertFalse(r.spendsPriorityCredit, "covered by capacity: the solver is charged, no credit spent");
         _exhaustSolver();
         r = RiskPreviewFacet(address(diamond)).previewIntent(
-            solver, solver, lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+            solver, solver, lender, mockERC20, mockCollateralERC20, 0, cp, PRINCIPAL
         );
         assertTrue(r.ok, "exhausted + opted in + credit: the preview is Ok");
         assertTrue(r.spendsPriorityCredit, "and it names the credit as what carries the fill");
         _setPriority(false);
         r = RiskPreviewFacet(address(diamond)).previewIntent(
-            solver, solver, lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+            solver, solver, lender, mockERC20, mockCollateralERC20, 0, cp, PRINCIPAL
         );
         assertFalse(r.ok, "opted out: refused");
         assertFalse(r.spendsPriorityCredit, "a refused preview names no credit");
@@ -825,7 +826,7 @@ contract PriorityRoutingPerkTest is SetupTest {
         _fill(cp);
         _setPriority(true);
         r = RiskPreviewFacet(address(diamond)).previewIntent(
-            solver, solver, lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+            solver, solver, lender, mockERC20, mockCollateralERC20, 0, cp, PRINCIPAL
         );
         assertTrue(r.ok, "opted back in: Ok again");
         assertTrue(r.spendsPriorityCredit, "carried by the credit again");

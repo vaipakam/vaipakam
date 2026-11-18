@@ -3,7 +3,9 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibInitiationFee} from "../libraries/LibInitiationFee.sol";
 import {LibPriceRead} from "../libraries/LibPriceRead.sol";
+import {LibTerms} from "../libraries/LibTerms.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
@@ -23,6 +25,7 @@ import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
+import {CollateralConcentrationFacet} from "./CollateralConcentrationFacet.sol";
 import {OfferPreviewFacet} from "./OfferPreviewFacet.sol";
 import {LibOfferPriceGuard} from "../libraries/LibOfferPriceGuard.sol";
 
@@ -212,6 +215,11 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // transfer the lender relationship.  Skip liquidity, mixed-collateral,
         // and LTV/HF checks for these.
         bool isLenderSaleVehicle = s.saleOfferToLoanId[offerId] != 0;
+        // #3734 — both parties of a new loan must have accepted the Terms in
+        // force, whichever route opens it. A lender-sale vehicle's creator is
+        // the exiting lender, who is leaving, so only its buyer is asked.
+        if (!isLenderSaleVehicle) LibTerms.requireCurrent(offer.creator);
+        LibTerms.requireCurrent(acceptor);
 
         // If this is a lender-sale vehicle, the underlying live loan must still
         // be Active.  Otherwise the principal transfer in acceptOffer would send
@@ -878,37 +886,21 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         );
         if (!ltvSuccess) revert LTVCalculationFailed();
         uint256 ltv = abi.decode(ltvResult, (uint256));
-        uint256 loanInitMaxLtvBps = LibVaipakam.assetInitLtvCeilingBps(collateralAsset);
+        // #3685 — the ONE loan-opening cap rule, hosted by
+        // CollateralConcentrationFacet: depth-tiered ⇒ min(per-asset ceiling,
+        // the tier cap for the collateral's effective liquidity tier; tier 0
+        // ⇒ cap 0 ⇒ any positive LTV reverts); untiered ⇒ the per-asset
+        // ceiling. Either regime is held to the lowered tier cap while the
+        // collateral is at the High concentration level. The tier cap is the
+        // autonomous tier-LTV cache while fresh and peer reads are not paused,
+        // else the tier default, never above the tier's governance ceiling
+        // (#3547). Same refusals as before: the tiered regime names the cap.
+        (uint256 cap,,,) =
+            CollateralConcentrationFacet(address(this)).newLoanInitLtvCapBps(collateralAsset);
         bool tieredOn = LibVaipakam.cfgDepthTieredLtvEnabled();
-
         if (tieredOn) {
-            // Depth-graded ceiling: min(per-asset maxLtv, the tier cap for
-            // the collateral's effective liquidity tier). effTier ∈ 0..3;
-            // tier 0 ⇒ cap 0 ⇒ any positive LTV reverts (no borrow).
-            uint8 effTier = abi.decode(
-                LibFacet.crossFacetStaticCall(
-                    abi.encodeWithSelector(
-                        OracleFacet.getEffectiveLiquidityTier.selector,
-                        collateralAsset
-                    ),
-                    LTVCalculationFailed.selector
-                ),
-                (uint8)
-            );
-            // Phase 5 of AutonomousLtvAndOracleFallback.md — the tier cap is
-            // the autonomous tier-LTV cache (peer-protocol-derived,
-            // refreshable permissionlessly via
-            // `OracleFacet.refreshTierLtvCache`) while that entry is fresh
-            // (≤ 14d) and peer reads are not paused (#633); otherwise the
-            // tier default `cfgTierMaxInitLtvBps`. Either way it is never
-            // above the tier's governance ceiling
-            // (`ConfigFacet.setTierLtvParams`, applied at read, #3547).
-            uint256 tierCap = uint256(
-                LibVaipakam.effectiveTierMaxInitLtvBps(effTier)
-            );
-            uint256 cap = loanInitMaxLtvBps < tierCap ? loanInitMaxLtvBps : tierCap;
             if (ltv > cap) revert InitLtvAboveTier(ltv, cap);
-        } else if (ltv > loanInitMaxLtvBps) {
+        } else if (ltv > cap) {
             revert LTVExceeded();
         }
 
@@ -997,9 +989,14 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // ONLY when the fee is actually charged, so `getLoanDetails` honestly
         // reports 0 on the paths that skip it rather than a rate never applied.
         if (!isSaleVehicle && loan.assetType == LibVaipakam.AssetType.ERC20) {
+            // #3649 — the rate for the loan's agreed term, in whole bps
+            // rounded down; the charged amount itself is exact.
             loan.loanInitiationFeeBpsAtInit = uint16(
-                LibVaipakam.cfgLoanInitiationFeeBps()
+                LibInitiationFee.rateBpsDown(loan.durationDays)
             );
+            // The term the fee pays for, counted from this start (#3649).
+            loan.lifTermOrigin = loan.startTime;
+            loan.lifPaidDays = uint32(loan.durationDays);
         }
     }
 
@@ -1244,12 +1241,14 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             // tier cap); non-tiered ⇒ the per-asset cap. Post-admission
             // withdrawal / cure enforce this snapshot so the tier buffer can't
             // be shed later (the branch-aware HF snapshot alone doesn't bound LTV).
-            uint256 assetCap = LibVaipakam.assetInitLtvCeilingBps(loan.collateralAsset);
-            if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
-                uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(effTier));
-                if (tierCap < assetCap) assetCap = tierCap;
-            }
+            // #3685 — the same host the admission gate read, so the stamp and
+            // the gate cannot differ; it also records the collateral's
+            // concentration level at opening (a loan opened at Caution or
+            // above is not eligible for the shortfall reserve).
+            (uint256 assetCap,, uint8 level,) =
+                CollateralConcentrationFacet(address(this)).newLoanInitLtvCapBps(loan.collateralAsset);
             loan.initLtvCapBpsAtInit = uint16(assetCap);
+            if (level != 0) LibVaipakam.storageSlot().loanConcentrationAtInit[loan.id] = level;
             _snapshotLiqDiscount(loan);
         }
     }

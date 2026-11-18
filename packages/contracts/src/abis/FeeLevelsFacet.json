@@ -1,0 +1,204 @@
+[
+  {
+    "type": "function",
+    "name": "getLoanInitiationFeeTerms",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "baseBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "baseTermDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "yearlyBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "yearDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "quoteExtensionFee",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "newEndTime",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "gross",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "fee",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "paidDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "newPaidDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "quoteLoanInitiationFee",
+    "inputs": [
+      {
+        "name": "principal",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "termDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "fee",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "rateBpsDown",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "rateBpsUp",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "setLoanInitiationFeeTerms",
+    "inputs": [
+      {
+        "name": "baseTermDays",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "yearlyBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "yearDays",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "LoanInitiationFeeTermsSet",
+    "inputs": [
+      {
+        "name": "baseTermDays",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "yearlyBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "yearDays",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AccessControlUnauthorizedAccount",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "neededRole",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ERC721NonexistentToken",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidLoanInitiationFeeTerms",
+    "inputs": [
+      {
+        "name": "baseTermDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "yearlyBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "yearDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PositionNFTNotSet",
+    "inputs": []
+  }
+]

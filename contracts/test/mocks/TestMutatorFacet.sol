@@ -1936,7 +1936,7 @@ contract TestMutatorFacet {
     /// @param interestGross #1209 — the payout's gross interest (before the
     ///        fee); the host pays open seller claims out of it first.
     /// @param interestNet   What the lender side receives of that interest.
-    function callFreezeOrPayActiveLenderResident(
+    function callHoldActiveLenderResident(
         uint256 loanId,
         address asset,
         uint256 amount,
@@ -1945,7 +1945,7 @@ contract TestMutatorFacet {
     ) external {
         _selfCall(
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector,
+                EncumbranceMutateFacet.holdActiveLenderResident.selector,
                 loanId,
                 asset,
                 amount,
@@ -1957,7 +1957,7 @@ contract TestMutatorFacet {
 
     /// @notice Drive the payer-funded Class B host (the ERC-20 `repayPartial`
     ///         shape). `payer` must have approved the diamond for `amount`.
-    function callFreezeOrPayActiveLenderFromPayer(
+    function callHoldActiveLenderFromPayer(
         uint256 loanId,
         address payer,
         address asset,
@@ -1967,7 +1967,7 @@ contract TestMutatorFacet {
     ) external {
         _selfCall(
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.freezeOrPayActiveLenderFromPayer.selector,
+                EncumbranceMutateFacet.holdActiveLenderFromPayer.selector,
                 loanId,
                 payer,
                 asset,
@@ -1980,7 +1980,7 @@ contract TestMutatorFacet {
 
     /// @notice Drive the vault-funded Class B host (the NFT-rental prepay shape).
     ///         `fromUser`'s vault must hold `amount` of `asset`.
-    function callFreezeOrPayActiveLenderFromVault(
+    function callHoldActiveLenderFromVault(
         uint256 loanId,
         address fromUser,
         address asset,
@@ -1988,7 +1988,7 @@ contract TestMutatorFacet {
     ) external {
         _selfCall(
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector,
+                EncumbranceMutateFacet.holdActiveLenderFromVault.selector,
                 loanId,
                 fromUser,
                 asset,

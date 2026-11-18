@@ -70,6 +70,13 @@ library VaultOutflowTypes {
      *           stored party's vault to the CURRENT holder's vault, still under
      *           the side's lien (#594): holder-bound like PositionHolder, but
      *           not free money, so the move books it as custody.
+     *         - HolderWallet (#3710): the WALLET of whoever holds
+     *           `positionToken` of loan `ref` now, read from the token by the
+     *           policy, never named by the route. A holder that is the paying
+     *           vault's own owner is paid as an Owner payout (its delay, its
+     *           lock, a replaced account's manager); any other holder at its
+     *           wallet, or at its own vault when it has protected mode on.
+     *           ERC-20 only.
      */
     enum OutflowClass {
         Owner,
@@ -87,7 +94,8 @@ library VaultOutflowTypes {
         DiamondTransient,
         ClaimCustody,
         PrincipalToBorrower,
-        Consolidation
+        Consolidation,
+        HolderWallet
     }
 
     /// @notice Who a just-in-time allowance may name as spender.
@@ -235,5 +243,6 @@ library OutflowReason {
     uint8 internal constant LISTING_ESCROW = 20; // an ERC-1155 listing's lot into its escrow
     uint8 internal constant SANCTIONED_LOCK = 21; // a sanctioned party's share into its lock
     uint8 internal constant RENTAL = 22; // a rental settlement leg
+    uint8 internal constant STANDING_INSTRUCTION = 23; // #3681: a standing instruction's draw on a loan reserve
 
 }

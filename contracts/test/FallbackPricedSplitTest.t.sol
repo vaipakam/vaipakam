@@ -16,7 +16,7 @@ import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
-import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
+import {CollateralLienFacet} from "../src/facets/CollateralLienFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
@@ -252,7 +252,7 @@ contract FallbackPricedSplitTest is SetupTest {
     function _assertEntryRefusedWith(bytes memory refusal) internal {
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(LOAN);
         vm.startPrank(address(diamond));
-        EncumbranceMutateFacet(address(diamond)).releaseCollateralLien(LOAN);
+        CollateralLienFacet(address(diamond)).releaseCollateralLien(LOAN);
         LibTestOutflow.withdrawERC20(address(diamond), l.borrower, l.collateralAsset, address(diamond), l.collateralAmount);
         vm.expectRevert(refusal);
         FallbackCustodyFacet(address(diamond)).enterFallback(LOAN);

@@ -223,6 +223,7 @@ export async function seedDeskOffer(opts: {
     allowsParallelSale: false,
     refinanceTargetLoanId: 0n,
     useFullTermInterest: opts.terms?.useFullTermInterest ?? false,
+    lifecycleFlex: 0, // #3621
   };
   // The transaction deadline (#3412): the chain's latest block time plus
   // the shared window, never the host clock (the e2e chain's clock is warped).
