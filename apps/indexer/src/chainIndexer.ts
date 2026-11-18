@@ -87,6 +87,7 @@ import {
 } from './settledHead';
 import { DIAMOND_METRICS_ABI } from './diamondAbi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import { recordTermsLogs } from './termsStanding';
 import {
   DIAMOND_OFFER_DETAILS_ABI,
   DIAMOND_LOAN_DETAILS_ABI,
@@ -2812,6 +2813,10 @@ async function runChainPass(
     // corrects the `loans` projection above, because healing is exactly what
     // would hide the drift it reports. See loanLifecycleGuard.ts.
     await recordLoanLifecycle(env.DB, chainId, logs, blockTimestamps);
+    // #3734 — the Terms record: publications, announcements, withdrawals,
+    // comings-into-force and each wallet's acceptances. Its own two tables
+    // only; the book's marks are folded from them at read time.
+    await recordTermsLogs(env.DB, chainId, logs, blockTimestamps);
     // #1131 Rate Desk phase 3 — signed-offer book lifecycle. Reconciles the
     // off-chain `signed_offers` rows against the on-chain fill/cancel/nonce
     // events. Runs after the offer/loan passes; it touches only its own table.

@@ -8,6 +8,8 @@ Every open offer in the offer lists, and every order in the signed book, now car
 
 A new read, `/terms/{address}?chainId=`, answers one wallet's acceptances on one network, the network's record, and whether the wallet is current now, including the date an announced change would stop it counting. When the record cannot be read it answers 503 with the standing stated as unknown, which the apps treat as not current.
 
-> Caveat: the event decoders are not wired yet, because the contract events are still being built. Until they are, every standing reads unknown rather than "no Terms in force", so nothing is shown as fillable on a guess.
+The scan stores the LegalFacet events (TermsAccepted, TosPublished, TosAnnounced, TosAnnouncementWithdrawn, TosVersionInForce) as they are read.
+
+> Caveat: the indexer decodes those events only when the Diamond ABI it is built with declares all five. A build whose ABI predates them reports every standing as unknown rather than "no Terms in force", so nothing is shown as fillable on a guess. Diamonds deployed before these events (which announced versions with the retired CurrentTosUpdated event) are not read.
 
 Advances #3734.

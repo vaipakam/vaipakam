@@ -18,8 +18,12 @@ import {
   walletStanding,
   walletTerms,
   TERMS_EVENTS_WIRED,
+  recordTermsLogs,
+  termsRowOf,
+  TERMS_EVENT_NAMES,
   type TermsChange,
 } from '../src/termsStanding';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { handleOfferById } from '../src/offerRoutes';
 import { handleTermsWallet } from '../src/termsRoutes';
 import type { Env } from '../src/env';
@@ -200,6 +204,7 @@ describe('walletStanding', () => {
 });
 
 type H = ReturnType<typeof createSqliteD1>;
+const EMPTY_RECORD_STANDING = TERMS_EVENTS_WIRED ? { state: 'no-terms-in-force' } : { state: 'unknown' };
 const envOf = (h: H) => ({ DB: h.d1, RPC_BASE_SEPOLIA: 'http://127.0.0.1:9', RPC_ARB_SEPOLIA: 'http://127.0.0.1:9' }) as unknown as Env;
 
 const seedRecord = async (h: H, chainId: number, changes: TermsChange[]) => {
@@ -253,12 +258,18 @@ describe('the stored record', () => {
     expect(w).toMatchObject({ standing: { state: 'unknown' }, accepted: null, record: null });
   });
 
-  it('a build that does not decode the Terms events yet reads unknown, not "none in force"', async () => {
-    expect(TERMS_EVENTS_WIRED).toBe(false);
+  it('wired exactly when the Diamond ABI this build carries declares every Terms event', () => {
+    const names = new Set(
+      (DIAMOND_ABI_VIEM as readonly { type: string; name?: string }[]).filter((i) => i.type === 'event').map((i) => i.name),
+    );
+    expect(TERMS_EVENTS_WIRED).toBe(TERMS_EVENT_NAMES.every((n) => names.has(n)));
+  });
+
+  it('a build that does not decode the Terms events reads unknown, not "none in force"', async () => {
     const h = createSqliteD1(migrations());
     await seedRecord(h, CHAIN, [change('published', 1, 10)]);
     await seedAcceptance(h, CHAIN, ALICE, 1);
-    const s = await makerStandings(envOf(h), CHAIN, [ALICE], 100);
+    const s = await makerStandings(envOf(h), CHAIN, [ALICE], 100, { wired: false });
     expect(s.get(ALICE)).toEqual({ state: 'unknown' });
   });
 });
@@ -302,16 +313,86 @@ describe('the book and the wallet read', () => {
     seedOffer(h, 3, BOB, { is_offset_vehicle: 1 });
     seedOffer(h, 4, BOB, { status: 'cancelled' });
     expect((await fetchOffer(h, 1)).makerTerms).toEqual({ state: 'exempt' });
-    // Not wired yet: the record is not read, so the standing is stated unknown.
-    expect((await fetchOffer(h, 2)).makerTerms).toEqual({ state: 'unknown' });
-    expect((await fetchOffer(h, 3)).makerTerms).toEqual({ state: 'unknown' });
+    // An empty record: unknown while this build cannot decode the events,
+    // otherwise no Terms in force.
+    expect((await fetchOffer(h, 2)).makerTerms).toEqual(EMPTY_RECORD_STANDING);
+    expect((await fetchOffer(h, 3)).makerTerms).toEqual(EMPTY_RECORD_STANDING);
     expect((await fetchOffer(h, 4)).makerTerms).toBeNull();
   });
 
   it('the wallet read answers 503 unknown while the record cannot be read', async () => {
-    const h = createSqliteD1(migrations());
+    const h = createSqliteD1(migrations(MIGRATION_0100));
     const res = await handleTermsWallet(new Request(`https://x/terms/${ALICE}?chainId=${CHAIN}`), envOf(h), ALICE);
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject({ chainId: CHAIN, wallet: ALICE, standing: { state: 'unknown' }, accepted: null });
+  });
+});
+
+describe('the ingest: LegalFacet logs to rows', () => {
+  const W = '0x00000000000000000000000000000000000000Aa';
+  const H32 = '0x' + 'ab'.repeat(32);
+  let li = 0;
+  const lg = (eventName: string, block: bigint, args: Record<string, unknown>) => ({
+    eventName,
+    args,
+    blockNumber: block,
+    transactionHash: '0x' + 'cd'.repeat(32),
+    logIndex: li++,
+  });
+
+  it('maps each event to its row, and ignores every other event', () => {
+    expect(termsRowOf(lg('TosPublished', 5n, { version: 1, hash: H32, minVersion: 1, at: 100n }), 100)).toMatchObject({
+      change: { kind: 'published', version: 1, movesMinimum: true, inForceAt: 100 },
+    });
+    // A small change: the minimum stays below it.
+    expect(termsRowOf(lg('TosPublished', 6n, { version: 2, hash: H32, minVersion: 1, at: 200n }), 200)).toMatchObject({
+      change: { kind: 'published', version: 2, movesMinimum: false },
+    });
+    expect(
+      termsRowOf(lg('TosAnnounced', 7n, { version: 3, hash: H32, effectiveAt: 900n, minVersion: 3, newVersion: true }), 300),
+    ).toMatchObject({ change: { kind: 'announced', version: 3, movesMinimum: true, inForceAt: 900 } });
+    expect(termsRowOf(lg('TosAnnouncementWithdrawn', 8n, { version: 3, hash: H32, newVersion: true }), 400)).toMatchObject({
+      change: { kind: 'withdrawn', version: 3 },
+    });
+    expect(
+      termsRowOf(lg('TosVersionInForce', 9n, { version: 3, hash: H32, effectiveAt: 900n, minVersion: 3, newVersion: true }), 950),
+    ).toMatchObject({ change: { kind: 'in-force', version: 3, inForceAt: 900 } });
+    expect(termsRowOf(lg('TermsAccepted', 10n, { user: W, version: 2, hash: H32, timestamp: 1_000n }), 1_000)).toMatchObject({
+      acceptance: { wallet: W, version: 2, acceptedAt: 1_000 },
+    });
+    expect(termsRowOf(lg('OfferCreated', 11n, {}), 1_000)).toBeNull();
+  });
+
+  it('a scanned material change: stale makers are marked from its in-force time, and a replay writes nothing new', async () => {
+    const h = createSqliteD1(migrations());
+    const times = new Map<bigint, number>([
+      [5n, 100],
+      [6n, 200],
+      [7n, 300],
+    ]);
+    const logs = [
+      lg('TosPublished', 5n, { version: 1, hash: H32, minVersion: 1, at: 100n }),
+      lg('TermsAccepted', 6n, { user: W, version: 1, hash: H32, timestamp: 200n }),
+      lg('TosAnnounced', 7n, { version: 2, hash: H32, effectiveAt: 1_000n, minVersion: 2, newVersion: true }),
+      lg('OfferCreated', 7n, { offerId: 1n }),
+    ];
+    const db = h.d1 as unknown as D1Database;
+    expect(await recordTermsLogs(db, CHAIN, logs, times)).toBe(3);
+    await recordTermsLogs(db, CHAIN, logs, times);
+    expect((h.db.prepare('SELECT COUNT(*) AS c FROM terms_change').get() as { c: number }).c).toBe(2);
+    expect((h.db.prepare('SELECT COUNT(*) AS c FROM terms_acceptance').get() as { c: number }).c).toBe(1);
+
+    const w = W.toLowerCase();
+    const before = await makerStandings(envOf(h), CHAIN, [W], 999, { wired: true });
+    expect(before.get(w)).toMatchObject({ state: 'current', stopsBeingCurrentAt: 1_000 });
+    const after = await makerStandings(envOf(h), CHAIN, [W], 1_000, { wired: true });
+    expect(after.get(w)).toMatchObject({ state: 'not-current', reason: 'below-minimum', minimumVersion: 2 });
+  });
+
+  it('refuses a log whose block has no chain time', async () => {
+    const h = createSqliteD1(migrations());
+    await expect(
+      recordTermsLogs(h.d1 as unknown as D1Database, CHAIN, [lg('TosPublished', 5n, { version: 1, hash: H32, minVersion: 1, at: 1n })], new Map()),
+    ).rejects.toThrow(/no chain time/);
   });
 });

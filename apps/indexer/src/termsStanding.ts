@@ -36,14 +36,33 @@
 import type { Env } from './env';
 import { chunkD1InList } from '@vaipakam/lib/d1Binds';
 import { redactedError } from '@vaipakam/lib/errorDescription';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+
+/** The Diamond's Terms events (LegalFacet), by name. */
+export const TERMS_EVENT_NAMES = [
+  'TermsAccepted',
+  'TosPublished',
+  'TosAnnounced',
+  'TosAnnouncementWithdrawn',
+  'TosVersionInForce',
+] as const;
 
 /**
  * Whether this build's ingest decodes the Diamond's Terms events into
- * `terms_change` / `terms_acceptance`. Until it does, an empty record means
- * "not read", not "no Terms in force", so every standing reads `unknown`.
- * Set to true in the change that wires the decoders.
+ * `terms_change` / `terms_acceptance`: true only when the compiled Diamond
+ * ABI this build carries declares every one of them. Otherwise the scan
+ * cannot decode them, an empty record means "not read" rather than "no
+ * Terms in force", and every standing reads `unknown`. Derived, never set by
+ * hand, so a build cannot claim a record it is unable to read.
  */
-export const TERMS_EVENTS_WIRED = false;
+export const TERMS_EVENTS_WIRED: boolean = (() => {
+  const names = new Set(
+    (DIAMOND_ABI_VIEM as readonly { type: string; name?: string }[])
+      .filter((i) => i.type === 'event')
+      .map((i) => i.name),
+  );
+  return TERMS_EVENT_NAMES.every((n) => names.has(n));
+})();
 
 // ── The record ────────────────────────────────────────────────────────
 
@@ -472,4 +491,134 @@ export function termsAcceptanceStatement(
       a.logIndex,
       a.txHash.toLowerCase(),
     );
+}
+
+// ── The ingest: decoded logs to rows ──────────────────────────────────
+
+/** The fields of a decoded log this ingest reads. */
+export interface TermsLog {
+  eventName: string;
+  args: Record<string, unknown>;
+  blockNumber: bigint;
+  transactionHash: string;
+  logIndex: number;
+}
+
+const num = (v: unknown): number => Number(v as bigint | number);
+const hex = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+
+/**
+ * Map one decoded LegalFacet log to the row it stores, or null for any other
+ * event. The event shapes (#3734):
+ *  - TermsAccepted(user, version, hash, timestamp): one wallet's acceptance;
+ *  - TosPublished(version, hash, minVersion, at): in force at once; it moves
+ *    the minimum only as the first version on a network (minVersion =
+ *    version), never as a small change;
+ *  - TosAnnounced(version, hash, effectiveAt, minVersion, newVersion): the
+ *    minimum moves to `version` at `effectiveAt`; `newVersion` false is a
+ *    raise to the version already latest;
+ *  - TosAnnouncementWithdrawn(version, hash, newVersion): drops the open
+ *    announcement; a version already published stays in force;
+ *  - TosVersionInForce(version, hash, effectiveAt, minVersion, newVersion):
+ *    the announced change is in force (counted from `effectiveAt`).
+ */
+export function termsRowOf(
+  log: TermsLog,
+  blockAt: number,
+): { change: TermsChangeInput } | { acceptance: TermsAcceptanceInput } | null {
+  const a = log.args;
+  const base = {
+    blockNumber: Number(log.blockNumber),
+    logIndex: Number(log.logIndex),
+    txHash: log.transactionHash,
+    blockAt,
+  };
+  switch (log.eventName) {
+    case 'TermsAccepted':
+      return {
+        acceptance: {
+          wallet: String(a.user),
+          version: num(a.version),
+          termsHash: hex(a.hash),
+          acceptedAt: num(a.timestamp),
+          blockNumber: base.blockNumber,
+          logIndex: base.logIndex,
+          txHash: base.txHash,
+        },
+      };
+    case 'TosPublished':
+      return {
+        change: {
+          ...base,
+          kind: 'published',
+          version: num(a.version),
+          termsHash: hex(a.hash),
+          movesMinimum: num(a.minVersion) === num(a.version),
+          inForceAt: num(a.at),
+        },
+      };
+    case 'TosAnnounced':
+      return {
+        change: {
+          ...base,
+          kind: 'announced',
+          version: num(a.version),
+          termsHash: hex(a.hash),
+          movesMinimum: true,
+          inForceAt: num(a.effectiveAt),
+        },
+      };
+    case 'TosAnnouncementWithdrawn':
+      return {
+        change: {
+          ...base,
+          kind: 'withdrawn',
+          version: num(a.version),
+          termsHash: hex(a.hash),
+          movesMinimum: false,
+          inForceAt: null,
+        },
+      };
+    case 'TosVersionInForce':
+      return {
+        change: {
+          ...base,
+          kind: 'in-force',
+          version: num(a.version),
+          termsHash: hex(a.hash),
+          movesMinimum: true,
+          inForceAt: num(a.effectiveAt),
+        },
+      };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Store one block's Terms events. Idempotent: replaying a window writes
+ * nothing new. `blockTimes` is the scan's chain time per block; a log whose
+ * block has no time is refused (the scan reads every block's time first).
+ */
+export async function recordTermsLogs(
+  db: D1Database,
+  chainId: number,
+  logs: readonly TermsLog[],
+  blockTimes: ReadonlyMap<bigint, number>,
+): Promise<number> {
+  const statements: D1PreparedStatement[] = [];
+  for (const log of logs) {
+    if (!(TERMS_EVENT_NAMES as readonly string[]).includes(log.eventName)) continue;
+    const blockAt = blockTimes.get(log.blockNumber);
+    if (blockAt === undefined) throw new Error(`recordTermsLogs: no chain time for block ${log.blockNumber}`);
+    const row = termsRowOf(log, blockAt);
+    if (row === null) continue;
+    statements.push(
+      'change' in row
+        ? termsChangeStatement(db, chainId, row.change)
+        : termsAcceptanceStatement(db, chainId, row.acceptance),
+    );
+  }
+  if (statements.length > 0) await db.batch(statements);
+  return statements.length;
 }

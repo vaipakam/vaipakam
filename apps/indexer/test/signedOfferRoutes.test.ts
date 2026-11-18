@@ -43,6 +43,7 @@ import {
   type SignedOrderWire,
 } from '../src/signedOfferEip712';
 import { getChainConfigs, type Env } from '../src/env';
+import { TERMS_EVENTS_WIRED } from '../src/termsStanding';
 
 const TEST_PK =
   '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80' as Hex; // anvil key 0
@@ -592,13 +593,16 @@ describe('GET /signed-offers — per-side price-relevant caps (Codex #1145 r4)',
     expect(offers.map((o) => o.orderHash)).not.toContain('spam-149');
   });
 
-  it('#3734: every order carries its maker Terms standing, stated unknown until the record is read', async () => {
+  it('#3734: every order carries its maker Terms standing', async () => {
     const rows: SeedRow[] = [
       { orderHash: 'ask-1', offerType: 0, rateBps: 100, rateBpsMax: 100, createdAt: 1_000 },
       { orderHash: 'bid-1', offerType: 1, rateBps: 0, rateBpsMax: 400, createdAt: 1_100 },
     ];
     const offers = (await getBook(seedBook(rows))) as { orderHash: string; makerTerms?: unknown }[];
-    expect(offers.map((o) => o.makerTerms)).toEqual([{ state: 'unknown' }, { state: 'unknown' }]);
+    // An empty record: unknown while this build cannot decode the Terms
+    // events, otherwise no Terms in force.
+    const empty = TERMS_EVENTS_WIRED ? { state: 'no-terms-in-force' } : { state: 'unknown' };
+    expect(offers.map((o) => o.makerTerms)).toEqual([empty, empty]);
   });
 
   it('borrower bids rank highest-rate-first and are capped independently of lender spam', async () => {
