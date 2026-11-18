@@ -170,6 +170,12 @@ where it is.
 - A wallet that accepts from then on accepts the new text.
 - A wallet on an older version that still counts may accept the latest one
   whenever it likes. It is never required to.
+- The latest version is at most 16 numbers above the minimum (**Default**). A
+  small change that would pass that is refused by name, and the minimum is
+  raised first (section 5.2). Whether a wallet is current is read across the
+  versions from the minimum to the latest at every step of section 3.1, so
+  this keeps the cost of opening a loan bounded however many small changes
+  are published.
 
 Which kind a change is, is the platform's decision, taken on legal advice and
 stated in the publication's event. Each record names the exact version and
@@ -400,6 +406,11 @@ date their commitments stop filling.
     stops one second after. The acceptance on the first network changes
     nothing shown for the second. A third network where the wallet has
     nothing is not listed. A small update starts no such flow.
+
+22. With the latest version 16 numbers above the minimum, one more small
+    change is refused by name. After the minimum is raised it is published.
+    A wallet that is not current is refused at a loan opening within a
+    stated gas bound at that widest window.
 
 ## 10. Residuals
 
