@@ -367,4 +367,80 @@ contract RecoveryClawbackTest is SetupTest {
         recVault.protect(abi.encodeCall(VaultRecovery.clawback, (_assets(), P.direct(rec))));
         assertEq(tok.balanceOf(rec2), 40 ether, "on to its recovery address");
     }
+
+    // ─── 9. The split: VaultProtection forwards only VaultRecovery's own ─
+
+    function _ids(string memory name) internal view returns (bytes4[] memory out) {
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        string memory json = vm.readFile(string.concat("out/", name, ".sol/", name, ".json"));
+        string[] memory sigs = vm.parseJsonKeys(json, ".methodIdentifiers");
+        out = new bytes4[](sigs.length);
+        for (uint256 i; i < sigs.length; ++i) {
+            out[i] = bytes4(keccak256(bytes(sigs[i])));
+        }
+    }
+
+    function _has(bytes4[] memory set, bytes4 sel) internal pure returns (bool) {
+        for (uint256 i; i < set.length; ++i) {
+            if (set[i] == sel) return true;
+        }
+        return false;
+    }
+
+    /// The selectors VaultRecovery adds to the shared base are exactly the
+    /// five the fallback forwards, and none of them is carried by
+    /// VaultProtection or by the vault itself.
+    function test_recoverysOwnSelectorsAreTheForwardedFive_andCollideWithNothing() public view {
+        bytes4[] memory rec_ = _ids("VaultRecovery");
+        bytes4[] memory base = _ids("VaultProtectionBase");
+        bytes4[] memory prot = _ids("VaultProtection");
+        bytes4[] memory vlt = _ids("VaipakamVaultImplementation");
+        bytes4[5] memory forwarded = [
+            VaultRecovery.requestRecoveryAddress.selector,
+            VaultRecovery.cancelRecoveryAddress.selector,
+            VaultRecovery.clearRecoveryAddress.selector,
+            VaultRecovery.settleRecoveryAddress.selector,
+            VaultRecovery.clawback.selector
+        ];
+        uint256 own;
+        for (uint256 i; i < rec_.length; ++i) {
+            if (_has(base, rec_[i])) continue; // shared code, the same in both
+            ++own;
+            bool listed;
+            for (uint256 j; j < forwarded.length; ++j) {
+                if (forwarded[j] == rec_[i]) listed = true;
+            }
+            assertTrue(listed, "a VaultRecovery endpoint the fallback does not forward");
+            assertFalse(_has(prot, rec_[i]), "collides with VaultProtection");
+            assertFalse(_has(vlt, rec_[i]), "collides with the vault");
+        }
+        assertEq(own, forwarded.length, "VaultRecovery's own endpoints are the forwarded five");
+    }
+
+    /// Any other selector reaching the fallback is refused by name.
+    function test_theFallbackRefusesAnUnknownSelectorByName() public {
+        bytes4 unknown = bytes4(keccak256("notAProtectionCall()"));
+        _expectProtectRevert(
+            acct,
+            abi.encodeWithSelector(unknown),
+            abi.encodeWithSelector(VaultProtection.UnknownProtectionSelector.selector, unknown)
+        );
+    }
+
+    /// Called on their own code, not inside a vault, both refuse and change
+    /// nothing: the fallback, and VaultRecovery's endpoints directly.
+    function test_theCodeContractsRefuseADirectCall() public {
+        VaultProtection code = VaultProtection(vault.PROTECTION());
+        VaultRecovery recCode = VaultRecovery(code.RECOVERY());
+        vm.prank(acct);
+        vm.expectRevert(VaultProtectionBase.NotDelegateCall.selector);
+        recCode.settleRecoveryAddress();
+        vm.prank(acct);
+        vm.expectRevert(VaultProtectionBase.NotDelegateCall.selector);
+        recCode.clawback(_assets(), P.direct(acct));
+        // Through VaultProtection's own fallback, on its own storage.
+        vm.prank(acct);
+        vm.expectRevert(VaultProtectionBase.NotDelegateCall.selector);
+        VaultRecovery(address(code)).settleRecoveryAddress();
+    }
 }

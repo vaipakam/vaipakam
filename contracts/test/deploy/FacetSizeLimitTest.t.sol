@@ -10,6 +10,8 @@ import {PriceGuard} from "../../src/oracle/PriceGuard.sol";
 import {PriceGuardReader} from "../../src/oracle/PriceGuardReader.sol";
 import {VaipakamFeedRegistry} from "../../src/oracle/VaipakamFeedRegistry.sol";
 import {Erc4626RateReader} from "../../src/oracle/rate/Erc4626RateReader.sol";
+import {VaultProtection} from "../../src/vault/VaultProtection.sol";
+import {VaultRecovery} from "../../src/vault/VaultRecovery.sol";
 
 /**
  * @title FacetSizeLimitTest
@@ -92,6 +94,17 @@ contract FacetSizeLimitTest is Test, DiamondFacetNames {
 
     /// @dev EIP-3860 maximum initcode size, in bytes.
     uint256 internal constant EIP3860_INITCODE_LIMIT = 49_152;
+
+    /// @notice The vault's protection code is two deployables since #3246
+    ///         part 2: {VaultProtection} (settings, signers, lock,
+    ///         replacement) and {VaultRecovery} (the recovery address and
+    ///         the clawback), which the first reaches by delegatecall. Neither
+    ///         is a facet, so `cutFacetNames()` never names them; the split
+    ///         exists because the single contract crossed EIP-170.
+    function test_VaultProtectionCodeUnderSizeLimit() public view {
+        _assertUnderLimit(type(VaultProtection).name);
+        _assertUnderLimit(type(VaultRecovery).name);
+    }
 
     /// @notice #2975 — the LaunchGate and the companion it creates are
     ///         deployed by every chain's `contracts` phase, and no facet list

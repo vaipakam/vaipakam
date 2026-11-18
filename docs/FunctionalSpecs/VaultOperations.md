@@ -195,6 +195,13 @@ The exit from a locked protected account (#3246 part 2; design:
   tokens cannot be transferred. Its open offers and Auto-lend funding can no
   longer fill and anyone may release them back into its vault; its Ready
   balance lapses.
+- A replacement and a clawback can happen in either order on one account.
+  Once the account is recovered, the replacement's move of the retired
+  wallet's position tokens to the new wallet is refused as a move out of a
+  recovered account; the tokens stay with the account, the current wallet
+  still claims, repays, adds collateral and cancels the account's offers on
+  them, and what they pay out reaches the recovery address, never either
+  wallet.
 - Anything that later reaches a recovered account's vault is swept on to the
   recovery address by any caller; the sweep moves only free balance, only to
   that address. A recovery address that is itself a protected account is paid

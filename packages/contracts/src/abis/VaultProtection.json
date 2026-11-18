@@ -2165,5 +2165,16 @@
     "type": "error",
     "name": "TooMany",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnknownProtectionSelector",
+    "inputs": [
+      {
+        "name": "selector",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ]
   }
 ]

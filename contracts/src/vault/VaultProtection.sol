@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaultProtectionStorage as P} from "./LibVaultProtectionStorage.sol";
 import {VaultProtectionBase, IProtectedVaultSelf, IPayoutRowsView} from "./VaultProtectionBase.sol";
+import {VaultRecovery} from "./VaultRecovery.sol";
 
 /**
  * @title  VaultProtection
@@ -51,16 +52,30 @@ contract VaultProtection is VaultProtectionBase {
     /// @notice The recovery code address holds no code.
     error RecoveryCodeMissing();
 
+    /// @notice A selector neither this code nor {VaultRecovery}'s five
+    ///         endpoints carry. Refused here, by name, before anything runs.
+    error UnknownProtectionSelector(bytes4 selector);
+
     constructor(address recovery) {
         if (recovery.code.length == 0) revert RecoveryCodeMissing();
         RECOVERY = recovery;
     }
 
-    /// @dev Every selector this contract does not carry runs in {RECOVERY},
-    ///      still inside the vault (a nested delegatecall keeps its storage
-    ///      and caller). Refused on this contract's own storage.
+    /// @dev {VaultRecovery}'s five endpoints run in {RECOVERY}, still inside
+    ///      the vault (a nested delegatecall keeps its storage and caller).
+    ///      Any other selector is refused by name, so a selector added to
+    ///      {VaultRecovery} reaches nothing until it is listed here too.
+    ///      Refused on this contract's own storage.
     fallback() external {
         if (address(this) == SELF) revert NotDelegateCall();
+        bytes4 sel = msg.sig;
+        if (
+            sel != VaultRecovery.requestRecoveryAddress.selector
+                && sel != VaultRecovery.cancelRecoveryAddress.selector
+                && sel != VaultRecovery.clearRecoveryAddress.selector
+                && sel != VaultRecovery.settleRecoveryAddress.selector
+                && sel != VaultRecovery.clawback.selector
+        ) revert UnknownProtectionSelector(sel);
         (bool ok, bytes memory ret) = RECOVERY.delegatecall(msg.data);
         // `ret` is a memory bytes this function already holds; both blocks
         // read only inside it and end the call.

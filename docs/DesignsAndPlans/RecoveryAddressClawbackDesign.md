@@ -216,6 +216,26 @@ account keeps it, a clawback works on a replaced account, and its trigger
 keys are that account's current manager, its signers and the linked-chat
 keeper. A change requested after a replacement waits the same 30 days.
 
+**Default (design thread, 2026-11-18).** On a recovered account the
+replacement's token move (#3526: anyone may move a retired wallet's position
+tokens to the replacement wallet) is refused, and the recovered rule runs
+first, so the refusal names the recovered account
+(`TransferFromRecoveredAccount`), not the retired holder. The same holds in
+both orders: replaced and then recovered, or recovered and then replaced (a
+replacement remains possible after a clawback, and the account stays locked
+through it). The tokens stay with the account; the current wallet still
+claims, repays, adds collateral and cancels the account's offers on them, as
+the account's manager, and what they pay out reaches the account's vault and
+from there the recovery address. The recovered record is read from the
+account itself, so it answers the same whichever wallet acts, and neither the
+retired wallet nor the current one receives a payout. The app offers no "Move
+positions to your new wallet" on a recovered account and says why.
+
+**Open (2026-11-18).** A token already moved to the replacement wallet BEFORE
+the clawback is that wallet's own position from then on: the clawback of the
+replaced account does not reach it, and its payouts go to the replacement
+wallet. Raised with the design thread.
+
 ## 5. Events and the record
 
 - A first setting, a change request, a cancellation and a drop each emit an
@@ -283,6 +303,16 @@ every amount that went to the recovery address.
     its delay. A transfer, a sale and a handover of the account's positions
     are each refused, and what the positions pay out reaches the recovery
     address.
+12. **(added, 4.5 Default)** Replaced then recovered, and recovered then
+    replaced, with the tokens still at the retired wallet: the replacement's
+    token move is refused with the recovered error; the current wallet
+    claims, repays, adds collateral and cancels the account's offers; every
+    payout reaches the recovery address and neither wallet.
+13. **(added, the code split)** The vault's protection code forwards to its
+    recovery code only that code's five endpoints and refuses any other
+    selector by name; none of the five collides with the protection code or
+    the vault; both code contracts refuse a direct call; both are under
+    EIP-170.
 
 ## 8. Residuals
 
