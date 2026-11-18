@@ -291,10 +291,16 @@ date their commitments stop filling.
     asks at the wallet's next use there.
   - Each step stands alone. One that is skipped, rejected or fails leaves the
     others recorded, and a wallet short of the fee on one network is told the
-    amount and the flow moves on. The app shows, per network: accepted, with
-    the transaction; sent and waiting; or not yet, with the date.
-  - A wallet is never shown as current on a network because of an acceptance
-    made on another. Each network's standing is read from that network.
+    amount and the flow moves on.
+  - Two things are shown per network and never merged. One is the wallet's
+    standing there now: current or not. The other is the announced version:
+    accepted, with the transaction; sent and waiting; or not yet, with the
+    date. A wallet that is current on a network and has not yet accepted the
+    announced version there stays current, with everything open, until the
+    date. Putting a step off changes nothing before it.
+  - Neither is ever taken from another network. A wallet is not shown as
+    current on one network, or as having accepted the announced version
+    there, because of an acceptance made on another.
   - A small update never starts this flow.
 - **The book.** The book applies the rule of section 3 and nothing wider. A
   commitment that would give its maker a new position (a lending, borrowing
@@ -385,12 +391,15 @@ date their commitments stop filling.
     withdrawn version is not current, although its number now lies between
     the minimum and the latest.
 
-21. In the app, during the notice of a material change, a wallet with an
-    open offer on a second network is walked through both networks. It
-    accepts on the first and rejects on the second: the first is recorded,
-    the second shows not yet with the date, and the wallet is not shown as
-    current on the second. A third network where it has nothing is not
-    listed. A small update starts no such flow.
+21. In the app, during the notice of a material change, a wallet that is
+    current on two networks and has an open offer on each is walked through
+    both. It accepts the announced version on the first and rejects the
+    transaction on the second. The first shows the announced version as
+    accepted. The second shows it as not yet, with the date, and still shows
+    the wallet as current there: its offer keeps filling until the date and
+    stops one second after. The acceptance on the first network changes
+    nothing shown for the second. A third network where the wallet has
+    nothing is not listed. A small update starts no such flow.
 
 ## 10. Residuals
 
