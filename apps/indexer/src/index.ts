@@ -74,6 +74,8 @@ import {
 } from '@vaipakam/lib/d1Maintenance';
 import { handleApiIndex } from './apiIndex';
 import { handleIngestHealth } from './healthRoutes';
+import { withReplayEnvelope } from './replayEnvelope';
+import { requestedChainId } from './servedChain';
 import { handleAssetRankings } from './assetRankings';
 import { handleConfigSnapshot } from './configSnapshot';
 import {
@@ -607,152 +609,14 @@ export default {
       return new Response('Not found', { status: 404 });
     }
 
-    // ─── /offers/* ──────────────────────────────────────────────
-    if (url.pathname.startsWith('/offers')) {
-      if (req.method === 'OPTIONS') return handleOffersPreflight();
-      if (req.method === 'GET') {
-        if (url.pathname === '/offers/stats') {
-          return handleOffersStats(req, resolved);
-        }
-        if (url.pathname === '/offers/active') {
-          return handleOffersActive(req, resolved);
-        }
-        if (url.pathname === '/offers/markets') {
-          // Rate Desk (#1129) — market discovery for the pair/tenor chips.
-          return handleOffersMarkets(req, resolved);
-        }
-        if (url.pathname === '/offers/recent') {
-          return handleOffersRecent(req, resolved);
-        }
-        const byCreator = url.pathname.match(
-          /^\/offers\/by-creator\/(0x[0-9a-fA-F]{40})$/,
-        );
-        if (byCreator) return handleOffersByCreator(req, resolved, byCreator[1]);
-        const byHolder = url.pathname.match(
-          /^\/offers\/by-current-holder\/(0x[0-9a-fA-F]{40})$/,
-        );
-        if (byHolder) {
-          return handleOffersByCurrentHolder(req, resolved, byHolder[1]);
-        }
-        const nearest = url.pathname.match(/^\/offers\/(\d+)\/nearest$/);
-        if (nearest) return handleOfferNearest(req, resolved, nearest[1]);
-        const byId = url.pathname.match(/^\/offers\/(\d+)$/);
-        if (byId) return handleOfferById(req, resolved, byId[1]);
-      }
-      return new Response('Not found', { status: 404 });
-    }
-
-    // ─── /signed-offers ─────────────────────────────────────────
-    // #1131 Rate Desk phase 3 — the gasless signed-offer book. POST
-    // publishes an EIP-712-signed order (verified locally before
-    // acceptance, rate-limited per IP); GET serves one (pair, tenor)
-    // market's active book for takers to replay on-chain.
-    if (url.pathname === '/signed-offers') {
-      if (req.method === 'OPTIONS') return handleSignedOffersPreflight();
-      if (req.method === 'POST') return handleSignedOfferPost(req, resolved);
-      if (req.method === 'GET') return handleSignedOffersGet(req, resolved);
-      return new Response('Not found', { status: 404 });
-    }
-
-    // ─── /loans/* ───────────────────────────────────────────────
-    if (url.pathname.startsWith('/loans')) {
-      if (req.method === 'OPTIONS') return handleLoansPreflight();
-      if (req.method === 'GET') {
-        if (url.pathname === '/loans/active') {
-          return handleLoansActive(req, resolved);
-        }
-        if (url.pathname === '/loans/recent') {
-          return handleLoansRecent(req, resolved);
-        }
-        if (url.pathname === '/loans/stats') {
-          return handleLoansStats(req, resolved);
-        }
-        if (url.pathname === '/loans/timeseries') {
-          return handleLoansTimeseries(req, resolved);
-        }
-        if (url.pathname === '/loans/rate-candles') {
-          // Rate Desk phase 2 (#1130) — per-market executed-rate OHLC series.
-          return handleLoansRateCandles(req, resolved);
-        }
-        if (url.pathname === '/loans/by-participant') {
-          // Rate Desk phase 2 (#1130) — historical-participation view (History
-          // tab): every loan the wallet EVER held a position of, all statuses.
-          return handleLoansByHistoricalParticipant(req, resolved);
-        }
-        const byLender = url.pathname.match(
-          /^\/loans\/by-lender\/(0x[0-9a-fA-F]{40})$/,
-        );
-        if (byLender) {
-          return handleLoansByParticipant(req, resolved, byLender[1], 'lender');
-        }
-        const byBorrower = url.pathname.match(
-          /^\/loans\/by-borrower\/(0x[0-9a-fA-F]{40})$/,
-        );
-        if (byBorrower) {
-          return handleLoansByParticipant(
-            req,
-            resolved,
-            byBorrower[1],
-            'borrower',
-          );
-        }
-        const byHolder = url.pathname.match(
-          /^\/loans\/by-current-holder\/(0x[0-9a-fA-F]{40})$/,
-        );
-        if (byHolder) {
-          return handleLoansByCurrentHolder(req, resolved, byHolder[1]);
-        }
-        const byId = url.pathname.match(/^\/loans\/(\d+)$/);
-        if (byId) return handleLoanById(req, resolved, byId[1]);
-      }
-      return new Response('Not found', { status: 404 });
-    }
-
-    // ─── /activity ──────────────────────────────────────────────
-    if (url.pathname === '/activity') {
-      if (req.method === 'OPTIONS') return handleLoansPreflight();
-      if (req.method === 'GET') return handleActivity(req, resolved);
-      return new Response('Not found', { status: 404 });
-    }
-
-    // ─── /claim-candidates/:address ─────────────────────────────
-    // RPC read-diet PR C — additive claim-candidate hint (§4.2.3).
-    // Capture ANY single path segment and let the handler validate:
-    // an address-shaped regex here would 404 malformed addresses
-    // before the handler's documented 400 {error:'bad-address'} could
-    // ever run (Codex #1232 r3).
-    if (url.pathname.startsWith('/claim-candidates/')) {
-      if (req.method === 'OPTIONS') return handleLoansPreflight();
-      if (req.method === 'GET') {
-        const m = url.pathname.match(/^\/claim-candidates\/([^/]+)$/);
-        if (m) return handleClaimCandidates(req, resolved, m[1]);
-      }
-      return new Response('Not found', { status: 404 });
-    }
-
-    // ─── /claimables/:address ───────────────────────────────────
-    if (url.pathname.startsWith('/claimables/')) {
-      if (req.method === 'OPTIONS') return handleLoansPreflight();
-      if (req.method === 'GET') {
-        const m = url.pathname.match(/^\/claimables\/(0x[0-9a-fA-F]{40})$/);
-        if (m) return handleClaimables(req, resolved, m[1]);
-      }
-      return new Response('Not found', { status: 404 });
-    }
-
-    // ─── /notifications/:address ────────────────────────────────
-    // #1213 / E-11 — the in-app inbox feed (GET). Read/unread state is
-    // client-side (a per-wallet last-seen cursor), so there is no server
-    // mutation route.
-    if (url.pathname.startsWith('/notifications/')) {
-      if (req.method === 'OPTIONS') return handleLoansPreflight();
-      const feedMatch = url.pathname.match(
-        /^\/notifications\/(0x[0-9a-fA-F]{40})$/,
-      );
-      if (feedMatch && req.method === 'GET') {
-        return handleNotifications(req, resolved, feedMatch[1]);
-      }
-      return new Response('Not found', { status: 404 });
+    // ─── chain-keyed reads: offers, loans, activity, claims, notifications ───
+    // Row 3.9 — every 200 answer from these routes carries `ingest`: whether
+    // the chain's index is replaying, why, and its lag behind the safe head
+    // (replayEnvelope.ts), so a consumer that never calls /health/ingest is
+    // still told when a list may be incomplete.
+    const read = await routeChainReads(req, url, resolved);
+    if (read !== null) {
+      return req.method === 'GET' ? withReplayEnvelope(read, resolved.DB, requestedChainId(url)) : read;
     }
 
     return new Response('Not found', { status: 404 });
@@ -874,4 +738,163 @@ async function handleChainEventWebhook(
     .bind(deliveryId, Math.floor(Date.now() / 1000))
     .run();
   return new Response('queued', { status: 200 });
+}
+
+
+/**
+ * The chain-keyed read routes: the offer, signed-offer, loan, activity,
+ * claim and notification surfaces. Returns null for a path outside them.
+ * Every route here names its chain the one way (`servedChain.requestedChainId`),
+ * which is what lets the caller attach that chain's replay state.
+ */
+async function routeChainReads(req: Request, url: URL, resolved: Env): Promise<Response | null> {
+  // ─── /offers/* ──────────────────────────────────────────────
+  if (url.pathname.startsWith('/offers')) {
+    if (req.method === 'OPTIONS') return handleOffersPreflight();
+    if (req.method === 'GET') {
+      if (url.pathname === '/offers/stats') {
+        return handleOffersStats(req, resolved);
+      }
+      if (url.pathname === '/offers/active') {
+        return handleOffersActive(req, resolved);
+      }
+      if (url.pathname === '/offers/markets') {
+        // Rate Desk (#1129) — market discovery for the pair/tenor chips.
+        return handleOffersMarkets(req, resolved);
+      }
+      if (url.pathname === '/offers/recent') {
+        return handleOffersRecent(req, resolved);
+      }
+      const byCreator = url.pathname.match(
+        /^\/offers\/by-creator\/(0x[0-9a-fA-F]{40})$/,
+      );
+      if (byCreator) return handleOffersByCreator(req, resolved, byCreator[1]);
+      const byHolder = url.pathname.match(
+        /^\/offers\/by-current-holder\/(0x[0-9a-fA-F]{40})$/,
+      );
+      if (byHolder) {
+        return handleOffersByCurrentHolder(req, resolved, byHolder[1]);
+      }
+      const nearest = url.pathname.match(/^\/offers\/(\d+)\/nearest$/);
+      if (nearest) return handleOfferNearest(req, resolved, nearest[1]);
+      const byId = url.pathname.match(/^\/offers\/(\d+)$/);
+      if (byId) return handleOfferById(req, resolved, byId[1]);
+    }
+    return new Response('Not found', { status: 404 });
+  }
+
+  // ─── /signed-offers ─────────────────────────────────────────
+  // #1131 Rate Desk phase 3 — the gasless signed-offer book. POST
+  // publishes an EIP-712-signed order (verified locally before
+  // acceptance, rate-limited per IP); GET serves one (pair, tenor)
+  // market's active book for takers to replay on-chain.
+  if (url.pathname === '/signed-offers') {
+    if (req.method === 'OPTIONS') return handleSignedOffersPreflight();
+    if (req.method === 'POST') return handleSignedOfferPost(req, resolved);
+    if (req.method === 'GET') return handleSignedOffersGet(req, resolved);
+    return new Response('Not found', { status: 404 });
+  }
+
+  // ─── /loans/* ───────────────────────────────────────────────
+  if (url.pathname.startsWith('/loans')) {
+    if (req.method === 'OPTIONS') return handleLoansPreflight();
+    if (req.method === 'GET') {
+      if (url.pathname === '/loans/active') {
+        return handleLoansActive(req, resolved);
+      }
+      if (url.pathname === '/loans/recent') {
+        return handleLoansRecent(req, resolved);
+      }
+      if (url.pathname === '/loans/stats') {
+        return handleLoansStats(req, resolved);
+      }
+      if (url.pathname === '/loans/timeseries') {
+        return handleLoansTimeseries(req, resolved);
+      }
+      if (url.pathname === '/loans/rate-candles') {
+        // Rate Desk phase 2 (#1130) — per-market executed-rate OHLC series.
+        return handleLoansRateCandles(req, resolved);
+      }
+      if (url.pathname === '/loans/by-participant') {
+        // Rate Desk phase 2 (#1130) — historical-participation view (History
+        // tab): every loan the wallet EVER held a position of, all statuses.
+        return handleLoansByHistoricalParticipant(req, resolved);
+      }
+      const byLender = url.pathname.match(
+        /^\/loans\/by-lender\/(0x[0-9a-fA-F]{40})$/,
+      );
+      if (byLender) {
+        return handleLoansByParticipant(req, resolved, byLender[1], 'lender');
+      }
+      const byBorrower = url.pathname.match(
+        /^\/loans\/by-borrower\/(0x[0-9a-fA-F]{40})$/,
+      );
+      if (byBorrower) {
+        return handleLoansByParticipant(
+          req,
+          resolved,
+          byBorrower[1],
+          'borrower',
+        );
+      }
+      const byHolder = url.pathname.match(
+        /^\/loans\/by-current-holder\/(0x[0-9a-fA-F]{40})$/,
+      );
+      if (byHolder) {
+        return handleLoansByCurrentHolder(req, resolved, byHolder[1]);
+      }
+      const byId = url.pathname.match(/^\/loans\/(\d+)$/);
+      if (byId) return handleLoanById(req, resolved, byId[1]);
+    }
+    return new Response('Not found', { status: 404 });
+  }
+
+  // ─── /activity ──────────────────────────────────────────────
+  if (url.pathname === '/activity') {
+    if (req.method === 'OPTIONS') return handleLoansPreflight();
+    if (req.method === 'GET') return handleActivity(req, resolved);
+    return new Response('Not found', { status: 404 });
+  }
+
+  // ─── /claim-candidates/:address ─────────────────────────────
+  // RPC read-diet PR C — additive claim-candidate hint (§4.2.3).
+  // Capture ANY single path segment and let the handler validate:
+  // an address-shaped regex here would 404 malformed addresses
+  // before the handler's documented 400 {error:'bad-address'} could
+  // ever run (Codex #1232 r3).
+  if (url.pathname.startsWith('/claim-candidates/')) {
+    if (req.method === 'OPTIONS') return handleLoansPreflight();
+    if (req.method === 'GET') {
+      const m = url.pathname.match(/^\/claim-candidates\/([^/]+)$/);
+      if (m) return handleClaimCandidates(req, resolved, m[1]);
+    }
+    return new Response('Not found', { status: 404 });
+  }
+
+  // ─── /claimables/:address ───────────────────────────────────
+  if (url.pathname.startsWith('/claimables/')) {
+    if (req.method === 'OPTIONS') return handleLoansPreflight();
+    if (req.method === 'GET') {
+      const m = url.pathname.match(/^\/claimables\/(0x[0-9a-fA-F]{40})$/);
+      if (m) return handleClaimables(req, resolved, m[1]);
+    }
+    return new Response('Not found', { status: 404 });
+  }
+
+  // ─── /notifications/:address ────────────────────────────────
+  // #1213 / E-11 — the in-app inbox feed (GET). Read/unread state is
+  // client-side (a per-wallet last-seen cursor), so there is no server
+  // mutation route.
+  if (url.pathname.startsWith('/notifications/')) {
+    if (req.method === 'OPTIONS') return handleLoansPreflight();
+    const feedMatch = url.pathname.match(
+      /^\/notifications\/(0x[0-9a-fA-F]{40})$/,
+    );
+    if (feedMatch && req.method === 'GET') {
+      return handleNotifications(req, resolved, feedMatch[1]);
+    }
+    return new Response('Not found', { status: 404 });
+  }
+
+  return null;
 }

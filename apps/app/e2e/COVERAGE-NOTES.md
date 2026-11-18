@@ -1990,3 +1990,14 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 **Tier.** Unit in `src/lib/signedOffer.test.ts` for the placement read in `signedRowToDeskRow` and for `signedOfferSetArg`. CI-Anvil through the existing signed-book specs, whose fills now carry the set argument against the part 2 contracts. The indexer's set ingest is pinned in `apps/indexer/test/signedOfferRoutes.test.ts` against real migrated SQLite.
 
 **Gap.** No spec fills an order signed in a set, because neither app signs a set yet; the contract suite (`SignedOfferBook.t.sol`, `SignedOfferMatcher.t.sol`) and the indexer test drive set signatures, and the follow-up issue for a ladder-signing screen (#3653) carries the app side.
+
+<a id="cov-index-rebuilding-3733"></a>
+
+## Market lists state a rebuilding index (#3733)
+
+**Journey.** When the indexer adopts a new deployment, or a reorganised block forces it to rebuild a network, it replays that network's records from the deployment block. Until it reaches the chain's safe head the lists are partial, but its cursor stays young because a replay scans every few seconds. The indexer now says so on every chain-keyed read (`ingest`: replaying, reason, block gap, caught-up cut), and the app reads it from `/offers/stats`. The market-list note says the figures are being rebuilt and may be incomplete; a gap beyond the caught-up cut is stated in blocks; the old age rule applies only after both. The Support drawer follows the same verdict and says "up to date" only when the indexer said it is not rebuilding.
+
+**Tier.** Unit for the parse (an absent or malformed field is unknown, never "not replaying") and for the verdict order. CI-Anvil: the stub states "not replaying" by default and spec 58 overrides it through `POST /__ingest`, then checks the note for the rebuilding and behind-in-blocks readings and its absence when caught up.
+
+**Gap.** The Support drawer lines are typecheck- and unit-covered through the shared verdict, not driven by a spec. The live reading needs a real replay, which happens only on a deployment adoption or a reorg rebuild.
+

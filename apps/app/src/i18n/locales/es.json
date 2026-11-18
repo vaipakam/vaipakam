@@ -465,6 +465,9 @@
       "indexerStale": "Con retraso (última actualización hace {{age}}) — las listas de mercado pueden retrasarse; tus propias posiciones siguen cargándose directamente desde la cadena.",
       "indexerUnreachable": "Inalcanzable ahora mismo — las listas de mercado pueden no cargar hasta que se recupere. Tus propias posiciones siguen cargando directamente desde la cadena.",
       "indexerNoCursor": "Alcanzable, pero aún no se registraron datos para esta red — se llenará cuando llegue actividad.",
+      "indexerRebuilding": "Reconstruyendo los registros de esta red — las listas del mercado pueden estar incompletas hasta que se ponga al día. Tus propias posiciones se siguen cargando directamente desde la cadena.",
+      "indexerBehindBlocks": "Con {{blocks}} bloques de retraso — las listas del mercado pueden ir atrasadas; tus propias posiciones se siguen cargando directamente desde la cadena.",
+      "indexerReplayUnknown": "Actualizado hace {{age}}, pero no indicó si se está reconstruyendo, así que las listas del mercado pueden estar incompletas.",
       "indexerNotConfigured": "No configurado en esta compilación — las listas de mercado no pueden cargar aquí. Tus propias posiciones siguen cargando directamente desde la cadena.",
       "networkUnsupported": "La wallet está en una red no admitida (chain id {{walletChainId}}) — los datos mostrados vienen de {{readName}} ({{readChainId}}). Cambia de red para transaccionar.",
       "build": "Versión de la app",
@@ -1943,6 +1946,8 @@
       "rateBand": "banda de tasa {{min}}–{{max}}",
       "rateInline": "tasa {{pct}}",
       "staleList": "Esta lista se actualizó hace {{age}} y puede estar atrasada — pueden existir ofertas nuevas que no se muestran. Vuelve en breve.",
+      "rebuildingList": "Los datos de mercado de esta red se están reconstruyendo, así que esta lista puede estar incompleta: algunas ofertas o cambios recientes pueden no aparecer todavía. Se completará a medida que avance la reconstrucción.",
+      "behindList": "Esta lista va {{blocks}} bloques por detrás de la cadena y puede no incluir cambios recientes. Vuelve en breve.",
       "unavailable": "No pudimos cargar el libro de ofertas ahora mismo. Inténtalo de nuevo en un momento.",
       "lenderOffer": "Oferta de préstamo",
       "borrowerOffer": "Solicitud de préstamo"

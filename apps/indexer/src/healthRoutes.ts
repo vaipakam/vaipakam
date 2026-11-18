@@ -24,6 +24,11 @@
  *    is read from the bindings without resolving a secret, and says so:
  *    a configured chain whose secret fails to resolve stays in the set,
  *    because its standing cursor is the stall the prober exists to see.
+ *  - `replay` (row 3.9): per chain, whether the rows are being replayed
+ *    after a deployment adoption or a reorg rebuild, the cursor, the safe
+ *    head the last pass read and the lag in blocks. The cursor's age cannot
+ *    show a replay, because a replay scans every few seconds. See
+ *    replayState.ts.
  *  - `lifecycle` (#2337): per chain, how many loan-status announcements
  *    disagreed with the status diagram, the oldest of them by name, and how
  *    many loans the check tracks (and how many from initiation, the ones it
@@ -46,6 +51,7 @@ import { RESET_REBUILD } from './deploymentEpoch';
 import { schemaGate, type SchemaCheck } from './schemaGate';
 import { redactedError } from '@vaipakam/lib/errorDescription';
 import { readLifecycleHealth, type LifecycleHealth } from './loanLifecycleGuard';
+import { readReplayStates, unknownReplayState, type ReplayState } from './replayState';
 
 /** The narrow D1 surface this route reads. */
 interface D1Like {
@@ -88,6 +94,13 @@ export interface ChainIngestState {
    *  rather than clamped to 0, which would report an unknown as fresh. Null
    *  when there is no cursor. */
   ageSeconds: number | null;
+  /**
+   * Row 3.9 — whether the chain's rows are being replayed (and why), the
+   * cursor, the safe head the last pass read and the lag between them in
+   * blocks (replayState.ts). `replaying` is null and the rest unknown for a
+   * chain without a deployment record or on a database before migration 0097.
+   */
+  replay: ReplayState;
 }
 
 /** The chains this deployment is configured to scan (#2498). */
@@ -173,6 +186,7 @@ export async function readIngestHealth(
       adopted_blind: null,
     }));
   }
+  const replay = await readReplayStates(db);
   const chains: ChainIngestState[] = rows.map((r) => ({
     chainId: r.chain_id,
     lastBlock: r.last_block,
@@ -189,6 +203,7 @@ export async function readIngestHealth(
             resetKind: !r.reset_pending ? null : r.reset_pending === RESET_REBUILD ? 'rebuild' : 'diamond-change',
             adoptedBlind: (r.adopted_blind ?? 0) !== 0,
           },
+    replay: replay.get(r.chain_id) ?? { ...unknownReplayState(), cursorBlock: r.last_block },
   }));
   return {
     checkedAt: nowSec,

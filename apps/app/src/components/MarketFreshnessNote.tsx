@@ -1,44 +1,67 @@
 /**
  * F-20260703-003 (#988) — an empty offer book must be distinguishable
  * from a STALE one. Market-list surfaces (Offer Book, guided matching,
- * rental browse) render this note; it appears only when the indexer's
- * ingest cursor has POSITIVELY not advanced for a while, so "no offers
- * right now" is never confidently shown from a stalled snapshot.
- * Unknown freshness (endpoint unreachable, no cursor yet) renders
- * nothing — warning on every transient blip would train users to
+ * rental browse, activity) render this note.
+ *
+ * #3733 — it reads the indexer's own replay statement first. While the
+ * indexer says it is rebuilding a network's records (a new deployment
+ * adopted, or a reorganised block replaced), the list is partial whatever
+ * the cursor's age, so the note says the figures are being rebuilt and may
+ * be incomplete. After that, a measured block gap beyond the indexer's
+ * caught-up cut, and then a cursor that has not moved for a while.
+ *
+ * The note never says "fresh": the current case renders nothing. Unknown
+ * freshness (endpoint unreachable, no cursor and no replay stated) also
+ * renders nothing — warning on every transient blip would train users to
  * ignore it.
  */
 import { useQuery } from '@tanstack/react-query';
 import { copy } from '../content/copy';
-import { fetchIndexerFreshness } from '../data/indexer';
+import { fetchIndexerStatus } from '../data/indexer';
+import { indexReadingOf } from '../data/ingestReplay';
 import { useActiveChain } from '../chain/useActiveChain';
 import { idleAware } from '../lib/idle';
 import { useNowSec } from '../hooks/useNowSec';
 
-/** Cursor idle time that counts as "stale". Base Sepolia mines every
- *  ~2s and the ingest cron ticks every few minutes, so half an hour of
- *  silence is a stall, not an idle market. */
-const STALE_AFTER_SECONDS = 30 * 60;
-
 export function MarketFreshnessNote() {
   const { readChain } = useActiveChain();
-  const freshness = useQuery({
-    queryKey: ['indexerFreshness', readChain.chainId],
+  const status = useQuery({
+    queryKey: ['indexerStatus', readChain.chainId],
     staleTime: 30_000,
     refetchInterval: idleAware(60_000),
-    queryFn: () => fetchIndexerFreshness(readChain.chainId),
+    queryFn: () => fetchIndexerStatus(readChain.chainId),
   });
   // Ticks, so a book that goes stale while this page sits open crosses the
   // threshold on its own instead of waiting for an unrelated re-render.
   const nowSec = useNowSec();
-  if (!freshness.data) return null;
-  const ageSec = nowSec - freshness.data.updatedAt;
-  if (ageSec < STALE_AFTER_SECONDS) return null;
+  if (!status.data) return null;
+  const reading = indexReadingOf(
+    status.data.replay,
+    status.data.freshness?.updatedAt ?? null,
+    nowSec,
+  );
+  let body: string;
+  switch (reading.kind) {
+    case 'rebuilding':
+      body = copy.offers.rebuildingList;
+      break;
+    case 'behind-blocks':
+      body = copy.offers.behindList(reading.lagBlocks.toLocaleString());
+      break;
+    case 'stale':
+      body = copy.offers.staleList(formatAge(reading.ageSec));
+      break;
+    default:
+      return null;
+  }
   return (
-    <div className="banner banner-warn" role="status">
-      <span className="banner-body">
-        {copy.offers.staleList(formatAge(ageSec))}
-      </span>
+    <div
+      className="banner banner-warn"
+      role="status"
+      data-testid="market-freshness-note"
+      data-reading={reading.kind}
+    >
+      <span className="banner-body">{body}</span>
     </div>
   );
 }

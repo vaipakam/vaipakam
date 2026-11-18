@@ -483,6 +483,9 @@
       "indexerStale": "Running behind (last refreshed {{age}} ago) — market lists may lag; your own positions still load directly from the chain.",
       "indexerUnreachable": "Unreachable right now — market lists may not load until it recovers. Your own positions still load directly from the chain.",
       "indexerNoCursor": "Reachable, but no data has been recorded for this network yet — it will fill as activity arrives.",
+      "indexerRebuilding": "Rebuilding this network’s records — market lists may be incomplete until it catches up. Your own positions still load directly from the chain.",
+      "indexerBehindBlocks": "Running behind by {{blocks}} blocks — market lists may lag; your own positions still load directly from the chain.",
+      "indexerReplayUnknown": "Refreshed {{age}} ago, but it did not say whether it is rebuilding, so market lists may be incomplete.",
       "indexerNotConfigured": "Not configured on this build — market lists can’t load here. Your own positions still load directly from the chain.",
       "networkUnsupported": "Wallet is on an unsupported network (chain id {{walletChainId}}) — data shown comes from {{readName}} ({{readChainId}}). Switch networks to transact.",
       "build": "App version",
@@ -2524,6 +2527,8 @@
       "rateBand": "rate band {{min}}–{{max}}",
       "rateInline": "rate {{pct}}",
       "staleList": "This list last updated {{age}} ago and may be behind — new offers may exist that aren’t shown yet. Check back shortly.",
+      "rebuildingList": "Market data for this network is being rebuilt, so this list may be incomplete: some offers or recent changes may not show yet. It fills in as the rebuild catches up.",
+      "behindList": "This list is {{blocks}} blocks behind the chain and may be missing recent changes. Check back shortly.",
       "unavailable": "We couldn’t load the offer book right now. Please try again in a moment.",
       "lenderOffer": "Lending offer",
       "borrowerOffer": "Borrow request"

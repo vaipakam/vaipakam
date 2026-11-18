@@ -141,6 +141,18 @@ export function releaseReplayedRows<S>(
   });
 }
 
+/**
+ * `replay_reason` values (migration 0097): why the chain's rows are being
+ * replayed from the deploy block. Set together with the reset that starts the
+ * replay, and cleared by the scan once its cursor first comes within
+ * one scan pass of the safe head (`replayState.ts`).
+ * `deployment`: a deployment was adopted, the first adoption included.
+ * `rebuild`: the reorg guard found an indexed block replaced (#3411).
+ */
+export const REPLAY_DEPLOYMENT = 'deployment';
+export const REPLAY_REBUILD = 'rebuild';
+export type ReplayReason = typeof REPLAY_DEPLOYMENT | typeof REPLAY_REBUILD;
+
 /** `reset_pending` values: which reset a set flag asks for. */
 export const RESET_DIAMOND_CHANGE = 1;
 export const RESET_REBUILD = 2;
@@ -351,10 +363,10 @@ export async function requestChainRebuild(
 ): Promise<boolean> {
   const r = await db
     .prepare(
-      `UPDATE indexer_deployment SET reset_pending = ?
+      `UPDATE indexer_deployment SET reset_pending = ?, replay_reason = ?
         WHERE chain_id = ? AND lower(diamond) = lower(?) AND reset_pending = 0`,
     )
-    .bind(RESET_REBUILD, args.chainId, args.diamond)
+    .bind(RESET_REBUILD, REPLAY_REBUILD, args.chainId, args.diamond)
     .run();
   return (r.meta?.changes ?? 0) === 1;
 }
@@ -377,11 +389,11 @@ export async function adoptDeployment(
   if (current === null) {
     const inserted = await db
       .prepare(
-        `INSERT INTO indexer_deployment (chain_id, diamond, deploy_block, adopted_at, reset_pending, adopted_blind)
-         VALUES (?, ?, ?, ?, 0, 1)
+        `INSERT INTO indexer_deployment (chain_id, diamond, deploy_block, adopted_at, reset_pending, adopted_blind, replay_reason)
+         VALUES (?, ?, ?, ?, 0, 1, ?)
          ON CONFLICT(chain_id) DO NOTHING`,
       )
-      .bind(chainId, diamond, deployBlock, nowSec)
+      .bind(chainId, diamond, deployBlock, nowSec, REPLAY_DEPLOYMENT)
       .run();
     if ((inserted.meta?.changes ?? 0) === 1) return { outcome: 'first' };
     // Two isolates read an empty table; only one insert lands. The loser is
@@ -423,10 +435,11 @@ export async function adoptDeployment(
   const claimed = await db
     .prepare(
       `UPDATE indexer_deployment
-          SET diamond = ?, deploy_block = ?, adopted_at = ?, reset_pending = 1, adopted_blind = 0
+          SET diamond = ?, deploy_block = ?, adopted_at = ?, reset_pending = 1, adopted_blind = 0,
+              replay_reason = ?
         WHERE chain_id = ? AND lower(diamond) = lower(?)`,
     )
-    .bind(diamond, deployBlock, nowSec, chainId, current.diamond)
+    .bind(diamond, deployBlock, nowSec, REPLAY_DEPLOYMENT, chainId, current.diamond)
     .run();
   if ((claimed.meta?.changes ?? 0) === 0) {
     // The record moved under us. If a sibling pass of THIS bundle won, its

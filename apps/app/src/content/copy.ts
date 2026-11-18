@@ -1046,6 +1046,17 @@ const copySource = {
       'Unreachable right now — market lists may not load until it recovers. Your own positions still load directly from the chain.',
     indexerNoCursor:
       'Reachable, but no data has been recorded for this network yet — it will fill as activity arrives.',
+    // #3733 — the indexer's own replay statement outranks the cursor's age.
+    indexerRebuilding:
+      'Rebuilding this network’s records — market lists may be incomplete until it catches up. Your own positions still load directly from the chain.',
+    indexerBehindBlocks: tmpl(
+      `Running behind by {{blocks}} blocks — market lists may lag; your own positions still load directly from the chain.`,
+      ['blocks'],
+    ),
+    indexerReplayUnknown: tmpl(
+      `Refreshed {{age}} ago, but it did not say whether it is rebuilding, so market lists may be incomplete.`,
+      ['age'],
+    ),
     indexerNotConfigured:
       'Not configured on this build — market lists can’t load here. Your own positions still load directly from the chain.',
     networkUnsupported: tmpl(
@@ -5421,6 +5432,14 @@ const copySource = {
         ['age'],
 
       ),
+    // #3733 — shown by MarketFreshnessNote while the indexer states it is
+    // rebuilding this network's records. Never paired with "up to date".
+    rebuildingList:
+      'Market data for this network is being rebuilt, so this list may be incomplete: some offers or recent changes may not show yet. It fills in as the rebuild catches up.',
+    behindList: tmpl(
+      `This list is {{blocks}} blocks behind the chain and may be missing recent changes. Check back shortly.`,
+      ['blocks'],
+    ),
     unavailable:
       'We couldn’t load the offer book right now. Please try again in a moment.',
     lenderOffer: 'Lending offer',

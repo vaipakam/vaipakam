@@ -465,6 +465,9 @@
       "indexerStale": "Hinkt hinterher (zuletzt vor {{age}} aktualisiert) — Marktlisten können verzögert sein; Ihre eigenen Positionen werden weiter direkt von der Chain geladen.",
       "indexerUnreachable": "Derzeit nicht erreichbar — Marktlisten laden möglicherweise erst wieder, wenn der Dienst sich erholt hat. Ihre eigenen Positionen werden weiterhin direkt von der Chain geladen.",
       "indexerNoCursor": "Erreichbar, aber für dieses Netzwerk wurden noch keine Daten aufgezeichnet — sie füllen sich, sobald Aktivität eintrifft.",
+      "indexerRebuilding": "Die Daten dieses Netzwerks werden neu aufgebaut — Marktlisten können bis zum Abschluss unvollständig sein. Ihre eigenen Positionen werden weiterhin direkt von der Chain geladen.",
+      "indexerBehindBlocks": "{{blocks}} Blöcke im Rückstand — Marktlisten können hinterherhinken; Ihre eigenen Positionen werden weiterhin direkt von der Chain geladen.",
+      "indexerReplayUnknown": "Vor {{age}} aktualisiert, aber ohne Angabe, ob gerade neu aufgebaut wird — Marktlisten können daher unvollständig sein.",
       "indexerNotConfigured": "In diesem Build nicht konfiguriert — Marktlisten können hier nicht geladen werden. Ihre eigenen Positionen werden weiterhin direkt von der Chain geladen.",
       "networkUnsupported": "Wallet ist auf einem nicht unterstützten Netzwerk (chain id {{walletChainId}}) — angezeigte Daten stammen von {{readName}} ({{readChainId}}). Wechseln Sie das Netzwerk, um Transaktionen auszuführen.",
       "build": "App-Version",
@@ -1943,6 +1946,8 @@
       "rateBand": "Zinsband {{min}}–{{max}}",
       "rateInline": "Satz {{pct}}",
       "staleList": "Diese Liste wurde zuletzt vor {{age}} aktualisiert und kann hinterherhinken — neue Angebote können existieren, die noch nicht angezeigt werden. Schauen Sie in Kürze wieder vorbei.",
+      "rebuildingList": "Die Marktdaten für dieses Netzwerk werden neu aufgebaut, daher kann diese Liste unvollständig sein: Einige Angebote oder jüngste Änderungen werden eventuell noch nicht angezeigt. Sie füllt sich, während der Neuaufbau aufholt.",
+      "behindList": "Diese Liste liegt {{blocks}} Blöcke hinter der Chain und kann jüngste Änderungen noch nicht enthalten. Schauen Sie in Kürze wieder vorbei.",
       "unavailable": "Wir konnten das Angebotsbuch gerade nicht laden. Bitte versuchen Sie es gleich noch einmal.",
       "lenderOffer": "Kreditangebot",
       "borrowerOffer": "Leihanfrage"

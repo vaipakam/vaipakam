@@ -9,6 +9,7 @@ import { handleIngestHealth, readIngestHealth } from '../src/healthRoutes';
 import { createSchemaGate } from '../src/schemaGate';
 import { configuredScanChains } from '../src/env';
 import { REQUIRED_D1_MIGRATIONS } from '../src/requiredMigrations';
+import { unknownReplayState } from '../src/replayState';
 
 const DDL = [
   `CREATE TABLE d1_migrations(
@@ -29,6 +30,9 @@ const DDL = [
    )`,
 ];
 const DIAMOND = '0x2535baC87F3df287268fC697F2f31cf418365303';
+
+/** The replay state of a chain the indexer cannot describe (row 3.9): everything unknown but the cursor. */
+const unknownAt = (cursorBlock: number | null) => ({ ...unknownReplayState(), cursorBlock });
 
 function seeded(migrations: readonly string[]) {
   const h = createSqliteD1(DDL);
@@ -57,13 +61,15 @@ describe('readIngestHealth', () => {
       checkedAt: 1_100,
       schema: { state: 'current' },
       chains: [
-        { chainId: 97, lastBlock: 900, scannedAt: 1_090, ageSeconds: 10, deployment: null },
+        { chainId: 97, lastBlock: 900, scannedAt: 1_090, ageSeconds: 10, deployment: null, replay: unknownAt(900) },
         {
           chainId: 84532,
           lastBlock: 500,
           scannedAt: 1_000,
           ageSeconds: 100,
           deployment: { diamond: DIAMOND, deployBlock: 400, adoptedAt: 950, resetPending: false, resetKind: null, adoptedBlind: false },
+          // This DDL predates migration 0097, so the replay state is unknown, not "not replaying".
+          replay: unknownAt(500),
         },
       ],
       configured: { chains: [], basis: expect.stringMatching(/not resolved/) },
@@ -89,6 +95,7 @@ describe('readIngestHealth', () => {
       scannedAt: null,
       ageSeconds: null,
       deployment: { diamond: DIAMOND, deployBlock: 320_151_741, adoptedAt: 1_050, resetPending: false, resetKind: null, adoptedBlind: false },
+      replay: unknownAt(null),
     });
   });
 
@@ -113,7 +120,7 @@ describe('readIngestHealth', () => {
     for (const n of REQUIRED_D1_MIGRATIONS) h.db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').run(n);
     h.db.prepare('INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at) VALUES (?, ?, ?, ?)').run(84532, 'diamond', 500, 1_000);
     const out = await readIngestHealth(h.d1 as never, [], createSchemaGate(), 1_100);
-    expect(out.chains).toEqual([{ chainId: 84532, lastBlock: 500, scannedAt: 1_000, ageSeconds: 100, deployment: null }]);
+    expect(out.chains).toEqual([{ chainId: 84532, lastBlock: 500, scannedAt: 1_000, ageSeconds: 100, deployment: null, replay: unknownAt(500) }]);
   });
 
   it('names the missing migration when the gate is the reason ingest declines', async () => {

@@ -465,6 +465,9 @@
       "indexerStale": "पीछे चल रहा है (last refreshed {{age}} पहले) — market lists lag कर सकती हैं; आपकी positions chain से direct load होती रहेंगी।",
       "indexerUnreachable": "अभी unreachable — market lists recover होने तक load नहीं हो सकतीं। आपकी अपनी positions chain से सीधे load होती रहेंगी।",
       "indexerNoCursor": "Reachable है, लेकिन इस network के लिए अभी data record नहीं हुआ — activity आते ही भर जाएगा।",
+      "indexerRebuilding": "इस network के records फिर से बनाए जा रहे हैं — पूरा होने तक market lists अधूरी हो सकती हैं। आपकी अपनी positions अब भी सीधे chain से load होती हैं।",
+      "indexerBehindBlocks": "{{blocks}} blocks पीछे — market lists पीछे हो सकती हैं; आपकी अपनी positions अब भी सीधे chain से load होती हैं।",
+      "indexerReplayUnknown": "{{age}} पहले refresh हुआ, लेकिन यह नहीं बताया कि rebuild चल रहा है या नहीं, इसलिए market lists अधूरी हो सकती हैं।",
       "indexerNotConfigured": "इस build पर configured नहीं — यहाँ market lists load नहीं हो सकतीं। आपकी अपनी positions chain से सीधे load होती रहेंगी।",
       "networkUnsupported": "Wallet unsupported network पर है (chain id {{walletChainId}}) — दिखाया data {{readName}} ({{readChainId}}) से आता है। Transact करने के लिए networks switch करें।",
       "build": "App version",
@@ -1943,6 +1946,8 @@
       "rateBand": "rate band {{min}}–{{max}}",
       "rateInline": "rate {{pct}}",
       "staleList": "यह list {{age}} पहले updated हुई थी और पीछे हो सकती है — नए offers मौजूद हो सकते हैं जो अभी दिखते नहीं। थोड़ी देर बाद check करें।",
+      "rebuildingList": "इस network का market data फिर से बनाया जा रहा है, इसलिए यह list अधूरी हो सकती है: कुछ offers या हाल के बदलाव अभी न दिखें। Rebuild आगे बढ़ते ही यह भर जाएगी।",
+      "behindList": "यह list chain से {{blocks}} blocks पीछे है और हाल के बदलाव इसमें न हों। थोड़ी देर बाद check करें।",
       "unavailable": "अभी offer book load नहीं कर सके। थोड़ी देर में try करें।",
       "lenderOffer": "Lending offer",
       "borrowerOffer": "Borrow request"

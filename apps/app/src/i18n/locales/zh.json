@@ -465,6 +465,9 @@
       "indexerStale": "正在落后（上次刷新于 {{age}} 前）— 市场列表可能延迟；你自己的头寸仍会直接从链上加载。",
       "indexerUnreachable": "当前不可达 — 市场列表可能要等其恢复后才能加载。您自己的持仓仍会直接从链上加载。",
       "indexerNoCursor": "可达，但此网络尚未记录数据 — 活动到来后会填充。",
+      "indexerRebuilding": "正在重建此网络的记录 — 在追上之前，市场列表可能不完整。您自己的仓位仍直接从链上加载。",
+      "indexerBehindBlocks": "落后 {{blocks}} 个区块 — 市场列表可能滞后；您自己的仓位仍直接从链上加载。",
+      "indexerReplayUnknown": "{{age}} 前已刷新，但未说明是否正在重建，因此市场列表可能不完整。",
       "indexerNotConfigured": "此构建未配置 — 这里无法加载市场列表。您自己的持仓仍会直接从链上加载。",
       "networkUnsupported": "钱包在不支持的网络上（chain id {{walletChainId}}）— 显示数据来自 {{readName}}（{{readChainId}}）。请切换网络以交易。",
       "build": "应用版本",
@@ -1943,6 +1946,8 @@
       "rateBand": "利率区间 {{min}}–{{max}}",
       "rateInline": "利率 {{pct}}",
       "staleList": "此列表上次更新于 {{age}} 前，可能落后 — 可能有未显示的新报价。请稍后再查看。",
+      "rebuildingList": "此网络的市场数据正在重建，因此此列表可能不完整：部分报价或最近的变更可能尚未显示。随着重建追上，列表会逐步补全。",
+      "behindList": "此列表落后链上 {{blocks}} 个区块，可能缺少最近的变更。请稍后再查看。",
       "unavailable": "当前无法加载报价簿。请稍后重试。",
       "lenderOffer": "出借报价",
       "borrowerOffer": "借入请求"

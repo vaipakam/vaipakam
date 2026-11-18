@@ -44,6 +44,7 @@ import { SupportTicketCard } from './SupportTicketCard';
 import { useLatestAttempt } from '../lib/useLatestAttempt';
 import { useActiveChain } from '../chain/useActiveChain';
 import { indexerConfigured, probeIndexerFreshness } from '../data/indexer';
+import { indexReadingOf } from '../data/ingestReplay';
 import { readLastError } from '../diagnostics/lastError';
 import { useNowSec } from '../hooks/useNowSec';
 import {
@@ -53,9 +54,6 @@ import {
   redactCap,
 } from '../diagnostics/reportIssue';
 
-/** Same staleness bar as MarketFreshnessNote: a cache cursor older
- *  than this stops counting as "up to date". */
-const INDEXER_STALE_AFTER_SEC = 30 * 60;
 const RPC_POLL_MS = 15_000;
 const INDEXER_POLL_MS = 30_000;
 
@@ -222,20 +220,53 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
   if (!indexerConfigured()) {
     indexerLine = copy.diagnostics.indexerNotConfigured;
     indexerTone = 'muted';
-  } else if (freshness.data?.kind === 'cursor') {
-    const ageSec = Math.max(0, nowSec - freshness.data.freshness.updatedAt);
-    if (ageSec < INDEXER_STALE_AFTER_SEC) {
-      indexerLine = copy.diagnostics.indexerOk(formatAge(ageSec));
-      indexerTone = 'ok';
-    } else {
-      indexerLine = copy.diagnostics.indexerStale(formatAge(ageSec));
-      indexerTone = 'warn';
+  } else if (
+    freshness.data?.kind === 'cursor' ||
+    freshness.data?.kind === 'no-cursor'
+  ) {
+    // #3733 — the indexer's replay statement outranks the cursor's age: a
+    // rebuild scans every few seconds, so its cursor always looks young.
+    const reading = indexReadingOf(
+      freshness.data.replay,
+      freshness.data.kind === 'cursor'
+        ? freshness.data.freshness.updatedAt
+        : null,
+      nowSec,
+    );
+    switch (reading.kind) {
+      case 'rebuilding':
+        indexerLine = copy.diagnostics.indexerRebuilding;
+        indexerTone = 'warn';
+        break;
+      case 'behind-blocks':
+        indexerLine = copy.diagnostics.indexerBehindBlocks(
+          reading.lagBlocks.toLocaleString(),
+        );
+        indexerTone = 'warn';
+        break;
+      case 'stale':
+        indexerLine = copy.diagnostics.indexerStale(formatAge(reading.ageSec));
+        indexerTone = 'warn';
+        break;
+      case 'current':
+        // "Up to date" only when the indexer said it is NOT rebuilding.
+        if (reading.replayKnown) {
+          indexerLine = copy.diagnostics.indexerOk(formatAge(reading.ageSec));
+          indexerTone = 'ok';
+        } else {
+          indexerLine = copy.diagnostics.indexerReplayUnknown(
+            formatAge(reading.ageSec),
+          );
+          indexerTone = 'muted';
+        }
+        break;
+      case 'unknown':
+        // Reachable but this chain has no ingest cursor yet — a fresh
+        // deployment, not an outage (round 2).
+        indexerLine = copy.diagnostics.indexerNoCursor;
+        indexerTone = 'muted';
+        break;
     }
-  } else if (freshness.data?.kind === 'no-cursor') {
-    // Reachable but this chain has no ingest cursor yet — a fresh
-    // deployment, not an outage (round 2).
-    indexerLine = copy.diagnostics.indexerNoCursor;
-    indexerTone = 'muted';
   } else if (freshness.data?.kind === 'unreachable') {
     indexerLine = copy.diagnostics.indexerUnreachable;
     indexerTone = 'warn';

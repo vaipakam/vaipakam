@@ -648,6 +648,28 @@ function applyOfferFlags(offers, url, chainNowSec) {
 // race-free across specs.
 let pinned = null;
 
+// #3733 — the indexer's replay statement (`ingest`), which the real Worker
+// adds to every chain-keyed read. The stub states "not replaying" by
+// default, the honest reading for an index that serves the fork live, and
+// a spec overrides it with `POST /__ingest` (a JSON object merged over the
+// default; an empty POST restores it). Only /offers/stats carries it: that
+// is the one answer the app reads it from.
+const DEFAULT_INGEST = {
+  replaying: false,
+  reason: null,
+  lagBlocks: 0,
+  caughtUpWithinBlocks: 2000,
+};
+let ingestOverride = null;
+const ingestNow = (cursorBlock) => ({
+  chainId: CHAIN_ID,
+  ...DEFAULT_INGEST,
+  cursorBlock,
+  safeHead: cursorBlock,
+  safeHeadObservedAt: null,
+  ...(ingestOverride ?? {}),
+});
+
 async function capturePin() {
   const [ids, chainNow, block] = await Promise.all([
     activeOfferIds(),
@@ -956,6 +978,24 @@ async function handler(req, res) {
       pinned = null;
       return json(200, { ok: true });
     }
+    if (req.method === 'POST' && parts[0] === '__ingest') {
+      const raw = await readBody(req);
+      if (raw.trim() === '') {
+        ingestOverride = null;
+        return json(200, { ok: true });
+      }
+      let body;
+      try {
+        body = JSON.parse(raw);
+      } catch {
+        return json(400, { error: 'invalid-json' });
+      }
+      if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+        return json(400, { error: 'invalid-body' });
+      }
+      ingestOverride = body;
+      return json(200, { ok: true });
+    }
 
     // The stub serves exactly ONE chain (the fork). An explicit
     // chainId for anything else must be a loud error, not Base
@@ -975,10 +1015,13 @@ async function handler(req, res) {
     // FORK's latest block/timestamp so evm_increaseTime never reads
     // as a stalled cursor (pin mode: the captured cursor instead).
     if (parts[0] === 'offers' && parts[1] === 'stats') {
-      if (pinned) return json(200, pinned.stats);
+      if (pinned) {
+        return json(200, { ...pinned.stats, ingest: ingestNow(pinned.stats.indexer.lastBlock) });
+      }
       const block = await pub.getBlock({ blockTag: 'latest' });
       return json(200, {
         indexer: { lastBlock: Number(block.number), updatedAt: Number(block.timestamp) },
+        ingest: ingestNow(Number(block.number)),
       });
     }
 

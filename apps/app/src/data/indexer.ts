@@ -13,6 +13,7 @@ import type { SignedOrderWire } from '../lib/signedOffer';
 import type { SignedOfferPlacement } from '@vaipakam/lib/signedOfferWire';
 import { indexerOrigin, indexerWsOrigin as wsOriginOf } from '../lib/endpoints';
 import { probeIndexerRead, type IndexerReadOutcome } from '../lib/readProbe';
+import { parseIngestReplay, type IngestReplay } from './ingestReplay';
 
 const TIMEOUT_MS = 4_000;
 
@@ -1004,35 +1005,58 @@ export async function fetchClaimCandidates(
   };
 }
 
+/** The cursor and the replay state together (#3733). Both come from one
+ *  answer, so a surface never pairs one moment's cursor with another's
+ *  replay. `replay` is null when the indexer did not state it. */
+export interface IndexerStatus {
+  freshness: IndexerFreshness | null;
+  replay: IngestReplay | null;
+}
+
+type StatsBody = {
+  indexer: { lastBlock: number; updatedAt: number } | null;
+  ingest?: unknown;
+};
+
+const statusOf = (res: StatsBody): IndexerStatus => ({
+  freshness: res.indexer ?? null,
+  replay: parseIngestReplay(res.ingest),
+});
+
+/** `null` = the endpoint was unreachable. */
+export async function fetchIndexerStatus(
+  chainId: number,
+): Promise<IndexerStatus | null> {
+  const res = await getJson<StatsBody>(`/offers/stats?chainId=${chainId}`);
+  return res === null ? null : statusOf(res);
+}
+
 export async function fetchIndexerFreshness(
   chainId: number,
 ): Promise<IndexerFreshness | null> {
-  const res = await getJson<{
-    indexer: { lastBlock: number; updatedAt: number } | null;
-  }>(`/offers/stats?chainId=${chainId}`);
-  return res?.indexer ?? null;
+  return (await fetchIndexerStatus(chainId))?.freshness ?? null;
 }
 
 /** Freshness probe for the Support drawer (#1028 item 4) — unlike
  *  `fetchIndexerFreshness`, this keeps "endpoint unreachable" and
  *  "reachable but this chain has no ingest cursor yet" apart: a fresh
  *  deployment or newly added chain must not read as an outage in a
- *  user-facing health check. */
+ *  user-facing health check. A reachable answer also carries the replay
+ *  state (#3733), so a chain rebuilt from a cleared cursor says it is
+ *  rebuilding rather than that it has no data. */
 export type IndexerFreshnessProbe =
   | { kind: 'unreachable' }
-  | { kind: 'no-cursor' }
-  | { kind: 'cursor'; freshness: IndexerFreshness };
+  | { kind: 'no-cursor'; replay: IngestReplay | null }
+  | { kind: 'cursor'; freshness: IndexerFreshness; replay: IngestReplay | null };
 
 export async function probeIndexerFreshness(
   chainId: number,
 ): Promise<IndexerFreshnessProbe> {
-  const res = await getJson<{
-    indexer: { lastBlock: number; updatedAt: number } | null;
-  }>(`/offers/stats?chainId=${chainId}`);
-  if (res === null) return { kind: 'unreachable' };
-  return res.indexer
-    ? { kind: 'cursor', freshness: res.indexer }
-    : { kind: 'no-cursor' };
+  const status = await fetchIndexerStatus(chainId);
+  if (status === null) return { kind: 'unreachable' };
+  return status.freshness
+    ? { kind: 'cursor', freshness: status.freshness, replay: status.replay }
+    : { kind: 'no-cursor', replay: status.replay };
 }
 
 /* ── Public protocol statistics (/analytics) ───────────────────────────

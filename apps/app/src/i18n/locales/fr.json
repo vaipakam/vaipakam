@@ -465,6 +465,9 @@
       "indexerStale": "En retard (dernière actualisation il y a {{age}}) — les listes de marché peuvent décaler ; vos propres positions se chargent toujours directement depuis la chaîne.",
       "indexerUnreachable": "Injoignable pour le moment — les listes de marché peuvent ne pas charger avant son rétablissement. Vos propres positions se chargent toujours directement depuis la chaîne.",
       "indexerNoCursor": "Joignable, mais aucune donnée n'a encore été enregistrée pour ce réseau — elle se remplira lorsque l'activité arrivera.",
+      "indexerRebuilding": "Reconstruction des données de ce réseau — les listes du marché peuvent être incomplètes jusqu'à ce qu'elle rattrape son retard. Vos propres positions se chargent toujours directement depuis la chaîne.",
+      "indexerBehindBlocks": "En retard de {{blocks}} blocs — les listes du marché peuvent être en retard ; vos propres positions se chargent toujours directement depuis la chaîne.",
+      "indexerReplayUnknown": "Actualisé il y a {{age}}, mais sans indiquer s'il est en reconstruction, donc les listes du marché peuvent être incomplètes.",
       "indexerNotConfigured": "Non configuré sur ce build — les listes de marché ne peuvent pas charger ici. Vos propres positions se chargent toujours directement depuis la chaîne.",
       "networkUnsupported": "Le wallet est sur un réseau non pris en charge (chain id {{walletChainId}}) — les données affichées viennent de {{readName}} ({{readChainId}}). Changez de réseau pour transacter.",
       "build": "Version de l'app",
@@ -1943,6 +1946,8 @@
       "rateBand": "fourchette de taux {{min}}–{{max}}",
       "rateInline": "taux {{pct}}",
       "staleList": "Cette liste a été mise à jour il y a {{age}} et peut être en retard — de nouvelles offres peuvent exister sans être affichées. Revenez bientôt.",
+      "rebuildingList": "Les données de marché de ce réseau sont en cours de reconstruction, cette liste peut donc être incomplète : certaines offres ou modifications récentes peuvent ne pas encore apparaître. Elle se complète à mesure que la reconstruction avance.",
+      "behindList": "Cette liste a {{blocks}} blocs de retard sur la chaîne et peut ne pas inclure les modifications récentes. Revenez bientôt.",
       "unavailable": "Impossible de charger le carnet d'offres pour le moment. Réessayez dans un instant.",
       "lenderOffer": "Offre de prêt",
       "borrowerOffer": "Demande d'emprunt"

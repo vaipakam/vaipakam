@@ -395,6 +395,14 @@ The app uses chain reads and indexed reads for different jobs.
   claimability, offer and loan detail pages, ownership, and submit-time safety.
 - Indexed reads are the fast market and history layer for shared books, activity
   history, executed-rate charts, market discovery, and historical participation.
+- When the index is rebuilding a network's records (after a new deployment is
+  adopted, or after a chain reorganisation replaced a block it had already
+  read), every indexed list and status for that network says so, in plain
+  words: the figures are being rebuilt and may be incomplete. The index states
+  that it is rebuilding, why, and how many blocks it still has to read. Freshness
+  is judged from that gap, never from how recently the index last ran, so a
+  rebuilding index is never called up to date. When the index cannot say
+  whether it is rebuilding, the app says that it does not know.
 - A just-confirmed offer or loan owned by the connected wallet should appear in
   My positions within a block when the chain can enumerate it.
 - A just-ended offer should not remain selectable when the chain already shows

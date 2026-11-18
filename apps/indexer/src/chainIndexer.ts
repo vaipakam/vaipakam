@@ -158,6 +158,7 @@ import {
   describeReplacedAnchor,
   readAnchorCandidate,
 } from './reorgGuard';
+import { chainHeadStatement, recordChainHead } from './replayState';
 import { activityRefs } from '@vaipakam/lib/activityRefs';
 import { activityActor } from '@vaipakam/lib/activityActor';
 import {
@@ -2369,6 +2370,9 @@ async function runChainPass(
   // must see. The one step kept is the market-summary sweep, which removes
   // markets whose only order expired BY CLOCK.
   if (heldOnGuess) {
+    // Row 3.9 — the head is unknown this tick, and is recorded as unknown
+    // (replayState.ts), so no lag is stated from an older reading.
+    await recordChainHead(env.DB, { chainId, safeHead: null });
     await sweepMarketSummaries(env, chainId, Math.floor(Date.now() / 1000));
     return {
       ...emptyResult('settled-head-unavailable'),
@@ -2465,6 +2469,9 @@ async function runChainPass(
   }
 
   if (scanFrom > head) {
+    // Row 3.9 — record the safe head, which ends a replay whose cursor has
+    // reached it (replayState.ts).
+    await recordChainHead(env.DB, { chainId, safeHead: head });
     // #1415 second guard: a head MATERIALLY below our own cursor is
     // never healthy on these chains (the safe-tag reorg horizon is far
     // smaller) — likelier a lagging replica or a mis-pointed RPC that
@@ -2980,6 +2987,10 @@ async function runChainPass(
         ? [anchorUpsert(env.DB, { chainId, block: nextAnchor.block, hash: nextAnchor.hash, nowSec: now })]
         : []),
       ...(scanTo >= scanFrom ? releaseReplayedRows(env.DB, { chainId, through: scanTo, nowSec: now }) : []),
+      // Row 3.9 — the safe head this pass scanned against, and the end of a
+      // replay this cursor write catches up (replayState.ts). Last, so it
+      // reads the cursor just written.
+      chainHeadStatement(env.DB, { chainId, safeHead: head, nowSec: now }),
     ]);
   }
 

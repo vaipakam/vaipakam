@@ -211,6 +211,9 @@ describe('the scan core finishes whole blocks within the allowance (#2221)', () 
     expect(r.scannedTo).toBe(BigInt(HEAD));
     expect(cursorOf(h)).toBe(HEAD);
     expect(recordedBlocks(h)).toEqual(EVENT_BLOCKS);
+    // Row 3.9 — the pass records the safe head it scanned against, in its
+    // cursor write, for the replay lag.
+    expect(h.db.prepare('SELECT safe_head FROM indexer_deployment WHERE chain_id = ?').get(BASE)).toEqual({ safe_head: HEAD });
   });
 
   // Both meters a block can run short on: chain reads, and D1 queries.
