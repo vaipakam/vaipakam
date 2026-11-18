@@ -1,4 +1,4 @@
-## Thread — Terms of Service version 3: the software risk line (PR #TBD)
+## Thread — Terms of Service version 3: the software risk line (PR #3738)
 
 The Terms of Service are published as version 3. One sentence changed and
 nothing else. The risk line about software, price feeds, tokens and networks
