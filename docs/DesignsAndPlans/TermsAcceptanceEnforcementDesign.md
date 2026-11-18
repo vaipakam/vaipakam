@@ -27,6 +27,7 @@ has agreed to anything.
 | 2026-11-18 | The app takes the acceptance at Connect. Connecting a wallet means agreeing to the Terms, and a wallet that has not accepted is not connected to the app, not even to browse it. |
 | 2026-11-18 | **The acceptance is the wallet's own paid transaction, sent right after it connects.** There is no free signature, and nobody else may record an acceptance for a wallet: not the keeper, not a counterparty, not a relayer. A paid step also keeps throwaway wallets out, and a record that someone else submitted could be questioned. |
 | 2026-11-18 | **A wallet accepts on each network by its own transaction there.** An acceptance is not carried from one network to another by a cross-chain message. |
+| 2026-11-18 | **The same holds for a new version.** Asked again for the re-acceptance a material change needs, the owner kept one own transaction per network. The app makes it one guided flow across the networks a wallet uses (section 7). |
 | 2026-11-18 | A new version is announced with a notice period. After it, a wallet that has not accepted takes on no new position; its commitments wait and are not cancelled (section 5). |
 | 2026-11-18 | **A small wording fix does not need re-acceptance.** Each network holds a minimum version beside the latest one. A typo fix or a clarification becomes the latest version and is what a new wallet accepts; existing wallets keep working and pay nothing. Only a material change raises the minimum, and it does so through the notice period (section 5). |
 
@@ -275,8 +276,26 @@ date their commitments stop filling.
   all that is required to be connected. A wallet connecting for the first time
   during the notice is shown both versions and accepts both in the one
   transaction.
-- **Another network.** The first time a wallet uses another network the app
-  asks for the acceptance there, before anything else on that network.
+- **Another network.** A wallet accepts on each network it uses, by its own
+  transaction there (section 4). The app makes that one guided flow and never
+  a surprise:
+  - The first time a wallet uses another network the app asks for the
+    acceptance there, before anything else on that network.
+  - During the notice of a material change, the request at Connect also lists
+    the other networks where the wallet has something that would stop on the
+    date: an open offer, Auto-lend, a standing instruction, or a loan set to
+    extend or roll. It walks through them one at a time: switch network,
+    confirm, next. Each step names the network, says that its only cost is
+    that network's fee, and says what stops there on the date.
+  - A network where the wallet has nothing is not listed and not asked. It
+    asks at the wallet's next use there.
+  - Each step stands alone. One that is skipped, rejected or fails leaves the
+    others recorded, and a wallet short of the fee on one network is told the
+    amount and the flow moves on. The app shows, per network: accepted, with
+    the transaction; sent and waiting; or not yet, with the date.
+  - A wallet is never shown as current on a network because of an acceptance
+    made on another. Each network's standing is read from that network.
+  - A small update never starts this flow.
 - **The book.** The book applies the rule of section 3 and nothing wider. A
   commitment that would give its maker a new position (a lending, borrowing
   or rental offer, an offer to buy a loan, an offset offer) is shown as not
@@ -366,6 +385,13 @@ date their commitments stop filling.
     withdrawn version is not current, although its number now lies between
     the minimum and the latest.
 
+21. In the app, during the notice of a material change, a wallet with an
+    open offer on a second network is walked through both networks. It
+    accepts on the first and rejects on the second: the first is recorded,
+    the second shows not yet with the date, and the wallet is not shown as
+    current on the second. A third network where it has nothing is not
+    listed. A small update starts no such flow.
+
 ## 10. Residuals
 
 - **A position token moved by a plain transfer** can reach a wallet that
@@ -413,6 +439,18 @@ date their commitments stop filling.
    also make opening a position on one network depend on a message from
    another, and add a message fee and a delay to something the wallet can do
    itself in one step.
+
+   Asked again the same day for new versions only, with a delay of fifteen to
+   twenty minutes accepted, and declined again. With a minimum version only a
+   material change needs re-acceptance, so a carried record would save one
+   low-cost transaction per extra network, a few times in the platform's
+   life. The message costs more than that transaction, since its fee covers
+   the gas on the other network. If the platform paid it, anyone could make
+   the platform spend. And the same address is not always the same party: a
+   contract wallet's address on another network can belong to someone else
+   or to nobody, so a carried acceptance could bind an address whose owner
+   never agreed, and leaving contract wallets out would make two rules. The
+   guided flow of section 7 gives the convenience with none of this.
 9. **Every new version is re-accepted, even a typo fix.** Declined by the
    owner (2026-11-18): every wallet would pay again on each network, and
    every offer and Auto-lend would pause, for a change that binds nobody to
