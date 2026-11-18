@@ -17,6 +17,7 @@ import {LibAcceptContext} from "../libraries/LibAcceptContext.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {VaultOutflowTypes} from "../vault/VaultOutflowTypes.sol";
+import {LibReferral} from "../libraries/LibReferral.sol";
 
 /// @dev The protected-mode payout gate's host (`VaultPayoutFacet`).
 interface IVaultOutflowPayoutGate {
@@ -466,6 +467,12 @@ contract VaultOutflowFacet is IVaipakamErrors {
             if (e.status != LibVaipakam.IntegratorStatus.Active) revert OutflowRecipientInvalid(c, o.to);
             payeeOwner = e.payout;
             o.to = LibFacet.getOrCreateVault(payeeOwner);
+        } else if (c == VaultOutflowTypes.OutflowClass.ReferralShare) {
+            // #3722 — `o.to` names the new user; the payee is the inviter its
+            // own binding names, only inside its period. Paid to the inviter's
+            // wallet (a protected inviter's vault, below).
+            o.to = LibReferral.activeInviter(o.to);
+            if (o.to == address(0) || o.to == address(this)) revert OutflowRecipientInvalid(c, o.to);
         } else {
             // Incentive, LiquidationBuyer: the caller names the actor; never
             // this Diamond or a vault-less zero.
@@ -533,7 +540,7 @@ contract VaultOutflowFacet is IVaipakamErrors {
 
     function _paysWallet(VaultOutflowTypes.OutflowClass c) private pure returns (bool) {
         return c == VaultOutflowTypes.OutflowClass.OwnerAllowlisted || c == VaultOutflowTypes.OutflowClass.Incentive
-            || c == VaultOutflowTypes.OutflowClass.LiquidationBuyer;
+            || c == VaultOutflowTypes.OutflowClass.LiquidationBuyer || c == VaultOutflowTypes.OutflowClass.ReferralShare;
     }
 
     /// @dev Where a payout from `user`'s vault to `recipient` must land instead

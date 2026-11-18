@@ -66,6 +66,7 @@ import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
 import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
+import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {ISeaportOrderHash, IConduitController} from "../src/seaport/ISeaportOrderHash.sol";
@@ -556,6 +557,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         IntegratorFacet integratorFacet = IntegratorFacet(ArtifactDeploy.deploy(type(IntegratorFacet).name));
         StandingOfferCheckFacet standingOfferCheckFacet =
             StandingOfferCheckFacet(ArtifactDeploy.deploy(type(StandingOfferCheckFacet).name));
+        // #3722 — the referral binding, settings, quote and payment.
+        ReferralFacet referralFacet = ReferralFacet(ArtifactDeploy.deploy(type(ReferralFacet).name));
         // #1841 - the one sale-exit verdict: the lender exit chooser's view and
         // the guard both sale entries self-call.
         SaleExitVerdictFacet saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
@@ -604,7 +607,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](121);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](122);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -729,6 +732,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #3682 — the integrator registry and the share's delivery.
         cuts[119] = _buildCut(address(integratorFacet), _getIntegratorSelectors());
         cuts[120] = _buildCut(address(standingOfferCheckFacet), _getStandingOfferCheckSelectors());
+        cuts[121] = _buildCut(address(referralFacet), _getReferralSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1480,6 +1484,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("feeLevelsFacet", address(feeLevelsFacet));
         Deployments.writeFacet("integratorFacet", address(integratorFacet));
         Deployments.writeFacet("standingOfferCheckFacet", address(standingOfferCheckFacet));
+        Deployments.writeFacet("referralFacet", address(referralFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
         Deployments.writeFacet("refinancePayoffFacet", address(refinancePayoffFacet));
@@ -2194,6 +2199,20 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s = new bytes4[](2);
         s[0] = StandingOfferCheckFacet.checkAgainstRequest.selector;
         s[1] = StandingOfferCheckFacet.checkForAmount.selector;
+    }
+
+    /// @dev Selectors for `ReferralFacet` (#3722) — the referral binding,
+    ///      its settings and views, the fee quote and the isolated payment.
+    function _getReferralSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](8);
+        s[0] = ReferralFacet.bindInviter.selector;
+        s[1] = ReferralFacet.setReferralRates.selector;
+        s[2] = ReferralFacet.setReferralPeriodDays.selector;
+        s[3] = ReferralFacet.payReferralShare.selector;
+        s[4] = ReferralFacet.getReferral.selector;
+        s[5] = ReferralFacet.getReferralSettings.selector;
+        s[6] = ReferralFacet.getReferralTotals.selector;
+        s[7] = ReferralFacet.quoteBorrowerFee.selector;
     }
 
     function _getRepaySelectors() internal pure returns (bytes4[] memory s) {

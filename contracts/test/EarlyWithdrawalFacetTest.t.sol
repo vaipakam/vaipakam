@@ -28,6 +28,7 @@ import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
+import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {TestOfferFloor} from "./helpers/TestOfferFloor.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
@@ -282,7 +283,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // reads to prove a torn-down vehicle drops out of the open-position view.
         MetricsFacet metricsFacet = MetricsFacet(ArtifactDeploy.deploy(type(MetricsFacet).name));
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](42);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](43);
         cuts[25] = IDiamondCut.FacetCut({
             facetAddress: address(metricsFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -451,6 +452,12 @@ contract EarlyWithdrawalFacetTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(LoanClockFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getLoanClockFacetSelectors()
+        });
+        // #3722 — the accept preview quotes the fee through ReferralFacet.
+        cuts[42] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(ReferralFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getReferralFacetSelectors()
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.

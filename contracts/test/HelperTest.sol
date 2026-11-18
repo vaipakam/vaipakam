@@ -120,6 +120,7 @@ import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
 import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
+import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -1021,6 +1022,18 @@ contract HelperTest {
         selectors = new bytes4[](2);
         selectors[0] = StandingOfferCheckFacet.checkAgainstRequest.selector;
         selectors[1] = StandingOfferCheckFacet.checkForAmount.selector;
+    }
+
+    function getReferralFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](8);
+        selectors[0] = ReferralFacet.bindInviter.selector;
+        selectors[1] = ReferralFacet.setReferralRates.selector;
+        selectors[2] = ReferralFacet.setReferralPeriodDays.selector;
+        selectors[3] = ReferralFacet.payReferralShare.selector;
+        selectors[4] = ReferralFacet.getReferral.selector;
+        selectors[5] = ReferralFacet.getReferralSettings.selector;
+        selectors[6] = ReferralFacet.getReferralTotals.selector;
+        selectors[7] = ReferralFacet.quoteBorrowerFee.selector;
     }
 
     function getRepayFacetSelectors()

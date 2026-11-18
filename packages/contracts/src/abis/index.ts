@@ -87,6 +87,7 @@ import LoanClockFacetABI from './LoanClockFacet.json';
 import FeeLevelsFacetABI from './FeeLevelsFacet.json';
 import IntegratorFacetABI from './IntegratorFacet.json';
 import StandingOfferCheckFacetABI from './StandingOfferCheckFacet.json';
+import ReferralFacetABI from './ReferralFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
 import OracleAdminFacetABI from './OracleAdminFacet.json';
@@ -281,6 +282,7 @@ export {
   FeeLevelsFacetABI,
   IntegratorFacetABI,
   StandingOfferCheckFacetABI,
+  ReferralFacetABI,
   ClaimFacetABI,
   OracleFacetABI,
   OracleAdminFacetABI,

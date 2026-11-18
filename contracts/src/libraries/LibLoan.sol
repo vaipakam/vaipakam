@@ -314,6 +314,9 @@ library LibLoan {
         // policy exists to refuse.
         _indexLoanForHolder(s, previousBorrower, newBorrower, loan.lender, loanId);
         if (newBorrower != previousBorrower) loan.borrowerNotifBilled = false;
+        // #3722 — taking over an obligation counts as the incoming wallet's
+        // first loan as borrower: it can no longer bind an inviter.
+        s.hasBorrowed[newBorrower] = true;
 
         loan.borrower = newBorrower;
         loan.borrowerTokenId = newTokenId;

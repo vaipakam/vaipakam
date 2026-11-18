@@ -2022,14 +2022,13 @@ contract OfferAcceptFacet is
     /// @param collateralAmount         Collateral the loan would lock
     ///                                  (`offer.collateralAmount` for
     ///                                  every direct-accept path).
-    /// @param lifEstimate              0.1% Loan Initiation Fee the lender
-    ///                                  would pay out of principal,
-    ///                                  expressed in lending-asset wei.
-    ///                                  Zero if the borrower has a live
-    ///                                  VPFI discount (tier ≥ 1, consent
-    ///                                  flipped, vault holds ≥ the FULL
-    ///                                  LIF-equivalent VPFI). NFT rentals
-    ///                                  do not charge LIF.
+    /// @param lifEstimate              The Loan Initiation Fee the accept
+    ///                                  would take out of principal, in
+    ///                                  lending-asset wei: the fee for the
+    ///                                  offer's term (#3649) after the
+    ///                                  borrower's hold-tier discount and
+    ///                                  its referral cut. NFT rentals and
+    ///                                  loan-sale accepts charge none.
     /// @param collateralResidualRefund For borrower offers with
     ///                                  `collateralAmountMax > collateralAmount`,
     ///                                  the excess pre-vaulted collateral
@@ -2039,6 +2038,11 @@ contract OfferAcceptFacet is
     /// @param errorCode                `None` on the happy path; the first
     ///                                  failing precondition's classifier
     ///                                  otherwise.
+    /// @param referralCut              #3722 — the part of the fee not
+    ///                                  charged because the borrower bound an
+    ///                                  inviter and is inside its period
+    ///                                  (already taken off `lifEstimate`;
+    ///                                  0 otherwise).
     struct AcceptPreview {
         uint256 effectivePrincipal;
         uint256 interestRateBps;
@@ -2046,5 +2050,6 @@ contract OfferAcceptFacet is
         uint256 lifEstimate;
         uint256 collateralResidualRefund;
         AcceptError errorCode;
+        uint256 referralCut;
     }
 }

@@ -75,6 +75,12 @@ library VaultOutflowTypes {
      *           vault of the integrator's payout account, which the Diamond
      *           derives from the integrator registry. The vault checks a
      *           genuine vault.
+     *         - ReferralShare: an inviter's share of a new loan's initiation
+     *           fee (#3722), from the lender's vault to the inviter's WALLET
+     *           (an inviter needs no vault). `to` names the new user; the
+     *           Diamond derives the inviter from that user's own binding and
+     *           refuses one whose period has ended. A protected inviter is
+     *           paid into its vault, as for every wallet payout.
      */
     enum OutflowClass {
         Owner,
@@ -93,7 +99,8 @@ library VaultOutflowTypes {
         ClaimCustody,
         PrincipalToBorrower,
         Consolidation,
-        IntegratorShare
+        IntegratorShare,
+        ReferralShare
     }
 
     /// @notice Who a just-in-time allowance may name as spender.
@@ -239,5 +246,6 @@ library OutflowReason {
     uint8 internal constant SANCTIONED_LOCK = 21; // a sanctioned party's share into its lock
     uint8 internal constant RENTAL = 22; // a rental settlement leg
     uint8 internal constant INTEGRATOR_SHARE = 23; // an integrator's share of the initiation fee
+    uint8 internal constant REFERRAL_SHARE = 24; // an inviter's share of the initiation fee
 
 }

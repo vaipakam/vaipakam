@@ -55,6 +55,7 @@
     "FeeLevelsFacet",
     "IntegratorFacet",
     "StandingOfferCheckFacet",
+    "ReferralFacet",
     "ClaimFacet",
     "OracleFacet",
     "OracleAdminFacet",

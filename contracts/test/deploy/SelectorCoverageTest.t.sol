@@ -78,7 +78,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
     function test_DeployDiamond_RoutesEveryFacetSelector() public {
         _populateRoutedSet();
 
-        string[121] memory facets = cutFacetNames();
+        string[122] memory facets = cutFacetNames();
         uint256 missing;
         for (uint256 i; i < facets.length; ++i) {
             string memory name = facets[i];
@@ -108,7 +108,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
     ///         4-byte selector — such a collision makes `diamondCut`
     ///         revert and the Diamond undeployable.
     function test_NoSelectorCollisionAcrossFacets() public {
-        string[121] memory facets = cutFacetNames();
+        string[122] memory facets = cutFacetNames();
         uint256 collisions;
         for (uint256 i; i < facets.length; ++i) {
             collisions += _recordAndCountCollisions(facets[i]);
@@ -320,6 +320,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
         _addAll(_getFeeLevelsSelectors());
         _addAll(_getIntegratorSelectors());
         _addAll(_getStandingOfferCheckSelectors());
+        _addAll(_getReferralSelectors());
         // T-086 step 5 — `PrepayListingFacet` (executor↔diamond trust
         // boundary for Seaport prepay collateral sales). Selector
         // helper lives on `DeployDiamond.s.sol` like every other facet.

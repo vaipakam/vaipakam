@@ -156,9 +156,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     );
 
     // Facet-specific errors (shared errors inherited from IVaipakamErrors)
-    /// @dev #3682 — the integrator settlement named a different loan id than
-    ///      the loan being opened (an internal invariant; never expected).
-    error IntegratorLoanMismatch(uint256 settledFor, uint256 opened);
+    /// @dev #3682 / #3722 — the initiation-fee charge's settlement events
+    ///      named a different loan id than the loan being opened (an internal
+    ///      invariant; never expected).
+    error AcceptChargeLoanMismatch(uint256 settledFor, uint256 opened);
     error InvalidOffer();
     error MixedCollateralNotAllowed();
 
@@ -489,13 +490,17 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // public count rises once) and cleared.
         {
             LibVaipakam.Storage storage st = LibVaipakam.storageSlot();
+            // #3722 — the charge's settlement events (the integrator's and
+            // the referral's) named the next loan id; it must be this loan,
+            // whatever the route.
+            uint256 chargedFor = st.acceptChargeLoanId;
+            if (chargedFor != 0) {
+                if (chargedFor != loanId) revert AcceptChargeLoanMismatch(chargedFor, loanId);
+                delete st.acceptChargeLoanId;
+            }
             address integrator = st.acceptIntegratorPending;
             if (integrator != address(0)) {
-                // The charge's settlement event named the next loan id; it
-                // must be this loan, whatever the route.
-                if (st.acceptIntegratorLoanId != loanId) revert IntegratorLoanMismatch(st.acceptIntegratorLoanId, loanId);
                 delete st.acceptIntegratorPending;
-                delete st.acceptIntegratorLoanId;
                 LibIntegrator.recordLoan(loanId, integrator);
                 d.integrator = integrator;
             }
@@ -992,10 +997,11 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         LibInterestLedger.open(LibVaipakam.storageSlot(), loan);
         // A lender-sale-vehicle accept (offer mapped to an underlying loan)
         // skips the LIF charge, so the receipt must NOT record one.
-        _snapshotFeeBps(
-            loan,
-            LibVaipakam.storageSlot().saleOfferToLoanId[offerId] != 0
-        );
+        bool isSaleVehicle = LibVaipakam.storageSlot().saleOfferToLoanId[offerId] != 0;
+        _snapshotFeeBps(loan, isSaleVehicle);
+        // #3722 — the borrower has now opened a loan, so it can no longer
+        // bind an inviter. A sale vehicle's "borrower" opens nothing.
+        if (!isSaleVehicle) LibVaipakam.storageSlot().hasBorrowed[loan.borrower] = true;
         _latchOfferKeepersToLoan(loan.id, offerId, offer.creator);
     }
 

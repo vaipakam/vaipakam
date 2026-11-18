@@ -8,12 +8,13 @@ import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibFeeEntitlement} from "../libraries/LibFeeEntitlement.sol";
-import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
 import {LibFeeShares} from "../libraries/LibFeeShares.sol";
 import {LibIntegrator} from "../libraries/LibIntegrator.sol";
+import {LibReferral} from "../libraries/LibReferral.sol";
 import {IntegratorFacet} from "./IntegratorFacet.sol";
+import {ReferralFacet} from "./ReferralFacet.sol";
 import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
 import {LibRefinanceNetting} from "../libraries/LibRefinanceNetting.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -150,13 +151,16 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
         // release, so a borrower whose VPFI collateral is freed at accept can't
         // have Full charged post-mint without the paired pre-mint discount.
         s.acceptAckBorrowerPreFreeVpfi = LibFeeEntitlement.freeVpfiBalance(borrower);
-        uint256 initiationFee = LibVPFIDiscount.holdOnlyBorrowerLif(
+        // #3722 — the fee after the hold discount and the borrower's
+        // referral, by the one rule every borrow preview reads.
+        LibReferral.Quote memory q = LibReferral.quote(
             borrower,
             effectivePrincipal,
             offer.durationDays, // #3649 — the accepted offer's term is the loan's
             isLiquid,
             borrowerFull
         );
+        uint256 initiationFee = q.fee;
 
         if (initiationFee > 0) {
             _chargeFee(
@@ -167,6 +171,10 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
                     borrower: borrower,
                     principal: effectivePrincipal,
                     fee: initiationFee,
+                    above: q.above,
+                    cut: q.cut,
+                    share: q.share,
+                    inviter: q.inviter,
                     // #3682 — the integrator the BORROWER named: from its signed
                     // accept terms when it accepts a lender's offer, else from
                     // its own offer. A lender's action never names one.
@@ -218,6 +226,10 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
         address borrower;
         uint256 principal;
         uint256 fee;
+        uint256 above;
+        uint256 cut;
+        uint256 share;
+        address inviter;
         address integrator;
         address matcher;
     }
@@ -241,25 +253,43 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
         LibIntegrator.Refusal refusal
     );
 
+    /// @notice #3722 — a loan opened by `newUser` inside its referral
+    ///         period: `cut` is the part of the initiation fee not charged,
+    ///         `share` the inviter's share after the per-loan ceiling, and
+    ///         `outcome` where the share went (to `inviter`'s wallet, or to
+    ///         the reserve and why). The loan opened either way: `loanId` is
+    ///         the loan this accept of `offerId` created.
+    event ReferralShareSettled(
+        uint256 indexed loanId,
+        address indexed newUser,
+        address indexed inviter,
+        address asset,
+        uint256 offerId,
+        uint256 cut,
+        uint256 share,
+        LibReferral.Outcome outcome
+    );
+
     /// @dev Divide the fee: the treasury's floor first (taken by the
     ///      treasury leg's split), then from the part above it the matcher's
-    ///      and the integrator's shares under the per-loan ceiling
-    ///      ({LibFeeShares}); the rest of the fee is the treasury leg, whose
-    ///      part above the floor is the reserve's. The integrator's share is
-    ///      delivered as one isolated step that may fail alone: a failure or
-    ///      a short delivery is undone and the share joins the treasury leg,
-    ///      above the floor, so it is the reserve's.
+    ///      the integrator's and the inviter's shares under the per-loan
+    ///      ceiling, after the borrower's referral cut, which was never
+    ///      charged ({LibFeeShares}); the rest of the fee is the treasury
+    ///      leg, whose part above the floor is the reserve's. The
+    ///      integrator's and the inviter's shares are each paid as one
+    ///      isolated step that may fail alone: a failure or a short delivery
+    ///      is undone and the share joins the treasury leg, above the floor,
+    ///      so it is the reserve's.
     function _chargeFee(ChargeCtx memory c) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.acceptIntegratorPending = c.integrator;
         // The loan this accept creates takes the next id; the loan's creation
         // checks it, so this event joins exactly one loan on every route.
         uint256 loanId = s.nextLoanId + 1;
-        s.acceptIntegratorLoanId = loanId;
-        uint256 above = LibFeeFloor.aboveFloor(c.fee, c.principal);
+        s.acceptChargeLoanId = loanId;
         (uint256 rateBps, LibIntegrator.Refusal refusal) = LibIntegrator.rateFor(c.integrator, c.borrower);
-        (uint256 matcherCut, uint256 integratorCut,) = LibFeeShares.bound(
-            above, 0, LibOfferMatch.matcherShareOf(above), (above * rateBps) / LibVaipakam.BASIS_POINTS, 0
+        (uint256 matcherCut, uint256 integratorCut, uint256 share) = LibFeeShares.bound(
+            c.above, c.cut, LibOfferMatch.matcherShareOf(c.above), (c.above * rateBps) / LibVaipakam.BASIS_POINTS, c.share
         );
 
         bool delivered;
@@ -280,7 +310,7 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
         LibFacet.vaultFeeToTreasury(
             c.lender,
             c.lendingAsset,
-            c.fee - matcherCut - (delivered ? integratorCut : 0),
+            c.fee - matcherCut - (delivered ? integratorCut : 0) - _settleReferral(c, loanId, share),
             LibFeeFloor.initiation(c.principal)
         );
         if (matcherCut > 0) {
@@ -288,5 +318,35 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
                 c.lender, c.lendingAsset, matcherCut, c.matcher, c.offerId, OutflowReason.INCENTIVE
             );
         }
+    }
+
+    /// @dev #3722 — pay the inviter's `share` (after the ceiling) as one
+    ///      isolated step, state where it went, and count the loan. Returns
+    ///      what reached the inviter (0 when the share went to the reserve).
+    function _settleReferral(ChargeCtx memory c, uint256 loanId, uint256 share) private returns (uint256 paid) {
+        if (c.inviter == address(0) || (c.cut == 0 && share == 0)) return 0;
+        LibReferral.Outcome outcome = LibReferral.Outcome.NoShare;
+        if (share > 0) {
+            (bool ok, bytes memory ret) = address(this).call(
+                abi.encodeCall(ReferralFacet.payReferralShare, (c.lender, c.lendingAsset, share, c.borrower, c.offerId))
+            );
+            if (ok) {
+                outcome = LibReferral.Outcome.Paid;
+                paid = share;
+            } else {
+                bytes4 sel = ret.length >= 4 ? bytes4(ret) : bytes4(0);
+                outcome = sel == LibVaipakam.SanctionedAddress.selector
+                    ? LibReferral.Outcome.InviterFlagged
+                    : (sel == TokenDeliveryShort.selector
+                        ? LibReferral.Outcome.DeliveredShort
+                        : LibReferral.Outcome.PaymentFailed);
+            }
+        }
+        LibVaipakam.ReferralTotals storage t = LibVaipakam.storageSlot().referralTotals[c.lendingAsset];
+        t.cut += c.cut;
+        t.sharePaid += paid;
+        t.shareRedirected += share - paid;
+        t.loans += 1;
+        emit ReferralShareSettled(loanId, c.borrower, c.inviter, c.lendingAsset, c.offerId, c.cut, share, outcome);
     }
 }

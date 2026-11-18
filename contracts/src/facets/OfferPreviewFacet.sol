@@ -6,7 +6,6 @@ import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
-import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibSaleSolvency} from "../libraries/LibSaleSolvency.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
@@ -23,6 +22,7 @@ import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {OfferPriceGuardFacet} from "./OfferPriceGuardFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
+import {ReferralFacet} from "./ReferralFacet.sol";
 
 /**
  * @title OfferPreviewFacet
@@ -201,25 +201,22 @@ contract OfferPreviewFacet {
         // phantom fee; `lifEstimate` stays 0.
         if (_isErc20 && _saleLoanId == 0) {
             address _borrower = _isLender ? acceptor : offer.creator;
-            // HoldOnly hybrid (#1352, §F3): quote exactly what `_acceptOffer`
-            // will charge — the shared helper resolves the consent-gated
-            // hold-tier discount (capped 50%, liquid-asset only) and applies it
-            // to the lending-asset LIF. The retired peg-custody VPFI path is
-            // gone. Resolve liquidity the same way accept does so the discount
-            // gate matches.
-            preview.lifEstimate = LibVPFIDiscount.holdOnlyBorrowerLif(
+            // Quote exactly what the accept will charge: the hold discount
+            // (#1352, §F3, consent-gated, capped 50%, liquid only) and the
+            // borrower's referral cut (#3722), by the one rule the charge
+            // reads, resolving liquidity as the accept does. Non-Full: the
+            // borrower's Full bump only materialises once the Full tariff is
+            // confirmed at accept (#1347); the Full-aware quote is
+            // `FeeEntitlementFacet.quoteCStar`.
+            ReferralFacet.FeeQuote memory fq = ReferralFacet(address(this)).quoteBorrowerFee(
                 _borrower,
+                offer.lendingAsset,
                 preview.effectivePrincipal,
                 offer.durationDays, // #3649 — the term rate the accept charges
-                OracleFacet(address(this)).checkLiquidity(offer.lendingAsset) ==
-                    LibVaipakam.LiquidityStatus.Liquid,
-                // #1347 — the accept-time preview quotes the HoldOnly (non-Full)
-                // LIF: `previewAccept` takes no Full opt-in, and the borrower's
-                // `+10%` Full bump only materialises once the Full tariff is
-                // confirmed at accept. The Full-aware quote is a separate view
-                // (`FeeEntitlementFacet.quoteCStar` + the Stage-E preview wiring).
                 /*fullMode=*/ false
             );
+            preview.lifEstimate = fq.fee;
+            preview.referralCut = fq.cut;
         }
 
         // ─── Precondition chain (first failure wins) ────────────────

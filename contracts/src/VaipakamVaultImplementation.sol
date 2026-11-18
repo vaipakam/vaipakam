@@ -741,7 +741,9 @@ contract VaipakamVaultImplementation is
         // Stage A residuals, checked by the Diamond only until Stage B
         // (#3379): an allowlisted address (the allowlist moves into the
         // vault), the incentive and liquidation-buyer actors (bounded by the
-        // lien's budgets) and a recorded seller (the signed sale terms). None
+        // lien's budgets), a referral share's inviter (the Diamond derives it
+        // from the new user's own binding, #3722) and a recorded seller (the
+        // signed sale terms). None
         // may name this vault or the Diamond.
         return o.to != address(this) && o.to != diamond;
     }

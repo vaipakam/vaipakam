@@ -313,6 +313,7 @@ FACETS=(
   "FeeLevelsFacet"
   "IntegratorFacet"
   "StandingOfferCheckFacet"
+  "ReferralFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"

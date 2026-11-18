@@ -489,6 +489,17 @@ library LibVaipakam {
     uint256 constant FEE_SHARE_CEILING_BPS_DEFAULT = 6_000;
     uint256 constant FEE_SHARE_CEILING_BPS_MIN = 4_000;
     uint256 constant FEE_SHARE_CEILING_BPS_MAX = 7_000;
+    /// @dev #3722 — the referral (`ReferralFeeShareDesign.md`): the new user's
+    ///      cut and the inviter's share, each a rate of the initiation fee's
+    ///      above-floor part after the hold discount (default 10% each, owner
+    ///      decision 2026-11-17, a setting bounded 0 to 30%), for the period
+    ///      fixed when the user binds (default 180 days, bounded 30 to 365).
+    uint256 constant REFERRAL_CUT_BPS_DEFAULT = 1_000;
+    uint256 constant REFERRAL_SHARE_BPS_DEFAULT = 1_000;
+    uint256 constant REFERRAL_RATE_BPS_MAX = 3_000;
+    uint256 constant REFERRAL_PERIOD_DAYS_DEFAULT = 180;
+    uint256 constant REFERRAL_PERIOD_DAYS_MIN = 30;
+    uint256 constant REFERRAL_PERIOD_DAYS_MAX = 365;
     /// @dev #3720 — an integrator's public record counts a loan that defaults
     ///      or is liquidated within this long of opening.
     uint256 constant INTEGRATOR_EARLY_DEFAULT_WINDOW = 7 days;
@@ -3301,6 +3312,33 @@ library LibVaipakam {
     struct FeeShareConfig {
         uint16 integratorDefaultBps;
         uint16 ceilingBps;
+    }
+
+    /// @dev #3722 — the referral settings. A rate counts only once set
+    ///      (`ratesSet`), so 0 is a settable rate; before that the defaults
+    ///      apply. `periodDays` 0 ⇒ {REFERRAL_PERIOD_DAYS_DEFAULT}.
+    struct ReferralConfig {
+        uint16 cutBps;
+        uint16 shareBps;
+        uint16 periodDays;
+        bool ratesSet;
+    }
+
+    /// @dev #3722 — one wallet's referral: the inviter it bound and the end
+    ///      of its period, fixed at the binding.
+    struct ReferralRecord {
+        address inviter;
+        uint64 endsAt;
+    }
+
+    /// @dev #3722 — the public counters, per lending asset: the cut not
+    ///      charged, the shares paid to inviters, the shares sent to the
+    ///      reserve instead, and the loans that carried a cut or a share.
+    struct ReferralTotals {
+        uint256 cut;
+        uint256 sharePaid;
+        uint256 shareRedirected;
+        uint256 loans;
     }
 
     struct Storage {
@@ -8561,10 +8599,11 @@ library LibVaipakam {
         ///      creation in the same transaction, which records it on the loan
         ///      and clears it.
         address acceptIntegratorPending;
-        /// @dev #3682 — the id of the loan that charge is for (the next loan
-        ///      id when the fee is charged), checked by the loan's creation
-        ///      so the settlement event and the loan always name one loan.
-        uint256 acceptIntegratorLoanId;
+        /// @dev #3682 / #3722 — the id of the loan an initiation-fee charge
+        ///      is for (the next loan id when the fee is charged), checked by
+        ///      the loan's creation so the integrator's and the referral's
+        ///      settlement events and the loan always name one loan.
+        uint256 acceptChargeLoanId;
         /// @dev The calm-price check on a lender intent slot's fills, keyed
         ///      like `lenderIntent`: true = the slot's owner switched it OFF.
         ///      Default (false) = on. Written only by
@@ -8572,6 +8611,21 @@ library LibVaipakam {
         ///      intent is cancelled, so a new intent in the slot starts with
         ///      the check on.
         mapping(address => mapping(address => mapping(address => mapping(uint8 => bool)))) intentCalmCheckOff;
+        /// @dev #3722 — the referral settings. Written only by
+        ///      `ReferralFacet`'s admin setters.
+        ReferralConfig referralCfg;
+        /// @dev #3722 — each wallet's referral. One writer, the wallet's own
+        ///      binding (`ReferralFacet.bindInviter`); the fee host and the
+        ///      outflow policy only read it.
+        mapping(address => ReferralRecord) referralOf;
+        /// @dev #3722 — whether a wallet has been a loan's borrower: set when
+        ///      a loan opens with it as borrower and when it takes over an
+        ///      obligation. Read by the binding, which only a wallet that has
+        ///      never borrowed may make.
+        mapping(address => bool) hasBorrowed;
+        /// @dev #3722 — the public counters per lending asset. Written only
+        ///      by the acceptance charge.
+        mapping(address => ReferralTotals) referralTotals;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.

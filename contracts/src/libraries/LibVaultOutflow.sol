@@ -277,6 +277,28 @@ library LibVaultOutflow {
         );
     }
 
+    /// @notice #3722 — the inviter's share of a new loan's initiation fee,
+    ///         from `user`'s (the lender's) vault to the wallet of the inviter
+    ///         `newUser` bound. The policy derives the inviter from that
+    ///         binding and refuses one whose period has ended.
+    function toReferralShare(address user, address asset, uint256 amount, address newUser, uint256 offerId)
+        internal
+        returns (uint256)
+    {
+        return _go(
+            user,
+            ERC20,
+            asset,
+            0,
+            amount,
+            newUser,
+            VaultOutflowTypes.OutflowClass.ReferralShare,
+            offerId,
+            0,
+            OutflowReason.REFERRAL_SHARE
+        );
+    }
+
     /// @notice To the liquidator that paid loan `loanId`'s debt in this same
     ///         transaction: the caller passes `msg.sender` of its entry.
     function toLiquidationBuyer(
