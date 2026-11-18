@@ -53,7 +53,7 @@ One rule, in one place, read from three kinds of step.
 | --- | --- | --- |
 | **Opening a loan**, by any route: a direct accept, a match, a signed-offer fill, an Auto-lend fill, an instant-market borrow, a refinance, a rental, a roll or an extension that starts a new term | The two wallets the new loan records as lender and borrower | The one step every loan passes through. This is the rule; the rows below only refuse earlier. |
 | **Taking over a position** through the platform: buying a loan, or replacing a borrower | The wallet coming in | It takes on the position. The wallet going out is not checked (3.2). |
-| **Posting a standing commitment**: creating an offer of any kind, listing a loan for sale, setting or funding Auto-lend, setting a standing instruction | The wallet posting | So the book never holds a commitment that cannot be filled. |
+| **Posting a standing commitment that would give the poster a new position**: a lending, borrowing or rental offer, an offer to buy a loan, an offer that offsets a loan with a new one, setting or funding Auto-lend, setting a standing instruction | The wallet posting | So the book never holds a commitment that cannot be filled. |
 
 The previews that the app and the keeper read before sending (accept, match,
 Auto-lend fill, sale) ask the same rule and name the wallet that is not
@@ -76,6 +76,12 @@ stays as it is and fills again once its owner has accepted.
   a keeper's or a fee consent's authority.
 - The wallet that **leaves** a position in one step: a lender being bought
   out, a borrower whose obligation moves to a replacement.
+- **Listing one's own loan, or one's own collateral, for sale.** The listing
+  only ends the lister's position, and the buyer is the one checked when it
+  fills, so the seller's standing can never make it unfillable. Without this
+  a lender who declines a new version could leave only if a buyer's offer
+  happened to be standing. An offer that offsets a loan by opening a new one
+  is different: its poster becomes a party to a new loan, so it is checked.
 - Defaults, liquidations and every other step a third party or the keeper
   takes to settle a loan. A loan always settles, whatever its parties have or
   have not accepted.
@@ -181,18 +187,26 @@ Connect would charge every visitor. The shape:
 not yet recorded for the wallet, the announced version included. Its scope is
 a setting:
 
-- *Commitments only*: wallets with an open offer, a signed offer in the
-  shared book, Auto-lend or a standing instruction. This is what keeps those
-  filling after a new version without their owners paying a transaction.
-- *Every signer*: every wallet that signed at Connect, within a daily budget
-  per network. This puts the record on-chain within minutes of connecting.
-  When the budget is spent the pass falls back to commitments only, and the
-  rest are recorded with their first transaction.
+- *Commitments only*: wallets with a commitment that is on-chain: an open
+  offer, Auto-lend or a standing instruction. Each of those cost its owner a
+  transaction, so they cannot be produced for nothing. This is what keeps
+  them filling after a new version without their owners paying again.
+- *Every signer*: every wallet that signed at Connect. This puts the record
+  on-chain within minutes of connecting.
+
+A signed offer in the shared book is in neither scope by itself. Publishing
+one costs nothing, so a flood of throwaway wallets could each publish one;
+its maker's signature is carried by the taker with the fill instead.
+
+**One daily budget per network bounds the whole pass, whichever scopes are
+armed.** Commitments are served first. When the budget is spent the pass
+stops for the day and says so, and everything it did not reach is recorded
+with its owner's first transaction or with the fill. Nothing depends on the
+pass: it only saves a wallet from carrying its own acceptance.
 
 Like every new pass it ships disarmed, and each scope is armed separately by
-the owner. The cost of *every signer* is one small transaction per wallet per
-network per version, paid by the keeper; the daily budget is what bounds a
-flood of throwaway wallets.
+the owner. Its cost is one small transaction per wallet per network per
+version, paid by the keeper.
 
 The app states where a wallet stands, and never more than it knows: not
 accepted; signed on a date and not yet recorded; or recorded, with the
@@ -271,6 +285,11 @@ transaction.
     listed as fillable.
 13. A wallet that refused, with no position and no balance, cancels its own
     signed order and withdraws a keeper's authority through the app.
+14. A lender whose acceptance is stale lists its loan for sale, and a buyer
+    who is current fills it. The same lender's offset offer is refused.
+15. With both scopes armed, the keeper pass submits no more than the daily
+    budget on a network, serves on-chain commitments first, and never
+    submits for a wallet whose only commitment is a signed offer.
 
 ## 10. Residuals
 
