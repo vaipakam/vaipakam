@@ -46,6 +46,17 @@ export async function acceptTermsAtConnect(page: Page): Promise<void> {
   await page.getByTestId('terms-hold').waitFor({ state: 'detached', timeout: 60_000 });
 }
 
+/** Decline the acceptance asked at Connect and choose to only close out
+ *  what the wallet has (#3734, design section 3.2): the page body is shown
+ *  again, and every action that takes on a position keeps its own Terms
+ *  gate, which is what a spec of that gate drives next. */
+export async function closeOutOnly(page: Page): Promise<void> {
+  const dialog = page.getByRole('dialog', { name: 'Terms of Service' });
+  await dialog.getByRole('button', { name: 'Close' }).click({ timeout: 60_000 });
+  await page.getByTestId('terms-hold-exits').click({ timeout: 30_000 });
+  await page.getByTestId('terms-hold').waitFor({ state: 'detached', timeout: 30_000 });
+}
+
 /** Open the More sheet when the page folds the navigation into it (phone
  *  width), so a spec can reach the primary navigation and the mode control
  *  on either device. */

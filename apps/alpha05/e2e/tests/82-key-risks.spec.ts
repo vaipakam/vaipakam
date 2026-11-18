@@ -34,14 +34,14 @@ test('the risk page is one tap from the footer, with no wallet, and states the s
 
 test('the Terms prompt shows the key risks above the accept step', async ({ launchWallet }) => {
   const sc = scenario({ lender: 'freshLender' });
-  await sc.diamondWrite('admin', 'setCurrentTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
+  await sc.diamondWrite('admin', 'publishTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
   const { page, flags } = await launchWallet('freshLender');
   const sent = flags.sentTransactions;
   await page.goto('/vault');
   await connectWallet(page);
-  await page.getByTestId('vault-deposit-open').click();
+  // The acceptance asked as the wallet connects shows them too.
   const dialog = page.getByRole('dialog', { name: 'Terms of Service' });
-  await expect(dialog).toContainText('Depositing into your vault needs the Terms of Service', { timeout: 30_000 });
+  await expect(dialog).toContainText('Using this app with your wallet needs the Terms of Service', { timeout: 30_000 });
   const risks = dialog.getByTestId('terms-key-risks');
   await expect(risks.locator('li')).toHaveCount(6);
   await expect(risks).toContainText('You alone control your wallet.');
