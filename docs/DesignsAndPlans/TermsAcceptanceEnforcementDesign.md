@@ -45,13 +45,20 @@ One rule, in one place, read from three kinds of step.
 
 | Step | Who must be current | Why here |
 | --- | --- | --- |
-| **Opening a loan**, by any route: a direct accept, a match, a signed-offer fill, an Auto-lend fill, an instant-market borrow, a refinance, a rental, a roll or an extension that starts a new term | The two wallets the new loan records as lender and borrower | The one step every loan passes through. This is the rule; the rows below only refuse earlier. |
+| **Opening a loan**, by any route: a direct accept, a match, a signed-offer fill, an Auto-lend fill, an instant-market borrow, a refinance, a rental, a roll or an extension that starts a new term | The two wallets the new loan records as lender and borrower. Where the record exists only to carry the sale of an existing loan, the seller is not checked and the buyer is (see below) | The one step every loan passes through. This is the rule; the rows below only refuse earlier. |
 | **Taking over a position** through the platform: buying a loan, or replacing a borrower | The wallet coming in | It takes on the position. The wallet going out is not checked (3.2). |
 | **Posting a standing commitment that would give the poster a new position**: a lending, borrowing or rental offer, an offer to buy a loan, an offer that offsets a loan with a new one, setting or funding Auto-lend, setting a standing instruction | The wallet posting | So the book never holds a commitment that cannot be filled. |
 
 The previews that the app and the keeper read before sending (accept, match,
 Auto-lend fill, sale) ask the same rule and name the wallet that is not
 current, so a refusal is known before a transaction is sent.
+
+**A sale that passes through the loan-opening step.** When a buyer fills a
+lender's sale listing, the platform opens a short-lived loan record that
+names the seller as one of its parties and then completes the sale. That
+record is not a new position for the seller. The shared check recognises it
+and checks only the incoming buyer, so the exit that section 3.2 protects is
+open at every step of the route, not only at posting.
 
 A refused fill does not cancel anything. The offer or the Auto-lend setting
 stays as it is and fills again once its owner has accepted.
@@ -248,7 +255,10 @@ date their commitments stop filling.
     and reaches nothing else.
 13. A lender whose acceptance is stale lists its loan for sale, the book
     shows the listing as fillable, and a buyer who is current fills it. The
-    same lender's offset offer is refused.
+    fill is driven end to end through the listing route, including the
+    short-lived loan record that names the seller, and the direct sale into a
+    buyer's standing offer. A buyer who is not current is refused on both.
+    The same lender's offset offer is refused.
 14. The keeper's fill passes send nothing for a fill the preview refuses for
     the Terms, and the keeper sends no acceptance for any wallet.
 15. In the app, a wallet that rejects the acceptance transaction is not
