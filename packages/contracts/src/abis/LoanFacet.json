@@ -523,11 +523,32 @@
             "name": "loanInitiationFeeBpsAtInit",
             "type": "uint16",
             "internalType": "uint16"
+          },
+          {
+            "name": "integrator",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AcceptChargeLoanMismatch",
+    "inputs": [
+      {
+        "name": "settledFor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "opened",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -1711,22 +1732,6 @@
   },
   {
     "type": "error",
-    "name": "IlliquidPairNotConsented",
-    "inputs": [
-      {
-        "name": "actor",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "pairKey",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "ImportedMarkerMissing",
     "inputs": [
       {
@@ -2257,22 +2262,6 @@
   },
   {
     "type": "error",
-    "name": "MidTierPairNotAcknowledged",
-    "inputs": [
-      {
-        "name": "actor",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "pairKey",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "MixedCollateralNotAllowed",
     "inputs": []
   },
@@ -2580,33 +2569,7 @@
   },
   {
     "type": "error",
-    "name": "PriceGuardNumeraireMismatch",
-    "inputs": [
-      {
-        "name": "guard",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "recorded",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "guardNumeraire",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "PriceReadOutOfGas",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ProtocolRegistryUnset",
     "inputs": []
   },
   {
@@ -4079,27 +4042,6 @@
     "type": "error",
     "name": "RiskAndTermsConsentRequired",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "RiskTierTooLow",
-    "inputs": [
-      {
-        "name": "actor",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "requiredTier",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "actorTier",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ]
   },
   {
     "type": "error",

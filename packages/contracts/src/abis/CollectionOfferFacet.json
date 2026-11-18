@@ -142,6 +142,11 @@
             "name": "lifecycleFlex",
             "type": "uint8",
             "internalType": "uint8"
+          },
+          {
+            "name": "integrator",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       },
@@ -410,6 +415,11 @@
             "name": "acceptorAllowFullDowngrade",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "integrator",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       },
@@ -590,6 +600,11 @@
             "name": "lifecycleFlex",
             "type": "uint8",
             "internalType": "uint8"
+          },
+          {
+            "name": "integrator",
+            "type": "address",
+            "internalType": "address"
           },
           {
             "name": "creatorFull",
@@ -906,6 +921,11 @@
             "name": "acceptorAllowFullDowngrade",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "integrator",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       },

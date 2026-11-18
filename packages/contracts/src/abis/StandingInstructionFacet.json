@@ -259,6 +259,28 @@
         "name": "lenderDue",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "basis",
+        "type": "tuple",
+        "internalType": "struct ITreasuryFeeHost.FeeBasis",
+        "components": [
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum ITreasuryFeeHost.FeeKind"
+          },
+          {
+            "name": "base",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "shareBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
       }
     ],
     "outputs": [
