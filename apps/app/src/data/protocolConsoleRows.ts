@@ -142,7 +142,7 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
       { key: 'lifYearlyBps', label: 'lifYearlyRate', hint: 'lifYearlyRateHint', format: 'bps' },
       { key: 'lifYearDays', label: 'lifYearPoint', hint: 'lifYearPointHint', format: 'days' },
       { key: 'liquidationHandlingFeeBps', label: 'liquidationHandlingFee', format: 'bps' },
-      { key: 'lifMatcherFeeBps', label: 'matcherFee', format: 'bps' },
+      { key: 'lifMatcherFeeBps', label: 'matcherFee', hint: 'matcherFeeHint', format: 'bps' },
       { key: 'notificationFeeVpfi', label: 'notificationFee', hint: 'notificationFeeHint', format: 'vpfiAmount' },
     ],
   },

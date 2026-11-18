@@ -275,6 +275,16 @@ The exit from a locked protected account (#3246 part 2; design:
   into its own vault.
 - While a recovery address is in force, the paused-platform escape route pays
   it, not the owner wallet.
+- In the app, the recovery address is the step before "Turn on protection",
+  which stays unavailable until one is set or waiting. The owner names the
+  address and sends it a signing link; the recovery wallet opens it and signs
+  its proof without sending a transaction, so a cold wallet needs no gas, and
+  gets a link back; the owner opens that link and asks for the address. Before
+  asking, the page checks the proof belongs to this account, vault and
+  network, is signed by the named wallet, is unexpired and unused, and says
+  how long the address will wait. It shows the address in force, a waiting one
+  with the time it comes into force, and lets the owner cancel the waiting one.
+  It says that starting a clawback is not in the app yet.
 - Every setting, change, cancellation, drop, clawback and sweep is recorded
   with the account, the address and the amounts.
 
