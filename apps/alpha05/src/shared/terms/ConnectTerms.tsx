@@ -122,7 +122,7 @@ export function ConnectTerms({ onChoose, onClose }: { onChoose: () => void; onCl
             <input id={tickId} type="checkbox" checked={ticked} onChange={(e) => setTickedKey(e.target.checked ? key : null)} data-testid="connect-terms-tick" />
             <label htmlFor={tickId}>{format('connectTerms.tick', { version: String(terms.data.version) })}</label>
           </p>
-          <p className="tier-b">{text('connectTerms.next')}</p>
+          <p className="tier-a">{text('connectTerms.next')}</p>
         </>
       )}
       <p className="actions">

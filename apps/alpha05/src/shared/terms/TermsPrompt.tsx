@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useMode } from '../../app/ModeContext';
@@ -37,6 +37,7 @@ export function TermsPrompt({
   own,
   onAccepted,
   onClose,
+  notice,
 }: {
   /** The action that asked, as a phrase ("Turning on the fee discount"). */
   asker: string;
@@ -46,6 +47,9 @@ export function TermsPrompt({
   own: OwnStateClient;
   onAccepted: () => void;
   onClose: () => void;
+  /** A statement the asker adds above the review (the Connect step's
+   *  missing-gas notice). */
+  notice?: ReactNode;
 }) {
   const { text, format } = useCopy();
   const { mode } = useMode();
@@ -142,6 +146,7 @@ export function TermsPrompt({
       <h3>{text('keyRisks.title')}</h3>
       <p className="tier-b">{text('keyRisks.lead')}</p>
       <KeyRiskList testId="terms-key-risks" />
+      {notice}
       {session.settled ? (
         <>
           <p className="actions">{proceed}</p>

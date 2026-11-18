@@ -3,6 +3,7 @@ import { Link, NavLink, Outlet } from 'react-router-dom';
 import { useMode } from './ModeContext';
 import { useTheme } from './ThemeContext';
 import { IdentityLine, WalletControl } from './WalletControl';
+import { TermsAtConnect, TermsHold, useTermsHoldsPage } from '../shared/terms/TermsAtConnect';
 import { useCapabilities } from '../shared/capability/CapabilityContext';
 import { useCopy } from '../shared/copy/useCopy';
 import { HelpPanel } from '../shared/help/HelpPanel';
@@ -45,6 +46,8 @@ export function Shell() {
   const { preference, resolved, setPreference } = useTheme();
   const { caps, stale, chainId, error } = useCapabilities();
   const world = useWorldRail();
+  // #3734: the page body waits until the connected wallet's Terms are settled.
+  const holdPage = useTermsHoldsPage();
   const { text, format } = useCopy();
   const nav = isAdvanced ? NAV_ADVANCED : NAV_BASIC;
   // Phones (RB-A11Y: mobile first, bottom navigation on small screens): the
@@ -255,8 +258,9 @@ export function Shell() {
         </div>
       </div>
       <div id="main">
+        <TermsAtConnect />
         <OutstandingTx />
-        <Outlet />
+        {holdPage ? <TermsHold /> : <Outlet />}
       </div>
       <footer className="foot">
         <WhyLink summaryKey="shell.mode" detailKey="shell.modeWhy" vars={{ mode }} />

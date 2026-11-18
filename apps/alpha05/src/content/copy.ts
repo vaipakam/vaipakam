@@ -826,13 +826,31 @@ export const copy = {
     failed: A('The Terms in force on {{chain}} could not be read ({{reason}}), so the app cannot show what you would accept, and connects no wallet until it can.'),
     retry: B('Try again'),
     lead: A(
-      'Using this app needs your acceptance of the Terms of Service in force on {{chain}}, version {{version}}. Read them and the key risks below, then tick the box. Without an acceptance no wallet is connected, and the app stays a read-only site.',
+      'Connecting a wallet to this app means agreeing to the Terms of Service in force on {{chain}}, version {{version}}. Read them and the key risks below, then tick the box.',
+    ),
+    next: A(
+      'Once the wallet connects, it asks you to record this acceptance on-chain with one transaction. It moves no funds; you pay only the network fee. Until it is recorded, the app shows nothing of your wallet.',
     ),
     guide: B('What accepting means, and what it never blocks'),
     tick: B('I have read and accept the Terms of Service, version {{version}}.'),
-    next: B('Next, your wallet asks you to sign this acceptance. Signing is free, moves nothing, and is recorded on-chain.'),
     choose: B('Agree and connect'),
     cancel: B('Not now'),
+    asker: B('Using this app with your wallet'),
+    noGas: A('The acceptance needs about {{need}} {{gas}} for the network fee on {{chain}}, and this wallet holds {{have}}. Move a little {{gas}} to it, then accept.'),
+    noGasTestnet: A(
+      'The acceptance needs about {{need}} {{gas}} for the network fee on {{chain}}, and this wallet holds {{have}}. Get a little test {{gas}} from a faucet for this test network, then accept.',
+    ),
+    holdTitle: B('Terms of Service'),
+    checking: B('Checking whether this wallet has accepted the Terms on {{chain}}…'),
+    unreadable: A('Whether this wallet has accepted the Terms on {{chain}} could not be read ({{reason}}). Nothing of your wallet is shown until it can be.'),
+    locked: A(
+      'This wallet has not accepted the Terms of Service version {{version}} on {{chain}}, so the app shows nothing of it yet. Without accepting, you can still repay, close, add collateral, claim, withdraw and cancel what you already have.',
+    ),
+    exitsOnly: B('Only close out what I have'),
+    exits: A(
+      'This wallet has not accepted the Terms of Service version {{version}} on {{chain}}. It can repay, close, add collateral, claim, withdraw and cancel here, and take on nothing new.',
+    ),
+    acceptNow: B('Accept the Terms'),
   },
   keyRisks: {
     title: B('Key risks'),
