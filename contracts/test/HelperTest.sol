@@ -118,6 +118,7 @@ import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
+import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -987,13 +988,32 @@ contract HelperTest {
     /// @dev #3649 — the initiation fee's term schedule.
     ///      Mirrors `DeployDiamond._getFeeLevelsSelectors`.
     function getFeeLevelsFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](6);
+        selectors = new bytes4[](8);
         selectors[0] = FeeLevelsFacet.setLoanInitiationFeeTerms.selector;
         selectors[1] = FeeLevelsFacet.getLoanInitiationFeeTerms.selector;
         selectors[2] = FeeLevelsFacet.quoteLoanInitiationFee.selector;
         selectors[3] = FeeLevelsFacet.quoteExtensionFee.selector;
         selectors[4] = FeeLevelsFacet.setTreasuryFeeFloors.selector;
         selectors[5] = FeeLevelsFacet.getTreasuryFeeFloors.selector;
+        selectors[6] = FeeLevelsFacet.setFeeShareCeiling.selector;
+        selectors[7] = FeeLevelsFacet.getFeeShareCeiling.selector;
+    }
+
+    function getIntegratorFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](13);
+        selectors[0] = IntegratorFacet.setIntegrator.selector;
+        selectors[1] = IntegratorFacet.removeIntegrator.selector;
+        selectors[2] = IntegratorFacet.suspendIntegrator.selector;
+        selectors[3] = IntegratorFacet.restoreIntegrator.selector;
+        selectors[4] = IntegratorFacet.setIntegratorDefaultRate.selector;
+        selectors[5] = IntegratorFacet.deliverIntegratorShare.selector;
+        selectors[6] = IntegratorFacet.getIntegrator.selector;
+        selectors[7] = IntegratorFacet.getIntegrators.selector;
+        selectors[8] = IntegratorFacet.integratorOf.selector;
+        selectors[9] = IntegratorFacet.getPlatformContracts.selector;
+        selectors[10] = IntegratorFacet.getIntegratorShareSettings.selector;
+        selectors[11] = IntegratorFacet.integratorRateFor.selector;
+        selectors[12] = IntegratorFacet.nameLenderIntentIntegrator.selector;
     }
 
     function getRepayFacetSelectors()

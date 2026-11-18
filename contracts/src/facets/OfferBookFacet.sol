@@ -174,6 +174,7 @@ contract OfferBookFacet is IVaipakamErrors {
         // refinance-tagged borrower offer from a standard one.
         f.refinanceTargetLoanId = offer.refinanceTargetLoanId;
         f.lifecycleFlex = offer.lifecycleFlex;
+        f.integrator = offer.integrator;
 
         emit OfferCreateFacet.OfferCreatedDetails(offerId, offer.creator, offer.lendingAsset, f);
     }

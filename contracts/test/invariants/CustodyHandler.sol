@@ -914,6 +914,7 @@ contract CustodyHandler is Test {
         uint256 durationDays
     ) internal returns (bool created, uint256 offerId) {
         LibVaipakam.CreateOfferParams memory p = LibVaipakam.CreateOfferParams({
+            integrator: address(0),
             lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: lending,

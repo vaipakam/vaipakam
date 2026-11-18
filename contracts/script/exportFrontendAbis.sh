@@ -311,6 +311,7 @@ FACETS=(
   # The loan clock's disclosure, split off LoanFacet (#3410).
   "LoanClockFacet"
   "FeeLevelsFacet"
+  "IntegratorFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"

@@ -153,6 +153,10 @@ contract OfferCreateFacet is
         // ── #3621 — the lender's "either" marks ({LibVaipakam.Offer.lifecycleFlex}),
         //    so a cache can show which borrower settings the offer also takes.
         uint8 lifecycleFlex;
+        // ── #3719 — the integrator named at creation (address(0) = none), so
+        //    the platform's alert can name the door the user came through. On a
+        //    lender's offer it is attribution only and earns no share.
+        address integrator;
     }
 
     /// @notice Companion to {OfferCreated} — full self-sufficient
@@ -1556,6 +1560,9 @@ contract OfferCreateFacet is
         // #3621 — the lender's "either" marks; `OfferBookFacet.openOfferOnBook`
         // refuses them on an offer that cannot carry them.
         offer.lifecycleFlex = params.lifecycleFlex;
+        // #3682 — the integrator the creator named: paid a share only on a
+        // borrower's offer, attribution only on a lender's (#3719).
+        offer.integrator = params.integrator;
         // #1347 — the creator's Full VPFI tariff opt-in (`Offer.creatorFull` /
         // `creatorMaxCStar` / `creatorAllowFullDowngrade`) is NOT a
         // `CreateOfferParams` field: it is authorized post-create by the creator

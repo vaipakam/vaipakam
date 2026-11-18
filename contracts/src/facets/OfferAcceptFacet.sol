@@ -526,6 +526,9 @@ contract OfferAcceptFacet is
         s.acceptAckAcceptorFull = terms.acceptorFull;
         s.acceptAckAcceptorAllowFullDowngrade = terms.acceptorAllowFullDowngrade;
         s.acceptAckAcceptorMaxCStar = terms.acceptorMaxCStar;
+        // #3682 — the integrator the acceptor named; the charge reads it only
+        // when the acceptor is the borrower (a lender's offer).
+        s.acceptAckIntegrator = terms.integrator;
     }
 
     /// @dev Equality-bind every loan-affecting `AcceptTerms` field against the

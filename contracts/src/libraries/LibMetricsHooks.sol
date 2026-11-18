@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibIntegrator} from "./LibIntegrator.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 /// @title LibMetricsHooks
@@ -290,9 +291,14 @@ library LibMetricsHooks {
             from == LibVaipakam.LoanStatus.Settled;
         bool isTerminal = to == LibVaipakam.LoanStatus.Defaulted ||
             to == LibVaipakam.LoanStatus.Settled;
+        bool badEnd = to == LibVaipakam.LoanStatus.InternalMatched;
         if (!wasTerminal && isTerminal) {
             s.terminalBadOrSettledCount += 1;
+            badEnd = true;
         }
+        // #3720 — an integrator's public record counts a loan it brought that
+        // defaulted or was liquidated within 7 days of opening.
+        if (badEnd && from != LibVaipakam.LoanStatus.InternalMatched) LibIntegrator.onLoanBadEnd(loan);
     }
 
     // ───────────────────────── Offer hooks ────────────────────────

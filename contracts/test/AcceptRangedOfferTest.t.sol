@@ -110,6 +110,7 @@ contract AcceptRangedOfferTest is SetupTest {
         vm.prank(creator);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -155,6 +156,7 @@ contract AcceptRangedOfferTest is SetupTest {
         vm.prank(creator);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,

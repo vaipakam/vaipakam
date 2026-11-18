@@ -11,6 +11,9 @@ import {LibFeeEntitlement} from "../libraries/LibFeeEntitlement.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
+import {LibFeeShares} from "../libraries/LibFeeShares.sol";
+import {LibIntegrator} from "../libraries/LibIntegrator.sol";
+import {IntegratorFacet} from "./IntegratorFacet.sol";
 import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
 import {LibRefinanceNetting} from "../libraries/LibRefinanceNetting.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -156,30 +159,25 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
         );
 
         if (initiationFee > 0) {
-            // #3649 stage 3 — the matcher's share is sized on the part of
-            // the fee above the treasury floor (0.1% of the principal by
-            // default), so it never comes out of the floor; the treasury
-            // leg splits what arrives at the same floor, once per loan.
-            uint256 matcherCut = LibOfferMatch.matcherShareOf(
-                LibFeeFloor.aboveFloor(initiationFee, effectivePrincipal)
-            );
-            uint256 treasuryCut = initiationFee - matcherCut;
-            // #2440 — the treasury accrues what reached it.
-            LibFacet.vaultFeeToTreasury(
-                lender, lendingAsset, treasuryCut, LibFeeFloor.initiation(effectivePrincipal)
-            );
-            if (matcherCut > 0) {
-                LibVaultOutflow.toIncentive(
-                    lender,
-                    lendingAsset,
-                    matcherCut,
-                    s.matchOverride.active
+            _chargeFee(
+                ChargeCtx({
+                    offerId: offerId,
+                    lendingAsset: lendingAsset,
+                    lender: lender,
+                    borrower: borrower,
+                    principal: effectivePrincipal,
+                    fee: initiationFee,
+                    // #3682 — the integrator the BORROWER named: from its signed
+                    // accept terms when it accepts a lender's offer, else from
+                    // its own offer. A lender's action never names one.
+                    integrator: isLenderOffer
+                        ? (s.acceptAckActive ? s.acceptAckIntegrator : address(0))
+                        : offer.integrator,
+                    matcher: s.matchOverride.active
                         ? s.matchOverride.matcher
-                        : (s.signedOfferAcceptor != address(0) ? s.signedOfferAcceptor : originalCaller),
-                    offerId,
-                    OutflowReason.INCENTIVE
-                );
-            }
+                        : (s.signedOfferAcceptor != address(0) ? s.signedOfferAcceptor : originalCaller)
+                })
+            );
         }
 
         // #3042 — a refinance accept does not deliver: the net principal stays
@@ -209,5 +207,79 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
             effectivePrincipal - initiationFee,
             LibVaultOutflow.toBorrowerAtAccept(lender, lendingAsset, effectivePrincipal - initiationFee, offerId)
         );
+    }
+
+    /// @dev The inputs of one initiation-fee charge, in a struct so the split
+    ///      runs in its own frame.
+    struct ChargeCtx {
+        uint256 offerId;
+        address lendingAsset;
+        address lender;
+        address borrower;
+        uint256 principal;
+        uint256 fee;
+        address integrator;
+        address matcher;
+    }
+
+    /// @notice #3682 — the integrator named on an accept, and what became of
+    ///         its share of the initiation fee. `amount` is the share after
+    ///         the per-loan ceiling; `delivered` says whether it reached the
+    ///         integrator's vault. A refused integrator (`refusal` other than
+    ///         None) is paid nothing, and a share that could not be delivered
+    ///         went to the reserve in the same transaction. The loan opened
+    ///         either way; it is the one this accept of `offerId` created, whose
+    ///         `LoanInitiatedDetails` names the same integrator.
+    event IntegratorShareSettled(
+        uint256 indexed offerId,
+        address indexed integrator,
+        address indexed asset,
+        uint256 amount,
+        bool delivered,
+        LibIntegrator.Refusal refusal
+    );
+
+    /// @dev Divide the fee: the treasury's floor first (taken by the
+    ///      treasury leg's split), then from the part above it the matcher's
+    ///      and the integrator's shares under the per-loan ceiling
+    ///      ({LibFeeShares}); the rest of the fee is the treasury leg, whose
+    ///      part above the floor is the reserve's. The integrator's share is
+    ///      delivered as one isolated step that may fail alone: a failure or
+    ///      a short delivery is undone and the share joins the treasury leg,
+    ///      above the floor, so it is the reserve's.
+    function _chargeFee(ChargeCtx memory c) private {
+        LibVaipakam.storageSlot().acceptIntegratorPending = c.integrator;
+        uint256 above = LibFeeFloor.aboveFloor(c.fee, c.principal);
+        (uint256 rateBps, LibIntegrator.Refusal refusal) = LibIntegrator.rateFor(c.integrator, c.borrower);
+        (uint256 matcherCut, uint256 integratorCut,) = LibFeeShares.bound(
+            above, 0, LibOfferMatch.matcherShareOf(above), (above * rateBps) / LibVaipakam.BASIS_POINTS, 0
+        );
+
+        bool delivered;
+        if (integratorCut > 0) {
+            (delivered,) = address(this).call(
+                abi.encodeCall(
+                    IntegratorFacet.deliverIntegratorShare,
+                    (c.lender, c.lendingAsset, integratorCut, c.integrator, c.offerId)
+                )
+            );
+        }
+        if (c.integrator != address(0)) {
+            emit IntegratorShareSettled(c.offerId, c.integrator, c.lendingAsset, integratorCut, delivered, refusal);
+        }
+
+        // #2440 — the treasury accrues what reached it; the host splits it at
+        // the floor, so an undelivered integrator share is the reserve's.
+        LibFacet.vaultFeeToTreasury(
+            c.lender,
+            c.lendingAsset,
+            c.fee - matcherCut - (delivered ? integratorCut : 0),
+            LibFeeFloor.initiation(c.principal)
+        );
+        if (matcherCut > 0) {
+            LibVaultOutflow.toIncentive(
+                c.lender, c.lendingAsset, matcherCut, c.matcher, c.offerId, OutflowReason.INCENTIVE
+            );
+        }
     }
 }

@@ -50,6 +50,7 @@ import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
+import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {TestOfferFloor} from "./helpers/TestOfferFloor.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -652,7 +653,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](120);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](121);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1171,6 +1172,12 @@ contract SetupTest is Test {
             facetAddress: address(feeLevelsFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getFeeLevelsFacetSelectors()
+        });
+        // #3682 — the integrator registry and the share's delivery.
+        cuts[120] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(IntegratorFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getIntegratorFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).

@@ -241,6 +241,7 @@ export interface DeploymentFacets {
   /** #3410 — the loan clock's disclosure, split off LoanFacet. */
   loanClockFacet?: HexAddress;
   feeLevelsFacet?: HexAddress;
+  integratorFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */

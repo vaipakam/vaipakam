@@ -217,6 +217,18 @@ library LibAcceptTestSigner {
         return OfferAcceptFacet(diamond).acceptOffer(offerId, t, sig);
     }
 
+    /// @notice #3682 — sign + accept naming `integrator` in the accept terms.
+    function signAndAcceptVia(address diamond, address acceptor, uint256 pk, uint256 offerId, address integrator)
+        internal
+        returns (uint256)
+    {
+        LibAcceptTerms.AcceptTerms memory t = buildTerms(diamond, acceptor, offerId, true, 0);
+        t.integrator = integrator;
+        bytes memory sig = sign(diamond, t, pk);
+        vm.prank(acceptor);
+        return OfferAcceptFacet(diamond).acceptOffer(offerId, t, sig);
+    }
+
     function _ack(address diamond, address leg) private view returns (address) {
         if (leg == address(0)) return address(0);
         return

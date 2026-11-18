@@ -53,6 +53,7 @@
     "SignedOfferMatchFacet",
     "LoanClockFacet",
     "FeeLevelsFacet",
+    "IntegratorFacet",
     "ClaimFacet",
     "OracleFacet",
     "OracleAdminFacet",

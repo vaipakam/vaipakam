@@ -90,6 +90,7 @@ import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
+import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
@@ -324,7 +325,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // Replace cut repoints it); `getSequencerOutageWindow` is new (an Add).
     // 118 -> 119: FeeLevelsFacet (#3649) - the initiation fee's term
     // schedule; all three selectors are new (an Add).
-    uint256 public constant EXPECTED_FACETS = 119;
+    uint256 public constant EXPECTED_FACETS = 120;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1375,6 +1376,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         );
         items[117] = Item("loanClockFacet", ArtifactDeploy.deploy(type(LoanClockFacet).name), _getLoanClockSelectors());
         items[118] = Item("feeLevelsFacet", ArtifactDeploy.deploy(type(FeeLevelsFacet).name), _getFeeLevelsSelectors());
+        items[119] = Item("integratorFacet", ArtifactDeploy.deploy(type(IntegratorFacet).name), _getIntegratorSelectors());
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

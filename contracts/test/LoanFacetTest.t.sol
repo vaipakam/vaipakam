@@ -174,7 +174,7 @@ contract LoanFacetTest is Test {
 
         // Deploy facets
         cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
-        diamond = new VaipakamDiamond(owner, address(cutFacet));
+        diamond = VaipakamDiamond(payable(ArtifactDeploy.deploy(type(VaipakamDiamond).name, abi.encode(owner, address(cutFacet)))));
 
         offerCreateFacet = OfferCreateFacet(ArtifactDeploy.deploy(type(OfferCreateFacet).name));
         offerAcceptFacet = OfferAcceptFacet(ArtifactDeploy.deploy(type(OfferAcceptFacet).name));
@@ -187,11 +187,12 @@ contract LoanFacetTest is Test {
         loanFacet = LoanFacet(ArtifactDeploy.deploy(type(LoanFacet).name));
         riskFacet = RiskFacet(ArtifactDeploy.deploy(type(RiskFacet).name)); // Added
         accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
-        testMutatorFacet = new TestMutatorFacet();
-        helperTest = new HelperTest();
+        testMutatorFacet = TestMutatorFacet(ArtifactDeploy.deploy(type(TestMutatorFacet).name));
+        // #3682: from the artifact, so its growing creation code is not embedded here (solc "Tag too large").
+        helperTest = HelperTest(ArtifactDeploy.deploy(type(HelperTest).name));
 
         // Deploy vault impl
-        vaultImpl = new VaipakamVaultImplementation(address(0), LibTestVaultEndpoints.none());
+        vaultImpl = VaipakamVaultImplementation(payable(ArtifactDeploy.deploy(type(VaipakamVaultImplementation).name, abi.encode(address(0), LibTestVaultEndpoints.none()))));
 
         // Cut facets into diamond
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](22);
@@ -541,6 +542,7 @@ contract LoanFacetTest is Test {
         vm.prank(lender);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: lendingAsset,
@@ -808,6 +810,7 @@ contract LoanFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockIlliquidERC20,
@@ -957,6 +960,7 @@ contract LoanFacetTest is Test {
         vm.prank(borrower);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -1007,6 +1011,7 @@ contract LoanFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -1061,6 +1066,7 @@ contract LoanFacetTest is Test {
         vm.prank(borrower);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockNft721,
@@ -1239,6 +1245,7 @@ contract LoanFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -1287,6 +1294,7 @@ contract LoanFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockIlliquidERC20,
@@ -1343,6 +1351,7 @@ contract LoanFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,

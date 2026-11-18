@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibInitiationFee} from "../libraries/LibInitiationFee.sol";
 import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
+import {LibFeeShares} from "../libraries/LibFeeShares.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
@@ -35,10 +36,14 @@ contract FeeLevelsFacet is DiamondAccessControl {
 
     /// @notice A treasury floor is outside its bounds.
     error InvalidTreasuryFeeFloors(uint256 initiationBps, uint256 interestBps);
+    /// @notice #3682 — a fee-share ceiling outside 40% to 70% (0 = default).
+    error InvalidFeeShareCeiling(uint256 ceilingBps);
 
     /// @notice Emitted when the treasury floors change. Zero in a field means
     ///         its default.
     event TreasuryFeeFloorsSet(uint16 initiationBps, uint16 interestBps);
+    /// @notice #3682 — the per-loan fee-share ceiling changed (0 = default).
+    event FeeShareCeilingSet(uint16 ceilingBps);
 
     /// @dev The settings' bounds. The base term is a short loan; the one-year
     ///      point is about a year; the yearly rate may not push the fee at the
@@ -117,6 +122,31 @@ contract FeeLevelsFacet is DiamondAccessControl {
                 || 2 * interestFloor > LibVaipakam.cfgTreasuryFeeBps()
         ) revert InvalidTreasuryFeeFloors(initiationFloor, interestFloor);
         emit TreasuryFeeFloorsSet(initiationBps, interestBps);
+    }
+
+    /**
+     * @notice #3682 / #3722 — set the per-loan ceiling on the parts taken from
+     *         the initiation fee's part above the treasury floor (the new
+     *         user's referral cut and the matcher's, integrator's and inviter's
+     *         shares together), in basis points of that part. 0 restores the
+     *         60% default; otherwise 40% to 70% (`ReferralFeeShareDesign.md`
+     *         2.1). When the sum would exceed it, the inviter's share is
+     *         reduced first, then the integrator's, then the matcher's; the
+     *         reserve receives the rest. Applies to fees collected after it.
+     */
+    function setFeeShareCeiling(uint16 ceilingBps) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        if (
+            ceilingBps != 0
+                && (ceilingBps < LibVaipakam.FEE_SHARE_CEILING_BPS_MIN || ceilingBps > LibVaipakam.FEE_SHARE_CEILING_BPS_MAX)
+        ) revert InvalidFeeShareCeiling(ceilingBps);
+        LibVaipakam.storageSlot().feeShareCfg.ceilingBps = ceilingBps;
+        emit FeeShareCeilingSet(ceilingBps);
+    }
+
+    /// @notice The per-loan ceiling in force, default resolved, in basis
+    ///         points of the initiation fee's part above the treasury floor.
+    function getFeeShareCeiling() external view returns (uint256) {
+        return LibFeeShares.ceilingBps();
     }
 
     /// @notice The treasury floors in force, defaults resolved, in basis

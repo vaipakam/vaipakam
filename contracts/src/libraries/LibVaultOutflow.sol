@@ -254,6 +254,29 @@ library LibVaultOutflow {
         return _go(user, ERC20, asset, 0, amount, actor, VaultOutflowTypes.OutflowClass.Incentive, ref, 0, reason);
     }
 
+    /// @notice #3682 — a registered integrator's share of a new loan's
+    ///         initiation fee, from `user`'s (the lender's) vault into the
+    ///         vault of integrator `integratorId`'s payout account. The
+    ///         policy derives the destination from the registry and refuses
+    ///         an integrator that is not active.
+    function toIntegratorShare(address user, address asset, uint256 amount, address integratorId, uint256 offerId)
+        internal
+        returns (uint256)
+    {
+        return _go(
+            user,
+            ERC20,
+            asset,
+            0,
+            amount,
+            integratorId,
+            VaultOutflowTypes.OutflowClass.IntegratorShare,
+            offerId,
+            0,
+            OutflowReason.INTEGRATOR_SHARE
+        );
+    }
+
     /// @notice To the liquidator that paid loan `loanId`'s debt in this same
     ///         transaction: the caller passes `msg.sender` of its entry.
     function toLiquidationBuyer(

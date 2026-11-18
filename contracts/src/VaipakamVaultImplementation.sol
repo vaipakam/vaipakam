@@ -734,6 +734,7 @@ contract VaipakamVaultImplementation is
         if (
             c == VaultOutflowTypes.OutflowClass.ClaimCustody || c == VaultOutflowTypes.OutflowClass.PrincipalToBorrower
                 || c == VaultOutflowTypes.OutflowClass.MatchedCounterparty
+                || c == VaultOutflowTypes.OutflowClass.IntegratorShare
         ) {
             return _isGenuineVault(o.to);
         }

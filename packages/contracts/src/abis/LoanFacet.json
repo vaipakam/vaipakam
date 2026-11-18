@@ -523,6 +523,11 @@
             "name": "loanInitiationFeeBpsAtInit",
             "type": "uint16",
             "internalType": "uint16"
+          },
+          {
+            "name": "integrator",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       }

@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibIntegrator} from "../libraries/LibIntegrator.sol";
 import {LibInitiationFee} from "../libraries/LibInitiationFee.sol";
 import {LibPriceRead} from "../libraries/LibPriceRead.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
@@ -130,6 +131,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // path — see `_snapshotFeeBps`).
         uint16 treasuryFeeBpsAtInit;
         uint16 loanInitiationFeeBpsAtInit;
+        // #3719 — the integrator the borrower named (address(0) = none), so the
+        // platform's alert can name the door the user came through. What its
+        // share became is stated by `OfferAcceptFeeFacet.IntegratorShareSettled`.
+        address integrator;
     }
 
     /// @notice Companion to {LoanInitiated} — full self-sufficient
@@ -476,6 +481,18 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // the loan's real economics without a `getLoanDetails` read-back.
         d.treasuryFeeBpsAtInit = loan.treasuryFeeBpsAtInit;
         d.loanInitiationFeeBpsAtInit = loan.loanInitiationFeeBpsAtInit;
+        // #3682 / #3719 — the integrator named on this accept, handed over by
+        // the acceptance charge: recorded on the loan (a registered entry's
+        // public count rises once) and cleared.
+        {
+            LibVaipakam.Storage storage st = LibVaipakam.storageSlot();
+            address integrator = st.acceptIntegratorPending;
+            if (integrator != address(0)) {
+                delete st.acceptIntegratorPending;
+                LibIntegrator.recordLoan(loanId, integrator);
+                d.integrator = integrator;
+            }
+        }
 
         // Best-effort HF, read only for a loan with both legs liquid (the
         // health factor refuses any other, so 0 stays the illiquid answer

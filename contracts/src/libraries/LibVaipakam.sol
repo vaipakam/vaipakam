@@ -475,6 +475,23 @@ library LibVaipakam {
     ///      1% of the interest for the treasury's share of interest.
     uint256 constant FEE_FLOOR_INITIATION_BPS_DEFAULT = 10;
     uint256 constant FEE_FLOOR_INTEREST_BPS_DEFAULT = 100;
+
+    /// @dev #3682 — the integrator's share of the initiation fee's part above
+    ///      the treasury floor (`IntegratorFeeShareDesign.md` section 3):
+    ///      default 10% (owner decision 2026-11-17), hard ceiling 50%.
+    uint256 constant INTEGRATOR_SHARE_BPS_DEFAULT = 1_000;
+    uint256 constant INTEGRATOR_SHARE_BPS_MAX = 5_000;
+    /// @dev #3682 / #3722 — the per-loan ceiling on the parts taken from the
+    ///      initiation fee's above-floor part (the new user's cut, the
+    ///      matcher's, the integrator's and the inviter's shares together):
+    ///      default 60%, a setting bounded 40% to 70%
+    ///      (`ReferralFeeShareDesign.md` 2.1).
+    uint256 constant FEE_SHARE_CEILING_BPS_DEFAULT = 6_000;
+    uint256 constant FEE_SHARE_CEILING_BPS_MIN = 4_000;
+    uint256 constant FEE_SHARE_CEILING_BPS_MAX = 7_000;
+    /// @dev #3720 — an integrator's public record counts a loan that defaults
+    ///      or is liquidated within this long of opening.
+    uint256 constant INTEGRATOR_EARLY_DEFAULT_WINDOW = 7 days;
     // Fallback-path split (README §7): lender gets principal + accrued
     // interest + {FALLBACK_LENDER_BONUS_BPS} of principal; treasury gets
     // {FALLBACK_TREASURY_BPS} of principal; borrower gets the remainder.
@@ -1850,6 +1867,11 @@ library LibVaipakam {
         // #3621 — lender-only "either" marks for the partial-repay and
         // prepay-listing options ({Offer.lifecycleFlex}). 0 = both exact.
         uint8 lifecycleFlex;
+        // #3682 — the integrator a BORROWER's offer names (address(0) = none).
+        // Stored on the offer at creation; the fill credits it, and neither a
+        // matcher nor an accepting lender can set or change it. On a lender's
+        // offer it is attribution only (#3719) and earns no share.
+        address integrator;
     }
 
     /// @notice #193 — input bundle for `OfferMutateFacet.modifyOffer`.
@@ -2123,6 +2145,11 @@ library LibVaipakam {
         // sale vehicle and NFT rental (refused at posting). Immutable after
         // creation (no edit changes it). Appended.
         uint8 lifecycleFlex;
+        // #3682 — the integrator named at creation (address(0) = none). Paid a
+        // share of the initiation fee only when this is a BORROWER's offer;
+        // on a lender's offer it is attribution only (#3719). Set only by
+        // `OfferCreateFacet`.
+        address integrator;
     }
 
     /**
@@ -3237,6 +3264,43 @@ library LibVaipakam {
     struct FeeFloorConfig {
         uint16 initiationBps;
         uint16 interestBps;
+    }
+
+    /// @dev #3682 — a registered integrator's standing. `None` is never
+    ///      registered or removed. APPEND-ONLY.
+    enum IntegratorStatus {
+        None,
+        Active,
+        Suspended
+    }
+
+    /// @dev #3682 / #3720 — one registered integrator, keyed by its id (the
+    ///      address a borrower names). `rateBps` 0 ⇒ the default rate.
+    ///      `payout` is the account whose platform vault receives the share.
+    ///      `name` is its display name (1 to 32 printable ASCII characters,
+    ///      unique without regard to letter case). The three counters are its
+    ///      public record: loans brought, loans opened with a warning, and
+    ///      loans defaulted or liquidated within
+    ///      {INTEGRATOR_EARLY_DEFAULT_WINDOW} of opening. `declared` lists the
+    ///      contracts it operates; a loan whose borrower is the id, the payout
+    ///      account or one of them pays it nothing.
+    struct IntegratorEntry {
+        address payout;
+        uint16 rateBps;
+        IntegratorStatus status;
+        uint32 loansBrought;
+        uint32 loansWarned;
+        uint32 loansEarlyDefaulted;
+        string name;
+        address[] declared;
+    }
+
+    /// @dev #3682 / #3722 — the shared fee-share settings. Zero in a field ⇒
+    ///      its default ({INTEGRATOR_SHARE_BPS_DEFAULT},
+    ///      {FEE_SHARE_CEILING_BPS_DEFAULT}).
+    struct FeeShareConfig {
+        uint16 integratorDefaultBps;
+        uint16 ceilingBps;
     }
 
     struct Storage {
@@ -8468,6 +8532,35 @@ library LibVaipakam {
         ///      yet. Only rises. Written only by `TreasuryFeeFacet`'s split.
         ///      Appended — append-only.
         mapping(address => uint256) reservePartHeldByTreasury;
+        /// @dev #3682 — the integrator registry, keyed by id. Written only by
+        ///      `IntegratorFacet`. Appended — append-only.
+        mapping(address => IntegratorEntry) integrators;
+        /// @dev #3682 — every id ever registered and not removed, for the
+        ///      public list. Written only by `IntegratorFacet`.
+        address[] integratorIds;
+        /// @dev #3682 — the display name's lower-case hash ⇒ the id carrying
+        ///      it, so no two entries carry one name. `IntegratorFacet` only.
+        mapping(bytes32 => address) integratorByName;
+        /// @dev #3682 — each integrator address (its id, payout account and
+        ///      declared contracts) ⇒ the id it belongs to. Read by the share
+        ///      (a borrower that is one earns nothing) and by the referral
+        ///      binding (none may be an inviter). `IntegratorFacet` only.
+        mapping(address => address) integratorOfAddress;
+        /// @dev #3682 / #3722 — the shared fee-share settings.
+        FeeShareConfig feeShareCfg;
+        /// @dev #3682 — the integrator credited on loan id, for its public
+        ///      record. Written once at acceptance.
+        mapping(uint256 => address) loanIntegrator;
+        /// @dev #3682 — the integrator the BORROWER named on a direct accept
+        ///      of a lender's offer, from its signed accept terms. Written on
+        ///      every direct accept entry and read only while
+        ///      `acceptAckActive`, like the other accept-ack fields.
+        address acceptAckIntegrator;
+        /// @dev #3682 / #3719 — the integrator named on the accept being
+        ///      charged, handed from the acceptance charge to the loan's
+        ///      creation in the same transaction, which records it on the loan
+        ///      and clears it.
+        address acceptIntegratorPending;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.

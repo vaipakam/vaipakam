@@ -173,6 +173,7 @@ contract AggregatorAdapterTest is SetupTest {
         vm.prank(b);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -625,6 +626,7 @@ contract AggregatorAdapterTest is SetupTest {
         vm.prank(aggregator);
         uint256 selfOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,

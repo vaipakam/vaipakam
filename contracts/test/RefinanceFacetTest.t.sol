@@ -203,6 +203,7 @@ contract RefinanceFacetTest is SetupTest {
         uint256 target
     ) internal view returns (LibVaipakam.CreateOfferParams memory) {
         return LibVaipakam.CreateOfferParams({
+            integrator: address(0),
             lifecycleFlex: 0,
             offerType: offerType,
             lendingAsset: mockERC20,
