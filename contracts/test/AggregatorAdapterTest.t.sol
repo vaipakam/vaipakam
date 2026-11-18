@@ -800,6 +800,48 @@ contract AggregatorAdapterTest is SetupTest {
         assertGt(adapter.matchLoan(cp, 100 ether), 0);
     }
 
+    /// Deposit and mint are refused naming the principal while it is behind;
+    /// the max views stay 0 as the standard requires.
+    function test_terms_depositAndMintNameThePrincipal() public {
+        LegalFacet(address(diamond)).publishTos(1, TOS1);
+        assertEq(adapter.maxDeposit(aggregator), 0);
+        assertEq(adapter.maxMint(aggregator), 0);
+        ERC20Mock(mockERC20).mint(aggregator, 10 ether);
+        vm.startPrank(aggregator);
+        ERC20(mockERC20).approve(address(adapter), 10 ether);
+        vm.expectRevert(abi.encodeWithSelector(LibTerms.TermsNotAccepted.selector, aggregator, uint32(1)));
+        adapter.deposit(10 ether, aggregator);
+        vm.expectRevert(abi.encodeWithSelector(LibTerms.TermsNotAccepted.selector, aggregator, uint32(1)));
+        adapter.mint(10 ether, aggregator);
+        LegalFacet(address(diamond)).acceptTerms(1, TOS1);
+        adapter.deposit(10 ether, aggregator);
+        vm.stopPrank();
+    }
+
+    /// The reordered creation: a failed initialize reverts the registration
+    /// with it, and nobody but the Diamond can initialize a proxy over the
+    /// template, so the uninitialized step cannot be reached from outside.
+    function test_terms_failedCreationLeavesNoRegistration() public {
+        LegalFacet(address(diamond)).publishTos(1, TOS1);
+        address p = makeAddr("termsPrincipal2");
+        address predicted = vm.computeCreateAddress(address(diamond), vm.getNonce(address(diamond)));
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(LibTerms.TermsNotAccepted.selector, p, uint32(1)));
+        AggregatorAdapterFactoryFacet(address(diamond)).createAggregatorAdapter(
+            p, mockERC20, mockCollateralERC20, HAIRCUT_BPS, keeper, "T", "T",
+            MAX_EXPOSURE, MIN_RATE, MAX_LTV, MAX_DUR, MIN_FILL
+        );
+        assertFalse(AggregatorAdapterFactoryFacet(address(diamond)).isAggregatorAdapter(predicted), "no registration");
+        assertEq(predicted.code.length, 0, "no proxy");
+
+        ERC1967Proxy proxy = new ERC1967Proxy(AggregatorAdapterFactoryFacet(address(diamond)).aggregatorAdapterTemplate(), "");
+        vm.expectRevert(AggregatorAdapterImplementation.NotDiamond.selector);
+        AggregatorAdapterImplementation(address(proxy)).initialize(
+            address(diamond), p, mockERC20, mockCollateralERC20, HAIRCUT_BPS, keeper, "x", "x",
+            MAX_EXPOSURE, MIN_RATE, MAX_LTV, MAX_DUR, MIN_FILL
+        );
+    }
+
     /// A claim never waits on the Terms: with the principal behind, the
     /// claim succeeds and the re-fund (new lending) is skipped.
     function test_terms_claimSucceedsAndSkipsTheReFund() public {

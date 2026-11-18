@@ -139,6 +139,9 @@ interface IVaipakamIntentSurface {
     /// @dev #3734 — the Terms standing; for this adapter, its principal's.
     function isTermsCurrent(address wallet) external view returns (bool);
 
+    /// @dev #3734 — reverts TermsNotAccepted naming this adapter's principal.
+    function requireCurrentTerms(address wallet) external view;
+
     function getAggregatorAdapterVersion(address adapter)
         external
         view
@@ -460,6 +463,23 @@ contract AggregatorAdapterImplementation is
 
     /// @dev Gate to the single authorized principal, then pull + mint via OZ,
     ///      then deploy the pulled assets into the standing intent.
+    /// @inheritdoc ERC4626Upgradeable
+    /// @dev #3734 — a deposit is new lending: while the principal is not
+    ///      current on the Terms it is refused with the Diamond's
+    ///      `TermsNotAccepted(principal, version)`, ahead of the limit check
+    ///      (whose `maxDeposit` is 0 then, as the standard requires).
+    function deposit(uint256 assets, address receiver) public override returns (uint256) {
+        _requireTermsForNewLending();
+        return super.deposit(assets, receiver);
+    }
+
+    /// @inheritdoc ERC4626Upgradeable
+    /// @dev #3734 — as {deposit}.
+    function mint(uint256 shares, address receiver) public override returns (uint256) {
+        _requireTermsForNewLending();
+        return super.mint(shares, receiver);
+    }
+
     function _deposit(
         address caller,
         address receiver,
@@ -877,6 +897,16 @@ contract AggregatorAdapterImplementation is
             return false;
         }
         return true;
+    }
+
+    /// @dev #3734 — refuse new lending, naming the principal, while the
+    ///      principal is not current on the Terms. A pause or a version below
+    ///      the mandatory floor keeps its own refusal, so it is left to the
+    ///      usual path.
+    function _requireTermsForNewLending() private view {
+        IVaipakamIntentSurface d = IVaipakamIntentSurface(diamond);
+        if (_belowMandatoryFloor() || d.paused()) return;
+        d.requireCurrentTerms(address(this));
     }
 
     /// @dev True when a mandatory upgrade floor is set and this adapter is below
