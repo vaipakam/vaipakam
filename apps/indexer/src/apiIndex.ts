@@ -39,6 +39,7 @@ const API_INDEX = {
     { method: 'GET', path: '/offers/by-creator/{address}', description: 'Offers created by a wallet.' },
     { method: 'GET', path: '/offers/by-current-holder/{address}', description: 'Open offers whose position NFT a wallet currently holds.' },
     { method: 'GET', path: '/offers/{id}', description: 'One offer by id.' },
+    { method: 'GET', path: '/referrals/by-inviter/{address}', description: "What one inviter's invitations have paid on one network, read from the binding and per-loan share events: the wallets that bound this inviter (each with the end time its binding fixed and the loans that carried a share), the shares paid to the inviter's wallet with a total per asset (never across assets; null when too many rows to sum), and the shares sent to the reserve instead with the reason each event gave. Current to `indexedThroughBlock`. 503 with null lists when unreadable." },
     { method: 'GET', path: '/signed-offers', description: "One (pair, tenor) market's active gasless signed-offer book. `awaitingReplay` counts the market's orders whose fills and cancels a reorg rebuild is re-reading from the chain: left out of the shared book until it has, and listed with `replayPending: true` in a signer-scoped read so the maker can still cancel them." },
     { method: 'GET', path: '/loans/stats', description: 'Loan counts by status.' },
     { method: 'GET', path: '/loans/active', description: 'Active loans (paginated).' },

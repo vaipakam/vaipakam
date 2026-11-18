@@ -89,5 +89,6 @@
   "0090_pending_activity.sql",
   "0091_telegram_state_moved.sql",
   "0092_reward_day_user_by_user.sql",
-  "0093_delete_pre_3327_signed_offers.sql"
+  "0093_delete_pre_3327_signed_offers.sql",
+  "0101_referral_record.sql"
 ]

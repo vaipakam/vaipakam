@@ -131,6 +131,8 @@ const CLASSIFICATION = {
       'numbered above every mark, which re-examines rather than skips',
   },
   loan_participants: { class: 'replay-derived', reason: 'append-only chain history (#1450 r31)' },
+  referral_binding: { class: 'replay-derived', reason: 'each wallet\'s on-chain inviter binding and end time, read off InviterBound (#3727)' },
+  referral_share: { class: 'replay-derived', reason: 'each loan\'s referral cut and share and where the share went, read off ReferralShareSettled (#3727)' },
   loan_lifecycle_state: {
     class: 'replay-derived',
     reason: 'the status each loan last announced, read off LoanInitiated / LoanStatusChanged (#2337)',

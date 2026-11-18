@@ -1650,6 +1650,8 @@ DELETE FROM keeper_deployment" )
 # starts from genesis into empty tables.
 wrangler d1 execute vaipakam-warm --remote --command="\
 DELETE FROM activity_events; \
+DELETE FROM referral_binding; \
+DELETE FROM referral_share; \
 DELETE FROM loan_participants; \
 DELETE FROM loan_lifecycle_state; \
 DELETE FROM loan_lifecycle_violation; \
