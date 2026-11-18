@@ -38,6 +38,8 @@ import {MockPermit2} from "./mocks/MockPermit2.sol";
 import {LibPermit2, ISignatureTransfer} from "../src/libraries/LibPermit2.sol";
 import {LibRefinancePayoff} from "../src/libraries/LibRefinancePayoff.sol";
 import {LibTestTiming} from "./helpers/LibTestTiming.sol";
+import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
+import {LibIntegrator} from "../src/libraries/LibIntegrator.sol";
 
 /// @dev Drives {LibRefinanceNetting} directly. Each case runs inside ONE call,
 ///      because the record is transient: it is meant to live for one
@@ -360,6 +362,51 @@ contract RefinanceFacetTest is SetupTest {
     ///         for exactly the old interest plus the initiation fee completes
     ///         the refinance, and one wei less refuses the whole accept by
     ///         name, leaving both loans and every balance untouched.
+    event IntegratorShareSettled(
+        uint256 indexed loanId,
+        address indexed integrator,
+        address indexed asset,
+        uint256 offerId,
+        uint256 amount,
+        bool delivered,
+        LibIntegrator.Refusal refusal
+    );
+
+    /// @notice #3682 — a refinance request naming an integrator pays it when
+    ///         the request is accepted, and the settlement event names the
+    ///         REPLACEMENT loan the accept opens (not the old one).
+    function test_3682_integratorSettlementNamesTheReplacementLoan() public {
+        address integ = makeAddr("integrator");
+        IntegratorFacet(address(diamond)).setIntegrator(integ, makeAddr("integPayout"), 0, "Acme", new address[](0));
+        vm.warp(vm.getBlockTimestamp() + 1 days); // past the cancel cooldown
+        vm.prank(borrower);
+        OfferCancelFacet(address(diamond)).cancelOffer(taggedOfferId);
+        LibVaipakam.CreateOfferParams memory p =
+            _params(LibVaipakam.OfferType.Borrower, NEW_RATE_BPS, COLLATERAL, oldLoanId);
+        p.integrator = integ;
+        vm.prank(borrower);
+        taggedOfferId = OfferCreateFacet(address(diamond)).createOffer(p, type(uint64).max);
+        RefinancePayoffPermitHelper.attach(address(diamond), borrower, mockERC20, taggedOfferId);
+        vm.warp(vm.getBlockTimestamp() + 15 days);
+
+        (uint256 created,) = MetricsFacet(address(diamond)).getGlobalCounts();
+        vm.recordLogs();
+        uint256 newLoanId = _accept();
+        assertEq(newLoanId, created + 1, "the accept opened the next loan");
+        assertTrue(newLoanId != oldLoanId);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint256 seen;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter != address(diamond) || logs[i].topics[0] != IntegratorShareSettled.selector) continue;
+            ++seen;
+            assertEq(uint256(logs[i].topics[1]), newLoanId, "the settlement names the replacement loan");
+            (, , bool delivered,) = abi.decode(logs[i].data, (uint256, uint256, bool, LibIntegrator.Refusal));
+            assertTrue(delivered);
+        }
+        assertEq(seen, 1, "one settlement");
+    }
+
     function test_PermitCoversOnlyTheDifference() public {
         vm.warp(block.timestamp + 15 days);
         (uint256 interest, , ) = _expectedSettlement(15 days);

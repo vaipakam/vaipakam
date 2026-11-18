@@ -35,6 +35,9 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 import {LibTiming} from "../src/libraries/LibTiming.sol";
+import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
+import {LibIntegrator} from "../src/libraries/LibIntegrator.sol";
+import {Vm} from "forge-std/Vm.sol";
 
 /**
  * @title  LenderIntentMatchTest
@@ -144,10 +147,18 @@ contract LenderIntentMatchTest is SetupTest {
         internal
         returns (uint256 offerId)
     {
+        return _postBorrower(creator, principal, coll, address(0));
+    }
+
+    /// @dev #3682 — the same borrower offer, naming `integrator`.
+    function _postBorrower(address creator, uint256 principal, uint256 coll, address integrator)
+        internal
+        returns (uint256 offerId)
+    {
         vm.prank(creator);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
-                integrator: address(0),
+                integrator: integrator,
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -293,6 +304,51 @@ contract LenderIntentMatchTest is SetupTest {
         // either the guard or the inheritance copy.
         assertTrue(loan.useFullTermInterest, "intent loan is full-term");
         assertFalse(loan.allowsPartialRepay, "intent loan disallows partial repay");
+    }
+
+    event IntegratorShareSettled(
+        uint256 indexed loanId,
+        address indexed integrator,
+        address indexed asset,
+        uint256 offerId,
+        uint256 amount,
+        bool delivered,
+        LibIntegrator.Refusal refusal
+    );
+
+    /// @dev #3682 — an Auto-lend fill accepts the borrower's offer, so it
+    ///      pays the integrator that offer names, and the settlement event
+    ///      names the loan the fill opens.
+    function test_matchIntent_integratorSettlementNamesTheLoan() public {
+        address integ = makeAddr("integrator");
+        IntegratorFacet(address(diamond)).setIntegrator(integ, makeAddr("integPayout"), 0, "Acme", new address[](0));
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("b3682");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL, integ);
+
+        (uint256 created,) = MetricsFacet(address(diamond)).getGlobalCounts();
+        vm.recordLogs();
+        vm.prank(solver);
+        uint256 loanId = OfferMatchIntentFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, 0, cp, PRINCIPAL
+        );
+        assertEq(loanId, created + 1, "the fill opened the next loan");
+        _assertSettledFor(vm.getRecordedLogs(), loanId, integ);
+    }
+
+    function _assertSettledFor(Vm.Log[] memory logs, uint256 loanId, address integ) internal view {
+        bytes32 topic = IntegratorShareSettled.selector;
+        uint256 seen;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter != address(diamond) || logs[i].topics[0] != topic) continue;
+            ++seen;
+            assertEq(uint256(logs[i].topics[1]), loanId, "the settlement names the loan opened");
+            assertEq(address(uint160(uint256(logs[i].topics[2]))), integ);
+            (, , bool delivered,) = abi.decode(logs[i].data, (uint256, uint256, bool, LibIntegrator.Refusal));
+            assertTrue(delivered, "the share was delivered");
+        }
+        assertEq(seen, 1, "one settlement");
     }
 
     /// @dev #625 WI-2a — a fill that depletes the intent's funded capital re-syncs the
