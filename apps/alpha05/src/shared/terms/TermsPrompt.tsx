@@ -10,7 +10,7 @@ import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
 import { KeyRiskList } from '../risk/KeyRiskList';
 import { formatUtc } from '../ui/format';
-import { LEGAL_ABI, PRIVACY_URL, fingerprint, readTerms, termsUrl } from './terms';
+import { PRIVACY_URL, acceptTermsCall, fingerprint, readTerms, termsUrl } from './terms';
 import { inFlight } from '../tx/txStore';
 import type { TermsGate, TermsSession } from './useTermsGate';
 
@@ -78,7 +78,7 @@ export function TermsPrompt({
       return { kind: 'changed', what: text('terms.changedVersion') };
     }
     if (current()) gate.update({ readAt: Date.now() });
-    return simulateCall(own, { address: diamond, abi: LEGAL_ABI, functionName: 'acceptTerms', args: [reviewed.version, reviewed.hash] });
+    return simulateCall(own, { address: diamond, ...acceptTermsCall(reviewed) });
   };
 
   const receipt: Receipt = {

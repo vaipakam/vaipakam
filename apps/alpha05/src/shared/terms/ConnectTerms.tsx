@@ -7,14 +7,15 @@ import { useChainRead, useScreenChain } from '../reads/chainRead';
 import { KeyRiskList } from '../risk/KeyRiskList';
 import { refusalFromError } from '../eligibility/refusal';
 import { Notice } from '../ui/Notice';
-import { LEGAL_ABI, PRIVACY_URL, fingerprint, termsUrl } from './terms';
+import { formatUtcDate } from '../ui/format';
+import { PRIVACY_URL, fingerprint, readPosture, termsUrl, type TermsAnnouncement } from './terms';
 import { noteTermsTicked } from './connectIntent';
 
-/** The Terms in force on a network, read with no wallet: version 0 means
- *  none are in force there. */
-async function readCurrentTos(client: PublicClient, diamond: Hex): Promise<{ version: number; hash: Hex }> {
-  const [version, hash] = (await client.readContract({ address: diamond, abi: LEGAL_ABI, functionName: 'getCurrentTos' })) as readonly [number, Hex];
-  return { version: Number(version), hash };
+/** The Terms on a network, read with no wallet: the latest version (0 means
+ *  none are in force there) and any announced change with its date. */
+async function readCurrentTos(client: PublicClient, diamond: Hex): Promise<{ version: number; hash: Hex; announced: TermsAnnouncement | null }> {
+  const p = await readPosture(client, diamond);
+  return { version: p.latest, hash: p.latestHash, announced: p.announced };
 }
 
 /**
@@ -55,7 +56,8 @@ export function ConnectTerms({ onChoose, onClose }: { onChoose: () => void; onCl
     onChoose();
   }, [none, onChoose]);
 
-  const key = terms.data ? `${terms.data.version}:${terms.data.hash}` : null;
+  const announced = terms.data?.announced ?? null;
+  const key = terms.data ? `${terms.data.version}:${terms.data.hash}:${announced?.version ?? 0}:${announced?.effectiveAt ?? 0}` : null;
   const ticked = key !== null && tickedKey === key;
 
   const close = () => {
@@ -115,6 +117,15 @@ export function ConnectTerms({ onChoose, onClose }: { onChoose: () => void; onCl
           <p className="tier-b connect-terms-fingerprint" data-testid="connect-terms-fingerprint">
             {text('terms.rowFingerprint')}: {fingerprint(terms.data.hash)}
           </p>
+          {announced && (
+            <div data-testid="connect-terms-announced">
+              <Notice tone="info" tier="A">
+                {announced.newVersion
+                  ? format('connectTerms.announcedVersion', { version: String(announced.version), date: formatUtcDate(announced.effectiveAt) })
+                  : format('connectTerms.announcedMinimum', { version: String(announced.minVersion), date: formatUtcDate(announced.effectiveAt) })}
+              </Notice>
+            </div>
+          )}
           <h3>{text('keyRisks.title')}</h3>
           <p className="tier-b">{text('keyRisks.lead')}</p>
           <KeyRiskList testId="connect-terms-key-risks" />

@@ -833,6 +833,8 @@ export const copy = {
     ),
     guide: B('What accepting means, and what it never blocks'),
     tick: B('I have read and accept the Terms of Service, version {{version}}.'),
+    announcedVersion: A('Version {{version}} of the Terms comes into force on {{date}}. Connecting now asks you to accept it as well, in the same transaction.'),
+    announcedMinimum: A('From {{date}}, only acceptances of version {{version}} or later count. Connecting now records the latest version, which still counts then.'),
     choose: B('Agree and connect'),
     cancel: B('Not now'),
     asker: B('Using this app with your wallet'),

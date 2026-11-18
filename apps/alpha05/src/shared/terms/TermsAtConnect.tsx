@@ -9,7 +9,7 @@ import { useOwnRead } from '../reads/useOwnRead';
 import { useStoredValue } from '../tx/txStore';
 import { formatFigureText } from '../ui/format';
 import { Notice } from '../ui/Notice';
-import { LEGAL_ABI } from './terms';
+import { acceptTermsCall } from './terms';
 import { TermsPrompt } from './TermsPrompt';
 import { useTerms } from './useTerms';
 import { useTermsGate, type NeededTerms, type TermsGate } from './useTermsGate';
@@ -88,12 +88,12 @@ export function useTermsHoldsPage(): boolean {
 /** The network fee the acceptance needs and what the wallet holds for it. */
 function useAcceptFee(own: OwnStateClient | null, chain: SupportedChain | null, terms: NeededTerms | null) {
   return useOwnRead(
-    ['terms-accept-fee', terms?.version ?? 0, terms?.hash ?? '0x'],
+    ['terms-accept-fee', terms?.version ?? 0, terms?.hash ?? '0x', terms?.alsoAnnounced?.version ?? 0],
     async (c) => {
       const account = own!.account;
       const [balance, gas, price] = await Promise.all([
         c.getBalance({ address: account }),
-        c.estimateContractGas({ address: chain!.diamondAddress, abi: LEGAL_ABI, functionName: 'acceptTerms', args: [terms!.version, terms!.hash], account }),
+        c.estimateContractGas({ address: chain!.diamondAddress, ...acceptTermsCall(terms!), account }),
         c.getGasPrice(),
       ]);
       return { balance, need: (gas * price * FEE_MARGIN_PCT) / 100n };
