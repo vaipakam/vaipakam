@@ -34,6 +34,18 @@
 //         carry a guard (`getOfferPriceGuard`, read at the run's block). A
 //         Diamond from before #3358 does not answer it, and the run says so
 //         and still writes the floor's assets.
+//      c. The lender intent slots' calm-price check: both assets of every
+//         lender intent in the Diamond's registry (`getActiveLenderIntents`,
+//         read at the run's block) whose check is on. With the check on, a
+//         slot fills only while its pair has a checkpoint in each of the last
+//         two hours, so as for b, a missing checkpoint refuses every fill
+//         from the slot. The Diamond decides which slots have it on
+//         (`intentCalmStatus`); a slot whose status read did not come back is
+//         covered anyway, and the backstop vault's slots always are (the
+//         check cannot be switched off for them). Each slot read
+//         NoCheckpoint starts or keeps a clock, and a slot that has read it
+//         for 3 hours is raised to ops in one digest per chain
+//         (`intentCalm.trackNoCheckpoint`).
 //      The indexer only nominates: a stale or wrong row costs a read or one
 //      asset's gas and records the oracle's own price, and an asset it misses
 //      keeps that loan on the full cap or that offer unfillable for the hour.
@@ -61,7 +73,7 @@
 // Gated by KEEPER_ENABLED + PRICE_CHECKPOINT_ENABLED. Ships disarmed.
 
 import { createPublicClient, decodeEventLog, http, type Abi, type Address, type Hex, type Log, type PublicClient } from 'viem';
-import { OfferPriceGuardFacetABI, OracleFacetABI, SaleFloorFacetABI } from '@vaipakam/contracts/abis';
+import { BackstopFacetABI, LenderIntentFacetABI, OfferPriceGuardFacetABI, OracleFacetABI, SaleFloorFacetABI } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
@@ -73,8 +85,24 @@ import { readCutoffMs, priorStageCutoffMs, runIndex } from './runWindow';
 import { walkFrom } from './rotate';
 import { StepSender } from './stepSender';
 import { snapshotAssets } from './dailyOracleSnapshot';
+import { CALM_STATUS, d1NoCheckpointStore, trackNoCheckpoint, type CalmObservation, type CalmSlot, type NoCheckpointResult } from './intentCalm';
 
-export const ABI = [...(SaleFloorFacetABI as Abi), ...(OracleFacetABI as Abi), ...(OfferPriceGuardFacetABI as Abi)] as Abi;
+const pick = (abi: unknown, names: readonly string[]): Abi =>
+  (abi as Abi).filter((x) => x.type === 'function' && names.includes(x.name)) as Abi;
+
+export const ABI = [
+  ...(SaleFloorFacetABI as Abi),
+  ...(OracleFacetABI as Abi),
+  ...(OfferPriceGuardFacetABI as Abi),
+  ...pick(LenderIntentFacetABI, ['getActiveLenderIntents']),
+  ...pick(BackstopFacetABI, ['getBackstopVault']),
+] as Abi;
+
+/** Lender intents read per registry page. */
+export const INTENT_PAGE = 100n;
+/** Registry pages one run reads: 2,000 intents. A registry past it is read
+ *  from a start that moves each run, and the run line says it was cut. */
+export const MAX_INTENT_PAGES = 20;
 
 /** Twice an hour: the first run writes the hour, the second retries what it
  *  left. Scheduled FROM this constant (passSchedule.ts). */
@@ -120,6 +148,20 @@ export interface CheckpointReport {
   /** Open offers whose guard read did not come back: `guardedOffers` counts
    *  only the guards confirmed, so these are unknown, not unguarded. */
   guardsUnread: number;
+  /** Lender intent slots whose pair this run covers for the calm-price
+   *  check (on, unread, or the backstop's), or null when the slots were not
+   *  read (`calmNote` says why). */
+  calmSlots: number | null;
+  /** Slots read with the check switched off by their owner: not covered. */
+  calmOff: number;
+  /** Covered slots whose status read did not come back. */
+  calmUnread: number;
+  /** Slots read NoCheckpoint at this run's block. */
+  calmNoCheckpoint: number;
+  /** Slots that have read NoCheckpoint for the alert's length. */
+  calmOverdue: number;
+  /** Why the slots were not read, or were read only in part. */
+  calmNote: string | null;
   /** Already checkpointed for the hour when read. */
   alreadyRecorded: number;
   /** Not sent: the oracle price did not read, so the contract would skip it. */
@@ -154,6 +196,9 @@ export interface CheckpointDeps {
   assets: () => Promise<readonly string[]>;
   /** The open offers that could carry a guard (the indexer's view). */
   offers: () => Promise<readonly GuardCandidate[]>;
+  /** Apply the slots' status reads to the no-checkpoint tracker (`complete`:
+   *  the whole registry was read). Absent: nothing is tracked. */
+  trackCalm?: (observations: readonly CalmObservation[], complete: boolean) => Promise<NoCheckpointResult>;
 }
 
 /** An open offer whose two legs are both ERC-20, as the indexer names it. */
@@ -182,6 +227,8 @@ export async function runPriceCheckpoint(env: Env, tick: PassTick): Promise<void
           visit,
           assets: () => trackedPairAssets(env, chain.id),
           offers: () => openGuardCandidates(env, chain.id, Math.floor(Date.now() / 1000)),
+          trackCalm: (obs, complete) =>
+            trackNoCheckpoint(chain.id, obs, complete, d1NoCheckpointStore(env, chain.id, chain.diamond as Address, sendDeadline)),
         });
         console.log(describeReport(report));
       } catch (err) {
@@ -251,6 +298,9 @@ export function describeReport(r: CheckpointReport): string {
     r.guardedOffers === null
       ? `guarded-offers=unread (${r.guardNote ?? 'not read'})`
       : `guarded-offers=${r.guardedOffers}${r.guardsUnread > 0 ? ` (+${r.guardsUnread} unread)` : ''}`,
+    r.calmSlots === null
+      ? `calm-slots=unread (${r.calmNote ?? 'not read'})`
+      : `calm-slots=${r.calmSlots}${r.calmOff > 0 ? ` (+${r.calmOff} off)` : ''}${r.calmNoCheckpoint > 0 ? ` no-checkpoint=${r.calmNoCheckpoint}` : ''}${r.calmOverdue > 0 ? ` no-checkpoint-3h=${r.calmOverdue}` : ''}${r.calmNote ? ` (${r.calmNote})` : ''}`,
     `already=${r.alreadyRecorded}`,
     `due=${r.due}`,
     `recorded=${r.recorded.length}`,
@@ -324,6 +374,12 @@ export async function checkpointOnce(chainId: number, diamond: Address, deps: Ch
     guardedOffers: null,
     guardNote: null,
     guardsUnread: 0,
+    calmSlots: null,
+    calmOff: 0,
+    calmUnread: 0,
+    calmNoCheckpoint: 0,
+    calmOverdue: 0,
+    calmNote: null,
     alreadyRecorded: 0,
     unpriced: [],
     due: 0,
@@ -364,11 +420,6 @@ export async function checkpointOnce(chainId: number, diamond: Address, deps: Ch
   const loanFailure = loanRead.status === 'rejected' ? `the active loans' assets could not be read from the indexer (${why(loanRead)})` : null;
   const candidates = offerRead.status === 'fulfilled' ? offerRead.value : [];
   if (offerRead.status === 'rejected') report.guardNote = `the open offers could not be read from the indexer (${why(offerRead)})`;
-  if (loanAssets.length === 0 && candidates.length === 0) {
-    if (loanFailure) return { ...report, skipped: loanFailure };
-    if (report.guardNote) return { ...report, skipped: report.guardNote };
-    return { ...report, guardedOffers: 0, skipped: 'no active loan and no open offer with two ERC-20 legs, so nothing reads a checkpoint' };
-  }
   if (loanFailure) sender.noteUnread('loan assets', loanFailure);
 
   // Whether this Diamond carries the #3359 floor.
@@ -401,22 +452,20 @@ export async function checkpointOnce(chainId: number, diamond: Address, deps: Ch
   // Which open offers carry a guard, at the run's block. A Diamond from before
   // #3358 is told apart from an unread guard by one probe (offer 0 never
   // exists, and the view answers it with no guard).
-  const guardAssets = candidates.length > 0 ? await readGuardAssets(diamond, deps, candidates, chainId, block.number, probeCutoff, report) : [];
+  const [guardAssets, calm] = await Promise.all([
+    candidates.length > 0 ? readGuardAssets(diamond, deps, candidates, chainId, block.number, probeCutoff, report) : Promise.resolve([]),
+    readCalmSlotAssets(diamond, deps, chainId, block.number, probeCutoff, report),
+  ]);
   if (offerRead.status === 'fulfilled' && candidates.length === 0) report.guardedOffers = 0;
-
-  const assets = snapshotAssets([...loanAssets, ...guardAssets], chainId, 'priceCheckpoint');
-  report.tracked = assets.length;
-  if (assets.length === 0) {
-    return {
-      ...report,
-      skipped:
-        report.guardedOffers === null
-          ? `no active loan with two ERC-20 legs, and the open offers' guards were not read (${report.guardNote})`
-          : report.guardsUnread > 0
-            ? `no active loan with two ERC-20 legs and no guard confirmed on the open offers read, but the guards of ${report.guardsUnread} open offer(s) were not read, so whether any of them needs a checkpoint is unknown this run`
-            : 'no active loan with two ERC-20 legs and no open offer with a price-move guard, so nothing reads a checkpoint',
-    };
+  if (deps.trackCalm && calm.observations.length + (calm.complete ? 1 : 0) > 0) {
+    // After the reads and before the sends: the status reads the hours before
+    // this one, which this run's sends do not change.
+    report.calmOverdue = (await deps.trackCalm(calm.observations, calm.complete)).overdue;
   }
+
+  const assets = snapshotAssets([...loanAssets, ...guardAssets, ...calm.assets], chainId, 'priceCheckpoint');
+  report.tracked = assets.length;
+  if (assets.length === 0) return { ...report, skipped: nothingToCheckpoint(report, loanFailure) };
 
   const reads = await settledGroupedRead(
     deps.readClient,
@@ -467,6 +516,130 @@ export async function checkpointOnce(chainId: number, diamond: Address, deps: Ch
   }
   report.stopped = sender.stopped ? sender.stopReason : null;
   return report;
+}
+
+/** Why a run found no asset to checkpoint, from what each reader said. Pure. */
+export function nothingToCheckpoint(r: CheckpointReport, loanFailure: string | null): string {
+  const unknown: string[] = [];
+  if (loanFailure) unknown.push(loanFailure);
+  if (r.guardedOffers === null) unknown.push(`the open offers' guards were not read (${r.guardNote})`);
+  else if (r.guardsUnread > 0) unknown.push(`the guards of ${r.guardsUnread} open offer(s) were not read`);
+  if (r.calmSlots === null) unknown.push(`the lender intent slots were not read (${r.calmNote})`);
+  if (unknown.length > 0) return `nothing confirmed to need a checkpoint, but ${unknown.join('; ')}, so whether anything does is unknown this run`;
+  return 'no active loan with two ERC-20 legs, no open offer with a price-move guard and no lender intent slot with the price check on, so nothing reads a checkpoint';
+}
+
+/**
+ * Both assets of every lender intent slot whose calm-price check is on (or
+ * unread, or the backstop vault's), from the Diamond's registry read at
+ * `blockNumber`, with each slot's status for the no-checkpoint tracker. Sets
+ * the report's `calm*` fields. A Diamond without the check, or without the
+ * registry, nominates nothing and the run says so.
+ */
+async function readCalmSlotAssets(
+  diamond: Address,
+  deps: CheckpointDeps,
+  chainId: number,
+  blockNumber: bigint | null,
+  cutoff: number,
+  report: CheckpointReport,
+): Promise<{ assets: string[]; observations: CalmObservation[]; complete: boolean }> {
+  const none = { assets: [], observations: [], complete: false };
+  const at = blockNumber ?? undefined;
+  const read = <T>(what: string, functionName: string, args: readonly unknown[]) =>
+    boundedCall(cutoff, what, () => deps.client.readContract({ address: diamond, abi: ABI, functionName, args, blockNumber: at } as never)) as Promise<T>;
+  const zero = '0x0000000000000000000000000000000000000000' as Address;
+  // Whether the Diamond carries the check: one status read of a slot no one owns.
+  try {
+    await read('the intent price check', 'intentCalmStatus', [zero, zero, zero, 0]);
+  } catch (err) {
+    if (err instanceof PastRunDeadline) {
+      report.calmNote = 'the run deadline passed before the slots were read';
+      return none;
+    }
+    const c = classify(err);
+    report.calmNote =
+      'refused' in c
+        ? `this Diamond does not answer intentCalmStatus (${c.refused}), so no slot fill reads a checkpoint`
+        : `the intent price check could not be probed (${c.unread})`;
+    return none;
+  }
+  let backstop: string | null = null;
+  try {
+    const v = await read<Address>('the backstop vault', 'getBackstopVault', []);
+    if (v.toLowerCase() !== zero) backstop = v.toLowerCase();
+  } catch (err) {
+    if (err instanceof PastRunDeadline) {
+      report.calmNote = 'the run deadline passed before the slots were read';
+      return none;
+    }
+    // Not fatal: the backstop's slots cannot be switched off, so their status
+    // read already covers them; only an unread one is lost to "always".
+  }
+  // The registry, from a start that moves each run.
+  const rows: CalmSlot[] = [];
+  let complete = false;
+  try {
+    const [, total] = await read<readonly [readonly unknown[], bigint]>('the intent registry size', 'getActiveLenderIntents', [0n, 0n]);
+    const pages = Number((total + INTENT_PAGE - 1n) / INTENT_PAGE);
+    const take = Math.min(pages, MAX_INTENT_PAGES);
+    const first = pages === 0 ? 0 : deps.visit % pages;
+    for (let i = 0; i < take; i++) {
+      const offset = BigInt((first + i) % pages) * INTENT_PAGE;
+      // eslint-disable-next-line no-await-in-loop
+      const [page] = await read<readonly [readonly Record<string, unknown>[], bigint]>('the intent registry', 'getActiveLenderIntents', [offset, INTENT_PAGE]);
+      for (const r of page) {
+        rows.push({
+          owner: String(r['owner']).toLowerCase() as Address,
+          lendingAsset: String(r['lendingAsset']).toLowerCase() as Address,
+          collateralAsset: String(r['collateralAsset']).toLowerCase() as Address,
+          slot: Number(r['slot']),
+        });
+      }
+    }
+    complete = take === pages;
+    if (!complete) report.calmNote = `the intent registry has ${pages} pages; ${take} were read this run`;
+  } catch (err) {
+    if (err instanceof PastRunDeadline && rows.length === 0) {
+      report.calmNote = 'the run deadline passed before the slots were read';
+      return none;
+    }
+    if (rows.length === 0) {
+      const c = classify(err);
+      report.calmNote = 'refused' in c ? `this Diamond does not list lender intents (${c.refused})` : `the intent registry could not be read (${c.unread})`;
+      return none;
+    }
+    report.calmNote = `the intent registry was read only in part (${err instanceof PastRunDeadline ? 'the read cutoff passed' : shortErr(err)})`;
+  }
+  const reads = await settledGroupedRead(
+    deps.readClient,
+    rows,
+    READ_CHUNK,
+    (r) => [{ address: diamond, abi: ABI, functionName: 'intentCalmStatus', args: [r.owner, r.lendingAsset, r.collateralAsset, r.slot] }],
+    `priceCheckpoint slots chain=${chainId}`,
+    cutoff,
+    deps.visit,
+    at,
+  );
+  const assets: string[] = [];
+  const observations: CalmObservation[] = [];
+  let covered = 0;
+  for (const r of rows) {
+    const res = reads.get(r)?.[0];
+    const status = res?.status === 'success' ? Number(res.result) : null;
+    observations.push({ slot: r, status });
+    if (status === CALM_STATUS.Off && r.owner !== backstop) {
+      report.calmOff += 1;
+      continue;
+    }
+    covered += 1;
+    if (status === null) report.calmUnread += 1;
+    if (status === CALM_STATUS.NoCheckpoint) report.calmNoCheckpoint += 1;
+    assets.push(r.lendingAsset, r.collateralAsset);
+  }
+  report.calmSlots = covered;
+  if (report.calmUnread > 0) report.unread.set('slots', `the price check status of ${report.calmUnread} slot(s), covered anyway`);
+  return { assets, observations, complete };
 }
 
 /**

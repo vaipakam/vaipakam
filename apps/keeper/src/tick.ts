@@ -29,6 +29,7 @@ import { claimRunnerLease } from './runnerLease';
 import { adoptKeeperDeployments } from './keeperEpoch';
 import { armEpochFence } from './epochFence';
 import { signingKeyHealth } from './signingKeyAlert';
+import { checkpointCoverageHealth } from './checkpointCoverage';
 import { redactedError } from '@vaipakam/lib/errorDescription';
 /**
  * Run one pass and report what it cost.
@@ -205,6 +206,13 @@ export async function runKeeperTick(
   // alert says it for the machine.
   launch('signingKeyHealth', async () => {
     await signingKeyHealth(resolved);
+  });
+
+  // A pass that fills from lender intent slots needs the checkpoint pass: a
+  // slot fills only on the last two hours' checkpoints. One ops alert while
+  // the configuration leaves them unwritten (`checkpointCoverage.ts`).
+  launch('checkpointCoverageHealth', async () => {
+    await checkpointCoverageHealth(resolved);
   });
 
   // ONE loop over the declared table (#1896), rather than ten

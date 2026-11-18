@@ -65,6 +65,15 @@ class FakeDiamond {
   guards = new Map<bigint, [number, number]>();
   /** Offers whose guard read fails (an RPC failure, not a refusal). */
   guardReadFails = new Set<bigint>();
+  /** Whether the Diamond carries the intent slots' calm-price check. */
+  hasCalm = true;
+  /** The lender intent registry. */
+  intents: { owner: Address; lendingAsset: Address; collateralAsset: Address; slot: number }[] = [];
+  /** `owner:slot` → status; absent = Clear (2). */
+  calm = new Map<string, number>();
+  /** `owner:slot` whose status read fails. */
+  calmReadFails = new Set<string>();
+  backstop: Address = '0x0000000000000000000000000000000000000000';
   /** asset → [price, decimals]; absent = the oracle refuses it. */
   prices = new Map<Address, [bigint, number]>();
   /** `asset:hour` → stored 1e18 price. */
@@ -86,6 +95,18 @@ class FakeDiamond {
         if (this.guardReadFails.has(a[0] as bigint)) throw new Error('rpc timeout');
         const [maxMoveBps, status] = this.guards.get(a[0] as bigint) ?? [0, 0];
         return { maxMoveBps, setAt: 1n, refCollateralPrice1e18: 1n, refPrincipalPrice1e18: 1n, status, moveBps: 0n, calmMoveBps: 200 };
+      }
+      case 'intentCalmStatus': {
+        if (!this.hasCalm) throw new ContractFunctionRevertedError({ abi: ABI, data: '0xa9ad62f8', functionName });
+        const k = `${String(a[0]).toLowerCase()}:${a[3]}`;
+        if (this.calmReadFails.has(k)) throw new Error('rpc timeout');
+        return this.calm.get(k) ?? 2;
+      }
+      case 'getBackstopVault':
+        return this.backstop;
+      case 'getActiveLenderIntents': {
+        const [offset, limit] = a as [bigint, bigint];
+        return [this.intents.slice(Number(offset), Number(offset + limit)), BigInt(this.intents.length)];
       }
       case 'getHourlyPriceCheckpoint':
         return this.book.get(`${(a[0] as string).toLowerCase()}:${a[1]}`) ?? 0n;
@@ -172,6 +193,8 @@ function deps(d: FakeDiamond, assets: readonly string[], over: Partial<Checkpoin
   };
 }
 
+const NOTHING =
+  'no active loan with two ERC-20 legs, no open offer with a price-move guard and no lender intent slot with the price check on, so nothing reads a checkpoint';
 const ok = (result: unknown) => ({ status: 'success' as const, result });
 const fail = { status: 'failure' as const, error: new Error('x') };
 
@@ -216,7 +239,7 @@ describe('one chain\'s run', () => {
     expect(r.recorded.sort()).toEqual([weth, usdc].sort());
     expect(d.book.get(`${weth}:${HOUR}`)).toBe(3_000n * 10n ** 18n);
     expect(describeReport(r)).toBe(
-      `[keeper] priceCheckpoint chain=${CHAIN} hour=${HOUR} tracked=4 guarded-offers=0 already=1 due=2 recorded=2 no-price=${gone}`,
+      `[keeper] priceCheckpoint chain=${CHAIN} hour=${HOUR} tracked=4 guarded-offers=0 calm-slots=0 already=1 due=2 recorded=2 no-price=${gone}`,
     );
   });
 
@@ -288,16 +311,16 @@ describe('one chain\'s run', () => {
     expect((await checkpointOnce(CHAIN, DIAMOND, deps(d, [asset(1)]))).skipped).toBe(`the RPC configured for chain ${CHAIN} serves chain 1`);
     const e = new FakeDiamond();
     const r = await checkpointOnce(CHAIN, DIAMOND, deps(e, ['0x', '0x0000000000000000000000000000000000000000']));
-    expect(r.skipped).toBe('no active loan and no open offer with two ERC-20 legs, so nothing reads a checkpoint');
+    expect(r.skipped).toBe(NOTHING);
     expect(e.sent).toEqual([]);
   });
 
   it('a failed indexer read with nothing else to work skips the chain rather than guessing', async () => {
     const d = new FakeDiamond();
     const r = await checkpointOnce(CHAIN, DIAMOND, deps(d, [], { assets: async () => Promise.reject(new Error('D1 down')) }));
-    expect(r.skipped).toMatch(/^the active loans' assets could not be read from the indexer \(/);
+    expect(r.skipped).toMatch(/^nothing confirmed to need a checkpoint, but the active loans' assets could not be read from the indexer \(/);
     const o = await checkpointOnce(CHAIN, DIAMOND, deps(d, [], { offers: async () => Promise.reject(new Error('D1 down')) }));
-    expect(o.skipped).toMatch(/^the open offers could not be read from the indexer \(/);
+    expect(o.skipped).toMatch(/but the open offers' guards were not read \(the open offers could not be read from the indexer \(/);
   });
 });
 
@@ -331,7 +354,7 @@ describe('guarded offers (#3358)', () => {
     d.prices.set(asset(3), [1n, 0]).set(asset(4), [1n, 0]);
     const r = await checkpointOnce(CHAIN, DIAMOND, deps(d, [], { offers: async () => [offer(7, asset(3), asset(4))] }));
     expect(d.sent).toEqual([]);
-    expect(r).toMatchObject({ guardedOffers: 0, skipped: 'no active loan with two ERC-20 legs and no open offer with a price-move guard, so nothing reads a checkpoint' });
+    expect(r).toMatchObject({ guardedOffers: 0, skipped: NOTHING });
   });
 
   it('says a guard it could not read is unknown, not absent, and keeps the failure in a skipped line', async () => {
@@ -341,7 +364,7 @@ describe('guarded offers (#3358)', () => {
     const r = await checkpointOnce(CHAIN, DIAMOND, deps(d, [], { offers: async () => [offer(7, asset(3), asset(4)), offer(8, asset(5), asset(6))] }));
     expect(d.sent).toEqual([]);
     expect(r).toMatchObject({ guardedOffers: 0, guardsUnread: 1 });
-    expect(r.skipped).toMatch(/the guards of 1 open offer\(s\) were not read, so whether any of them needs a checkpoint is unknown this run$/);
+    expect(r.skipped).toMatch(/but the guards of 1 open offer\(s\) were not read, so whether anything does is unknown this run$/);
     expect(describeReport(r)).toMatch(/ unread=guards\(the guard of 1 open offer\(s\)\)$/);
 
     const e = new FakeDiamond();
@@ -477,5 +500,52 @@ describe('arming', () => {
     await runPriceCheckpoint(env, { scheduledTimeMs: 0, deadlineMs: Date.now() + 60_000 });
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatch(/^\[keeper\] priceCheckpoint skipped: KEEPER_ENABLED/);
+  });
+});
+
+describe('lender intent slots with the price check on', () => {
+  const slot = (owner: number, lend: Address, coll: Address, n = 0) => ({ owner: asset(owner), lendingAsset: lend, collateralAsset: coll, slot: n });
+
+  it('covers the pair of every slot with the check on, an unread one, and always the backstop; not one switched off', async () => {
+    const d = new FakeDiamond();
+    const [a, b, c, e, f, g, h, i] = [1, 2, 3, 4, 5, 6, 7, 8].map(asset);
+    for (const x of [a, b, c, e, f, g, h, i]) d.prices.set(x, [1n, 0]);
+    d.backstop = asset(0xbb);
+    d.intents = [slot(0xa0, a, b), slot(0xa1, c, e, 2), slot(0xa2, f, g), slot(0xbb, h, i, 255)];
+    d.calm.set(`${asset(0xa1)}:2`, 0).set(`${asset(0xbb)}:255`, 0); // switched off (the backstop cannot be, but "always" holds)
+    d.calmReadFails.add(`${asset(0xa2)}:0`);
+    const r = await checkpointOnce(CHAIN, DIAMOND, deps(d, []));
+    expect(d.sent.flat().sort()).toEqual([a, b, f, g, h, i].sort());
+    expect(r).toMatchObject({ calmSlots: 3, calmOff: 1, calmUnread: 1, calmNoCheckpoint: 0, calmNote: null });
+    expect(describeReport(r)).toContain('calm-slots=3 (+1 off) ');
+    expect(describeReport(r)).toContain('unread=slots(the price check status of 1 slot(s), covered anyway)');
+  });
+
+  it('hands every status read to the tracker, NoCheckpoint ones included, and says the registry was read whole', async () => {
+    const d = new FakeDiamond();
+    d.prices.set(asset(1), [1n, 0]).set(asset(2), [1n, 0]);
+    d.intents = [slot(0xa0, asset(1), asset(2)), slot(0xa1, asset(1), asset(2), 1)];
+    d.calm.set(`${asset(0xa0)}:0`, 4);
+    d.calmReadFails.add(`${asset(0xa1)}:1`);
+    const trackCalm = vi.fn(async () => ({ overdue: 1, outcome: 'sent' as const }));
+    const r = await checkpointOnce(CHAIN, DIAMOND, deps(d, [], { trackCalm }));
+    expect(trackCalm).toHaveBeenCalledWith(
+      [
+        { slot: slot(0xa0, asset(1), asset(2)), status: 4 },
+        { slot: slot(0xa1, asset(1), asset(2), 1), status: null },
+      ],
+      true,
+    );
+    expect(describeReport(r)).toContain('calm-slots=2 no-checkpoint=1 no-checkpoint-3h=1 ');
+  });
+
+  it('a Diamond without the check nominates no slot and says so, and the rest of the run goes on', async () => {
+    const d = new FakeDiamond();
+    d.hasCalm = false;
+    d.prices.set(asset(1), [1n, 0]);
+    const r = await checkpointOnce(CHAIN, DIAMOND, deps(d, [asset(1)]));
+    expect(d.sent).toEqual([[asset(1)]]);
+    expect(r.calmSlots).toBeNull();
+    expect(describeReport(r)).toMatch(/calm-slots=unread \(this Diamond does not answer intentCalmStatus \(.*\), so no slot fill reads a checkpoint\)/s);
   });
 });

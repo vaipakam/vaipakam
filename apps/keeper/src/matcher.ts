@@ -97,6 +97,7 @@ import { summarizeFailure, redactedError } from '@vaipakam/lib/errorDescription'
 import { revertErrorName } from '@vaipakam/lib/contractRevert';
 import { ROLL_MIN_VALUE_TO_GAS, judgeRollValue } from './rollGasFloor';
 import { estimateTxFeeWei, txFeeUnpricedReason } from './txFee';
+import { CALM_INTENT_ERRORS } from './intentCalm';
 
 // `getActiveOffersCount` / `getActiveOffersPaginated` live on
 // MetricsFacet; `getOffer` on OfferCancelFacet post the EIP-170 facet
@@ -298,6 +299,10 @@ const INTENT_ERR_INTENT_TERMINAL = new Set<number>([
   6, // Inactive
   7, // RetiredVpfiLending — never returned since #2914; kept intent-level
   8, // KeeperUnauthorized — this keeper not delegated for a gated intent
+  // 26–28 — the slot's calm-price check refuses the pair (no checkpoint for
+  // one of the last two hours, moved past the calm bound, or unpriced). It
+  // depends on the pair and the slot alone (`intentCalm.ts`).
+  ...CALM_INTENT_ERRORS.keys(),
 ]);
 
 /** `LibOfferMatch.MatchError.CollateralBelowRequired` — index 6. When a non-AON
@@ -1303,6 +1308,11 @@ export async function runIntentFillPass(
   // served. An intent is `dead` once the walk is done with it this run: after
   // any submit attempt, or a refusal that holds for every borrower of it.
   const deadIntents = new Set<LenderIntentSummary>();
+  /** The intents the slot's price check refused this run, with the reason:
+   *  one line at the end of the pass, never an alert per skip. A slot that
+   *  stays refused for want of a checkpoint is raised by the checkpoint pass
+   *  (`intentCalm.trackNoCheckpoint`). */
+  const calmSkips: string[] = [];
   /** #2564 — each time the capacity is seen spent, every live intent needs a
    *  fresh priority read before it is scanned again: `spentEpoch` counts those
    *  times, and `readAt` says in which one an intent was last read. */
@@ -1419,6 +1429,8 @@ export async function runIntentFillPass(
       // collateral, …), so abandon the intent rather than burning a preview
       // per borrower for an identical result (Codex #748 r1/r3).
       if (scope === 'intent') {
+        const calm = CALM_INTENT_ERRORS.get(e);
+        if (calm !== undefined) calmSkips.push(`${intent.owner} slot ${intent.slot} (${calm})`);
         deadIntents.add(intent);
         continue;
       }
@@ -1458,6 +1470,9 @@ export async function runIntentFillPass(
     // either way, sizing more fills for it against the stale snapshot would
     // queue reverting txs (mirrors the matchOffers path — Codex #748 r1).
     deadIntents.add(intent);
+  }
+  if (calmSkips.length > 0) {
+    console.log(`[matcher] chain=${ctx.chainId} intent-fill: skipped ${calmSkips.length} intent(s) the price check refuses: ${calmSkips.join('; ')}`);
   }
   if (intentFills > 0) {
     console.log(

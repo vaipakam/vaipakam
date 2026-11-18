@@ -74,6 +74,7 @@ import { pickBatch } from './rotate';
 import { leadStageCutoffMs, runIndex } from './runWindow';
 import { d1ScanCursors, type ScanCursors } from './scanCursors';
 import { StepSender } from './stepSender';
+import { CALM_FILL_REFUSALS } from './intentCalm';
 
 const pick = (abi: unknown, names: readonly string[]): Abi =>
   (abi as Abi).filter((x) => (x.type === 'function' || x.type === 'event') && names.includes(x.name)) as Abi;
@@ -131,6 +132,9 @@ export const FILL_REFUSALS: ReadonlyMap<string, string> = new Map([
   ['OfferNotBackstopFillable', 'not fillable at the current block (accepted, expired, not yet eligible, or its collateral not liquid)'],
   ['OfferNotBackstopEligible', 'its shape is not one the backstop fills'],
   ['SanctionedAddress', 'the borrower is flagged by the sanctions oracle'],
+  // The backstop's own intent slot always carries the calm-price check: the
+  // pair, not the offer, is refused, and the checkpoint pass covers the pair.
+  ...CALM_FILL_REFUSALS,
 ]);
 /** The refusals of a fill that describe the deployment: the step stops for
  *  the run, since no other offer can be filled either. */

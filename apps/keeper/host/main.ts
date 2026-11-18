@@ -27,6 +27,7 @@
  */
 
 import { discountPathPosture } from '../src/discountPath';
+import { checkpointCoverageGap, type CoverageFlags } from '../src/checkpointCoverage';
 import { buildHostEnv } from './hostEnv';
 import { createHostLeaseRenewal, createHostTick } from './hostTick';
 import { createTickRunner, minuteFloor, msUntilNextMinute } from './scheduler';
@@ -42,6 +43,10 @@ function main(): void {
   // #2633 — the discount path's arming, stated once from the parser the
   // passes use, so it is readable without waiting for a loan to reach it.
   log(`[keeper-host] discount path: ${discountPathPosture(env.DISCOUNT_PATH_CHAIN_IDS)}`);
+  // The launch check: wherever a pass fills from lender intent slots, the
+  // price checkpoint pass must be armed, or every such fill is refused.
+  const coverage = checkpointCoverageGap(process.env as CoverageFlags);
+  log(`[keeper-host] price checkpoints: ${coverage === null ? 'cover every armed slot fill' : `NOT COVERED: ${coverage}`}`);
   if (process.argv.includes('--check')) {
     log(
       `[keeper-host] check: build loads; database ${missingD1.length > 0 ? `not configured (${missingD1.join(', ')} unset)` : 'configured'}`,
