@@ -35,6 +35,7 @@
  */
 import type { Env } from './env';
 import { chunkD1InList } from '@vaipakam/lib/d1Binds';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 /**
  * Whether this build's ingest decodes the Diamond's Terms events into
@@ -237,7 +238,7 @@ export interface ReadOpts {
   wired?: boolean;
 }
 
-const isMissingTable = (err: unknown) => /no such table/i.test(String((err as Error)?.message ?? err));
+const isMissingTable = (err: unknown) => /no such table/i.test(redactedError(err));
 
 interface TermsChangeRow {
   block_number: number;
@@ -282,7 +283,7 @@ export async function readTermsRecord(
       nowSec,
     );
   } catch (err) {
-    if (!isMissingTable(err)) console.error('[termsStanding] record read failed', String(err));
+    if (!isMissingTable(err)) console.error('[termsStanding] record read failed', redactedError(err));
     return null;
   }
 }
@@ -312,7 +313,7 @@ async function acceptedVersions(
     }
     return out;
   } catch (err) {
-    if (!isMissingTable(err)) console.error('[termsStanding] acceptance read failed', String(err));
+    if (!isMissingTable(err)) console.error('[termsStanding] acceptance read failed', redactedError(err));
     return null;
   }
 }
@@ -394,7 +395,7 @@ export async function walletTerms(
       txHash: r.tx_hash,
     }));
   } catch (err) {
-    if (!isMissingTable(err)) console.error('[termsStanding] wallet read failed', String(err));
+    if (!isMissingTable(err)) console.error('[termsStanding] wallet read failed', redactedError(err));
     return unknown;
   }
   return {
