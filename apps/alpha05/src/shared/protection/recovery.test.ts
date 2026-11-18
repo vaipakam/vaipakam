@@ -27,7 +27,7 @@ describe('the recovery links', () => {
   it('a request carries the network, the account and the address, and reads back strictly', () => {
     const link = recoveryRequestLink({ chainId: 31337, account: ME, recovery: REC });
     expect(link).toContain('/protection?');
-    expect(parseRecoveryRequest(params(link))).toEqual({ chainId: 31337, account: ME, recovery: REC });
+    expect(parseRecoveryRequest(params(link))).toEqual({ chainId: 31337, account: getAddress(ME), recovery: getAddress(REC) });
     const q = params(link);
     q.set('rr_recovery', 'nope');
     expect(parseRecoveryRequest(q)).toBeNull();
@@ -39,7 +39,7 @@ describe('the recovery links', () => {
     const a: RecoveryProof = { chainId: 31337, vault: VAULT, account: ME, diamond: DIAMOND, recovery: REC, nonce: 3n, expiry: 1_800_000_000n, sig: '0xabcd' };
     const link = recoveryAnswerLink(a);
     expect(link).toContain('/vault?');
-    expect(parseRecoveryProof(params(link))).toEqual(a);
+    expect(parseRecoveryProof(params(link))).toEqual({ ...a, vault: getAddress(VAULT), diamond: getAddress(DIAMOND), account: getAddress(ME), recovery: getAddress(REC) });
     for (const [k, v] of [
       ['rp_nonce', '-1'],
       ['rp_expiry', 'soon'],

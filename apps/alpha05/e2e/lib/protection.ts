@@ -8,8 +8,9 @@
 import fs from 'node:fs';
 import { encodeFunctionData, type Abi } from 'viem';
 import type { Party, ScenarioChain } from '@vaipakam/anvil-harness/scenarioChain';
-import type { VaultProtectionState } from '@vaipakam/lib/protectedAccountView';
+import type { VaultProtectionRecovery, VaultProtectionState } from '@vaipakam/lib/protectedAccountView';
 import { directAuth } from '@vaipakam/lib/vaultProtectionAuth';
+import { increaseTime, mine } from './anvil';
 import { accountFor, type Role } from './wallets';
 
 type Hex = `0x${string}`;
@@ -58,10 +59,10 @@ export async function protect(sc: ScenarioChain, who: Party, account: Hex, funct
  *  `who`'s own account (the vault must exist): protected mode can be switched
  *  on only once one is set, pending or in force. The owner asks, by its direct
  *  call; the second test wallet proves control by signing `RecoveryProof`
- *  with its next proof nonce, as the app's recovery step has it do. It holds
- *  no account of `who` and is no signer or destination in the specs that use
- *  this. Returns the address asked for. */
-export async function requestRecovery(sc: ScenarioChain, who: Party, recovery: Role = 'freshBorrower'): Promise<Hex> {
+ *  with its next proof nonce, as the app's recovery step has it do. The
+ *  default is the `recovery` role, which holds no account and is no signer or
+ *  destination anywhere. Returns the address asked for. */
+export async function requestRecovery(sc: ScenarioChain, who: Party, recovery: Role = 'recovery'): Promise<Hex> {
   const account = sc.address(who);
   const vault = await vaultOf(sc, account);
   const key = accountFor(recovery);
@@ -88,9 +89,23 @@ export async function requestRecovery(sc: ScenarioChain, who: Party, recovery: R
   return key.address;
 }
 
+/** Move the chain past the account's pending recovery address, so it is IN
+ *  FORCE (a first address waits twice the shortest delay while protected
+ *  mode is off). Finalizing a signer needs one in force, not just pending. */
+export async function recoveryInForce(sc: ScenarioChain, account: Hex): Promise<void> {
+  const vault = await vaultOf(sc, account);
+  const [, pending, pendingAt] = (await sc.pub.readContract({ address: vault, abi: VAULT, functionName: 'protectionRecovery' })) as VaultProtectionRecovery;
+  if (ZERO.test(pending)) return;
+  const now = (await sc.pub.getBlock()).timestamp;
+  if (pendingAt > now) await increaseTime(Number(pendingAt - now) + 60);
+  await mine();
+}
+
 /** Protected mode on for `who`'s own account with `delaySeconds` (what the
  *  retired `enableProtectedMode(delay, false)` did), after asking for the
- *  recovery address the switch-on needs (#3246 part 2). */
+ *  recovery address the switch-on needs (#3246 part 2). It stays pending,
+ *  which is all the switch-on needs; a spec that finalizes a signer calls
+ *  {@link recoveryInForce} too. */
 export async function enableProtection(sc: ScenarioChain, who: Party, delaySeconds: number): Promise<void> {
   const account = sc.address(who);
   await vaultOf(sc, account, true);

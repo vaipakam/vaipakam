@@ -3557,7 +3557,7 @@ export const copy = {
     ready: B('The protocol confirms this pair can be matched now:'),
     pair: B('Lender’s offer #{{ask}} from {{lender}} with borrower’s request #{{bid}} from {{borrower}}'),
     terms: B('{{amount}} at {{rate}}% a year for {{days}} days; the borrower locks {{collateral}}.'),
-    shareAtMost: B('At most {{amount}}: {{pct}}% of the initiation fee the borrower pays.'),
+    shareAtMost: B('At most {{amount}}: {{pct}}% of the initiation fee above the treasury’s floor.'),
     shareUnread: A('Your share could not be read, so it is not stated.'),
     capacityYours: B('A match counts one fill against your wallet’s matching capacity.'),
     capacityNone: B('No matching-capacity limit is in force on this network.'),

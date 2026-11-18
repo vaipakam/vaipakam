@@ -63,8 +63,9 @@ test('the match band states the switch, offers the pair the protocol confirms, a
   await expect(offered).toContainText(`Lender’s offer #${ask}`);
   await expect(offered).toContainText(`borrower’s request #${bid}`);
   await expect(band.getByTestId('desk-match-terms')).toHaveText('0.05 WETH at 4.75% a year for 14 days; the borrower locks 250 tLIQ.');
-  // 0.2% of 0.05 WETH is the fee; 1% of the fee is the most the share can be.
-  await expect(band.getByTestId('desk-match-share')).toHaveText('At most 0.000001 WETH: 1% of the initiation fee the borrower pays.');
+  // 0.2% of 0.05 WETH is the fee (0.0001 WETH); the treasury keeps its 0.1%
+  // floor (0.00005 WETH), and the share is 1% of the rest (#3649 stage 3).
+  await expect(band.getByTestId('desk-match-share')).toHaveText('At most 0.0000005 WETH: 1% of the initiation fee above the treasury’s floor.');
   await expect(band.getByTestId('desk-match-capacity')).toHaveText(
     /^(A match counts one fill against your wallet’s matching capacity\.|No matching-capacity limit is in force on this network\.)$/,
   );
@@ -83,7 +84,7 @@ test('the match band states the switch, offers the pair the protocol confirms, a
   const finish = panel.locator('[data-phase="measured"]');
   await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
   await expect(finish).toContainText(/Loan #\d+ opened: 0\.05 WETH at 4\.75% a year/);
-  await expect(finish).toContainText('Your share arrived: 0.000001 WETH');
+  await expect(finish).toContainText('Your share arrived: 0.0000005 WETH');
 
   // The chain holds the request as taken; the band finds nothing to match
   // once the ladder follows, and the finish card stays until it is closed.

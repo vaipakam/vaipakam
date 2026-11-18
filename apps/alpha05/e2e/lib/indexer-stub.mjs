@@ -138,7 +138,11 @@ const DEPLOYMENT = JSON.parse(fs.readFileSync(path.resolve(HERE, '..', '.state',
 // facet's file). Each carries the loan as topic 1 and its actor as topic 2.
 const DIAMOND_ABI = JSON.parse(fs.readFileSync(path.resolve(HERE, '..', '..', '..', '..', 'packages', 'contracts', 'src', 'diamondAbi.json'), 'utf8'));
 const SELLER_KINDS = ['SellerInterestClaimRecorded', 'SellerInterestPaid', 'SellerInterestClaimClosed', 'SellerInterestWithdrawn'];
-const RESERVE_KINDS = ['LoanReserveFunded', 'LoanReserveWithdrawn', 'ExtendChargeDrawn'];
+// The same list the app's reserve discovery asks for (`RESERVE_KINDS` in
+// src/shared/claims/reserve.ts): the stand-in refuses a kind it does not
+// serve, so a kind the app adds must be added here too (#3681 added the
+// standing-instruction runs, each filed under the holder, topic 2).
+const RESERVE_KINDS = ['LoanReserveFunded', 'LoanReserveWithdrawn', 'ExtendChargeDrawn', 'InterestPaidFromReserve', 'DueRepaymentRun'];
 const ACTIVITY_KINDS = [...SELLER_KINDS, ...RESERVE_KINDS];
 const ACTIVITY_TOPICS = new Map(
   ACTIVITY_KINDS.map((name) => {

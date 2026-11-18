@@ -19,11 +19,13 @@
  *
  * Both links carry only what is signed, never a key.
  */
-import type { PublicClient } from 'viem';
+import { getAddress, type PublicClient } from 'viem';
 import { directAuth, recoveryCall as encodeRecovery } from '@vaipakam/lib/protectedAccountView';
 import {
   RECOVERY_CHANGE_WAIT_SECONDS,
   VAULT_PURPOSE_RECOVERY_PROOF,
+  parseRecoveryProof as parseProofParams,
+  parseRecoveryRequest as parseRequestParams,
   recoveryProofAuth,
   recoveryProofParams,
   recoveryRequestParams,
@@ -32,14 +34,7 @@ import {
 } from '@vaipakam/lib/vaultProtectionAuth';
 import { VAULT } from './payout';
 
-export {
-  RECOVERY_PROOF_LIFETIME_SECONDS,
-  parseRecoveryProof,
-  parseRecoveryRequest,
-  recoveryProofTypedData,
-  type RecoveryProof,
-  type RecoveryRequest,
-} from '@vaipakam/lib/vaultProtectionAuth';
+export { RECOVERY_PROOF_LIFETIME_SECONDS, recoveryProofTypedData, type RecoveryProof, type RecoveryRequest } from '@vaipakam/lib/vaultProtectionAuth';
 
 type Hex = `0x${string}`;
 
@@ -77,6 +72,20 @@ export function hasRecovery(r: RecoveryState): boolean {
 /** The recovery wallet's next proof nonce at the account's vault. */
 export async function readProofNonce(c: PublicClient, vault: Hex, recovery: Hex): Promise<bigint> {
   return (await c.readContract({ address: vault, abi: VAULT, functionName: 'protectionNonce', args: [recovery, VAULT_PURPOSE_RECOVERY_PROOF] })) as bigint;
+}
+
+/** A request link read back, its addresses checksummed for display (the
+ *  link carries them in lowercase). Null when the link carries none or a
+ *  malformed one. */
+export function parseRecoveryRequest(q: URLSearchParams): RecoveryRequest | null {
+  const r = parseRequestParams(q);
+  return r === null ? null : { ...r, account: getAddress(r.account), recovery: getAddress(r.recovery) };
+}
+
+/** A proof link read back, its addresses checksummed for display. */
+export function parseRecoveryProof(q: URLSearchParams): RecoveryProof | null {
+  const p = parseProofParams(q);
+  return p === null ? null : { ...p, vault: getAddress(p.vault), account: getAddress(p.account), diamond: getAddress(p.diamond), recovery: getAddress(p.recovery) };
 }
 
 const origin = () => (typeof window === 'undefined' ? '' : window.location.origin);
