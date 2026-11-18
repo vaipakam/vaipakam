@@ -32,6 +32,7 @@ Two more things follow from the acceptance being a paid transaction:
 | --- | --- |
 | 2026-11-18 | The contracts refuse a new position for a wallet that has not accepted the Terms in force. |
 | 2026-11-18 | The app asks for the acceptance at Connect. A wallet that has not accepted is not connected to the app. The acceptance is recorded on-chain. |
+| 2026-11-18 | A new version is announced with a notice period. After it, a wallet that has not accepted takes on no new position; its commitments wait and are not cancelled (section 5). |
 
 ## 3. The rule
 
@@ -263,11 +264,13 @@ transaction.
 4. **Check every step, close-outs included.** Declined: a new version would
    lock a wallet out of repaying or claiming until it agreed, which is
    leverage the platform must never hold over funds.
-5. **Commitments made under an older version keep filling.** Not taken: a
-   loan would open with a party who never accepted the Terms in force that
-   day. The notice period gives the same continuity without that.
-6. **A new version in force at once.** Not taken: every Auto-lend and every
-   standing offer would stop in the same block, with no time to accept.
+5. **Commitments made under an older version keep filling.** Declined by the
+   owner (2026-11-18): a loan would open with a party who never accepted the
+   Terms in force that day. The notice period gives the same continuity
+   without that.
+6. **A new version in force at once.** Declined by the owner (2026-11-18):
+   every Auto-lend and every standing offer would stop in the same block,
+   with no time to accept.
 7. **One signature for all networks.** Not taken (section 4).
 8. **Require acceptance of matchers and liquidators.** Not taken: settling a
    loan must stay open to anyone, and they hold no position.
