@@ -79,7 +79,8 @@
         "activity": "Aktivität",
         "nftVerifier": "NFT-Verifizierer",
         "settings": "Einstellungen",
-        "help": "Hilfe"
+        "help": "Hilfe",
+        "invites": "Einladungen"
       },
       "settings": {
         "language": "Sprache",
@@ -165,6 +166,12 @@
       },
       "protection": {
         "title": "Vault-Schutz — Vaipakam"
+      },
+      "invites": {
+        "title": "Einladungen — Vaipakam"
+      },
+      "invite": {
+        "title": "Einladung — Vaipakam"
       }
     },
     "home": {
@@ -4090,7 +4097,75 @@
         "unavailable": "Wir konnten gerade nicht nach Verlängerungsreserven suchen. Versuchen Sie es gleich noch einmal.",
         "unread": "Wir konnten Ihre Reserve für Kredit #{{id}} gerade nicht lesen.",
         "truncated": "Hier werden nur die Kredite geprüft, die Ihre jüngsten Reserveeinzahlungen nennen; eine Reserve auf einem älteren Kredit wird daher vielleicht nicht angezeigt."
-      }
+      },
+      "extensionFee": "Eine Verlängerung bis zu diesem Datum erhöht deine Darlehenseröffnungsgebühr für die zusätzliche Laufzeit um {{fee}}, entnommen aus deinem Tresor. Das ist das Maximum, das deine Grenzen erlauben; steigt die Gebühr darüber, findet die Verlängerung erst statt, wenn du neue Grenzen speicherst.",
+      "extensionFeeNone": "Eine Verlängerung bis zu diesem Datum fügt keine Eröffnungsgebühr hinzu: Die Laufzeit ist bereits bezahlt.",
+      "extensionFeeUnknown": "Die zusätzliche Eröffnungsgebühr für dieses Datum konnte nicht gelesen werden, daher können die Grenzen noch nicht gespeichert werden."
+    },
+    "referrals": {
+      "title": "Einladungen",
+      "lede": "Lade andere mit deinem Link zu Vaipakam ein und sieh, was deine Einladungen ausgezahlt haben.",
+      "inviterSentence": "Du kannst einen Teil der Plattformgebühr auf Darlehen erhalten, die deine eingeladenen Nutzer in ihren ersten {{days}} Tagen eröffnen, ausgezahlt an deine Wallet, wenn das jeweilige Darlehen eröffnet wird. Der Betrag hängt von der Gebühr des Darlehens und den aktuellen Sätzen der Plattform ab. Er kann geringer oder null sein, zum Beispiel wenn die Gebühr eines Darlehens nur die Grundgebühr ist oder wenn andere Anteile am Darlehen die Grenze erreichen.",
+      "inviterSentenceNoPeriod": "Du kannst einen Teil der Plattformgebühr auf Darlehen erhalten, die deine eingeladenen Nutzer in einem festen Zeitraum nach ihrem Beitritt eröffnen, ausgezahlt an deine Wallet, wenn das jeweilige Darlehen eröffnet wird. Der Betrag hängt von der Gebühr des Darlehens und den aktuellen Sätzen der Plattform ab. Er kann geringer oder null sein, zum Beispiel wenn die Gebühr eines Darlehens nur die Grundgebühr ist oder wenn andere Anteile am Darlehen die Grenze erreichen.",
+      "linkTitle": "Dein Einladungslink",
+      "linkHint": "Der Link enthält nur deine Wallet-Adresse. Das Öffnen speichert nichts; eine Einladung zählt, sobald der neue Nutzer sie mit seiner eigenen Wallet bestätigt.",
+      "copyLink": "Link kopieren",
+      "copied": "Kopiert",
+      "shareLink": "Teilen",
+      "shareText": "Komm zu mir auf Vaipakam",
+      "invitedTitle": "Eingeladene Wallets",
+      "invitedEmpty": "In diesem Netzwerk hat dich noch keine Wallet als Einladenden angegeben.",
+      "colJoined": "Beigetreten",
+      "colLoans": "Darlehen mit Anteil",
+      "daysLeft_zero": "Noch {{count}} Tage",
+      "daysLeft_one": "Noch 1 Tag",
+      "daysLeft_two": "Noch {{count}} Tage",
+      "daysLeft_few": "Noch {{count}} Tage",
+      "daysLeft_many": "Noch {{count}} Tage",
+      "daysLeft_other": "Noch {{count}} Tage",
+      "ended": "Beendet",
+      "endsOn": "Endet am {{date}}",
+      "receivedTitle": "Erhalten",
+      "receivedEmpty": "In diesem Netzwerk wurde aus einer Einladung noch nichts an deine Wallet ausgezahlt.",
+      "totalsTitle": "Insgesamt erhalten, je Asset",
+      "totalsWithheld": "Es gibt zu viele Zahlungen, um sie in einem Lesevorgang zu addieren, daher wird keine Summe angezeigt. Jede Zahlung ist unten aufgeführt.",
+      "colLoan": "Darlehen",
+      "colReason": "Grund",
+      "viewTx": "Ansehen",
+      "loanLabel": "Darlehen #{{id}}",
+      "reserveTitle": "Stattdessen an die Reserve gegangen",
+      "reserveLede": "Anteile, die nicht an deine Wallet ausgezahlt wurden, mit dem Grund aus dem Eintrag.",
+      "reserveEmpty": "Kein Anteil ist statt an dich an die Reserve gegangen.",
+      "reasonFlagged": "Deine Wallet war in diesem Moment markiert",
+      "reasonPaymentFailed": "Die Zahlung an deine Wallet ist fehlgeschlagen",
+      "reasonDeliveredShort": "Die Zahlung kam unvollständig an",
+      "truncated": "Nur die neuesten {{count}} werden angezeigt.",
+      "currentTo": "Diese Zahlen sind auf dem Stand von Block {{block}}.",
+      "behind": "Der Eintrag liegt etwa {{span}} hinter der Chain, daher wird eine Zahlung oder Einladung aus dieser Zeit eventuell noch nicht angezeigt.",
+      "notStarted": "Der Eintrag für dieses Netzwerk hat noch nicht begonnen, daher kann nichts angezeigt werden.",
+      "unavailable": "Deine Einladungen konnten gerade nicht gelesen werden. Bitte versuche es gleich noch einmal.",
+      "loading": "Deine Einladungen werden gelesen…",
+      "connectBody": "Verbinde die Wallet, mit der du andere einlädst. Für diese Seite brauchst du keinen Tresor.",
+      "assetUnknown": "Unbekanntes Asset"
+    },
+    "invite": {
+      "title": "Du wurdest eingeladen",
+      "invalid": "Dieser Einladungslink ist ungültig. Prüfe, ob er vollständig kopiert wurde.",
+      "invitedBy": "Eingeladen von",
+      "sentence": "Du wurdest von {{inviter}} eingeladen. Für {{days}} Tage ab deiner Bestätigung zieht die Plattform {{cut}} von dem Teil jeder Darlehensgebühr ab, der über der Grundgebühr liegt, bei Darlehen, die du als Kreditnehmer eröffnest, und die Plattform kann der Person, die dich eingeladen hat, einen Teil ihrer Gebühr zahlen. Du zahlst nichts extra. Diese Sätze legt die Plattform fest, und sie können sich ändern, auch auf null; ein Darlehen, dessen Gebühr nur die Grundgebühr ist, erhält keinen Abzug. Diese Wahl kann später nicht geändert werden.",
+      "nothingOff": "Du wurdest von {{inviter}} eingeladen. Derzeit wird nichts abgezogen. Wenn du bestätigst, wird die Person, die dich eingeladen hat, für {{days}} Tage als dein Einladender eingetragen, und die Plattform kann ihr in dieser Zeit einen Teil ihrer Gebühr auf Darlehen zahlen, die du als Kreditnehmer eröffnest. Du zahlst nichts extra. Diese Sätze legt die Plattform fest, und sie können sich ändern. Diese Wahl kann später nicht geändert werden.",
+      "confirm": "Diese Einladung bestätigen",
+      "confirming": "Wird bestätigt…",
+      "done": "Erledigt. Deine Einladung ist eingetragen.",
+      "alreadyBound": "Der Einladende deiner Wallet ist {{inviter}}, bis {{date}}.",
+      "alreadyBoundEnded": "Der Einladende deiner Wallet war {{inviter}}; dieser Zeitraum endete am {{date}}.",
+      "alreadyBoundOther": "Eine Wallet gibt ihren Einladenden nur einmal an, daher kann dieser Link ihn nicht ändern.",
+      "hasBorrowed": "Diese Wallet hat bereits ein Darlehen als Kreditnehmer eröffnet und kann daher keinen Einladenden mehr angeben.",
+      "selfInvite": "Das ist dein eigener Einladungslink. Teile ihn mit jemand anderem; eine Wallet kann sich nicht selbst einladen.",
+      "connectBody": "Verbinde die Wallet, mit der du leihen wirst, um die Einladung zu bestätigen.",
+      "loading": "Einladung wird gelesen…",
+      "unavailable": "Die Details der Einladung konnten gerade nicht gelesen werden. Bitte versuche es gleich noch einmal.",
+      "wrongNetwork": "Wechsle deine Wallet zu einem unterstützten Netzwerk, um zu bestätigen."
     }
   },
   "contractError": {

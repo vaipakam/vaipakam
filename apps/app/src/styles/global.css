@@ -2756,3 +2756,18 @@ a.item-row:hover {
   display: grid;
   gap: var(--space-2);
 }
+
+/* #3727 — the inviter's page. The link wraps anywhere so a full address
+   never pushes a phone-width card sideways. */
+.referral-link {
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  margin: var(--space-2) 0 var(--space-3);
+}
+
+.referral-totals {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-3);
+}

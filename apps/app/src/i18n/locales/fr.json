@@ -79,7 +79,8 @@
         "activity": "Activité",
         "nftVerifier": "Vérificateur NFT",
         "settings": "Paramètres",
-        "help": "Aide"
+        "help": "Aide",
+        "invites": "Invitations"
       },
       "settings": {
         "language": "Langue",
@@ -165,6 +166,12 @@
       },
       "protection": {
         "title": "Protection du coffre — Vaipakam"
+      },
+      "invites": {
+        "title": "Invitations — Vaipakam"
+      },
+      "invite": {
+        "title": "Votre invitation — Vaipakam"
       }
     },
     "home": {
@@ -4090,7 +4097,75 @@
         "unavailable": "Nous n’avons pas pu rechercher de réserves de prolongation pour le moment. Réessayez dans un instant.",
         "unread": "Nous n’avons pas pu lire votre réserve sur le prêt #{{id}} pour le moment.",
         "truncated": "Seuls les prêts nommés par vos dépôts de réserve les plus récents sont vérifiés ici ; une réserve sur un prêt plus ancien peut donc ne pas apparaître."
-      }
+      },
+      "extensionFee": "Une prolongation jusqu’à cette date ajoute {{fee}} à vos frais d’ouverture du prêt, pour la durée ajoutée, prélevés sur votre coffre. C’est le maximum que vos limites autorisent ; si les frais dépassent ce montant, la prolongation n’a pas lieu tant que vous n’enregistrez pas de nouvelles limites.",
+      "extensionFeeNone": "Une prolongation jusqu’à cette date n’ajoute aucuns frais d’ouverture : la durée est déjà payée.",
+      "extensionFeeUnknown": "Les frais d’ouverture ajoutés pour cette date n’ont pas pu être lus, les limites ne peuvent donc pas encore être enregistrées."
+    },
+    "referrals": {
+      "title": "Invitations",
+      "lede": "Invitez des personnes sur Vaipakam avec votre lien et voyez ce que vos invitations ont versé.",
+      "inviterSentence": "Vous pouvez recevoir une partie des frais de la plateforme sur les prêts ouverts par vos utilisateurs invités, pendant leurs {{days}} premiers jours, versée à votre portefeuille à l’ouverture de chaque prêt. Le montant dépend des frais de chaque prêt et des taux actuels de la plateforme. Il peut être réduit ou nul, par exemple lorsque les frais d’un prêt se limitent aux frais de base ou lorsque d’autres parts sur le prêt atteignent la limite.",
+      "inviterSentenceNoPeriod": "Vous pouvez recevoir une partie des frais de la plateforme sur les prêts ouverts par vos utilisateurs invités, pendant une période fixée après l’arrivée de chacun, versée à votre portefeuille à l’ouverture de chaque prêt. Le montant dépend des frais de chaque prêt et des taux actuels de la plateforme. Il peut être réduit ou nul, par exemple lorsque les frais d’un prêt se limitent aux frais de base ou lorsque d’autres parts sur le prêt atteignent la limite.",
+      "linkTitle": "Votre lien d’invitation",
+      "linkHint": "Le lien ne contient que l’adresse de votre portefeuille. L’ouvrir n’enregistre rien ; une invitation compte une fois que le nouvel utilisateur la confirme avec son propre portefeuille.",
+      "copyLink": "Copier le lien",
+      "copied": "Copié",
+      "shareLink": "Partager",
+      "shareText": "Rejoignez-moi sur Vaipakam",
+      "invitedTitle": "Portefeuilles invités",
+      "invitedEmpty": "Aucun portefeuille ne vous a encore désigné comme parrain sur ce réseau.",
+      "colJoined": "Arrivé le",
+      "colLoans": "Prêts avec une part",
+      "daysLeft_zero": "{{count}} jours restants",
+      "daysLeft_one": "1 jour restant",
+      "daysLeft_two": "{{count}} jours restants",
+      "daysLeft_few": "{{count}} jours restants",
+      "daysLeft_many": "{{count}} jours restants",
+      "daysLeft_other": "{{count}} jours restants",
+      "ended": "Terminé",
+      "endsOn": "Se termine le {{date}}",
+      "receivedTitle": "Reçu",
+      "receivedEmpty": "Rien n’a encore été versé à votre portefeuille au titre d’une invitation sur ce réseau.",
+      "totalsTitle": "Total reçu, par actif",
+      "totalsWithheld": "Il y a trop de paiements pour les additionner en une seule lecture, donc aucun total n’est affiché. Chaque paiement est listé ci-dessous.",
+      "colLoan": "Prêt",
+      "colReason": "Motif",
+      "viewTx": "Voir",
+      "loanLabel": "Prêt n° {{id}}",
+      "reserveTitle": "Envoyé à la réserve à la place",
+      "reserveLede": "Parts qui n’ont pas été versées à votre portefeuille, avec le motif indiqué par l’enregistrement.",
+      "reserveEmpty": "Aucune part n’a été envoyée à la réserve au lieu de vous.",
+      "reasonFlagged": "Votre portefeuille était signalé à ce moment-là",
+      "reasonPaymentFailed": "Le paiement vers votre portefeuille a échoué",
+      "reasonDeliveredShort": "Le paiement est arrivé incomplet",
+      "truncated": "Seuls les {{count}} plus récents sont affichés.",
+      "currentTo": "Ces chiffres sont à jour jusqu’au bloc {{block}}.",
+      "behind": "L’enregistrement a environ {{span}} de retard sur la chaîne, donc un paiement ou une invitation de cette période peut ne pas encore apparaître.",
+      "notStarted": "L’enregistrement pour ce réseau n’a pas encore commencé, donc rien ne peut être affiché.",
+      "unavailable": "Nous n’avons pas pu lire vos invitations pour le moment. Réessayez dans un instant.",
+      "loading": "Lecture de vos invitations…",
+      "connectBody": "Connectez le portefeuille avec lequel vous invitez des personnes. Vous n’avez pas besoin d’un coffre pour cette page.",
+      "assetUnknown": "Actif inconnu"
+    },
+    "invite": {
+      "title": "Vous avez été invité",
+      "invalid": "Ce lien d’invitation n’est pas valide. Vérifiez qu’il a été copié en entier.",
+      "invitedBy": "Invité par",
+      "sentence": "Vous avez été invité par {{inviter}}. Pendant {{days}} jours à partir de votre confirmation, la plateforme retire {{cut}} de la partie de chaque frais de prêt au-dessus de ses frais de base sur les prêts que vous ouvrez comme emprunteur, et la plateforme peut verser à la personne qui vous a invité une partie de ses frais. Vous ne payez rien de plus. Ces taux sont fixés par la plateforme et peuvent changer, y compris à zéro ; un prêt dont les frais se limitent aux frais de base n’a aucune réduction. Ce choix ne pourra pas être modifié.",
+      "nothingOff": "Vous avez été invité par {{inviter}}. Rien n’est retiré pour le moment. Si vous confirmez, la personne qui vous a invité est enregistrée comme votre parrain pendant {{days}} jours, et la plateforme peut lui verser une partie de ses frais sur les prêts que vous ouvrez comme emprunteur pendant cette période. Vous ne payez rien de plus. Ces taux sont fixés par la plateforme et peuvent changer. Ce choix ne pourra pas être modifié.",
+      "confirm": "Confirmer cette invitation",
+      "confirming": "Confirmation…",
+      "done": "C’est fait. Votre invitation est enregistrée.",
+      "alreadyBound": "Le parrain de votre portefeuille est {{inviter}}, jusqu’au {{date}}.",
+      "alreadyBoundEnded": "Le parrain de votre portefeuille était {{inviter}} ; cette période a pris fin le {{date}}.",
+      "alreadyBoundOther": "Un portefeuille désigne son parrain une seule fois, ce lien ne peut donc pas le modifier.",
+      "hasBorrowed": "Ce portefeuille a déjà ouvert un prêt comme emprunteur, il ne peut donc plus désigner de parrain.",
+      "selfInvite": "C’est votre propre lien d’invitation. Partagez-le avec quelqu’un d’autre ; un portefeuille ne peut pas s’inviter lui-même.",
+      "connectBody": "Connectez le portefeuille avec lequel vous emprunterez pour confirmer l’invitation.",
+      "loading": "Lecture de l’invitation…",
+      "unavailable": "Nous n’avons pas pu lire les détails de l’invitation pour le moment. Réessayez dans un instant.",
+      "wrongNetwork": "Passez votre portefeuille sur un réseau pris en charge pour confirmer."
     }
   },
   "contractError": {

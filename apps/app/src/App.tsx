@@ -68,6 +68,8 @@ function ExternalRedirect({ url }: { url: string }) {
   }
   return null;
 }
+const Referrals = lazy(() => import('./pages/Referrals').then((m) => ({ default: m.Referrals })));
+const Invite = lazy(() => import('./pages/Invite').then((m) => ({ default: m.Invite })));
 const Marketplace = lazy(() => import('./pages/Marketplace').then((m) => ({ default: m.Marketplace })));
 
 const Borrow = lazy(() =>
@@ -240,6 +242,8 @@ export function App() {
         <Route path="/vault" element={<Vault />} />
         <Route path="/vault/protection" element={<Protection />} />
         <Route path="/activity" element={<Activity />} />
+        <Route path="/invites" element={<Referrals />} />
+        <Route path="/invite/:inviter" element={<Invite />} />
         <Route path="/vpfi" element={<Vpfi />} />
         <Route path="/nft" element={<NftVerifier />} />
         <Route path="/nft/:tokenId" element={<NftVerifier />} />

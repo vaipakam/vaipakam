@@ -1981,3 +1981,12 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 
 **Gap.** No spec posts an order that names a taker or a co-signer, because neither app can sign one yet; the contract suite (`SignedOfferBook.t.sol`, `SignedOfferMatcher.t.sol`) drives both, and the follow-up issues for a co-signing service and a taker-binding control carry the app side.
 
+## Invites page and invite link (#3727, #3722)
+<a id="cov-invites-3727"></a>
+
+**Journey.** An inviter opens Invites with only a connected wallet (no vault needed), copies or shares a link that carries their address and nothing else, and sees three lists read from the indexer's record of the two referral events: the wallets that bound them (joined date, loans that carried a share, days left or ended, compared with the chain's latest block), the shares paid to their wallet with a total per asset (withheld, never partial, when the indexer could not sum every row), and the shares sent to the reserve with the reason the event gave. The page states the block it is current to, and warns when that block trails the chain's head by more than ten minutes. A new user opening the link reads the cut and the period from the chain at that moment (or that nothing is taken off), is told the choice cannot be changed, and confirms `bindInviter` with their own wallet; the page refuses an invalid link, the inviter's own wallet, a wallet already bound and a wallet that has borrowed before a signature is asked.
+
+**Tier.** Unit for the body validation (one unreadable row fails the list rather than understate it; an unknown reason or a redirect in the paid list is refused), the end-time rule (inclusive, chain time) and the lag measure. The indexer's ingest and read are pinned against the real migrated schema in `apps/indexer/test/referralRecord.test.ts`.
+
+**Gap.** No CI-Anvil spec yet: the referral contracts (#3722) reach the fixture Diamond with their branch, and the page's data comes from the deployed indexer route. The live review after deploy binds a test wallet through a link and reads the inviter's page.
+

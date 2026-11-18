@@ -112,6 +112,7 @@ const copySource = {
       desk: 'Rate Desk',
       vpfi: 'VPFI discounts',
       activity: 'Activity',
+      invites: 'Invites',
       nftVerifier: 'NFT verifier',
       settings: 'Settings',
       help: 'Help',
@@ -194,6 +195,8 @@ const copySource = {
     claims: { title: 'Claims — Vaipakam' },
     vault: { title: 'My vault — Vaipakam' },
     activity: { title: 'Activity — Vaipakam' },
+    invites: { title: 'Invites — Vaipakam' },
+    invite: { title: 'Invitation — Vaipakam' },
     // #1960 — noindex like the other per-user surfaces. Without a row
     // here the route falls through to `notFound`, so a working page
     // titles itself "Page not found".
@@ -6615,6 +6618,85 @@ const copySource = {
       'We couldn’t read your vault right now. Your funds are unaffected — please try again in a moment.',
     lockedHint:
       'Locked amounts back your open offers, active loans and rentals, or wait in a queued payout. They free up when those close or the payout is paid or cancelled.',
+  },
+
+  /** #3727 — the inviter's page, and #3722's invite flow. Wording rules
+   *  (ReferralFeeShareDesign.md section 6): a referral share of the
+   *  platform's fee, "received"; never earnings, income, yield or a share
+   *  of revenue, no rate of return, no forecast. */
+  referrals: {
+    title: 'Invites',
+    lede: 'Invite people to Vaipakam with your link and see what your invitations have paid.',
+    inviterSentence: tmpl(
+      'You may receive part of the platform’s fee on loans your invited users open, for their first {{days}} days, paid to your wallet when each loan opens. The amount depends on each loan’s fee and on the platform’s current rates. It can be reduced or zero, for example when a loan’s fee is only the base fee or when other shares on the loan reach the limit.',
+      ['days'],
+    ),
+    inviterSentenceNoPeriod:
+      'You may receive part of the platform’s fee on loans your invited users open, for a set period after each one joins, paid to your wallet when each loan opens. The amount depends on each loan’s fee and on the platform’s current rates. It can be reduced or zero, for example when a loan’s fee is only the base fee or when other shares on the loan reach the limit.',
+    linkTitle: 'Your invite link',
+    linkHint: 'The link carries only your wallet address. Opening it records nothing; an invitation counts once the new user confirms it with their own wallet.',
+    copyLink: 'Copy link',
+    copied: 'Copied',
+    shareLink: 'Share',
+    shareText: 'Join me on Vaipakam',
+    invitedTitle: 'Invited wallets',
+    invitedEmpty: 'No wallet has named you as its inviter on this network yet.',
+    colJoined: 'Joined',
+    colLoans: 'Loans with a share',
+    daysLeft: tmpl('{{count}} days left', ['count'], { one: '1 day left' }),
+    ended: 'Ended',
+    endsOn: tmpl('Ends {{date}}', ['date']),
+    receivedTitle: 'Received',
+    receivedEmpty: 'Nothing has been paid to your wallet from an invitation on this network yet.',
+    totalsTitle: 'Total received, per asset',
+    totalsWithheld: 'There are too many payments to add up in one read, so no total is shown. Each payment is listed below.',
+    colLoan: 'Loan',
+    colReason: 'Reason',
+    viewTx: 'View',
+    loanLabel: tmpl('Loan #{{id}}', ['id']),
+    reserveTitle: 'Sent to the reserve instead',
+    reserveLede: 'Shares that were not paid to your wallet, with the reason the record gives.',
+    reserveEmpty: 'No share has been sent to the reserve instead of to you.',
+    reasonFlagged: 'Your wallet was flagged at that moment',
+    reasonPaymentFailed: 'The payment to your wallet failed',
+    reasonDeliveredShort: 'The payment arrived short',
+    truncated: tmpl('Showing the latest {{count}} only.', ['count']),
+    currentTo: tmpl('These figures are current to block {{block}}.', ['block']),
+    behind: tmpl(
+      'The record is about {{span}} behind the chain, so a payment or invitation from that time may not show yet.',
+      ['span'],
+    ),
+    notStarted: 'The record for this network has not started yet, so nothing can be shown.',
+    unavailable: 'We couldn’t read your invitations just now. Please try again in a moment.',
+    loading: 'Reading your invitations…',
+    connectBody: 'Connect the wallet you invite people with. You don’t need a vault for this page.',
+    assetUnknown: 'Unknown asset',
+  },
+
+  invite: {
+    title: 'You’ve been invited',
+    invalid: 'This invite link is not valid. Check that it was copied in full.',
+    invitedBy: 'Invited by',
+    sentence: tmpl(
+      'You were invited by {{inviter}}. For {{days}} days from when you confirm, the platform takes {{cut}} off the part of each loan fee above its base fee on loans you open as borrower, and the platform may pay the person who invited you part of its fee. You pay nothing extra. These rates are set by the platform and can change, including to zero; a loan whose fee is only the base fee gets nothing off. This choice cannot be changed later.',
+      ['inviter', 'days', 'cut'],
+    ),
+    nothingOff: tmpl(
+      'You were invited by {{inviter}}. Nothing is taken off at present. If you confirm, the person who invited you is recorded as your inviter for {{days}} days, and the platform may pay them part of its fee on loans you open as borrower in that time. You pay nothing extra. These rates are set by the platform and can change. This choice cannot be changed later.',
+      ['inviter', 'days'],
+    ),
+    confirm: 'Confirm this invitation',
+    confirming: 'Confirming…',
+    done: 'Done. Your invitation is recorded.',
+    alreadyBound: tmpl('Your wallet’s inviter is {{inviter}}, until {{date}}.', ['inviter', 'date']),
+    alreadyBoundEnded: tmpl('Your wallet’s inviter was {{inviter}}; that period ended on {{date}}.', ['inviter', 'date']),
+    alreadyBoundOther: 'A wallet names its inviter once, so this link cannot change it.',
+    hasBorrowed: 'This wallet has already opened a loan as borrower, so it can no longer name an inviter.',
+    selfInvite: 'This is your own invite link. Share it with someone else; a wallet cannot invite itself.',
+    connectBody: 'Connect the wallet you will borrow with to confirm the invitation.',
+    loading: 'Reading the invitation…',
+    unavailable: 'We couldn’t read the invitation details just now. Please try again in a moment.',
+    wrongNetwork: 'Switch your wallet to a supported network to confirm.',
   },
 
   /** Claim-All batch preview labels (data/claimAll.ts). The pure builder

@@ -18,4 +18,12 @@ end time from today's period setting and never gives a redirect a reason the
 event did not give. An outcome the indexer does not know is skipped and
 logged rather than recorded under a guessed reason.
 
-Part of #3727; the app page follows.
+The app has a new Invites page built on that read. It needs only a
+connected wallet, gives the inviter a link to copy or share, and shows the
+three lists with the block they are current to and a warning when the record
+trails the chain. Opening an invite link leads a new user to a page that
+states, with the rates read from the chain at that moment, what naming the
+inviter carries and that it cannot be changed later, and asks them to
+confirm it with their own wallet.
+
+Closes #3727

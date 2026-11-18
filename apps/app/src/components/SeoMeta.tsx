@@ -153,6 +153,9 @@ function metaForPath(rawPathname: string): RouteMeta {
   if (pathname === '/vault') return { ...seo.vault, index: false };
   if (pathname === '/vault/protection') return { ...seo.protection, index: false };
   if (pathname === '/activity') return { ...seo.activity, index: false };
+  if (pathname === '/invites') return { ...seo.invites, index: false };
+  // An invite link names a wallet: never indexed, never followed.
+  if (inSection(pathname, '/invite')) return { ...seo.invite, index: false, follow: false };
   if (pathname === '/settings') return { ...seo.settings, index: false };
   if (pathname === '/risk-access') return { ...seo.riskAccess, index: false };
   if (pathname === '/recover') {

@@ -79,7 +79,8 @@
         "activity": "Actividad",
         "nftVerifier": "Verificador de NFT",
         "settings": "Configuración",
-        "help": "Ayuda"
+        "help": "Ayuda",
+        "invites": "Invitaciones"
       },
       "settings": {
         "language": "Idioma",
@@ -165,6 +166,12 @@
       },
       "protection": {
         "title": "Protección de la bóveda — Vaipakam"
+      },
+      "invites": {
+        "title": "Invitaciones — Vaipakam"
+      },
+      "invite": {
+        "title": "Invitación — Vaipakam"
       }
     },
     "home": {
@@ -4090,7 +4097,75 @@
         "unavailable": "No pudimos buscar reservas de extensión ahora mismo. Inténtalo de nuevo en breve.",
         "unread": "No pudimos leer tu reserva en el préstamo #{{id}} ahora mismo.",
         "truncated": "Aquí solo se comprueban los préstamos que nombran tus depósitos de reserva más recientes, así que puede que no aparezca una reserva en un préstamo más antiguo."
-      }
+      },
+      "extensionFee": "Una extensión hasta esa fecha añade {{fee}} a tu comisión de apertura del préstamo, por el plazo añadido, tomada de tu bóveda. Es lo máximo que permiten tus límites; si la comisión sube por encima, la extensión no se realiza hasta que guardes nuevos límites.",
+      "extensionFeeNone": "Una extensión hasta esa fecha no añade comisión de apertura: el plazo ya está pagado.",
+      "extensionFeeUnknown": "No se pudo leer la comisión de apertura añadida para esa fecha, así que los límites aún no se pueden guardar."
+    },
+    "referrals": {
+      "title": "Invitaciones",
+      "lede": "Invita a otras personas a Vaipakam con tu enlace y consulta lo que han pagado tus invitaciones.",
+      "inviterSentence": "Puedes recibir parte de la comisión de la plataforma en los préstamos que abran tus usuarios invitados, durante sus primeros {{days}} días, pagada a tu billetera cuando se abre cada préstamo. El importe depende de la comisión de cada préstamo y de las tasas vigentes de la plataforma. Puede reducirse o ser cero, por ejemplo cuando la comisión de un préstamo es solo la comisión base o cuando otras partes del préstamo alcanzan el límite.",
+      "inviterSentenceNoPeriod": "Puedes recibir parte de la comisión de la plataforma en los préstamos que abran tus usuarios invitados, durante un periodo fijado tras unirse cada uno, pagada a tu billetera cuando se abre cada préstamo. El importe depende de la comisión de cada préstamo y de las tasas vigentes de la plataforma. Puede reducirse o ser cero, por ejemplo cuando la comisión de un préstamo es solo la comisión base o cuando otras partes del préstamo alcanzan el límite.",
+      "linkTitle": "Tu enlace de invitación",
+      "linkHint": "El enlace solo contiene la dirección de tu billetera. Abrirlo no registra nada; una invitación cuenta cuando el nuevo usuario la confirma con su propia billetera.",
+      "copyLink": "Copiar enlace",
+      "copied": "Copiado",
+      "shareLink": "Compartir",
+      "shareText": "Únete a mí en Vaipakam",
+      "invitedTitle": "Billeteras invitadas",
+      "invitedEmpty": "Ninguna billetera te ha indicado todavía como su invitador en esta red.",
+      "colJoined": "Se unió",
+      "colLoans": "Préstamos con parte",
+      "daysLeft_zero": "Quedan {{count}} días",
+      "daysLeft_one": "Queda 1 día",
+      "daysLeft_two": "Quedan {{count}} días",
+      "daysLeft_few": "Quedan {{count}} días",
+      "daysLeft_many": "Quedan {{count}} días",
+      "daysLeft_other": "Quedan {{count}} días",
+      "ended": "Finalizado",
+      "endsOn": "Finaliza el {{date}}",
+      "receivedTitle": "Recibido",
+      "receivedEmpty": "Todavía no se ha pagado nada a tu billetera por una invitación en esta red.",
+      "totalsTitle": "Total recibido, por activo",
+      "totalsWithheld": "Hay demasiados pagos para sumarlos en una sola lectura, así que no se muestra un total. Cada pago aparece abajo.",
+      "colLoan": "Préstamo",
+      "colReason": "Motivo",
+      "viewTx": "Ver",
+      "loanLabel": "Préstamo n.º {{id}}",
+      "reserveTitle": "Enviado a la reserva en su lugar",
+      "reserveLede": "Partes que no se pagaron a tu billetera, con el motivo que indica el registro.",
+      "reserveEmpty": "Ninguna parte se ha enviado a la reserva en lugar de a ti.",
+      "reasonFlagged": "Tu billetera estaba marcada en ese momento",
+      "reasonPaymentFailed": "El pago a tu billetera falló",
+      "reasonDeliveredShort": "El pago llegó incompleto",
+      "truncated": "Solo se muestran los {{count}} más recientes.",
+      "currentTo": "Estas cifras están actualizadas hasta el bloque {{block}}.",
+      "behind": "El registro va unos {{span}} por detrás de la cadena, así que un pago o una invitación de ese periodo puede no aparecer todavía.",
+      "notStarted": "El registro de esta red aún no ha comenzado, así que no se puede mostrar nada.",
+      "unavailable": "No pudimos leer tus invitaciones en este momento. Inténtalo de nuevo en un momento.",
+      "loading": "Leyendo tus invitaciones…",
+      "connectBody": "Conecta la billetera con la que invitas a otras personas. No necesitas una bóveda para esta página.",
+      "assetUnknown": "Activo desconocido"
+    },
+    "invite": {
+      "title": "Te han invitado",
+      "invalid": "Este enlace de invitación no es válido. Comprueba que se haya copiado completo.",
+      "invitedBy": "Invitado por",
+      "sentence": "Te invitó {{inviter}}. Durante {{days}} días desde que confirmes, la plataforma descuenta {{cut}} de la parte de cada comisión de préstamo por encima de su comisión base en los préstamos que abras como prestatario, y la plataforma puede pagar a la persona que te invitó parte de su comisión. No pagas nada extra. Estas tasas las fija la plataforma y pueden cambiar, incluso a cero; un préstamo cuya comisión es solo la comisión base no tiene descuento. Esta elección no se puede cambiar después.",
+      "nothingOff": "Te invitó {{inviter}}. Por ahora no se descuenta nada. Si confirmas, la persona que te invitó queda registrada como tu invitador durante {{days}} días, y la plataforma puede pagarle parte de su comisión en los préstamos que abras como prestatario en ese tiempo. No pagas nada extra. Estas tasas las fija la plataforma y pueden cambiar. Esta elección no se puede cambiar después.",
+      "confirm": "Confirmar esta invitación",
+      "confirming": "Confirmando…",
+      "done": "Listo. Tu invitación está registrada.",
+      "alreadyBound": "El invitador de tu billetera es {{inviter}}, hasta el {{date}}.",
+      "alreadyBoundEnded": "El invitador de tu billetera era {{inviter}}; ese periodo terminó el {{date}}.",
+      "alreadyBoundOther": "Una billetera indica su invitador una sola vez, así que este enlace no puede cambiarlo.",
+      "hasBorrowed": "Esta billetera ya abrió un préstamo como prestatario, así que ya no puede indicar un invitador.",
+      "selfInvite": "Este es tu propio enlace de invitación. Compártelo con otra persona; una billetera no puede invitarse a sí misma.",
+      "connectBody": "Conecta la billetera con la que pedirás prestado para confirmar la invitación.",
+      "loading": "Leyendo la invitación…",
+      "unavailable": "No pudimos leer los detalles de la invitación en este momento. Inténtalo de nuevo en un momento.",
+      "wrongNetwork": "Cambia tu billetera a una red compatible para confirmar."
     }
   },
   "contractError": {

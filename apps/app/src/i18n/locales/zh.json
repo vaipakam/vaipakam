@@ -79,7 +79,8 @@
         "activity": "活动",
         "nftVerifier": "NFT 验证器",
         "settings": "设置",
-        "help": "帮助"
+        "help": "帮助",
+        "invites": "邀请"
       },
       "settings": {
         "language": "语言",
@@ -165,6 +166,12 @@
       },
       "protection": {
         "title": "金库保护 — Vaipakam"
+      },
+      "invites": {
+        "title": "邀请 — Vaipakam"
+      },
+      "invite": {
+        "title": "邀请函 — Vaipakam"
       }
     },
     "home": {
@@ -4090,7 +4097,75 @@
         "unavailable": "我们目前无法查找展期储备。请稍后再试。",
         "unread": "目前无法读取您在贷款 #{{id}} 上的储备。",
         "truncated": "这里只检查您最近的储备存入记录所指的贷款，因此较早贷款上的储备可能不会列出。"
-      }
+      },
+      "extensionFee": "延期到该日期将为延长的期限在你的贷款发起费上增加 {{fee}}，从你的金库中扣除。这是你的限额允许的最高金额；如果费用超过该金额，在你保存新的限额之前不会延期。",
+      "extensionFeeNone": "延期到该日期不会增加发起费：该期限已经付清。",
+      "extensionFeeUnknown": "无法读取该日期增加的发起费，因此暂时无法保存限额。"
+    },
+    "referrals": {
+      "title": "邀请",
+      "lede": "用你的链接邀请他人加入 Vaipakam，并查看你的邀请带来的付款。",
+      "inviterSentence": "你受邀用户在其最初 {{days}} 天内开立的贷款，你可能会收到平台费用的一部分，在每笔贷款开立时支付到你的钱包。金额取决于每笔贷款的费用和平台当前的费率。它可能减少或为零，例如当贷款费用只有基础费用时，或贷款上的其他份额达到上限时。",
+      "inviterSentenceNoPeriod": "你受邀用户在各自加入后的一段固定期间内开立的贷款，你可能会收到平台费用的一部分，在每笔贷款开立时支付到你的钱包。金额取决于每笔贷款的费用和平台当前的费率。它可能减少或为零，例如当贷款费用只有基础费用时，或贷款上的其他份额达到上限时。",
+      "linkTitle": "你的邀请链接",
+      "linkHint": "链接只包含你的钱包地址。打开链接不会记录任何内容；新用户用自己的钱包确认后，邀请才算数。",
+      "copyLink": "复制链接",
+      "copied": "已复制",
+      "shareLink": "分享",
+      "shareText": "来 Vaipakam 和我一起",
+      "invitedTitle": "已邀请的钱包",
+      "invitedEmpty": "在此网络上，还没有钱包将你设为邀请人。",
+      "colJoined": "加入日期",
+      "colLoans": "有份额的贷款",
+      "daysLeft_zero": "还剩 {{count}} 天",
+      "daysLeft_one": "还剩 1 天",
+      "daysLeft_two": "还剩 {{count}} 天",
+      "daysLeft_few": "还剩 {{count}} 天",
+      "daysLeft_many": "还剩 {{count}} 天",
+      "daysLeft_other": "还剩 {{count}} 天",
+      "ended": "已结束",
+      "endsOn": "于 {{date}} 结束",
+      "receivedTitle": "已收到",
+      "receivedEmpty": "在此网络上，还没有因邀请向你的钱包支付过任何款项。",
+      "totalsTitle": "已收到总额（按资产）",
+      "totalsWithheld": "付款太多，无法在一次读取中相加，因此不显示总额。每笔付款都列在下方。",
+      "colLoan": "贷款",
+      "colReason": "原因",
+      "viewTx": "查看",
+      "loanLabel": "贷款 #{{id}}",
+      "reserveTitle": "改为转入储备",
+      "reserveLede": "未支付到你钱包的份额，以及记录中给出的原因。",
+      "reserveEmpty": "没有份额改为转入储备而非支付给你。",
+      "reasonFlagged": "当时你的钱包被标记",
+      "reasonPaymentFailed": "向你钱包的付款失败",
+      "reasonDeliveredShort": "到账金额不足",
+      "truncated": "仅显示最近的 {{count}} 条。",
+      "currentTo": "这些数字截至区块 {{block}}。",
+      "behind": "记录落后于链约 {{span}}，因此这段时间内的付款或邀请可能尚未显示。",
+      "notStarted": "此网络的记录尚未开始，因此无法显示任何内容。",
+      "unavailable": "暂时无法读取你的邀请。请稍后再试。",
+      "loading": "正在读取你的邀请…",
+      "connectBody": "请连接你用来邀请他人的钱包。此页面不需要金库。",
+      "assetUnknown": "未知资产"
+    },
+    "invite": {
+      "title": "你收到了邀请",
+      "invalid": "此邀请链接无效。请检查是否完整复制。",
+      "invitedBy": "邀请人",
+      "sentence": "你由 {{inviter}} 邀请。自你确认起 {{days}} 天内，对于你作为借款人开立的贷款，平台会从每笔贷款费用中高于基础费用的部分扣减 {{cut}}，平台还可能向邀请你的人支付其费用的一部分。你无需额外支付。这些费率由平台设定，可能会变化，包括变为零；费用只有基础费用的贷款不会获得扣减。此选择以后无法更改。",
+      "nothingOff": "你由 {{inviter}} 邀请。目前不会扣减任何费用。如果你确认，邀请你的人将被记录为你的邀请人，期限 {{days}} 天，在此期间平台可能会就你作为借款人开立的贷款向其支付费用的一部分。你无需额外支付。这些费率由平台设定，可能会变化。此选择以后无法更改。",
+      "confirm": "确认此邀请",
+      "confirming": "正在确认…",
+      "done": "完成。你的邀请已记录。",
+      "alreadyBound": "你钱包的邀请人是 {{inviter}}，有效至 {{date}}。",
+      "alreadyBoundEnded": "你钱包的邀请人曾是 {{inviter}}；该期间已于 {{date}} 结束。",
+      "alreadyBoundOther": "每个钱包只能指定一次邀请人，因此此链接无法更改。",
+      "hasBorrowed": "此钱包已作为借款人开立过贷款，因此不能再指定邀请人。",
+      "selfInvite": "这是你自己的邀请链接。请分享给其他人；钱包不能邀请自己。",
+      "connectBody": "请连接你将用来借款的钱包以确认邀请。",
+      "loading": "正在读取邀请…",
+      "unavailable": "暂时无法读取邀请详情。请稍后再试。",
+      "wrongNetwork": "请将钱包切换到受支持的网络后再确认。"
     }
   },
   "contractError": {

@@ -29,6 +29,7 @@ import {
   BookOpen,
   Droplets,
   LifeBuoy,
+  Users,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { getDeployment } from '@vaipakam/contracts/deployments';
@@ -90,6 +91,7 @@ const SECONDARY_NAV: NavItem[] = [
   { to: '/desk', labelKey: 'desk', icon: CandlestickChart, advancedOnly: true },
   { to: '/vpfi', labelKey: 'vpfi', icon: Coins, advancedOnly: true },
   { to: '/activity', labelKey: 'activity', icon: History, advancedOnly: true },
+  { to: '/invites', labelKey: 'invites', icon: Users },
   // UX-032 — the trust tool for exactly the off-platform user must be
   // reachable without a deep link.
   { to: '/nft', labelKey: 'nftVerifier', icon: BadgeCheck },
@@ -207,6 +209,8 @@ export function AppShell() {
     '/desk',
     '/vpfi',
     '/activity',
+    '/invites',
+    '/invite/',
     '/nft',
     '/settings',
     '/help',
