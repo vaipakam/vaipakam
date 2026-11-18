@@ -90,7 +90,7 @@ export const EXIT_WRITES: ReadonlySet<string> = new Set([
   // A past seller's interest claim (#1209): the interest they earned on a
   // position they sold, paid into their vault and withdrawn from there.
   'claimAsSeller',
-  'withdrawExtendReserve',
+  'withdrawLoanReserve',
   'claimInteractionRewards',
   // The held-apart balance alone (#2489 r2) — the same settled funds as the
   // combined claim, taken on their own.

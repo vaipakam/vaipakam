@@ -307,6 +307,7 @@ describe('storage-prefix coverage', () => {
     'src/pages/Desk.tsx': ['app.deskHowItWorksSeen'],
     'src/data/alerts.ts': ['app.alerts.'],
     'src/lib/notifSeen.ts': ['app.notif.lastseen.'],
+    'src/contracts/useTosNotice.ts': ['app.tosNotice.later.'],
     'src/lib/pendingMarker.ts': [
       'app.loanSaleOffer.',
       'app.offsetOffer.',

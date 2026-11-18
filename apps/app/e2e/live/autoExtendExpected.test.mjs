@@ -86,11 +86,11 @@ describe('the ordered plan', () => {
     expect(plan.offer('lender', 'tx', caps(L, 'setAutoExtendLenderCaps', 800, 88n)).ok).toBe(true);
     plan.arm('borrower');
     expect(plan.offer('borrower', 'tx', tx(B, WETH, 'approve', { spender: DIAMOND, amount: AMOUNT })).ok).toBe(true);
-    expect(plan.offer('borrower', 'tx', tx(B, DIAMOND, 'fundExtendReserve', { loanId: 1n, amount: AMOUNT })).ok).toBe(true);
-    expect(plan.offer('borrower', 'tx', tx(B, DIAMOND, 'withdrawExtendReserve', { account: B, loanId: 1n, amount: AMOUNT })).ok).toBe(true);
+    expect(plan.offer('borrower', 'tx', tx(B, DIAMOND, 'fundLoanReserve', { loanId: 1n, kind: 0, amount: AMOUNT })).ok).toBe(true);
+    expect(plan.offer('borrower', 'tx', tx(B, DIAMOND, 'withdrawLoanReserve', { account: B, loanId: 1n, kind: 0, amount: AMOUNT })).ok).toBe(true);
     // The second deposit with no approval (an allowance already covering it).
-    expect(plan.offer('borrower', 'tx', tx(B, DIAMOND, 'fundExtendReserve', { loanId: 1n, amount: AMOUNT })).ok).toBe(true);
-    expect(plan.offer('borrower', 'tx', tx(B, DIAMOND, 'withdrawExtendReserve', { account: B, loanId: 1n, amount: AMOUNT })).ok).toBe(true);
+    expect(plan.offer('borrower', 'tx', tx(B, DIAMOND, 'fundLoanReserve', { loanId: 1n, kind: 0, amount: AMOUNT })).ok).toBe(true);
+    expect(plan.offer('borrower', 'tx', tx(B, DIAMOND, 'withdrawLoanReserve', { account: B, loanId: 1n, kind: 0, amount: AMOUNT })).ok).toBe(true);
     expect(plan.complete()).toBe(true);
     expect(plan.steps().filter((s) => s.status === 'skipped').map((s) => s.id)).toEqual(['b-approve-reset', 'b-approve-reset-2', 'b-approve-set-2']);
   });
@@ -110,21 +110,21 @@ describe('the ordered plan', () => {
     expect(over.offer('borrower', 'tx', tx(B, WETH, 'approve', { spender: DIAMOND, amount: AMOUNT + 1n })).ok).toBe(false);
     const other = createWritePlan(reserveSteps());
     other.arm('borrower');
-    expect(other.offer('borrower', 'tx', tx(B, DIAMOND, 'fundExtendReserve', { loanId: 1n, amount: AMOUNT * 2n })).ok).toBe(false);
+    expect(other.offer('borrower', 'tx', tx(B, DIAMOND, 'fundLoanReserve', { loanId: 1n, kind: 0, amount: AMOUNT * 2n })).ok).toBe(false);
   });
 
   it('refuses a withdrawal for another account or of a different amount', () => {
     const w = steps().find((s) => s.id === 'b-withdraw');
-    expect(structMismatches(w.expected, tx(B, DIAMOND, 'withdrawExtendReserve', { account: L, loanId: 1n, amount: AMOUNT }))).not.toEqual([]);
-    expect(structMismatches(w.expected, tx(B, DIAMOND, 'withdrawExtendReserve', { account: B, loanId: 1n, amount: 1n }))).not.toEqual([]);
-    expect(structMismatches(w.expected, tx(B, DIAMOND, 'withdrawExtendReserve', { account: B, loanId: 1n, amount: AMOUNT }))).toEqual([]);
+    expect(structMismatches(w.expected, tx(B, DIAMOND, 'withdrawLoanReserve', { account: L, loanId: 1n, kind: 0, amount: AMOUNT }))).not.toEqual([]);
+    expect(structMismatches(w.expected, tx(B, DIAMOND, 'withdrawLoanReserve', { account: B, loanId: 1n, kind: 0, amount: 1n }))).not.toEqual([]);
+    expect(structMismatches(w.expected, tx(B, DIAMOND, 'withdrawLoanReserve', { account: B, loanId: 1n, kind: 0, amount: AMOUNT }))).toEqual([]);
   });
 
   it('refuses a reset that is not followed by its set', () => {
     const plan = createWritePlan(reserveSteps());
     plan.arm('borrower');
     expect(plan.offer('borrower', 'tx', tx(B, WETH, 'approve', { spender: DIAMOND, amount: 0n })).ok).toBe(true);
-    expect(plan.offer('borrower', 'tx', tx(B, DIAMOND, 'fundExtendReserve', { loanId: 1n, amount: AMOUNT })).ok).toBe(false);
+    expect(plan.offer('borrower', 'tx', tx(B, DIAMOND, 'fundLoanReserve', { loanId: 1n, kind: 0, amount: AMOUNT })).ok).toBe(false);
   });
 });
 
@@ -178,7 +178,7 @@ describe('reserveFigureMismatches', () => {
 });
 
 describe('fundedRowFor', () => {
-  const row = { kind: 'ExtendReserveFunded', loanId: 1, txHash: '0xAB', actor: B.toLowerCase() };
+  const row = { kind: 'LoanReserveFunded', loanId: 1, txHash: '0xAB', actor: B.toLowerCase() };
   it('finds the deposit by kind, loan, transaction and depositor', () => {
     expect(fundedRowFor([row], { loanId: 1, txHash: '0xab', holder: B })).toBe(row);
   });
@@ -186,7 +186,7 @@ describe('fundedRowFor', () => {
     expect(fundedRowFor([{ ...row, loanId: 2 }], { loanId: 1, txHash: '0xab', holder: B })).toBe(null);
     expect(fundedRowFor([{ ...row, txHash: '0xcd' }], { loanId: 1, txHash: '0xab', holder: B })).toBe(null);
     expect(fundedRowFor([{ ...row, actor: L }], { loanId: 1, txHash: '0xab', holder: B })).toBe(null);
-    expect(fundedRowFor([{ ...row, kind: 'ExtendReserveWithdrawn' }], { loanId: 1, txHash: '0xab', holder: B })).toBe(null);
+    expect(fundedRowFor([{ ...row, kind: 'LoanReserveWithdrawn' }], { loanId: 1, txHash: '0xab', holder: B })).toBe(null);
     expect(fundedRowFor(null, { loanId: 1, txHash: '0xab', holder: B })).toBe(null);
   });
 });

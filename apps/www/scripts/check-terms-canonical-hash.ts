@@ -11,7 +11,7 @@
  * frozen byte-copy of the canonical `docs/Terms/TermsOfService.md`
  * at the commit that published the version — and displays its
  * keccak256 as the version's `canonicalMdKeccak256` fingerprint, the
- * derivation the governance runbook proposes for `setCurrentTos`.
+ * derivation the governance runbook proposes for `publishTos` / `announceTos`.
  *
  * The first cut of this feature transcribed the document into JSX by
  * hand and hashed only the Markdown — and review found the
@@ -34,7 +34,7 @@
  *    is current. (Older versions' canonical files are superseded in
  *    `docs/` by design; their frozen copies are the record.)
  * 4. Registry versions are positive integers in the on-chain route
- *    domain (`setCurrentTos` takes a uint32, and
+ *    domain (`publishTos` / `announceTos` take a uint32, and
  *    `parseTermsVersionSlug` addresses only `v<positive integer>` —
  *    a fractional or out-of-range entry would publish a version the
  *    acceptance gate could never name; #2010 round 2 P2), unique and
@@ -97,7 +97,7 @@ const fail = (msg: string) => {
 };
 
 // (4) Registry shape: every version a positive integer within the
-// uint32 domain `setCurrentTos` accepts and the `v<N>` route can
+// uint32 domain `publishTos` / `announceTos` accept and the `v<N>` route can
 // address; unique, strictly ascending, last = current.
 const UINT32_MAX = 0xffffffff;
 for (const meta of TERMS_VERSION_METAS) {
@@ -108,7 +108,7 @@ for (const meta of TERMS_VERSION_METAS) {
   ) {
     fail(
       `registry version ${meta.version} is outside the addressable domain — ` +
-        `must be an integer in [1, 2^32-1]: LegalFacet.setCurrentTos takes a ` +
+        `must be an integer in [1, 2^32-1]: LegalFacet.publishTos and announceTos take a ` +
         `uint32 and parseTermsVersionSlug addresses only v<positive integer>, ` +
         `so this entry could never be named by the acceptance gate`,
     );

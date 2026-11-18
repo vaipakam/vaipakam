@@ -850,16 +850,32 @@ incident.
 
 ### Bumping the Terms of Service
 
-The on-chain ToS gate is the `(currentTosVersion, currentTosHash)`
-pair on `LegalFacet`. The retail launch ships with
-`currentTosVersion == 0`, which short-circuits `isAccepted(...)` to
-`true` for every wallet — the gate is dormant. Whenever the canonical
-ToS text changes (`docs/Terms/TermsOfService.md` is the source of
-truth; since #1998 `apps/www` RENDERS the text from a frozen
-byte-copy of it and serves every published version at a pinned route
-`/terms/v<N>` — there is no hand-mirrored transcription to keep in
-sync), governance must also bump the on-chain pair so users re-sign
-before the frontend re-opens.
+The Terms rule lives in `LegalFacet` (#3734). Each network keeps a
+LATEST version (with its content hash) and a MINIMUM version. A wallet
+may take on a new position when it accepted a version that came into
+force, numbered from the minimum to the latest; anything that reduces
+or ends a position is never asked. A fresh network has no version in
+force, which leaves every wallet current. Whenever the canonical ToS
+text changes (`docs/Terms/TermsOfService.md` is the source of truth;
+since #1998 `apps/www` RENDERS the text from a frozen byte-copy of it
+and serves every published version at a pinned route `/terms/v<N>` —
+there is no hand-mirrored transcription to keep in sync), governance
+publishes it on-chain as one of two kinds of change:
+
+- **Small change** — `publishTos(version, hash)`. The new version is
+  the latest at once; the minimum does not move, so nobody loses
+  standing and the app shows only an optional notice.
+- **Material change** — `announceTos(version, hash, effectiveAt)`, or
+  `announceTosMinimum(effectiveAt)` to raise the minimum to the version
+  that is already latest. The notice is at least `MIN_TOS_NOTICE`
+  (seven days; the first version on a network may take effect at once).
+  Until `effectiveAt` standing is unchanged and the app shows each
+  wallet the date; a wallet may accept the announced version early to
+  carry over with no gap. `withdrawTosAnnouncement()` cancels it before
+  then (a withdrawn new version's number stays spent).
+
+Only one announcement is open at a time, and every new version number
+must exceed every number used before.
 
 1. Edit the canonical text in `docs/Terms/TermsOfService.md`, then
    publish it as the NEW version in `apps/www`: copy the file
@@ -882,7 +898,7 @@ before the frontend re-opens.
    its base and rejects any change to a `v<M>.md` that exists there.
    A local typecheck alone therefore CANNOT confirm an archive edit
    is legal; only the base diff can, and it will refuse it.
-2. The content hash for `setCurrentTos` is the same value the site
+2. The content hash for `publishTos` / `announceTos` is the same value the site
    publishes: each `/terms/v<N>` page displays its "canonical source
    fingerprint" — keccak256 over the exact bytes of the version's
    frozen Markdown, which are the bytes the page renders — and the
@@ -898,7 +914,7 @@ before the frontend re-opens.
 3. **Deploy the updated `apps/www` FIRST** and verify `/terms/v<N>`
    serves the new text (and that its displayed fingerprint equals
    the hash the proposal will commit). Order matters because the
-   frontend only echoes `currentTosHash`, so activating the hash
+   frontend only echoes the on-chain hash, so activating the hash
    before the text is live would open a window where users record
    acceptance of terms the public site does not yet show — with
    versioned hosting that window fails SAFE rather than silently: the
@@ -906,27 +922,32 @@ before the frontend re-opens.
    read from chain, so a not-yet-published version renders an honest
    "not published here" explainer telling the user not to accept
    text they cannot read, instead of someone else's text. The
-   reverse interval (page live, `setCurrentTos` not yet executed) is
+   reverse interval (page live, the change not yet executed) is
    also harmless now: `/terms` already shows the new text, but the
    gate's pinned link still resolves to the exact old version its
    hash pins — the user reads what they record.
-4. Governance Safe schedules
-   `timelock.schedule(target=diamond, data=setCurrentTos(newVersion,
-   newHash), delay=48h)`. `newVersion` MUST strictly exceed
-   `currentTosVersion` — the setter rejects replays and downgrades.
-   (The 48h delay also gives step 3's deploy time to be verified
-   live before the hash flips.)
-5. Wait 48h. Execute. The Diamond emits `CurrentTosUpdated(prev,
-   newVersion, newHash)`. From this moment new acceptances bind to
-   the new hash, whose text has been publicly rendered since step 3.
-6. Existing on-chain positions are NOT affected — the gate is a
-   frontend-level UX, not a protocol-level deny. Users keep their
-   loans / claims / repays without re-signing; only NEW state-creating
-   entries through the Vaipakam frontend require a fresh acceptance.
+4. Governance Safe schedules the change through the timelock:
+   `timelock.schedule(target=diamond, data=publishTos(newVersion,
+   newHash), delay=48h)` for a small change, or
+   `data=announceTos(newVersion, newHash, effectiveAt)` for a material
+   one. Pick `effectiveAt` so it is still at least seven days after
+   the timelock EXECUTES, not after it is scheduled, or the call
+   reverts `TosNoticeTooShort`. (The 48h delay also gives step 3's
+   deploy time to be verified live before the hash goes on-chain.)
+5. Wait 48h. Execute. A small change emits `TosPublished(version,
+   hash, minVersion, at)`; a material one emits `TosAnnounced(version,
+   hash, effectiveAt, minVersion, newVersion)` and later
+   `TosVersionInForce(...)` when its time comes (the first transaction
+   that reads the Terms after `effectiveAt` settles it). Wallets may
+   accept the announced version from the moment it is announced.
+6. Existing positions are never closed by a Terms change. From the
+   minimum's move, a wallet that has not accepted the new minimum
+   takes on no new position (its offers and automatic lending stop
+   filling); repaying, claiming and withdrawing stay open.
 
-When `currentTosVersion == 0` (retail-launch state), step 1 ships
-without on-chain action. Future bumps from version 0 → version 1 are
-the moment the gate becomes active across all live wallets.
+On a fresh network step 1 ships with no on-chain action until the
+first version is published; that first `publishTos` or `announceTos`
+is the moment the rule starts asking wallets on that network.
 
 ### Enabling progressive risk access (#671)
 

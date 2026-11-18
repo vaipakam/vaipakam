@@ -46,6 +46,7 @@ import {
   useReserveOutcomes,
   windowPhase,
   withdrawWholeReserve,
+  PAYMENT_RESERVE,
   type AutoExtendState,
   type ExtendCaps,
   type ExtendFunding,
@@ -320,7 +321,8 @@ function ReservePanel({
         amount,
         ...approval.hooks(funding.asset),
       });
-      await write('fundExtendReserve', [BigInt(loanId), amount]);
+      // #3681 — the extension draws the loan's payment reserve (kind 0).
+      await write('fundLoanReserve', [BigInt(loanId), PAYMENT_RESERVE, amount]);
       approving = false;
       setInput('');
       // A deposit makes an earlier withdrawal's outcome stale.

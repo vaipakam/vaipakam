@@ -11,4 +11,3 @@ Two smaller changes came with it. The borrower's offset now passes the real refu
 Design: [TermsAcceptanceEnforcementDesign.md](../../DesignsAndPlans/TermsAcceptanceEnforcementDesign.md). Closes #3734.
 
 > Caveat: a lender's listed sale is covered for the buyer by the loan-creation check, but no test drives a listed sale's fill end to end (the harness cannot run that fill; the direct sale is driven end to end).
-> Caveat: the app, the website scripts and the app's end-to-end tests still name the retired setter and need the new publish and announce entries.
