@@ -21,6 +21,7 @@ import {
   ABI,
   CHANGE_FLOOR_ITEM,
   CHANGE_EVENTS,
+  changeApplied,
   changeOf,
   describeReport,
   PAYOUT_EVENT,
@@ -239,7 +240,8 @@ class FakeDiamond {
   private admitVault(vault: Address, fn: string, a: readonly any[]): () => void {
     const owner = this.ownerOfVault(vault);
     const acct = this.acct(owner);
-    const vlog = (eventName: string, args: Record<string, unknown>) => ({ ...logOf(eventName, args), address: vault });
+    // #3719: a vault's protection events name the account first.
+    const vlog = (eventName: string, args: Record<string, unknown>) => ({ ...logOf(eventName, { account: owner, ...args }), address: vault });
     if (!acct.enabled) throw revert('NotEnabled');
     switch (fn) {
       case 'finalizeSettings': {
@@ -432,6 +434,23 @@ describe('changeOf', () => {
 
   it('names the same events the step reads', () => {
     expect([...CHANGE_EVENTS].sort()).toEqual(['AllowlistAddRequested', 'ReplacementScheduled', 'SettingChangeRequested', 'SignerAddRequested', 'SignerRemoveRequested']);
+  });
+});
+
+describe('changeApplied', () => {
+  // #3719: every vault protection event names the account first, so a
+  // receipt carrying the right event for ANOTHER account is not this change.
+  const VAULT = '0x00000000000000000000000000000000000000c1' as Address;
+  const DIAMOND = '0x00000000000000000000000000000000000000d1' as Address;
+  const vlog = (account: Address, eventName: string, args: Record<string, unknown>) => ({ ...logOf(eventName, { account, ...args }), address: VAULT });
+  const allow = { t: 'allow', account: ALICE.toLowerCase(), other: DEST.toLowerCase(), at: 1n } as const;
+
+  it('counts the vault event that names the account', () => {
+    expect(changeApplied([vlog(ALICE, 'AllowlistAdded', { destination: DEST })], DIAMOND, VAULT, allow as never)).toBe(true);
+  });
+
+  it('does not count the same event for another account', () => {
+    expect(changeApplied([vlog(BOB, 'AllowlistAdded', { destination: DEST })], DIAMOND, VAULT, allow as never)).toBe(false);
   });
 });
 

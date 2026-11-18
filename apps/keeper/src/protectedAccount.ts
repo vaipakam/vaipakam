@@ -1140,8 +1140,9 @@ const VAULT_SETTING_ACTION: Readonly<Record<number, number>> = { 2: 2, 5: 4 };
 /** Whether the receipt's logs carry the event that APPLYING `c` emits. The
  *  co-sign switch-off is the Diamond's: `SettingChangeApplied` for the
  *  account, from this Diamond. Every other change is the account's vault's
- *  (#3379 B2), whose events name no account: they must come from `vault`
- *  itself — `ProtectionSettingApplied` with the matching action
+ *  (#3379 B2): its event must come from `vault` itself and name the account
+ *  (#3719 puts the account first in every protection event) —
+ *  `ProtectionSettingApplied` with the matching action
  *  (`ProtectionDisabled` for the switch-off), `AllowlistAdded`,
  *  `SignerAdded`, `SignerRemoved` for its destination or signer, or
  *  `PrimaryReplaced` naming the nominee as the new owner. Pure. Exported for
@@ -1158,10 +1159,11 @@ export function changeApplied(logs: readonly ReceiptLog[], diamond: Address, vau
       continue;
     }
     const a = ev.args;
+    if (lower(a.account as Address) !== c.account) continue;
     switch (c.t) {
       case 'setting':
         if (fromDiamond) {
-          if (ev.eventName === 'SettingChangeApplied' && lower(a.account as Address) === c.account && Number(a.kind) === c.kind) return true;
+          if (ev.eventName === 'SettingChangeApplied' && Number(a.kind) === c.kind) return true;
         } else if (c.kind === CHANGE_DISABLE) {
           if (ev.eventName === 'ProtectionDisabled') return true;
         } else if (ev.eventName === 'ProtectionSettingApplied' && Number(a.action) === VAULT_SETTING_ACTION[c.kind]) {
