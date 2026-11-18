@@ -34,7 +34,7 @@ test('the risk page is one tap from the footer, with no wallet, and states the s
 
 test('the Terms prompt shows the key risks above the accept step', async ({ launchWallet }) => {
   const sc = scenario({ lender: 'freshLender' });
-  await sc.diamondWrite('admin', 'setCurrentTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
+  await sc.diamondWrite('admin', 'publishTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
   const { page, flags } = await launchWallet('freshLender');
   const sent = flags.sentTransactions;
   await page.goto('/vault');

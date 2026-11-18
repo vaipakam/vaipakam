@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibRevert} from "../libraries/LibRevert.sol";
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
@@ -559,7 +560,10 @@ contract PrecloseOffsetFacet is
                 params
             )
         );
-        if (!success) revert OfferCreationFailed();
+        // #3734 — pass the creation's own refusal through (a borrower who
+        // has not accepted the Terms in force reads `TermsNotAccepted`, not
+        // a generic failure); the generic error only when it gave no reason.
+        LibRevert.bubbleOnFailureTyped(success, result, OfferCreationFailed.selector);
         newOfferId = abi.decode(result, (uint256));
     }
 

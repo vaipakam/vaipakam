@@ -174,7 +174,7 @@ test('a quantity of a multi-token is deposited; the collection approval is grant
 test('with Terms in force the deposit asks for them first; a paused protocol closes it and says what stays open', async ({ launchWallet }) => {
   test.setTimeout(180_000);
   const sc = scenario({ lender: 'freshLender' });
-  await sc.diamondWrite('admin', 'setCurrentTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
+  await sc.diamondWrite('admin', 'publishTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
 
   const { page, flags } = await launchWallet('freshLender');
   await page.goto('/vault');
@@ -218,7 +218,7 @@ test('protected mode is stated in the receipt, and Terms published during the re
   await expect(receipt).not.toContainText('To your wallet, at once');
   await fitsWidth(page);
 
-  await sc.diamondWrite('admin', 'setCurrentTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
+  await sc.diamondWrite('admin', 'publishTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
   const sent = flags.sentTransactions;
   await flow.getByRole('button', { name: 'Confirm in wallet' }).click();
   await expect(page.getByTestId('vault-deposit-terms-due')).toContainText('A Terms version you have not accepted is now in force', { timeout: 60_000 });

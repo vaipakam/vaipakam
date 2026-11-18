@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibTestProtectedCut} from "../helpers/LibTestProtectedCut.sol";
+import {LibTestTermsCut} from "../helpers/LibTestTermsCut.sol";
 import {LibTestPositionNFT} from "../helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "../helpers/LibTestVaultBeacon.sol";
@@ -461,7 +462,9 @@ contract InvariantBase is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getStandingInstructionFacetSelectors()
         });
-        IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
+        IDiamondCut(address(diamond)).diamondCut(
+            LibTestTermsCut.withTermsHost(LibTestProtectedCut.withProtected(cuts)), address(0), ""
+        ); // #3734
         LibTestForcedSalePreview.install(address(diamond));
         LibTestVaultBeacon.installDepository(address(diamond));
         // The payoff permit is pulled through Permit2; the mock moves tokens on the owner's

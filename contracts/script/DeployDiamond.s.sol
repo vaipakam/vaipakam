@@ -602,11 +602,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // carved off `ConfigFacet` to keep it under EIP-170. Sibling
         // facet sharing LibVaipakam storage.
         NumeraireConfigFacet numeraireConfigFacet = NumeraireConfigFacet(ArtifactDeploy.deploy(type(NumeraireConfigFacet).name));
-        // LegalFacet — Phase 4.1 Terms-of-Service acceptance gate. The
-        // gate stays disabled until governance writes a non-zero
-        // `currentTosVersion` via `LegalFacet.setCurrentTos`; cutting
-        // the facet now keeps that surface reachable on the deployed
-        // Diamond instead of leaving it as dead code.
+        // LegalFacet — Terms of Service acceptance and (#3734) the rule every
+        // opening step self-calls. Nothing is checked until governance
+        // announces a first version (`LegalFacet.announceTos`).
         LegalFacet legalFacet = LegalFacet(ArtifactDeploy.deploy(type(LegalFacet).name));
 
         console.log("All 35 facets deployed.");
@@ -2112,17 +2110,15 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      #3025 adds the origination check loan creation and the accept and
     ///      match previews call.
     function _getOfferPreviewSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](6);
         s[0] = OfferPreviewFacet.previewAccept.selector;
         s[1] = OfferPreviewFacet.requireCadenceAdmitted.selector;
         s[2] = OfferPreviewFacet.previewCadenceAdmission.selector;
         s[3] = OfferPreviewFacet.requireOriginationCadenceAdmitted.selector;
-        // #3358 — the match preview's origination checks (cadence, then guards).
-        s[4] = OfferPreviewFacet.previewOriginationRefusal.selector;
         // #3552 — the signed-order accept preview.
-        s[5] = OfferPreviewFacet.previewSignedOfferAccept.selector;
+        s[4] = OfferPreviewFacet.previewSignedOfferAccept.selector;
         // #3326 — the initiation risk bounds the match core reads by self-call.
-        s[6] = OfferPreviewFacet.initRiskBounds.selector;
+        s[5] = OfferPreviewFacet.initRiskBounds.selector;
     }
 
     /// @dev OfferMatchFacet — Range Orders Phase 1 bot-driven offer
@@ -3994,11 +3990,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      clear on a posted offer, the view, and the check loan creation
     ///      and the accept and match previews self-call.
     function _getOfferPriceGuardSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](5);
         s[0] = OfferPriceGuardFacet.armOfferPriceGuard.selector;
         s[1] = OfferPriceGuardFacet.setOfferPriceGuard.selector;
         s[2] = OfferPriceGuardFacet.getOfferPriceGuard.selector;
         s[3] = OfferPriceGuardFacet.requireOfferPriceGuardsClear.selector;
+        s[4] = OfferPriceGuardFacet.previewOriginationRefusal.selector;
     }
 
     function _getForcedSaleSelectors() internal pure returns (bytes4[] memory s) {
@@ -4416,17 +4413,28 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[8] = bytes4(keccak256("MAX_BATCH_IDS()"));
     }
 
-    /// Phase 4.1 — Terms-of-Service acceptance gate. The gate stays
-    /// disabled while `currentTosVersion == 0` (default at deploy);
-    /// once governance writes a non-zero version + content hash via
-    /// `setCurrentTos`, the frontend requires every wallet to call
-    /// `acceptTerms(version, hash)` before reaching `/app/*` routes.
+    /// Phase 4.1 / #3734 — Terms of Service: acceptance (own transaction or
+    /// signature), announced versions, and the rule every opening step
+    /// self-calls (`requireCurrentTerms`). Nothing is checked while no
+    /// version is in force (the default at deploy).
     function _getLegalSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](17);
         s[0] = LegalFacet.acceptTerms.selector;
-        s[1] = LegalFacet.setCurrentTos.selector;
-        s[2] = LegalFacet.hasAcceptedCurrentTerms.selector;
-        s[3] = LegalFacet.getCurrentTos.selector;
-        s[4] = LegalFacet.getUserTosAcceptance.selector;
+        s[1] = LegalFacet.announceTos.selector;
+        s[2] = LegalFacet.withdrawTosAnnouncement.selector;
+        s[3] = LegalFacet.requireCurrentTerms.selector;
+        s[4] = LegalFacet.isTermsCurrent.selector;
+        s[5] = LegalFacet.termsBlocker.selector;
+        s[6] = LegalFacet.hasAcceptedCurrentTerms.selector;
+        s[7] = LegalFacet.getCurrentTos.selector;
+        s[8] = LegalFacet.getAnnouncedTos.selector;
+        s[9] = LegalFacet.getUserTosAcceptance.selector;
+        s[10] = LegalFacet.getUserTosAcceptanceOf.selector;
+        s[11] = bytes4(keccak256("MIN_TOS_NOTICE()"));
+        s[12] = LegalFacet.publishTos.selector;
+        s[13] = LegalFacet.announceTosMinimum.selector;
+        s[14] = LegalFacet.getTosVersions.selector;
+        s[15] = LegalFacet.getTosVersionInForceAt.selector;
+        s[16] = LegalFacet.getUserAcceptedTosVersions.selector;
     }
 }

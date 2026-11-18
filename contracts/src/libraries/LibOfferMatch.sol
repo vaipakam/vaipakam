@@ -106,7 +106,11 @@ library LibOfferMatch {
         // reverts `LibTiming.OfferTermsTooFresh(offerId, readyAt)`. Transient:
         // the pair becomes matchable on its own a few seconds later. Appended
         // last to keep every prior ordinal ABI-stable.
-        TermsTooFresh
+        TermsTooFresh,
+        // #3734 — a party of the loan has not accepted the Terms in force
+        // (`LibTerms.TermsNotAccepted`); `LegalFacet.termsBlocker` names it.
+        // Reported by the match and intent previews. Appended.
+        TermsNotAccepted
     }
 
     /// @notice Structured return from `previewMatch`. Bots check

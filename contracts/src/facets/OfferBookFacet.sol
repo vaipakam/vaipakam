@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTerms} from "../libraries/LibTerms.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibRiskMath} from "../libraries/LibRiskMath.sol";
@@ -50,7 +51,14 @@ contract OfferBookFacet is IVaipakamErrors {
      */
     function openOfferOnBook(uint256 offerId, LibOfferAdmission.Route route) external {
         if (msg.sender != address(this)) revert UnauthorizedCrossFacetCall();
-        LibVaipakam.Offer storage offer = LibVaipakam.storageSlot().offers[offerId];
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Offer storage offer = s.offers[offerId];
+        // #3734 — an offer that would give its poster a new position (lend,
+        // borrow, rent, buy a loan, an offset) is a standing commitment, so
+        // its creator must have accepted the Terms in force. A loan-sale
+        // listing only ends the lister's position (its buyer is asked at the
+        // fill), so it is not asked.
+        if (!s.saleVehicleCreate) LibTerms.requireCurrent(offer.creator);
         LibOfferAdmission.enforceLifecycleFlex(offer, route);
         LibOfferAdmission.enforceBounds(offer, route);
         LibMetricsHooks.onOfferCreated(offer);

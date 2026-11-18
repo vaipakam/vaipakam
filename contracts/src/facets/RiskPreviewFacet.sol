@@ -12,6 +12,7 @@ import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
+import {OfferPriceGuardFacet} from "./OfferPriceGuardFacet.sol";
 import {OfferPreviewFacet} from "./OfferPreviewFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 
@@ -460,12 +461,14 @@ contract RiskPreviewFacet {
         // guard a view could read. Same entry the accept and match previews
         // use, so the three cannot disagree about a refusal.
         {
-            OfferPreviewFacet.OriginationRefusal refusal = OfferPreviewFacet(address(this))
-                .previewOriginationRefusal(counterpartyOfferId, res.matchAmount, 0);
-            if (refusal != OfferPreviewFacet.OriginationRefusal.None) {
-                res.matchError = refusal == OfferPreviewFacet.OriginationRefusal.CadenceNotAdmitted
+            OfferPriceGuardFacet.OriginationRefusal refusal = OfferPriceGuardFacet(address(this))
+                .previewOriginationRefusal(counterpartyOfferId, res.matchAmount, 0, lender, s.offers[counterpartyOfferId].creator);
+            if (refusal != OfferPriceGuardFacet.OriginationRefusal.None) {
+                res.matchError = refusal == OfferPriceGuardFacet.OriginationRefusal.CadenceNotAdmitted
                     ? LibOfferMatch.MatchError.CadenceNotAdmitted
-                    : LibOfferMatch.MatchError.PriceGuardRefused;
+                    : refusal == OfferPriceGuardFacet.OriginationRefusal.TermsNotAccepted
+                        ? LibOfferMatch.MatchError.TermsNotAccepted
+                        : LibOfferMatch.MatchError.PriceGuardRefused;
                 res.ok = false;
                 return res;
             }

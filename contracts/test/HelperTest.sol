@@ -70,6 +70,7 @@ import {LibTestProtectedCut} from "./helpers/LibTestProtectedCut.sol";
 // true strict superset of production (+ TestMutatorFacet test-only).
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {LegalFacet} from "../src/facets/LegalFacet.sol";
+import {LibTestTermsCut} from "./helpers/LibTestTermsCut.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {PayrollFacet} from "../src/facets/PayrollFacet.sol";
 import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
@@ -679,14 +680,13 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](6);
         selectors[0] = OfferPreviewFacet.previewAccept.selector;
         selectors[1] = OfferPreviewFacet.requireCadenceAdmitted.selector;
         selectors[2] = OfferPreviewFacet.previewCadenceAdmission.selector;
         selectors[3] = OfferPreviewFacet.requireOriginationCadenceAdmitted.selector;
-        selectors[4] = OfferPreviewFacet.previewOriginationRefusal.selector;
-        selectors[5] = OfferPreviewFacet.previewSignedOfferAccept.selector;
-        selectors[6] = OfferPreviewFacet.initRiskBounds.selector;
+        selectors[4] = OfferPreviewFacet.previewSignedOfferAccept.selector;
+        selectors[5] = OfferPreviewFacet.initRiskBounds.selector;
         return selectors;
     }
 
@@ -2852,11 +2852,12 @@ contract HelperTest {
     /// #3358 — the maker's price-move guard. Mirrors
     /// `DeployDiamond._getOfferPriceGuardSelectors`.
     function getOfferPriceGuardFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](5);
         selectors[0] = OfferPriceGuardFacet.armOfferPriceGuard.selector;
         selectors[1] = OfferPriceGuardFacet.setOfferPriceGuard.selector;
         selectors[2] = OfferPriceGuardFacet.getOfferPriceGuard.selector;
         selectors[3] = OfferPriceGuardFacet.requireOfferPriceGuardsClear.selector;
+        selectors[4] = OfferPriceGuardFacet.previewOriginationRefusal.selector;
     }
 
     /// #3359 - the forced-sale floor rule. Mirrors
@@ -3239,7 +3240,7 @@ contract HelperTest {
     }
 
     /// @dev Mirrors `_getLegalSelectors` at
-    ///      `contracts/script/DeployDiamond.s.sol` L1466 (5-entry list).
+    ///      `contracts/script/DeployDiamond.s.sol` (12-entry list, #3734).
     ///      ToS acceptance + admin-side current-ToS pointer
     ///      management.
     function getLegalFacetSelectors()
@@ -3247,12 +3248,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](5);
-        selectors[0] = LegalFacet.acceptTerms.selector;
-        selectors[1] = LegalFacet.setCurrentTos.selector;
-        selectors[2] = LegalFacet.hasAcceptedCurrentTerms.selector;
-        selectors[3] = LegalFacet.getCurrentTos.selector;
-        selectors[4] = LegalFacet.getUserTosAcceptance.selector;
+        selectors = LibTestTermsCut.legalSelectors();
         return selectors;
     }
 

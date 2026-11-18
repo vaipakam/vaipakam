@@ -2689,15 +2689,11 @@ library LibVaipakam {
         int256 minValidAnswer;
     }
 
-    /// @notice Per-user acceptance of the protocol's Terms of Service.
-    ///         Written once per user per ToS version by
-    ///         `LegalFacet.acceptTerms`. Frontends gate app entry until
-    ///         `version == currentTosVersion` AND `hash == currentTosHash`.
-    /// @dev `version == 0` is the "never accepted" marker — first-time
-    ///      visitors always need to sign to enter the app.
-    ///      `acceptedAt` is the block timestamp at acceptance; used by
-    ///      audit / compliance queries asking "when did this wallet
-    ///      accept version X?".
+    /// @notice A wallet's acceptance of one Terms of Service version: the
+    ///         version, its fingerprint and when it was first recorded.
+    ///         Written only by `LegalFacet` (#3734: by the wallet's own
+    ///         transaction or by its signature, submitted by anyone).
+    /// @dev `version == 0` is the "never accepted" marker.
     struct TosAcceptance {
         uint32 version;
         bytes32 hash;
@@ -3760,16 +3756,15 @@ library LibVaipakam {
         // check entirely (fail-open); a retail deploy must not route real
         // value while it is zero.
         address sanctionsOracle;
-        // ─── Legal: Terms of Service acceptance (Phase 4.1) ──────────────
-        // On-chain record of every wallet's acceptance of the current ToS
-        // version. `currentTosVersion` starts at 0 (no ToS in force), which
-        // the frontend treats as "gate disabled — app is still pre-launch
-        // / testnet"; once governance sets `currentTosVersion >= 1` via
-        // `LegalFacet.setCurrentTos`, every user wallet must sign an
-        // `acceptTerms(version, hash)` tx before the frontend unlocks
-        // `/app/*` routes. The version+hash pair in storage lets audit
-        // tooling reconstruct exactly which ToS text a given user agreed
-        // to and when.
+        // ─── Legal: Terms of Service acceptance (Phase 4.1, #3734) ───────
+        // The LATEST Terms version in force and its fingerprint (0 = none in
+        // force, and nothing is checked). The minimum version, the pending
+        // announcement and the per-version marks are the #3734 fields at the
+        // tail. A pending announcement counts from its time without any call
+        // and is folded into these fields by the next `LegalFacet` write.
+        // `tosAcceptance` is each wallet's LATEST acceptance, kept for
+        // readers; the gate reads the per-version record
+        // `tosAcceptedVersion`. Read through `LibTerms`.
         uint32 currentTosVersion;
         bytes32 currentTosHash;
         mapping(address => TosAcceptance) tosAcceptance;
@@ -8525,6 +8520,40 @@ library LibVaipakam {
         ///      `StandingInstructionFacet.setStandingInstructionConfig`.
         ///      Appended — append-only.
         StandingInstructionConfig standingInstructionCfg;
+        /// @dev #3734 — the MINIMUM Terms version in force: a wallet is
+        ///      current when it accepted a version that came into force,
+        ///      numbered from this one to the latest. A small change leaves it
+        ///      where it is; a material change raises it, after a notice.
+        ///      Appended — append-only.
+        uint32 minTosVersion;
+        /// @dev #3734 — the one pending announcement (its time is zero when
+        ///      none is pending): the version it concerns and that version's
+        ///      fingerprint, the time it comes into force, the minimum it sets
+        ///      then, and whether it introduces a NEW version (false when it
+        ///      only raises the minimum to the version already latest). Read
+        ///      through `LibTerms`, which counts it from its time without any
+        ///      call; written only by `LegalFacet`. Appended — append-only.
+        uint32 announcedTosVersion;
+        bytes32 announcedTosHash;
+        uint64 announcedTosEffectiveAt;
+        uint32 announcedTosMinVersion;
+        bool announcedTosIsNew;
+        /// @dev #3734 — the highest Terms version number ever used. A
+        ///      withdrawn new version's number is spent: the next must exceed
+        ///      it. Appended — append-only.
+        uint32 highestTosVersionAnnounced;
+        /// @dev #3734 — per wallet and Terms version, that wallet's
+        ///      acceptance of that version (zero when it never accepted it).
+        ///      Kept per version so accepting an announced version never
+        ///      overwrites the acceptance of the one in force. Written only by
+        ///      `LegalFacet`. Appended — append-only.
+        mapping(address => mapping(uint32 => TosAcceptance)) tosAcceptedVersion;
+        /// @dev #3734 — per Terms version, the time it came into force (zero
+        ///      for a version that never did: pending, or withdrawn). Only a
+        ///      version with this mark can make a wallet current, so a spent
+        ///      number inside the minimum-to-latest range never counts.
+        ///      Written only by `LegalFacet`. Appended — append-only.
+        mapping(uint32 => uint64) tosVersionInForceAt;
     }
 
     /// @notice #3681 — one loan's standing instructions, set by the

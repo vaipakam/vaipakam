@@ -1996,7 +1996,11 @@ contract OfferAcceptFacet is
         SignedOfferTakerNotAllowed,
         // The order names a co-signer, and the fill carries no live
         // co-signature from it.
-        SignedOfferCoSignatureInvalid
+        SignedOfferCoSignatureInvalid,
+        // #3734 — a party of the loan has not accepted the Terms in force
+        // (`LibTerms.TermsNotAccepted`); `LegalFacet.termsBlocker` names it.
+        // APPENDED.
+        TermsNotAccepted
     }
 
     /// @notice Projection of the loan that would land if the supplied

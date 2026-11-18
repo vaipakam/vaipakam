@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibInitiationFee} from "../libraries/LibInitiationFee.sol";
 import {LibPriceRead} from "../libraries/LibPriceRead.sol";
+import {LibTerms} from "../libraries/LibTerms.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
@@ -214,6 +215,11 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // transfer the lender relationship.  Skip liquidity, mixed-collateral,
         // and LTV/HF checks for these.
         bool isLenderSaleVehicle = s.saleOfferToLoanId[offerId] != 0;
+        // #3734 — both parties of a new loan must have accepted the Terms in
+        // force, whichever route opens it. A lender-sale vehicle's creator is
+        // the exiting lender, who is leaving, so only its buyer is asked.
+        if (!isLenderSaleVehicle) LibTerms.requireCurrent(offer.creator);
+        LibTerms.requireCurrent(acceptor);
 
         // If this is a lender-sale vehicle, the underlying live loan must still
         // be Active.  Otherwise the principal transfer in acceptOffer would send

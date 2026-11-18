@@ -5,6 +5,7 @@ import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
+import {LibTerms} from "../libraries/LibTerms.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
@@ -502,6 +503,11 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         address lenderNftOwner = LibPositionNFT.ownerOf(loan.lenderTokenId);
         LibVaipakam._assertNotSanctioned(borrowerNftOwner);
         LibVaipakam._assertNotSanctioned(lenderNftOwner);
+        // #3734 — an extension starts a new term, so both sides must have
+        // accepted the Terms in force: the wallet that manages each position
+        // (its holder, or the holder's replacement once one retired it).
+        LibTerms.requireCurrent(LibProtectedAccount.manager(borrowerNftOwner));
+        LibTerms.requireCurrent(LibProtectedAccount.manager(lenderNftOwner));
 
         // ── Both-side cap consent + staleness fence ──────────────────
         LibVaipakam.AutoExtendCaps storage borrowerCaps =

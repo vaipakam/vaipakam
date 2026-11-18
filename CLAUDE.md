@@ -400,7 +400,8 @@ runs half of it on old code:
   the obligation handover (the incoming borrower's offer). The offer book records a guard armed before posting,
   and the accept, match and standing-intent previews ask the same entry
   (the match preview and `RiskPreviewFacet.previewIntent` through
-  `OfferPreviewFacet.previewOriginationRefusal`). An unguarded fill
+  `OfferPriceGuardFacet.previewOriginationRefusal`, which #3734 moved off
+  OfferPreviewFacet for EIP-170 room and which also reports a Terms refusal). An unguarded fill
   makes no self-call, so a Diamond without the host fills unguarded offers
   as before, but a guarded offer's fill reverts `FunctionDoesNotExist` there
   (a hard revert, never an unchecked fill). The calm rule is
@@ -503,6 +504,21 @@ runs half of it on old code:
   and need the manual pause, and `RedeployFacets` / `ReplaceStaleFacets`
   refuse a Diamond that does not already route `newLoanInitLtvCapBps`
   (`PredatesCollateralConcentration`).
+
+- **LegalFacet + every facet that opens a position (#3734).** The Terms
+  rule lives once, in `LibTerms`, and its one runtime host is
+  `LegalFacet.requireCurrentTerms`: LoanFacet (both parties), the two
+  position migrations in `LibLoan` (every facet inlining them), OfferBookFacet
+  (posting, sale listings exempt), LenderIntentFacet,
+  StandingInstructionFacet and AutoLifecycleFacet (the in-place extension)
+  self-call it, and the previews ask `termsBlocker`. A caller refreshed
+  without the host reverts `FunctionDoesNotExist` on every opening step (a
+  hard revert, never an unchecked position); a hand-built test Diamond adds
+  it with `LibTestTermsCut.withTermsHost`. A loan's `startTime` and
+  `durationDays` may be written only by the three steps that ask the rule
+  (origination, the in-place extension, the obligation handover);
+  `check-loan-start-term-writer.mjs`, pre-deploy step 1d4, refuses any other
+  write. Reaches a chain by fresh deploy.
 
 - **The position state guard (#3710).** Every value-out marks the loan's
   position tokens through `LibPositionNFT` (a per-token state number, a wait

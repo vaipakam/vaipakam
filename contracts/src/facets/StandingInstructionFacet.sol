@@ -16,6 +16,7 @@ import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
+import {LibTerms} from "../libraries/LibTerms.sol";
 import {LibPriceRead} from "../libraries/LibPriceRead.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
@@ -378,6 +379,8 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active) revert IVaipakamErrors.LoanNotActive();
         LibAuth.requirePositionManager(loan.borrowerTokenId);
+        // #3734 — setting a standing instruction is a standing commitment.
+        LibTerms.requireCurrent(msg.sender);
         if (loan.assetType != LibVaipakam.AssetType.ERC20) {
             revert StandingInstructionNotOffered(loanId, INSTRUCTION_REPAY_AT_DUE);
         }

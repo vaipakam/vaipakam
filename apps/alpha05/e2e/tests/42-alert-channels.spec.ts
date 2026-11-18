@@ -210,7 +210,7 @@ test('a declined signature sends nothing, and a request already used is refused'
 test('with Terms in force, linking Telegram asks for them first; switching off never does', async ({ launchWallet }) => {
   test.setTimeout(180_000);
   const sc = scenario({ lender: 'freshLender' });
-  await sc.diamondWrite('admin', 'setCurrentTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
+  await sc.diamondWrite('admin', 'publishTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
   const { page, flags } = await launchWallet('freshLender');
   await openChannels(page);
 
