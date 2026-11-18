@@ -2913,6 +2913,29 @@ above. Each resolves here, so a route reviewer needs no private file:
   resumes: a connect the picker started (a phone connection prepares its
   link as the picker opens) can stay pending after the picker closes, and
   must never leave the visitor with a button that cannot be pressed.
+- **RB-TERMS-CONNECT** — The Terms come before the wallet, and the wallet
+  records its own acceptance (#3734, owner decisions 2026-11-18). Connect
+  opens the Terms in force on the network the screen describes: the
+  version, the whole fingerprint, the link pinned to that version, the
+  privacy notice, the key risks and a box to tick, with a plain statement
+  that connecting a wallet means agreeing and that the agreement is
+  recorded on-chain by a transaction the wallet pays for. The wallet list
+  opens only from "Agree and connect" once the box is ticked; "Not now"
+  connects nothing; no Terms in force opens the list at once; a failed read
+  connects nothing. As soon as a wallet is connected on a served network
+  whose Terms it has not accepted (first connection, another network, a new
+  version), the Terms review opens by itself for its own `acceptTerms`
+  transaction. No free signature and no submission by anyone else: the
+  platform and its keeper never record an acceptance for a wallet. Until the
+  acceptance is read back from the chain, every page but the public ones
+  shows a hold in place of its body: checking, unreadable with a retry (never
+  "accepted"), or not accepted with three choices: accept, only close out
+  what the wallet has, or disconnect. The close-out choice is the exception
+  the Terms never take away (design section 3.2): repay, close, add
+  collateral, claim, withdraw and cancel stay open with a standing notice,
+  and every action that takes on a position keeps its own Terms gate, as the
+  contract does. A wallet short of gas for the fee is told the fee it needs
+  and what it holds before it tries.
 - **RB-ACTIVITY** — The Activity page (#3677) reads one wallet's history
   from the index's own wallet filter, never by paging the whole network's feed
   and keeping the rows that look like the wallet's. The index answers with the
