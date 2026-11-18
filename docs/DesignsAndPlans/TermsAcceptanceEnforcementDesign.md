@@ -26,6 +26,7 @@ has agreed to anything.
 | 2026-11-18 | The contracts refuse a new position for a wallet that has not accepted the Terms in force. |
 | 2026-11-18 | The app takes the acceptance at Connect. Connecting a wallet means agreeing to the Terms, and a wallet that has not accepted is not connected to the app, not even to browse it. |
 | 2026-11-18 | **The acceptance is the wallet's own paid transaction, sent right after it connects.** There is no free signature, and nobody else may record an acceptance for a wallet: not the keeper, not a counterparty, not a relayer. A paid step also keeps throwaway wallets out, and a record that someone else submitted could be questioned. |
+| 2026-11-18 | **A wallet accepts on each network by its own transaction there.** An acceptance is not carried from one network to another by a cross-chain message. |
 | 2026-11-18 | A new version is announced with a notice period. After it, a wallet that has not accepted takes on no new position; its commitments wait and are not cancelled (section 5). |
 
 ## 3. The rule
@@ -314,8 +315,14 @@ date their commitments stop filling.
 7. **A new version in force at once.** Declined by the owner (2026-11-18):
    every Auto-lend and every standing offer would stop in the same block,
    with no time to accept.
-8. **One acceptance for all networks.** Not possible with an on-chain record
-   and no relayer: each network holds its own.
+8. **One acceptance for all networks, carried to the others by a cross-chain
+   message.** Declined by the owner (2026-11-18): the wallet accepts on each
+   network by its own transaction. A carried record would be written on the
+   other network by the platform's messenger and not by the wallet, which is
+   the kind of record the owner already declined (alternative 2). It would
+   also make opening a position on one network depend on a message from
+   another, and add a message fee and a delay to something the wallet can do
+   itself in one step.
 9. **Require acceptance of matchers and liquidators.** Not taken: settling a
    loan must stay open to anyone, and they hold no position.
 
