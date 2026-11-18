@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTerms} from "./LibTerms.sol";
 import {LibProtectedAccount} from "./LibProtectedAccount.sol";
 import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
@@ -37,6 +38,9 @@ library LibLoan {
         // taking over a lender position is one: refused here, the one place
         // a lender position changes hands, so every sale route holds it.
         LibProtectedAccount.requireCanOpen(newLender);
+        // #3734 — and must have accepted the Terms in force; the exiting
+        // seller is not asked.
+        LibTerms.requireCurrent(newLender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         _requirePositionMayLeave(loan.lenderTokenId);
@@ -268,6 +272,8 @@ library LibLoan {
         // Same rule as {migrateLenderPosition}: a locked or replaced
         // protected account takes over no obligation.
         LibProtectedAccount.requireCanOpen(newBorrower);
+        // #3734 — the incoming borrower must have accepted the Terms in force.
+        LibTerms.requireCurrent(newBorrower);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         _requirePositionMayLeave(loan.borrowerTokenId);

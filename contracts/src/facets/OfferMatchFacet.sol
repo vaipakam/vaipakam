@@ -8,6 +8,7 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable, LibPausable} from "../libraries/LibPausable.sol";
 import {LibOfferMatchExecute} from "../libraries/LibOfferMatchExecute.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
+import {OfferPriceGuardFacet} from "./OfferPriceGuardFacet.sol";
 import {OfferPreviewFacet} from "./OfferPreviewFacet.sol";
 
 /**
@@ -116,11 +117,19 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // its cadence and asks both makers' price-move guards, after every
         // check above. Asked of the preview entry that runs those same checks.
         if (result.errorCode == LibOfferMatch.MatchError.Ok) {
-            OfferPreviewFacet.OriginationRefusal r = OfferPreviewFacet(address(this))
-                .previewOriginationRefusal(borrowerOfferId, result.matchAmount, lenderOfferId);
-            if (r == OfferPreviewFacet.OriginationRefusal.CadenceNotAdmitted) {
+            LibVaipakam.Storage storage st = LibVaipakam.storageSlot();
+            OfferPriceGuardFacet.OriginationRefusal r = OfferPriceGuardFacet(address(this)).previewOriginationRefusal(
+                borrowerOfferId,
+                result.matchAmount,
+                lenderOfferId,
+                st.offers[lenderOfferId].creator,
+                st.offers[borrowerOfferId].creator
+            );
+            if (r == OfferPriceGuardFacet.OriginationRefusal.TermsNotAccepted) {
+                result.errorCode = LibOfferMatch.MatchError.TermsNotAccepted;
+            } else if (r == OfferPriceGuardFacet.OriginationRefusal.CadenceNotAdmitted) {
                 result.errorCode = LibOfferMatch.MatchError.CadenceNotAdmitted;
-            } else if (r == OfferPreviewFacet.OriginationRefusal.PriceGuardRefused) {
+            } else if (r == OfferPriceGuardFacet.OriginationRefusal.PriceGuardRefused) {
                 result.errorCode = LibOfferMatch.MatchError.PriceGuardRefused;
             }
         }

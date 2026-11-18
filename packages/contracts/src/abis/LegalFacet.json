@@ -1,6 +1,32 @@
 [
   {
     "type": "function",
+    "name": "MAX_TOS_WINDOW",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MIN_TOS_NOTICE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "acceptTerms",
     "inputs": [
       {
@@ -16,6 +42,75 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "announceTos",
+    "inputs": [
+      {
+        "name": "version",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "hash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "effectiveAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "announceTosMinimum",
+    "inputs": [
+      {
+        "name": "effectiveAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getAnnouncedTos",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "version",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "hash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "effectiveAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "minVersion",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "newVersion",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -37,12 +132,114 @@
   },
   {
     "type": "function",
+    "name": "getTosVersionInForceAt",
+    "inputs": [
+      {
+        "name": "version",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "at",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getTosVersions",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "latest",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "latestHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "minimum",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getUserAcceptedTosVersions",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "versions",
+        "type": "uint32[]",
+        "internalType": "uint32[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getUserTosAcceptance",
     "inputs": [
       {
         "name": "user",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "acceptance",
+        "type": "tuple",
+        "internalType": "struct LibVaipakam.TosAcceptance",
+        "components": [
+          {
+            "name": "version",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "hash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "acceptedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getUserTosAcceptanceOf",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "version",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "outputs": [
@@ -92,15 +289,34 @@
   },
   {
     "type": "function",
-    "name": "setCurrentTos",
+    "name": "isTermsCurrent",
     "inputs": [
       {
-        "name": "newVersion",
+        "name": "wallet",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "publishTos",
+    "inputs": [
+      {
+        "name": "version",
         "type": "uint32",
         "internalType": "uint32"
       },
       {
-        "name": "newHash",
+        "name": "hash",
         "type": "bytes32",
         "internalType": "bytes32"
       }
@@ -109,29 +325,53 @@
     "stateMutability": "nonpayable"
   },
   {
-    "type": "event",
-    "name": "CurrentTosUpdated",
+    "type": "function",
+    "name": "requireCurrentTerms",
     "inputs": [
+      {
+        "name": "wallet",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "termsBlocker",
+    "inputs": [
+      {
+        "name": "a",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "b",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "wallet",
+        "type": "address",
+        "internalType": "address"
+      },
       {
         "name": "version",
         "type": "uint32",
-        "indexed": false,
         "internalType": "uint32"
-      },
-      {
-        "name": "newVersion",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "newHash",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
       }
     ],
-    "anonymous": false
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "withdrawTosAnnouncement",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "event",
@@ -165,6 +405,136 @@
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "TosAnnounced",
+    "inputs": [
+      {
+        "name": "version",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "hash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "effectiveAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "minVersion",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "newVersion",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TosAnnouncementWithdrawn",
+    "inputs": [
+      {
+        "name": "version",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "hash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "newVersion",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TosPublished",
+    "inputs": [
+      {
+        "name": "version",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "hash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "minVersion",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "at",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TosVersionInForce",
+    "inputs": [
+      {
+        "name": "version",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "hash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "effectiveAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "minVersion",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "newVersion",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "error",
     "name": "AccessControlUnauthorizedAccount",
     "inputs": [
@@ -189,5 +559,74 @@
     "type": "error",
     "name": "InvalidTosVersion",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoTosAnnouncement",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TermsNotAccepted",
+    "inputs": [
+      {
+        "name": "wallet",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "version",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TosAnnouncementPending",
+    "inputs": [
+      {
+        "name": "version",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TosMinimumAlreadyLatest",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TosNoticeTooShort",
+    "inputs": [
+      {
+        "name": "effectiveAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "earliest",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TosVersionWindowTooWide",
+    "inputs": [
+      {
+        "name": "version",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "minimum",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
   }
 ]

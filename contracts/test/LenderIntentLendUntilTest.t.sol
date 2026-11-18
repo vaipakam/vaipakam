@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibIntentFill} from "../src/libraries/LibIntentFill.sol";
+import {LenderIntentViewFacet} from "../src/facets/LenderIntentViewFacet.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -12,6 +13,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
@@ -25,6 +27,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 import {LibTestPayout} from "./helpers/LibTestPayout.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
 import {AutoLifecycleSettingsFacet} from "../src/facets/AutoLifecycleSettingsFacet.sol";
 
@@ -181,11 +184,11 @@ contract LenderIntentLendUntilTest is SetupTest {
     }
 
     function _intentCapital() internal view returns (uint256) {
-        return LenderIntentFacet(address(diamond)).getLenderIntentCapital(lender, mockERC20, mockCollateralERC20, 0);
+        return LenderIntentViewFacet(address(diamond)).getLenderIntentCapital(lender, mockERC20, mockCollateralERC20, 0);
     }
 
     function _livePrincipal() internal view returns (uint256) {
-        return LenderIntentFacet(address(diamond)).getLenderIntentLivePrincipal(lender, mockERC20, mockCollateralERC20, 0);
+        return LenderIntentViewFacet(address(diamond)).getLenderIntentLivePrincipal(lender, mockERC20, mockCollateralERC20, 0);
     }
 
     function _vaultHolding(address user) internal view returns (uint256) {
@@ -201,7 +204,7 @@ contract LenderIntentLendUntilTest is SetupTest {
         _setIntent(0, false);
         _fundIntent(PRINCIPAL);
         (LibMetricsTypes.LenderIntentSummary[] memory rows,) =
-            LenderIntentFacet(address(diamond)).getActiveLenderIntents(0, 10);
+            LenderIntentViewFacet(address(diamond)).getActiveLenderIntents(0, 10);
         assertEq(rows.length, 1, "listed");
         assertEq(rows[0].lendUntil, 0, "no end date in the feed");
         assertFalse(rows[0].acceptsProRata, "no pro-rata opt-in in the feed");
@@ -220,7 +223,7 @@ contract LenderIntentLendUntilTest is SetupTest {
         _assertPastLendUntil(tooLong, PRINCIPAL, 31, lendUntil);
         assertGt(_fill(fits, PRINCIPAL), 0, "the 30-day term fits");
         LibVaipakam.LenderIntent memory i =
-            LenderIntentFacet(address(diamond)).getLenderIntent(lender, mockERC20, mockCollateralERC20, 0);
+            LenderIntentViewFacet(address(diamond)).getLenderIntent(lender, mockERC20, mockCollateralERC20, 0);
         assertEq(i.lendUntil, lendUntil, "stored");
     }
 
@@ -278,7 +281,7 @@ contract LenderIntentLendUntilTest is SetupTest {
         RepayFacet(address(diamond)).repayLoan(loanId);
 
         (LibMetricsTypes.RollableIntentLoan[] memory rows, uint256 total) =
-            LenderIntentFacet(address(diamond)).getRollableIntentLoans(0, 10);
+            LenderIntentViewFacet(address(diamond)).getRollableIntentLoans(0, 10);
         assertEq(total, 1, "still registered");
         assertEq(rows.length, 0, "an ended intent offers no roll");
 
@@ -286,13 +289,13 @@ contract LenderIntentLendUntilTest is SetupTest {
         vm.expectRevert(LenderIntentFacet.LenderIntentEnded.selector);
         LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
 
-        (, uint256 owed,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 owed,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertGt(owed, PRINCIPAL, "principal plus interest owed");
         // The claim settles into the position holder's vault (here the same
         // vault the repayment landed in), as free balance, not intent capital.
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
-        (,, bool claimed) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (,, bool claimed) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertTrue(claimed, "the normal claim consumed the lender claim");
         assertGe(_vaultHolding(lender), owed, "the whole claim sits in the lender's vault");
         assertEq(_intentCapital(), 0, "nothing re-committed behind the ended intent");
@@ -306,17 +309,17 @@ contract LenderIntentLendUntilTest is SetupTest {
         _setIntent(uint64(start + 2 days + SLACK), false);
         _fundIntent(PRINCIPAL);
         (LibMetricsTypes.LenderIntentSummary[] memory rows, uint256 total) =
-            LenderIntentFacet(address(diamond)).getActiveLenderIntents(0, 10);
+            LenderIntentViewFacet(address(diamond)).getActiveLenderIntents(0, 10);
         assertEq(total, 1, "registered");
         assertEq(rows.length, 1, "listed while open");
         assertEq(rows[0].lendUntil, uint64(start + 2 days + SLACK), "summary carries the date");
 
         vm.warp(start + 1 days + SLACK);
-        (rows,) = LenderIntentFacet(address(diamond)).getActiveLenderIntents(0, 10);
+        (rows,) = LenderIntentViewFacet(address(diamond)).getActiveLenderIntents(0, 10);
         assertEq(rows.length, 1, "exactly one day left still lists");
 
         vm.warp(start + 1 days + SLACK + 1);
-        (rows, total) = LenderIntentFacet(address(diamond)).getActiveLenderIntents(0, 10);
+        (rows, total) = LenderIntentViewFacet(address(diamond)).getActiveLenderIntents(0, 10);
         assertEq(total, 1, "still registered, capital withdrawable");
         assertEq(rows.length, 0, "a closed window is not listed");
     }
@@ -419,7 +422,7 @@ contract LenderIntentLendUntilTest is SetupTest {
         vm.prank(b);
         RepayFacet(address(diamond)).repayLoan(loanId);
         uint256 arrived = _vaultHolding(lender) - vaultBefore;
-        (, uint256 owed,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 owed,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertEq(owed, arrived, "the claim is what arrived");
         // Ten days of a 30-day term at 5-6% APR: well under full-term interest.
         assertLt(arrived - PRINCIPAL, (PRINCIPAL * 600 * 30) / (10_000 * 365), "accrued interest only");
@@ -495,7 +498,7 @@ contract LenderIntentLendUntilTest is SetupTest {
         vm.warp(vm.getBlockTimestamp() + 5 days);
         vm.prank(b);
         RepayFacet(address(diamond)).repayLoan(loanId);
-        (, uint256 owed,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 owed,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertLt(owed, PRINCIPAL, "the claim carries only the remainder");
         assertGt(owed, PRINCIPAL - 400 ether, "remainder plus its interest");
 
@@ -516,7 +519,7 @@ contract LenderIntentLendUntilTest is SetupTest {
         uint256 held = _lenderHeld(loanId);
         uint256 capitalBefore = _intentCapital();
         (LibMetricsTypes.RollableIntentLoan[] memory rows,) =
-            LenderIntentFacet(address(diamond)).getRollableIntentLoans(0, 50);
+            LenderIntentViewFacet(address(diamond)).getRollableIntentLoans(0, 50);
         assertEq(rows.length, 1, "the open loan with a held payment is a candidate");
         assertTrue(rows[0].open, "marked open");
         assertEq(rows[0].held, held, "with what is held");
@@ -575,7 +578,7 @@ contract LenderIntentLendUntilTest is SetupTest {
     }
 
     function _lenderHeld(uint256 loanId) internal view returns (uint256 amount) {
-        (, , , , , , amount, ) = ClaimFacet(address(diamond)).getClaimable(loanId, true);
+        (, , , , , , amount, ) = ClaimViewFacet(address(diamond)).getClaimable(loanId, true);
     }
 
     // ─── #3618 follow-up — the lend-until time bounds an extension ──────
@@ -600,7 +603,7 @@ contract LenderIntentLendUntilTest is SetupTest {
         ERC20Mock(mockERC20).mint(b, 50 ether);
         vm.startPrank(b);
         ERC20(mockERC20).approve(address(diamond), 50 ether);
-        AutoLifecycleFacet(address(diamond)).fundExtendReserve(loanId, 50 ether);
+        StandingInstructionFacet(address(diamond)).fundLoanReserve(loanId, 0, 50 ether);
         vm.stopPrank();
     }
 

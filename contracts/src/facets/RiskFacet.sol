@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
@@ -32,6 +33,7 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
  // For NFT updates/burns
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
+import {CollateralLienFacet} from "./CollateralLienFacet.sol";
  // For transfers
 import {ProfileFacet} from "./ProfileFacet.sol";
  // For KYC if high-value
@@ -1077,7 +1079,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // from `now`, and a full-term minimum runs to maturity to the second
         // (#3169). The pre-partial coupon was already settled interest-first
         // from the swap proceeds above.
-        loan.collateralAmount -= swappedCollateral;
+        LibLoanCollateral.reduce(loan, swappedCollateral);
         LibInterestLedger.reducePrincipal(s, loan, principalRepaid, principalRepaid);
         // #3169 — only the clock's start moves; the residual's full-term
         // minimum runs to the term's end to the second
@@ -1433,6 +1435,6 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     }
 
     function _decrementLienAtPartialLiq(uint256 loanId, uint256 consumed) private {
-        _callEncumb2(EncumbranceMutateFacet.decrementCollateralLien.selector, loanId, consumed);
+        _callEncumb2(CollateralLienFacet.decrementCollateralLien.selector, loanId, consumed);
     }
 }

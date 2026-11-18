@@ -157,7 +157,7 @@ contract VaipakamNFTFacet is DiamondReentrancyGuard, DiamondAccessControl {
      */
     function checkPositionTransfer(address, address from, address to, uint256 tokenId) external nonReentrant {
         if (msg.sender != LibPositionNFT._storage().core) revert NotAuthorized();
-        (uint64 valueOutBlock, uint64 readyAt) = LibPositionNFT.cooldownOf(tokenId);
+        (, uint64 valueOutBlock, uint64 readyAt) = LibPositionNFT.stateOf(tokenId);
         if (valueOutBlock != 0 && (block.number <= valueOutBlock || block.timestamp < readyAt)) {
             revert PositionCoolingDown(tokenId, valueOutBlock, readyAt);
         }
@@ -202,7 +202,7 @@ contract VaipakamNFTFacet is DiamondReentrancyGuard, DiamondAccessControl {
      *         Every marketplace fill of a seller who emptied the position
      *         just before it therefore reverts.
      * @dev    Admin only (the timelocked admin role). Bounded to
-     *         1..600 seconds; the default, until set, is 5.
+     *         1..600 seconds; the default, until set, is 60 (#3710).
      */
     function setPositionTransferCooldownSec(uint32 sec) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         if (sec < LibPositionNFT.MIN_TRANSFER_COOLDOWN_SEC || sec > LibPositionNFT.MAX_TRANSFER_COOLDOWN_SEC) {
@@ -210,6 +210,50 @@ contract VaipakamNFTFacet is DiamondReentrancyGuard, DiamondAccessControl {
         }
         LibPositionNFT._storage().transferCooldownSec = sec;
         emit PositionTransferCooldownSet(sec);
+    }
+
+    /// @notice #3710 — a long wait outside {LibPositionNFT.MIN_OWN_MOVE_WAIT_SEC}..
+    ///         {LibPositionNFT.MAX_OWN_MOVE_WAIT_SEC}.
+    error InvalidPositionOwnMoveWait(uint32 sec);
+    /// @notice #3710 — the wait after the holder's own move changed.
+    event PositionOwnMoveWaitSet(uint32 sec);
+
+    /**
+     * @notice Set how long a position NFT may not move after its holder's own
+     *         move for itself (#3710): a payout to the position the caller
+     *         holds (a collateral withdrawal, a claim) or a change to the
+     *         caller's own offer. Long enough for marketplaces to act on the
+     *         metadata refresh before anyone can buy at a stale figure.
+     * @dev    Admin only (the timelocked admin role). Bounded to 60..3600
+     *         seconds; the default, until set, is 900.
+     */
+    function setPositionOwnMoveWaitSec(uint32 sec) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        if (sec < LibPositionNFT.MIN_OWN_MOVE_WAIT_SEC || sec > LibPositionNFT.MAX_OWN_MOVE_WAIT_SEC) {
+            revert InvalidPositionOwnMoveWait(sec);
+        }
+        LibPositionNFT._storage().ownMoveWaitSec = sec;
+        emit PositionOwnMoveWaitSet(sec);
+    }
+
+    /// @notice #3710 — mark offers `offerA` and `offerB`'s own tokens (0 =
+    ///         none): a change to an offer, a match drawing on it, or its end.
+    ///         Each token's state number goes up and it takes the short wait,
+    ///         or the long one when the caller of the action holds it; one
+    ///         ERC-4906 refresh covers both.
+    /// @dev    Diamond-internal: reached only by self-call
+    ///         ({LibPositionNFT.markOffersValueOut}), so the mark is compiled
+    ///         once rather than into every match host.
+    function markOfferPositions(uint256 offerA, uint256 offerB) external {
+        _enforceAuthorizedCaller();
+        LibPositionNFT.markOffersValueOutHere(offerA, offerB);
+    }
+
+    /// @notice #3710 — the wait after the holder's own move, in seconds, and
+    ///         its bounds.
+    function positionOwnMoveWaitSec() external view returns (uint32 sec, uint32 minSec, uint32 maxSec) {
+        return (
+            LibPositionNFT.ownMoveWaitSec(), LibPositionNFT.MIN_OWN_MOVE_WAIT_SEC, LibPositionNFT.MAX_OWN_MOVE_WAIT_SEC
+        );
     }
 
     /// @notice The transfer cooldown in force, in seconds, and its bounds.
@@ -222,13 +266,31 @@ contract VaipakamNFTFacet is DiamondReentrancyGuard, DiamondAccessControl {
     }
 
     /**
-     * @notice When `tokenId` may next move: the block of the latest value-out
-     *         on its position (it may not move in that block) and the
-     *         earliest time after it. Both 0 when nothing has left it. A loan
-     *         token reads its loan; only an offer's own token reads the offer.
+     * @notice `tokenId`'s position state (#3710): its state number (how many
+     *         times value has left the position; it only goes up), the block
+     *         of the latest value-out (the token may not move in it) and the
+     *         earliest time the token may move after it. All 0 when nothing
+     *         has left it. A loan token reads its loan; only an offer's own
+     *         token reads the offer. A price for a position is a price for
+     *         one state number: commit to it with the price, and check it at
+     *         the fill with {requirePositionState}.
      */
-    function positionTransferCooldown(uint256 tokenId) external view returns (uint64 valueOutBlock, uint64 readyAt) {
-        return LibPositionNFT.cooldownOf(tokenId);
+    function positionState(uint256 tokenId)
+        external
+        view
+        returns (uint256 stateNumber, uint64 valueOutBlock, uint64 readyAt)
+    {
+        return LibPositionNFT.stateOf(tokenId);
+    }
+
+    /**
+     * @notice Revert `PositionStateChanged(tokenId, expected, current)` unless
+     *         `tokenId`'s state number is `expected` (#3710). Anyone may call
+     *         it; it changes nothing. An order or a contract that agreed a
+     *         price for one state calls it at the fill.
+     */
+    function requirePositionState(uint256 tokenId, uint256 expected) external view {
+        LibPositionNFT.requireState(tokenId, expected);
     }
 
     /**
@@ -307,6 +369,9 @@ contract VaipakamNFTFacet is DiamondReentrancyGuard, DiamondAccessControl {
         es.loanIds[tokenId] = loanId;
         es.isLenderRoles[tokenId] = isLender;
         LibPositionNFT.mint(to, tokenId);
+        // #3710 — a loan's token waits from the loan's start like its
+        // other side (the principal or the position just moved).
+        if (loanId != 0) LibPositionNFT.markTokenValueOut(tokenId);
         _stampLenderEntry(tokenId, to, false);
 
         emit NFTMinted(tokenId, to, isLender ? "Lender" : "Borrower");
@@ -328,9 +393,17 @@ contract VaipakamNFTFacet is DiamondReentrancyGuard, DiamondAccessControl {
         // accept): the offer's deposit became a loan and the borrower side
         // took its principal, so the new loan's tokens cool down.
         bool becomesLoanToken = loanId != 0 && es.loanIds[tokenId] == 0;
-        if (becomesLoanToken) LibPositionNFT.markLoanValueOut(loanId);
+        if (becomesLoanToken) {
+            LibPositionNFT.markLoanValueOut(loanId);
+            // #3710 — and this token itself, which the loan may not name yet:
+            // its kind changed, so its state number goes up.
+            LibPositionNFT.markTokenValueOut(tokenId);
+        }
         es.nftStatuses[tokenId] = newStatus;
         es.loanIds[tokenId] = loanId;
+        // #3710 — the status is a rendered figure: refresh the token (the
+        // mark above already did when it became a loan token).
+        if (!becomesLoanToken) LibPositionNFT.refreshTokens(tokenId, 0);
         // #3562 — the offer's holder takes the loan's lender position here.
         if (becomesLoanToken) _stampLenderEntry(tokenId, LibPositionNFT.core().holderOf(tokenId), false);
 

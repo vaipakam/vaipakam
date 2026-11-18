@@ -12,6 +12,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @notice Integration tests for the diamond-side `PrepayListingFacet`
@@ -158,7 +159,7 @@ contract PrepayListingFacetTest is SetupTest {
         address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(_scLender);
         assertEq(IERC20(mockERC20).balanceOf(lenderVault), pctx.lenderLeg, "lender's due in the lender vault");
         assertEq(IERC20(mockERC20).balanceOf(_scLender), 0, "nothing paid to the lender wallet at the sale");
-        (, uint256 owed, bool claimed) = ClaimFacet(address(diamond)).getClaimableAmount(TEST_LOAN_ID, true);
+        (, uint256 owed, bool claimed) = ClaimViewFacet(address(diamond)).getClaimableAmount(TEST_LOAN_ID, true);
         assertEq(owed, pctx.lenderLeg, "the lender's claim names its due");
         assertFalse(claimed, "the lender has not claimed yet");
         // #3629 — the remainder is held for the borrower position's claim in

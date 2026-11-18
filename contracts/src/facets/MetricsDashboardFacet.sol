@@ -465,7 +465,7 @@ contract MetricsDashboardFacet {
             // to pay, the surplus row takes the entry, so a delisted self-holder
             // still sees the funds. When the collateral lane IS open, it takes
             // the row and the surplus stays discoverable via
-            // `ClaimFacet.getBorrowerSurplusClaim`.
+            // `ClaimViewFacet.getBorrowerSurplusClaim`.
             LibVaipakam.ClaimInfo storage emitCi =
                 (borrowerSide && !LibCloseoutFreeze.collateralLaneOpen(ci))
                     ? s.borrowerSurplusClaims[lid]

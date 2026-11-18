@@ -12,6 +12,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
@@ -283,7 +284,7 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
 
         assertEq(_plRow(f.a), 0, "the custody returned to the pledge");
         _plAssertPledge(f.a, c);
-        (, uint256 owed, bool claimed) = ClaimFacet(address(diamond)).getClaimableAmount(f.a, false);
+        (, uint256 owed, bool claimed) = ClaimViewFacet(address(diamond)).getClaimableAmount(f.a, false);
         assertEq(owed, c, "the borrower is owed exactly collateralAmount");
         assertFalse(claimed, "and has not claimed it yet");
         assertEq(_plBal(weth, address(diamond)), f.diamondWeth0, "the curing repayment moved nothing through the Diamond");
@@ -620,7 +621,7 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
             c - sold,
             "only the unsold collateral stays encumbered"
         );
-        (address keptAsset, uint256 kept, ) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+        (address keptAsset, uint256 kept, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, false);
         assertEq(keptAsset, weth, "the borrower claim is the unsold collateral");
         assertEq(kept, c - sold, "the borrower claim is exactly the unsold collateral");
         assertEq(_plBal(weth, address(diamond)), diamond0, "the Diamond kept none of it");
@@ -655,7 +656,7 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
     }
 
     function _plSlices(uint256 loanId) internal view returns (uint256 l, uint256 t, uint256 b) {
-        (l, t, b,,,,) = ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);
+        (l, t, b,,,,) = ClaimViewFacet(address(diamond)).getFallbackSnapshot(loanId);
     }
 
     function _plSnapshotTotal(uint256 loanId) internal view returns (uint256) {

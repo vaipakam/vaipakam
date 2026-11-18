@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestCollateralCut} from "../helpers/LibTestCollateralCut.sol";
+import {LibTestTermsCut} from "../helpers/LibTestTermsCut.sol";
+import {LibTestClaimViewCut} from "../helpers/LibTestClaimViewCut.sol";
 import {LibTestProtectedCut} from "../helpers/LibTestProtectedCut.sol";
 import {LibTestPositionNFT} from "../helpers/LibTestPositionNFT.sol";
 import {LibTestSettlementLeg} from "../helpers/LibTestSettlementLeg.sol";
@@ -27,6 +30,7 @@ import {RepayFacet} from "../../src/facets/RepayFacet.sol";
 import {DefaultedFacet} from "../../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../../src/facets/ClaimViewFacet.sol";
 import {AddCollateralFacet} from "../../src/facets/AddCollateralFacet.sol";
 import {DiamondCutFacet} from "../../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
@@ -263,6 +267,9 @@ contract Scenario1_ERC20LendingLifecycle is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
+        cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
+        cuts = LibTestTermsCut.withTermsHost(cuts); // #3734
+        cuts = LibTestClaimViewCut.withClaimView(cuts); // the claim reads
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         LibTestSettlementLeg.install(address(diamond)); // #3669
         LibTestForcedSalePreview.install(address(diamond));
@@ -386,7 +393,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
 
         // Step 5: Lender claims (principal + interest - treasury fee)
-        (, uint256 lenderClaimAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 lenderClaimAmount,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertGt(lenderClaimAmount, 0, "Lender should have claimable amount");
 
         vm.prank(lender);
@@ -398,7 +405,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         assertEq(lenderUsdcAfterClaim - lenderUsdcBefore, lenderClaimAmount - PRINCIPAL, "Lender net gain should equal claim minus principal spent");
 
         // Step 6: Borrower claims (collateral returned)
-        (, uint256 borrowerClaimAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+        (, uint256 borrowerClaimAmount,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, false);
         assertGt(borrowerClaimAmount, 0, "Borrower should have claimable collateral");
 
         vm.prank(borrower);
@@ -487,7 +494,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
 
         // Step 5: Verify lender has claimable collateral
         (address claimAsset, uint256 lenderClaimAmount, bool claimed) =
-            ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertEq(claimAsset, mockWeth, "Lender claim asset should be WETH collateral");
         assertEq(lenderClaimAmount, COLLATERAL, "Lender should claim full collateral");
         assertFalse(claimed, "Should not be claimed yet");
@@ -503,7 +510,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         assertEq(lenderWethAfter - lenderWethBefore, COLLATERAL, "Lender should receive full collateral");
 
         // Step 7: Verify borrower has nothing to claim (illiquid default = full collateral to lender)
-        (, uint256 borrowerClaimAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+        (, uint256 borrowerClaimAmount,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, false);
         assertEq(borrowerClaimAmount, 0, "Borrower should have no claim after illiquid default");
 
         // Step 8: Loan should be Settled since lender claimed and borrower has no claim
@@ -569,7 +576,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
 
         // Step 5: Borrower (not third party) claims collateral back
-        (, uint256 borrowerClaimAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+        (, uint256 borrowerClaimAmount,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, false);
         assertEq(borrowerClaimAmount, COLLATERAL, "Borrower should claim full collateral");
 
         uint256 borrowerWethBefore = IERC20(mockWeth).balanceOf(borrower);

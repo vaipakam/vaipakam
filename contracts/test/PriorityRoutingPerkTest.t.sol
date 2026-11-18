@@ -20,6 +20,7 @@ import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
+import {LenderIntentViewFacet} from "../src/facets/LenderIntentViewFacet.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -124,6 +125,11 @@ contract PriorityRoutingPerkTest is SetupTest {
         return LenderIntentFacet(address(diamond));
     }
 
+    /// @dev The standing-intent reads (LenderIntentViewFacet).
+    function _intentFacetReads() internal view returns (LenderIntentViewFacet) {
+        return LenderIntentViewFacet(address(diamond));
+    }
+
     /// @dev Light the Solver capacity curve (the limiter goes live).
     function _lightCurve() internal {
         _cap().setCapacityCurve(SOLVER, FREE, RATE, AT4X, COST);
@@ -173,7 +179,7 @@ contract PriorityRoutingPerkTest is SetupTest {
     /// @dev The snapshot view for the direct solver (the initiator is ignored on a
     ///      direct route, so the transaction originator is passed).
     function _view() internal view returns (bool enabled, uint256 credits, bool capacityCovers, bool creditUnlocks) {
-        return _intentFacet().getLenderIntentPriority(lender, mockERC20, mockCollateralERC20, 0, solver, tx.origin);
+        return _intentFacetReads().getLenderIntentPriority(lender, mockERC20, mockCollateralERC20, 0, solver, tx.origin);
     }
 
     function _assertView(bool enabled, uint256 credits, bool capacityCovers, bool creditUnlocks, string memory tag)

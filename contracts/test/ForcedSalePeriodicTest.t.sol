@@ -14,6 +14,7 @@ import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
@@ -47,6 +48,8 @@ import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 contract ForcedSalePeriodicTest is SetupTest {
     uint256 internal constant LOAN = 1;
     uint256 internal constant ADAPTER_IDX = 1; // index 0 is SetupTest's legacy shim
+    /// @dev The loan's stamped treasury share of interest (#1352 default).
+    uint256 internal constant TREASURY_BPS = LibVaipakam.TREASURY_FEE_BPS;
 
     MockSwapAdapter internal adapter;
     address internal settler = makeAddr("periodic-settler");
@@ -142,13 +145,13 @@ contract ForcedSalePeriodicTest is SetupTest {
     }
 
     function _held() internal view returns (uint256 amount) {
-        (, amount, ) = ClaimFacet(address(diamond)).getBorrowerSurplusClaim(LOAN);
+        (, amount, ) = ClaimViewFacet(address(diamond)).getBorrowerSurplusClaim(LOAN);
     }
 
     /// @dev #3629 — what is held for the lender position (never paid to a
     ///      wallet while the loan is open).
     function _lenderHeld() internal view returns (uint256 amount) {
-        (, , , , , , amount, ) = ClaimFacet(address(diamond)).getClaimable(LOAN, true);
+        (, , , , , , amount, ) = ClaimViewFacet(address(diamond)).getClaimable(LOAN, true);
     }
 
     // ─── The plan ─────────────────────────────────────────────────────────
@@ -228,6 +231,9 @@ contract ForcedSalePeriodicTest is SetupTest {
         uint256 bonus = (d * 300) / 10_000;
         uint256 fee = (d * 200) / 10_000;
         uint256 extra = p.sell - bonus - d - fee; // 1:1 at zero slippage
+        // #3681 — the recovered interest bears the treasury's share at the
+        // loan's stamped rate, as any interest payment does.
+        uint256 cut = (d * TREASURY_BPS) / 10_000;
 
         uint256 lender0 = _bal(lender);
         uint256 borrower0 = _bal(borrower);
@@ -237,20 +243,20 @@ contract ForcedSalePeriodicTest is SetupTest {
 
         vm.expectEmit(true, true, true, true, address(diamond));
         emit ForcedSaleFacet.ForcedSaleSettled(
-            LOAN, 0, d, p.need, p.sell, p.sell, d, fee, bonus, extra,
+            LOAN, 0, d, p.need, p.sell, p.sell, d - cut, fee, bonus, extra,
             collateral0 - p.sell, true, settler
         );
         _settle();
 
         assertEq(_bal(lender), lender0, "nothing paid to the lender's wallet or free balance");
-        assertEq(_lenderHeld(), d, "the debt is held for the lender position");
+        assertEq(_lenderHeld(), d - cut, "the debt less the treasury share is held for the lender position");
         assertEq(_bal(settler) - settler0, bonus, "bonus 3% of the debt");
-        assertEq(_bal(address(diamond)) - diamond0, fee, "fee 2% of the debt");
+        assertEq(_bal(address(diamond)) - diamond0, fee + cut, "fee 2% of the debt, and the treasury share");
         assertEq(_bal(borrower), borrower0, "nothing paid to the borrower's wallet");
         assertEq(_held(), extra, "the extra is held for the borrower position");
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(LOAN);
         assertEq(l.collateralAmount, collateral0 - p.sell, "only the slice left the loan");
-        assertEq(l.interestSettled, d, "interestSettled rises by what the lender got");
+        assertEq(l.interestSettled, d, "interestSettled rises by the gross interest recovered");
     }
 
     /// @notice #3629 — both held parts are claimable while the loan runs, into
@@ -311,7 +317,7 @@ contract ForcedSalePeriodicTest is SetupTest {
         uint256 settler0 = _bal(settler);
         _settle();
 
-        assertEq(_lenderHeld(), d, "lender still owed the debt in full, held");
+        assertEq(_lenderHeld(), d - (d * TREASURY_BPS) / 10_000, "lender's net interest in full, held");
         assertEq(_bal(settler) - settler0, 0, "no bonus at the slippage cap");
         uint256 extra = _held();
         assertEq(extra, proceeds - d - fee, "the rest is the borrower's");
@@ -407,7 +413,7 @@ contract ForcedSalePeriodicTest is SetupTest {
         ClaimFacet(address(diamond)).claimAsBorrower(LOAN);
         vm.stopPrank();
         assertEq(_bal(borrower) - borrower0, total, "held extras paid with the claim");
-        (, , bool claimed) = ClaimFacet(address(diamond)).getBorrowerSurplusClaim(LOAN);
+        (, , bool claimed) = ClaimViewFacet(address(diamond)).getBorrowerSurplusClaim(LOAN);
         assertTrue(claimed);
     }
 
@@ -419,10 +425,9 @@ contract ForcedSalePeriodicTest is SetupTest {
 
         address newHolder = makeAddr("new-borrower-holder");
         uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(LOAN).borrowerTokenId;
-        // #3413 — the settlement paid the lender, so the loan's tokens may not
-        // move in that block nor for the 5-second cooldown after it.
-        vm.roll(block.number + 1);
-        vm.warp(block.timestamp + 5);
+        // #3413 / #3710 — the settlement paid out, so the loan's tokens wait
+        // before they move.
+        LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
         vm.prank(borrower);
         LibTestPositionNFT.core(address(diamond)).transferFrom(borrower, newHolder, tokenId);
         vm.prank(newHolder);
@@ -553,7 +558,7 @@ contract ForcedSalePeriodicTest is SetupTest {
         DefaultedFacet(address(diamond)).triggerDefault(LOAN, sellQuote, _calls());
 
         (, uint256 colAmount, bool colClaimed) =
-            ClaimFacet(address(diamond)).getClaimableAmount(LOAN, false);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(LOAN, false);
         assertEq(colAmount, 0, "no collateral surplus");
         assertTrue(colClaimed, "the terminal wrote the collateral row claimed");
         assertEq(_held(), held, "the held extra is still on its row");
@@ -597,7 +602,7 @@ contract ForcedSalePeriodicTest is SetupTest {
         DefaultedFacet(address(diamond)).triggerDefault(LOAN, sellQuote, _calls());
 
         (address colAsset, uint256 colAmount, ) =
-            ClaimFacet(address(diamond)).getClaimableAmount(LOAN, false);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(LOAN, false);
         assertEq(colAsset, address(0), "no borrower collateral row written");
         assertEq(colAmount, 0);
 

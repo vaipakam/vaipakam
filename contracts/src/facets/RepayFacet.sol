@@ -17,6 +17,7 @@ import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibStandingInstructions} from "../libraries/LibStandingInstructions.sol";
 import {LibFallbackCustody} from "../libraries/LibFallbackCustody.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
@@ -200,6 +201,15 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
      * @param loanId The loan ID to repay.
      */
     function repayLoan(uint256 loanId) external nonReentrant {
+        // #3681 — the "repay at the due date" standing instruction reaches
+        // this same entry by self-call, having bound the holder whose payment
+        // reserve pays (StandingInstructionFacet.runDueRepayment). The
+        // reserve then pays exactly what a wallet would: same amounts,
+        // splits and events, the holder named as payer. Any other caller,
+        // a self-call with no binding included, pays from its wallet.
+        address reserveHolder =
+            msg.sender == address(this) ? LibStandingInstructions.takeReserveRepayer(loanId) : address(0);
+        address payer = reserveHolder == address(0) ? msg.sender : reserveHolder;
         // T-090 v1.1 (#389) §5.8 — block voluntary close while an
         // intent-based swap-to-repay commit is live: its lot is promised
         // to a live LOP order that may still fill, so closing the loan
@@ -262,7 +272,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
         // there since rental fees are deducted from a borrower-funded
         // prepay vault regardless of caller.
         if (loan.assetType == LibVaipakam.AssetType.ERC20) {
-            LibAuth.requireNotLenderSide(loan);
+            LibAuth.requireNotLenderSide(loan, payer);
         }
 
         uint256 graceEnd = LibLoanClock.graceEnd(loan);
@@ -336,49 +346,30 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
                 plan.treasuryShare = newTreasury;
             }
 
-            // Treasury share transferred immediately (no claim needed).
-            // Skipped entirely when the VPFI discount path satisfied it.
-            // #1281-011 — through the one payer -> treasury pull, which
-            // refuses a short arrival by name.
-            // #3669 — a frozen treasury never stops the repayment: a refused
-            // share waits, liened, in the borrower's vault.
-            LibFacet.treasuryShareOrPark(0, msg.sender, loan.principalAsset, plan.treasuryShare);
-
-            // T-037 — Lender's due: borrower → lender's vault in ONE
-            // transfer. The Diamond carries the borrower's allowance
-            // (granted by the prior `approve()`) so the chokepoint's
-            // cross-payer variant pushes the asset from the borrower's
-            // wallet into the lender's vault without ever residing
-            // on the Diamond. Routing through `vaultDepositERC20From`
-            // ensures the protocolTrackedVaultBalance counter ticks
-            // up under the LENDER (the owner of the receiving vault,
-            // not the borrower who's the payer).
-            // #821 — vault-lock: a flagged stored lender would otherwise brick
-            // this deposit (the receiving-vault screen reverts). Pin the
-            // receive-side exemption to `loan.lender` so the close-out completes
-            // and the borrower's debt clears; the proceeds land in the lender's
-            // OWN (protocol-tracked) vault, frozen behind the Tier-1 claim gate
-            // (the `claimAsLender` stored-owner screen) until the flag clears.
-            // #3669 — through the one host of the refused-leg rule: when the
-            // token refuses delivery into the lender's vault (a frozen vault),
-            // the due is liened in the payer's own vault for the lender side
-            // and the repayment still completes.
-            LibSanctionedLock.begin(s, loan.lender);
+            // Both legs leave through one host (#3669, #3681): a hand repayment's
+            // from the payer's wallet (SettlementLegFacet), a reserve-paid one's
+            // from the holder's released reserve (StandingInstructionFacet). The
+            // treasury share goes first; a leg the token refuses waits, liened,
+            // in the payer's own vault, and the repayment still completes. The
+            // lender due lands in the stored lender's vault behind the
+            // receive-side exemption (#821), frozen behind the claim gate.
             bool parked = abi.decode(
                 LibFacet.crossFacetCallReturn(
-                    abi.encodeWithSelector(
-                        SettlementLegFacet.deliverLenderDueOrPark.selector,
-                        loanId,
-                        msg.sender,        // payer — borrower
-                        loan.principalAsset,
-                        plan.lenderDue
-                    ),
+                    reserveHolder == address(0)
+                        ? abi.encodeCall(
+                            SettlementLegFacet.payRepaymentLegs,
+                            (loanId, msg.sender, loan.principalAsset, plan.treasuryShare, plan.lenderDue)
+                        )
+                        : abi.encodeWithSignature(
+                            "payRepaymentFromReserve(uint256,address,uint256,uint256)",
+                            loanId,
+                            reserveHolder,
+                            plan.treasuryShare,
+                            plan.lenderDue
+                        ),
                     VaultDepositFailed.selector
                 ),
                 (bool)
-            );
-            LibSanctionedLock.end(
-                s, loan.lender, loanId, loan.principalAsset, plan.lenderDue
             );
             // #998 S10 (#1006 / #1132) — both holders' fail-closed markers are
             // recorded centrally at the `Repaid` transition (terminalizeFromAny).
@@ -497,33 +488,18 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
                 totalDue
             );
 
-            // #821 (Codex #832 r3 P1) — both withdrawals below pull the prepay
-            // from the repayer's (`msg.sender`) own vault. Arm the move-out
-            // exemption so a borrower flagged after init can still settle the
-            // rental repayment (Tier-2 stays open) — the prepay is pushed OUT to
-            // the already-screened treasury / lender, the payer loses custody.
-            LibSanctionedLock.beginMoveOut(s, msg.sender);
-            // Treasury share: immediate from borrower's vault. #2440 — the
-            // treasury accrues what reached it; #3669 — a refused share waits,
-            // liened, in that vault.
-            LibFacet.treasuryShareOrPark(1, msg.sender, loan.prepayAsset, treasuryShare);
-
-            // Lender's rental share: withdraw from borrower's vault → Diamond → lender's vault.
-            // #2440 — a voluntary repayment: refused unless the whole share
-            // reached the Diamond, so the lender is never paid out of the
-            // Diamond's other balance and the loan never closes on less.
-            LibVaultOutflow.toDiamondExact(msg.sender, loan.prepayAsset, lenderShare, loanId, OutflowReason.REPAYMENT);
-            LibSanctionedLock.endMoveOut(s);
-            // #821 (Codex #832 r2 P1) — vault-lock the lender's rental share so a
-            // flagged stored lender doesn't brick the rental repayment; the share
-            // lands in the lender's OWN vault, frozen behind the claim gate
-            // (T-051 — the Diamond-side transfer ticks protocolTrackedVaultBalance
-            // so the subsequent claim's vaultWithdrawERC20 doesn't underflow).
-            // #2440 — the same voluntary repayment's second hop: refused unless
-            // the lender's vault received the whole share, so the claim below
-            // names the share the loan closes on and never a shrunk figure.
-            LibSanctionedLock.depositLockedInFull(
-                s, loan.lender, loanId, loan.prepayAsset, lenderShare
+            // The rental's two legs leave the repayer's prepay through the
+            // settlement host (SettlementLegFacet.payRentalLegs): the treasury
+            // share (#2440 accrued as it arrived, #3669 parked when refused)
+            // and the lender's share, exact, into the stored lender's vault
+            // behind the receive-side exemption (#821), so a flagged party on
+            // either side never bricks the rental repayment.
+            LibFacet.crossFacetCall(
+                abi.encodeCall(
+                    SettlementLegFacet.payRentalLegs,
+                    (loanId, msg.sender, loan.prepayAsset, treasuryShare, lenderShare)
+                ),
+                VaultDepositFailed.selector
             );
             // #998 S10 (#1006 / #1132) — both holders' fail-closed markers are
             // recorded centrally at the `Repaid` transition (terminalizeFromAny).
@@ -661,7 +637,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
         // library just transitioned to (typically `Repaid`).
         emit LoanRepaid(
             loanId,
-            msg.sender,
+            payer,
             interest,
             lateFee,
             /* outstandingPrincipal */ 0,

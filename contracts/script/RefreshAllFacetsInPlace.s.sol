@@ -99,6 +99,11 @@ import {CollectionOfferFacet} from "../src/facets/CollectionOfferFacet.sol";
 import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
 import {RecoveryClawbackFacet} from "../src/facets/RecoveryClawbackFacet.sol";
+import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
+import {CollateralLienFacet} from "../src/facets/CollateralLienFacet.sol";
+import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
+import {LenderIntentViewFacet} from "../src/facets/LenderIntentViewFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
@@ -351,7 +356,23 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // at the claim). Its selectors are new (Adds).
     // 127 -> 128: RecoveryClawbackFacet (#3246 part 2) - the clawback to a
     // protected account's recovery address; its selectors are new (Adds).
-    uint256 public constant EXPECTED_FACETS = 128;
+    // 128 -> 129: CollateralConcentrationFacet (#3685) - the one host of
+    // the new-loan init-LTV cap, which loan creation, the previews and the
+    // offer book self-call. Its selectors are new (Adds).
+    // 129 -> 130: CollateralLienFacet (#3685) - the collateral-lien entries,
+    // split off EncumbranceMutateFacet for EIP-170. Their selectors move
+    // hosts, so the Replace cut repoints them.
+    // 130 -> 131: StandingInstructionFacet (#3681) - the loan reserve and
+    // the standing instructions. Its selectors are new (Adds), and the
+    // reserve entries it takes over from AutoLifecycleFacet are retired
+    // (swept as stale routes).
+    // 131 -> 132: ClaimViewFacet - the claim reads, split off ClaimFacet
+    // along its read / write seam for EIP-170. Their selectors move hosts,
+    // so the Replace cut repoints them.
+    // 132 -> 133: LenderIntentViewFacet - the standing-intent reads, split
+    // off LenderIntentFacet along its read / write seam for EIP-170. Their
+    // selectors move hosts, so the Replace cut repoints them.
+    uint256 public constant EXPECTED_FACETS = 133;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -494,6 +515,41 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         }
     }
 
+    /// @notice #3685 - the target Diamond predates the collateral pledged
+    ///         total and has an ERC-20 loan open; see
+    ///         {_requireNoOpenLoanAcrossCollateralPledge}.
+    error OpenLoanAcrossCollateralPledge(address diamond, uint256 loanId);
+
+    /// @notice #3685 - the target Diamond predates the collateral pledged
+    ///         total and is not under the manual pause.
+    error CollateralPledgeCrossingNeedsManualPause(address diamond);
+
+    /// @dev #3685 - every collateral lien change now moves a per-asset pledged
+    ///      total, which starts at zero. A lien a pre-#3685 Diamond created is
+    ///      not in it, so releasing or reducing that lien after the refresh
+    ///      would underflow the total and revert (a repay, a liquidation, a
+    ///      default stuck), and the concentration it reports would be short.
+    ///      So crossing the boundary in place is refused while any ERC-20 loan
+    ///      is open (`Active` or `FallbackPending`): close those loans, or
+    ///      cross by fresh deploy. A Diamond that already routes
+    ///      `newLoanInitLtvCapBps` is past the boundary and is not walked. The
+    ///      walk and the manual-pause requirement follow
+    ///      {_requireNoOpenLoanAcrossInterestLedger}, for the same reasons.
+    function _requireNoOpenLoanAcrossCollateralPledge(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(CollateralConcentrationFacet.newLoanInitLtvCapBps.selector)
+                != address(0)
+        ) return;
+        (bool manual,,,) = LibPausable.decodePausableSlot(vm.load(diamond, LibPausable.PAUSABLE_STORAGE_POSITION));
+        if (!manual) revert CollateralPledgeCrossingNeedsManualPause(diamond);
+        (uint256 highestLoanId,) = MetricsFacet(diamond).getGlobalCounts();
+        for (uint256 loanId = 1; loanId <= highestLoanId; ++loanId) {
+            if (_isOpenErc20Loan(diamond, loanId)) {
+                revert OpenLoanAcrossCollateralPledge(diamond, loanId);
+            }
+        }
+    }
+
     /// @dev Kept in its own frame, like {_isOpenErc1155Rental}.
     function _isOpenErc20Loan(address diamond, uint256 loanId) private view returns (bool) {
         LibVaipakam.Loan memory loan = LoanFacet(diamond).getLoanDetails(loanId);
@@ -573,6 +629,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         PriceGuardCrossing.requireRecorded(diamond);
         _requireNoOpenErc1155RentalAcross902(diamond);
         _requireNoOpenLoanAcrossInterestLedger(diamond);
+        _requireNoOpenLoanAcrossCollateralPledge(diamond);
         // The per-token tracked vault ledger is fresh-deploy only; see
         // TrackedHoldingRollout.
         TrackedHoldingRollout.assertInstalled(diamond);
@@ -1432,6 +1489,27 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[126] = Item("settlementLegFacet", ArtifactDeploy.deploy(type(SettlementLegFacet).name), _getSettlementLegSelectors());
         items[127] = Item(
             "recoveryClawbackFacet", ArtifactDeploy.deploy(type(RecoveryClawbackFacet).name), _getRecoveryClawbackSelectors()
+        );
+        items[128] = Item(
+            "collateralConcentrationFacet",
+            ArtifactDeploy.deploy(type(CollateralConcentrationFacet).name),
+            _getCollateralConcentrationSelectors()
+        );
+        items[129] = Item(
+            "collateralLienFacet", ArtifactDeploy.deploy(type(CollateralLienFacet).name), _getCollateralLienSelectors()
+        );
+        items[130] = Item(
+            "standingInstructionFacet",
+            ArtifactDeploy.deploy(type(StandingInstructionFacet).name),
+            _getStandingInstructionSelectors()
+        );
+        items[131] = Item(
+            "claimViewFacet", ArtifactDeploy.deploy(type(ClaimViewFacet).name), _getClaimViewSelectors()
+        );
+        items[132] = Item(
+            "lenderIntentViewFacet",
+            ArtifactDeploy.deploy(type(LenderIntentViewFacet).name),
+            _getLenderIntentViewSelectors()
         );
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /

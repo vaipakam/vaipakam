@@ -144,7 +144,16 @@ abstract contract DiamondFacetNames {
     ///      token refuses parks in the payer's vault under a lien).
     ///      127 → 128 with `RecoveryClawbackFacet` (#3246 part 2 — the
     ///      clawback to a protected account's recovery address).
-    function cutFacetNames() internal pure returns (string[128] memory) {
+    ///      128 → 129 with `CollateralConcentrationFacet` (#3685 — the
+    ///      new-loan init-LTV cap host and collateral concentration).
+    ///      129 → 130 with `CollateralLienFacet` (#3685 — the collateral-lien
+    ///      entries, split off EncumbranceMutateFacet).
+    ///      130 → 131 with `StandingInstructionFacet` (#3681).
+    ///      131 → 132 with `ClaimViewFacet` (the claim reads, split off
+    ///      ClaimFacet along its read / write seam for EIP-170).
+    ///      132 → 133 with `LenderIntentViewFacet` (the standing-intent
+    ///      reads, split off LenderIntentFacet the same way).
+    function cutFacetNames() internal pure returns (string[133] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -327,6 +336,16 @@ abstract contract DiamondFacetNames {
             "SettlementLegFacet",
             // The clawback to a recovery address (#3246 part 2).
             "RecoveryClawbackFacet",
+            // The new-loan cap host and collateral concentration (#3685).
+            "CollateralConcentrationFacet",
+            // The collateral-lien entries (#3685, split off EncumbranceMutateFacet).
+            "CollateralLienFacet",
+            // Standing instructions and the loan reserve (#3681).
+            "StandingInstructionFacet",
+            // The claim reads, split off ClaimFacet (EIP-170).
+            "ClaimViewFacet",
+            // The standing-intent reads, split off LenderIntentFacet (EIP-170).
+            "LenderIntentViewFacet",
             "SwapToRepayFacet",
             "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",

@@ -137,7 +137,7 @@ test('with a wallet: the Terms state on this network and the fee-discount settin
   await expect(terms).toContainText('No Terms of Service are in force on');
   await expect(page.getByTestId('settings-fees').getByTestId('consent-toggle')).toBeVisible({ timeout: 30_000 });
 
-  await sc.diamondWrite('admin', 'setCurrentTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
+  await sc.diamondWrite('admin', 'publishTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
   await page.reload();
   await expect(terms).toHaveAttribute('data-terms', 'needed', { timeout: 30_000 });
   await expect(terms).toContainText('Version 1 is in force on');

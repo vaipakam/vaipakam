@@ -1122,7 +1122,7 @@ contract ProtectedVaultTest is Test {
         vm.expectRevert(abi.encodeWithSelector(PositionNFT.HolderIsLocked.selector, user));
         _core().transferFrom(user, friend, 1);
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(PositionNFT.HolderIsLocked.selector, user));
+        vm.expectRevert(PositionNFT.OperatorApprovalRefused.selector);
         _core().setApprovalForAll(friend, true);
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(PositionNFT.HolderIsLocked.selector, user));

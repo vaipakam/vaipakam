@@ -59,6 +59,9 @@ import {CollectionOfferFacet} from "../src/facets/CollectionOfferFacet.sol";
 import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
 import {RecoveryClawbackFacet} from "../src/facets/RecoveryClawbackFacet.sol";
+import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
+import {CollateralLienFacet} from "../src/facets/CollateralLienFacet.sol";
+import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {TestOfferFloor} from "./helpers/TestOfferFloor.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -199,6 +202,8 @@ import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
 import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
+import {LenderIntentViewFacet} from "../src/facets/LenderIntentViewFacet.sol";
 import {RefinancePayoffFacet} from "../src/facets/RefinancePayoffFacet.sol";
 import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
 import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
@@ -452,6 +457,8 @@ contract SetupTest is Test {
     FeeLevelsFacet feeLevelsFacet;
     SettlementLegFacet settlementLegFacet;
     RecoveryClawbackFacet recoveryClawbackFacet;
+    CollateralConcentrationFacet collateralConcentrationFacet;
+    CollateralLienFacet collateralLienFacet;
     SaleExitVerdictFacet saleExitVerdictFacet;
     SellerClaimFacet sellerClaimFacet;
     RefinancePayoffFacet refinancePayoffFacet;
@@ -642,6 +649,9 @@ contract SetupTest is Test {
         feeLevelsFacet = FeeLevelsFacet(ArtifactDeploy.deploy(type(FeeLevelsFacet).name));
         settlementLegFacet = SettlementLegFacet(ArtifactDeploy.deploy(type(SettlementLegFacet).name));
         recoveryClawbackFacet = RecoveryClawbackFacet(ArtifactDeploy.deploy(type(RecoveryClawbackFacet).name));
+        collateralConcentrationFacet =
+            CollateralConcentrationFacet(ArtifactDeploy.deploy(type(CollateralConcentrationFacet).name));
+        collateralLienFacet = CollateralLienFacet(ArtifactDeploy.deploy(type(CollateralLienFacet).name));
         saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
         sellerClaimFacet = SellerClaimFacet(ArtifactDeploy.deploy(type(SellerClaimFacet).name));
         refinancePayoffFacet = RefinancePayoffFacet(ArtifactDeploy.deploy(type(RefinancePayoffFacet).name));
@@ -679,7 +689,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](129);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](134);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1247,6 +1257,36 @@ contract SetupTest is Test {
             facetAddress: address(recoveryClawbackFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRecoveryClawbackFacetSelectors()
+        });
+        // #3685 — the new-loan cap host, which loan creation self-calls.
+        cuts[129] = IDiamondCut.FacetCut({
+            facetAddress: address(collateralConcentrationFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getCollateralConcentrationFacetSelectors()
+        });
+        // #3685 — the collateral-lien entries, split off EncumbranceMutateFacet.
+        cuts[130] = IDiamondCut.FacetCut({
+            facetAddress: address(collateralLienFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getCollateralLienFacetSelectors()
+        });
+        // #3681 — the loan reserve and the standing instructions.
+        cuts[131] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(StandingInstructionFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getStandingInstructionFacetSelectors()
+        });
+        // The claim reads, split off ClaimFacet (EIP-170).
+        cuts[132] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(ClaimViewFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getClaimViewFacetSelectors()
+        });
+        // The standing-intent reads, split off LenderIntentFacet (EIP-170).
+        cuts[133] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(LenderIntentViewFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getLenderIntentViewFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).
@@ -1828,7 +1868,7 @@ contract SetupTest is Test {
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
         uint256 diamond0 = ERC20(l.collateralAsset).balanceOf(address(diamond));
         vm.startPrank(address(diamond));
-        EncumbranceMutateFacet(address(diamond)).releaseCollateralLien(loanId);
+        CollateralLienFacet(address(diamond)).releaseCollateralLien(loanId);
         LibTestOutflow.withdrawERC20(address(diamond), l.borrower, l.collateralAsset, address(diamond), l.collateralAmount);
         FallbackCustodyFacet(address(diamond)).enterFallback(loanId);
         vm.stopPrank();
@@ -1885,7 +1925,7 @@ contract SetupTest is Test {
         mockOraclePrice(l.collateralAsset, FALLBACK_FIXTURE_PAR_PRICE, colDec);
 
         (uint256 lc, uint256 tc, uint256 bc, , , bool active, ) =
-            ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);
+            ClaimViewFacet(address(diamond)).getFallbackSnapshot(loanId);
         assertTrue(active, "fixture-live: an active snapshot");
         assertEq(lc, lenderCollateral, "fixture-live: the producer computed the lender slice");
         assertEq(tc, treasuryCollateral, "fixture-live: the producer computed the treasury slice");

@@ -17,6 +17,7 @@ import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
@@ -28,6 +29,7 @@ import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
+import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
@@ -121,6 +123,9 @@ contract RedeployFacets is Script {
     /// @notice #3009 / #3025 - the target Diamond's OfferPreviewFacet predates
     ///         the cadence admission host; see {_requireCadenceAdmissionHost}.
     error PredatesCadenceAdmissionHost(address diamond);
+    /// @notice #3685 - the target Diamond predates the collateral pledged
+    ///         total; see {_requireCollateralConcentration}.
+    error PredatesCollateralConcentration(address diamond);
     /// @notice #1558 - the target Diamond predates the refinance payoff
     ///         permit; see {_requireRefinancePayoffPermit}.
     error PredatesRefinancePayoffPermit(address diamond);
@@ -208,6 +213,9 @@ contract RedeployFacets is Script {
         // #3009 / #3025 - and one whose OfferPreviewFacet cannot answer the
         // origination cadence check; see {_requireCadenceAdmissionHost}.
         _requireCadenceAdmissionHost(diamond);
+        // #3685 - and one from before the collateral pledged total; see
+        // {_requireCollateralConcentration}.
+        _requireCollateralConcentration(diamond);
         // #1209 / #1808 - and one from before the interest ledger; see
         // {_requireInterestLedger}.
         _requireInterestLedger(diamond);
@@ -267,6 +275,9 @@ contract RedeployFacets is Script {
         // ClaimFacet so a curated redeploy doesn't leave the claim path on stale
         // bytecode that skips the restamp after a preclosed borrower claims VPFI.
         ClaimFacet claimFacet = ClaimFacet(ArtifactDeploy.deploy(type(ClaimFacet).name));
+        // The claim reads moved off ClaimFacet to ClaimViewFacet (EIP-170 split);
+        // they refresh together, so the reads never stay on the old ClaimFacet.
+        address claimViewFacet = ArtifactDeploy.deploy(type(ClaimViewFacet).name);
         // #691 — the internal-match executors (triggerInternalMatchLiquidation +
         // attemptInternalMatchAutoDispatch) gained the eager-consolidation +
         // VPFI-restamp hooks. Refresh RiskMatchLiquidationFacet so a curated
@@ -372,6 +383,7 @@ contract RedeployFacets is Script {
         console.log("EarlyWithdrawalDirect:", address(earlyWithdrawalDirectFacet));
         console.log("RefinanceFacet:       ", address(refinanceFacet));
         console.log("ClaimFacet:           ", address(claimFacet));
+        console.log("ClaimViewFacet:       ", claimViewFacet);
         console.log("RiskMatchLiquidation: ", address(riskMatchFacet));
         console.log("ProfileFacet:         ", address(profileFacet));
         console.log("ConsolidationFacet:   ", address(consolidationFacet));
@@ -596,7 +608,7 @@ contract RedeployFacets is Script {
             (rdToAdd.length > 0 ? 1 : 0) + (rdToReplace.length > 0 ? 1 : 0) +
             (dfToAdd.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
-            new IDiamondCut.FacetCut[](10 + nExtra);
+            new IDiamondCut.FacetCut[](11 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
         cuts[1] = _replace(address(defaultedFacet), dfToReplace);
         cuts[2] = _replace(address(loanFacet), _loanSelectors());
@@ -715,6 +727,9 @@ contract RedeployFacets is Script {
         if (claimToAdd.length > 0) {
             cuts[idx++] = _add(address(claimFacet), claimToAdd);
         }
+        // The claim reads, routed on every Diamond this script accepts, repoint
+        // from the old ClaimFacet to ClaimViewFacet.
+        cuts[idx++] = _replace(claimViewFacet, _claimViewSelectors());
         // #1123 — already-routed ProfileFacet selectors repoint to the refreshed
         // bytecode (Replace); the new #1123 selectors are Add'ed.
         if (profToReplace.length > 0) {
@@ -1110,6 +1125,25 @@ contract RedeployFacets is Script {
         ) revert PredatesTierRecordSeam(diamond);
     }
 
+    /// @dev #3685 - refuse a Diamond from before the collateral pledged
+    ///      total. Every collateral lien change now moves a per-asset pledged
+    ///      total (LibEncumbrance, inlined in many facets), the four lien
+    ///      entries moved from EncumbranceMutateFacet to CollateralLienFacet,
+    ///      and loan creation, the previews and the offer book read their
+    ///      init-LTV cap from CollateralConcentrationFacet. This curated set
+    ///      carries only some of those facets, so crossing here would leave
+    ///      lien entries on old code that moves no total, and a pre-#3685
+    ///      loan's release would underflow the total. Crossing the boundary is
+    ///      a fresh deploy, never this refresh. The marker is the routing of
+    ///      `CollateralConcentrationFacet.newLoanInitLtvCapBps`. Called before
+    ///      the broadcast starts, so a refused run sends nothing.
+    function _requireCollateralConcentration(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(CollateralConcentrationFacet.newLoanInitLtvCapBps.selector)
+                == address(0)
+        ) revert PredatesCollateralConcentration(diamond);
+    }
+
     /// @dev #3009 / #3025 - refuse a Diamond whose OfferPreviewFacet predates
     ///      the cadence admission host. LoanFacet re-admits the cadence of
     ///      every loan it opens, and OfferMatchFacet previews the same answer,
@@ -1492,21 +1526,26 @@ contract RedeployFacets is Script {
     }
 
     function _claimSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](13);
+        s = new bytes4[](7);
         s[0] = ClaimFacet.claimAsLender.selector;
         s[1] = ClaimFacet.claimAsBorrower.selector;
-        s[2] = ClaimFacet.getClaimableAmount.selector;
-        s[3] = ClaimFacet.getClaimable.selector;
-        s[4] = ClaimFacet.claimAsLenderWithRetry.selector;
-        s[5] = ClaimFacet.getFallbackSnapshot.selector;
-        s[6] = ClaimFacet.setLenderBackstopOptIn.selector;
-        s[7] = ClaimFacet.claimAsLenderViaBackstop.selector;
-        s[8] = ClaimFacet.getBorrowerSurplusClaim.selector;
-        s[9] = ClaimFacet.getOwedAtDefault.selector; // #2374
-        s[10] = ClaimFacet.getOwedAtInternalMatch.selector; // #2427
+        s[2] = ClaimFacet.claimAsLenderWithRetry.selector;
+        s[3] = ClaimFacet.setLenderBackstopOptIn.selector;
+        s[4] = ClaimFacet.claimAsLenderViaBackstop.selector;
         // #3629 — the mid-loan claims of held payments.
-        s[11] = ClaimFacet.claimHeldForLender.selector;
-        s[12] = ClaimFacet.claimHeldForBorrower.selector;
+        s[5] = ClaimFacet.claimHeldForLender.selector;
+        s[6] = ClaimFacet.claimHeldForBorrower.selector;
+    }
+
+    /// @dev The claim reads, mirrors `DeployDiamond._getClaimViewSelectors`.
+    function _claimViewSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](6);
+        s[0] = ClaimViewFacet.getClaimableAmount.selector;
+        s[1] = ClaimViewFacet.getClaimable.selector;
+        s[2] = ClaimViewFacet.getFallbackSnapshot.selector;
+        s[3] = ClaimViewFacet.getBorrowerSurplusClaim.selector;
+        s[4] = ClaimViewFacet.getOwedAtDefault.selector; // #2374
+        s[5] = ClaimViewFacet.getOwedAtInternalMatch.selector; // #2427
     }
 
     /// @dev #779 — the prior hand-list carried only 15 of ProfileFacet's 25

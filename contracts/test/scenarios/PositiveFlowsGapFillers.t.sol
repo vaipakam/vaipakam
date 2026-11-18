@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestCollateralCut} from "../helpers/LibTestCollateralCut.sol";
+import {LibTestTermsCut} from "../helpers/LibTestTermsCut.sol";
+import {LibTestClaimViewCut} from "../helpers/LibTestClaimViewCut.sol";
 import {LibTestProtectedCut} from "../helpers/LibTestProtectedCut.sol";
 import {LibTestPositionNFT} from "../helpers/LibTestPositionNFT.sol";
 import {LibTestSettlementLeg} from "../helpers/LibTestSettlementLeg.sol";
@@ -567,6 +570,9 @@ contract PositiveFlowsGapFillers is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
+        cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
+        cuts = LibTestTermsCut.withTermsHost(cuts); // #3734
+        cuts = LibTestClaimViewCut.withClaimView(cuts); // the claim reads
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         LibTestSettlementLeg.install(address(diamond)); // #3669
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.

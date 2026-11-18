@@ -7,6 +7,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {AutoLifecycleSettingsFacet} from "../src/facets/AutoLifecycleSettingsFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
@@ -344,7 +345,7 @@ contract RefinanceFacetTest is SetupTest {
         assertEq(uint8(newLoan.status), uint8(LibVaipakam.LoanStatus.Active), "new loan Active");
         assertEq(newLoan.principal, P, "new loan owes the whole principal");
         assertEq(newLoan.lender, newLender, "new loan funded by the accepting lender");
-        (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(oldLoanId, true);
+        (, uint256 claim, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(oldLoanId, true);
         assertEq(claim, lenderDue, "old lender's claim is the due");
     }
 
@@ -434,7 +435,7 @@ contract RefinanceFacetTest is SetupTest {
         _accept();
         (uint256 a, uint256 b, ) = _payoffLegs(vm.getRecordedLogs());
 
-        (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(oldLoanId, true);
+        (, uint256 claim, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(oldLoanId, true);
         (, , uint256 inTermDue) = _expectedSettlement(30 days);
         assertGt(claim, inTermDue, "the grace late fee is part of the due");
         assertEq(_bal(_vault(lender)) - oldLenderVaultBefore, claim, "old lender's vault receives the whole due");
@@ -489,7 +490,7 @@ contract RefinanceFacetTest is SetupTest {
             fresh,
             "only the fresh pledge stays locked"
         );
-        (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(oldLoanId, true);
+        (, uint256 claim, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(oldLoanId, true);
         assertEq(_bal(_vault(lender)) - oldLenderVaultBefore, claim, "old lender paid the due");
     }
 
@@ -514,7 +515,7 @@ contract RefinanceFacetTest is SetupTest {
             uint8(LibVaipakam.LoanStatus.Repaid),
             "refinance completed for a flagged old lender"
         );
-        (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(oldLoanId, true);
+        (, uint256 claim, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(oldLoanId, true);
         assertEq(_bal(oldLenderVault) - oldLenderVaultBefore, claim, "proceeds parked in the old lender's vault");
         assertEq(
             TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(oldLoanId, true),

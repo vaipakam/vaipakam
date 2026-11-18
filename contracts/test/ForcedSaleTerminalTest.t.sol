@@ -10,6 +10,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -148,7 +149,7 @@ contract ForcedSaleTerminalTest is SetupTest {
     }
 
     function _held() internal view returns (uint256 amount) {
-        (, amount, ) = ClaimFacet(address(diamond)).getBorrowerSurplusClaim(LOAN);
+        (, amount, ) = ClaimViewFacet(address(diamond)).getBorrowerSurplusClaim(LOAN);
     }
 
     function _flag(address who) internal {
@@ -182,12 +183,12 @@ contract ForcedSaleTerminalTest is SetupTest {
         assertEq(_bal(mockERC20, keeper) - keeper0, bonus, "bonus 3% of the debt");
         assertEq(vaultCol0 - _bal(mockCollateralERC20, bVault), p.sell, "only the quote left the vault");
         (address colAsset, uint256 colAmount, bool colClaimed) =
-            ClaimFacet(address(diamond)).getClaimableAmount(LOAN, false);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(LOAN, false);
         assertEq(colAsset, mockCollateralERC20);
         assertEq(colAmount, PLEDGED - p.sell, "the borrower's claim names the unsold collateral");
         assertFalse(colClaimed);
         assertEq(_held(), extra, "the extra is held on the surplus row");
-        (, uint256 lenderAmount, ) = ClaimFacet(address(diamond)).getClaimableAmount(LOAN, true);
+        (, uint256 lenderAmount, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(LOAN, true);
         assertLe(lenderAmount, d, "the lender is owed at most the debt");
         assertGe(lenderAmount, 1000 ether, "and at least the principal");
 
@@ -245,7 +246,7 @@ contract ForcedSaleTerminalTest is SetupTest {
         DefaultedFacet(address(diamond)).triggerDefault(LOAN, p.maxSell + 1, _calls());
 
         DefaultedFacet(address(diamond)).triggerDefault(LOAN, p.maxSell, _calls());
-        (, uint256 colAmount, ) = ClaimFacet(address(diamond)).getClaimableAmount(LOAN, false);
+        (, uint256 colAmount, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(LOAN, false);
         assertEq(colAmount, PLEDGED - p.maxSell, "the quoted amount was sold");
         uint256 d = p.debt;
         assertEq(
@@ -269,7 +270,7 @@ contract ForcedSaleTerminalTest is SetupTest {
         vm.prank(keeper);
         RiskFacet(address(diamond)).triggerLiquidation(LOAN, PLEDGED, _calls());
 
-        (, uint256 colAmount, bool colClaimed) = ClaimFacet(address(diamond)).getClaimableAmount(LOAN, false);
+        (, uint256 colAmount, bool colClaimed) = ClaimViewFacet(address(diamond)).getClaimableAmount(LOAN, false);
         assertEq(colAmount, 0, "nothing of the collateral left");
         assertTrue(colClaimed, "the empty collateral row is written claimed");
         uint256 held = _held();
@@ -304,7 +305,7 @@ contract ForcedSaleTerminalTest is SetupTest {
         // the bonus are paid in full and the fee takes what is left.
         uint256 d = p.debt;
         assertEq(_bal(mockERC20, keeper) - keeper0, (d * 300) / 10_000, "bonus on the debt");
-        (, uint256 lenderAmount, ) = ClaimFacet(address(diamond)).getClaimableAmount(LOAN, true);
+        (, uint256 lenderAmount, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(LOAN, true);
         assertGe(lenderAmount, 1000 ether, "the lender recovers at least the principal");
     }
 
@@ -324,7 +325,7 @@ contract ForcedSaleTerminalTest is SetupTest {
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(LOAN);
         assertEq(uint256(l.status), uint256(LibVaipakam.LoanStatus.FallbackPending), "in the fallback");
         assertEq(l.collateralAmount, PLEDGED, "the fallback holds the whole collateral");
-        (,,,,, bool active, ) = ClaimFacet(address(diamond)).getFallbackSnapshot(LOAN);
+        (,,,,, bool active, ) = ClaimViewFacet(address(diamond)).getFallbackSnapshot(LOAN);
         assertTrue(active, "a fallback snapshot exists");
         assertEq(_bal(mockERC20, keeper), 0, "nothing paid");
     }
@@ -353,7 +354,7 @@ contract ForcedSaleTerminalTest is SetupTest {
         legs[1].splitAmount = p.sell - half;
         vm.prank(keeper);
         RiskSplitLiquidationFacet(address(diamond)).triggerLiquidationSplit(LOAN, legs);
-        (, uint256 colAmount, ) = ClaimFacet(address(diamond)).getClaimableAmount(LOAN, false);
+        (, uint256 colAmount, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(LOAN, false);
         assertEq(colAmount, PLEDGED - p.sell, "the legs' sum was sold, the rest is claimable");
     }
 

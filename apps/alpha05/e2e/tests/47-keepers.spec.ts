@@ -95,7 +95,7 @@ test('with Terms in force, giving a keeper a permission asks for them first; rem
   const keeper = accountFor('visitor').address;
   await sc.diamondWrite('borrower', 'setKeeperAccess', [true]);
   await sc.diamondWrite('borrower', 'approveKeeper', [keeper, 1]);
-  await sc.diamondWrite('admin', 'setCurrentTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
+  await sc.diamondWrite('admin', 'publishTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
   const { page } = await launchWallet('freshBorrower');
   await page.goto('/settings');
   await connectWallet(page);

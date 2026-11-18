@@ -18,7 +18,7 @@ import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 contract NftAttributesHarness is VaipakamNFTMetadataFacet {
     function attributes(MetricsFacet.NFTPositionSummary memory s)
         external
-        pure
+        view
         returns (string memory)
     {
         return _buildAttributes(s);

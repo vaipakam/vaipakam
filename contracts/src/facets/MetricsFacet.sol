@@ -834,7 +834,7 @@ contract MetricsFacet {
      *      safe). `availableToClaimNumeraire` currently returns 0 —
      *      claim valuations require ClaimInfo iteration with per-asset
      *      pricing beyond the scope of this snapshot; integrators
-     *      should call `ClaimFacet.getClaimable` per loan.
+     *      should call `ClaimViewFacet.getClaimable` per loan.
      */
     function getUserSummary(address user)
         external

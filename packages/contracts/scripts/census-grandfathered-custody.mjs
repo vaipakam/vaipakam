@@ -1431,7 +1431,7 @@ async function censusDeployment(dep) {
   const rpc = rpcFor(slug);
   if (!diamond) throw new Error(`${who}: addresses.json carries no diamond address`);
   if (!rpc) throw new Error(`${who}: no RPC — pass --rpc or set CENSUS_RPC_${slug.toUpperCase().replace(/-/g, '_')}`);
-  const claim = pick(loadAbi('ClaimFacet'), ['getFallbackSnapshot']);
+  const claim = pick(loadAbi('ClaimViewFacet'), ['getFallbackSnapshot']);
   const loanView = pick(loadAbi('LoanFacet'), ['getLoanDetails']);
   const vpfiView = pick(loadAbi('VPFITokenFacet'), ['getVPFIToken']);
   const metrics = pick(loadAbi('MetricsFacet'), ['getProtocolStats', 'getGlobalCounts']);

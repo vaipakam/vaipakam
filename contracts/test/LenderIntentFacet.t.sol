@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {LenderIntentViewFacet} from "../src/facets/LenderIntentViewFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -75,7 +76,7 @@ contract LenderIntentFacetTest is SetupTest {
     }
 
     function _activeCount() internal view returns (uint256 total) {
-        (, total) = LenderIntentFacet(address(diamond)).getActiveLenderIntents(0, 100);
+        (, total) = LenderIntentViewFacet(address(diamond)).getActiveLenderIntents(0, 100);
     }
 
     function test_getActiveLenderIntents_onlyFundedAreListed() public {
@@ -87,7 +88,7 @@ contract LenderIntentFacetTest is SetupTest {
         // Funding it lists it, with the bounds + sizing figures.
         _fund(mockERC20, mockCollateralERC20, 1_000 ether);
         (LibMetricsTypes.LenderIntentSummary[] memory page, uint256 total) =
-            LenderIntentFacet(address(diamond)).getActiveLenderIntents(0, 10);
+            LenderIntentViewFacet(address(diamond)).getActiveLenderIntents(0, 10);
         assertEq(total, 1, "funded intent listed");
         assertEq(page[0].owner, user, "owner");
         assertEq(page[0].lendingAsset, mockERC20, "lendingAsset");
@@ -151,12 +152,12 @@ contract LenderIntentFacetTest is SetupTest {
         _fund(mockCollateralERC20, mockERC20, 1_000 ether);
 
         (LibMetricsTypes.LenderIntentSummary[] memory p0, uint256 total) =
-            LenderIntentFacet(address(diamond)).getActiveLenderIntents(0, 1);
+            LenderIntentViewFacet(address(diamond)).getActiveLenderIntents(0, 1);
         assertEq(total, 2, "total reflects all funded-active");
         assertEq(p0.length, 1, "limit honoured");
 
         (LibMetricsTypes.LenderIntentSummary[] memory p1,) =
-            LenderIntentFacet(address(diamond)).getActiveLenderIntents(1, 1);
+            LenderIntentViewFacet(address(diamond)).getActiveLenderIntents(1, 1);
         assertEq(p1.length, 1, "second page");
         assertTrue(
             p0[0].collateralAsset != p1[0].collateralAsset,
@@ -164,7 +165,7 @@ contract LenderIntentFacetTest is SetupTest {
         );
 
         (LibMetricsTypes.LenderIntentSummary[] memory pEnd,) =
-            LenderIntentFacet(address(diamond)).getActiveLenderIntents(5, 10);
+            LenderIntentViewFacet(address(diamond)).getActiveLenderIntents(5, 10);
         assertEq(pEnd.length, 0, "offset past end is empty");
     }
 
@@ -173,7 +174,7 @@ contract LenderIntentFacetTest is SetupTest {
     function test_setLenderIntent_roundTrip() public {
         _set(mockERC20, mockCollateralERC20);
 
-        LibVaipakam.LenderIntent memory it = LenderIntentFacet(address(diamond))
+        LibVaipakam.LenderIntent memory it = LenderIntentViewFacet(address(diamond))
             .getLenderIntent(user, mockERC20, mockCollateralERC20, 0);
         assertTrue(it.active, "active");
         assertEq(it.maxExposure, MAX_EXPOSURE, "maxExposure");
@@ -190,7 +191,7 @@ contract LenderIntentFacetTest is SetupTest {
         _set(mockERC20, mockCollateralERC20);
         vm.prank(user);
         _setWith(mockERC20, mockCollateralERC20, 50_000 ether, 500, 5000, 30, 250 ether, false, true);
-        LibVaipakam.LenderIntent memory it = LenderIntentFacet(address(diamond))
+        LibVaipakam.LenderIntent memory it = LenderIntentViewFacet(address(diamond))
             .getLenderIntent(user, mockERC20, mockCollateralERC20, 0);
         assertEq(it.maxExposure, 50_000 ether, "overwritten exposure");
         assertEq(it.minRateBps, 500, "overwritten rate");
@@ -206,7 +207,7 @@ contract LenderIntentFacetTest is SetupTest {
         LenderIntentFacet(address(diamond)).cancelLenderIntent(
             mockERC20, mockCollateralERC20, 0
         );
-        LibVaipakam.LenderIntent memory it = LenderIntentFacet(address(diamond))
+        LibVaipakam.LenderIntent memory it = LenderIntentViewFacet(address(diamond))
             .getLenderIntent(user, mockERC20, mockCollateralERC20, 0);
         assertFalse(it.active, "cancelled => inactive");
     }
@@ -281,7 +282,7 @@ contract LenderIntentFacetTest is SetupTest {
         vm.prank(user);
         _setWith(mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, true);
         LibVaipakam.LenderIntent memory intent =
-            LenderIntentFacet(address(diamond)).getLenderIntent(
+            LenderIntentViewFacet(address(diamond)).getLenderIntent(
                 user, mockERC20, mockCollateralERC20, 0
             );
         assertTrue(intent.active, "VPFI-lending intent registered");
@@ -294,7 +295,7 @@ contract LenderIntentFacetTest is SetupTest {
         vm.prank(user);
         _setWith(mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, true);
         assertTrue(
-            LenderIntentFacet(address(diamond))
+            LenderIntentViewFacet(address(diamond))
                 .getLenderIntent(user, mockERC20, mockCollateralERC20, 0).active,
             "VPFI-collateral intent registers"
         );
@@ -306,7 +307,7 @@ contract LenderIntentFacetTest is SetupTest {
         vm.prank(user);
         _setWith(mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, true, true);
         assertTrue(
-            LenderIntentFacet(address(diamond))
+            LenderIntentViewFacet(address(diamond))
                 .getLenderIntent(user, mockERC20, mockCollateralERC20, 0)
                 .requiresKeeperAuth,
             "requiresKeeperAuth stored"
@@ -349,7 +350,7 @@ contract LenderIntentFacetTest is SetupTest {
         _set(mockERC20, mockCollateralERC20);
         // A different collateral asset is a distinct intent slot.
         assertFalse(
-            LenderIntentFacet(address(diamond))
+            LenderIntentViewFacet(address(diamond))
                 .getLenderIntent(user, mockERC20, mockERC20, 0).active,
             "distinct pair untouched"
         );

@@ -9,6 +9,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
 import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
@@ -520,8 +521,8 @@ contract SellerInterestClaimTest is SetupTest {
 
         uint256 sellers = SellerClaimFacet(address(diamond)).getSellersShareOfLenderClaim(loanId);
         assertEq(sellers, _net(loanId, sellerGross), "the sellers' part is the seller's net claim");
-        (, uint256 shown,,,,,,) = ClaimFacet(address(diamond)).getClaimable(loanId, true);
-        (, uint256 shownAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 shown,,,,,,) = ClaimViewFacet(address(diamond)).getClaimable(loanId, true);
+        (, uint256 shownAmount,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertEq(shown, shownAmount, "both claim views agree");
 
         uint256 before = _owned(buyer, mockERC20);

@@ -110,7 +110,11 @@ library LibOfferMatch {
         // #3328 — the lender offer is a collection offer, which fills only
         // through `CollectionOfferFacet`. `matchOffers` reverts
         // `CollectionParentNotFillable(lenderOfferId)`. Appended last.
-        CollectionParent
+        CollectionParent,
+        // #3734 — a party of the loan has not accepted the Terms in force
+        // (`LibTerms.TermsNotAccepted`); `LegalFacet.termsBlocker` names it.
+        // Reported by the match and intent previews. Appended.
+        TermsNotAccepted
     }
 
     /// @notice Structured return from `previewMatch`. Bots check

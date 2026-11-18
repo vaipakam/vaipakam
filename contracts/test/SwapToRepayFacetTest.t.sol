@@ -13,6 +13,7 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
@@ -477,7 +478,7 @@ contract SwapToRepayFacetTest is SetupTest {
             "nothing is pushed to the borrower's wallet"
         );
         (address sAsset, uint256 surplus, bool claimed) =
-            ClaimFacet(address(diamond)).getBorrowerSurplusClaim(1);
+            ClaimViewFacet(address(diamond)).getBorrowerSurplusClaim(1);
         assertEq(sAsset, address(principalAsset), "surplus held in the principal asset");
         assertGt(surplus, 0, "the surplus is held for the borrower's claim");
         assertFalse(claimed, "not yet claimed");
@@ -606,7 +607,7 @@ contract SwapToRepayFacetTest is SetupTest {
         // slippage headroom the sale was sized against — a favourable-quote
         // surplus, not a user-chosen conversion. #3629: it is held for the
         // borrower's claim, not pushed to the wallet.
-        (, uint256 heldSurplus, ) = ClaimFacet(address(diamond)).getBorrowerSurplusClaim(1);
+        (, uint256 heldSurplus, ) = ClaimViewFacet(address(diamond)).getBorrowerSurplusClaim(1);
         assertEq(
             heldSurplus,
             toSell - required,
@@ -974,7 +975,7 @@ contract SwapToRepayFacetTest is SetupTest {
         vm.prank(borrowerEoa);
         SwapToRepayPartialFacet(address(diamond)).swapToRepayPartial(1, 250 ether, _adapterTryList(1), type(uint64).max);
 
-        (, , , , , , uint256 held, ) = ClaimFacet(address(diamond)).getClaimable(1, true);
+        (, , , , , , uint256 held, ) = ClaimViewFacet(address(diamond)).getClaimable(1, true);
         assertGt(held, 0, "the flagged holder's share is held for the position");
         assertEq(
             IERC20(address(principalAsset)).balanceOf(lenderEoa),
@@ -1022,7 +1023,7 @@ contract SwapToRepayFacetTest is SetupTest {
 
         // A pending surplus row exists; collateral claim is empty.
         (, uint256 surplusAmt, bool surplusClaimed) =
-            ClaimFacet(address(diamond)).getBorrowerSurplusClaim(1);
+            ClaimViewFacet(address(diamond)).getBorrowerSurplusClaim(1);
         assertGt(surplusAmt, 0, "surplus frozen for the delistable holder");
         assertEq(surplusClaimed, false, "surplus not yet claimed");
 
@@ -1215,7 +1216,7 @@ contract SwapToRepayFacetTest is SetupTest {
         // `loan.lender`) can claim (#3629).
         uint256 disc = IERC20(address(principalAsset)).balanceOf(treasury) - t0;
         assertEq(disc, base - (base * 1000) / 10_000, "Full honored on transferred position");
-        (, , , , , , uint256 held, ) = ClaimFacet(address(diamond)).getClaimable(2, true);
+        (, , , , , , uint256 held, ) = ClaimViewFacet(address(diamond)).getClaimable(2, true);
         assertGt(held, 0, "the lender proceeds are held for the position");
 
         vm.prank(lenderEoa);

@@ -38,7 +38,7 @@ import {VaultOutflowTypes, OutflowReason} from "../vault/VaultOutflowTypes.sol";
  */
 contract RecoveryClawbackFacet is DiamondReentrancyGuard {
     /// @notice Most assets one clawback or sweep names.
-    uint256 public constant MAX_ASSETS = 32;
+    uint256 internal constant MAX_ASSETS = 32;
 
     /**
      * @notice `account` was clawed back to `recovery`: each asset listed and

@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {LibInterestLedger} from "./LibInterestLedger.sol";
 import {LibSanctionedLock} from "./LibSanctionedLock.sol";
@@ -68,5 +69,8 @@ library LibHeldForLender {
             l.parkedInterestReservedNet = 0;
         }
         s.heldForLender[loanId] = 0;
+        // #3413 / #3710 — what was held for the lender position left it (a
+        // claim, a recommit to an intent): marked here, the one taker.
+        LibPositionNFT.markLoanValueOut(loanId);
     }
 }

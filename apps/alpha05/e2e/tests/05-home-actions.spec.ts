@@ -126,7 +126,7 @@ test('with Terms in force, turning the discount on asks for them first; turning 
   // every test, so later specs and the other project start with none.
   await sc.diamondWrite('borrower', 'setVPFIDiscountConsent', [false]);
   const hash = keccak256(toHex('alpha05 e2e Terms v1'));
-  await sc.diamondWrite('admin', 'setCurrentTos', [1, hash]);
+  await sc.diamondWrite('admin', 'publishTos', [1, hash]);
   const { page } = await launchWallet('borrower');
   await page.goto('/');
   await connectWallet(page);
@@ -157,7 +157,7 @@ test('with Terms in force, turning the discount on asks for them first; turning 
   await expect(section).toHaveAttribute('data-consent', 'on', { timeout: 30_000 });
 
   // A newer version: turning OFF still asks nothing.
-  await sc.diamondWrite('admin', 'setCurrentTos', [2, keccak256(toHex('alpha05 e2e Terms v2'))]);
+  await sc.diamondWrite('admin', 'publishTos', [2, keccak256(toHex('alpha05 e2e Terms v2'))]);
   await page.reload();
   await expect(section).toHaveAttribute('data-consent', 'on', { timeout: 60_000 });
   await section.getByRole('button', { name: 'Turn off' }).click();

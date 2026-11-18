@@ -7,11 +7,13 @@
  * the page states what is ready and never promises a fill.
  */
 import type { Abi, PublicClient } from 'viem';
-import { AdminFacetABI, AggregatorAdapterFactoryFacetABI, LenderIntentFacetABI } from '@vaipakam/contracts/abis';
+import { AdminFacetABI, AggregatorAdapterFactoryFacetABI, LenderIntentFacetABI, LenderIntentViewFacetABI } from '@vaipakam/contracts/abis';
 import type { LifecycleTerms } from '../post/postModel';
 import { CONFIG } from './reads';
 
 const INTENT = LenderIntentFacetABI as Abi;
+/** The standing-intent reads (split off LenderIntentFacet). */
+const INTENT_VIEW = LenderIntentViewFacetABI as Abi;
 const ADMIN = AdminFacetABI as Abi;
 const FACTORY = AggregatorAdapterFactoryFacetABI as Abi;
 
@@ -129,7 +131,7 @@ export async function readLenderIntents(client: PublicClient, diamond: Hex): Pro
   let scanned = 0;
   for (let page = 0; page < INTENT_PAGES; page++) {
     const offset = BigInt(page * INTENT_PAGE);
-    const [rows, all] = await read<readonly [readonly IntentSummary[], bigint]>(INTENT, 'getActiveLenderIntents', [offset, BigInt(INTENT_PAGE)]);
+    const [rows, all] = await read<readonly [readonly IntentSummary[], bigint]>(INTENT_VIEW, 'getActiveLenderIntents', [offset, BigInt(INTENT_PAGE)]);
     total = all;
     intents.push(...rows);
     // Count registry positions read, not rows returned: the feed leaves out an

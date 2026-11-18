@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {LenderIntentViewFacet} from "../../src/facets/LenderIntentViewFacet.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
@@ -339,7 +340,7 @@ contract PriorityRoutingPerkLiveForkTest is Test {
         string memory tag
     ) internal view {
         (bool e, uint256 c, bool cc, bool cu) =
-            LenderIntentFacet(diamond).getLenderIntentPriority(owner, weth, collateral, 0, solver, tx.origin);
+            LenderIntentViewFacet(diamond).getLenderIntentPriority(owner, weth, collateral, 0, solver, tx.origin);
         assertEq(e, enabled, string.concat(tag, ": enabled"));
         assertEq(c, credits, string.concat(tag, ": credits"));
         assertEq(cc, capacityCovers, string.concat(tag, ": capacityCovers"));

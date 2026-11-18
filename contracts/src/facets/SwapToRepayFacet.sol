@@ -14,6 +14,7 @@ import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
+import {CollateralLienFacet} from "./CollateralLienFacet.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
@@ -293,7 +294,7 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // Safe under revert: a downstream revert rolls back the storage
         // write.
         _callEncumb2(
-            EncumbranceMutateFacet.decrementCollateralLien.selector,
+            CollateralLienFacet.decrementCollateralLien.selector,
             loanId,
             sellAmount
         );
@@ -442,7 +443,7 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             // after this = `(collateralAmount - sellAmount) +
             // partialFillRefund` = `unconsumedCollateral`.
             _callEncumb2(
-                EncumbranceMutateFacet.incrementCollateralLien.selector,
+                CollateralLienFacet.incrementCollateralLien.selector,
                 loanId,
                 partialFillRefund
             );

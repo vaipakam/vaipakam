@@ -2,6 +2,8 @@
 pragma solidity ^0.8.29;
 
 import {LibTestProtectedCut} from "../helpers/LibTestProtectedCut.sol";
+import {LibTestTermsCut} from "../helpers/LibTestTermsCut.sol";
+import {LibTestClaimViewCut} from "../helpers/LibTestClaimViewCut.sol";
 import {LibTestPositionNFT} from "../helpers/LibTestPositionNFT.sol";
 import {LibTestSettlementLeg} from "../helpers/LibTestSettlementLeg.sol";
 import {Test} from "forge-std/Test.sol";
@@ -50,6 +52,9 @@ import {TestOfferFloor} from "../helpers/TestOfferFloor.sol";
 import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
 import {RepayPeriodicFacet} from "../../src/facets/RepayPeriodicFacet.sol";
 import {NumeraireConfigFacet} from "../../src/facets/NumeraireConfigFacet.sol";
+import {CollateralConcentrationFacet} from "../../src/facets/CollateralConcentrationFacet.sol";
+import {CollateralLienFacet} from "../../src/facets/CollateralLienFacet.sol";
+import {StandingInstructionFacet} from "../../src/facets/StandingInstructionFacet.sol";
 import {SaleFloorFacet} from "../../src/facets/SaleFloorFacet.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {MockSwapAdapter} from "../mocks/MockSwapAdapter.sol";
@@ -210,7 +215,7 @@ contract InvariantBase is Test {
         TestMutatorFacet mutatorFacet = new TestMutatorFacet();
         MetricsFacet metricsFacet = MetricsFacet(ArtifactDeploy.deploy(type(MetricsFacet).name));
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](46);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](49);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -441,7 +446,27 @@ contract InvariantBase is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
-        IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
+        // #3685 — loan creation reads its init-LTV cap from this host.
+        cuts[46] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(CollateralConcentrationFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getCollateralConcentrationFacetSelectors()
+        });
+        // #3685 — the collateral-lien entries, split off EncumbranceMutateFacet.
+        cuts[47] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(CollateralLienFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getCollateralLienFacetSelectors()
+        });
+        // #3681 — the loan reserve and the standing instructions.
+        cuts[48] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(StandingInstructionFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getStandingInstructionFacetSelectors()
+        });
+        IDiamondCut(address(diamond)).diamondCut(
+            LibTestClaimViewCut.withClaimView(LibTestTermsCut.withTermsHost(LibTestProtectedCut.withProtected(cuts))), address(0), ""
+        ); // #3734
         LibTestSettlementLeg.install(address(diamond)); // #3669
         LibTestForcedSalePreview.install(address(diamond));
         LibTestVaultBeacon.installDepository(address(diamond));

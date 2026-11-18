@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {LibTestTiming} from "./helpers/LibTestTiming.sol";
@@ -108,7 +109,7 @@ contract LenderEntryDiscountTest is SetupTest {
 
     /// @dev #3629 — what is held for the lender position of `loanId`.
     function _held(uint256 loanId) internal view returns (uint256 held) {
-        (, , , , , , held, ) = ClaimFacet(address(diamond)).getClaimable(loanId, true);
+        (, , , , , , held, ) = ClaimViewFacet(address(diamond)).getClaimable(loanId, true);
     }
 
     function _skip(uint256 dt) internal {

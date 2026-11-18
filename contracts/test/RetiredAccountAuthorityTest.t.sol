@@ -135,8 +135,9 @@ contract RetiredAccountAuthorityTest is SetupTest {
         uint256 tokenId = _loan(loanId).borrowerTokenId;
         address operator = makeAddr("operatorApprovedBefore");
         address attacker = makeAddr("attacker");
+        // A token approval given before retirement (#3721: per token only).
         vm.prank(borrower);
-        _core().setApprovalForAll(operator, true);
+        _core().approve(operator, tokenId);
 
         address nominee = makeAddr("borrowerReplacement");
         _retire(borrower, nominee);

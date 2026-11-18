@@ -535,8 +535,7 @@ library LibOfferMatchExecute {
         // so both offers' own tokens cool down. (A direct accept instead turns
         // the offer's own token into a loan token, and the facet stamps that
         // loan as it does.)
-        LibPositionNFT.markOfferValueOut(lenderOfferId);
-        LibPositionNFT.markOfferValueOut(borrowerOfferId);
+        LibPositionNFT.markOffersValueOut(lenderOfferId, borrowerOfferId);
         uint256 lenderRemaining = L.amountMax - L.amountFilled;
 
         // Auto-close on dust: if the leftover can't satisfy the

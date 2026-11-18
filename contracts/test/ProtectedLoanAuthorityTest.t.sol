@@ -5,6 +5,7 @@ import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
 import {AutoLifecycleSettingsFacet} from "../src/facets/AutoLifecycleSettingsFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -122,7 +123,7 @@ contract ProtectedLoanAuthorityTest is SetupTest {
         ERC20Mock(mockERC20).mint(borrower, 10 ether);
         vm.startPrank(borrower);
         ERC20(mockERC20).approve(address(diamond), 10 ether);
-        _f().fundExtendReserve(loanId, 10 ether);
+        StandingInstructionFacet(address(diamond)).fundLoanReserve(loanId, 0, 10 ether);
         vm.stopPrank();
 
         address nominee = makeAddr("borrowerController");

@@ -11,6 +11,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {IZeroExProxy} from "../src/interfaces/IZeroExProxy.sol";
@@ -154,7 +155,7 @@ contract FallbackCustodyFacetGateTest is SetupTest {
             "fixture-live: the real producer entered FallbackPending"
         );
         (uint256 l, uint256 t, uint256 b, , , bool active, ) =
-            ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);
+            ClaimViewFacet(address(diamond)).getFallbackSnapshot(loanId);
         assertTrue(active, "fixture-live: the snapshot is active");
         assertGt(l, 0, "fixture-live: a non-zero lender slice");
         assertEq(l + t + b, COLLATERAL, "fixture-live: the split covers the whole collateral");
@@ -208,7 +209,7 @@ contract FallbackCustodyFacetGateTest is SetupTest {
     ///      read still (total, 0).
     function _fcAssertCustodyUntouched() internal view {
         assertEq(uint8(_fcStatus(loanId)), uint8(LibVaipakam.LoanStatus.FallbackPending), "still FallbackPending");
-        (, , , , , bool active, bool retried) = ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);
+        (, , , , , bool active, bool retried) = ClaimViewFacet(address(diamond)).getFallbackSnapshot(loanId);
         assertTrue(active, "the snapshot is still active");
         assertFalse(retried, "no retry was recorded");
         assertEq(_bal(address(diamond)), diamondHeldAfterEntry, "the Diamond's balance did not move");
@@ -354,7 +355,7 @@ contract FallbackCustodyFacetGateTest is SetupTest {
         assertEq(_bal(treasury) - treasury0, treasuryCol, "treasury slice paid");
         assertEq(_bal(_borrowerVault()), borrowerCol, "the borrower slice stays in the borrower's vault");
         assertEq(_bal(address(diamond)), diamondHeldAfterEntry, "the Diamond is never a waypoint");
-        (, , , , , bool active, ) = ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);
+        (, , , , , bool active, ) = ClaimViewFacet(address(diamond)).getFallbackSnapshot(loanId);
         assertFalse(active, "the claim closed the snapshot");
         (uint256 vaultHeld, uint256 diamondHeld) =
             FallbackCustodyFacet(address(diamond)).getFallbackCustody(loanId);

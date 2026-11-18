@@ -8,6 +8,7 @@ import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
@@ -228,7 +229,7 @@ contract MeasuredDeliveryTest is SetupTest {
     }
 
     function _snapshot() internal view returns (uint256 lc, uint256 tc, uint256 bc) {
-        (lc, tc, bc, , , , ) = ClaimFacet(address(diamond)).getFallbackSnapshot(LOAN);
+        (lc, tc, bc, , , , ) = ClaimViewFacet(address(diamond)).getFallbackSnapshot(LOAN);
     }
 
     function _lien() internal view returns (uint256 amount) {
@@ -423,7 +424,7 @@ contract MeasuredDeliveryTest is SetupTest {
         DefaultedFacet(address(diamond)).triggerDefault(LOAN, sellQuote, defaultAdapterCalls());
 
         assertEq(uint8(_status()), uint8(LibVaipakam.LoanStatus.Defaulted), "the default completed");
-        (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(LOAN, true);
+        (, uint256 claim, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(LOAN, true);
         assertEq(claim, _less(COLLATERAL), "the claim is what arrived");
         assertEq(_bal(col, lVault) - lVault0, claim, "the lender's vault holds the claim");
         assertEq(_tracked(lender, col), claim, "and tracks it");
@@ -509,7 +510,7 @@ contract MeasuredDeliveryTest is SetupTest {
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).precloseDirect(loanId);
 
-        (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 claim, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertGt(claim, 0, "fixture: the lender has rent to claim");
         assertEq(_tracked(lender, mockERC20) - tracked0, claim, "the share is on the lender's books");
 
@@ -570,7 +571,7 @@ contract MeasuredDeliveryTest is SetupTest {
         uint256 treasuryFee = (l.prepayAmount * 500) / 10_000;
         uint256 shortfall = l.prepayAmount - _less(l.prepayAmount);
         assertLt(shortfall, treasuryFee, "fixture: the treasury fee covers the shortfall");
-        (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 claim, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertEq(claim, _less(l.prepayAmount - treasuryFee), "the lender's whole share, less the push's own fee");
         assertEq(_bal(mockERC20, lVault) - lVault0, claim, "the lender's vault holds the claim");
         assertEq(
@@ -701,7 +702,7 @@ contract MeasuredDeliveryTest is SetupTest {
         uint256 snap = vm.snapshotState();
         vm.prank(borrower);
         RepayFacet(address(diamond)).repayLoan(loanId);
-        (, uint256 share, ) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 share, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertGt(share, 0, "fixture: the lender has a rental share");
         vm.revertToState(snap);
 

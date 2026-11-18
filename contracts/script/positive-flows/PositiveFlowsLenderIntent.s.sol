@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {console} from "forge-std/console.sol";
+import {LenderIntentViewFacet} from "../../src/facets/LenderIntentViewFacet.sol";
 import {PositiveFlowsStaged} from "./PositiveFlowsStaged.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibMetricsTypes} from "../../src/libraries/LibMetricsTypes.sol";
@@ -14,6 +15,7 @@ import {MetricsFacet} from "../../src/facets/MetricsFacet.sol";
 import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../../src/facets/ClaimViewFacet.sol";
 
 /**
  * @title PositiveFlowsLenderIntent
@@ -179,7 +181,7 @@ contract PositiveFlowsLenderIntent is PositiveFlowsStaged {
         require(_intentCapital() == 0, "PF-074: the fill should draw the whole funded capital");
 
         _repayInFull(borrowerKey, loanId);
-        (address asset, uint256 proceeds, bool claimedBefore,,,,,) = ClaimFacet(diamond).getClaimable(loanId, true);
+        (address asset, uint256 proceeds, bool claimedBefore,,,,,) = ClaimViewFacet(diamond).getClaimable(loanId, true);
         require(asset == address(usdc) && proceeds > LOAN_AMOUNT && !claimedBefore,
             "PF-074: the repaid loan should owe the lender principal plus interest");
 
@@ -190,7 +192,7 @@ contract PositiveFlowsLenderIntent is PositiveFlowsStaged {
         require(usdc.balanceOf(lender) == walletBefore, "PF-074: a roll should pay nothing to the wallet");
         require(_intentCapital() == proceeds, "PF-074: the whole lender claim should become intent capital");
         require(_livePrincipal() == 0, "PF-074: the rolled loan should release its exposure");
-        (,, bool claimed,,,,,) = ClaimFacet(diamond).getClaimable(loanId, true);
+        (,, bool claimed,,,,,) = ClaimViewFacet(diamond).getClaimable(loanId, true);
         require(claimed, "PF-074: the lender claim should be consumed by the roll");
         _requireOwnerRow(true, proceeds, 0, "PF-074: the owner view should show the rolled capital");
         console.log("Repaid intent loan rolled into capital:", proceeds);
@@ -226,7 +228,7 @@ contract PositiveFlowsLenderIntent is PositiveFlowsStaged {
         );
         vm.stopBroadcast();
         LibVaipakam.LenderIntent memory intent =
-            LenderIntentFacet(diamond).getLenderIntent(lender, address(usdc), address(weth), 0);
+            LenderIntentViewFacet(diamond).getLenderIntent(lender, address(usdc), address(weth), 0);
         require(
             intent.active && intent.maxExposure == MAX_EXPOSURE && intent.minRateBps == INTEREST_BPS
                 && intent.maxInitLtvBps == MAX_INIT_LTV_BPS && intent.minFillAmount == MIN_FILL,
@@ -298,11 +300,11 @@ contract PositiveFlowsLenderIntent is PositiveFlowsStaged {
     }
 
     function _intentCapital() internal view returns (uint256) {
-        return LenderIntentFacet(diamond).getLenderIntentCapital(lender, address(usdc), address(weth), 0);
+        return LenderIntentViewFacet(diamond).getLenderIntentCapital(lender, address(usdc), address(weth), 0);
     }
 
     function _livePrincipal() internal view returns (uint256) {
-        return LenderIntentFacet(diamond).getLenderIntentLivePrincipal(lender, address(usdc), address(weth), 0);
+        return LenderIntentViewFacet(diamond).getLenderIntentLivePrincipal(lender, address(usdc), address(weth), 0);
     }
 
     /// @dev Requires the owner view to list the module's intent with exactly
@@ -311,7 +313,7 @@ contract PositiveFlowsLenderIntent is PositiveFlowsStaged {
         uint256 i = _ownerRowIndex();
         require(i != type(uint256).max, failure);
         (LibMetricsTypes.OwnerLenderIntentSummary[] memory rows,) =
-            LenderIntentFacet(diamond).getLenderIntentsByOwner(lender, i, 1);
+            LenderIntentViewFacet(diamond).getLenderIntentsByOwner(lender, i, 1);
         require(
             rows[0].active == active && rows[0].intent.availableCapital == capital
                 && rows[0].intent.livePrincipal == live,
@@ -323,7 +325,7 @@ contract PositiveFlowsLenderIntent is PositiveFlowsStaged {
     ///      `type(uint256).max` when it is not listed.
     function _ownerRowIndex() internal view returns (uint256) {
         (LibMetricsTypes.OwnerLenderIntentSummary[] memory rows, uint256 total) =
-            LenderIntentFacet(diamond).getLenderIntentsByOwner(lender, 0, type(uint256).max);
+            LenderIntentViewFacet(diamond).getLenderIntentsByOwner(lender, 0, type(uint256).max);
         require(rows.length == total, "the owner view should return every row in one page");
         for (uint256 i; i < rows.length; ++i) {
             if (rows[i].intent.lendingAsset == address(usdc) && rows[i].intent.collateralAsset == address(weth)) {
@@ -335,7 +337,7 @@ contract PositiveFlowsLenderIntent is PositiveFlowsStaged {
 
     function _inKeeperFeed() internal view returns (bool) {
         (LibMetricsTypes.LenderIntentSummary[] memory rows, uint256 total) =
-            LenderIntentFacet(diamond).getActiveLenderIntents(0, type(uint256).max);
+            LenderIntentViewFacet(diamond).getActiveLenderIntents(0, type(uint256).max);
         require(rows.length == total, "the keeper feed should return every row in one page");
         for (uint256 i; i < rows.length; ++i) {
             if (

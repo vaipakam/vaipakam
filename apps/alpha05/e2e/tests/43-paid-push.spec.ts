@@ -166,7 +166,7 @@ test('with Terms in force, agreeing asks for them first; withdrawing never does'
   const sc = scenario({ borrower: 'freshBorrower' });
   // A cap stored before the Terms were published.
   await sc.diamondWrite('borrower', 'setNotificationFeeConsent', [VPFI / 4n]);
-  await sc.diamondWrite('admin', 'setCurrentTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
+  await sc.diamondWrite('admin', 'publishTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
   const { page } = await launchWallet('freshBorrower');
   await openPaidPush(page);
   const card = page.getByTestId('paid-push');
@@ -212,7 +212,7 @@ test('Terms published while an agreement review is open stop it before the walle
   const flow = page.getByTestId('paid-push-panel');
   await expect(flow.locator('.receipt')).toContainText('Agree to pay for push alerts', { timeout: 60_000 });
 
-  await sc.diamondWrite('admin', 'setCurrentTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
+  await sc.diamondWrite('admin', 'publishTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
   const sent = flags.sentTransactions;
   await flow.getByRole('button', { name: 'Confirm in wallet' }).click();
   await expect(flow).toContainText('A Terms version you have not accepted is now in force, so nothing was sent', { timeout: 60_000 });

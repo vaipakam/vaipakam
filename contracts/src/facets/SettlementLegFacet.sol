@@ -119,6 +119,66 @@ contract SettlementLegFacet is IVaipakamErrors, DiamondReentrancyGuard, DiamondP
         returns (bool parked)
     {
         _onlySelf();
+        return _deliverLenderDueOrPark(loanId, payer, asset, amount);
+    }
+
+    /**
+     * @notice A hand repayment's two legs, both from `payer`'s wallet: the
+     *         treasury share (parked in `payer`'s vault when the treasury
+     *         refuses it), then the lender due into the stored lender's vault
+     *         behind the receive-side exemption (#821), parked in `payer`'s
+     *         vault when the token refuses that delivery. Self-only:
+     *         `RepayFacet` sizes the legs and this host moves them, so the
+     *         rule for a refused leg lives in one facet.
+     * @return parked Whether the lender due was parked.
+     */
+    function payRepaymentLegs(
+        uint256 loanId,
+        address payer,
+        address asset,
+        uint256 treasuryShare,
+        uint256 lenderDue
+    ) external returns (bool parked) {
+        _onlySelf();
+        LibFacet.treasuryShareOrPark(FROM_WALLET, payer, asset, treasuryShare);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address lender = s.loans[loanId].lender;
+        LibSanctionedLock.begin(s, lender);
+        parked = _deliverLenderDueOrPark(loanId, payer, asset, lenderDue);
+        LibSanctionedLock.end(s, lender, loanId, asset, lenderDue);
+    }
+
+    /**
+     * @notice A rental repayment's two legs, both from `payer`'s own vault
+     *         (the prepayment): the treasury share (parked in that vault when
+     *         the treasury refuses it), then the lender's share, exact, into
+     *         the stored lender's vault behind the receive-side exemption
+     *         (#821). Self-only: `RepayFacet` sizes the legs and this host
+     *         moves them. The move-out exemption is armed for the payer, so a
+     *         borrower flagged after the rental began can still settle it.
+     *         The lender's share is a voluntary repayment's: refused unless
+     *         all of it arrived (#2440).
+     */
+    function payRentalLegs(
+        uint256 loanId,
+        address payer,
+        address asset,
+        uint256 treasuryShare,
+        uint256 lenderShare
+    ) external {
+        _onlySelf();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibSanctionedLock.beginMoveOut(s, payer);
+        LibFacet.treasuryShareOrPark(FROM_VAULT, payer, asset, treasuryShare);
+        LibVaultOutflow.toDiamondExact(payer, asset, lenderShare, loanId, OutflowReason.REPAYMENT);
+        LibSanctionedLock.endMoveOut(s);
+        LibSanctionedLock.depositLockedInFull(s, s.loans[loanId].lender, loanId, asset, lenderShare);
+    }
+
+    function _deliverLenderDueOrPark(uint256 loanId, address payer, address asset, uint256 amount)
+        private
+        returns (bool parked)
+    {
         if (amount == 0) return false;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         (bool ok, bytes memory ret) = _attempt(
@@ -139,6 +199,46 @@ contract SettlementLegFacet is IVaipakamErrors, DiamondReentrancyGuard, DiamondP
         LibEncumbrance.encumberParkedLeg(payer, asset, amount);
         _park(s, loanId, payer, asset, LibVaipakam.AssetType.ERC20, 0, amount, false);
         return true;
+    }
+
+    /**
+     * @notice #3681 — a reserve-paid repayment's lender due, from `owner`'s
+     *         own vault (the payment reserve, already released) into the vault
+     *         of `loanId`'s stored lender, or, when the token refuses that
+     *         delivery, left where it is under a lien for the lender side:
+     *         the same park a hand repayment's refused leg takes, so the two
+     *         end in the same state.
+     * @return parked Whether the leg was parked.
+     */
+    function deliverLenderDueFromVaultOrPark(uint256 loanId, address owner, address asset, uint256 amount)
+        external
+        returns (bool parked)
+    {
+        _onlySelf();
+        if (amount == 0) return false;
+        (bool ok, bytes memory ret) =
+            _attempt(abi.encodeCall(this.vaultLegToStoredLender, (loanId, owner, asset, amount)));
+        if (ok) return false;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // The vault must hold the whole leg: otherwise the failure is not the
+        // token's refusal of the delivery, and it surfaces as it always did.
+        if (IERC20(asset).balanceOf(s.userVaipakamVaults[owner]) < amount) {
+            LibRevert.bubbleOnFailureTyped(false, ret, VaultDepositFailed.selector);
+        }
+        LibEncumbrance.encumberParkedLeg(owner, asset, amount);
+        _park(s, loanId, owner, asset, LibVaipakam.AssetType.ERC20, 0, amount, false);
+        return true;
+    }
+
+    /// @notice The delivery itself, run as the attempt above. Self-only.
+    ///         Out of `owner`'s vault into the Diamond, then into the stored
+    ///         lender's vault behind the receive-side exemption (#821), each
+    ///         refused unless all of it arrives.
+    function vaultLegToStoredLender(uint256 loanId, address owner, address asset, uint256 amount) external {
+        _onlySelf();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaultOutflow.toDiamondExact(owner, asset, amount, loanId, OutflowReason.STANDING_INSTRUCTION);
+        LibSanctionedLock.depositLockedInFull(s, s.loans[loanId].lender, loanId, asset, amount);
     }
 
     // ─── A forced sale's lender share ──────────────────────────────────

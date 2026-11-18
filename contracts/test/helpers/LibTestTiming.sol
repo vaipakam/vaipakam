@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {Vm, VmSafe} from "forge-std/Vm.sol";
+import {LenderIntentViewFacet} from "../../src/facets/LenderIntentViewFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibTiming} from "../../src/libraries/LibTiming.sol";
 import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
@@ -70,7 +71,7 @@ library LibTestTiming {
         uint8 slot
     ) internal {
         uint64 setAt;
-        try LenderIntentFacet(diamond).getLenderIntent(owner, lendingAsset, collateralAsset, slot)
+        try LenderIntentViewFacet(diamond).getLenderIntent(owner, lendingAsset, collateralAsset, slot)
             returns (LibVaipakam.LenderIntent memory i)
         {
             setAt = i.termsSetAt;

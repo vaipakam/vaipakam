@@ -13,6 +13,7 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
+import {LibInterestPayment} from "../libraries/LibInterestPayment.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
@@ -444,6 +445,21 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     }
 
     // ─── T-034 — settlePeriodicInterest entry point ───────────────────────
+
+    /// @notice #3681 — the one host of {LibInterestPayment.book}: book
+    ///         `recovered` of `gross` interest, already in the Diamond, as paid
+    ///         on the open loan `loanId` (treasury share, lender side with
+    ///         sellers first, settled interest). Reached by self-call from the
+    ///         periodic forced sale (`ForcedSaleFacet`) and the "pay my
+    ///         interest" standing instruction (`StandingInstructionFacet`);
+    ///         each closes the period its own way, once.
+    function bookInterestPayment(uint256 loanId, uint256 gross, uint256 recovered, uint8 source)
+        external
+        returns (uint256 lenderPaid, uint256 settled)
+    {
+        if (msg.sender != address(this)) revert IVaipakamErrors.UnauthorizedCrossFacetCall();
+        return LibInterestPayment.book(loanId, gross, recovered, source);
+    }
 
     /// @notice Permissionless settler. Closes the loan's current
     ///         periodic-interest period, advancing

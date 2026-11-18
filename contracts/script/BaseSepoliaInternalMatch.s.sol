@@ -13,6 +13,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -30,7 +31,7 @@ import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
  * @title BaseSepoliaInternalMatch
  * @notice #2427 live verification — leaves a REAL internally matched ERC-20
  *         loan pair on a testnet Diamond, so the lender's claim card for
- *         `ClaimFacet.getOwedAtInternalMatch` can be seen against chain
+ *         `ClaimViewFacet.getOwedAtInternalMatch` can be seen against chain
  *         state rather than a scaffolded loan.
  *
  *         Why prices have to move. Two opposing loans (A: tLIQ lent against
@@ -820,7 +821,7 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
 
     function _logRecord(string memory tag, address diamond, uint256 loanId) internal view {
         (uint256 principal, uint256 interest, uint256 lateFee, uint256 proceeds, uint64 at, bool incomplete) =
-            ClaimFacet(diamond).getOwedAtInternalMatch(loanId);
+            ClaimViewFacet(diamond).getOwedAtInternalMatch(loanId);
         console.log(string.concat("getOwedAtInternalMatch(", tag, ") id:"), loanId);
         console.log("  status:", uint256(LoanFacet(diamond).getLoanDetails(loanId).status));
         console.log("  principal / interest:", principal, interest);

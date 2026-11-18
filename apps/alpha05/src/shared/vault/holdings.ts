@@ -28,7 +28,7 @@
  */
 import type { Abi, PublicClient } from 'viem';
 import { erc20Abi } from 'viem';
-import { LenderIntentFacetABI, LoanFacetABI, MetricsFacetABI, OfferCancelFacetABI, VaultDepositoryFacetABI, VaultFactoryFacetABI } from '@vaipakam/contracts/abis';
+import { LenderIntentViewFacetABI, LoanFacetABI, MetricsFacetABI, OfferCancelFacetABI, VaultDepositoryFacetABI, VaultFactoryFacetABI } from '@vaipakam/contracts/abis';
 import { answerOrNull } from '../reads/answer';
 import { NFT_ABI, readStandard, type Standard } from '../nft/nft';
 
@@ -36,7 +36,7 @@ type Hex = `0x${string}`;
 
 const DEPOSITORY = VaultDepositoryFacetABI as Abi;
 const FACTORY = VaultFactoryFacetABI as Abi;
-const INTENT = LenderIntentFacetABI as Abi;
+const INTENT = LenderIntentViewFacetABI as Abi;
 const LOAN = LoanFacetABI as Abi;
 const METRICS = MetricsFacetABI as Abi;
 const OFFER = OfferCancelFacetABI as Abi;

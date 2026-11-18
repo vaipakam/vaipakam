@@ -30,7 +30,7 @@ library LibTestSettlementLeg {
 
     /// @dev Mirrors `DeployDiamond._getSettlementLegSelectors`.
     function selectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](10);
+        s = new bytes4[](14);
         s[0] = SettlementLegFacet.deliverLenderDueOrPark.selector;
         s[1] = SettlementLegFacet.moveInKindCollateralOrPark.selector;
         s[2] = SettlementLegFacet.inKindMove.selector;
@@ -41,5 +41,10 @@ library LibTestSettlementLeg {
         s[7] = SettlementLegFacet.treasuryShareOrPark.selector;
         s[8] = SettlementLegFacet.releaseParkedTreasury.selector;
         s[9] = SettlementLegFacet.getParkedTreasury.selector;
+        // #3681 — a reserve-paid repayment's lender due, from the holder's vault.
+        s[10] = SettlementLegFacet.deliverLenderDueFromVaultOrPark.selector;
+        s[11] = SettlementLegFacet.vaultLegToStoredLender.selector;
+        s[12] = SettlementLegFacet.payRepaymentLegs.selector;
+        s[13] = SettlementLegFacet.payRentalLegs.selector;
     }
 }

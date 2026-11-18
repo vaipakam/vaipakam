@@ -82,6 +82,13 @@ library VaultOutflowTypes {
      *           that address's own vault when it is itself a protected
      *           account. Only a clawback and a recovered account's sweep use
      *           it; it passes no payout queue.
+     *         - HolderWallet (#3710): the WALLET of whoever holds
+     *           `positionToken` of loan `ref` now, read from the token by the
+     *           policy, never named by the route. A holder that is the paying
+     *           vault's own owner is paid as an Owner payout (its delay, its
+     *           lock, a replaced account's manager); any other holder at its
+     *           wallet, or at its own vault when it has protected mode on.
+     *           ERC-20 only.
      */
     enum OutflowClass {
         Owner,
@@ -100,7 +107,8 @@ library VaultOutflowTypes {
         ClaimCustody,
         PrincipalToBorrower,
         Consolidation,
-        Recovery
+        Recovery,
+        HolderWallet
     }
 
     /// @notice #3246 part 2 — one asset a clawback or a recovered account's
@@ -271,5 +279,6 @@ library OutflowReason {
     uint8 internal constant RENTAL = 22; // a rental settlement leg
     uint8 internal constant CLAWBACK = 23; // #3246 part 2: a clawback to the recovery address
     uint8 internal constant RECOVERY_SWEEP = 24; // #3246 part 2: a recovered account's later free balance swept there
+    uint8 internal constant STANDING_INSTRUCTION = 25; // #3681: a standing instruction's draw on a loan reserve
 
 }

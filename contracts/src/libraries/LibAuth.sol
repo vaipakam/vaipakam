@@ -117,9 +117,16 @@ library LibAuth {
     ///      position's holder, or as the manager of either (so a controller
     ///      managing both sides is still excluded).
     function requireNotLenderSide(LibVaipakam.Loan storage loan) internal view {
-        if (msg.sender == loan.lender || msg.sender == LibProtectedAccount.manager(loan.lender)) revert IVaipakamErrors.LenderCannotRepayOwnLoan();
+        requireNotLenderSide(loan, msg.sender);
+    }
+
+    /// @dev The same rule for a named payer: a repayment drawn from a
+    ///      standing-instruction reserve (#3681) is paid by the reserve's
+    ///      holder, not by the Diamond that made the call.
+    function requireNotLenderSide(LibVaipakam.Loan storage loan, address payer) internal view {
+        if (payer == loan.lender || payer == LibProtectedAccount.manager(loan.lender)) revert IVaipakamErrors.LenderCannotRepayOwnLoan();
         address holder = LibPositionNFT.ownerOf(loan.lenderTokenId);
-        if (msg.sender == holder || msg.sender == LibProtectedAccount.manager(holder)) revert IVaipakamErrors.LenderCannotRepayOwnLoan();
+        if (payer == holder || payer == LibProtectedAccount.manager(holder)) revert IVaipakamErrors.LenderCannotRepayOwnLoan();
     }
 
     /// @dev Canonical keeper-authorization helper (Phase 6).

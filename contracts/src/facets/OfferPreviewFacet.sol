@@ -17,6 +17,7 @@ import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibOfferAdmission} from "../libraries/LibOfferAdmission.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
+import {LegalFacet} from "./LegalFacet.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {OfferPriceGuardFacet} from "./OfferPriceGuardFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
@@ -46,15 +47,6 @@ import {ProfileFacet} from "./ProfileFacet.sol";
 contract OfferPreviewFacet {
     /// @notice The offer does not exist (zero creator).
     error InvalidOffer();
-
-    /// @notice #3358 — the first check loan creation runs after the accept or
-    ///         match core that would refuse the loan, if any: the offer's
-    ///         cadence (#3025), then the makers' price-move guards (#3358).
-    enum OriginationRefusal {
-        None,
-        CadenceNotAdmitted,
-        PriceGuardRefused
-    }
 
     /**
      * @notice Read-only projection + first-failing-blocker for a direct
@@ -494,6 +486,13 @@ contract OfferPreviewFacet {
             }
         }
 
+        // #3734 — loan creation asks both parties' Terms acceptance (the
+        // exiting seller of a sale vehicle is not asked) before its cadence.
+        if (!_termsClear(_saleLoanId == 0 ? offer.creator : address(0), acceptor)) {
+            preview.errorCode = OfferAcceptFacet.AcceptError.TermsNotAccepted;
+            return preview;
+        }
+
         // #3025 — loan creation re-admits the offer's cadence on the loan it
         // opens (inside `initiateLoan`, after every check above and before the
         // refinance hook below), so a cadence the rule no longer admits is
@@ -806,29 +805,12 @@ contract OfferPreviewFacet {
         );
     }
 
-    /**
-     * @notice #3358 — the first origination check loan creation would refuse
-     *         a loan opened now from `offerId` with `principal` funded, where
-     *         `otherOfferId` (0 = none) is the other maker's offer in a match:
-     *         the cadence rule first, then the price-move guards, in loan
-     *         creation's order.
-     * @dev The match preview asks it (one call for both checks); the accept
-     *      preview runs the same two checks inline. Each asks the entry loan
-     *      creation itself calls, so the refusal is the one it would raise.
-     *      Not for a lender-sale vehicle, which the cadence rule exempts.
-     */
-    function previewOriginationRefusal(uint256 offerId, uint256 principal, uint256 otherOfferId)
-        external
-        view
-        returns (OriginationRefusal)
-    {
-        try OfferPreviewFacet(address(this)).requireOriginationCadenceAdmitted(offerId, principal) {} catch {
-            return OriginationRefusal.CadenceNotAdmitted;
-        }
-        if (!_priceGuardsClear(LibVaipakam.storageSlot(), offerId, otherOfferId)) {
-            return OriginationRefusal.PriceGuardRefused;
-        }
-        return OriginationRefusal.None;
+    /// @dev #3734 — whether `a` and `b` (0 = skip) have both accepted the
+    ///      Terms that count now, asked of the rule's one host.
+    function _termsClear(address a, address b) private view returns (bool) {
+        (bool ok, bytes memory r) =
+            address(this).staticcall(abi.encodeWithSelector(LegalFacet.termsBlocker.selector, a, b));
+        return ok && abi.decode(r, (address)) == address(0);
     }
 
     /// @dev Whether the price-move guards on `offerId` and `otherOfferId`

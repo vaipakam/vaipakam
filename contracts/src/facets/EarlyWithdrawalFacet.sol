@@ -32,6 +32,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
+import {CollateralLienFacet} from "./CollateralLienFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
 import {SaleExitVerdictFacet} from "./SaleExitVerdictFacet.sol";
@@ -911,7 +912,7 @@ contract EarlyWithdrawalFacet is
         // NFT rentals (D-1). EncumbranceLifecycleMap.md §4.6.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.releaseCollateralLien.selector,
+                CollateralLienFacet.releaseCollateralLien.selector,
                 tempLoanId
             ),
             bytes4(0)

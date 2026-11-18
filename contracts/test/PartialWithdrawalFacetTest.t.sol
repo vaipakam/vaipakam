@@ -2,15 +2,21 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestCollateralCut} from "./helpers/LibTestCollateralCut.sol";
+import {LibTestTermsCut} from "./helpers/LibTestTermsCut.sol";
+import {LibTestClaimViewCut} from "./helpers/LibTestClaimViewCut.sol";
 import {LibTestProtectedCut} from "./helpers/LibTestProtectedCut.sol";
+import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {LibTestSettlementLeg} from "./helpers/LibTestSettlementLeg.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {LibPositionNFT} from "../src/libraries/LibPositionNFT.sol";
 import {PositionNFT} from "../src/PositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
+import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
 import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -18,6 +24,7 @@ import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
@@ -238,6 +245,9 @@ contract PartialWithdrawalFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
+        cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
+        cuts = LibTestTermsCut.withTermsHost(cuts); // #3734
+        cuts = LibTestClaimViewCut.withClaimView(cuts); // the claim reads
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         LibTestSettlementLeg.install(address(diamond)); // #3669
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
@@ -536,72 +546,110 @@ contract PartialWithdrawalFacetTest is Test {
         nft.transferFrom(holder, buyer, tokenId);
     }
 
-    function _withdrawSome() internal returns (uint64 atBlock, uint64 readyAt) {
-        MockVaultWithdraw.deliversAll(address(diamond));
+    /// @dev The borrower withdraws: its own move for itself, so its token
+    ///      takes the long wait; the lender's token the short one.
+    function _withdrawSome() internal returns (uint64 atBlock, uint64 borrowerReady, uint64 lenderReady) {
+        // The real outflow policy runs: it is the seam that gives the
+        // holder's own move its long wait.
         vm.prank(borrower);
         PartialWithdrawalFacet(address(diamond)).partialWithdrawCollateral(activeLoanId, 30 ether);
         atBlock = uint64(block.number);
-        readyAt = uint64(block.timestamp) + 5;
+        borrowerReady = uint64(block.timestamp) + 900;
+        lenderReady = uint64(block.timestamp) + 60;
     }
 
     /// @dev A direct accept turns the offer's own token into the loan's
-    ///      token, and the borrower side took its principal: the new loan
-    ///      cools down from its start, then both sides move freely.
+    ///      token, and the borrower side took its principal: the new loan's
+    ///      tokens wait from its start, then both sides move freely.
     function testCooldown_ANewLoanCoolsDownFromItsStartThenMoves() public {
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        (uint64 b, uint64 r) = VaipakamNFTFacet(address(diamond)).positionTransferCooldown(loan.lenderTokenId);
+        (uint256 n, uint64 b, uint64 r) = VaipakamNFTFacet(address(diamond)).positionState(loan.lenderTokenId);
         assertGt(b, 0, "the accept stamped the loan");
-        (uint64 b2, uint64 r2) = VaipakamNFTFacet(address(diamond)).positionTransferCooldown(loan.borrowerTokenId);
-        assertEq(b2, b, "both sides read the loan's stamp");
-        assertEq(r2, r);
-        if (vm.getBlockNumber() <= b) {
-            _tryMove(
-                loan.lenderTokenId,
-                abi.encodeWithSelector(VaipakamNFTFacet.PositionCoolingDown.selector, loan.lenderTokenId, b, r)
-            );
-        }
-        vm.roll(uint256(b) + 1);
-        if (vm.getBlockTimestamp() < r) vm.warp(r);
+        assertGt(n, 0, "and moved the lender token's state number");
+        (, uint64 b2, uint64 r2) = VaipakamNFTFacet(address(diamond)).positionState(loan.borrowerTokenId);
+        uint64 last = b2 > b ? b2 : b;
+        uint64 ready = r2 > r ? r2 : r;
+        vm.roll(uint256(last) + 1);
+        if (vm.getBlockTimestamp() < ready) vm.warp(ready);
         _tryMove(loan.lenderTokenId, "");
         _tryMove(loan.borrowerTokenId, "");
     }
 
-    function testCooldown_WithdrawalHoldsBothSidesForABlockAndTheCooldown() public {
+    function testCooldown_WithdrawalHoldsBothSidesTheBorrowersLonger() public {
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        (uint64 atBlock, uint64 readyAt) = _withdrawSome();
+        (uint256 nB0,,) = VaipakamNFTFacet(address(diamond)).positionState(loan.borrowerTokenId);
+        (uint256 nL0,,) = VaipakamNFTFacet(address(diamond)).positionState(loan.lenderTokenId);
+        (uint64 atBlock, uint64 borrowerReady, uint64 lenderReady) = _withdrawSome();
 
-        (uint64 b, uint64 r) = VaipakamNFTFacet(address(diamond)).positionTransferCooldown(loan.borrowerTokenId);
+        (uint256 nB, uint64 b, uint64 r) = VaipakamNFTFacet(address(diamond)).positionState(loan.borrowerTokenId);
         assertEq(b, atBlock, "stamped in this block");
-        assertEq(r, readyAt, "ready after the default 5 seconds");
+        assertEq(r, borrowerReady, "the holder's own move: the 15-minute wait");
+        assertGt(nB, nB0, "the borrower token's state number went up");
+        (uint256 nL,, uint64 rL) = VaipakamNFTFacet(address(diamond)).positionState(loan.lenderTokenId);
+        assertEq(rL, lenderReady, "the other side: the 60-second wait");
+        assertGt(nL, nL0, "the lender token's state number went up");
 
         bytes memory borrowerErr = abi.encodeWithSelector(
-            VaipakamNFTFacet.PositionCoolingDown.selector, loan.borrowerTokenId, atBlock, readyAt
+            VaipakamNFTFacet.PositionCoolingDown.selector, loan.borrowerTokenId, atBlock, borrowerReady
         );
         bytes memory lenderErr = abi.encodeWithSelector(
-            VaipakamNFTFacet.PositionCoolingDown.selector, loan.lenderTokenId, atBlock, readyAt
+            VaipakamNFTFacet.PositionCoolingDown.selector, loan.lenderTokenId, atBlock, lenderReady
         );
-        // Same block: neither side moves.
+        // Same block: neither side moves, whatever the time.
+        vm.warp(block.timestamp + 3600);
         _tryMove(loan.borrowerTokenId, borrowerErr);
         _tryMove(loan.lenderTokenId, lenderErr);
 
-        // The time has passed but it is still the same block: refused.
-        vm.warp(block.timestamp + 60);
-        _tryMove(loan.borrowerTokenId, borrowerErr);
-
-        // A later block, but before the cooldown: refused.
-        vm.warp(readyAt - 1);
+        // A later block at the short wait's end: the lender's moves, the
+        // borrower's does not.
         vm.roll(block.number + 1);
-        _tryMove(loan.borrowerTokenId, borrowerErr);
-
-        // A later block at the cooldown's end: moves.
-        vm.warp(readyAt);
-        _tryMove(loan.borrowerTokenId, "");
+        vm.warp(lenderReady);
         _tryMove(loan.lenderTokenId, "");
+        _tryMove(loan.borrowerTokenId, borrowerErr);
+        vm.warp(borrowerReady - 1);
+        _tryMove(loan.borrowerTokenId, borrowerErr);
+        vm.warp(borrowerReady);
+        _tryMove(loan.borrowerTokenId, "");
+    }
+
+    /// @dev #3710 — a price is a price for one state number: the fill check
+    ///      passes for the current number and refuses after a value-out.
+    function testState_RequirePositionStateRefusesAfterAValueOut() public {
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        (uint256 n,,) = VaipakamNFTFacet(address(diamond)).positionState(loan.borrowerTokenId);
+        VaipakamNFTFacet(address(diamond)).requirePositionState(loan.borrowerTokenId, n);
+        _withdrawSome();
+        (uint256 n2,,) = VaipakamNFTFacet(address(diamond)).positionState(loan.borrowerTokenId);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibPositionNFT.PositionStateChanged.selector, loan.borrowerTokenId, n, n2)
+        );
+        VaipakamNFTFacet(address(diamond)).requirePositionState(loan.borrowerTokenId, n);
+        VaipakamNFTFacet(address(diamond)).requirePositionState(loan.borrowerTokenId, n2);
+    }
+
+    /// @dev #3710 — the withdrawal flags both tokens' metadata for refresh
+    ///      (ERC-4906, from the core), and the core reports the interface.
+    function testRefresh_WithdrawalEmitsMetadataUpdateForBothTokens() public {
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        PositionNFT nft = LibTestPositionNFT.core(address(diamond));
+        assertTrue(nft.supportsInterface(0x49064906), "ERC-4906 reported");
+        vm.expectEmit(false, false, false, true, address(nft));
+        emit PositionNFT.MetadataUpdate(loan.lenderTokenId);
+        vm.expectEmit(false, false, false, true, address(nft));
+        emit PositionNFT.MetadataUpdate(loan.borrowerTokenId);
+        _withdrawSome();
+    }
+
+    /// @dev #3710 — the core's refresh entry is the Diamond's only.
+    function testRefresh_OnlyTheDiamondMayAskTheCore() public {
+        PositionNFT nft = LibTestPositionNFT.core(address(diamond));
+        vm.expectRevert(abi.encodeWithSelector(PositionNFT.NotDiamond.selector, address(this)));
+        nft.refreshMetadata(1, 2);
     }
 
     function testCooldown_AdminSetsItWithinBounds() public {
         (uint32 sec, uint32 minSec, uint32 maxSec) = VaipakamNFTFacet(address(diamond)).positionTransferCooldownSec();
-        assertEq(sec, 5, "default");
+        assertEq(sec, 60, "default");
         assertEq(minSec, 1);
         assertEq(maxSec, 600);
 
@@ -612,25 +660,168 @@ contract PartialWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert();
-        VaipakamNFTFacet(address(diamond)).setPositionTransferCooldownSec(60);
+        VaipakamNFTFacet(address(diamond)).setPositionTransferCooldownSec(30);
 
         vm.expectEmit(false, false, false, true, address(diamond));
-        emit VaipakamNFTFacet.PositionTransferCooldownSet(60);
-        VaipakamNFTFacet(address(diamond)).setPositionTransferCooldownSec(60);
+        emit VaipakamNFTFacet.PositionTransferCooldownSet(30);
+        VaipakamNFTFacet(address(diamond)).setPositionTransferCooldownSec(30);
         (sec,,) = VaipakamNFTFacet(address(diamond)).positionTransferCooldownSec();
-        assertEq(sec, 60);
+        assertEq(sec, 30);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        (uint64 atBlock,) = _withdrawSome();
-        (, uint64 r) = VaipakamNFTFacet(address(diamond)).positionTransferCooldown(loan.borrowerTokenId);
-        assertEq(r, uint64(block.timestamp) + 60, "the set cooldown applies");
+        // Past the loan's opening wait, which a shorter setting never cuts.
+        vm.warp(block.timestamp + 120);
+        vm.roll(block.number + 1);
+        (uint64 atBlock,,) = _withdrawSome();
+        (,, uint64 r) = VaipakamNFTFacet(address(diamond)).positionState(loan.lenderTokenId);
+        assertEq(r, uint64(block.timestamp) + 30, "the set short wait applies to the other side");
         vm.roll(atBlock + 1);
-        vm.warp(block.timestamp + 59);
+        vm.warp(block.timestamp + 29);
         _tryMove(
-            loan.borrowerTokenId,
-            abi.encodeWithSelector(VaipakamNFTFacet.PositionCoolingDown.selector, loan.borrowerTokenId, atBlock, r)
+            loan.lenderTokenId,
+            abi.encodeWithSelector(VaipakamNFTFacet.PositionCoolingDown.selector, loan.lenderTokenId, atBlock, r)
         );
         vm.warp(r);
-        _tryMove(loan.borrowerTokenId, "");
+        _tryMove(loan.lenderTokenId, "");
+    }
+
+    function testOwnMoveWait_AdminSetsItWithinBounds() public {
+        (uint32 sec, uint32 minSec, uint32 maxSec) = VaipakamNFTFacet(address(diamond)).positionOwnMoveWaitSec();
+        assertEq(sec, 900, "default");
+        assertEq(minSec, 60);
+        assertEq(maxSec, 3600);
+        vm.expectRevert(abi.encodeWithSelector(VaipakamNFTFacet.InvalidPositionOwnMoveWait.selector, uint32(59)));
+        VaipakamNFTFacet(address(diamond)).setPositionOwnMoveWaitSec(59);
+        vm.expectRevert(abi.encodeWithSelector(VaipakamNFTFacet.InvalidPositionOwnMoveWait.selector, uint32(3601)));
+        VaipakamNFTFacet(address(diamond)).setPositionOwnMoveWaitSec(3601);
+        vm.prank(lender);
+        vm.expectRevert();
+        VaipakamNFTFacet(address(diamond)).setPositionOwnMoveWaitSec(120);
+        vm.expectEmit(false, false, false, true, address(diamond));
+        emit VaipakamNFTFacet.PositionOwnMoveWaitSet(120);
+        VaipakamNFTFacet(address(diamond)).setPositionOwnMoveWaitSec(120);
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        _withdrawSome();
+        (,, uint64 r) = VaipakamNFTFacet(address(diamond)).positionState(loan.borrowerTokenId);
+        assertEq(r, uint64(block.timestamp) + 120, "the set long wait applies to the holder's own token");
+    }
+
+    /// @dev #3710 — the payee is read from the borrower token: the borrower
+    ///      who holds it and owns the paying vault is paid at its wallet.
+    function testHolderWallet_PaysTheHoldersWallet() public {
+        uint256 before = ERC20Mock(mockCollateralERC20).balanceOf(borrower);
+        vm.prank(borrower);
+        PartialWithdrawalFacet(address(diamond)).partialWithdrawCollateral(activeLoanId, 30 ether);
+        assertEq(ERC20Mock(mockCollateralERC20).balanceOf(borrower), before + 30 ether, "paid to the holder's wallet");
+    }
+
+    /// @dev #3710 / #3568 — a protected holder's withdrawal is its own Owner
+    ///      payout: nothing reaches the wallet before the delay.
+    function testHolderWallet_ProtectedHolderWaitsItsDelay() public {
+        // The payout queue (VaultPayoutFacet), which the gate self-calls.
+        IDiamondCut.FacetCut[] memory pay = new IDiamondCut.FacetCut[](1);
+        pay[0] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(VaultPayoutFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getVaultPayoutFacetSelectors()
+        });
+        IDiamondCut(address(diamond)).diamondCut(pay, address(0), "");
+        LibTestProtection.enable(address(diamond), borrower, 2 days);
+        uint256 before = ERC20Mock(mockCollateralERC20).balanceOf(borrower);
+        vm.prank(borrower);
+        PartialWithdrawalFacet(address(diamond)).partialWithdrawCollateral(activeLoanId, 30 ether);
+        assertEq(ERC20Mock(mockCollateralERC20).balanceOf(borrower), before, "nothing reached the wallet");
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        assertEq(loan.collateralAmount, COLLATERAL - 30 ether, "the loan's collateral fell");
+        assertEq(VaultPayoutFacet(address(diamond)).getPendingPayoutIds(borrower).length, 1, "queued behind the delay");
+    }
+
+    // ─── #3710 3.3 — the wallet step is isolated; a refusal pays the vault ──
+    //
+    // The withdrawal route consolidates a transferred side first, so its
+    // payee is normally the paying vault's own owner. The other-holder branch
+    // is driven here through the policy itself: the borrower token reads as
+    // held by `newHolder`, and the borrower's vault holds free collateral.
+
+    address internal newHolder = makeAddr("newHolder");
+    bool internal expectFallbackEvent;
+
+    function _payOtherHolder() internal returns (uint256 toWallet, uint256 toVault, uint256 tokenId) {
+        tokenId = LoanFacet(address(diamond)).getLoanDetails(activeLoanId).borrowerTokenId;
+        // Free collateral in the borrower's vault (outside the lien).
+        ERC20Mock(mockCollateralERC20).mint(borrower, 30 ether);
+        vm.prank(borrower);
+        ERC20Mock(mockCollateralERC20).approve(address(diamond), 30 ether);
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultDepositERC20(borrower, mockCollateralERC20, 30 ether);
+        LibTestPositionNFT.mockHolder(address(diamond), tokenId, newHolder);
+        LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
+
+        (uint256 n0,,) = VaipakamNFTFacet(address(diamond)).positionState(tokenId);
+        if (expectFallbackEvent) {
+            vm.expectEmit(true, true, true, true, address(diamond));
+            emit VaultOutflowFacet.HolderWalletPaymentToVault(
+                borrower, newHolder, mockCollateralERC20, 30 ether, 30 ether, activeLoanId, tokenId
+            );
+        }
+        vm.prank(address(diamond));
+        VaultOutflowFacet(address(diamond)).vaultOutflowArgs(
+            borrower,
+            uint8(VaultOutflowTypes.AssetKind.ERC20),
+            mockCollateralERC20,
+            0,
+            30 ether,
+            address(0),
+            uint8(VaultOutflowTypes.OutflowClass.HolderWallet),
+            activeLoanId,
+            tokenId,
+            19 // PARTIAL_WITHDRAWAL
+        );
+        (uint256 n1, uint64 b1, uint64 r1) = VaipakamNFTFacet(address(diamond)).positionState(tokenId);
+        // The same marks however the payment lands: one value-out, this
+        // block, the short wait (no guarded action is running here).
+        assertEq(n1, n0 + 1, "one value-out");
+        assertEq(b1, uint64(block.number), "value left in this block");
+        assertEq(r1, uint64(block.timestamp) + 60, "the short wait");
+        toWallet = ERC20Mock(mockCollateralERC20).balanceOf(newHolder);
+        address v = VaultFactoryFacet(address(diamond)).getUserVaultAddress(newHolder);
+        toVault = v == address(0) ? 0 : ERC20Mock(mockCollateralERC20).balanceOf(v);
+    }
+
+    function testHolderWallet_AnotherHolderIsPaidAtItsWallet() public {
+        (uint256 toWallet, uint256 toVault,) = _payOtherHolder();
+        assertEq(toWallet, 30 ether, "paid at the wallet");
+        assertEq(toVault, 0, "nothing to a vault");
+    }
+
+    /// @dev A token whose receiver hook refuses the payment.
+    function testHolderWallet_ReceiverHookRefusesThenVaultIsCredited() public {
+        vm.mockCallRevert(
+            mockCollateralERC20,
+            abi.encodeCall(ERC20.transfer, (newHolder, 30 ether)),
+            abi.encodeWithSignature("Error(string)", "hook refused")
+        );
+        expectFallbackEvent = true;
+        (uint256 toWallet, uint256 toVault,) = _payOtherHolder();
+        assertEq(toWallet, 0, "nothing at the wallet");
+        assertEq(toVault, 30 ether, "the whole amount in the holder's vault");
+    }
+
+    /// @dev A token that blocks the holder's address (reverts without data).
+    function testHolderWallet_BlockedAddressThenVaultIsCredited() public {
+        vm.mockCallRevert(mockCollateralERC20, abi.encodeCall(ERC20.transfer, (newHolder, 30 ether)), "");
+        (uint256 toWallet, uint256 toVault,) = _payOtherHolder();
+        assertEq(toWallet, 0, "nothing at the wallet");
+        assertEq(toVault, 30 ether, "the whole amount in the holder's vault");
+    }
+
+    /// @dev A short delivery (the token reports success and moves nothing):
+    ///      the wallet step is undone and the whole amount goes to the vault.
+    function testHolderWallet_ShortDeliveryIsUndoneThenVaultIsCredited() public {
+        vm.mockCall(mockCollateralERC20, abi.encodeCall(ERC20.transfer, (newHolder, 30 ether)), abi.encode(true));
+        (uint256 toWallet, uint256 toVault,) = _payOtherHolder();
+        assertEq(toWallet, 0, "nothing at the wallet");
+        assertEq(toVault, 30 ether, "the whole amount in the holder's vault");
     }
 }

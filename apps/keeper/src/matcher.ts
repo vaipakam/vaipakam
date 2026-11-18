@@ -57,7 +57,8 @@ import {
   RiskPreviewFacetABI,
   AdminFacetABI,
   LenderIntentFacetABI,
-  ClaimFacetABI,
+  LenderIntentViewFacetABI,
+  ClaimViewFacetABI,
   ConfigFacetABI,
   DIAMOND_ABI_VIEM,
 } from '@vaipakam/contracts/abis';
@@ -109,6 +110,7 @@ const MATCHER_ABI: Abi = [
   ...(RiskPreviewFacetABI as Abi), // previewIntent — split off RiskAccessFacet (#1104)
   ...(AdminFacetABI as Abi), // keepersPaused() self-gate (Codex #748 r3)
   ...(LenderIntentFacetABI as Abi), // rollIntentLoan — #625 WI-2c part 2b
+  ...(LenderIntentViewFacetABI as Abi), // the intent feeds + priority snapshot
 ];
 
 /** Pagination size for `getActiveOffersPaginated`. */
@@ -1698,7 +1700,7 @@ async function runIntentRollPass(
       try {
         const [, amount, claimed] = (await ctx.client.readContract({
           address: ctx.diamond,
-          abi: ClaimFacetABI as Abi,
+          abi: ClaimViewFacetABI as Abi,
           functionName: 'getClaimableAmount',
           args: [loan.loanId, true],
         })) as readonly [Address, bigint, boolean];

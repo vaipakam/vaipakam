@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {LenderIntentViewFacet} from "../src/facets/LenderIntentViewFacet.sol";
 import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
@@ -88,13 +89,13 @@ contract LenderIntentCapitalTest is SetupTest {
     }
 
     function _capital() internal view returns (uint256) {
-        return LenderIntentFacet(address(diamond)).getLenderIntentCapital(
+        return LenderIntentViewFacet(address(diamond)).getLenderIntentCapital(
             lender, mockERC20, mockCollateralERC20, 0
         );
     }
 
     function _livePrincipal() internal view returns (uint256) {
-        return LenderIntentFacet(address(diamond)).getLenderIntentLivePrincipal(
+        return LenderIntentViewFacet(address(diamond)).getLenderIntentLivePrincipal(
             lender, mockERC20, mockCollateralERC20, 0
         );
     }
@@ -728,7 +729,7 @@ contract LenderIntentCapitalTest is SetupTest {
         )
     {
         return
-            LenderIntentFacet(address(diamond)).getLenderIntentsByOwner(
+            LenderIntentViewFacet(address(diamond)).getLenderIntentsByOwner(
                 who, 0, 50
             );
     }
@@ -821,18 +822,18 @@ contract LenderIntentCapitalTest is SetupTest {
         (
             LibMetricsTypes.OwnerLenderIntentSummary[] memory p0,
             uint256 total
-        ) = LenderIntentFacet(address(diamond)).getLenderIntentsByOwner(
+        ) = LenderIntentViewFacet(address(diamond)).getLenderIntentsByOwner(
             lender, 0, 1
         );
         assertEq(total, 2, "total is the full count");
         assertEq(p0.length, 1, "page window respected");
         (LibMetricsTypes.OwnerLenderIntentSummary[] memory p1, ) =
-            LenderIntentFacet(address(diamond)).getLenderIntentsByOwner(
+            LenderIntentViewFacet(address(diamond)).getLenderIntentsByOwner(
                 lender, 1, 1
             );
         assertEq(p1.length, 1);
         (LibMetricsTypes.OwnerLenderIntentSummary[] memory pEnd, ) =
-            LenderIntentFacet(address(diamond)).getLenderIntentsByOwner(
+            LenderIntentViewFacet(address(diamond)).getLenderIntentsByOwner(
                 lender, 2, 10
             );
         assertEq(pEnd.length, 0, "offset >= total returns empty");

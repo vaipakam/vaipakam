@@ -13,7 +13,7 @@
  * whose read fails is null and the list names it as left out.
  */
 import type { Abi, PublicClient } from 'viem';
-import { AdminFacetABI, LenderIntentFacetABI, MulticallFacetABI, PayrollFacetABI, VaultDepositoryFacetABI } from '@vaipakam/contracts/abis';
+import { AdminFacetABI, LenderIntentViewFacetABI, MulticallFacetABI, PayrollFacetABI, VaultDepositoryFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
@@ -29,7 +29,7 @@ import { readHeldRewards, readPendingRewards, readVpfiToken } from './rewards';
 type Hex = `0x${string}`;
 
 const ADMIN = AdminFacetABI as Abi;
-const INTENT = LenderIntentFacetABI as Abi;
+const INTENT = LenderIntentViewFacetABI as Abi;
 const DEPOSITORY = VaultDepositoryFacetABI as Abi;
 const PAYROLL = PayrollFacetABI as Abi;
 export const MULTICALL = MulticallFacetABI as Abi;

@@ -145,7 +145,7 @@ contract PositionNFTTest is Test {
         nft.transferFrom(alice, bob, 1);
         vm.expectRevert(abi.encodeWithSelector(PositionNFT.HolderIsLocked.selector, alice));
         nft.approve(operator, 1);
-        vm.expectRevert(abi.encodeWithSelector(PositionNFT.HolderIsLocked.selector, alice));
+        vm.expectRevert(PositionNFT.OperatorApprovalRefused.selector);
         nft.setApprovalForAll(operator, true);
         // Revoking is always allowed.
         nft.setApprovalForAll(operator, false);
@@ -156,27 +156,45 @@ contract PositionNFTTest is Test {
         _mint(alice, 1);
         _mint(alice, 2);
         vm.startPrank(alice);
-        nft.setApprovalForAll(operator, true);
+        nft.approve(operator, 1);
         nft.approve(bob, 2);
         nft.lock();
         vm.stopPrank();
-        assertFalse(nft.isApprovedForAll(alice, operator), "operator ignored while locked");
+        assertEq(nft.getApproved(1), address(0), "token approval ignored while locked");
         assertEq(nft.getApproved(2), address(0), "token approval ignored while locked");
         // Unlock (delay 0: immediate) — the pre-lock approvals stay retired.
         vm.prank(alice);
         nft.requestUnlock();
         assertFalse(nft.isLocked(alice));
-        assertFalse(nft.isApprovedForAll(alice, operator), "pre-lock operator stays stale");
         assertEq(nft.getApproved(2), address(0), "pre-lock token approval stays stale");
         vm.prank(operator);
         vm.expectRevert(abi.encodeWithSelector(IERC721Errors.ERC721InsufficientApproval.selector, operator, 1));
         nft.transferFrom(alice, operator, 1);
         // A fresh approval after the unlock works.
         vm.prank(alice);
-        nft.setApprovalForAll(operator, true);
+        nft.approve(operator, 1);
         vm.prank(operator);
         nft.transferFrom(alice, operator, 1);
         assertEq(nft.ownerOf(1), operator);
+    }
+
+    /// @dev #3721 — no approval over all of a holder's tokens; per-token
+    ///      approval works and is cleared when the token moves.
+    function test_operatorApprovalIsRefused_perTokenApprovalClearsOnTransfer() public {
+        _mint(alice, 1);
+        vm.prank(alice);
+        vm.expectRevert(PositionNFT.OperatorApprovalRefused.selector);
+        nft.setApprovalForAll(operator, true);
+        assertFalse(nft.isApprovedForAll(alice, operator), "never an operator");
+        vm.prank(alice);
+        nft.approve(operator, 1);
+        assertEq(nft.getApproved(1), operator);
+        vm.prank(operator);
+        nft.transferFrom(alice, bob, 1);
+        assertEq(nft.getApproved(1), address(0), "cleared on transfer");
+        vm.prank(operator);
+        vm.expectRevert(abi.encodeWithSelector(IERC721Errors.ERC721InsufficientApproval.selector, operator, 1));
+        nft.transferFrom(bob, operator, 1);
     }
 
     function test_unlockWaitsTheDelay_lockAgainDropsIt() public {

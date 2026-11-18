@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestCollateralCut} from "./helpers/LibTestCollateralCut.sol";
+import {LibTestTermsCut} from "./helpers/LibTestTermsCut.sol";
+import {LibTestClaimViewCut} from "./helpers/LibTestClaimViewCut.sol";
 import {LibTiming} from "../src/libraries/LibTiming.sol";
 import {LibTestSettlementLeg} from "./helpers/LibTestSettlementLeg.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
@@ -454,6 +457,9 @@ contract EarlyWithdrawalFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getLoanClockFacetSelectors()
         });
+        cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
+        cuts = LibTestTermsCut.withTermsHost(cuts); // #3734
+        cuts = LibTestClaimViewCut.withClaimView(cuts); // the claim reads
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         LibTestSettlementLeg.install(address(diamond)); // #3669
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
@@ -1030,9 +1036,10 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(lender);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId, 0, type(uint256).max, type(uint64).max);
         uint64 atBlock = uint64(vm.getBlockNumber());
-        uint64 readyAt = uint64(vm.getBlockTimestamp()) + 5;
+        // #3710 — the seller's own sale retires its token: the long wait.
+        uint64 readyAt = uint64(vm.getBlockTimestamp()) + 900;
 
-        (uint64 b2, uint64 r2) = VaipakamNFTFacet(address(diamond)).positionTransferCooldown(oldToken);
+        (, uint64 b2, uint64 r2) = VaipakamNFTFacet(address(diamond)).positionState(oldToken);
         assertEq(b2, atBlock, "the sale stamped the loan");
         assertEq(r2, readyAt);
         PositionNFT nft = LibTestPositionNFT.core(address(diamond));

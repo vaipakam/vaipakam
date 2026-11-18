@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibIntentFill} from "../src/libraries/LibIntentFill.sol";
+import {LenderIntentViewFacet} from "../src/facets/LenderIntentViewFacet.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -182,7 +183,7 @@ contract LenderIntentMatchTest is SetupTest {
     }
 
     function _livePrincipal() internal view returns (uint256) {
-        return LenderIntentFacet(address(diamond)).getLenderIntentLivePrincipal(
+        return LenderIntentViewFacet(address(diamond)).getLenderIntentLivePrincipal(
             lender, mockERC20, mockCollateralERC20, 0
         );
     }
@@ -205,7 +206,7 @@ contract LenderIntentMatchTest is SetupTest {
     }
 
     function _intentCapital() internal view returns (uint256) {
-        return LenderIntentFacet(address(diamond)).getLenderIntentCapital(
+        return LenderIntentViewFacet(address(diamond)).getLenderIntentCapital(
             lender, mockERC20, mockCollateralERC20, 0
         );
     }
@@ -302,7 +303,7 @@ contract LenderIntentMatchTest is SetupTest {
         _setIntent(MAX_EXPOSURE);
         _fundIntent(PRINCIPAL);
         (, uint256 listedBefore) =
-            LenderIntentFacet(address(diamond)).getActiveLenderIntents(0, 10);
+            LenderIntentViewFacet(address(diamond)).getActiveLenderIntents(0, 10);
         assertEq(listedBefore, 1, "funded intent is listed in the feed");
 
         address b = _newBorrower("bdep");
@@ -314,7 +315,7 @@ contract LenderIntentMatchTest is SetupTest {
 
         assertEq(_intentCapital(), 0, "fill depleted the funded capital");
         (, uint256 listedAfter) =
-            LenderIntentFacet(address(diamond)).getActiveLenderIntents(0, 10);
+            LenderIntentViewFacet(address(diamond)).getActiveLenderIntents(0, 10);
         assertEq(listedAfter, 0, "depleted intent de-listed (matchIntent re-sync)");
     }
 
@@ -1515,7 +1516,7 @@ contract LenderIntentMatchTest is SetupTest {
         view
         returns (LibMetricsTypes.RollableIntentLoan[] memory loans, uint256 total)
     {
-        return LenderIntentFacet(address(diamond)).getRollableIntentLoans(0, 100);
+        return LenderIntentViewFacet(address(diamond)).getRollableIntentLoans(0, 100);
     }
 
     // Active → (repay) Repaid surfaces as rollable → (normal claim) de-registers.

@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestCollateralCut} from "../helpers/LibTestCollateralCut.sol";
+import {LibTestTermsCut} from "../helpers/LibTestTermsCut.sol";
+import {LibTestClaimViewCut} from "../helpers/LibTestClaimViewCut.sol";
 import {LibTestProtectedCut} from "../helpers/LibTestProtectedCut.sol";
 import {LibTestPositionNFT} from "../helpers/LibTestPositionNFT.sol";
 import {LibTestSettlementLeg} from "../helpers/LibTestSettlementLeg.sol";
@@ -31,6 +34,7 @@ import {RiskMatchLiquidationFacet} from "../../src/facets/RiskMatchLiquidationFa
 import {DefaultedFacet} from "../../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../../src/facets/ClaimViewFacet.sol";
 import {AddCollateralFacet} from "../../src/facets/AddCollateralFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {DiamondCutFacet} from "../../src/facets/DiamondCutFacet.sol";
@@ -286,6 +290,9 @@ contract Scenario2b_ERC1155RentalLending is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
+        cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
+        cuts = LibTestTermsCut.withTermsHost(cuts); // #3734
+        cuts = LibTestClaimViewCut.withClaimView(cuts); // the claim reads
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         LibTestSettlementLeg.install(address(diamond)); // #3669
         LibTestForcedSalePreview.install(address(diamond));
@@ -454,7 +461,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid), "loan Repaid");
 
         (address lenderClaimAsset, uint256 lenderClaimAmount, bool lenderClaimed) =
-            ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertEq(lenderClaimAsset, mockUsdc, "lender claim asset USDC");
         assertFalse(lenderClaimed, "lender not yet claimed");
 
@@ -486,7 +493,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
         );
 
         (address borrowerClaimAsset, uint256 borrowerClaimAmount, bool borrowerClaimed) =
-            ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, false);
         assertEq(borrowerClaimAsset, mockUsdc, "borrower claim asset USDC");
         assertFalse(borrowerClaimed, "borrower not yet claimed");
         assertEq(borrowerClaimAmount, BUFFER, "borrower refund should be the buffer");
@@ -539,7 +546,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted), "loan Defaulted");
 
         (address lenderClaimAsset, uint256 lenderClaimAmount, bool lenderClaimed) =
-            ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertEq(lenderClaimAsset, mockUsdc, "lender claim asset USDC");
         assertFalse(lenderClaimed, "lender not yet claimed");
 
@@ -570,7 +577,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
         );
 
         (, uint256 borrowerClaimAmount,) =
-            ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, false);
         assertEq(borrowerClaimAmount, 0, "borrower has no claim on default");
     }
 }

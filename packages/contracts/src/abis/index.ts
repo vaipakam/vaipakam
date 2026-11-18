@@ -94,7 +94,12 @@ import ReadyBalanceFacetABI from './ReadyBalanceFacet.json';
 import FeeLevelsFacetABI from './FeeLevelsFacet.json';
 import SettlementLegFacetABI from './SettlementLegFacet.json';
 import RecoveryClawbackFacetABI from './RecoveryClawbackFacet.json';
+import CollateralConcentrationFacetABI from './CollateralConcentrationFacet.json';
+import CollateralLienFacetABI from './CollateralLienFacet.json';
+import StandingInstructionFacetABI from './StandingInstructionFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
+import ClaimViewFacetABI from './ClaimViewFacet.json';
+import LenderIntentViewFacetABI from './LenderIntentViewFacet.json';
 import OracleFacetABI from './OracleFacet.json';
 import OracleAdminFacetABI from './OracleAdminFacet.json';
 import VaultFactoryFacetABI from './VaultFactoryFacet.json';
@@ -299,7 +304,12 @@ export {
   FeeLevelsFacetABI,
   SettlementLegFacetABI,
   RecoveryClawbackFacetABI,
+  CollateralConcentrationFacetABI,
+  CollateralLienFacetABI,
+  StandingInstructionFacetABI,
   ClaimFacetABI,
+  ClaimViewFacetABI,
+  LenderIntentViewFacetABI,
   OracleFacetABI,
   OracleAdminFacetABI,
   VaultFactoryFacetABI,

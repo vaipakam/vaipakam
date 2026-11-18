@@ -167,6 +167,45 @@ library LibVaipakam {
     uint256 constant MIN_TWAP_WINDOW_SEC = 5 minutes; // too short ⇒ trivially flash-manipulable
     uint256 constant MAX_TWAP_WINDOW_SEC = 1 days; // too long ⇒ stale, blocks legit fast moves
     // Simulated-swap test sizes for the floor + the three graded tiers.
+    // ─── #3685 — collateral concentration ────────────────────────────
+    // The pledged amount of a collateral asset, valued at the oracle, over
+    // the sale size its effective liquidity tier is measured at. Defaults
+    // and bounds (hundredths of a multiple; the step in bps). Changed only
+    // by ADMIN_ROLE, the Timelock after handover.
+    uint16 constant CONCENTRATION_CAUTION_X100_DEFAULT = 500;
+    uint16 constant CONCENTRATION_CAUTION_X100_MIN = 200;
+    uint16 constant CONCENTRATION_CAUTION_X100_MAX = 2000;
+    uint16 constant CONCENTRATION_HIGH_X100_DEFAULT = 1000;
+    uint16 constant CONCENTRATION_HIGH_X100_MAX = 5000;
+    uint16 constant CONCENTRATION_STEP_BPS_DEFAULT = 1000;
+    uint16 constant CONCENTRATION_STEP_BPS_MIN = 500;
+    uint16 constant CONCENTRATION_STEP_BPS_MAX = 2500;
+    /// @dev Concentration levels, as `Storage.loanConcentrationAtInit` and
+    ///      the views report them.
+    uint8 constant CONCENTRATION_NORMAL = 0;
+    uint8 constant CONCENTRATION_CAUTION = 1;
+    uint8 constant CONCENTRATION_HIGH = 2;
+
+    // ─── #3681 — standing instructions ──────────────────────────────
+    // Defaults and outer bounds for the governed settings (health factors
+    // 1e18-scaled). Changed only by ADMIN_ROLE, the Timelock after handover.
+    uint64 constant STANDING_TRIGGER_MIN_HF_DEFAULT = 1.05e18;
+    uint64 constant STANDING_TRIGGER_MAX_HF_DEFAULT = 1.45e18;
+    uint64 constant STANDING_TARGET_MAX_HF_DEFAULT = 2e18;
+    uint64 constant STANDING_MIN_MARGIN_HF_DEFAULT = 0.05e18;
+    uint32 constant STANDING_TOPUP_INTERVAL_DEFAULT = 1 hours;
+    /// @dev No governed value may set a trigger at or below 1.0 (the
+    ///      liquidation line) or a target above 3.0.
+    uint64 constant STANDING_HF_FLOOR = 1e18;
+    uint64 constant STANDING_TARGET_CEILING = 3e18;
+    uint64 constant STANDING_MIN_MARGIN_FLOOR = 0.01e18;
+    uint64 constant STANDING_MIN_MARGIN_CEILING = 0.5e18;
+    uint32 constant STANDING_TOPUP_INTERVAL_MIN = 5 minutes;
+    uint32 constant STANDING_TOPUP_INTERVAL_MAX = 1 days;
+    /// @dev The due-date repayment may run at most this long before the due
+    ///      date (the holder's own setting, 0 = at the due date).
+    uint32 constant STANDING_REPAY_LEAD_MAX = 1 days;
+
     uint256 constant FLOOR_SIZE_PAD_DEFAULT = 5_000 * 1e6; // clear ⇒ `Liquid`; fail ⇒ `Illiquid`
     uint256 constant TIER1_SIZE_PAD_DEFAULT = 50_000 * 1e6; // → Tier 1 (50% init-LTV)
     uint256 constant TIER2_SIZE_PAD_DEFAULT = 500_000 * 1e6; // → Tier 2 (60% init-LTV)
@@ -2757,15 +2796,11 @@ library LibVaipakam {
         int256 minValidAnswer;
     }
 
-    /// @notice Per-user acceptance of the protocol's Terms of Service.
-    ///         Written once per user per ToS version by
-    ///         `LegalFacet.acceptTerms`. Frontends gate app entry until
-    ///         `version == currentTosVersion` AND `hash == currentTosHash`.
-    /// @dev `version == 0` is the "never accepted" marker — first-time
-    ///      visitors always need to sign to enter the app.
-    ///      `acceptedAt` is the block timestamp at acceptance; used by
-    ///      audit / compliance queries asking "when did this wallet
-    ///      accept version X?".
+    /// @notice A wallet's acceptance of one Terms of Service version: the
+    ///         version, its fingerprint and when it was first recorded.
+    ///         Written only by `LegalFacet` (#3734: by the wallet's own
+    ///         transaction or by its signature, submitted by anyone).
+    /// @dev `version == 0` is the "never accepted" marker.
     struct TosAcceptance {
         uint32 version;
         bytes32 hash;
@@ -3850,16 +3885,15 @@ library LibVaipakam {
         // check entirely (fail-open); a retail deploy must not route real
         // value while it is zero.
         address sanctionsOracle;
-        // ─── Legal: Terms of Service acceptance (Phase 4.1) ──────────────
-        // On-chain record of every wallet's acceptance of the current ToS
-        // version. `currentTosVersion` starts at 0 (no ToS in force), which
-        // the frontend treats as "gate disabled — app is still pre-launch
-        // / testnet"; once governance sets `currentTosVersion >= 1` via
-        // `LegalFacet.setCurrentTos`, every user wallet must sign an
-        // `acceptTerms(version, hash)` tx before the frontend unlocks
-        // `/app/*` routes. The version+hash pair in storage lets audit
-        // tooling reconstruct exactly which ToS text a given user agreed
-        // to and when.
+        // ─── Legal: Terms of Service acceptance (Phase 4.1, #3734) ───────
+        // The LATEST Terms version in force and its fingerprint (0 = none in
+        // force, and nothing is checked). The minimum version, the pending
+        // announcement and the per-version marks are the #3734 fields at the
+        // tail. A pending announcement counts from its time without any call
+        // and is folded into these fields by the next `LegalFacet` write.
+        // `tosAcceptance` is each wallet's LATEST acceptance, kept for
+        // readers; the gate reads the per-version record
+        // `tosAcceptedVersion`. Read through `LibTerms`.
         uint32 currentTosVersion;
         bytes32 currentTosHash;
         mapping(address => TosAcceptance) tosAcceptance;
@@ -7724,14 +7758,14 @@ library LibVaipakam {
         mapping(uint256 => uint256) refinanceRequestOfLoan;
         /// @dev #2374 — what each ERC-20 loan owed at its most recent default,
         ///      by loan id. Written ONLY by {LibOwedAtDefault} and never
-        ///      cleared; `ClaimFacet.getOwedAtDefault` reports it only while
+        ///      cleared; `ClaimViewFacet.getOwedAtDefault` reports it only while
         ///      the loan stands defaulted. `recordedAt == 0` means none was
         ///      ever written (never defaulted, a default before this record
         ///      existed, or a rental).
         mapping(uint256 => OwedAtDefault) owedAtDefault;
         /// @dev #2427 — what internal matching cleared from each ERC-20 loan,
         ///      by loan id. Written ONLY by {LibOwedAtInternalMatch} and never
-        ///      cleared; `ClaimFacet.getOwedAtInternalMatch` reports it only
+        ///      cleared; `ClaimViewFacet.getOwedAtInternalMatch` reports it only
         ///      while the loan stands `InternalMatched`, closed from `Active`.
         mapping(uint256 => OwedAtInternalMatch) owedAtInternalMatch;
         /// @dev A2-ii — the batch-keyed priority window ({TransportBatchWindow}).
@@ -8239,7 +8273,7 @@ library LibVaipakam {
         ///      extension draws it first, and the depositor may withdraw what is
         ///      left at any time. Written only by `LibEncumbrance`. Appended —
         ///      append-only.
-        mapping(uint256 => mapping(address => uint256)) extendReserve;
+        mapping(uint256 => mapping(address => uint256)) paymentReserve;
         /// @dev #1558 — per refinance request (a borrower offer, by id): the
         ///      borrower's single-use Permit2 authorisation to pay off the loan
         ///      that request refinances. Whoever completes the refinance uses
@@ -8651,6 +8685,79 @@ library LibVaipakam {
         ///      released, permissionlessly, to the treasury the vault code
         ///      names. Appended — append-only.
         mapping(address => mapping(address => uint256)) parkedTreasury;
+        /// @dev #3685 — per ERC-20 collateral asset, the amount pledged under
+        ///      live collateral liens (open loans and fallback custody).
+        ///      Written only by `LibEncumbrance` alongside every collateral
+        ///      lien change; read by `CollateralConcentrationFacet`.
+        ///      Appended — append-only.
+        mapping(address => uint256) collateralPledged;
+        /// @dev #3685 — the platform's concentration thresholds. Zero fields
+        ///      read as their defaults; written only by
+        ///      `CollateralConcentrationFacet.setConcentrationConfig`.
+        ///      Appended — append-only.
+        ConcentrationConfig concentrationCfg;
+        /// @dev #3685 — per collateral asset, tighter thresholds than the
+        ///      platform's (zero fields = the platform value). Written only by
+        ///      `CollateralConcentrationFacet.setAssetConcentrationConfig`.
+        ///      Appended — append-only.
+        mapping(address => ConcentrationConfig) concentrationAssetCfg;
+        /// @dev #3685 — per loan, its collateral's concentration level when
+        ///      it opened (`LibVaipakam.CONCENTRATION_*`). Written once, by
+        ///      `LoanFacet` at origination; a loan opened at Caution or above
+        ///      is not eligible for the shortfall reserve. Appended —
+        ///      append-only.
+        mapping(uint256 => uint8) loanConcentrationAtInit;
+        /// @dev #3681 — per loan and depositor, the collateral reserve: the
+        ///      loan's collateral asset the depositor placed in their own
+        ///      vault for the "keep my loan healthy" instruction. Not
+        ///      collateral until that instruction moves it into the lien, so
+        ///      no liquidation, default or health factor reads it. Encumbered
+        ///      like the payment reserve; written only by `LibEncumbrance`.
+        ///      Appended — append-only.
+        mapping(uint256 => mapping(address => uint256)) collateralReserve;
+        /// @dev #3681 — per loan, the borrower-position holder's standing
+        ///      instructions. Written only by `StandingInstructionFacet`.
+        ///      Appended — append-only.
+        mapping(uint256 => StandingInstructions) standingInstructions;
+        /// @dev #3681 — the platform's bounds for the instructions. Zero
+        ///      fields read as their defaults; written only by
+        ///      `StandingInstructionFacet.setStandingInstructionConfig`.
+        ///      Appended — append-only.
+        StandingInstructionConfig standingInstructionCfg;
+        /// @dev #3734 — the MINIMUM Terms version in force: a wallet is
+        ///      current when it accepted a version that came into force,
+        ///      numbered from this one to the latest. A small change leaves it
+        ///      where it is; a material change raises it, after a notice.
+        ///      Appended — append-only.
+        uint32 minTosVersion;
+        /// @dev #3734 — the one pending announcement (its time is zero when
+        ///      none is pending): the version it concerns and that version's
+        ///      fingerprint, the time it comes into force, the minimum it sets
+        ///      then, and whether it introduces a NEW version (false when it
+        ///      only raises the minimum to the version already latest). Read
+        ///      through `LibTerms`, which counts it from its time without any
+        ///      call; written only by `LegalFacet`. Appended — append-only.
+        uint32 announcedTosVersion;
+        bytes32 announcedTosHash;
+        uint64 announcedTosEffectiveAt;
+        uint32 announcedTosMinVersion;
+        bool announcedTosIsNew;
+        /// @dev #3734 — the highest Terms version number ever used. A
+        ///      withdrawn new version's number is spent: the next must exceed
+        ///      it. Appended — append-only.
+        uint32 highestTosVersionAnnounced;
+        /// @dev #3734 — per wallet and Terms version, that wallet's
+        ///      acceptance of that version (zero when it never accepted it).
+        ///      Kept per version so accepting an announced version never
+        ///      overwrites the acceptance of the one in force. Written only by
+        ///      `LegalFacet`. Appended — append-only.
+        mapping(address => mapping(uint32 => TosAcceptance)) tosAcceptedVersion;
+        /// @dev #3734 — per Terms version, the time it came into force (zero
+        ///      for a version that never did: pending, or withdrawn). Only a
+        ///      version with this mark can make a wallet current, so a spent
+        ///      number inside the minimum-to-latest range never counts.
+        ///      Written only by `LegalFacet`. Appended — append-only.
+        mapping(uint32 => uint64) tosVersionInForceAt;
     }
 
     /// @notice #3344 — a protected account's Ready settings. See
@@ -8701,6 +8808,46 @@ library LibVaipakam {
         bool collateralLien;
         uint256 tokenId;
         uint256 amount;
+    }
+
+
+    /// @notice #3681 — one loan's standing instructions, set by the
+    ///         borrower-position holder `owner`. An instruction runs only
+    ///         while `owner` still holds the position and spends only
+    ///         `owner`'s reserves for the loan.
+    /// @dev    Health factors are 1e18-scaled. `topUpTriggerHf == 0` means
+    ///         the top-up is off. `lastTopUpAt` spaces two top-ups by the
+    ///         configured interval.
+    struct StandingInstructions {
+        address owner;
+        uint64 topUpTriggerHf;
+        uint64 topUpTargetHf;
+        uint64 lastTopUpAt;
+        bool payInterest;
+        bool repayAtDue;
+        uint32 repayLeadSeconds;
+    }
+
+    /// @notice #3681 — the governed bounds for the standing instructions.
+    ///         Every field reads 0 as its default (see the
+    ///         `STANDING_*` constants).
+    struct StandingInstructionConfig {
+        uint64 triggerMinHf;
+        uint64 triggerMaxHf;
+        uint64 targetMaxHf;
+        uint64 minMarginHf;
+        uint32 topUpIntervalSeconds;
+    }
+
+    /// @notice #3685 — collateral concentration thresholds. The two
+    ///         multiples are in hundredths (500 = 5 times the depth
+    ///         reference); `lowestTierStepBps` is the cut to the lowest
+    ///         liquid tier's loan-opening cap at the High level. Every field
+    ///         reads 0 as its default.
+    struct ConcentrationConfig {
+        uint16 cautionMultipleX100;
+        uint16 highMultipleX100;
+        uint16 lowestTierStepBps;
     }
 
     /// @notice Protected account mode — one owner wallet's settings.

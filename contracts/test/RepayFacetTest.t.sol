@@ -2,8 +2,12 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {LibTestCollateralCut} from "./helpers/LibTestCollateralCut.sol";
+import {LibTestTermsCut} from "./helpers/LibTestTermsCut.sol";
+import {LibTestClaimViewCut} from "./helpers/LibTestClaimViewCut.sol";
 import {LibTestProtectedCut} from "./helpers/LibTestProtectedCut.sol";
+import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
 import {LibTestSettlementLeg} from "./helpers/LibTestSettlementLeg.sol";
@@ -347,6 +351,9 @@ contract RepayFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getClaimFacetSelectors()
         });
+        cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
+        cuts = LibTestTermsCut.withTermsHost(cuts); // #3734
+        cuts = LibTestClaimViewCut.withClaimView(cuts); // the claim reads
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         LibTestSettlementLeg.install(address(diamond)); // #3669
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
@@ -718,7 +725,7 @@ contract RepayFacetTest is Test {
         vm.warp(block.timestamp + 1 days);
         RepayPeriodicFacet(address(diamond)).autoDeductDaily(2);
 
-        (, , , , , , uint256 held, ) = ClaimFacet(address(diamond)).getClaimable(2, true);
+        (, , , , , , uint256 held, ) = ClaimViewFacet(address(diamond)).getClaimable(2, true);
         assertGt(held, 0, "the daily fee is held for the position");
         assertEq(ERC20Mock(mockERC20).balanceOf(newHolder), newHolderBefore, "nothing reaches the holder's wallet");
         assertEq(ERC20Mock(mockERC20).balanceOf(lender), storedLenderBefore, "nothing reaches the departed lender's wallet");

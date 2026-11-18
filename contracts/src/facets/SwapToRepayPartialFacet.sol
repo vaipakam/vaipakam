@@ -7,6 +7,7 @@ import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
+import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
@@ -16,8 +17,8 @@ import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
+import {CollateralLienFacet} from "./CollateralLienFacet.sol";
 import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
-import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
@@ -364,7 +365,7 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
             // (above); subtracting the FULL `collateralSwapAmount`
             // here would double-count the loss and understate the
             // remaining backing for HF / default math.
-            loan.collateralAmount -= actualCollateralConsumed;
+            LibLoanCollateral.reduce(loan, actualCollateralConsumed);
         }
         // #408 / #410 / #413 (2026-06-12), Codex PR #559 round-1
         // P1: mirror `RepayFacet.repayPartial`'s Option A remaining-
@@ -435,10 +436,6 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
             )
         ) revert LTVExceeded();
 
-        // #3413 — collateral left the borrower side: the loan's tokens cool
-        // down.
-        LibPositionNFT.markLoanValueOut(loanId);
-
         // Codex round-3 P2 #1 + round-4 P2 #1 — emit `msg.sender`
         // (current borrower-NFT owner, not stale `loan.borrower`)
         // and `actualCollateralConsumed` (not the requested amount).
@@ -503,10 +500,10 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
     }
 
     function _decrementLienAtSwapToRepayPartial(uint256 loanId, uint256 consumed) private {
-        _callEncumb2(EncumbranceMutateFacet.decrementCollateralLien.selector, loanId, consumed);
+        _callEncumb2(CollateralLienFacet.decrementCollateralLien.selector, loanId, consumed);
     }
 
     function _incrementLienAtSwapToRepayPartial(uint256 loanId, uint256 added) private {
-        _callEncumb2(EncumbranceMutateFacet.incrementCollateralLien.selector, loanId, added);
+        _callEncumb2(CollateralLienFacet.incrementCollateralLien.selector, loanId, added);
     }
 }

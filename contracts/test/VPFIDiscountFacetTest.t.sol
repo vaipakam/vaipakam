@@ -24,6 +24,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {IVaipakamPrepayContext} from "../src/seaport/IVaipakamPrepayContext.sol";
@@ -1133,7 +1134,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         assertEq(IERC20(mockERC20).balanceOf(lender), lenderWalletBefore, "nothing paid to a flagged wallet");
         assertEq(IERC20(mockERC20).balanceOf(borrower), borrowerWalletBefore, "the remainder waits for the claim");
         (address asset, uint256 owed, bool claimed) =
-            ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertEq(asset, mockERC20, "the lender's claim is in the lending asset");
         assertEq(owed, pctx.lenderLeg, "the lender's leg waits for the claim");
         assertFalse(claimed, "unclaimed");

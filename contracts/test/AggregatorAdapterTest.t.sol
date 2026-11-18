@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {LenderIntentViewFacet} from "../src/facets/LenderIntentViewFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
@@ -232,7 +233,7 @@ contract AggregatorAdapterTest is SetupTest {
         assertEq(adapter.authorizedPrincipal(), aggregator, "principal");
         assertEq(adapter.haircutBps(), HAIRCUT_BPS, "haircut");
         // The adapter registered its standing intent (keeper-gated) as itself.
-        LibVaipakam.LenderIntent memory it = LenderIntentFacet(address(diamond))
+        LibVaipakam.LenderIntent memory it = LenderIntentViewFacet(address(diamond))
             .getLenderIntent(address(adapter), mockERC20, mockCollateralERC20, 0);
         assertTrue(it.active, "intent active");
         assertTrue(it.requiresKeeperAuth, "keeper-gated");
@@ -307,7 +308,7 @@ contract AggregatorAdapterTest is SetupTest {
         assertGt(idle, DEPOSIT - fill, "matcher kickback re-funded into idle");
         // ...but the kickback is a small fee, not a double-count of the fill.
         assertApproxEqAbs(idle, DEPOSIT - fill, 0.01 ether, "idle ~ deposit - fill + kickback");
-        uint256 live = LenderIntentFacet(address(diamond))
+        uint256 live = LenderIntentViewFacet(address(diamond))
             .getLenderIntentLivePrincipal(
                 address(adapter), mockERC20, mockCollateralERC20, 0
             );
@@ -379,7 +380,7 @@ contract AggregatorAdapterTest is SetupTest {
         vm.prank(aggregator);
         adapter.windDownIntent();
         assertFalse(
-            LenderIntentFacet(address(diamond))
+            LenderIntentViewFacet(address(diamond))
                 .getLenderIntent(address(adapter), mockERC20, mockCollateralERC20, 0)
                 .active,
             "intent cancelled"
@@ -511,7 +512,7 @@ contract AggregatorAdapterTest is SetupTest {
             .setAggregatorHaircutBps(address(adapter), 1000);
         assertEq(adapter.haircutBps(), 1000, "haircut updated");
         uint256 idle = _idle();
-        uint256 live = LenderIntentFacet(address(diamond))
+        uint256 live = LenderIntentViewFacet(address(diamond))
             .getLenderIntentLivePrincipal(
                 address(adapter), mockERC20, mockCollateralERC20, 0
             );

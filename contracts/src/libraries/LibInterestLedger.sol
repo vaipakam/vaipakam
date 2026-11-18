@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibEntitlement} from "./LibEntitlement.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {LibMetricsHooks} from "./LibMetricsHooks.sol";
@@ -236,6 +237,11 @@ library LibInterestLedger {
         touch(s, loan);
         loan.principal -= cleared;
         LibMarketLedger.syncLoan(s, loan); // Lent follows the open principal.
+        // #3710 — a step that cleared more than it delivered lowered what the
+        // lender is owed: value left the lender position. A fully delivered
+        // reduction only changes a rendered figure.
+        if (delivered < cleared) LibPositionNFT.markLoanValueOut(loan.id);
+        else LibPositionNFT.refreshLoan(loan.id);
         if (loan.assetType != LibVaipakam.AssetType.ERC20) return;
         LibVaipakam.InterestLedger storage l = s.interestLedger[loan.id];
         l.principalOwed = l.principalOwed > delivered ? l.principalOwed - delivered : 0;
@@ -248,6 +254,8 @@ library LibInterestLedger {
         touch(s, loan);
         loan.principal = 0;
         LibMarketLedger.syncLoan(s, loan); // Lent follows the open principal.
+        // #3710 — a write-off lowers what the lender is owed.
+        LibPositionNFT.markLoanValueOut(loan.id);
     }
 
     /// @notice Sets `loan.interestRateBps`, checkpointing the old rate first.
@@ -258,6 +266,10 @@ library LibInterestLedger {
     ) internal {
         touch(s, loan);
         loan.interestRateBps = newRateBps;
+        // #3710 — a terms change (a rate, and the term that comes with it at
+        // an extension or a handover) can raise what the borrower owes or
+        // lower what the lender is owed: marked whatever its direction.
+        LibPositionNFT.markLoanValueOut(loan.id);
     }
 
     // ─── Sale ──────────────────────────────────────────────────────────────

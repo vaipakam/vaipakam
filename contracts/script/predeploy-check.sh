@@ -208,6 +208,59 @@ else
   FAIL=1
 fi
 
+# ── 1d2. Loan-collateral writer guard ─────────────────────────────────
+# A lower collateral amount is value leaving the loan's positions, so it is
+# written only through LibLoanCollateral, which marks the position tokens
+# (state number, wait, metadata refresh) (#3710). Same AST artifacts as 1d.
+echo
+echo "[predeploy 1d2/4] loan-collateral writer guard (#3710)"
+if [ "$BUILD_OK" -ne 1 ] || [ ! -d "$SCRIPT_DIR/../out-measured-delivery" ]; then
+  echo "  ✗ skipped — no AST artifacts to read (step 1 or 1c failed)" >&2
+  FAIL=1
+elif node "$SCRIPT_DIR/check-loan-collateral-writer.mjs"; then
+  : # the script prints its own lines
+else
+  echo "  ✗ loan-collateral writer guard failed — write the collateral amount" >&2
+  echo "    through LibLoanCollateral, or list the site with its reason (see above)" >&2
+  FAIL=1
+fi
+
+# ── 1d4. Loan start/term writer guard ─────────────────────────────────
+# A new loan term is a new position, so a loan's start and term are written
+# only by the steps that ask the Terms rule for every wallet taking the term
+# on (#3734): origination, the in-place extension and the obligation
+# handover. Same AST artifacts as 1d.
+echo
+echo "[predeploy 1d4/4] loan start/term writer guard (#3734)"
+if [ "$BUILD_OK" -ne 1 ] || [ ! -d "$SCRIPT_DIR/../out-measured-delivery" ]; then
+  echo "  ✗ skipped — no AST artifacts to read (step 1 or 1c failed)" >&2
+  FAIL=1
+elif node "$SCRIPT_DIR/check-loan-start-term-writer.mjs"; then
+  : # the script prints its own lines
+else
+  echo "  ✗ loan start/term writer guard failed — ask LibTerms.requireCurrent for" >&2
+  echo "    every wallet taking the term on, and list the site (see above)" >&2
+  FAIL=1
+fi
+
+# ── 1d3. Raw payout guard ─────────────────────────────────────────────
+# The Diamond pays users only through the outflow policy or LibDelivery, the
+# two places protected mode's delay is applied (#3710 §3.8, #3568). Any other
+# token or native transfer in facets or libraries must be listed with its
+# reason. Same AST artifacts as 1d.
+echo
+echo "[predeploy 1d3/4] raw payout guard (#3710)"
+if [ "$BUILD_OK" -ne 1 ] || [ ! -d "$SCRIPT_DIR/../out-measured-delivery" ]; then
+  echo "  ✗ skipped — no AST artifacts to read (step 1 or 1c failed)" >&2
+  FAIL=1
+elif node "$SCRIPT_DIR/check-raw-payouts.mjs"; then
+  : # the script prints its own lines
+else
+  echo "  ✗ raw payout guard failed — pay through LibVaultOutflow or LibDelivery," >&2
+  echo "    or list the site with its reason (see above)" >&2
+  FAIL=1
+fi
+
 # ── 1e. Permissionless-steps ledger ───────────────────────────────────
 # Every entry point anyone may call has a row in permissionless-steps.json
 # saying what backs it, and every keeper-backed row names a pass, flag and

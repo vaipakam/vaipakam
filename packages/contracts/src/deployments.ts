@@ -259,6 +259,16 @@ export interface DeploymentFacets {
   settlementLegFacet?: HexAddress;
   /** #3246 part 2 — the clawback to a protected account's recovery address. */
   recoveryClawbackFacet?: HexAddress;
+  /** #3685 — the new-loan init-LTV cap host and collateral concentration. */
+  collateralConcentrationFacet?: HexAddress;
+  /** #3685 — the collateral-lien entries, split off EncumbranceMutateFacet. */
+  collateralLienFacet?: HexAddress;
+  /** #3681 — standing instructions and the loan reserve. */
+  standingInstructionFacet?: HexAddress;
+  /** The claim reads, split off claimFacet along its read / write seam. */
+  claimViewFacet?: HexAddress;
+  /** The standing-intent reads, split off lenderIntentFacet the same way. */
+  lenderIntentViewFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */

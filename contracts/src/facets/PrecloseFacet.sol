@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibOfferPriceGuard} from "../libraries/LibOfferPriceGuard.sol";
+import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibPriceRead} from "../libraries/LibPriceRead.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
@@ -22,6 +23,7 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
+import {CollateralLienFacet} from "./CollateralLienFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
@@ -1024,7 +1026,7 @@ contract PrecloseFacet is
         // below (rekey create-leg).
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.releaseCollateralLien.selector,
+                CollateralLienFacet.releaseCollateralLien.selector,
                 loanId
             ),
             bytes4(0)
@@ -1084,7 +1086,7 @@ contract PrecloseFacet is
         // paid-notification flag on an obligation transfer.
         address previousBorrower = loan.borrower;
         loan.borrower = newBorrower;
-        loan.collateralAmount = offer.collateralAmount;
+        LibLoanCollateral.set(loan, offer.collateralAmount);
         // #569 Codex #572 P1 #2 (2026-06-13) — copy the incoming offer's
         // collateral IDENTITY too, not just the amount. `assertAssetContinuity`
         // pins only `collateralAsset` + `collateralAssetType`, so an
@@ -1198,7 +1200,7 @@ contract PrecloseFacet is
         // protected. No-op on NFT rentals (D-1).
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.recreateCollateralLien.selector,
+                CollateralLienFacet.recreateCollateralLien.selector,
                 loanId
             ),
             bytes4(0)

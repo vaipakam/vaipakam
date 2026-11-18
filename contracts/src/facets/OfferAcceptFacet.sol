@@ -2003,7 +2003,11 @@ contract OfferAcceptFacet is
         SignedOfferCoSignatureInvalid,
         // #3328 — the offer is a collection offer, which fills only through
         // `CollectionOfferFacet` (`CollectionParentNotFillable`). APPENDED.
-        CollectionParent
+        CollectionParent,
+        // #3734 — a party of the loan has not accepted the Terms in force
+        // (`LibTerms.TermsNotAccepted`); `LegalFacet.termsBlocker` names it.
+        // APPENDED.
+        TermsNotAccepted
     }
 
     /// @notice Projection of the loan that would land if the supplied

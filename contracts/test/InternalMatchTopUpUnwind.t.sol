@@ -11,6 +11,7 @@ import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
@@ -306,7 +307,7 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
 
         // Borrower residual claim covers the WHOLE residual (400).
         (, uint256 borrowerClaimAmt, ) =
-            ClaimFacet(address(diamond)).getClaimableAmount(LOAN_A, false);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(LOAN_A, false);
         assertEq(borrowerClaimAmt, 400, "borrowerClaims = full residual");
 
         // The lien is exactly the whole residual (200 row residual + 200
@@ -372,7 +373,7 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
         );
 
         // Top-up is NOT stranded — recorded as a borrower claim.
-        (, uint256 borrowerClaimAmt, ) = ClaimFacet(address(diamond)).getClaimableAmount(LOAN_A, false);
+        (, uint256 borrowerClaimAmt, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(LOAN_A, false);
         assertEq(borrowerClaimAmt, 200, "top-up recorded as borrower claim");
 
         // Current (transferred-away) holder recovers the top-up.
@@ -430,7 +431,7 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
             ,
             ,
             bool active,
-        ) = ClaimFacet(address(diamond)).getFallbackSnapshot(LOAN_A);
+        ) = ClaimViewFacet(address(diamond)).getFallbackSnapshot(LOAN_A);
         assertTrue(active, "snapshot stays active");
         assertEq(lenderCollat, 4_250, "lenderCollateral scaled on the row 5000/8000");
         (uint256 rowAfter, ) = FallbackCustodyFacet(address(diamond)).getFallbackCustody(LOAN_A);
@@ -471,7 +472,7 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
         assertEq(a.collateralAmount, 200, "only the top-up remains");
 
         (, uint256 borrowerClaimAmt, ) =
-            ClaimFacet(address(diamond)).getClaimableAmount(LOAN_A, false);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(LOAN_A, false);
         assertEq(borrowerClaimAmt, 200, "borrowerClaims = top-up only");
 
         // #1566 S2b: the match decremented the lien by the 600 consumed from

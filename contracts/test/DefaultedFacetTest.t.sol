@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestCollateralCut} from "./helpers/LibTestCollateralCut.sol";
+import {LibTestTermsCut} from "./helpers/LibTestTermsCut.sol";
+import {LibTestClaimViewCut} from "./helpers/LibTestClaimViewCut.sol";
 import {LibTestProtectedCut} from "./helpers/LibTestProtectedCut.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestFallbackGate} from "./helpers/LibTestFallbackGate.sol";
@@ -41,6 +44,7 @@ import {IZeroExProxy} from "../src/interfaces/IZeroExProxy.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {LibOwedAtDefault} from "../src/libraries/LibOwedAtDefault.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -450,6 +454,9 @@ contract DefaultedFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
+        cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
+        cuts = LibTestTermsCut.withTermsHost(cuts); // #3734
+        cuts = LibTestClaimViewCut.withClaimView(cuts); // the claim reads
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         LibTestSettlementLeg.install(address(diamond)); // #3669
         LibTestForcedSalePreview.install(address(diamond));
@@ -841,7 +848,7 @@ contract DefaultedFacetTest is Test {
         // The contract computes: currentBorrowBalance (accrued interest through present)
         // + late fees + treasury fee on (interest + late fees).
         (address claimAsset, uint256 claimAmount, bool claimed) =
-            ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertEq(claimAsset, loan.principalAsset);
         assertFalse(claimed);
 
@@ -1422,7 +1429,7 @@ contract DefaultedFacetTest is Test {
 
         // Claim model: collateral stays in borrower's vault; lender claim is recorded
         (address claimAsset, uint256 claimAmount, bool claimed) =
-            ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertEq(claimAsset, mockIlliquidERC20);
         assertEq(claimAmount, 1500 ether);
         assertFalse(claimed);
@@ -2311,7 +2318,7 @@ contract DefaultedFacetTest is Test {
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
-        (address asset, uint256 amount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (address asset, uint256 amount,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertEq(asset, mockCollateralERC20, "lender claims the collateral in kind");
         assertEq(amount, 2000 ether);
         vm.clearMockedCalls();
@@ -2350,7 +2357,7 @@ contract DefaultedFacetTest is Test {
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
-        (address asset, uint256 amount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (address asset, uint256 amount,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertEq(asset, mockCollateralERC20, "lender claims the collateral in kind");
         assertEq(amount, 2000 ether);
         vm.clearMockedCalls();
@@ -2376,7 +2383,7 @@ contract DefaultedFacetTest is Test {
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Check borrower has a surplus claim
-        (, uint256 borrowerAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+        (, uint256 borrowerAmt,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, false);
         assertGt(borrowerAmt, 0, "Borrower should have surplus");
         vm.clearMockedCalls();
     }
@@ -2420,7 +2427,7 @@ contract DefaultedFacetTest is Test {
         // Lender claim is paid in the PRINCIPAL asset → proves the swap ran
         // (Path A), NOT the collateral asset the in-kind branch would record.
         (address lenderAsset, uint256 lenderAmt,) =
-            ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertEq(lenderAsset, mockERC20, "lender claim must be principal asset (swapped), not collateral");
         assertGt(lenderAmt, 0, "lender recovers from swap proceeds");
 
@@ -2430,12 +2437,12 @@ contract DefaultedFacetTest is Test {
         // in the collateral asset) and the proceeds beyond the debt and the
         // charges (the surplus row, in the principal asset).
         (address borrowerAsset, uint256 borrowerAmt,) =
-            ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, false);
         assertEq(borrowerAsset, mockCollateralERC20, "borrower keeps the unsold collateral");
         assertEq(borrowerAmt, 2000 ether - sellQuote, "unsold collateral = pledged - sold");
         assertGt(borrowerAmt, 0, "borrower must retain recoverable surplus (C1 fix)");
         (address surplusAsset, uint256 surplusAmt,) =
-            ClaimFacet(address(diamond)).getBorrowerSurplusClaim(loanId);
+            ClaimViewFacet(address(diamond)).getBorrowerSurplusClaim(loanId);
         assertEq(surplusAsset, mockERC20, "proceeds extra held in the principal asset");
         assertGt(surplusAmt, 0, "proceeds beyond the debt and charges are the borrower's");
         vm.clearMockedCalls();
@@ -2468,7 +2475,7 @@ contract DefaultedFacetTest is Test {
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Lender gets whatever proceeds there were (loss-bearing)
-        (, uint256 lenderAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 lenderAmt,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertLt(lenderAmt, 1000 ether, "Lender should have lost some principal");
         // No treasury fee when proceeds < principal
         vm.clearMockedCalls();
@@ -2493,7 +2500,7 @@ contract DefaultedFacetTest is Test {
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
         // Lender should get at least principal back (proceeds > total debt)
-        (, uint256 lenderAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 lenderAmt,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertGt(lenderAmt, 0);
         vm.clearMockedCalls();
     }
@@ -2713,12 +2720,12 @@ contract DefaultedFacetTest is Test {
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Lender gets all proceeds (loss-bearing), no treasury fee
-        (, uint256 lenderAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 lenderAmt,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertLt(lenderAmt, 1000 ether, "Lender should have less than principal");
         assertGt(lenderAmt, 0, "Lender should have some proceeds");
 
         // Borrower has no surplus
-        (, uint256 borrowerAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+        (, uint256 borrowerAmt,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, false);
         assertEq(borrowerAmt, 0, "Borrower should have no surplus");
 
         vm.clearMockedCalls();
@@ -2787,7 +2794,7 @@ contract DefaultedFacetTest is Test {
 
         // Check lender claim was recorded with prepay minus treasury fee
         (address claimAsset, uint256 claimAmount, bool claimed) =
-            ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertEq(claimAsset, mockERC20);
         assertGt(claimAmount, 0, "Lender should have prepay claim");
         assertFalse(claimed);
@@ -2919,11 +2926,11 @@ contract DefaultedFacetTest is Test {
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Verify borrower surplus is large (since proceeds >> totalDebt)
-        (, uint256 borrowerAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+        (, uint256 borrowerAmt,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, false);
         assertGt(borrowerAmt, 0, "Borrower should have large surplus");
 
         // Verify lender got at least principal + interest
-        (, uint256 lenderAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 lenderAmt,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertGt(lenderAmt, 1000 ether, "Lender should get more than principal");
 
         vm.clearMockedCalls();
@@ -3022,11 +3029,11 @@ contract DefaultedFacetTest is Test {
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Verify borrower got surplus
-        (, uint256 borrowerAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+        (, uint256 borrowerAmt,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, false);
         assertGt(borrowerAmt, 0, "Borrower should have surplus when proceeds >> debt");
 
         // Verify lender got more than principal (interest recovered)
-        (, uint256 lenderAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 lenderAmt,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertGt(lenderAmt, 1000 ether, "Lender should get principal + interest minus treasury");
 
         vm.clearMockedCalls();
@@ -3200,13 +3207,13 @@ contract DefaultedFacetTest is Test {
         DefaultedFacet(address(diamond)).triggerDefault(loanId, plan.sell, defaultAdapterCalls());
 
         // Verify: nothing left for the borrower (all collateral sold, proceeds < debt)
-        (, uint256 borrowerAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+        (, uint256 borrowerAmt,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, false);
         assertEq(borrowerAmt, 0, "No collateral left when every unit was sold");
-        (, uint256 surplusAmt,) = ClaimFacet(address(diamond)).getBorrowerSurplusClaim(loanId);
+        (, uint256 surplusAmt,) = ClaimViewFacet(address(diamond)).getBorrowerSurplusClaim(loanId);
         assertEq(surplusAmt, 0, "No surplus when proceeds < principal");
 
         // Verify lender got less than principal (loss)
-        (, uint256 lenderAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 lenderAmt,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertLt(lenderAmt, 1000 ether, "Lender bears loss when undercollateralized");
 
         vm.clearMockedCalls();
@@ -3312,7 +3319,7 @@ contract DefaultedFacetTest is Test {
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
 
         // Lender claim should be on collateral (not principal, since no swap)
-        (address claimAsset,,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (address claimAsset,,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertEq(claimAsset, mockCollateralERC20);
         vm.clearMockedCalls();
     }
@@ -3364,7 +3371,7 @@ contract DefaultedFacetTest is Test {
         bool viaFallback
     ) internal view {
         (uint256 p, uint256 i, uint256 l, uint64 at, bool vf) =
-            ClaimFacet(address(diamond)).getOwedAtDefault(loanId);
+            ClaimViewFacet(address(diamond)).getOwedAtDefault(loanId);
         assertEq(p, principal, "principal at default");
         assertEq(i, interest, "interest at default");
         assertEq(l, lateFee, "late fee at default");
@@ -3457,7 +3464,7 @@ contract DefaultedFacetTest is Test {
             uint8(LibVaipakam.LoanStatus.Defaulted),
             "precondition: the rental defaulted"
         );
-        (, , , uint64 at,) = ClaimFacet(address(diamond)).getOwedAtDefault(loanId);
+        (, , , uint64 at,) = ClaimViewFacet(address(diamond)).getOwedAtDefault(loanId);
         assertEq(at, 0, "no record for a rental");
     }
 }

@@ -6,6 +6,8 @@ import {LibOfferPriceGuard} from "../libraries/LibOfferPriceGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
+import {LegalFacet} from "./LegalFacet.sol";
+import {OfferPreviewFacet} from "./OfferPreviewFacet.sol";
 
 /**
  * @title  OfferPriceGuardFacet
@@ -148,6 +150,52 @@ contract OfferPriceGuardFacet is DiamondPausable, IVaipakamErrors {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         _requireClear(s, offerId);
         if (otherOfferId != 0) _requireClear(s, otherOfferId);
+    }
+
+    /// @notice The first check loan creation runs after the accept or match
+    ///         core that would refuse the loan, if any: the parties' Terms
+    ///         acceptance (#3734), the offer's cadence (#3025), then the
+    ///         makers' price-move guards (#3358).
+    enum OriginationRefusal {
+        None,
+        CadenceNotAdmitted,
+        PriceGuardRefused,
+        TermsNotAccepted
+    }
+
+    /**
+     * @notice The first origination check loan creation would refuse a loan
+     *         opened now from `offerId` with `principal` funded, between
+     *         `partyA` and `partyB` (0 = skip), where `otherOfferId` (0 =
+     *         none) is the other maker's offer in a match: the parties' Terms
+     *         acceptance, the cadence rule, then the price-move guards, in
+     *         loan creation's order.
+     * @dev The match and standing-intent previews ask it; each check asks
+     *      the entry loan creation itself calls, so the refusal is the one it
+     *      would raise. Not for a lender-sale vehicle, which the cadence rule
+     *      exempts. Hosted here (beside the guard it reads) because
+     *      `OfferPreviewFacet` has no EIP-170 room; the accept preview runs
+     *      the same three checks inline.
+     */
+    function previewOriginationRefusal(
+        uint256 offerId,
+        uint256 principal,
+        uint256 otherOfferId,
+        address partyA,
+        address partyB
+    ) external view returns (OriginationRefusal) {
+        (address blocked,) = LegalFacet(address(this)).termsBlocker(partyA, partyB);
+        if (blocked != address(0)) return OriginationRefusal.TermsNotAccepted;
+        try OfferPreviewFacet(address(this)).requireOriginationCadenceAdmitted(offerId, principal) {} catch {
+            return OriginationRefusal.CadenceNotAdmitted;
+        }
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.offerPriceGuard[offerId].maxMoveBps != 0 || s.offerPriceGuard[otherOfferId].maxMoveBps != 0) {
+            try OfferPriceGuardFacet(address(this)).requireOfferPriceGuardsClear(offerId, otherOfferId) {} catch {
+                return OriginationRefusal.PriceGuardRefused;
+            }
+        }
+        return OriginationRefusal.None;
     }
 
     function _requireClear(LibVaipakam.Storage storage s, uint256 offerId) private view {

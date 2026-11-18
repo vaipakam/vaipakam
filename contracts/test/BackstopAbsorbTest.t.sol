@@ -10,6 +10,7 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
@@ -172,7 +173,7 @@ contract BackstopAbsorbTest is SetupTest {
     function _moveToFallbackPending(uint256 id, address borrower_) internal {
         _moveToFallbackPendingAt(id, borrower_, PAR_PRICE);
         (uint256 l, uint256 t, uint256 b, uint256 due, uint256 tDue, , bool retried) =
-            ClaimFacet(address(diamond)).getFallbackSnapshot(id);
+            ClaimViewFacet(address(diamond)).getFallbackSnapshot(id);
         assertEq(l, LENDER_COL, "fixture-live: the producer's lender slice");
         assertEq(t, TREASURY_COL, "fixture-live: the producer's treasury slice");
         assertEq(b, BORROWER_COL, "fixture-live: the producer's borrower slice");
@@ -455,7 +456,7 @@ contract BackstopAbsorbTest is SetupTest {
         _seedLoan(LOAN, lender_, borrower_);
         _moveToFallbackPendingAt(LOAN, borrower_, PAR_GUARD_ENTRY_PRICE);
         (uint256 lenderSlice, , , uint256 lenderDue, , , ) =
-            ClaimFacet(address(diamond)).getFallbackSnapshot(LOAN);
+            ClaimViewFacet(address(diamond)).getFallbackSnapshot(LOAN);
         assertEq(lenderSlice, 500 ether, "fixture-live: the lender slice is 500");
         assertEq(lenderDue, DUE, "fixture-live: against the 550 due");
         _mockLenderNft(LOAN, lender_);
@@ -480,7 +481,7 @@ contract BackstopAbsorbTest is SetupTest {
         address lender_ = makeAddr("lender7");
         _fallbackOptedIn(lender_, makeAddr("borrower7"));
         (uint256 l, uint256 t, uint256 b, uint256 due, uint256 tDue, bool active, bool retried) =
-            ClaimFacet(address(diamond)).getFallbackSnapshot(LOAN);
+            ClaimViewFacet(address(diamond)).getFallbackSnapshot(LOAN);
         assertEq(l, due, "fixture-live: at par the producer sized the slice at the due");
         TestMutatorFacet(address(diamond)).setFallbackSnapshotRaw(
             LOAN,
@@ -509,7 +510,7 @@ contract BackstopAbsorbTest is SetupTest {
         address lender_ = makeAddr("lender7");
         _fallbackOptedIn(lender_, makeAddr("borrower7"));
         (uint256 l, uint256 t, uint256 b, , uint256 tDue, bool active, bool retried) =
-            ClaimFacet(address(diamond)).getFallbackSnapshot(LOAN);
+            ClaimViewFacet(address(diamond)).getFallbackSnapshot(LOAN);
         TestMutatorFacet(address(diamond)).setFallbackSnapshotRaw(
             LOAN,
             LibVaipakam.FallbackSnapshot({
@@ -532,7 +533,7 @@ contract BackstopAbsorbTest is SetupTest {
             BackstopFacet(address(diamond)).getBackstopAbsorbInfo(mockERC20, mockCollateralERC20);
         assertEq(cash, cashBefore, "no absorb cash spent");
         assertEq(exposure, exposureBefore, "no exposure taken");
-        (uint256 lAfter, , , , , bool activeAfter, ) = ClaimFacet(address(diamond)).getFallbackSnapshot(LOAN);
+        (uint256 lAfter, , , , , bool activeAfter, ) = ClaimViewFacet(address(diamond)).getFallbackSnapshot(LOAN);
         assertTrue(activeAfter, "the snapshot stays active for the in-kind claim");
         assertEq(lAfter, 1, "the lender keeps the one-unit slice");
     }

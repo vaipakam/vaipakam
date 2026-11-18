@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SettlementLegFacet} from "./SettlementLegFacet.sol";
+import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -16,6 +17,7 @@ import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
+import {LibInterestPayment, IInterestPaymentHost} from "../libraries/LibInterestPayment.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLenderYieldFeeHost} from "../libraries/LibLenderYieldFeeHost.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
@@ -458,7 +460,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
         uint256 rest = j.unsold == 0
             ? 0
             : LibSanctionedLock.pullToDiamond(s, loan.borrower, loan.collateralAsset, j.unsold, j.loanId, OutflowReason.LIQUIDATION);
-        loan.collateralAmount = alreadyHere + rest;
+        LibLoanCollateral.set(loan, alreadyHere + rest);
     }
 
     // ─── Internals: divide and book ─────────────────────────────────────
@@ -475,8 +477,8 @@ contract ForcedSaleFacet is IVaipakamErrors {
         if (sp.bonus > 0) LibDelivery.pushOut(loan.principalAsset, j.keeper, sp.bonus);
 
         if (j.kind == ForcedSaleKind.PeriodicSettlement) {
-            _bookPeriodic(s, j.loanId, loan, sp, out);
-            loan.collateralAmount = j.unsold;
+            _bookPeriodic(s, j.loanId, loan, sp, out, j.debt);
+            LibLoanCollateral.set(loan, j.unsold);
         } else {
             _bookTerminal(s, j.loanId, loan, sp, out);
             _recordUnsold(s, j.loanId, loan, j.unsold, out.collateralSold);
@@ -528,34 +530,36 @@ contract ForcedSaleFacet is IVaipakamErrors {
         sp.extra = rest - sp.fee;
     }
 
-    /// @dev Periodic booking (the loan stays open): the fee to the treasury,
-    ///      the lender's interest held for the lender position (open seller
-    ///      claims first), and the borrower's extra held on the surplus row
-    ///      (#3629: neither is paid to a wallet).
+    /// @dev Periodic booking (the loan stays open): the handling fee to the
+    ///      treasury, the recovered interest through the one interest booking
+    ///      (#3681, `LibInterestPayment` on `RepayPeriodicFacet`, shared with
+    ///      the "pay my interest" standing instruction), and the borrower's
+    ///      extra held on the surplus row (#3629: neither is paid to a
+    ///      wallet). `debt` is the period's gross shortfall the sale was sized
+    ///      for; `sp.lender` is what it recovered toward it. The booking
+    ///      takes the treasury's share of the interest at the loan's stamped
+    ///      rate (lender first on a short recovery) and counts what arrived as
+    ///      settled; the caller then advances the period once.
     function _bookPeriodic(
         LibVaipakam.Storage storage s,
         uint256 loanId,
         LibVaipakam.Loan storage loan,
         Split memory sp,
-        ForcedSaleOutcome memory out
+        ForcedSaleOutcome memory out,
+        uint256 debt
     ) private {
         // The treasury accrues what reached it (TreasuryFeeFacet).
         LibFacet.transferToTreasury(loan.principalAsset, sp.fee);
-        // #1209 / #1808 — the whole payout is interest, and this slice carries
-        // no treasury cut, so it is passed as both the gross and the net
-        // interest: open seller claims are paid out of it first, in full.
-        out.lenderPaid = LibCloseoutFreeze.holdActiveLenderResident(
-            s,
-            loanId,
-            loan,
-            loan.principalAsset,
-            sp.lender,
-            sp.lender,
-            sp.lender
+        (out.lenderPaid, ) = abi.decode(
+            LibFacet.crossFacetCallReturn(
+                abi.encodeCall(
+                    IInterestPaymentHost.bookInterestPayment,
+                    (loanId, debt, sp.lender, LibInterestPayment.SOURCE_PERIODIC_SALE)
+                ),
+                bytes4(0)
+            ),
+            (uint256, uint256)
         );
-        // #2795 — credit exactly what the lender received, never more than the
-        // shortfall: the extra above it is the borrower's, not prepaid interest.
-        loan.interestSettled += out.lenderPaid;
         // #3629 (owner decision 2026-11-15) — held for the borrower position,
         // claimable while the loan is open (`ClaimFacet.claimHeldForBorrower`)
         // or with the borrower claim at loan end.
@@ -669,6 +673,6 @@ contract ForcedSaleFacet is IVaipakamErrors {
         // #1132 (S10) — the borrower-side marker lands with its row, as the
         // lender's does in {_bookTerminal}.
         LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
-        loan.collateralAmount = unsold + sold;
+        LibLoanCollateral.set(loan, unsold + sold);
     }
 }

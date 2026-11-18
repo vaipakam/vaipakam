@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
@@ -391,7 +392,7 @@ contract WeirdErc20MatrixTest is SetupTest {
         _weird(col).rebase(bVault, COLLATERAL * 2);
 
         _default();
-        (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(LOAN, true);
+        (, uint256 claim, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(LOAN, true);
         assertEq(claim, COLLATERAL, "the lender's claim is the tracked collateral");
         assertEq(_bal(col, bVault), COLLATERAL, "the surplus stays in the borrower's vault");
     }

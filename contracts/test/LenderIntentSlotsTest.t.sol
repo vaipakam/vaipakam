@@ -7,6 +7,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
+import {LenderIntentViewFacet} from "../src/facets/LenderIntentViewFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
@@ -50,6 +51,11 @@ contract LenderIntentSlotsTest is SetupTest {
 
     function _intents() internal view returns (LenderIntentFacet) {
         return LenderIntentFacet(address(diamond));
+    }
+
+    /// @dev The standing-intent reads (LenderIntentViewFacet).
+    function _intentsReads() internal view returns (LenderIntentViewFacet) {
+        return LenderIntentViewFacet(address(diamond));
     }
 
     function _setSlot(uint8 slot, uint256 floorBps) internal {
@@ -140,11 +146,11 @@ contract LenderIntentSlotsTest is SetupTest {
     }
 
     function _capital(uint8 slot) internal view returns (uint256) {
-        return _intents().getLenderIntentCapital(lender, mockERC20, mockCollateralERC20, slot);
+        return _intentsReads().getLenderIntentCapital(lender, mockERC20, mockCollateralERC20, slot);
     }
 
     function _live(uint8 slot) internal view returns (uint256) {
-        return _intents().getLenderIntentLivePrincipal(lender, mockERC20, mockCollateralERC20, slot);
+        return _intentsReads().getLenderIntentLivePrincipal(lender, mockERC20, mockCollateralERC20, slot);
     }
 
     /// @dev A low-floor slot 0 and a high-floor slot 1, each funded on its own.
@@ -205,7 +211,7 @@ contract LenderIntentSlotsTest is SetupTest {
         vm.prank(b);
         RepayFacet(address(diamond)).repayLoan(loanId);
 
-        (LibMetricsTypes.RollableIntentLoan[] memory rows,) = _intents().getRollableIntentLoans(0, 10);
+        (LibMetricsTypes.RollableIntentLoan[] memory rows,) = _intentsReads().getRollableIntentLoans(0, 10);
         assertEq(rows.length, 1, "one roll candidate");
         assertEq(rows[0].slot, 1, "the feed names the slot the loan came from");
 
@@ -222,20 +228,20 @@ contract LenderIntentSlotsTest is SetupTest {
     ///      listed, in the keeper feed and in the owner's own view.
     function test_cancelOneSlot_otherStaysListed() public {
         _ladder();
-        (LibMetricsTypes.LenderIntentSummary[] memory rows, uint256 total) = _intents().getActiveLenderIntents(0, 10);
+        (LibMetricsTypes.LenderIntentSummary[] memory rows, uint256 total) = _intentsReads().getActiveLenderIntents(0, 10);
         assertEq(total, 2, "both slots in the feed");
         assertEq(rows.length, 2, "both listed");
         assertTrue(rows[0].slot != rows[1].slot, "one row per slot");
 
         vm.prank(lender);
         _intents().cancelLenderIntent(mockERC20, mockCollateralERC20, 0);
-        (rows, total) = _intents().getActiveLenderIntents(0, 10);
+        (rows, total) = _intentsReads().getActiveLenderIntents(0, 10);
         assertEq(total, 1, "only slot 1 left in the feed");
         assertEq(rows[0].slot, 1, "slot 1 still listed");
         assertEq(rows[0].minRateBps, HIGH_FLOOR, "with its own floor");
 
         (LibMetricsTypes.OwnerLenderIntentSummary[] memory mine, uint256 count) =
-            _intents().getLenderIntentsByOwner(lender, 0, 10);
+            _intentsReads().getLenderIntentsByOwner(lender, 0, 10);
         assertEq(count, 2, "the paused slot still holds capital, so the owner still sees it");
         for (uint256 i = 0; i < mine.length; i++) {
             assertEq(mine[i].active, mine[i].intent.slot == 1, "only slot 1 is active");
@@ -243,17 +249,17 @@ contract LenderIntentSlotsTest is SetupTest {
 
         vm.prank(lender);
         _intents().withdrawLenderIntentCapital(lender, mockERC20, mockCollateralERC20, 0, PRINCIPAL);
-        (, count) = _intents().getLenderIntentsByOwner(lender, 0, 10);
+        (, count) = _intentsReads().getLenderIntentsByOwner(lender, 0, 10);
         assertEq(count, 1, "a torn-down slot leaves the owner view");
         assertEq(_capital(1), 2 * PRINCIPAL, "slot 1 capital untouched");
-        assertTrue(_intents().getLenderIntent(lender, mockERC20, mockCollateralERC20, 1).active, "slot 1 active");
+        assertTrue(_intentsReads().getLenderIntent(lender, mockERC20, mockCollateralERC20, 1).active, "slot 1 active");
     }
 
     /// @dev Slots run 0 … MAX_INTENT_SLOTS − 1; the next one is refused by name.
     function test_slotOutOfRange() public {
         uint8 top = LibVaipakam.MAX_INTENT_SLOTS - 1;
         _setSlot(top, LOW_FLOOR);
-        assertTrue(_intents().getLenderIntent(lender, mockERC20, mockCollateralERC20, top).active, "the last slot");
+        assertTrue(_intentsReads().getLenderIntent(lender, mockERC20, mockCollateralERC20, top).active, "the last slot");
 
         vm.prank(lender);
         vm.expectRevert(
@@ -275,7 +281,7 @@ contract LenderIntentSlotsTest is SetupTest {
             false, 0, false
         );
         _setSlot(1, 900);
-        assertEq(_intents().getLenderIntent(lender, mockERC20, mockCollateralERC20, 0).minRateBps, LOW_FLOOR, "slot 0 kept");
+        assertEq(_intentsReads().getLenderIntent(lender, mockERC20, mockCollateralERC20, 0).minRateBps, LOW_FLOOR, "slot 0 kept");
         assertEq(_capital(0), PRINCIPAL, "slot 0 capital kept");
         assertEq(_capital(1), 2 * PRINCIPAL, "a re-set keeps the slot's own capital");
 

@@ -25,6 +25,7 @@ import {RiskFacet} from "./RiskFacet.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
+import {CollateralLienFacet} from "./CollateralLienFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 
 /**
@@ -51,7 +52,7 @@ import {ConsolidationFacet} from "./ConsolidationFacet.sol";
  *         {RiskFacet.calculateHealthFactor}, the eager consolidation a
  *         self-call into {ConsolidationFacet.eagerConsolidateBothSides}, and
  *         the lien decrement a self-call into
- *         {EncumbranceMutateFacet.decrementCollateralLien}. The figures (debt,
+ *         {CollateralLienFacet.decrementCollateralLien}. The figures (debt,
  *         seizure, tier discount) are the one rule in
  *         {LibDiscountedLiquidation}, which the preview reads too.
  *
@@ -530,14 +531,14 @@ contract RiskDiscountedLiquidationFacet is
 
     /// @dev #569 — lower the loan's collateral lien by `consumed`, through
     ///      the one cross-facet host
-    ///      ({EncumbranceMutateFacet.decrementCollateralLien}). Twin of
+    ///      ({CollateralLienFacet.decrementCollateralLien}). Twin of
     ///      `RiskFacet._decrementLienAtPartialLiq`: an encoder only, the rule
     ///      lives in {LibEncumbrance.decrementCollateralLien}. Its own frame
     ///      keeps the encoding off the settlement leg's stack.
     function _decrementCollateralLien(uint256 loanId, uint256 consumed) private {
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.decrementCollateralLien.selector,
+                CollateralLienFacet.decrementCollateralLien.selector,
                 loanId,
                 consumed
             ),

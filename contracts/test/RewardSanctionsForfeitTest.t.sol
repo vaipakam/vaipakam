@@ -12,6 +12,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {LibTestProtection} from "./helpers/LibTestProtection.sol";
@@ -2317,7 +2318,7 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         _mut().setSanctionsFrozenClaimant(LOAN_V, true, alice);
         uint256 id = _seed(alice, LOAN_V);
         bytes32 loanHash = keccak256(abi.encode(LoanFacet(address(diamond)).getLoanDetails(LOAN_V)));
-        (, uint256 claimAmt, , , , , uint256 held, ) = ClaimFacet(address(diamond)).getClaimable(LOAN_V, true);
+        (, uint256 claimAmt, , , , , uint256 held, ) = ClaimViewFacet(address(diamond)).getClaimable(LOAN_V, true);
         assertEq(claimAmt, 7 ether, "fixture LIVE: a lender claimable stands");
 
         oracle.setFlagged(alice, true);
@@ -2330,7 +2331,7 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
             loanHash,
             "the loan record is untouched"
         );
-        (, uint256 claimAmt2, , , , , uint256 held2, ) = ClaimFacet(address(diamond)).getClaimable(LOAN_V, true);
+        (, uint256 claimAmt2, , , , , uint256 held2, ) = ClaimViewFacet(address(diamond)).getClaimable(LOAN_V, true);
         assertEq(claimAmt2, claimAmt, "the claimable is untouched");
         assertEq(held2, held, "and the held lender value");
         assertEq(_mut().getSanctionsFrozenClaimant(LOAN_V, true), alice, "the frozen-claimant marker stands");

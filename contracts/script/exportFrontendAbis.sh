@@ -326,6 +326,15 @@ FACETS=(
   "SettlementLegFacet"
   # #3246 part 2: the clawback to a recovery address.
   "RecoveryClawbackFacet"
+  # The new-loan cap host and the collateral-lien entries (#3685).
+  "CollateralConcentrationFacet"
+  "CollateralLienFacet"
+  # Standing instructions and the loan reserve (#3681).
+  "StandingInstructionFacet"
+  # The claim reads, split off ClaimFacet (EIP-170).
+  "ClaimViewFacet"
+  # The standing-intent reads, split off LenderIntentFacet (EIP-170).
+  "LenderIntentViewFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"
