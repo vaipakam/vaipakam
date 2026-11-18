@@ -3109,6 +3109,8 @@ export const copy = {
     tagLoanSale: B('Sale of a running loan'),
     tagOffset: B('Early close of a running loan'),
     tagMoved: B('Can no longer complete'),
+    tagMakerNotCurrent: B('Cannot be taken now: its maker has not accepted the Terms here'),
+    tagYouNotCurrent: B('Cannot be taken now: accept the Terms here to reopen it'),
     whySummary: B('Where the book comes from'),
     why: C(
       'The book lists the open offers the protocol’s index has recorded on this network, newest first. The index can lag the chain by a few minutes and only suggests what to look at: an offer’s page reads it from the chain before anything is offered, so its state and terms there are the protocol’s. An offer whose expiry has passed can no longer be accepted, but what it locked stays in its creator’s vault until someone cleans it up; anyone may, and it always returns to the creator. The filters apply to the offers read so far.',
@@ -3516,6 +3518,7 @@ export const copy = {
     codeCadence: B('the loan’s interest schedule is not allowed at this amount now.'),
     codeGuard: B('a maker’s price-move guard refuses it now.'),
     codeFresh: B('one of them was posted or changed moments ago; it can be matched shortly.'),
+    codeTermsNotAccepted: B('one of the two makers has not accepted the Terms of Service in force on this network.'),
     codeOther: B('reason code {{code}}.'),
     whySummary: B('How a match works'),
     why: C(
@@ -4487,6 +4490,9 @@ export const copy = {
         "The borrower put a price-move guard on this request, and it refuses a fill now: the price has moved past the borrower's limit, the market is not calm against the last two hourly price checks, or a price or a check is missing. It may clear later.",
       ),
       TermsTooFresh: A('This request was posted or changed a few seconds ago, and a request can be funded only once its terms have stood for a few seconds. Try again shortly. Nothing was sent.'),
+      TermsNotAccepted: A(
+        'This request cannot be funded now: the protocol reports that you or the borrower who posted it has not accepted the Terms of Service in force on this network, without saying which. It can be funded once both have.',
+      ),
       Unrecognised: A('The protocol refused this request with a code this build cannot name.'),
     },
     signWhy: C(
@@ -5088,6 +5094,9 @@ export const copy = {
         "The lender put a price-move guard on this offer, and it refuses a fill now: the price has moved past the lender's limit, the market is not calm against the last two hourly price checks, or a price or a check is missing. It may clear later.",
       ),
       TermsTooFresh: A('This offer was posted or changed a few seconds ago, and an offer can be taken only once its terms have stood for a few seconds. Try again shortly. Nothing was sent.'),
+      TermsNotAccepted: A(
+        'This offer cannot be taken now: the protocol reports that you or its creator has not accepted the Terms of Service in force on this network, without saying which. It can be taken once both have.',
+      ),
       Unrecognised: A('The protocol refused this offer with a code this build cannot name.'),
       // OFF-60 — a signed order's own refusals, reported only by the
       // protocol's preview of a signed order's fill (#3552).

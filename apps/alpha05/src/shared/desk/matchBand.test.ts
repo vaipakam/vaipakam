@@ -192,7 +192,8 @@ describe('the share and the capacity', () => {
   it('words every refusal code, and an unknown one by its number', () => {
     expect(refusalText(18, copy)).toBe('matchBand.codeCapacity');
     expect(refusalText(25, copy)).toBe('matchBand.codeFresh');
-    expect(refusalText(26, copy)).toBe('matchBand.codeOther(26)');
+    expect(refusalText(26, copy)).toBe('matchBand.codeTermsNotAccepted');
+    expect(refusalText(27, copy)).toBe('matchBand.codeOther(27)');
   });
 });
 

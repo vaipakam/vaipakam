@@ -87,6 +87,7 @@ const REFUSAL: readonly CopyKey[] = [
   'matchBand.codeCadence',
   'matchBand.codeGuard',
   'matchBand.codeFresh',
+  'matchBand.codeTermsNotAccepted',
 ];
 
 /** Why the protocol refuses a pair, in words. */

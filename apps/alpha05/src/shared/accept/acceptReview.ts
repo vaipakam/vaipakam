@@ -300,6 +300,7 @@ const LENDER_ERRORS: Partial<Record<AcceptPreview['error'], CopyKey>> = {
   CadenceNotAdmitted: 'lendAccept.err.CadenceNotAdmitted',
   PriceGuardRefused: 'lendAccept.err.PriceGuardRefused',
   TermsTooFresh: 'lendAccept.err.TermsTooFresh',
+  TermsNotAccepted: 'lendAccept.err.TermsNotAccepted',
   Unrecognised: 'lendAccept.err.Unrecognised',
 };
 
