@@ -920,6 +920,7 @@ decisions 2026-11-10 (delegatecall split; the vault is the only writer).
 3. #3206 (rate limits held in the vault's own storage) builds on this
    library and the vault's records.
 4. #3246 part 2 (clawback to the recovery address) adds a class: the
-   recovery address, held in the vault.
+   recovery address, held in the vault. Its rules are in
+   [RecoveryAddressClawbackDesign.md](RecoveryAddressClawbackDesign.md).
 
 Fresh deploy, no migration.
