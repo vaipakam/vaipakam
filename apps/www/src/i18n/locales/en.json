@@ -257,7 +257,7 @@
     "step4Desc": "Repay on time and reclaim the collateral. Lenders claim principal + interest using the NFT. If default occurs, liquidation or full collateral transfer follows the protocol rules.",
     "step4Detail1": "Present NFT to claim funds",
     "step4Detail2": "Late fees capped at 5%",
-    "step4Detail3": "Term-based Loan Initiation Fee (0.2% up to 30 days) + 5% Yield Fee on interest",
+    "step4Detail3": "Term-based Loan Initiation Fee (0.2% up to 30 days) + 10% Yield Fee on interest",
     "step4Detail4": "Tiered VPFI discount: 10% / 15% / 20% / 24% off both fees by vault balance"
   },
   "security": {
@@ -431,8 +431,8 @@
       "fees": {
         "q": "What fees does the platform charge?",
         "a1": "Two headline fees, plus a late-payment schedule:",
-        "li1": "<s>Loan Initiation Fee — set by the loan's term</s> on ERC-20 loans: 0.2% for a term of up to 30 days, rising evenly to 0.5% at 365 days, and beyond that 0.5% a year, pro rata. It is deducted from the principal at loan start, so the borrower receives the offered amount less the fee but still owes the full principal. Extending a loan later adds the fee for the added term. These are the default settings, which governance can retune.",
-        "li2": "<s>Yield Fee — 5%</s> on interest earned by lenders and on rental income earned by NFT owners.",
+        "li1": "<s>Loan Initiation Fee — set by the loan's term</s> on ERC-20 loans: 0.2% for a term of up to 30 days, rising evenly to 1% at 365 days, and beyond that 1% a year, pro rata. It is deducted from the principal at loan start, so the borrower receives the offered amount less the fee but still owes the full principal. Extending a loan later adds the fee for the added term. These are the default settings, which governance can retune.",
+        "li2": "<s>Yield Fee — 10%</s> on interest earned by lenders and on rental income earned by NFT owners.",
         "li3": "<s>Late fees:</s> 1% flat on the day of miss, plus 0.5% per additional day, capped at 5% of principal. Late fees route to treasury.",
         "a2": "VPFI holders can reduce <em>both</em> headline fees via one consent setting, enabled per chain — see the VPFI discount entry below."
       },

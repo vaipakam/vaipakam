@@ -41,8 +41,9 @@ returns the _effective_ value (default OR stored, whichever applies).
 
 ### Treasury fee on lender interest
 
-Default 5% of accrued lender
-interest goes to treasury (the #3649 fee levels; it was 2% under the
+Default 10% of accrued lender
+interest goes to treasury (the #3649 fee levels, owner decision
+2026-11-17; it was 2% under the
 rev-8 fee freeze, #1352, and 1% before that). Range: 0% – `MAX_FEE_BPS`, and **`MAX_FEE_BPS` is 50%, not
 the 10% this document previously claimed**. Read the guard for what
 it is: a sanity cap that stops a fat-fingered denomination, not a
@@ -74,7 +75,7 @@ a stored 0 means the default, and `getLoanInitiationFeeTerms` reads
 all four in force:
 
 - base term — default 30 days, bounded 1 – 90;
-- yearly rate — default 0.5%, never below the base rate, and capped
+- yearly rate — default 1%, never below the base rate, and capped
   so the fee at the longest term the platform admits
   (`MAX_OFFER_DURATION_DAYS_CEIL`, 4,385 days) stays within
   `MAX_FEE_BPS`;
