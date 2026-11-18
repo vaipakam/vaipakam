@@ -357,6 +357,61 @@ contract LegalFacetTest is SetupTest {
         assertFalse(_l().isTermsCurrent(alice), "the spent v2 is inside 1..3 but never came into force");
     }
 
+    /// A small change may put the latest at most MAX_TOS_WINDOW above the
+    /// minimum; past it the minimum is raised first.
+    function test_SmallChangeWindowIsBounded() public {
+        _v1Now();
+        for (uint32 v = 2; v <= 17; ++v) _l().publishTos(v, keccak256(abi.encode(v)));
+        bytes32 h18 = keccak256(abi.encode(uint32(18)));
+        vm.expectRevert(abi.encodeWithSelector(LegalFacet.TosVersionWindowTooWide.selector, uint32(18), uint32(1)));
+        _l().publishTos(18, h18);
+        _l().announceTosMinimum(uint64(vm.getBlockTimestamp() + 7 days));
+        vm.warp(vm.getBlockTimestamp() + 7 days);
+        _l().publishTos(18, h18);
+        (uint32 latest,, uint32 min) = _l().getTosVersions();
+        assertEq(latest, 18);
+        assertEq(min, 17);
+    }
+
+    /// The window's far end still counts: a wallet whose only acceptance is
+    /// the minimum is current with the latest 16 above it.
+    function test_WindowFarEndCounts() public {
+        _v1Now();
+        vm.prank(alice);
+        _l().acceptTerms(1, H1);
+        for (uint32 v = 2; v <= 17; ++v) _l().publishTos(v, keccak256(abi.encode(v)));
+        assertTrue(_l().isTermsCurrent(alice));
+    }
+
+    /// A fresh network may start at any version in one call: latest and
+    /// minimum both that version.
+    function test_FreshNetworkStartsAtThree() public {
+        _l().publishTos(3, H3);
+        (uint32 latest, bytes32 h, uint32 min) = _l().getTosVersions();
+        assertEq(latest, 3);
+        assertEq(h, H3);
+        assertEq(min, 3);
+        assertEq(_l().getTosVersionInForceAt(3), uint64(block.timestamp));
+        assertFalse(_l().isTermsCurrent(alice));
+        vm.prank(alice);
+        _l().acceptTerms(3, H3);
+        assertTrue(_l().isTermsCurrent(alice));
+    }
+
+    /// Accepting through the wallet's own multicall works while paused.
+    function test_MulticallAcceptWhilePaused() public {
+        _v1Now();
+        _l().announceTos(2, H2, uint64(block.timestamp + 7 days));
+        AdminFacet(address(diamond)).pause();
+        MulticallFacet.Call[] memory calls = new MulticallFacet.Call[](2);
+        calls[0] = MulticallFacet.Call(abi.encodeCall(LegalFacet.acceptTerms, (uint32(1), H1)), false);
+        calls[1] = MulticallFacet.Call(abi.encodeCall(LegalFacet.acceptTerms, (uint32(2), H2)), false);
+        vm.prank(alice);
+        MulticallFacet(address(diamond)).multicall(calls);
+        assertTrue(_l().isTermsCurrent(alice));
+        assertEq(_l().getUserAcceptedTosVersions(alice).length, 2);
+    }
+
     function test_BackstopVaultIsExempt() public {
         _v1Now();
         vm.startPrank(owner);

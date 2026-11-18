@@ -90,10 +90,11 @@ library LibTerms {
 
     /// @notice Whether `wallet` may take on a new position as far as the
     ///         Terms go, and the version it needs if not.
-    /// @dev A bounded read from the latest version down to the minimum,
-    ///      stopping at the first version the wallet accepted that came into
-    ///      force. The window is the versions published since the last
-    ///      material change, usually one to three.
+    /// @dev The wallet's latest acceptance first, then a bounded read from
+    ///      the latest version down to the minimum, stopping at the first
+    ///      version the wallet accepted that came into force. The window is
+    ///      the versions published since the last material change, at most
+    ///      `LegalFacet.MAX_TOS_WINDOW` + 1.
     /// @return current True when no version is in force, when `wallet` is the
     ///                 backstop vault, or when it accepted a version in force
     ///                 from the minimum to the latest.
@@ -107,6 +108,11 @@ library LibTerms {
         if (t.latest == 0) return (true, 0);
         if (wallet != address(0) && wallet == s.backstopVault) return (true, 0);
         uint32 floor = t.minimum == 0 ? 1 : t.minimum;
+        // The wallet's latest acceptance first: one read settles the usual
+        // case. It may name a pending or withdrawn version, so it must also
+        // have come into force.
+        uint32 last = s.tosAcceptance[wallet].version;
+        if (last >= floor && last <= t.latest && inForce(s, last)) return (true, 0);
         for (uint32 v = t.latest; v >= floor; --v) {
             if (s.tosAcceptedVersion[wallet][v].acceptedAt != 0 && inForce(s, v)) return (true, 0);
         }

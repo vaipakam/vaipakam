@@ -4418,7 +4418,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// self-calls (`requireCurrentTerms`). Nothing is checked while no
     /// version is in force (the default at deploy).
     function _getLegalSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](17);
+        s = new bytes4[](18);
         s[0] = LegalFacet.acceptTerms.selector;
         s[1] = LegalFacet.announceTos.selector;
         s[2] = LegalFacet.withdrawTosAnnouncement.selector;
@@ -4436,5 +4436,6 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[14] = LegalFacet.getTosVersions.selector;
         s[15] = LegalFacet.getTosVersionInForceAt.selector;
         s[16] = LegalFacet.getUserAcceptedTosVersions.selector;
+        s[17] = bytes4(keccak256("MAX_TOS_WINDOW()"));
     }
 }

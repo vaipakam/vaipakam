@@ -27,6 +27,7 @@ import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {Vm} from "forge-std/Vm.sol";
 
 /**
  * @title TermsGateTest
@@ -271,17 +272,73 @@ contract TermsGateTest is SetupTest {
         assertEq(LoanFacet(address(diamond)).getLoanDetails(loanId).lender, buyer, "the buyer holds the position");
     }
 
-    /// Test 13 (listing): a stale lender may list its position.
-    function test_Listing_StaleSellerMayList() public {
-        uint256 loanId = _openLoan();
+    /// @dev A stale lender lists its position; returns the sale offer id.
+    function _listStale(uint256 loanId) internal returns (uint256 saleOfferId) {
         vm.warp(block.timestamp + 1 days);
         _v2InForce();
         assertFalse(_l().isTermsCurrent(lender));
+        vm.recordLogs();
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
             loanId, 500, true, 7 days, 0, type(uint256).max, type(uint64).max
         );
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics[0] == OfferCreateFacet.OfferCreated.selector) saleOfferId = uint256(logs[i].topics[1]);
+        }
+        assertGt(saleOfferId, 0, "the listing posted its sale offer");
     }
+
+    /// Test 13 (listing): a stale lender may list its position.
+    function test_Listing_StaleSellerMayList() public {
+        _listStale(_openLoan());
+    }
+
+    /// Test 13 (listing, end to end): a stale buyer is refused at the fill;
+    /// once it accepts, it fills the stale seller's listing and holds the
+    /// position.
+    function test_Listing_StaleBuyerRefused_CurrentBuyerFillsStaleSeller() public {
+        uint256 loanId = _openLoan();
+        uint256 saleOfferId = _listStale(loanId);
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("terms-sale-buyer");
+        ERC20Mock(mockERC20).mint(buyer, PRINCIPAL * 2);
+        vm.startPrank(buyer);
+        ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        ERC20(mockERC20).approve(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(buyer), type(uint256).max);
+        vm.stopPrank();
+        LibAcceptTerms.AcceptTerms memory t =
+            LibAcceptTestSigner.buildSaleTerms(address(diamond), buyer, saleOfferId, true, loanId);
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+        _expectTerms(buyer, 2);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+
+        _accept(buyer, 2, H2);
+        assertFalse(_l().isTermsCurrent(lender), "the seller stays stale");
+        t = LibAcceptTestSigner.buildSaleTerms(address(diamond), buyer, saleOfferId, true, loanId);
+        sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(loanId).lender, buyer, "the buyer holds the position");
+    }
+
+    /// The sale-vehicle exemption is keyed on the record, not on the
+    /// offer's look: the same stale lender's ordinary offer, with no record,
+    /// is refused at the fill.
+    function test_NoSaleRecord_StaleMakerRefused() public {
+        _v1();
+        _accept(lender, 1, H1);
+        uint256 offerId = _postLenderOffer();
+        _v2InForce();
+        _accept(borrower, 2, H2);
+        LibAcceptTerms.AcceptTerms memory t =
+            LibAcceptTestSigner.buildTerms(address(diamond), borrower, offerId, true, 0);
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, borrowerPk);
+        _expectTerms(lender, 2);
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, t, sig);
+    }
+
 
     /// Test 13 (offset): the borrower's offset offer is a new position and
     /// needs the borrower current.

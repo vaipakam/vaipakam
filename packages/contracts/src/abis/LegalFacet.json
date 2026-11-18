@@ -1,6 +1,19 @@
 [
   {
     "type": "function",
+    "name": "MAX_TOS_WINDOW",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MIN_TOS_NOTICE",
     "inputs": [],
     "outputs": [
@@ -597,6 +610,22 @@
         "name": "earliest",
         "type": "uint64",
         "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TosVersionWindowTooWide",
+    "inputs": [
+      {
+        "name": "version",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "minimum",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ]
   }
