@@ -107,11 +107,27 @@ contract InstantTakeoverTest is InstantMarketBase {
         }
         assertTrue(seen, "event emitted");
 
-        (, uint256 lent, uint256 fromSlots, uint256 instant) =
+        (, , uint256 lent, uint256 fromSlots, uint256 instant) =
             MarketLedgerFacet(address(diamond)).getPairLedger(mockERC20, mockCollateralERC20);
         assertEq(lent, PRINCIPAL, "lent unchanged");
         assertEq(fromSlots, PRINCIPAL, "still slot-lent, now from the incoming slot");
         assertEq(instant, PRINCIPAL, "still instant");
+
+        // #3714 — live principal moves with the loan: out of the outgoing
+        // slot, into the incoming one at the principal outstanding; the
+        // incoming slot's capital and room both fell by it.
+        (, uint256 outFillable, uint256 outLive, ) =
+            MarketLedgerFacet(address(diamond)).getSlotLedger(lender, mockERC20, mockCollateralERC20, 0);
+        (, uint256 inFillable, uint256 inLive, uint256 inCapital) =
+            MarketLedgerFacet(address(diamond)).getSlotLedger(lender2, mockERC20, mockCollateralERC20, 0);
+        assertEq(outLive, 0, "outgoing slot holds nothing");
+        assertEq(inLive, afterLoan.principal, "incoming slot holds the principal outstanding");
+        assertEq(inLive + outLive, fromSlots, "lent from slots is the sum of live");
+        assertEq(inCapital, 0, "the incoming slot's capital paid it");
+        assertEq(inFillable, 0, "so it has nothing fillable");
+        (, uint256 available, , , ) =
+            MarketLedgerFacet(address(diamond)).getPairLedger(mockERC20, mockCollateralERC20);
+        assertEq(available, outFillable + inFillable, "available is the sum of fillable amounts");
     }
 
     function test_refusedWithoutTakeoverConsent() public {

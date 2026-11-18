@@ -277,7 +277,7 @@ library LibPrepayOrder {
         address seaport,
         bytes32 conduitKey
     ) internal view returns (address conduit) {
-        address controller = ISeaportOrderHash(seaport).conduitController();
+        (,, address controller) = ISeaportOrderHash(seaport).information();
         bool exists;
         (conduit, exists) = IConduitController(controller).getConduit(conduitKey);
         // `getConduit` returns `(address, false)` when the key

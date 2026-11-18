@@ -86,6 +86,36 @@ contract OfferPriceGuardFacet is DiamondPausable, IVaipakamErrors {
     /// @notice A current price of one of the offer's assets cannot be read.
     error OfferPriceUnreadable(uint256 offerId);
 
+    /// @notice A lender intent slot's calm-price check was switched.
+    /// @param owner           The slot's owner, who switched it.
+    /// @param lendingAsset    The slot's lending asset.
+    /// @param collateralAsset The slot's collateral asset.
+    /// @param slot            The slot.
+    /// @param on              The state now: true = later fills are checked.
+    /// @custom:event-category state-change/offer-mutation
+    event IntentCalmCheckSet(
+        address indexed owner,
+        address indexed lendingAsset,
+        address indexed collateralAsset,
+        uint8 slot,
+        bool on
+    );
+
+    /// @notice A fill from an intent slot is refused: a checkpoint for one of
+    ///         the last two hours is missing for an asset of the pair.
+    error IntentPairNoCheckpoint(address lendingAsset, address collateralAsset);
+    /// @notice A fill from an intent slot is refused: the pair moved past the
+    ///         calm bound against one of the last two hourly checkpoints.
+    error IntentPairNotCalm(address lendingAsset, address collateralAsset);
+    /// @notice A fill from an intent slot is refused: a current price of one
+    ///         of the pair's assets cannot be read.
+    error IntentPairUnpriced(address lendingAsset, address collateralAsset);
+    /// @notice A platform-run slot (the backstop vault's, an aggregator
+    ///         adapter's) cannot switch the calm-price check off.
+    error IntentCalmCheckRequired(address owner);
+    /// @notice `slot` is at or above `LibVaipakam.MAX_INTENT_SLOTS`.
+    error IntentSlotOutOfRange(uint8 slot);
+
     /**
      * @notice Arm a guard for the next offer you post in this transaction.
      * @dev    Batch it ahead of the post through `MulticallFacet`. The post
@@ -196,6 +226,70 @@ contract OfferPriceGuardFacet is DiamondPausable, IVaipakamErrors {
             }
         }
         return OriginationRefusal.None;
+    }
+
+    /**
+     * @notice Switch the calm-price check on your own lender intent slot for
+     *         (`lendingAsset`, `collateralAsset`, `slot`). On (the default),
+     *         every fill from the slot is refused while the pair has moved
+     *         past the calm bound against either of the last two hourly price
+     *         checkpoints, while either checkpoint is missing, or while a
+     *         price cannot be read. Off, the slot fills whatever the pair has
+     *         done in the last two hours.
+     * @dev    Only the slot's owner (the caller), never a keeper, a manager
+     *         or a mandate. A platform-run owner (the backstop vault, an
+     *         aggregator adapter) is refused switching it off. Allowed with
+     *         or without a live intent and while fills are open; it applies
+     *         to later fills only. Cancelling the intent switches it back on
+     *         (`LenderIntentFacet.cancelLenderIntent` deletes the switch and
+     *         emits {IntentCalmCheckSet} with `on` = true when it was off), so
+     *         a new intent in the slot starts with the check on.
+     */
+    function setIntentCalmCheck(address lendingAsset, address collateralAsset, uint8 slot, bool on) external {
+        if (slot >= LibVaipakam.MAX_INTENT_SLOTS) revert IntentSlotOutOfRange(slot);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!on && (s.isAggregatorAdapter[msg.sender] || msg.sender == s.backstopVault)) {
+            revert IntentCalmCheckRequired(msg.sender);
+        }
+        s.intentCalmCheckOff[msg.sender][lendingAsset][collateralAsset][slot] = !on;
+        emit IntentCalmCheckSet(msg.sender, lendingAsset, collateralAsset, slot, on);
+    }
+
+    /**
+     * @notice Where a fill from `owner`'s intent slot stands against the
+     *         calm-price check now: Off (switched off), Clear, NoCheckpoint,
+     *         NotCalm or Unpriced (see {LibOfferPriceGuard.Status}).
+     * @dev    The fill and `RiskPreviewFacet.previewIntent` read this same
+     *         answer, so they cannot disagree.
+     */
+    function intentCalmStatus(address owner, address lendingAsset, address collateralAsset, uint8 slot)
+        external
+        view
+        returns (LibOfferPriceGuard.Status)
+    {
+        return LibOfferPriceGuard.intentStatus(
+            LibVaipakam.storageSlot(), owner, lendingAsset, collateralAsset, slot
+        );
+    }
+
+    /**
+     * @notice Reverts with the named refusal when a fill from `owner`'s
+     *         intent slot is refused by the calm-price check now.
+     * @dev    Self-called from `LibIntentFill.admitFill`, the one admission
+     *         every slot fill takes: a solver's `matchIntent` (Auto-lend, the
+     *         backstop fill, the aggregator adapters) and a borrower's own
+     *         instant borrow (#3656).
+     */
+    function requireIntentPairCalm(address owner, address lendingAsset, address collateralAsset, uint8 slot)
+        external
+        view
+    {
+        LibOfferPriceGuard.Status st = LibOfferPriceGuard.intentStatus(
+            LibVaipakam.storageSlot(), owner, lendingAsset, collateralAsset, slot
+        );
+        if (st == LibOfferPriceGuard.Status.NoCheckpoint) revert IntentPairNoCheckpoint(lendingAsset, collateralAsset);
+        if (st == LibOfferPriceGuard.Status.NotCalm) revert IntentPairNotCalm(lendingAsset, collateralAsset);
+        if (st == LibOfferPriceGuard.Status.Unpriced) revert IntentPairUnpriced(lendingAsset, collateralAsset);
     }
 
     function _requireClear(LibVaipakam.Storage storage s, uint256 offerId) private view {

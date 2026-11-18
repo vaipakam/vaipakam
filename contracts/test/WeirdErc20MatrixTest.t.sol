@@ -9,6 +9,7 @@ import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
+import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
@@ -318,8 +319,11 @@ contract WeirdErc20MatrixTest is SetupTest {
 
         _repay();
         assertEq(uint8(_status()), uint8(LibVaipakam.LoanStatus.Repaid), "the repayment completed");
-        uint256 parked = SettlementLegFacet(address(diamond)).getParkedTreasury(borrower, mockERC20);
+        (uint256 parked, uint256 parkedFloor) = SettlementLegFacet(address(diamond)).getParkedTreasury(borrower, mockERC20);
         assertGt(parked, 0, "the treasury share parked");
+        // #3649 stage 3 — the floor is fixed at parking and never above the share.
+        assertLe(parkedFloor, parked, "the floor fits inside the share");
+        uint256 reserveBefore = TreasuryFeeFacet(address(diamond)).getReservePartHeldByTreasury(mockERC20);
         assertEq(_bal(mockERC20, bVault), parked, "it waits in the borrower's vault");
 
         vm.expectRevert();
@@ -330,7 +334,14 @@ contract WeirdErc20MatrixTest is SetupTest {
         vm.prank(makeAddr("anyone"));
         SettlementLegFacet(address(diamond)).releaseParkedTreasury(borrower, mockERC20);
         assertEq(_bal(mockERC20, treasury) - before, parked, "the treasury received it");
-        assertEq(SettlementLegFacet(address(diamond)).getParkedTreasury(borrower, mockERC20), 0, "row cleared");
+        assertEq(
+            TreasuryFeeFacet(address(diamond)).getReservePartHeldByTreasury(mockERC20) - reserveBefore,
+            parked - parkedFloor,
+            "the release split at the floor fixed when it parked"
+        );
+        (uint256 left, uint256 leftFloor) = SettlementLegFacet(address(diamond)).getParkedTreasury(borrower, mockERC20);
+        assertEq(left, 0, "row cleared");
+        assertEq(leftFloor, 0, "floor cleared");
         assertEq(_bal(mockERC20, bVault), 0, "nothing left in the borrower's vault");
     }
 

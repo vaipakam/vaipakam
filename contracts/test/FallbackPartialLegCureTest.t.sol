@@ -505,6 +505,7 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
         _plFund(lender_, lending, principal);
         _plFund(borrower_, collateral, collateralAmount);
         LibVaipakam.CreateOfferParams memory p = LibVaipakam.CreateOfferParams({
+            integrator: address(0),
             lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: lending,

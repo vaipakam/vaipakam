@@ -18,7 +18,7 @@ import { readTerms, termsUrl, type TermsState } from '../terms/terms';
 import { allowanceSteps } from '../tx/approval';
 import { allowanceMoved, approvalFlow } from '../tx/approvalFlow';
 import type { LegOutcome } from '../tx/outcome';
-import { askThrough } from '../tx/simulate';
+import { askAfter } from '../tx/simulate';
 import { readValidUntil } from '../tx/deadline';
 import { cleanUpLeg } from '../tx/cleanUp';
 import { useStoredValue, useTxNote } from '../tx/txStore';
@@ -176,6 +176,9 @@ export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onC
       //    a change since the review stops before any prompt, and a stop
       //    puts back exactly what the wallet had right before.
       let putItBack: (() => Promise<{ sentence: string }>) | null = null;
+      // The block the approval landed in: the dry run below is asked at or
+      // after it, so a node that has not seen it cannot refuse the post.
+      let approvedAt: bigint | null = null;
       if (h.kind === 'erc721') {
         const ap = tokenApproval(collateral, h.tokenId);
         const now = await ap.read();
@@ -184,6 +187,7 @@ export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onC
         if (needed) {
           say(format('nftApproval.step', { token: format('asset.nft', { asset: assetName(collateral, meta), id: String(h.tokenId) }) }));
           const since = await ap.approve(now.approved);
+          approvedAt = since;
           approvalLeft.current = { kind: 'erc721', token: collateral, tokenId: h.tokenId, prior: now.approved, since };
           putItBack = () => ap.putBack(now.approved, since);
         }
@@ -194,6 +198,7 @@ export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onC
         if (!now.approvedForAll) {
           say(format('operatorApproval.step', { collection: assetName(collateral, meta) }));
           const since = await ap.grant();
+          approvedAt = since;
           holdGrant({ token: collateral, tokenId: h.tokenId, since });
           putItBack = () => {
             holdGrant(null);
@@ -210,6 +215,7 @@ export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onC
         if (steps.length !== h.approvalSteps) throw allowanceMoved(copy);
         if (steps.length > 0) {
           const since = await approveExactly(io, token, lock, prior);
+          approvedAt = since;
           approvalLeft.current = { kind: 'erc20', token, prior, amount: lock, since };
           putItBack = () => putBack(token, prior, lock, since);
         }
@@ -228,7 +234,7 @@ export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onC
       //    The deadline (#3412) is read from the chain's clock now, so the
       //    dry run and the write carry the same one.
       const call = postCall(CREATE_ABI, r.params, r.draft.parsed.guardBps, await readValidUntil(own));
-      const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, ...call, account }));
+      const dry = await askAfter(own, approvedAt, (c, blockNumber) => c.simulateContract({ address: diamond, ...call, account, blockNumber }));
       if (dry.kind === 'reverted') return stop(format(k.dryRunRefused, { reason: refusalFromError(dry.error).reason }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
 

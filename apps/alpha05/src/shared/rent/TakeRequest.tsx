@@ -26,7 +26,7 @@ import { cleanUpLeg } from '../tx/cleanUp';
 import { nftApproval } from '../tx/nftApproval';
 import { operatorApproval } from '../tx/operatorApproval';
 import type { LegOutcome } from '../tx/outcome';
-import { askThrough } from '../tx/simulate';
+import { askAfter } from '../tx/simulate';
 import { useStoredValue, useTxNote } from '../tx/txStore';
 import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
 import { useTrackedTx } from '../tx/useTrackedTx';
@@ -156,14 +156,18 @@ export function TakeRequest({ offerId, chain, own, meta, terms, onClose }: TakeR
       // 2. The approval: the one ERC-721 token, or for an ERC-1155 token the
       //    operator approval for this rental alone.
       let putItBack: (() => Promise<{ sentence: string }>) | null = null;
+      // The block the approval landed in: the dry run is asked at or after it.
+      let approvedAt: bigint | null = null;
       if (needed && ap721 && now721) {
         say(format('nftApproval.step', { token: nftName(r) }));
         const since = await ap721.approve(now721.approved);
+        approvedAt = since;
         approvalLeft.current = { token: o.lendingAsset, tokenId: o.tokenId, prior: now721.approved, since };
         putItBack = () => ap721.putBack(now721.approved, since);
       } else if (needed && ap1155) {
         say(format('operatorApproval.step', { collection: assetName(o.lendingAsset, meta) }));
         const since = await ap1155.grant();
+        approvedAt = since;
         grantLeft.current = { token: o.lendingAsset, tokenId: o.tokenId, since };
         putItBack = () => {
           grantLeft.current = null;
@@ -180,7 +184,7 @@ export function TakeRequest({ offerId, chain, own, meta, terms, onClose }: TakeR
 
       // 3. The dry run with the real signature and the approval in place:
       //    the protocol's own verdict, the NFT's move included.
-      const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, abi: ACCEPT_ABI, functionName: 'acceptOffer', args: [offerId, message, signature], account }));
+      const dry = await askAfter(own, approvedAt, (c, blockNumber) => c.simulateContract({ address: diamond, abi: ACCEPT_ABI, functionName: 'acceptOffer', args: [offerId, message, signature], account, blockNumber }));
       if (dry.kind === 'reverted') return stop(format('accept.dryRunRefused', { reason: refusalFromError(dry.error).reason }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
 

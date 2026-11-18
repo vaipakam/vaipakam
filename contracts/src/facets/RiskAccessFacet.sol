@@ -501,6 +501,18 @@ contract RiskAccessFacet is DiamondAccessControl {
         );
     }
 
+    /// @notice Reverts with the gate's refusal when `actor` may not take a
+    ///         position on the pair `p` now: its effective risk tier, its
+    ///         per-pair consent and its strict mode, read live.
+    /// @dev    The one runtime copy of {LibRiskAccess.assertActorMayTransact}
+    ///         loan creation reaches: `LoanFacet` self-calls it for the offer's
+    ///         creator, the accepting party and a sale's buyer, so it carries
+    ///         no copy of the rule (EIP-170). A view, so anyone may ask it; it
+    ///         reverts or returns nothing.
+    function requireActorMayTransact(address actor, LibRiskAccess.PairId calldata p) external view {
+        LibRiskAccess.assertActorMayTransact(LibVaipakam.storageSlot(), actor, p);
+    }
+
     // ─── Internals ───────────────────────────────────────────────────────────
 
     /// @dev #1522 — the shared expectation gate for both checked entry points.

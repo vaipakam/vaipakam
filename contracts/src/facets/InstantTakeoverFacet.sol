@@ -125,7 +125,7 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
         address holder = LibPositionNFT.ownerOf(loan.lenderTokenId);
         address borrowerNow = LibPositionNFT.ownerOf(loan.borrowerTokenId);
         if (incoming == holder || incoming == borrowerNow) revert InstantTakeoverSameParty(incoming);
-        uint256 live = _admitTakeover(s, loan, incoming, slot);
+        _admitTakeover(s, loan, incoming, slot);
         _screenIncoming(s, loan, holder, incoming, borrowerNow);
 
         // The incoming slot's capital pays the principal outstanding into the
@@ -156,7 +156,7 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
             bytes4(0)
         );
         LibIntentFill.recordSlotLoan(
-            s, loanId, incoming, loan.principalAsset, loan.collateralAsset, slot, live, principal
+            s, loanId, incoming, loan.principalAsset, loan.collateralAsset, slot, principal
         );
         emit InstantTakenOver(loanId, holder, incoming, slot, paid, earned);
     }
@@ -167,7 +167,7 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.Loan storage loan,
         address incoming,
         uint8 slot
-    ) private view returns (uint256 live) {
+    ) private view {
         LibVaipakam.LenderIntent memory intent =
             s.lenderIntent[incoming][loan.principalAsset][loan.collateralAsset][slot];
         LibIntentFill.requireSlotLive(intent, incoming);
@@ -194,8 +194,10 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
             ) revert InstantTakeoverTermPastSlot(maturity);
         }
         if (loan.principal < intent.minFillAmount) revert LibIntentFill.LenderIntentFillBelowMin();
-        live = s.lenderIntentLivePrincipal[incoming][loan.principalAsset][loan.collateralAsset][slot];
-        if (live + loan.principal > intent.maxExposure) revert LibIntentFill.LenderIntentExposureExceeded();
+        if (
+            s.lenderIntentLivePrincipal[incoming][loan.principalAsset][loan.collateralAsset][slot] + loan.principal
+                > intent.maxExposure
+        ) revert LibIntentFill.LenderIntentExposureExceeded();
         uint256 ltv = RiskFacet(address(this)).calculateLTV(loan.id);
         if (ltv > intent.maxInitLtvBps) revert InstantTakeoverLtvAboveSlot(ltv, intent.maxInitLtvBps);
         uint256 hf = RiskFacet(address(this)).calculateHealthFactor(loan.id);

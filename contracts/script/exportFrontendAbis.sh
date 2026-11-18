@@ -335,6 +335,9 @@ FACETS=(
   "ClaimViewFacet"
   # The standing-intent reads, split off LenderIntentFacet (EIP-170).
   "LenderIntentViewFacet"
+  "IntegratorFacet"
+  "StandingOfferCheckFacet"
+  "ReferralFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"

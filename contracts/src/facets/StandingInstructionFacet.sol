@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
@@ -698,11 +699,16 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
     ///         (so under {runDueRepayment}'s guard), which has computed both
     ///         amounts and books the repayment. It lives here, beside the
     ///         reserve, because RepayFacet has no EIP-170 room for it.
+    /// @param  basis The treasury share's fee basis (the interest it is cut
+    ///         from), so a parked share keeps its floor (#3649 stage 3).
     /// @return lenderParked Whether the lender's due was parked.
-    function payRepaymentFromReserve(uint256 loanId, address holder, uint256 treasuryShare, uint256 lenderDue)
-        external
-        returns (bool lenderParked)
-    {
+    function payRepaymentFromReserve(
+        uint256 loanId,
+        address holder,
+        uint256 treasuryShare,
+        uint256 lenderDue,
+        ITreasuryFeeHost.FeeBasis calldata basis
+    ) external returns (bool lenderParked) {
         if (msg.sender != address(this)) revert IVaipakamErrors.UnauthorizedCrossFacetCall();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address asset = s.loans[loanId].principalAsset;
@@ -713,7 +719,9 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
         if (treasuryShare != 0) {
             (, treasuryParked) = abi.decode(
                 LibFacet.crossFacetCallReturn(
-                    abi.encodeCall(SettlementLegFacet.treasuryShareOrPark, (FROM_VAULT, holder, asset, treasuryShare)),
+                    abi.encodeCall(
+                        SettlementLegFacet.treasuryShareOrPark, (FROM_VAULT, holder, asset, treasuryShare, basis)
+                    ),
                     IVaipakamErrors.TreasuryTransferFailed.selector
                 ),
                 (uint256, bool)

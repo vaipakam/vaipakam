@@ -772,6 +772,9 @@ library LibOfferCreate {
         // #3621 — the lender's "either" marks; `OfferBookFacet.openOfferOnBook`
         // refuses them on an offer that cannot carry them.
         offer.lifecycleFlex = params.lifecycleFlex;
+        // #3682 — the integrator the creator named: paid a share only on a
+        // borrower's offer, attribution only on a lender's (#3719).
+        offer.integrator = params.integrator;
         // #1347 — the creator's Full VPFI tariff opt-in (`Offer.creatorFull` /
         // `creatorMaxCStar` / `creatorAllowFullDowngrade`) is NOT a
         // `CreateOfferParams` field: it is authorized post-create by the creator

@@ -1,6 +1,19 @@
 [
   {
     "type": "function",
+    "name": "getFeeShareCeiling",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getLoanInitiationFeeTerms",
     "inputs": [],
     "outputs": [
@@ -21,6 +34,24 @@
       },
       {
         "name": "yearDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getTreasuryFeeFloors",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "initiationBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "interestBps",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -102,6 +133,32 @@
   },
   {
     "type": "function",
+    "name": "setFeeShareCeiling",
+    "inputs": [
+      {
+        "name": "ceilingBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setLifMatcherFeeBps",
+    "inputs": [
+      {
+        "name": "newBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setLoanInitiationFeeTerms",
     "inputs": [
       {
@@ -124,6 +181,50 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "setTreasuryFeeFloors",
+    "inputs": [
+      {
+        "name": "initiationBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "interestBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "FeeShareCeilingSet",
+    "inputs": [
+      {
+        "name": "ceilingBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "LifMatcherFeeBpsSet",
+    "inputs": [
+      {
+        "name": "newBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "event",
     "name": "LoanInitiationFeeTermsSet",
     "inputs": [
@@ -141,6 +242,25 @@
       },
       {
         "name": "yearDays",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TreasuryFeeFloorsSet",
+    "inputs": [
+      {
+        "name": "initiationBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "interestBps",
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
@@ -177,6 +297,33 @@
   },
   {
     "type": "error",
+    "name": "InvalidFeeBps",
+    "inputs": [
+      {
+        "name": "bps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxAllowed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidFeeShareCeiling",
+    "inputs": [
+      {
+        "name": "ceilingBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidLoanInitiationFeeTerms",
     "inputs": [
       {
@@ -191,6 +338,43 @@
       },
       {
         "name": "yearDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidTreasuryFeeFloors",
+    "inputs": [
+      {
+        "name": "initiationBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "interestBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "MatcherAndCutAboveCeiling",
+    "inputs": [
+      {
+        "name": "matcherBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cutBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "ceilingBps",
         "type": "uint256",
         "internalType": "uint256"
       }

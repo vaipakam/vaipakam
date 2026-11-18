@@ -105,7 +105,7 @@ interface ILaunchVaultCode {
 
 /// @dev Seaport's conduit controller, reached through the vault's Seaport.
 interface ILaunchSeaport {
-    function conduitController() external view returns (address);
+    function information() external view returns (string memory, bytes32, address);
 }
 
 interface ILaunchConduitController {
@@ -428,7 +428,7 @@ library LibLaunchReadiness {
     function _conduitKeyResolves(ILaunchVaultCode v) private view returns (bool) {
         address seaport = v.SEAPORT();
         if (seaport.code.length == 0) return true;
-        try ILaunchSeaport(seaport).conduitController() returns (address controller) {
+        try ILaunchSeaport(seaport).information() returns (string memory, bytes32, address controller) {
             try ILaunchConduitController(controller).getConduit(v.CONDUIT_KEY()) returns (address conduit, bool exists) {
                 return exists && conduit != address(0) && conduit == v.CONDUIT();
             } catch {

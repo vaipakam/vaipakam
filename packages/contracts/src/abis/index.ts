@@ -97,6 +97,9 @@ import RecoveryClawbackFacetABI from './RecoveryClawbackFacet.json';
 import CollateralConcentrationFacetABI from './CollateralConcentrationFacet.json';
 import CollateralLienFacetABI from './CollateralLienFacet.json';
 import StandingInstructionFacetABI from './StandingInstructionFacet.json';
+import IntegratorFacetABI from './IntegratorFacet.json';
+import StandingOfferCheckFacetABI from './StandingOfferCheckFacet.json';
+import ReferralFacetABI from './ReferralFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import ClaimViewFacetABI from './ClaimViewFacet.json';
 import LenderIntentViewFacetABI from './LenderIntentViewFacet.json';
@@ -307,6 +310,9 @@ export {
   CollateralConcentrationFacetABI,
   CollateralLienFacetABI,
   StandingInstructionFacetABI,
+  IntegratorFacetABI,
+  StandingOfferCheckFacetABI,
+  ReferralFacetABI,
   ClaimFacetABI,
   ClaimViewFacetABI,
   LenderIntentViewFacetABI,

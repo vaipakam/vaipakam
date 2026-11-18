@@ -33,6 +33,7 @@ import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
+import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {TestOfferFloor} from "./helpers/TestOfferFloor.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
@@ -287,7 +288,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // reads to prove a torn-down vehicle drops out of the open-position view.
         MetricsFacet metricsFacet = MetricsFacet(ArtifactDeploy.deploy(type(MetricsFacet).name));
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](42);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](43);
         cuts[25] = IDiamondCut.FacetCut({
             facetAddress: address(metricsFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -457,6 +458,12 @@ contract EarlyWithdrawalFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getLoanClockFacetSelectors()
         });
+        // #3722 — the accept preview quotes the fee through ReferralFacet.
+        cuts[42] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(ReferralFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getReferralFacetSelectors()
+        });
         cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
         cuts = LibTestTermsCut.withTermsHost(cuts); // #3734
         cuts = LibTestClaimViewCut.withClaimView(cuts); // the claim reads
@@ -517,6 +524,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -554,6 +562,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         buyOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -808,6 +817,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(borrower);
         uint256 borrowerBuyOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -1151,6 +1161,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         id = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -1918,6 +1929,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 lenderOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -3368,6 +3380,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -3679,6 +3692,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 localBuyOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -3753,6 +3767,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 highRateBuyOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -3810,6 +3825,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 slightlyHigherOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -3863,6 +3879,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 sameRateOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -3927,6 +3944,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 buyOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -3973,6 +3991,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 buyOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -4020,6 +4039,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 buyOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -4080,6 +4100,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 wrongOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: differentAsset,
@@ -4122,6 +4143,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 lowOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -4182,6 +4204,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 shortOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -4239,6 +4262,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 longOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -4424,6 +4448,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 highCollOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -4534,6 +4559,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 lowRateOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -4584,6 +4610,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 localBuyOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -4654,6 +4681,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 wrongPrepay = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -4706,6 +4734,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 wrongColl = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -4753,6 +4782,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 excessOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -5646,6 +5676,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 buyOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -5706,6 +5737,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         uint256 highRateOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -6159,6 +6191,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(lender);
         uint256 selfOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -7572,6 +7605,10 @@ contract EarlyWithdrawalFacetTest is Test {
     function test_1918_legacyLoanComparedAtTheFrozenFallbackNotAtTheRawZero() public {
         TestMutatorFacet(address(diamond)).setTreasuryFeeBpsAtInitRaw(activeLoanId, 0);
         uint16 belowLegacy = uint16(LibVaipakam.LEGACY_TREASURY_FEE_BPS - 50);
+        // #3649 stage 3 — an interest share must stay at least twice its
+        // treasury floor (1% of the interest by default); lower the floor
+        // first so the share can go below the legacy rate.
+        TestMutatorFacet(address(diamond)).setFeeFloorsRaw(0, 1);
         _setLiveTreasuryFeeBps(belowLegacy);
 
         (uint8 code, uint256 a, uint256 b) =

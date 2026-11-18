@@ -16,7 +16,7 @@ import {
  * @title MockSeaport
  * @notice Minimal Seaport stand-in for unit tests. Implements just
  *         the three views the diamond needs: `getOrderHash`,
- *         `getCounter`, `conduitController`. The on-chain Seaport
+ *         `getCounter`, `information`. The on-chain Seaport
  *         computes `getOrderHash` via EIP-712 typed-data hashing;
  *         this mock uses `keccak256(abi.encode(components))` so the
  *         result is deterministic per-input but NOT the same as
@@ -25,7 +25,7 @@ import {
  *         returns the hash; tests check it was stored correctly).
  */
 contract MockSeaport is ISeaportOrderHash {
-    address public override conduitController;
+    address public conduitController;
 
     /// @dev Per-offerer counter. The diamond reads this to derive
     ///      a fresh orderHash on every post / update — bumping
@@ -34,6 +34,10 @@ contract MockSeaport is ISeaportOrderHash {
 
     constructor(address _conduitController) {
         conduitController = _conduitController;
+    }
+
+    function information() external view override returns (string memory, bytes32, address) {
+        return ("1.6", bytes32(0), conduitController);
     }
 
     function getOrderHash(OrderComponents calldata order)

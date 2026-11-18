@@ -49,6 +49,11 @@
             "name": "errorCode",
             "type": "uint8",
             "internalType": "enum OfferAcceptFacet.AcceptError"
+          },
+          {
+            "name": "referralCut",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
@@ -298,6 +303,11 @@
             "internalType": "uint8"
           },
           {
+            "name": "integrator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
             "name": "creatorFull",
             "type": "bool",
             "internalType": "bool"
@@ -479,6 +489,11 @@
                 "name": "errorCode",
                 "type": "uint8",
                 "internalType": "enum OfferAcceptFacet.AcceptError"
+              },
+              {
+                "name": "referralCut",
+                "type": "uint256",
+                "internalType": "uint256"
               }
             ]
           },

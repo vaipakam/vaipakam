@@ -19,6 +19,8 @@ import {LibReadyBalance} from "../libraries/LibReadyBalance.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
+import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibKeeperReward} from "../libraries/LibKeeperReward.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
@@ -851,7 +853,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         _drawFromHolder(loan, borrowerNftOwner, lenderShare + treasuryShare, OutflowReason.INTEREST);
         // 2. Forward treasury share + record accrual. #2440 — measured,
         //    accrued as it arrived (TreasuryFeeFacet).
-        LibFacet.transferToTreasury(principalAsset, treasuryShare);
+        LibFacet.transferToTreasury(principalAsset, treasuryShare, LibFeeFloor.interest(interestGross, LibVaipakam.effectiveTreasuryFeeBps(loan)));
         // 3. Seller claims first, then the lender's vault.
         (uint256 sellersGross, uint256 sellersNet) = LibInterestLedger.paySellersFirst(
             s, loan, address(0), principalAsset, interestGross, lenderShare
@@ -921,7 +923,8 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         loan.lifPaidDays = uint32(newPaidDays);
         if (fee > 0) {
             _drawFromHolder(loan, holder, fee, OutflowReason.FEE);
-            LibFacet.transferToTreasury(loan.principalAsset, fee);
+            // #3649 stage 3 — no floor: the reserve's whole.
+            LibFacet.transferToTreasury(loan.principalAsset, fee, LibFeeFloor.extension());
         }
         emit ExtensionFeeCharged(loan.id, holder, loan.principalAsset, fee, paidDays, newPaidDays);
     }

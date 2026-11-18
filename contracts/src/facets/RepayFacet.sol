@@ -15,6 +15,8 @@ import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
+import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibStandingInstructions} from "../libraries/LibStandingInstructions.sol";
@@ -32,6 +34,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {SettlementLegFacet} from "./SettlementLegFacet.sol";
+import {StandingInstructionFacet} from "./StandingInstructionFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
 
@@ -353,19 +356,20 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // in the payer's own vault, and the repayment still completes. The
             // lender due lands in the stored lender's vault behind the
             // receive-side exemption (#821), frozen behind the claim gate.
+            // The treasury share's floor is cut from the interest (#3649
+            // stage 3), so a parked share keeps it.
+            ITreasuryFeeHost.FeeBasis memory basis =
+                LibFeeFloor.interest(plan.interest + plan.lateFee, LibVaipakam.effectiveTreasuryFeeBps(loan));
             bool parked = abi.decode(
                 LibFacet.crossFacetCallReturn(
                     reserveHolder == address(0)
                         ? abi.encodeCall(
                             SettlementLegFacet.payRepaymentLegs,
-                            (loanId, msg.sender, loan.principalAsset, plan.treasuryShare, plan.lenderDue)
+                            (loanId, msg.sender, loan.principalAsset, plan.treasuryShare, plan.lenderDue, basis)
                         )
-                        : abi.encodeWithSignature(
-                            "payRepaymentFromReserve(uint256,address,uint256,uint256)",
-                            loanId,
-                            reserveHolder,
-                            plan.treasuryShare,
-                            plan.lenderDue
+                        : abi.encodeCall(
+                            StandingInstructionFacet.payRepaymentFromReserve,
+                            (loanId, reserveHolder, plan.treasuryShare, plan.lenderDue, basis)
                         ),
                     VaultDepositFailed.selector
                 ),
@@ -806,7 +810,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // #1383 — a yield-fee discount can drive `treasuryShare` to 0 on the
             // VPFI-payment path; the shared pull is a no-op at zero.
             // #1281-011 — and it refuses a short arrival by name.
-            LibFacet.transferFromPayerToTreasury(msg.sender, loan.principalAsset, treasuryShare);
+            LibFacet.transferFromPayerToTreasury(msg.sender, loan.principalAsset, treasuryShare, LibFeeFloor.interest(accrued, LibVaipakam.effectiveTreasuryFeeBps(loan)));
 
             // #1808 — through the ledger's single writer (checkpoint first).
             // `partialAmount < loan.principal` is pinned above.

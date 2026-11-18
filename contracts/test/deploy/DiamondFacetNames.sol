@@ -153,7 +153,9 @@ abstract contract DiamondFacetNames {
     ///      ClaimFacet along its read / write seam for EIP-170).
     ///      132 → 133 with `LenderIntentViewFacet` (the standing-intent
     ///      reads, split off LenderIntentFacet the same way).
-    function cutFacetNames() internal pure returns (string[133] memory) {
+    ///      133 → 136 with `IntegratorFacet` (#3682), `StandingOfferCheckFacet`
+    ///      (#3720) and `ReferralFacet` (#3722).
+    function cutFacetNames() internal pure returns (string[136] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -346,6 +348,12 @@ abstract contract DiamondFacetNames {
             "ClaimViewFacet",
             // The standing-intent reads, split off LenderIntentFacet (EIP-170).
             "LenderIntentViewFacet",
+            // The integrator registry and the share's delivery (#3682).
+            "IntegratorFacet",
+            // The check of one standing offer a borrow preview points to (#3720).
+            "StandingOfferCheckFacet",
+            // The referral share: binding, settings, quote, payment (#3722).
+            "ReferralFacet",
             "SwapToRepayFacet",
             "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",

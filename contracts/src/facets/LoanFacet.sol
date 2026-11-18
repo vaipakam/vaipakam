@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibIntegrator} from "../libraries/LibIntegrator.sol";
 import {LibInitiationFee} from "../libraries/LibInitiationFee.sol";
 import {LibPriceGuard} from "../libraries/LibPriceGuard.sol";
 import {LibPriceRead} from "../libraries/LibPriceRead.sol";
@@ -11,6 +12,7 @@ import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
+import {RiskAccessFacet} from "./RiskAccessFacet.sol";
 import {LibInitRiskGate} from "../libraries/LibInitRiskGate.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
@@ -133,6 +135,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // path — see `_snapshotFeeBps`).
         uint16 treasuryFeeBpsAtInit;
         uint16 loanInitiationFeeBpsAtInit;
+        // #3719 — the integrator the borrower named (address(0) = none), so the
+        // platform's alert can name the door the user came through. What its
+        // share became is stated by `OfferAcceptFeeFacet.IntegratorShareSettled`.
+        address integrator;
     }
 
     /// @notice Companion to {LoanInitiated} — full self-sufficient
@@ -154,6 +160,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     );
 
     // Facet-specific errors (shared errors inherited from IVaipakamErrors)
+    /// @dev #3682 / #3722 — the initiation-fee charge's settlement events
+    ///      named a different loan id than the loan being opened (an internal
+    ///      invariant; never expected).
+    error AcceptChargeLoanMismatch(uint256 settledFor, uint256 opened);
     error InvalidOffer();
     error MixedCollateralNotAllowed();
 
@@ -490,6 +500,26 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // the loan's real economics without a `getLoanDetails` read-back.
         d.treasuryFeeBpsAtInit = loan.treasuryFeeBpsAtInit;
         d.loanInitiationFeeBpsAtInit = loan.loanInitiationFeeBpsAtInit;
+        // #3682 / #3719 — the integrator named on this accept, handed over by
+        // the acceptance charge: recorded on the loan (a registered entry's
+        // public count rises once) and cleared.
+        {
+            LibVaipakam.Storage storage st = LibVaipakam.storageSlot();
+            // #3722 — the charge's settlement events (the integrator's and
+            // the referral's) named the next loan id; it must be this loan,
+            // whatever the route.
+            uint256 chargedFor = st.acceptChargeLoanId;
+            if (chargedFor != 0) {
+                if (chargedFor != loanId) revert AcceptChargeLoanMismatch(chargedFor, loanId);
+                delete st.acceptChargeLoanId;
+            }
+            address integrator = st.acceptIntegratorPending;
+            if (integrator != address(0)) {
+                delete st.acceptIntegratorPending;
+                LibIntegrator.recordLoan(loanId, integrator);
+                d.integrator = integrator;
+            }
+        }
 
         // Best-effort HF, read only for a loan with both legs liquid (the
         // health factor refuses any other, so 0 stays the illiquid answer
@@ -708,8 +738,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             if (s.acceptAckActive && LibVaipakam.cfgRiskAccessGateEnabled()) {
                 LibVaipakam.Loan storage soldLoan =
                     s.loans[s.saleOfferToLoanId[ctx.offerId]];
-                LibRiskAccess.assertActorMayTransact(
-                    s,
+                RiskAccessFacet(address(this)).requireActorMayTransact(
                     s.loans[ctx.loanId].lender,
                     LibRiskAccess.PairId({
                         lendAsset: soldLoan.principalAsset,
@@ -755,7 +784,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             // bump. Re-asserting here closes that window before the loan is
             // admitted. Standing consent only — the creator signs no #662 accept
             // ack, so there is nothing to substitute.
-            LibRiskAccess.assertActorMayTransact(s, offer.creator, pair);
+            RiskAccessFacet(address(this)).requireActorMayTransact(offer.creator, pair);
             LibVaipakam.Loan storage gateLoan = s.loans[ctx.loanId];
             address acceptingParty = offer.creator == gateLoan.lender
                 ? gateLoan.borrower
@@ -765,7 +794,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             // deal. Nothing signed at accept time substitutes for it — a
             // consent recorded in the accept transaction would otherwise skip
             // the cooldown that lets the owner notice and revoke it.
-            LibRiskAccess.assertActorMayTransact(s, acceptingParty, pair);
+            RiskAccessFacet(address(this)).requireActorMayTransact(acceptingParty, pair);
         }
         // #2956 — the one rule every admitting path and preview reads. The
         // illiquid consent is not a term of it: `initiateLoan` has already
@@ -966,10 +995,11 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         LibInterestLedger.open(LibVaipakam.storageSlot(), loan);
         // A lender-sale-vehicle accept (offer mapped to an underlying loan)
         // skips the LIF charge, so the receipt must NOT record one.
-        _snapshotFeeBps(
-            loan,
-            LibVaipakam.storageSlot().saleOfferToLoanId[offerId] != 0
-        );
+        bool isSaleVehicle = LibVaipakam.storageSlot().saleOfferToLoanId[offerId] != 0;
+        _snapshotFeeBps(loan, isSaleVehicle);
+        // #3722 — the borrower has now opened a loan, so it can no longer
+        // bind an inviter. A sale vehicle's "borrower" opens nothing.
+        if (!isSaleVehicle) LibVaipakam.storageSlot().hasBorrowed[loan.borrower] = true;
         _latchOfferKeepersToLoan(loan.id, offerId, offer.creator);
     }
 

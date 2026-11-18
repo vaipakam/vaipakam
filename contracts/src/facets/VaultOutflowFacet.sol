@@ -19,6 +19,7 @@ import {LibFillLock} from "../libraries/LibFillLock.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {VaultOutflowTypes} from "../vault/VaultOutflowTypes.sol";
+import {LibReferral} from "../libraries/LibReferral.sol";
 
 /// @dev The protected-mode payout gate's host (`VaultPayoutFacet`).
 interface IVaultOutflowPayoutGate {
@@ -575,6 +576,21 @@ contract VaultOutflowFacet is IVaipakamErrors {
             payeeOwner = o.to;
             o.to = s.userVaipakamVaults[o.to];
             if (o.to == address(0)) revert OutflowRecipientInvalid(c, address(0));
+        } else if (c == VaultOutflowTypes.OutflowClass.IntegratorShare) {
+            // #3682 — `o.to` names the integrator; the payee is its payout
+            // account, read from the registry, and only an active entry is
+            // paid. Free money for that account, which it withdraws through
+            // the ordinary payout.
+            LibVaipakam.IntegratorEntry storage e = s.integrators[o.to];
+            if (e.status != LibVaipakam.IntegratorStatus.Active) revert OutflowRecipientInvalid(c, o.to);
+            payeeOwner = e.payout;
+            o.to = LibFacet.getOrCreateVault(payeeOwner);
+        } else if (c == VaultOutflowTypes.OutflowClass.ReferralShare) {
+            // #3722 — `o.to` names the new user; the payee is the inviter its
+            // own binding names, only inside its period. Paid to the inviter's
+            // wallet (a protected inviter's vault, below).
+            o.to = LibReferral.activeInviter(o.to);
+            if (o.to == address(0) || o.to == address(this)) revert OutflowRecipientInvalid(c, o.to);
         } else {
             // Incentive, LiquidationBuyer: the caller names the actor; never
             // this Diamond or a vault-less zero.
@@ -676,12 +692,14 @@ contract VaultOutflowFacet is IVaipakamErrors {
     /// @dev The classes whose arrival is the payee's own free money.
     function _credits(VaultOutflowTypes.OutflowClass c) private pure returns (bool) {
         return c == VaultOutflowTypes.OutflowClass.PositionHolder || c == VaultOutflowTypes.OutflowClass.Counterparty
-            || c == VaultOutflowTypes.OutflowClass.PrincipalToBorrower;
+            || c == VaultOutflowTypes.OutflowClass.PrincipalToBorrower
+            || c == VaultOutflowTypes.OutflowClass.IntegratorShare;
     }
 
     function _paysWallet(VaultOutflowTypes.OutflowClass c) private pure returns (bool) {
         return c == VaultOutflowTypes.OutflowClass.OwnerAllowlisted || c == VaultOutflowTypes.OutflowClass.Incentive
-            || c == VaultOutflowTypes.OutflowClass.LiquidationBuyer || c == VaultOutflowTypes.OutflowClass.HolderWallet;
+            || c == VaultOutflowTypes.OutflowClass.LiquidationBuyer || c == VaultOutflowTypes.OutflowClass.HolderWallet
+            || c == VaultOutflowTypes.OutflowClass.ReferralShare;
     }
 
     /// @dev #3710 — the classes whose `ref` is a loan the movement takes value

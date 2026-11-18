@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestCalmPair} from "./helpers/LibTestCalmPair.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {LenderIntentViewFacet} from "../src/facets/LenderIntentViewFacet.sol";
 import {LibTestProtection} from "./helpers/LibTestProtection.sol";
@@ -62,6 +63,8 @@ contract LenderIntentCapitalTest is SetupTest {
         vm.stopPrank();
         vm.prank(owner);
         LenderIntentFacet(address(diamond)).setLenderIntentEnabled(true);
+        // Intent fills run the calm-price check: two hourly checkpoints.
+        LibTestCalmPair.checkpoint(address(diamond), mockCollateralERC20, mockERC20);
     }
 
     // ─── helpers ────────────────────────────────────────────────────────────
@@ -138,6 +141,7 @@ contract LenderIntentCapitalTest is SetupTest {
         vm.prank(creator);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -518,7 +522,7 @@ contract LenderIntentCapitalTest is SetupTest {
     function test_rollIntentLoan_compoundsAndReLiens() public {
         uint256 loanId = _fillAndRepay();
         assertEq(_capital(), 0, "capital drawn down by the fill");
-        assertEq(_livePrincipal(), PRINCIPAL, "live until roll");
+        assertEq(_livePrincipal(), 0, "#3714: a repaid loan is not outstanding, live fell at repay");
 
         // Owner rolls their own repaid loan (no keeper needed for self).
         vm.prank(lender);
@@ -526,7 +530,7 @@ contract LenderIntentCapitalTest is SetupTest {
 
         // Proceeds (principal + interest) re-liened as capital; exposure freed.
         assertGt(_capital(), PRINCIPAL, "compounded: principal + interest re-liened");
-        assertEq(_livePrincipal(), 0, "exposure released on roll");
+        assertEq(_livePrincipal(), 0, "the roll releases nothing more");
     }
 
     /// @dev The headline: rolled capital is immediately re-lendable with NO

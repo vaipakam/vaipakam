@@ -39,7 +39,7 @@ The multiples are above one because only part of the pledged collateral is ever 
 
 All three apply to **new loans only**, judged when the loan opens. An open loan is never changed by a later rise in the ratio.
 
-1. **At or above caution: the app warns.** Offers, matches and Auto-lend settings for that collateral show that an unusually large amount of it is already pledged on the platform, with the ratio. A view returns the pledged amount, the depth reference, the ratio and which threshold applies.
+1. **At or above caution: the app warns.** Offers, matches and Auto-lend settings for that collateral show that an unusually large amount of it is already pledged on the platform, with the ratio. A view returns the pledged amount, the depth reference, the ratio and which threshold applies. The loan-opened event's `warnings` mask (#3719) carries one bit, set by the contract from the concentration level the loan records at opening, when a loan opens with its collateral at or above caution, so the platform's own alert can say so whichever website the borrower used. There is no acknowledgement step: the response is a warning and the two rules below, and nothing is asked of the user.
 2. **At or above caution: no reserve eligibility.** A loan opened while its collateral asset is at or above caution is not eligible for the shortfall reserve, whatever its tiers. This is recorded on the loan at opening with the tiers the reserve design already records.
 3. **At or above high: a lower loan-to-value cap.** The loan-opening cap for that collateral is the cap of the next lower liquidity tier. For an asset already in the lowest liquid tier, that tier's cap is reduced by a governed step. Borrowing against the asset stays possible with more cushion.
 

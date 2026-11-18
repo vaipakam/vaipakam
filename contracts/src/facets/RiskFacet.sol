@@ -14,6 +14,8 @@ import {SaleFloorFacet} from "./SaleFloorFacet.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
+import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
@@ -1015,7 +1017,10 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
         // Treasury receipt — single transfer, same as full.
         // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
-        LibFacet.transferToTreasury(loan.principalAsset, handlingFee + treasuryInterestFee);
+        // #3649 stage 3 — two legs: the handling fee is the treasury's whole,
+        // the interest share is split at its floor.
+        LibFacet.transferToTreasury(loan.principalAsset, handlingFee);
+        LibFacet.transferToTreasury(loan.principalAsset, treasuryInterestFee, LibFeeFloor.interest(interestPortion, LibVaipakam.effectiveTreasuryFeeBps(loan)));
 
         // Lender's share goes directly to their vault. We deliberately
         // do NOT write `s.lenderClaims[loanId]` — claims are reserved

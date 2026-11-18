@@ -503,6 +503,14 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().loans[loanId].treasuryFeeBpsAtInit = bps;
     }
 
+    /// @notice #3649 stage 3 — write the treasury floors directly, for a test
+    ///         Diamond that does not cut `FeeLevelsFacet`. Zero ⇒ default.
+    function setFeeFloorsRaw(uint16 initiationBps, uint16 interestBps) external {
+        LibVaipakam.FeeFloorConfig storage c = LibVaipakam.storageSlot().feeFloorCfg;
+        c.initiationBps = initiationBps;
+        c.interestBps = interestBps;
+    }
+
     /// @notice Write `s.offerIdToLoanId[offerId] = loanId` directly.
     ///         Used by `EarlyWithdrawalFacetTest` to scaffold the
     ///         loan-sale state without going through the full
@@ -1813,6 +1821,14 @@ contract TestMutatorFacet {
         LibVaipakam.AssetType assetType
     ) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #3685 — keep the pledged total equal to the sum of live ERC-20
+        // collateral liens, as LibEncumbrance does, so a later release
+        // through the real writer does not underflow. An overwritten live
+        // lien comes off the total first.
+        LibVaipakam.Encumbrance storage prev = s.loanCollateralLien[loanId];
+        if (!prev.released && prev.assetType == LibVaipakam.AssetType.ERC20 && prev.amount != 0) {
+            s.collateralPledged[prev.asset] -= prev.amount;
+        }
         s.loanCollateralLien[loanId] = LibVaipakam.Encumbrance({
             user: user,
             asset: asset,
@@ -1822,6 +1838,7 @@ contract TestMutatorFacet {
             released: false
         });
         s.encumbered[user][asset][tokenId] += amount;
+        if (assetType == LibVaipakam.AssetType.ERC20) s.collateralPledged[asset] += amount;
     }
 
     /// @notice #2342 — seed a LEGACY (pre-#2342) swap-to-repay-FULL freeze

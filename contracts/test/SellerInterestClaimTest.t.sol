@@ -52,6 +52,7 @@ contract SellerInterestClaimTest is SetupTest {
         returns (LibVaipakam.CreateOfferParams memory)
     {
         return LibVaipakam.CreateOfferParams({
+            integrator: address(0),
             lifecycleFlex: 0,
             offerType: kind,
             lendingAsset: mockERC20,

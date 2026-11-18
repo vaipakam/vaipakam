@@ -24,7 +24,7 @@ import { allowanceSteps } from '../tx/approval';
 import { allowanceMoved, approvalFlow } from '../tx/approvalFlow';
 import { cleanUpLeg } from '../tx/cleanUp';
 import type { LegOutcome } from '../tx/outcome';
-import { askThrough } from '../tx/simulate';
+import { askAfter } from '../tx/simulate';
 import { useStoredValue, useTxNote } from '../tx/txStore';
 import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
 import { useTrackedTx } from '../tx/useTrackedTx';
@@ -146,7 +146,7 @@ export function RentAccept({ offerId, chain, own, meta, terms, onClose }: RentAc
       };
 
       // 3. The dry run with the real signature: the protocol's own verdict.
-      const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, abi: ACCEPT_ABI, functionName: 'acceptOffer', args: [offerId, message, signature], account }));
+      const dry = await askAfter(own, since, (c, blockNumber) => c.simulateContract({ address: diamond, abi: ACCEPT_ABI, functionName: 'acceptOffer', args: [offerId, message, signature], account, blockNumber }));
       if (dry.kind === 'reverted') return stop(format('accept.dryRunRefused', { reason: refusalFromError(dry.error).reason }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
 

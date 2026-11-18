@@ -68,8 +68,10 @@ contract LenderIntentViewFacet {
     /// @notice Aggregate LIVE principal currently out from `owner`'s intent on
     ///         the `(lendingAsset, collateralAsset)` pair — the figure
     ///         `matchIntent` checks against `maxExposure` (#393 v1-b). Keyed by
-    ///         the full intent; decremented at each originated loan's terminal
-    ///         close.
+    ///         the full intent. Since #3714 it is exactly the outstanding
+    ///         principal of the open loans the intent holds: it falls as
+    ///         principal is repaid and drops to nothing when a loan closes,
+    ///         not at the lender's claim.
     function getLenderIntentLivePrincipal(
         address owner,
         address lendingAsset,

@@ -115,6 +115,9 @@ export function ActionFlow({
   const nowMs = useNow();
   const [checking, setChecking] = useState(false);
   const [found, setFound] = useState<Exclude<Recheck, { kind: 'ok' }> | null>(null);
+  /** The consent was cleared while the re-check ran (by the reader, or by a
+   *  re-read that found new figures): Confirm stopped, and says so. */
+  const [consentCleared, setConsentCleared] = useState(false);
   const { phase } = tx;
   // The wallet step open now ("Step 2 of 3: ..."), from the tracker's store:
   // asked by `send`, or by a clean-up after the hash (taking back an
@@ -169,6 +172,7 @@ export function ActionFlow({
   const close = () => {
     attempt.current += 1;
     setFound(null);
+    setConsentCleared(false);
     tx.reset();
     onClose();
   };
@@ -178,6 +182,7 @@ export function ActionFlow({
     const current = () => attempt.current === mine;
     setChecking(true);
     setFound(null);
+    setConsentCleared(false);
     let result: Recheck;
     try {
       result = await recheck(current);
@@ -188,11 +193,17 @@ export function ActionFlow({
     setChecking(false);
     // Moved while the re-check ran: the render now withholds signing.
     if (live.current !== reviewedFor) return;
-    // The gate was withdrawn while the re-check ran: the render now holds
-    // Confirm until it is given again.
-    if (!gateReady.current) return;
+    // What the re-check found is shown whatever happened to the gate: a
+    // re-check that found new figures clears the consent itself, and the
+    // reader is told why, never left at a review that quietly reset.
     if (result.kind !== 'ok') {
       setFound(result);
+      return;
+    }
+    // The gate was withdrawn while the re-check ran: the render now holds
+    // Confirm until it is given again, and says why the wallet did not open.
+    if (!gateReady.current) {
+      setConsentCleared(true);
       return;
     }
     await tx.run({ identity: reviewedFor, chainId: Number(reviewedFor.split(':')[0]), receipt, explorer, where: location.pathname + location.search });
@@ -240,6 +251,11 @@ export function ActionFlow({
           {found?.kind === 'unreadable' && (
             <Notice tone="warn" tier="A">
               {format('flow.unreadable', { reason: found.reason })}
+            </Notice>
+          )}
+          {consentCleared && found === null && (
+            <Notice tone="warn" tier="A">
+              {text('flow.consentCleared')}
             </Notice>
           )}
           {moved && (

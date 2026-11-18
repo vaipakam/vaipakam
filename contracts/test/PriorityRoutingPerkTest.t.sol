@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestCalmPair} from "./helpers/LibTestCalmPair.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {SetupTest} from "./SetupTest.t.sol";
@@ -101,6 +102,8 @@ contract PriorityRoutingPerkTest is SetupTest {
         vpfi.approve(address(diamond), type(uint256).max);
         VPFIDiscountFacet(address(diamond)).depositVPFIToVault(50e18);
         vm.stopPrank();
+        // Intent fills run the calm-price check: two hourly checkpoints.
+        LibTestCalmPair.checkpoint(address(diamond), mockCollateralERC20, mockERC20);
     }
 
     // ─── fixtures ───────────────────────────────────────────────────────────
@@ -222,6 +225,7 @@ contract PriorityRoutingPerkTest is SetupTest {
         vm.prank(creator);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,

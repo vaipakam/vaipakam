@@ -182,6 +182,11 @@
             "name": "acceptorAllowFullDowngrade",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "integrator",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       },
@@ -407,6 +412,11 @@
             "name": "acceptorAllowFullDowngrade",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "integrator",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       },
@@ -676,6 +686,11 @@
             "name": "acceptorAllowFullDowngrade",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "integrator",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       },

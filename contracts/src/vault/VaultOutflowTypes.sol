@@ -89,6 +89,17 @@ library VaultOutflowTypes {
      *           lock, a replaced account's manager); any other holder at its
      *           wallet, or at its own vault when it has protected mode on.
      *           ERC-20 only.
+     *         - IntegratorShare: a registered integrator's share of a new
+     *           loan's initiation fee (#3682), from the lender's vault into the
+     *           vault of the integrator's payout account, which the Diamond
+     *           derives from the integrator registry. The vault checks a
+     *           genuine vault.
+     *         - ReferralShare: an inviter's share of a new loan's initiation
+     *           fee (#3722), from the lender's vault to the inviter's WALLET
+     *           (an inviter needs no vault). `to` names the new user; the
+     *           Diamond derives the inviter from that user's own binding and
+     *           refuses one whose period has ended. A protected inviter is
+     *           paid into its vault, as for every wallet payout.
      */
     enum OutflowClass {
         Owner,
@@ -108,7 +119,9 @@ library VaultOutflowTypes {
         PrincipalToBorrower,
         Consolidation,
         Recovery,
-        HolderWallet
+        HolderWallet,
+        IntegratorShare,
+        ReferralShare
     }
 
     /// @notice #3246 part 2 — one asset a clawback or a recovered account's
@@ -280,5 +293,7 @@ library OutflowReason {
     uint8 internal constant CLAWBACK = 23; // #3246 part 2: a clawback to the recovery address
     uint8 internal constant RECOVERY_SWEEP = 24; // #3246 part 2: a recovered account's later free balance swept there
     uint8 internal constant STANDING_INSTRUCTION = 25; // #3681: a standing instruction's draw on a loan reserve
+    uint8 internal constant INTEGRATOR_SHARE = 26; // an integrator's share of the initiation fee
+    uint8 internal constant REFERRAL_SHARE = 27; // an inviter's share of the initiation fee
 
 }

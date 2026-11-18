@@ -104,6 +104,9 @@ import {CollateralLienFacet} from "../src/facets/CollateralLienFacet.sol";
 import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.sol";
 import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {LenderIntentViewFacet} from "../src/facets/LenderIntentViewFacet.sol";
+import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
+import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
+import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
@@ -372,7 +375,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // 132 -> 133: LenderIntentViewFacet - the standing-intent reads, split
     // off LenderIntentFacet along its read / write seam for EIP-170. Their
     // selectors move hosts, so the Replace cut repoints them.
-    uint256 public constant EXPECTED_FACETS = 133;
+    // 133 -> 136: IntegratorFacet (#3682), StandingOfferCheckFacet (#3720)
+    // and ReferralFacet (#3722). Their selectors are new (Adds).
+    uint256 public constant EXPECTED_FACETS = 136;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1511,6 +1516,13 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             ArtifactDeploy.deploy(type(LenderIntentViewFacet).name),
             _getLenderIntentViewSelectors()
         );
+        items[133] = Item("integratorFacet", ArtifactDeploy.deploy(type(IntegratorFacet).name), _getIntegratorSelectors());
+        items[134] = Item(
+            "standingOfferCheckFacet",
+            ArtifactDeploy.deploy(type(StandingOfferCheckFacet).name),
+            _getStandingOfferCheckSelectors()
+        );
+        items[135] = Item("referralFacet", ArtifactDeploy.deploy(type(ReferralFacet).name), _getReferralSelectors());
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

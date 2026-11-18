@@ -115,7 +115,7 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
         // lend-until (#3618), lifecycle (#3619), and the collateral the slot's
         // init-LTV ceiling requires (unresolvable ⇒ refused).
         LibVaipakam.Offer storage cp = s.offers[counterpartyOfferId];
-        (uint256 live, uint256 reqColl) = LibIntentFill.admitFill(
+        uint256 reqColl = LibIntentFill.admitFill(
             s, intent, lender, lendingAsset, collateralAsset, slot,
             cp.durationDays, cp.useFullTermInterest, cp.allowsPartialRepay, fillAmount
         );
@@ -143,11 +143,11 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
         // (`LibPriorityRouting.chargeFill`; otherwise this is `chargeSolver()`).
         LibPriorityRouting.chargeFill(s, lender, lendingAsset, collateralAsset, slot, loanId);
 
-        // Exposure, the originating slot key (so the terminal-close release
-        // survives a lender-position sale), the roll-discovery entry and the
-        // ledger's slot figure; then retire the orphaned lender slice.
+        // The originating slot key (so the release survives a lender-position
+        // sale), the roll-discovery entry and, on the ledger's host, the slot's
+        // live principal and figures; then retire the orphaned lender slice.
         LibIntentFill.recordSlotLoan(
-            s, loanId, lender, lendingAsset, collateralAsset, slot, live, fillAmount
+            s, loanId, lender, lendingAsset, collateralAsset, slot, fillAmount
         );
         LibIntentFill.retireLenderSlice(s, sliceOfferId);
 

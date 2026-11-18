@@ -12,6 +12,8 @@ import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
+import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -448,7 +450,7 @@ contract PrecloseOffsetFacet is
         address payAssetOffset = LibPreclose.paymentAsset(loan);
         // #1281-011 — the one payer -> treasury pull (refuses a short arrival);
         // the payer is Alice, on her standing allowance.
-        LibFacet.transferFromPayerToTreasury(loan.borrower, payAssetOffset, treasuryFee);
+        LibFacet.transferFromPayerToTreasury(loan.borrower, payAssetOffset, treasuryFee, LibFeeFloor.interest(interestBase, LibVaipakam.effectiveTreasuryFeeBps(loan)));
         // #1209 / #1808 — the payoff lands in the held balance, not in the
         // lender claim row the terminal split ranks, so the open seller claims
         // are paid first here, out of the interest, from Alice into each

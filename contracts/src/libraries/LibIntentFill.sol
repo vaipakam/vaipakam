@@ -8,12 +8,14 @@ import {LibRiskMath} from "./LibRiskMath.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {LibMetricsHooks} from "./LibMetricsHooks.sol";
-import {LibMarketLedger} from "./LibMarketLedger.sol";
 import {LibIntentTerms} from "./LibIntentTerms.sol";
 import {LibSignedOffer} from "./LibSignedOffer.sol";
 import {LibOfferMatchExecute} from "./LibOfferMatchExecute.sol";
 import {OfferMaterializeFacet} from "../facets/OfferMaterializeFacet.sol";
 import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
+import {MarketLedgerFacet} from "../facets/MarketLedgerFacet.sol";
+import {OfferPriceGuardFacet} from "../facets/OfferPriceGuardFacet.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
  * @title  LibIntentFill
@@ -24,7 +26,8 @@ import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
  *         borrow (`InstantFillFacet`, #3656). Both run the same admission
  *         (the slot is active and its terms aged, the fill is within its
  *         smallest fill, its exposure, its longest term and its lend-until
- *         time, its lifecycle terms admitted, its loan-to-value limit
+ *         time, its lifecycle terms admitted, the pair calm unless the slot's
+ *         owner switched that check off, its loan-to-value limit
  *         resolvable), draw the fill from the slot's capital lien the same
  *         way, materialize the lender slice the same way, and record the
  *         loan's slot origin the same way. A route adds only what is its own:
@@ -65,9 +68,8 @@ library LibIntentFill {
     }
 
     /// @dev The fill-level admission: smallest fill, exposure, longest term,
-    ///      lend-until, lifecycle terms, and the collateral the slot's LTV
-    ///      limit requires for `fillAmount`.
-    /// @return live    The slot's live principal before this fill.
+    ///      lend-until, lifecycle terms, the calm-price check, and the
+    ///      collateral the slot's LTV limit requires for `fillAmount`.
     /// @return reqColl The collateral the slot's init-LTV ceiling requires.
     function admitFill(
         LibVaipakam.Storage storage s,
@@ -80,10 +82,14 @@ library LibIntentFill {
         bool useFullTermInterest,
         bool allowsPartialRepay,
         uint256 fillAmount
-    ) internal view returns (uint256 live, uint256 reqColl) {
+    ) internal view returns (uint256 reqColl) {
         if (fillAmount == 0 || fillAmount < intent.minFillAmount) revert LenderIntentFillBelowMin();
-        live = s.lenderIntentLivePrincipal[lender][lendingAsset][collateralAsset][slot];
-        if (live + fillAmount > intent.maxExposure) revert LenderIntentExposureExceeded();
+        // The slot's live principal is the outstanding principal of the loans
+        // it holds (#3714), so the exposure cap bounds what is out now.
+        if (
+            s.lenderIntentLivePrincipal[lender][lendingAsset][collateralAsset][slot] + fillAmount
+                > intent.maxExposure
+        ) revert LenderIntentExposureExceeded();
         if (durationDays > intent.maxDurationDays) revert LenderIntentDurationTooLong();
         {
             (bool fits, uint256 maturity) = LibIntentTerms.fitsLendUntil(intent, durationDays);
@@ -96,6 +102,10 @@ library LibIntentFill {
         if (verdict == LibIntentTerms.Lifecycle.PartialRepayNotAllowed) {
             revert LenderIntentPartialRepayNotAllowed();
         }
+        // The calm-price check (on unless the slot's owner switched it off):
+        // no fill while the pair moved past the calm bound in the last two
+        // hours, a checkpoint is missing, or a price cannot be read.
+        OfferPriceGuardFacet(address(this)).requireIntentPairCalm(lender, lendingAsset, collateralAsset, slot);
         reqColl = LibRiskMath.minCollateralForLtvCap(
             fillAmount, lendingAsset, collateralAsset, intent.maxInitLtvBps
         );
@@ -144,9 +154,14 @@ library LibIntentFill {
         sliceOfferId = materialize(p, lender);
     }
 
-    /// @dev Record the loan's slot origin after the match: exposure, the
-    ///      origin key (so the terminal release survives a lender-position
-    ///      sale), the roll-discovery entry, and the ledger's slot figure.
+    /// @dev Record the loan's slot origin after the match: the origin key (so
+    ///      the release survives a lender-position sale), the roll-discovery
+    ///      entry, and, on the ledger's one host
+    ///      (`MarketLedgerFacet.onSlotFilled`), the slot's live principal, the
+    ///      lent-from-slots figure and the slot's Declared and Available
+    ///      shares (#3714). `amount` is the loan's principal as it joins the
+    ///      slot; the live principal follows the outstanding principal from
+    ///      then on.
     function recordSlotLoan(
         LibVaipakam.Storage storage s,
         uint256 loanId,
@@ -154,19 +169,20 @@ library LibIntentFill {
         address lendingAsset,
         address collateralAsset,
         uint8 slot,
-        uint256 live,
-        uint256 fillAmount
+        uint256 amount
     ) internal {
-        s.lenderIntentLivePrincipal[lender][lendingAsset][collateralAsset][slot] = live + fillAmount;
         s.intentOrigin[loanId] = LibVaipakam.IntentOrigin({
             owner: lender,
             lendingAsset: lendingAsset,
             collateralAsset: collateralAsset,
-            amount: fillAmount, // release the ORIGINAL fill, not a partial-repaid remainder
+            amount: amount,
             slot: slot
         });
         LibVaipakam.addIntentLoan(loanId);
-        LibMarketLedger.markFromSlot(s, s.loans[loanId]);
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(MarketLedgerFacet.onSlotFilled.selector, loanId),
+            IVaipakamErrors.CrossFacetCallFailed.selector
+        );
     }
 
     /// @dev The lender slice is the match ACCEPTOR, so its own OfferCreated

@@ -269,6 +269,9 @@ export interface DeploymentFacets {
   claimViewFacet?: HexAddress;
   /** The standing-intent reads, split off lenderIntentFacet the same way. */
   lenderIntentViewFacet?: HexAddress;
+  integratorFacet?: HexAddress;
+  standingOfferCheckFacet?: HexAddress;
+  referralFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */
@@ -396,7 +399,7 @@ export interface Deployment {
   rewardBaseChainId?: number;
   rewardGraceSeconds?: number;
   rewardExpectedSourceChainIds?: number[];
-  interactionLaunchTimestamp?: string;
+  interactionLaunchTimestamp?: number;
 
   // ── Universal cross-chain plumbing ──────────────────────────────
   weth?: HexAddress;

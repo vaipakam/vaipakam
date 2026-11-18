@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibIntentFill} from "../src/libraries/LibIntentFill.sol";
 import {LenderIntentViewFacet} from "../src/facets/LenderIntentViewFacet.sol";
+import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -62,6 +63,10 @@ contract LenderIntentLendUntilTest is SetupTest {
         ConfigFacet(address(diamond)).setPartialFillEnabled(true);
         vm.prank(owner);
         LenderIntentFacet(address(diamond)).setLenderIntentEnabled(true);
+        // This suite moves the clock by days between fills; the slot's
+        // calm-price check is covered in IntentCalmCheckTest, so it is off here.
+        vm.prank(lender);
+        OfferPriceGuardFacet(address(diamond)).setIntentCalmCheck(mockERC20, mockCollateralERC20, 0, false);
     }
 
     // ─── helpers ────────────────────────────────────────────────────────
@@ -115,6 +120,7 @@ contract LenderIntentLendUntilTest is SetupTest {
         vm.prank(creator);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -493,7 +499,9 @@ contract LenderIntentLendUntilTest is SetupTest {
         assertEq(ERC20(mockERC20).balanceOf(lender), walletBefore, "nothing paid to the wallet");
         assertEq(_vaultHolding(lender) - vaultBefore, held, "held in the owner's vault");
         assertEq(_intentCapital(), capitalBefore, "nothing re-committed yet");
-        assertEq(_livePrincipal(), PRINCIPAL, "exposure unchanged until the loan closes");
+        // #3714 — live is the outstanding principal, so it fell by the slice.
+        assertEq(_livePrincipal(), LoanFacet(address(diamond)).getLoanDetails(loanId).principal, "live follows the outstanding principal");
+        assertLt(_livePrincipal(), PRINCIPAL, "it fell with the repaid slice");
 
         vm.warp(vm.getBlockTimestamp() + 5 days);
         vm.prank(b);
@@ -528,7 +536,11 @@ contract LenderIntentLendUntilTest is SetupTest {
         LenderIntentFacet(address(diamond)).recommitHeldToIntent(loanId);
         assertEq(_intentCapital() - capitalBefore, held, "the held part is intent capital again");
         assertEq(_lenderHeld(loanId), 0, "nothing left held");
-        assertEq(_livePrincipal(), PRINCIPAL, "exposure unchanged until the loan closes");
+        assertEq(
+            _livePrincipal(),
+            LoanFacet(address(diamond)).getLoanDetails(loanId).principal,
+            "a recommit moves capital, not live: live stays the outstanding principal"
+        );
         assertEq(
             uint256(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
             uint256(LibVaipakam.LoanStatus.Active),

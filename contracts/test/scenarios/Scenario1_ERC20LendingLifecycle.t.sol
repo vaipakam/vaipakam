@@ -96,7 +96,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
     uint256 constant COLLATERAL = 2000 ether;
     uint256 constant DURATION   = 30; // days
     uint256 constant RATE_BPS   = 500; // 5%
-    uint256 constant TREASURY_FEE_BPS = 500; // 5% (#3649; loans snapshot the live default at origination)
+    uint256 constant TREASURY_FEE_BPS = 1000; // 10% (#3649; loans snapshot the live default at origination)
     uint256 constant BASIS_POINTS = 10000;
 
     function mockLiquidity(address asset, LibVaipakam.LiquidityStatus status) internal {
@@ -341,6 +341,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockUsdc,
@@ -433,6 +434,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockUsdc,
@@ -528,6 +530,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockUsdc,

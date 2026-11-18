@@ -76,6 +76,7 @@ contract StandingInstructionTest is SetupTest {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -411,7 +412,7 @@ contract StandingInstructionTest is SetupTest {
         LibVaipakam.ParkedLeg memory leg = SettlementLegFacet(address(diamond)).getParkedLenderLeg(LOAN);
         e.parkedLender = leg.amount;
         e.parkedPayer = leg.payer;
-        e.parkedTreasury = SettlementLegFacet(address(diamond)).getParkedTreasury(borrower, mockERC20);
+        (e.parkedTreasury,) = SettlementLegFacet(address(diamond)).getParkedTreasury(borrower, mockERC20);
         e.treasuryBal = IERC20(mockERC20).balanceOf(address(diamond));
         (, , , , , , e.lenderClaim, ) = ClaimViewFacet(address(diamond)).getClaimable(LOAN, true);
         (, , , , , , e.borrowerClaim, ) = ClaimViewFacet(address(diamond)).getClaimable(LOAN, false);

@@ -104,9 +104,8 @@ contract InstantFillFacet {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         bool isSlot = r.source.kind == 0;
         uint256 lenderOfferId;
-        uint256 live;
         if (isSlot) {
-            (lenderOfferId, live, res.amount, res.rateBps) = _drawSlot(s, r);
+            (lenderOfferId, res.amount, res.rateBps) = _drawSlot(s, r);
         } else {
             (lenderOfferId, res.amount, res.rateBps) = _sizeOffer(s, r);
         }
@@ -123,7 +122,7 @@ contract InstantFillFacet {
         if (isSlot) {
             LibIntentFill.recordSlotLoan(
                 s, res.loanId, r.source.owner, r.lendingAsset, r.collateralAsset,
-                r.source.slot, live, res.amount
+                r.source.slot, res.amount
             );
             LibIntentFill.retireLenderSlice(s, lenderOfferId);
         }
@@ -134,7 +133,7 @@ contract InstantFillFacet {
     ///      terms), the price limit, then the one slot rule and the draw.
     function _drawSlot(LibVaipakam.Storage storage s, FillRequest calldata r)
         private
-        returns (uint256 sliceOfferId, uint256 live, uint256 amount, uint256 rateBps)
+        returns (uint256 sliceOfferId, uint256 amount, uint256 rateBps)
     {
         address owner = r.source.owner;
         uint8 slot = r.source.slot;
@@ -148,8 +147,7 @@ contract InstantFillFacet {
         rateBps = intent.minRateBps;
         if (rateBps > r.maxRateBps) revert InstantRateAboveLimit(rateBps, r.maxRateBps);
         amount = _slotRoom(s, intent, owner, r);
-        uint256 reqColl;
-        (live, reqColl) = LibIntentFill.admitFill(
+        uint256 reqColl = LibIntentFill.admitFill(
             s, intent, owner, r.lendingAsset, r.collateralAsset, slot,
             r.termDays, false, r.allowsPartialRepay, amount
         );

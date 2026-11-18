@@ -15,7 +15,7 @@
 > and overridden by this banner.
 
 This specification consolidates the dated release notes from 2026-08-13
-through 2026-11-04, inclusive, and retains later recorded intent decisions.
+through 2026-11-15, inclusive, and retains later recorded intent decisions.
 Formulas are explained as financial rules; implementation evidence belongs
 in the [audit](../procedures/FunctionalSpecsCodeVsDocsAudit.md).
 
@@ -147,6 +147,54 @@ keeps a solo-founder cap table clean — the founder's hard share is 6%,
 and the rest is genuinely earmarked for others.
 
 ---
+
+## Functional consolidation through November 15, 2026
+
+The [corpus source map](README.md#release-note-consolidation-august-13-through-november-15-2026)
+accounts for the dated references. Later recorded owner decisions remain in
+force. The rules below complement the detailed economics and transport rules.
+
+- Reward allocation is mint headroom, not a funded payment promise. Canonical
+  launch requires an actually delivered, readable reward funding balance;
+  an unread or unfunded canonical launch is refused. Mirrors use their own
+  delivered batches, not an invented requirement to seed the canonical pool.
+- Every token loan on Base and reward mirrors records its lifetime fee-linked
+  cap regardless of Full tariff choice. Recording it charges no tariff to a
+  party who did not opt in. The first unpause waits for the armed day and
+  running clock; mirrors must receive Base's activation broadcast first.
+- Claims share one deterministic work allowance across both loan sides and
+  backlog preparation and resolution. At most thirty finalized days is an
+  outer bound, never a promise to finish thirty busy days. A domain takes at
+  most 32 entries; other entries wait for a later domain. A day may settle
+  across calls, preserving its total ceiling and allocating among entries in
+  settlement order. Saved progress is never paid twice.
+- Each claim reads at most 128 entries and rotates the window after every
+  call, including a zero-payment call that only advances the window. No
+  long-lived entry can hold the rest out indefinitely. An open domain keeps
+  progressing regardless of window rotation. Entries outside reachable work
+  accrue no removal time; window membership changes invalidate earlier
+  claimable time as described in the expiry rules.
+- Preview and claim use the same next-work rule. Only payable work is shown;
+  if the shared lender-first allowance leaves borrower work uncertain, that
+  day is named as uncounted. Apps disclose partial windows and progress-only
+  calls instead of hiding the only route to later entries.
+- The public holding explanation and live settings distinguish balance tier,
+  minimum tenure, weighted-average tier, look-back minimum, and effective tier.
+  Consent is a separate gate. A lender's holding discount remains bounded by
+  the lower of its per-holder entry record and its settlement-moment discount.
+- The protocol funds only qualifying cross-chain discount reductions. First,
+  raised, or new-table discounts require caller-paid transport; neither daily
+  spacing nor toggling consent creates another protocol-paid raise. Mirror
+  copies stay at their last valid value until delivery or expiry.
+
+- Reward delivery defaults to a normal or EIP-7702-delegated account's vault
+  and a contract wallet's wallet, subject to the chosen supported venue.
+  Protected mode always routes through the vault and its withdrawal delay.
+  A claim's destination and actual arrival are disclosed separately from a
+  later withdrawal; counted home-vault VPFI, not a mirror balance, sets tiers.
+- Cumulative claimed totals are payment history, counted on the UTC day paid,
+  with indexed completeness stated. The vault-delivered subset excludes wallet
+  fallbacks. Incomplete or unread history cannot establish a zero total.
 
 ## 4. Platform Interaction Rewards
 
@@ -618,15 +666,24 @@ Testing requirements beyond §9:
 
 > **Fee levels (#3649, owner decision 2026-11-15; design
 > [`FeeLevelsDesign.md`](../DesignsAndPlans/FeeLevelsDesign.md)).** This
-> supersedes the list rates of the freeze below. The **yield fee is `5%`**
+> supersedes the list rates of the freeze below. The **yield fee is `10%`**
 > of the interest lenders earn. The **Loan Initiation Fee depends on the
 > loan's agreed term**: `0.2%` up to 30 days, rising in a straight line to
-> `0.5%` at 365 days, then `0.5%` for each year of term in proportion to its
-> days. Both are fixed on the loan when it opens. Every figure derived from
+> `1%` at 365 days, then `1%` for each year of term in proportion to its
+> days (owner decision 2026-11-17). Both are fixed on the loan when it opens. Every figure derived from
 > the initiation fee (previews, the matcher share, the discount, a signed
 > order's fee cap) reads the loan's term rate; the paid fee tariff's `C*`
 > reads the base rate because it already scales with the term. Discount
 > percentages apply to these bases unchanged.
+>
+> **Treasury floor (#3649 stage 3).** From the initiation fee the treasury
+> keeps `0.1%` of the principal, and from its share of an ERC-20 loan's
+> interest `1%` of the interest; the part of each above that floor is the
+> shortfall reserve's. A discount therefore reduces the reserve's part
+> first, and the §5a matcher share is sized on the part above the floor.
+> An extension's added fee is the reserve's whole; every other fee stays
+> the treasury's. Until a reserve exists both parts go to the treasury,
+> reported separately and counted per asset.
 
 > **Fee freeze — M2 PR-1 supersession (recycling completion plan §M2; D1
 > decided (b) 2026-07-18; source of intent:
@@ -649,7 +706,7 @@ Testing requirements beyond §9:
 > from genesis; the snapshot-at-init discipline is retained as
 > forward-protection for any post-launch retune — see umbrella #1349.)
 
-The protocol charges a **Yield Fee** on interest **and late fees** accrued by lenders — both are lender yield economically, so both are in the fee base at settlement. The list rate is `5%` (#3649; `2%` under the frozen package above, legacy `1%`).
+The protocol charges a **Yield Fee** on interest **and late fees** accrued by lenders — both are lender yield economically, so both are in the fee base at settlement. The list rate is `10%` (#3649, owner decision 2026-11-17; `2%` under the frozen package above, legacy `1%`).
 
 This fee is automatically collected and directed to Treasury for protocol sustainability, buybacks, reward distribution, and ecosystem growth.
 
@@ -796,7 +853,7 @@ Lender rules:
   and collateral-sale settlements whose interest bears the yield fee.
 - Eligibility and any VPFI debit follow the current lender-position holder.
   An unsuccessful consolidation must not substitute the previous holder's
-  eligibility or spend their VPFI. Partial-liquidation proceeds normally reach the current holder’s wallet;
+  eligibility or spend their VPFI. Partial-liquidation proceeds normally credit the current holder’s own vault;
   sanctions-restricted proceeds are held for that holder instead. This applies
   even when the loan remains active and has no terminal claim yet.
 - A periodic auto-liquidation that charges a liquidation-service fee instead
@@ -1527,6 +1584,40 @@ Founder and contributor compensation:
 - salary streams must not be automatic percentages of protocol fees and must not be funded implicitly when fees accrue
 - genesis founder, team, early-contributor, and ecosystem grants should use per-grantee vesting wallets with the approved cliff and linear-release terms
 - real genesis funding actions, including founder grants and salary-stream activation, should remain gated on legal sign-off before token generation
+
+### Treasury destination follows the paying vault's code
+
+- The current vault code is the sole treasury source. A fee sent by the
+  platform uses that current destination; a fee paid from a pinned vault uses
+  its pinned code's destination. A vault-code replacement waits seven days
+  and remains vetoable. While paused, the guardian may use the emergency
+  route to already registered code, which can change treasury immediately.
+- Revoking an old version moves its pinned vaults to the current version;
+  unpinning has the same destination consequence for that vault. No separate
+  treasury setter or protocol-registry entry bypasses this authority.
+- The platform's treasury ledger counts only assets actually received there.
+  Its conversion, payroll, and backstop funding or withdrawal routes require
+  the current code's treasury to be the platform itself. Earlier treasury
+  assets do not disappear merely because a later version names another payee.
+  An unset destination refuses fees; it never pays an empty address.
+
+### Buyback capacity and treasury conversion protection
+
+- A buyback order reserves room for its remaining minimum VPFI in the reward
+  and keeper top-up targets. New orders must fit after existing reservations;
+  fills release their delivered minimum and expiry releases only what that
+  order reserved. Governance cannot lower targets below held room. Extra
+  output must fit free capacity. A pre-reservation order releases nothing
+  and uses only free room. Public reads distinguish available and held room.
+- Every treasury conversion leg enforces an oracle-derived minimum using the
+  shared forced-sale market floor. The caller can raise it, never lower it.
+  Unpriced or disputed inputs refuse conversion and remain treasury credits.
+  Per-asset tranche caps leave unsold amounts credited for later calls; each
+  leg records sold amount, arrival, valuation, floor, and enforced minimum.
+- VPFI buybacks use bounded intent auctions and governance-selected minimums:
+  VPFI has no protocol oracle price from which to derive one. An external
+  treasury multisig converts through batch or intent auctions or a tranche-based
+  time-weighted schedule, as required by the recorded owner procedure.
 
 ### 9a. Per-chain recycled-surplus flag (operator signal only)
 

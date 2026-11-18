@@ -144,6 +144,32 @@ library LibOfferPriceGuard {
         }
     }
 
+    /// @notice Where a fill from `owner`'s lender intent slot stands against
+    ///         the calm rule now: Off when the owner switched the check off,
+    ///         otherwise Clear, NoCheckpoint, NotCalm or Unpriced for the
+    ///         fill's own pair (`lendingAsset`, `collateralAsset`). The same
+    ///         rule and bound a guarded offer's calm part uses
+    ///         (`LibPairCalm.calmNow`, `SaleFloorConfig.calmMoveBps`); a
+    ///         missing checkpoint or an unreadable price refuses too.
+    function intentStatus(
+        LibVaipakam.Storage storage s,
+        address owner,
+        address lendingAsset,
+        address collateralAsset,
+        uint8 slot
+    ) internal view returns (Status) {
+        if (s.intentCalmCheckOff[owner][lendingAsset][collateralAsset][slot]) return Status.Off;
+        (bool okC, uint256 pC) = LibPairCalm.price1e18(collateralAsset);
+        (bool okP, uint256 pP) = LibPairCalm.price1e18(lendingAsset);
+        if (!okC || !okP) return Status.Unpriced;
+        LibPairCalm.Calm calm = LibPairCalm.calmNow(
+            collateralAsset, lendingAsset, pC, pP, LibVaipakam.cfgSaleFloor().calmMoveBps
+        );
+        if (calm == LibPairCalm.Calm.NoCheckpoint) return Status.NoCheckpoint;
+        if (calm == LibPairCalm.Calm.Moving) return Status.NotCalm;
+        return Status.Clear;
+    }
+
     /// @notice Remove `offerId`'s guard.
     function clear(LibVaipakam.Storage storage s, uint256 offerId) internal {
         delete s.offerPriceGuard[offerId];

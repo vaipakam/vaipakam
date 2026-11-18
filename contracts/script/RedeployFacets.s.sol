@@ -132,6 +132,9 @@ contract RedeployFacets is Script {
     /// @notice #3359 - the target Diamond predates the forced-sale floor
     ///         rule; see {_requireSaleFloorRule}.
     error PredatesSaleFloorRule(address diamond);
+    /// @notice #3649 stage 3 - the target Diamond predates the treasury floor
+    ///         split; see {_requireTreasuryFeeFloor}.
+    error PredatesTreasuryFeeFloor(address diamond);
     /// @notice #3205 part 2 - the target Diamond predates the vault outflow
     ///         policy; see {_requireVaultOutflowPolicy}.
     error PredatesVaultOutflowPolicy(address diamond);
@@ -225,6 +228,7 @@ contract RedeployFacets is Script {
         // #3359 - and one from before the forced-sale floor rule; see
         // {_requireSaleFloorRule}.
         _requireSaleFloorRule(diamond);
+        _requireTreasuryFeeFloor(diamond);
         _requireVaultOutflowPolicy(diamond);
 
         vm.startBroadcast(deployerKey);
@@ -1193,6 +1197,24 @@ contract RedeployFacets is Script {
         if (IDiamondLoupe(diamond).facetAddress(SaleFloorFacet.saleFloorBps.selector) == address(0)) {
             revert PredatesSaleFloorRule(diamond);
         }
+    }
+
+    /// @dev #3649 stage 3 - refuse a Diamond whose treasury fee host predates
+    ///      the floor split. Every fee leg now names its kind and floor base,
+    ///      a new selector shape; this script refreshes the host and some of
+    ///      the facets that charge fees but not all of them (RepayFacet,
+    ///      OfferAcceptFeeFacet and others stay), so against an older Diamond
+    ///      it must either leave the old entries routed to the old host
+    ///      (those callers' fees would skip the split) or remove them (those
+    ///      callers' fees would revert). The crossing is a fresh deploy or
+    ///      `RefreshAllFacetsInPlace`. The marker is the routing of
+    ///      `getReservePartHeldByTreasury`, which stage 3 introduced. Called
+    ///      before the broadcast starts.
+    function _requireTreasuryFeeFloor(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(TreasuryFeeFacet.getReservePartHeldByTreasury.selector)
+                == address(0)
+        ) revert PredatesTreasuryFeeFloor(diamond);
     }
 
     /// @dev #3205 part 2 - refuse a Diamond that does not route the vault

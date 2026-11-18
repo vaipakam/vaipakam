@@ -16,6 +16,11 @@
         "internalType": "uint256"
       },
       {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
         "name": "lent",
         "type": "uint256",
         "internalType": "uint256"
@@ -55,6 +60,11 @@
         "internalType": "uint256"
       },
       {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
         "name": "lent",
         "type": "uint256",
         "internalType": "uint256"
@@ -74,7 +84,105 @@
   },
   {
     "type": "function",
-    "name": "rollDeclaredLedger",
+    "name": "getSlotLedger",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "lendingAsset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "collateralAsset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "slot",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "declared",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "fillable",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "live",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "capital",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "onSlotFilled",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "onSlotLoanPrincipal",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "from",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "to",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "onSlotReleased",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "rollMarketLedger",
     "inputs": [
       {
         "name": "lendingAsset",
@@ -97,7 +205,7 @@
   },
   {
     "type": "function",
-    "name": "syncDeclared",
+    "name": "syncSlot",
     "inputs": [
       {
         "name": "owner",
@@ -127,5 +235,16 @@
     "type": "error",
     "name": "OnlyDiamondInternal",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SlotOriginMissing",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   }
 ]

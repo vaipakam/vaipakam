@@ -77,6 +77,9 @@ import {RecoveryClawbackFacet} from "../src/facets/RecoveryClawbackFacet.sol";
 import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
 import {CollateralLienFacet} from "../src/facets/CollateralLienFacet.sol";
 import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.sol";
+import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
+import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
+import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {VaultProtection} from "../src/vault/VaultProtection.sol";
@@ -622,6 +625,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
         ClaimViewFacet claimViewFacet = ClaimViewFacet(ArtifactDeploy.deploy(type(ClaimViewFacet).name));
         LenderIntentViewFacet lenderIntentViewFacet =
             LenderIntentViewFacet(ArtifactDeploy.deploy(type(LenderIntentViewFacet).name));
+        IntegratorFacet integratorFacet = IntegratorFacet(ArtifactDeploy.deploy(type(IntegratorFacet).name));
+        StandingOfferCheckFacet standingOfferCheckFacet =
+            StandingOfferCheckFacet(ArtifactDeploy.deploy(type(StandingOfferCheckFacet).name));
+        // #3722 — the referral binding, settings, quote and payment.
+        ReferralFacet referralFacet = ReferralFacet(ArtifactDeploy.deploy(type(ReferralFacet).name));
         // #1841 - the one sale-exit verdict: the lender exit chooser's view and
         // the guard both sale entries self-call.
         SaleExitVerdictFacet saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
@@ -668,7 +676,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](133);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](136);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -808,6 +816,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // The claim reads, split off ClaimFacet (EIP-170).
         cuts[131] = _buildCut(address(claimViewFacet), _getClaimViewSelectors());
         cuts[132] = _buildCut(address(lenderIntentViewFacet), _getLenderIntentViewSelectors());
+        // #3682 — the integrator registry and the share's delivery.
+        cuts[133] = _buildCut(address(integratorFacet), _getIntegratorSelectors());
+        cuts[134] = _buildCut(address(standingOfferCheckFacet), _getStandingOfferCheckSelectors());
+        cuts[135] = _buildCut(address(referralFacet), _getReferralSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1587,6 +1599,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("standingInstructionFacet", address(standingInstructionFacet));
         Deployments.writeFacet("claimViewFacet", address(claimViewFacet));
         Deployments.writeFacet("lenderIntentViewFacet", address(lenderIntentViewFacet));
+        Deployments.writeFacet("integratorFacet", address(integratorFacet));
+        Deployments.writeFacet("standingOfferCheckFacet", address(standingOfferCheckFacet));
+        Deployments.writeFacet("referralFacet", address(referralFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
         Deployments.writeFacet("refinancePayoffFacet", address(refinancePayoffFacet));
@@ -1758,7 +1773,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
             require(e.orderProtocol.code.length != 0, "DeployDiamond: no code at the vault's order protocol");
         }
         if (e.seaport.code.length != 0) {
-            address controller = ISeaportOrderHash(e.seaport).conduitController();
+            (,, address controller) = ISeaportOrderHash(e.seaport).information();
             (address conduit, bool exists) = IConduitController(controller).getConduit(e.conduitKey);
             require(exists && conduit != address(0), "DeployDiamond: the vault's conduit key is not deployed on its Seaport");
             e.conduit = conduit;
@@ -2381,13 +2396,62 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     /// @dev Selectors for `FeeLevelsFacet` (#3649) — the initiation fee's
-    ///      term schedule: its bounded setter, its getter and the quote.
+    ///      term schedule (its bounded setter, its getter and the quotes) and the
+    ///      treasury floors' bounded setter and getter (stage 3), the per-loan
+    ///      ceiling, and the matcher's rate setter (#3722).
     function _getFeeLevelsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](9);
         s[0] = FeeLevelsFacet.setLoanInitiationFeeTerms.selector;
         s[1] = FeeLevelsFacet.getLoanInitiationFeeTerms.selector;
         s[2] = FeeLevelsFacet.quoteLoanInitiationFee.selector;
         s[3] = FeeLevelsFacet.quoteExtensionFee.selector;
+        s[4] = FeeLevelsFacet.setTreasuryFeeFloors.selector;
+        s[5] = FeeLevelsFacet.getTreasuryFeeFloors.selector;
+        s[6] = FeeLevelsFacet.setFeeShareCeiling.selector;
+        s[7] = FeeLevelsFacet.getFeeShareCeiling.selector;
+        s[8] = FeeLevelsFacet.setLifMatcherFeeBps.selector;
+    }
+
+    /// @dev Selectors for `IntegratorFacet` (#3682) — the integrator registry
+    ///      (governance and guardian steps, the public list and the platform's
+    ///      contracts) and the Diamond-internal share delivery.
+    function _getIntegratorSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](13);
+        s[0] = IntegratorFacet.setIntegrator.selector;
+        s[1] = IntegratorFacet.removeIntegrator.selector;
+        s[2] = IntegratorFacet.suspendIntegrator.selector;
+        s[3] = IntegratorFacet.restoreIntegrator.selector;
+        s[4] = IntegratorFacet.setIntegratorDefaultRate.selector;
+        s[5] = IntegratorFacet.deliverIntegratorShare.selector;
+        s[6] = IntegratorFacet.getIntegrator.selector;
+        s[7] = IntegratorFacet.getIntegrators.selector;
+        s[8] = IntegratorFacet.integratorOf.selector;
+        s[9] = IntegratorFacet.getPlatformContracts.selector;
+        s[10] = IntegratorFacet.getIntegratorShareSettings.selector;
+        s[11] = IntegratorFacet.integratorRateFor.selector;
+        s[12] = IntegratorFacet.nameLenderIntentIntegrator.selector;
+    }
+
+    /// @dev Selectors for `StandingOfferCheckFacet` (#3720) — the check of one
+    ///      standing lender offer a borrow preview points to.
+    function _getStandingOfferCheckSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = StandingOfferCheckFacet.checkAgainstRequest.selector;
+        s[1] = StandingOfferCheckFacet.checkForAmount.selector;
+    }
+
+    /// @dev Selectors for `ReferralFacet` (#3722) — the referral binding,
+    ///      its settings and views, the fee quote and the isolated payment.
+    function _getReferralSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](8);
+        s[0] = ReferralFacet.bindInviter.selector;
+        s[1] = ReferralFacet.setReferralRates.selector;
+        s[2] = ReferralFacet.setReferralPeriodDays.selector;
+        s[3] = ReferralFacet.payReferralShare.selector;
+        s[4] = ReferralFacet.getReferral.selector;
+        s[5] = ReferralFacet.getReferralSettings.selector;
+        s[6] = ReferralFacet.getReferralTotals.selector;
+        s[7] = ReferralFacet.quoteBorrowerFee.selector;
     }
 
     /// @dev Selectors for `RecoveryClawbackFacet` (#3246 part 2) — the
@@ -2611,13 +2675,18 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     /// @dev Selectors for `MarketLedgerFacet` — the instant market's common
-    ///      ledger (§8): its views, the Declared roll and the Declared host.
+    ///      ledger (§8, #3714): its views, the roll, and the Diamond-internal
+    ///      slot hosts.
     function _getMarketLedgerSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](8);
         s[0] = MarketLedgerFacet.getMarketLedger.selector;
         s[1] = MarketLedgerFacet.getPairLedger.selector;
-        s[2] = MarketLedgerFacet.rollDeclaredLedger.selector;
-        s[3] = MarketLedgerFacet.syncDeclared.selector;
+        s[2] = MarketLedgerFacet.getSlotLedger.selector;
+        s[3] = MarketLedgerFacet.rollMarketLedger.selector;
+        s[4] = MarketLedgerFacet.syncSlot.selector;
+        s[5] = MarketLedgerFacet.onSlotFilled.selector;
+        s[6] = MarketLedgerFacet.onSlotReleased.selector;
+        s[7] = MarketLedgerFacet.onSlotLoanPrincipal.selector;
     }
 
     /// @dev Selectors for `InstantMarketFacet` — the instant market (#3656):
@@ -2680,7 +2749,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getRiskAccessFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](26);
+        s = new bytes4[](27);
         s[0] = RiskAccessFacet.setVaultRiskTier.selector;
         s[1] = RiskAccessFacet.setIlliquidPairConsent.selector;
         // #730 r5 — terms changes are a commit-reveal (commit+reveal selectors),
@@ -2713,6 +2782,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[23] = RiskAccessFacet.isMidTierAckPending.selector; // #735 item 3 pending-ack
         s[24] = RiskAccessFacet.setVaultRiskTierChecked.selector; // #1522 TOCTOU guard
         s[25] = RiskAccessFacet.getRiskTierMutationNonce.selector; // #1522 nonce view
+        s[26] = RiskAccessFacet.requireActorMayTransact.selector; // the gate loan creation self-calls
     }
 
     /// @dev #1104 — the read-only preview cluster + the two cross-facet gate
@@ -3683,7 +3753,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](87);
+        s = new bytes4[](86);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -3720,8 +3790,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[18] = ConfigFacet.setPartialFillEnabled.selector;
         // #1347 (M2 PR-5a/5b) — Full VPFI tariff knobs.
         s[19] = ConfigFacet.getFeeEntitlementConfig.selector;
-        // Range Orders Phase 1 — governance-tunable matcher BPS.
-        s[20] = ConfigFacet.setLifMatcherFeeBps.selector;
+        // #3722 — the matcher's rate setter moved to FeeLevelsFacet beside
+        // the per-loan ceiling it is checked against; the getter stays here.
+        s[20] = ConfigFacet.getMinTermsAgeSec.selector;
         // Auto-pause window duration setter (Phase 1 follow-up).
         s[21] = ConfigFacet.setAutoPauseDurationSeconds.selector;
         // Findings 00025 — governance-tunable max loan duration.
@@ -3862,7 +3933,6 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[84] = ConfigFacet.getMaxOpenOffersPerWallet.selector;
         // #3443 — the minimum age of an offer's terms at fill.
         s[85] = ConfigFacet.setMinTermsAgeSec.selector;
-        s[86] = ConfigFacet.getMinTermsAgeSec.selector;
         // #1222 (M3 B1) — cross-chain recycled ledger transparency reads.
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` MOVED to RewardAggregatorFacet
@@ -4227,12 +4297,15 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      clear on a posted offer, the view, and the check loan creation
     ///      and the accept and match previews self-call.
     function _getOfferPriceGuardSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](8);
         s[0] = OfferPriceGuardFacet.armOfferPriceGuard.selector;
         s[1] = OfferPriceGuardFacet.setOfferPriceGuard.selector;
         s[2] = OfferPriceGuardFacet.getOfferPriceGuard.selector;
         s[3] = OfferPriceGuardFacet.requireOfferPriceGuardsClear.selector;
         s[4] = OfferPriceGuardFacet.previewOriginationRefusal.selector;
+        s[5] = OfferPriceGuardFacet.setIntentCalmCheck.selector;
+        s[6] = OfferPriceGuardFacet.intentCalmStatus.selector;
+        s[7] = OfferPriceGuardFacet.requireIntentPairCalm.selector;
     }
 
     function _getForcedSaleSelectors() internal pure returns (bytes4[] memory s) {

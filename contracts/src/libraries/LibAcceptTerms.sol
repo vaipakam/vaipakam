@@ -75,6 +75,7 @@ library LibAcceptTerms {
         bool acceptorFull; // #1347 — the ACCEPTOR's own opt-in to the Full VPFI fee-entitlement tariff (drains `C*` VPFI from the acceptor's OWN vault). Party-scoped: the acceptor is the borrower on a Lender offer, the lender on a Borrower offer. A borrower/relayer can never set a counterparty's flag — the counterparty's Full lives on the Offer (`creatorFull`). Defaults false ⇒ non-Full (the pre-#1347 behaviour).
         uint256 acceptorMaxCStar; // #1347 — MANDATORY ceiling (VPFI 1e18) on the acceptor's Full tariff (rev-15 §3): a quoted `C* > acceptorMaxCStar` reverts unless `acceptorAllowFullDowngrade`. Only read when `acceptorFull`.
         bool acceptorAllowFullDowngrade; // #1347 — if the acceptor's Full opt-in cannot complete (kill-switch off, over-max, vault-short), true silently downgrades to HoldOnly/None instead of reverting the accept (rev-15 §4/§6). Only read when `acceptorFull`.
+        address integrator; // #3682 — the integrator a BORROWER acceptor names (address(0) = none). Read only when the acceptor is the borrower (a lender's offer); a lender acceptor's value is ignored.
     }
 
     /// @dev keccak256 of the canonical type string. The string MUST list the
@@ -116,7 +117,8 @@ library LibAcceptTerms {
         "bytes32 riskTermsHash,"
         "bool acceptorFull,"
         "uint256 acceptorMaxCStar,"
-        "bool acceptorAllowFullDowngrade"
+        "bool acceptorAllowFullDowngrade,"
+        "address integrator"
         ")"
     );
 
@@ -200,7 +202,8 @@ library LibAcceptTerms {
                     a.riskTermsHash,
                     a.acceptorFull,
                     a.acceptorMaxCStar,
-                    a.acceptorAllowFullDowngrade
+                    a.acceptorAllowFullDowngrade,
+                    a.integrator
                 )
             )
         );

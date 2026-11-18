@@ -64,6 +64,13 @@ contract InstantMarketFacet is DiamondReentrancyGuard, DiamondPausable, DiamondA
     ///        received, or the whole call reverts.
     /// @param validUntil        The transaction deadline.
     /// @param riskAndTermsConsent The borrower's consent to the loan terms.
+    /// @param rateFarFromAverageAcknowledged The borrower's own statement that
+    ///        it accepts a fixed rate far from the term average
+    ///        (TermAverageAndLinkGuardsDesign §6.4, #3713). It will be required
+    ///        for a fixed-rate instant borrow whose rate is outside the band
+    ///        around the term average, and is never needed inside it. Until the
+    ///        shared term-average check (#3635 part A) lands it is carried but
+    ///        NOT enforced: no borrow is refused or allowed because of it.
     struct InstantBorrowRequest {
         address lendingAsset;
         address collateralAsset;
@@ -76,6 +83,7 @@ contract InstantMarketFacet is DiamondReentrancyGuard, DiamondPausable, DiamondA
         uint256 minTotal;
         uint64 validUntil;
         bool riskAndTermsConsent;
+        bool rateFarFromAverageAcknowledged;
     }
 
     /// @notice One loan an instant borrow opened.

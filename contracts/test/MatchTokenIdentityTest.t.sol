@@ -7,7 +7,10 @@ import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibOfferMatchExecute} from "../src/libraries/LibOfferMatchExecute.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
+import {ERC1155Mock} from "./mocks/ERC1155Mock.sol";
+import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 /**
  * @title  MatchTokenIdentityTest
@@ -73,5 +76,82 @@ contract MatchTokenIdentityTest is SetupTest {
         LibOfferMatch.MatchError code = _code(lenderOffer, borrowerOffer);
         assertTrue(code != LibOfferMatch.MatchError.AssetMismatch, "identity rule passes");
         assertTrue(code != LibOfferMatch.MatchError.MatcherDisabled, "the core ran");
+    }
+
+    // ── ERC-1155 collateral: same token id, different quantity ──────────────
+
+    function test_erc1155CollateralOfAnotherQuantityIsRefused() public {
+        ERC1155Mock coll = new ERC1155Mock();
+        coll.mint(borrower, 7, 10);
+        mockOracleLiquidity(address(coll), LibVaipakam.LiquidityStatus.Illiquid);
+        vm.prank(borrower);
+        coll.setApprovalForAll(address(diamond), true);
+
+        LibVaipakam.CreateOfferParams memory b = _params(LibVaipakam.OfferType.Borrower, 7);
+        b.collateralAsset = address(coll);
+        b.collateralAssetType = LibVaipakam.AssetType.ERC1155;
+        b.collateralQuantity = 5;
+        vm.prank(borrower);
+        uint256 borrowerOffer = OfferCreateFacet(address(diamond)).createOffer(b, type(uint64).max);
+
+        LibVaipakam.CreateOfferParams memory l = _params(LibVaipakam.OfferType.Lender, 7);
+        l.collateralAsset = address(coll);
+        l.collateralAssetType = LibVaipakam.AssetType.ERC1155;
+        l.collateralQuantity = 3;
+        vm.prank(lender);
+        uint256 lenderOffer = OfferCreateFacet(address(diamond)).createOffer(l, type(uint64).max);
+
+        assertEq(uint8(_code(lenderOffer, borrowerOffer)), uint8(LibOfferMatch.MatchError.AssetMismatch));
+    }
+
+    // ── Rental: the LENT token differs ──────────────────────────────────────
+
+    function _rentalParams(LibVaipakam.OfferType kind, uint256 tokenId)
+        internal
+        view
+        returns (LibVaipakam.CreateOfferParams memory p)
+    {
+        p.offerType = kind;
+        p.lendingAsset = address(nft);
+        p.amount = 10 ether;
+        p.amountMax = 10 ether;
+        p.durationDays = 30;
+        p.assetType = LibVaipakam.AssetType.ERC721;
+        p.tokenId = tokenId;
+        p.quantity = 1;
+        p.creatorRiskAndTermsConsent = true;
+        p.prepayAsset = mockERC20;
+        p.collateralAssetType = LibVaipakam.AssetType.ERC20;
+        p.fillMode = LibVaipakam.FillMode.Partial;
+    }
+
+    function test_rentalOfAnotherLentTokenIsRefused() public {
+        nft.mint(lender, 7);
+        nft.mint(lender, 8);
+        vm.prank(lender);
+        nft.setApprovalForAll(address(diamond), true);
+
+        vm.prank(lender);
+        uint256 lenderOffer = OfferCreateFacet(address(diamond)).createOffer(
+            _rentalParams(LibVaipakam.OfferType.Lender, 7), type(uint64).max
+        );
+        vm.prank(borrower);
+        uint256 borrowerOffer = OfferCreateFacet(address(diamond)).createOffer(
+            _rentalParams(LibVaipakam.OfferType.Borrower, 8), type(uint64).max
+        );
+
+        assertEq(uint8(_code(lenderOffer, borrowerOffer)), uint8(LibOfferMatch.MatchError.AssetMismatch));
+    }
+
+    // ── The executed match refuses it too ───────────────────────────────────
+
+    function test_matchOffersRevertsForAnotherToken() public {
+        uint256 borrowerOffer = _create(borrower, LibVaipakam.OfferType.Borrower, 42);
+        uint256 lenderOffer = _create(lender, LibVaipakam.OfferType.Lender, 41);
+        LibTestTiming.waitOutTermsAge(address(diamond), lenderOffer);
+        LibTestTiming.waitOutTermsAge(address(diamond), borrowerOffer);
+
+        vm.expectRevert(LibOfferMatchExecute.AssetMismatch.selector);
+        OfferMatchFacet(address(diamond)).matchOffers(lenderOffer, borrowerOffer);
     }
 }
