@@ -1,7 +1,7 @@
 # Vaipakam Terms of Service
 
-**Version:** 2
-**Effective:** 2026-11-15
+**Version:** 3
+**Effective:** 2026-11-18
 
 ## What this document is
 
@@ -44,7 +44,8 @@ you accept these Terms.
 - If you borrow: your collateral can be sold if its value falls or you
   repay late, and you may lose it.
 - The software, price feeds, tokens and networks this platform relies
-  on can fail or be attacked. It is new technology.
+  on can fail or be attacked. These risks come with every blockchain
+  system.
 - You alone control your wallet. If you lose access, no one can
   recover it.
 - This is not financial advice. Decide for yourself, and only use what

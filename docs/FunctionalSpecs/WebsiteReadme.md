@@ -30,8 +30,9 @@ a new app feature is not evidence that the current app was replaced.
 - Public copy explains fixed agreed rates, own-vault credits, withdrawal
   protection, and the extension and handover exceptions. It offers no bounty
   programme or promised yield. Existing frozen Terms are not rewritten. The published version 2 contains
-  the approved new risk and legal clauses; wallets accept it only once that
-  version is configured on their network.
+  the approved new risk and legal clauses, and version 3 rewords one risk line
+  (below); wallets accept a version only once it is configured on their
+  network.
 - Position verification distinguishes live rights, retired receipt tokens,
   and never-minted identifiers. Retired tokens remain visible as receipts
   with their final position record, and convey no right to claim again.
@@ -75,7 +76,7 @@ The website, the connected app and the whitepaper describe the product as **non-
 - **"Vault" is always non-custodial.** Wherever the word could suggest that Vaipakam holds people's assets, it is paired with "non-custodial", "your own vault" or an equivalent, because custody is a regulated activity and Vaipakam does not perform it.
 - **The rate is fixed, and the copy says who fixes it.** The rate and term are agreed by the lender and borrower when the loan opens and hold for the whole loan; no pool or utilization curve moves them. The copy must not say that every rate change needs both parties' agreement. Two things can change it: an extension near maturity, which both position holders agree to within limits each sets; and a handover to a replacement borrower, which the borrower starts alone and which needs no lender consent, the lender instead being paid any interest the new terms would cost them. A refinance replaces the loan rather than changing its rate.
 - **No promised return.** Copy never says "earn a fixed yield", "start earning" or anything implying that Vaipakam promises or pays a return. Interest is what a borrower agreed to pay a lender; the protocol neither sets it nor lends its own money.
-- Frozen Terms versions are not rewritten. Published version 2 adopts the approved new clauses and becomes current only when configured on each network.
+- Frozen Terms versions are not rewritten. Published version 2 adopts the approved new clauses. Published version 3 changes one risk line and nothing else: the software, price feed, token and network line no longer ends by calling this new technology, and says instead that these risks come with every blockchain system (owner decision 2026-11-18). A published version becomes current only when configured on each network.
 
 ### Wallet and key-risk disclosure
 

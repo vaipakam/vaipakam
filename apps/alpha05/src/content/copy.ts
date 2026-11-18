@@ -828,7 +828,7 @@ export const copy = {
       'If you lend: when a borrower does not repay, their collateral is sold to repay you. If it cannot be sold, you receive the collateral itself, in part or in full, and it may be worth less than you are owed.',
     ),
     borrow: A('If you borrow: your collateral can be sold if its value falls or you repay late, and you may lose it.'),
-    software: A('The software, price feeds, tokens and networks this platform relies on can fail or be attacked. It is new technology.'),
+    software: A('The software, price feeds, tokens and networks this platform relies on can fail or be attacked. These risks come with every blockchain system.'),
     wallet: A('You alone control your wallet. If you lose access, no one can recover it.'),
     advice: A('This is not financial advice. Decide for yourself, and only use what you can afford to lose.'),
     all: B('All key risks'),

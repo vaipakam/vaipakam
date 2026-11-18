@@ -65,6 +65,12 @@ export const TERMS_VERSION_METAS: readonly TermsVersionMeta[] = [
     canonicalMdKeccak256:
       '0xecbdf420b0b626087e8549f00c68c663ebac79c220eb1f65c55f11b4b3c2605e',
   },
+  {
+    version: 3,
+    effective: '2026-11-18',
+    canonicalMdKeccak256:
+      '0xcb4518feedc5580707caccaf5c42024ff8cc4f111d60ef10135094e67b7f8245',
+  },
 ];
 
 export const CURRENT_TERMS_VERSION =
