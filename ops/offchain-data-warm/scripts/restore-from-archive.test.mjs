@@ -472,6 +472,7 @@ function signedOrder(over = {}) {
     collateralQuantity: '0', prepayAsset: `0x${'0'.repeat(40)}`, allowsPartialRepay: true,
     allowsPrepayListing: false, allowsParallelSale: false, expiresAt: '0', fillMode: '0',
     periodicInterestCadence: '0', refinanceTargetLoanId: '0', useFullTermInterest: false,
+    lifecycleFlex: '0', integrator: `0x${'0'.repeat(40)}`,
     creatorFull: false, creatorMaxCStar: '0', creatorAllowFullDowngrade: false,
     maxTreasuryFeeBps: '200', maxLoanInitiationFeeBps: '20',
     allowedTaker: `0x${'0'.repeat(40)}`, coSigner: `0x${'0'.repeat(40)}`,
