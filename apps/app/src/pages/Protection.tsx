@@ -51,6 +51,7 @@ import { useTokenMeta } from '../contracts/erc20';
 import { captureTxError } from '../lib/errors';
 import { formatDateTime, formatExactSpan, formatTokenAmount, shortAddress } from '../lib/format';
 import { SECOND_READ_DELAY_MS } from '../chain/receiptSync';
+import { useLatestAttempt } from '../lib/useLatestAttempt';
 import { useNowSec } from '../hooks/useNowSec';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import {
@@ -894,7 +895,11 @@ function protectionLink(params: Record<string, string>): string {
 /** A read-only link with a copy button. */
 function LinkBox({ label, link, testId }: { label: string; link: string; testId: string }) {
   const p = copy.protection;
-  const [copied, setCopied] = useState(false);
+  // The confirmation names the link it is about (#2044): a late copy of an
+  // older link, settling after the link changed, confirms nothing on screen.
+  const [copiedFor, setCopiedFor] = useState<string | null>(null);
+  const copied = copiedFor === link;
+  const copyAttempt = useLatestAttempt();
   return (
     <div className="stack">
       <label className="muted" htmlFor={testId}>
@@ -905,13 +910,19 @@ function LinkBox({ label, link, testId }: { label: string; link: string; testId:
         <button
           type="button"
           className="btn btn-secondary"
-          onClick={() => {
-            // The clipboard can be refused (an insecure origin, a denied
-            // permission): the link stays selectable in the box above.
-            void navigator.clipboard?.writeText(link).then(
-              () => setCopied(true),
-              () => setCopied(false),
-            );
+          onClick={async () => {
+            // Only the latest click reports. The clipboard can be refused (an
+            // insecure origin, a denied permission): the link stays selectable
+            // in the box above and the button just doesn't confirm.
+            const attempt = copyAttempt.begin();
+            setCopiedFor(null);
+            try {
+              await navigator.clipboard.writeText(link);
+              if (!attempt.isCurrent()) return;
+              setCopiedFor(link);
+            } catch {
+              /* refused: no confirmation */
+            }
           }}
         >
           {copied ? p.recoveryLinkCopied : p.recoveryCopyLink}
