@@ -142,7 +142,9 @@ abstract contract DiamondFacetNames {
     ///      term schedule).
     ///      126 → 127 with `SettlementLegFacet` (#3669 — a settlement leg the
     ///      token refuses parks in the payer's vault under a lien).
-    function cutFacetNames() internal pure returns (string[127] memory) {
+    ///      127 → 128 with `RecoveryClawbackFacet` (#3246 part 2 — the
+    ///      clawback to a protected account's recovery address).
+    function cutFacetNames() internal pure returns (string[128] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -323,6 +325,8 @@ abstract contract DiamondFacetNames {
             "FeeLevelsFacet",
             // A refused settlement leg's park and release (#3669).
             "SettlementLegFacet",
+            // The clawback to a recovery address (#3246 part 2).
+            "RecoveryClawbackFacet",
             "SwapToRepayFacet",
             "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",

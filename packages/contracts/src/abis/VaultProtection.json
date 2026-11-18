@@ -1,7 +1,17 @@
 [
   {
     "type": "constructor",
-    "inputs": [],
+    "inputs": [
+      {
+        "name": "recovery",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "fallback",
     "stateMutability": "nonpayable"
   },
   {
@@ -33,6 +43,19 @@
   {
     "type": "function",
     "name": "ALLOWLIST_REMOVE_TYPEHASH",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "CLAWBACK_TYPEHASH",
     "inputs": [],
     "outputs": [
       {
@@ -149,7 +172,46 @@
   },
   {
     "type": "function",
+    "name": "PURPOSE_CLAWBACK",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "PURPOSE_LOCK",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "PURPOSE_RECOVERY",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "PURPOSE_RECOVERY_PROOF",
     "inputs": [],
     "outputs": [
       {
@@ -214,6 +276,84 @@
   },
   {
     "type": "function",
+    "name": "RECOVERY",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "RECOVERY_CANCEL_TYPEHASH",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "RECOVERY_CHANGE_WAIT",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "RECOVERY_CLEAR_TYPEHASH",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "RECOVERY_PROOF_TYPEHASH",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "RECOVERY_SET_TYPEHASH",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "REPLACEMENT_TYPEHASH",
     "inputs": [],
     "outputs": [
@@ -267,6 +407,19 @@
   {
     "type": "function",
     "name": "ROLE_OWNER",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "ROLE_RECOVERY_ADDRESS",
     "inputs": [],
     "outputs": [
       {
@@ -448,6 +601,32 @@
   },
   {
     "type": "function",
+    "name": "TRIGGER_OWNER",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "TRIGGER_SIGNER",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "VERIFY_TYPEHASH",
     "inputs": [],
     "outputs": [
@@ -471,7 +650,7 @@
       {
         "name": "auth",
         "type": "tuple",
-        "internalType": "struct VaultProtection.Auth",
+        "internalType": "struct VaultProtectionBase.Auth",
         "components": [
           {
             "name": "key",
@@ -519,7 +698,7 @@
       {
         "name": "auth",
         "type": "tuple",
-        "internalType": "struct VaultProtection.Auth",
+        "internalType": "struct VaultProtectionBase.Auth",
         "components": [
           {
             "name": "key",
@@ -554,7 +733,7 @@
       {
         "name": "auth",
         "type": "tuple",
-        "internalType": "struct VaultProtection.Auth",
+        "internalType": "struct VaultProtectionBase.Auth",
         "components": [
           {
             "name": "key",
@@ -602,7 +781,7 @@
       {
         "name": "auth",
         "type": "tuple",
-        "internalType": "struct VaultProtection.Auth",
+        "internalType": "struct VaultProtectionBase.Auth",
         "components": [
           {
             "name": "key",
@@ -672,7 +851,7 @@
       {
         "name": "auth",
         "type": "tuple",
-        "internalType": "struct VaultProtection.Auth",
+        "internalType": "struct VaultProtectionBase.Auth",
         "components": [
           {
             "name": "key",
@@ -720,7 +899,7 @@
       {
         "name": "auth",
         "type": "tuple",
-        "internalType": "struct VaultProtection.Auth",
+        "internalType": "struct VaultProtectionBase.Auth",
         "components": [
           {
             "name": "key",
@@ -760,7 +939,7 @@
       {
         "name": "auth",
         "type": "tuple",
-        "internalType": "struct VaultProtection.Auth",
+        "internalType": "struct VaultProtectionBase.Auth",
         "components": [
           {
             "name": "key",
@@ -790,7 +969,7 @@
       {
         "name": "auth",
         "type": "tuple",
-        "internalType": "struct VaultProtection.Auth",
+        "internalType": "struct VaultProtectionBase.Auth",
         "components": [
           {
             "name": "key",
@@ -820,7 +999,7 @@
       {
         "name": "auth",
         "type": "tuple",
-        "internalType": "struct VaultProtection.Auth",
+        "internalType": "struct VaultProtectionBase.Auth",
         "components": [
           {
             "name": "key",
@@ -855,7 +1034,7 @@
       {
         "name": "auth",
         "type": "tuple",
-        "internalType": "struct VaultProtection.Auth",
+        "internalType": "struct VaultProtectionBase.Auth",
         "components": [
           {
             "name": "key",
@@ -895,7 +1074,7 @@
       {
         "name": "auth",
         "type": "tuple",
-        "internalType": "struct VaultProtection.Auth",
+        "internalType": "struct VaultProtectionBase.Auth",
         "components": [
           {
             "name": "key",
@@ -935,7 +1114,7 @@
       {
         "name": "auth",
         "type": "tuple",
-        "internalType": "struct VaultProtection.Auth",
+        "internalType": "struct VaultProtectionBase.Auth",
         "components": [
           {
             "name": "key",
@@ -957,6 +1136,37 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "AccountRecovered",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "recovery",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "role",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -1297,6 +1507,131 @@
   },
   {
     "type": "event",
+    "name": "RecoveryAddressCancelled",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "recovery",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RecoveryAddressCleared",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "recovery",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RecoveryAddressDropped",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "recovery",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RecoveryAddressRequested",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "recovery",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "at",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RecoveryAddressSet",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "previous",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "recovery",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "ReplacementApproved",
     "inputs": [
       {
@@ -1621,6 +1956,17 @@
   },
   {
     "type": "error",
+    "name": "BadRecovery",
+    "inputs": [
+      {
+        "name": "recovery",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "BadSignature",
     "inputs": [
       {
@@ -1777,6 +2123,26 @@
   {
     "type": "error",
     "name": "PlatformApplyOutOfGas",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RecoveredAccount",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RecoveryCodeMissing",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RecoveryInUse",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RecoveryRequired",
     "inputs": []
   },
   {

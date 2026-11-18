@@ -16,6 +16,10 @@ interface IVaultProtectionRead {
     function allowEntry(address destination) external view returns (ProtectionEntry memory);
     function signerEntry(address who) external view returns (ProtectionSigner memory);
     function protectionSignersEmptied() external view returns (uint64);
+    function protectionRecovery()
+        external
+        view
+        returns (address inForce, address pending, uint64 pendingAt, bool recovered, uint64 recoveredAt);
     function protectionState()
         external
         view
@@ -303,7 +307,12 @@ library LibProtectedAccount {
     function positionExitLocal(address account) internal view returns (PositionExit) {
         Core memory c = core(account);
         if (c.retired) return PositionExit.Held;
-        if (!LibPositionNFT.isHolderLocked(account)) return PositionExit.Free;
+        // #3246 part 2 — a recovered account's positions never leave it,
+        // whatever the token contract's own holder lock says (4.4): what they
+        // pay out reaches the recovery address through the account's vault.
+        if (!LibPositionNFT.isHolderLocked(account)) {
+            return isRecovered(account) ? PositionExit.Held : PositionExit.Free;
+        }
         return (c.enabled && !c.locked) ? PositionExit.UnderDelay : PositionExit.Held;
     }
 
@@ -329,6 +338,21 @@ library LibProtectedAccount {
         if (saleRateBps > loanRateBps && positionExit(seller) == PositionExit.UnderDelay) {
             revert LockedSaleRateAbove(seller, saleRateBps, loanRateBps);
         }
+    }
+
+    /// @notice #3246 part 2 — `account`'s recovery address in force (0 =
+    ///         none) and whether it was clawed back, read from its own vault.
+    ///         No vault means neither.
+    function recoveryOf(address account) internal view returns (address inForce, bool recovered) {
+        address vault = _s().userVaipakamVaults[account];
+        if (vault == address(0)) return (address(0), false);
+        (inForce,,, recovered,) = IVaultProtectionRead(vault).protectionRecovery();
+    }
+
+    /// @notice Whether `account` was clawed back (the recovered state, which
+    ///         never clears).
+    function isRecovered(address account) internal view returns (bool recovered) {
+        (, recovered) = recoveryOf(account);
     }
 
     /// @notice The wallet that manages `account`: the vault's owner record

@@ -63,6 +63,8 @@ contract VaipakamNFTFacet is DiamondReentrancyGuard, DiamondAccessControl {
     /// @notice #3526 — a position may not leave an account a primary
     ///         replacement retired, except to the wallet that replaced it.
     error TransferFromRetiredAccount(address from, address to);
+    /// @notice #3246 part 2 — a position may not leave a recovered account.
+    error TransferFromRecoveredAccount(address from, address to);
 
     /**
      * @notice Record the PositionNFT core and seed the default artwork. Once,
@@ -168,6 +170,11 @@ contract VaipakamNFTFacet is DiamondReentrancyGuard, DiamondAccessControl {
         // except the recovery move to the replacement wallet (the core's
         // `recover`, which the core itself checks against the vault).
         LibProtectedAccount.Core memory c = LibProtectedAccount.core(from);
+        // #3246 part 2 — and no position leaves a recovered account at all,
+        // not even to its replacement wallet: its payouts must keep reaching
+        // the account's vault, and from there the recovery address (4.4).
+        // Read from the account's own record, not the core's holder lock.
+        if (c.enabled && c.locked && LibProtectedAccount.isRecovered(from)) revert TransferFromRecoveredAccount(from, to);
         if (c.retired && to != c.manager) revert TransferFromRetiredAccount(from, to);
         _syncTierExclusion(LibPositionNFT._storage().loanIds[tokenId]);
         _stampLenderEntry(tokenId, to, true);

@@ -3,6 +3,8 @@ pragma solidity ^0.8.29;
 
 import {Vm} from "forge-std/Vm.sol";
 import {VaultProtection} from "../../src/vault/VaultProtection.sol";
+import {VaultProtectionBase} from "../../src/vault/VaultProtectionBase.sol";
+import {VaultRecovery} from "../../src/vault/VaultRecovery.sol";
 import {VaipakamVaultImplementation} from "../../src/VaipakamVaultImplementation.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 import {ProtectedAccountFacet} from "../../src/facets/ProtectedAccountFacet.sol";
@@ -24,7 +26,7 @@ library LibTestProtection {
         return VaipakamVaultImplementation(VaultFactoryFacet(diamond).getOrCreateUserVault(account));
     }
 
-    function direct(address key) internal pure returns (VaultProtection.Auth memory a) {
+    function direct(address key) internal pure returns (VaultProtectionBase.Auth memory a) {
         a.key = key;
     }
 
@@ -40,7 +42,55 @@ library LibTestProtection {
         try ProtectedAccountFacet(diamond).applyProtection(account) {} catch {}
     }
 
+    /// @dev The default recovery address's key for `account` (#3246 part 2):
+    ///      protected mode needs one before it switches on.
+    function recoveryKey(address account) public pure returns (uint256) {
+        return uint256(keccak256(abi.encode("vaipakam.test.recovery", account))) % (2 ** 255) + 1;
+    }
+
+    function recoveryOf(address account) public pure returns (address) {
+        return vm.addr(recoveryKey(account));
+    }
+
+    /// @dev The owner asks for `vm.addr(pk)` as the recovery address (a direct
+    ///      call); the address proves control by its signature.
+    function requestRecovery(address diamond, address account, address owner, uint256 pk) public {
+        VaipakamVaultImplementation v = vaultOf(diamond, account);
+        address r = vm.addr(pk);
+        VaultProtection code = VaultProtection(v.PROTECTION());
+        uint64 expiry = uint64(vm.getBlockTimestamp() + 1 hours);
+        bytes32 domain = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256("Vaipakam Vault"),
+                keccak256("1"),
+                block.chainid,
+                address(v)
+            )
+        );
+        bytes32 h = keccak256(
+            abi.encode(
+                code.RECOVERY_PROOF_TYPEHASH(),
+                v.vaultCreationOwner(),
+                diamond,
+                v.protectionNonce(r, code.PURPOSE_RECOVERY_PROOF()),
+                expiry
+            )
+        );
+        (uint8 sv, bytes32 sr, bytes32 ss) = vm.sign(pk, keccak256(abi.encodePacked("\x19\x01", domain, h)));
+        VaultProtectionBase.Auth memory proof = VaultProtectionBase.Auth({key: r, expiry: expiry, sig: abi.encodePacked(sr, ss, sv)});
+        vm.prank(owner);
+        v.protect(abi.encodeCall(VaultRecovery.requestRecoveryAddress, (r, direct(owner), proof)));
+    }
+
+    /// @dev Switch protected mode on. Sets the default recovery address first
+    ///      when none is set (pending is enough to switch on; {addSigner}
+    ///      waits for it to come into force).
     function enable(address diamond, address account, uint32 delay) public {
+        (address inForce, address pending,,,) = vaultOf(diamond, account).protectionRecovery();
+        if (inForce == address(0) && pending == address(0)) {
+            requestRecovery(diamond, account, account, recoveryKey(account));
+        }
         call(diamond, account, account, abi.encodeCall(VaultProtection.enable, (delay, direct(account))));
         apply_(diamond, account);
     }
@@ -99,6 +149,9 @@ library LibTestProtection {
         call(diamond, account, owner, abi.encodeCall(VaultProtection.signerChange, (add, signer, direct(owner))));
         call(diamond, account, signer, abi.encodeCall(VaultProtection.signerChange, (accept, signer, direct(signer))));
         vm.warp(vm.getBlockTimestamp() + delay);
+        // A signer is finalized only while a recovery address is in force.
+        (address inForce,, uint64 pendingAt,,) = vaultOf(diamond, account).protectionRecovery();
+        if (inForce == address(0) && pendingAt > vm.getBlockTimestamp()) vm.warp(pendingAt);
         vaultOf(diamond, account).protect(abi.encodeCall(VaultProtection.finalizeSigner, (signer)));
     }
 

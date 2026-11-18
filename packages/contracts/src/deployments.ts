@@ -257,6 +257,8 @@ export interface DeploymentFacets {
   feeLevelsFacet?: HexAddress;
   /** #3669 — a refused settlement leg's park and release. */
   settlementLegFacet?: HexAddress;
+  /** #3246 part 2 — the clawback to a protected account's recovery address. */
+  recoveryClawbackFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */
@@ -298,6 +300,9 @@ export interface Deployment {
   /** #3379 B2 — the protected-mode code every vault delegatecalls; fixed in
    *  the vault code. */
   vaultProtection?: HexAddress;
+  /** #3246 part 2 — the recovery-address and clawback code the protected-mode
+   *  code delegatecalls; fixed in it (`VaultProtection.RECOVERY`). */
+  vaultRecovery?: HexAddress;
   /** #3272 — the PriceGuard: the one price source the Diamond and every
    *  vault read, through the registry's `PRICE_GUARD` pointer (read the
    *  pointer, not this key, to find the guard in force). Optional until each

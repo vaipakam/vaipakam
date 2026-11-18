@@ -201,7 +201,16 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
         uint256 own = LibDepositoryLedger.holding(msg.sender, asset, tokenId);
         if (amount > own) revert LibProtectedAccount.AmountExceedsFree(amount, own);
         LibDepositoryLedger.debit(msg.sender, asset, tokenId, amount);
-        _pay(kind, msg.sender, asset, tokenId, amount, msg.sender, OutflowReason.ESCAPE);
+        // #3246 part 2 — whenever a recovery address is in force (an account
+        // that set one and then switched protected mode off keeps it), the
+        // escape pays it and not the owner wallet (4.4).
+        (address recovery,) = LibProtectedAccount.recoveryOf(msg.sender);
+        if (recovery != address(0)) {
+            LibVaipakam.assertRecipientNotBarred(recovery);
+            LibVaultOutflow.toRecovery(msg.sender, kind, asset, tokenId, amount, OutflowReason.ESCAPE);
+        } else {
+            _pay(kind, msg.sender, asset, tokenId, amount, msg.sender, OutflowReason.ESCAPE);
+        }
         emit EscapeWithdrawal(msg.sender, asset, tokenId, amount);
     }
 

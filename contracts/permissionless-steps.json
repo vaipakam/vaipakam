@@ -207,7 +207,7 @@
       "pass": "expiredTeardown",
       "flag": "EXPIRED_TEARDOWN_ENABLED",
       "evidence": "apps/keeper/src/expiredTeardown.ts",
-      "why": "the creator cancels its own offer; anyone may cancel an expired offer (refund to the creator, no keeper owed) or a vehicle offer whose route is dead (#3336), which the keeper sweeps"
+      "why": "the creator cancels its own offer; anyone may cancel an expired offer (refund to the creator, no keeper owed) or a vehicle offer whose route is dead (#3336), which the keeper sweeps; anyone may also cancel a recovered account's offer (#3246 part 2: refund to the account's vault, swept on from there)"
     },
     "OfferCancelFacet.teardownStaleSaleListing(uint256)": {
       "class": "keeper",
@@ -236,6 +236,11 @@
       "pass": "matcher",
       "flag": "KEEPER_ENABLED",
       "evidence": "apps/keeper/src/matcher.ts"
+    },
+    "RecoveryClawbackFacet.sweepRecovered(address,(uint8,address,uint256)[])": {
+      "class": "gap",
+      "issue": "#3246",
+      "why": "moves a recovered account's free balance on to the recovery address its own record names (a payout that reached it after the clawback); the keeper pass is to be built, disarmed, with the protected-account work"
     },
     "SettlementLegFacet.releaseParkedTreasury(address,address)": {
       "class": "gap",

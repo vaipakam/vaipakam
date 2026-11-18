@@ -35,6 +35,7 @@ import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 import {VaultProtection} from "../src/vault/VaultProtection.sol";
+import {VaultProtectionBase} from "../src/vault/VaultProtectionBase.sol";
 import {LibTestProtection as P} from "./helpers/LibTestProtection.sol";
 
 /**
@@ -419,7 +420,7 @@ contract ProtectedVaultTest is Test {
         P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.addAllowlisted, (friend, P.direct(user))));
         _expectFinalizeRevert(
             abi.encodeCall(VaultProtection.finalizeAllowlisted, (friend)),
-            abi.encodeWithSelector(VaultProtection.NotReady.selector, uint64(block.timestamp + DELAY))
+            abi.encodeWithSelector(VaultProtectionBase.NotReady.selector, uint64(block.timestamp + DELAY))
         );
         vm.warp(block.timestamp + DELAY);
         _v().protect(abi.encodeCall(VaultProtection.finalizeAllowlisted, (friend)));
@@ -477,7 +478,7 @@ contract ProtectedVaultTest is Test {
         _expectProtectRevert(
             user,
             abi.encodeCall(VaultProtection.addAllowlisted, (address(0xDEAD), P.direct(user))),
-            abi.encodeWithSelector(VaultProtection.TooMany.selector)
+            abi.encodeWithSelector(VaultProtectionBase.TooMany.selector)
         );
     }
 
@@ -488,7 +489,7 @@ contract ProtectedVaultTest is Test {
         vm.warp(at + DELAY + 1);
         _expectFinalizeRevert(
             abi.encodeCall(VaultProtection.finalizeAllowlisted, (friend)),
-            abi.encodeWithSelector(VaultProtection.Expired.selector, at + DELAY)
+            abi.encodeWithSelector(VaultProtectionBase.Expired.selector, at + DELAY)
         );
     }
 
@@ -513,7 +514,7 @@ contract ProtectedVaultTest is Test {
         P.finalizeSettings(address(diamond), user);
         assertFalse(_locked());
 
-        bytes memory notRequested = abi.encodeWithSelector(VaultProtection.NotRequested.selector);
+        bytes memory notRequested = abi.encodeWithSelector(VaultProtectionBase.NotRequested.selector);
         _expectFinalizeRevert(abi.encodeCall(VaultProtection.finalizeAllowlisted, (friend)), notRequested);
         _expectFinalizeRevert(abi.encodeCall(VaultProtection.finalizeSigner, (s2)), notRequested);
         _expectFinalizeRevert(abi.encodeCall(VaultProtection.finalizeSigner, (s1)), notRequested);
@@ -539,13 +540,13 @@ contract ProtectedVaultTest is Test {
         assertFalse(_enabled());
 
         _enable();
-        bytes memory notRequested = abi.encodeWithSelector(VaultProtection.NotRequested.selector);
+        bytes memory notRequested = abi.encodeWithSelector(VaultProtectionBase.NotRequested.selector);
         _expectFinalizeRevert(abi.encodeCall(VaultProtection.finalizeAllowlisted, (friend)), notRequested);
         // The old nominee's acceptance belongs to the cleared posture: it is
         // refused, and the addition can never be applied.
         VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
         vm.prank(s2);
-        vm.expectRevert(VaultProtection.NotRequested.selector);
+        vm.expectRevert(VaultProtectionBase.NotRequested.selector);
         v.protect(abi.encodeCall(VaultProtection.signerChange, (uint8(2), s2, P.direct(s2))));
         vm.warp(block.timestamp + DELAY);
         _expectFinalizeRevert(abi.encodeCall(VaultProtection.finalizeSigner, (s2)), notRequested);
@@ -643,13 +644,13 @@ contract ProtectedVaultTest is Test {
         vm.warp(block.timestamp + DELAY);
         _expectFinalizeRevert(
             abi.encodeCall(VaultProtection.finalizeSigner, (s1)),
-            abi.encodeWithSelector(VaultProtection.NotRequested.selector)
+            abi.encodeWithSelector(VaultProtectionBase.NotRequested.selector)
         );
         // Only the nominee's own key accepts.
         _expectProtectRevert(
             user,
             abi.encodeCall(VaultProtection.signerChange, (uint8(2), s1, P.direct(user))),
-            abi.encodeWithSelector(VaultProtection.NotRequested.selector)
+            abi.encodeWithSelector(VaultProtectionBase.NotRequested.selector)
         );
     }
 
@@ -784,7 +785,7 @@ contract ProtectedVaultTest is Test {
             // owner's cool-down. (A replaced account takes no payout
             // destination at all: testAReplacedAccountTakesNoPayoutDestination.)
             abi.encodeCall(VaultProtection.signerChange, (uint8(1), s3, P.direct(nominee))),
-            abi.encodeWithSelector(VaultProtection.InCooldown.selector, uint64(block.timestamp + DELAY))
+            abi.encodeWithSelector(VaultProtectionBase.InCooldown.selector, uint64(block.timestamp + DELAY))
         );
         vm.warp(block.timestamp + DELAY);
         _pay().releasePayout(id);
@@ -855,7 +856,7 @@ contract ProtectedVaultTest is Test {
         assertEq(pendingCosignOffAt, 0);
         (, , uint256 unlockAt, , ) = _core().lockOf(user);
         assertEq(unlockAt, 0, "the replacement voided the pending unlock");
-        bytes memory notRequested = abi.encodeWithSelector(VaultProtection.NotRequested.selector);
+        bytes memory notRequested = abi.encodeWithSelector(VaultProtectionBase.NotRequested.selector);
         _expectFinalizeRevert(abi.encodeCall(VaultProtection.finalizeSigner, (s3)), notRequested);
         _expectFinalizeRevert(abi.encodeCall(VaultProtection.finalizeAllowlisted, (thief)), notRequested);
         assertTrue(_v().signerEntry(s3).active, "the voided removal left s3 a signer");
@@ -902,7 +903,7 @@ contract ProtectedVaultTest is Test {
         _expectProtectRevert(
             s1,
             abi.encodeCall(VaultProtection.replacement, (uint8(1), nominee, P.direct(s1))),
-            abi.encodeWithSelector(VaultProtection.NotEnoughSigners.selector, 2, 3)
+            abi.encodeWithSelector(VaultProtectionBase.NotEnoughSigners.selector, 2, 3)
         );
     }
 
@@ -914,7 +915,7 @@ contract ProtectedVaultTest is Test {
         _expectProtectRevert(
             user,
             abi.encodeCall(VaultProtection.replacement, (uint8(3), nominee, P.direct(user))),
-            abi.encodeWithSelector(VaultProtection.OwnerBlockedBySignerLock.selector)
+            abi.encodeWithSelector(VaultProtectionBase.OwnerBlockedBySignerLock.selector)
         );
     }
 
@@ -935,7 +936,7 @@ contract ProtectedVaultTest is Test {
         // The switch-off waits while a row is queued: it was the one change
         // due, so it says so rather than succeed doing nothing.
         address v = address(P.vaultOf(address(diamond), user));
-        vm.expectRevert(VaultProtection.PendingRowsExist.selector);
+        vm.expectRevert(VaultProtectionBase.PendingRowsExist.selector);
         VaipakamVaultImplementation(v).protect(abi.encodeCall(VaultProtection.finalizeSettings, ()));
         assertTrue(_enabled(), "not while a row is queued");
         _pay().releasePayout(id);
@@ -1233,7 +1234,7 @@ contract ProtectedVaultTest is Test {
         vm.warp(block.timestamp + DELAY);
         _expectFinalizeRevert(
             abi.encodeCall(VaultProtection.finalizeReplacement, ()),
-            abi.encodeWithSelector(VaultProtection.NoProposal.selector)
+            abi.encodeWithSelector(VaultProtectionBase.NoProposal.selector)
         );
     }
 
@@ -1406,7 +1407,7 @@ contract ProtectedVaultTest is Test {
         _expectProtectRevert(
             user,
             abi.encodeCall(VaultProtection.replacement, (uint8(1), friend, P.direct(user))),
-            abi.encodeWithSelector(VaultProtection.OwnerBlockedBySignerLock.selector)
+            abi.encodeWithSelector(VaultProtectionBase.OwnerBlockedBySignerLock.selector)
         );
     }
 
@@ -1456,6 +1457,9 @@ contract ProtectedVaultTest is Test {
     function testSecondReplacementDropsTheOutgoingControllersPendingChanges() public {
         _deposit20(10 ether);
         _enable();
+        // #3246 part 2 — a replacement drops a recovery address still
+        // waiting; let it come into force first so a signer can be added.
+        vm.warp(vm.getBlockTimestamp() + 4 days);
         P.propose(address(diamond), user, user, nominee);
         vm.warp(vm.getBlockTimestamp() + DELAY);
         P.finalizeReplacement(address(diamond), user);
@@ -1770,16 +1774,19 @@ contract ProtectedVaultTest is Test {
     ///      wallet cannot be finalized.
     function testTheAccountsOwnWalletsCannotBecomeSigners() public {
         _enable();
+        // #3246 part 2 — a replacement drops a recovery address still
+        // waiting; let it come into force first so a signer can be added.
+        vm.warp(vm.getBlockTimestamp() + 4 days);
         P.propose(address(diamond), user, user, nominee);
         vm.warp(vm.getBlockTimestamp() + DELAY);
         P.finalizeReplacement(address(diamond), user);
         vm.warp(vm.getBlockTimestamp() + DELAY + 1); // past the cool-down
         VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
         vm.prank(nominee);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.NomineeIsAccountWallet.selector, user));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.NomineeIsAccountWallet.selector, user));
         v.protect(abi.encodeCall(VaultProtection.signerChange, (uint8(1), user, P.direct(nominee))));
         vm.prank(nominee);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.NomineeIsAccountWallet.selector, nominee));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.NomineeIsAccountWallet.selector, nominee));
         v.protect(abi.encodeCall(VaultProtection.signerChange, (uint8(1), nominee, P.direct(nominee))));
         // An ordinary signer can still be added.
         P.addSigner(address(diamond), user, nominee, s1, DELAY);
@@ -1797,10 +1804,10 @@ contract ProtectedVaultTest is Test {
         vm.warp(vm.getBlockTimestamp() + DELAY + 1); // past the cool-down
         VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
         vm.prank(nominee);
-        vm.expectRevert(VaultProtection.RetiredAccount.selector);
+        vm.expectRevert(VaultProtectionBase.RetiredAccount.selector);
         v.protect(abi.encodeCall(VaultProtection.addAllowlisted, (user, P.direct(nominee))));
         vm.prank(nominee);
-        vm.expectRevert(VaultProtection.RetiredAccount.selector);
+        vm.expectRevert(VaultProtectionBase.RetiredAccount.selector);
         v.protect(abi.encodeCall(VaultProtection.addAllowlisted, (friend, P.direct(nominee))));
     }
 
@@ -1813,7 +1820,7 @@ contract ProtectedVaultTest is Test {
         P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.signerChange, (uint8(3), s1, P.direct(user))));
         VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
         vm.prank(s1);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.CannotCancelOwnRemoval.selector, s1));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.CannotCancelOwnRemoval.selector, s1));
         v.protect(abi.encodeCall(VaultProtection.signerChange, (uint8(4), s1, P.direct(s1))));
         assertGt(v.signerEntry(s1).removeAt, 0, "still being removed");
         P.call(address(diamond), user, s2, abi.encodeCall(VaultProtection.signerChange, (uint8(4), s1, P.direct(s2))));
@@ -1835,10 +1842,10 @@ contract ProtectedVaultTest is Test {
         vm.warp(vm.getBlockTimestamp() + DELAY + 1);
         VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
         vm.prank(nominee);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.NomineeIsAccountWallet.selector, user));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.NomineeIsAccountWallet.selector, user));
         v.protect(abi.encodeCall(VaultProtection.replacement, (uint8(1), user, P.direct(nominee))));
         vm.prank(nominee);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.NomineeIsAccountWallet.selector, nominee));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.NomineeIsAccountWallet.selector, nominee));
         v.protect(abi.encodeCall(VaultProtection.replacement, (uint8(1), nominee, P.direct(nominee))));
     }
 
@@ -1859,7 +1866,7 @@ contract ProtectedVaultTest is Test {
         _expectProtectRevert(
             third,
             abi.encodeCall(VaultProtection.requestDisable, (P.direct(third))),
-            abi.encodeWithSelector(VaultProtection.RetiredAccount.selector)
+            abi.encodeWithSelector(VaultProtectionBase.RetiredAccount.selector)
         );
         (bool on,,,, bool retired) = P.vaultOf(address(diamond), user).protectionCore();
         assertTrue(on, "a retired account cannot be switched off");
@@ -1936,7 +1943,7 @@ contract ProtectedVaultTest is Test {
         _expectProtectRevert(
             nominee,
             abi.encodeCall(VaultProtection.requestDisable, (P.direct(nominee))),
-            abi.encodeWithSelector(VaultProtection.RetiredAccount.selector)
+            abi.encodeWithSelector(VaultProtectionBase.RetiredAccount.selector)
         );
         uint256 before = token.balanceOf(user);
         vm.prank(nominee);

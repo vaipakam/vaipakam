@@ -344,6 +344,18 @@ library LibVaultOutflow {
 
     // ─── The one encoding ────────────────────────────────────────────────
 
+    // ─── Recovery (#3246 part 2) ─────────────────────────────────────────
+
+    /// @notice To `user`'s recovery address in force, which the policy host
+    ///         reads from `user`'s own vault (no caller names it): a clawback
+    ///         or a recovered account's sweep. Passes no payout queue.
+    function toRecovery(address user, uint8 kind, address asset, uint256 tokenId, uint256 amount, uint8 reason)
+        internal
+        returns (uint256)
+    {
+        return _go(user, kind, asset, tokenId, amount, address(0), VaultOutflowTypes.OutflowClass.Recovery, 0, 0, reason);
+    }
+
     function _go(
         address user,
         uint8 kind,

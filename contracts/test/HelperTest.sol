@@ -127,6 +127,7 @@ import {CollectionOfferFacet} from "../src/facets/CollectionOfferFacet.sol";
 import {ReadyBalanceFacet} from "../src/facets/ReadyBalanceFacet.sol";
 import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {LibTestSettlementLeg} from "./helpers/LibTestSettlementLeg.sol";
+import {RecoveryClawbackFacet} from "../src/facets/RecoveryClawbackFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -1079,6 +1080,15 @@ contract HelperTest {
     ///      `DeployDiamond._getSettlementLegSelectors`.
     function getSettlementLegFacetSelectors() public pure returns (bytes4[] memory) {
         return LibTestSettlementLeg.selectors();
+    }
+
+    /// @dev #3246 part 2 — the clawback host. Mirrors
+    ///      `DeployDiamond._getRecoveryClawbackSelectors`.
+    function getRecoveryClawbackFacetSelectors() public pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = RecoveryClawbackFacet.applyClawback.selector;
+        s[1] = RecoveryClawbackFacet.sweepRecovered.selector;
+        s[2] = RecoveryClawbackFacet.recoveryMovable.selector;
     }
 
     function getRepayFacetSelectors()

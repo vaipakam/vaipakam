@@ -967,6 +967,39 @@
   },
   {
     "type": "function",
+    "name": "protectionRecovery",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "inForce",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "pending",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "pendingAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "recovered",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "recoveredAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "protectionSignersEmptied",
     "inputs": [],
     "outputs": [

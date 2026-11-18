@@ -77,6 +77,11 @@ library VaultOutflowTypes {
      *           stored party's vault to the CURRENT holder's vault, still under
      *           the side's lien (#594): holder-bound like PositionHolder, but
      *           not free money, so the move books it as custody.
+     *         - Recovery (#3246 part 2): a protected account's recovery
+     *           address in force, read by the vault from its own record, or
+     *           that address's own vault when it is itself a protected
+     *           account. Only a clawback and a recovered account's sweep use
+     *           it; it passes no payout queue.
      */
     enum OutflowClass {
         Owner,
@@ -94,7 +99,17 @@ library VaultOutflowTypes {
         DiamondTransient,
         ClaimCustody,
         PrincipalToBorrower,
-        Consolidation
+        Consolidation,
+        Recovery
+    }
+
+    /// @notice #3246 part 2 — one asset a clawback or a recovered account's
+    ///         sweep moves: its free balance, whatever it is when the move
+    ///         runs (one for an ERC-721 the account holds free).
+    struct ClawbackAsset {
+        AssetKind kind;
+        address asset;
+        uint256 tokenId;
     }
 
     /// @notice Who a just-in-time allowance may name as spender.
@@ -254,5 +269,7 @@ library OutflowReason {
     uint8 internal constant LISTING_ESCROW = 20; // an ERC-1155 listing's lot into its escrow
     uint8 internal constant SANCTIONED_LOCK = 21; // a sanctioned party's share into its lock
     uint8 internal constant RENTAL = 22; // a rental settlement leg
+    uint8 internal constant CLAWBACK = 23; // #3246 part 2: a clawback to the recovery address
+    uint8 internal constant RECOVERY_SWEEP = 24; // #3246 part 2: a recovered account's later free balance swept there
 
 }

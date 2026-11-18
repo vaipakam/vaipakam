@@ -32,6 +32,15 @@ interface IVaultOutflowPayoutGate {
     ) external returns (bool held);
 }
 
+/// @dev #3246 part 2 — the recovery address in force, read from the paying
+///      vault's own record (`VaipakamVaultImplementation.protectionRecovery`).
+interface IVaultRecoveryRead {
+    function protectionRecovery()
+        external
+        view
+        returns (address inForce, address pending, uint64 pendingAt, bool recovered, uint64 recoveredAt);
+}
+
 /**
  * @title  VaultOutflowFacet
  * @author Vaipakam Developer Team
@@ -252,8 +261,11 @@ contract VaultOutflowFacet is IVaipakamErrors {
         // controller) is queued, or kept in a locked account's vault. Nothing
         // moves and the tracked balance is unchanged until a release pays it
         // through this same function.
+        // #3246 part 2 — a clawback or a recovered account's sweep is not a
+        // payout to the owner: it pays the recovery address the vault's own
+        // record names, at once, past the queue a lock cancels (4.2).
         if (
-            LibProtectedAccount.isProtected(user)
+            o.class_ != VaultOutflowTypes.OutflowClass.Recovery && LibProtectedAccount.isProtected(user)
                 && IVaultOutflowPayoutGate(address(this)).applyPayoutGate(
                     user, _assetType(o.kind), o.asset, o.tokenId, o.amount, o.to
                 )
@@ -266,7 +278,12 @@ contract VaultOutflowFacet is IVaipakamErrors {
         // different account; an account's own owner payout is never
         // redirected (`_protectedRecipientVault` skips recipient == user).
         address creditTo;
-        if (_paysWallet(o.class_) || o.class_ == VaultOutflowTypes.OutflowClass.Owner) {
+        // #3246 part 2 — a recovery address that is itself a protected
+        // account is paid into its own vault the same way.
+        if (
+            _paysWallet(o.class_) || o.class_ == VaultOutflowTypes.OutflowClass.Owner
+                || o.class_ == VaultOutflowTypes.OutflowClass.Recovery
+        ) {
             creditTo = _protectedRecipientVault(user, o.to);
             if (creditTo != address(0)) {
                 payeeOwner = o.to;
@@ -467,6 +484,12 @@ contract VaultOutflowFacet is IVaipakamErrors {
             o.to = LibFacet.getOrCreateVault(backstop);
         } else if (c == VaultOutflowTypes.OutflowClass.DiamondTransient) {
             o.to = address(this);
+        } else if (c == VaultOutflowTypes.OutflowClass.Recovery) {
+            // #3246 part 2 — the recovery address in force on the paying
+            // vault's own record; the caller names none.
+            (address r,,,,) = IVaultRecoveryRead(s.userVaipakamVaults[user]).protectionRecovery();
+            if (r == address(0)) revert OutflowRecipientInvalid(c, address(0));
+            o.to = r;
         } else if (c == VaultOutflowTypes.OutflowClass.SwapAdapter) {
             if (!_isSwapAdapter(s, o.to)) revert OutflowRecipientInvalid(c, o.to);
         } else if (c == VaultOutflowTypes.OutflowClass.ListingEscrow) {

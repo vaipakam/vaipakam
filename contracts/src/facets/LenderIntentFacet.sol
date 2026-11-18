@@ -561,8 +561,16 @@ contract LenderIntentFacet is
         // replacement retired it, so a recovered account's capital is never
         // stranded behind the lost key. Paid to the manager (a protected
         // account's payout queues behind the delay).
-        LibProtectedAccount.requireManager(account);
-        LibVaipakam._assertNotSanctioned(msg.sender);
+        // #3246 part 2 — a RECOVERED account's intent can never fill again and
+        // its owner key may be lost, so anyone may return its un-lent capital
+        // to the account's vault (ruling 2026-11-18): it is paid to the owner
+        // class, which the locked account's payout gate keeps in the vault,
+        // free, for the recovered account's sweep to the recovery address.
+        bool recovered = LibProtectedAccount.isRecovered(account);
+        if (!recovered) {
+            LibProtectedAccount.requireManager(account);
+            LibVaipakam._assertNotSanctioned(msg.sender);
+        }
         if (amount == 0) revert LenderIntentInvalidBounds();
         // Release from the lien (reverts `IntentCapitalInsufficient` if it
         // exceeds the un-lent capital) BEFORE the withdraw, so the chokepoint
@@ -576,7 +584,7 @@ contract LenderIntentFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // The capital back to the account's own wallet, or to its controller
         // once a replacement retired it (#3205 part 2: the owner classes).
-        if (msg.sender == account) {
+        if (recovered || msg.sender == account) {
             LibVaultOutflow.toOwner(account, LibVaultOutflow.ERC20, lendingAsset, 0, amount, OutflowReason.WITHDRAW);
         } else {
             LibVaultOutflow.toAllowlisted(account, LibVaultOutflow.ERC20, lendingAsset, 0, amount, msg.sender, OutflowReason.WITHDRAW);

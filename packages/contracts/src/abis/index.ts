@@ -93,6 +93,7 @@ import CollectionOfferFacetABI from './CollectionOfferFacet.json';
 import ReadyBalanceFacetABI from './ReadyBalanceFacet.json';
 import FeeLevelsFacetABI from './FeeLevelsFacet.json';
 import SettlementLegFacetABI from './SettlementLegFacet.json';
+import RecoveryClawbackFacetABI from './RecoveryClawbackFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
 import OracleAdminFacetABI from './OracleAdminFacet.json';
@@ -232,6 +233,7 @@ import PriceGuardABI from './PriceGuard.json';
 // #3379 B2 — the vault code and its protected-mode rules (standalone).
 import VaipakamVaultImplementationABI from './VaipakamVaultImplementation.json';
 import VaultProtectionABI from './VaultProtection.json';
+import VaultRecoveryABI from './VaultRecovery.json';
 
 export {
   OfferCreateFacetABI,
@@ -296,6 +298,7 @@ export {
   ReadyBalanceFacetABI,
   FeeLevelsFacetABI,
   SettlementLegFacetABI,
+  RecoveryClawbackFacetABI,
   ClaimFacetABI,
   OracleFacetABI,
   OracleAdminFacetABI,
@@ -385,6 +388,7 @@ export {
   PriceGuardABI,
   VaipakamVaultImplementationABI,
   VaultProtectionABI,
+  VaultRecoveryABI,
 };
 
 import type { Abi } from 'viem';

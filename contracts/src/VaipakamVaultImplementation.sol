@@ -849,6 +849,16 @@ contract VaipakamVaultImplementation is
         ) {
             return _isGenuineVault(o.to);
         }
+        // #3246 part 2 — the recovery address in force on this vault's OWN
+        // record, or the genuine vault created for it when that address is
+        // itself a protected account (the outflow policy redirects it there).
+        // No trigger names it: the record does.
+        if (c == VaultOutflowTypes.OutflowClass.Recovery) {
+            address r = LibVaultProtectionStorage.recoveryInForce(LibVaultProtectionStorage.layout());
+            if (r == address(0)) return false;
+            if (o.to == r) return true;
+            return o.to != address(this) && _isGenuineVault(o.to) && IVaultOwnerView(o.to).vaultCreationOwner() == r;
+        }
         // Stage A residuals, checked by the Diamond only until Stage B3
         // (#3379): the incentive and liquidation-buyer actors (bounded by the
         // lien's budgets) and a recorded seller (the signed sale terms). None
@@ -1049,6 +1059,22 @@ contract VaipakamVaultImplementation is
             if (l.approved[l.round][l.signers[i]]) ++approvals;
         }
         threshold = n / 2 + 1;
+    }
+
+    /// @notice #3246 part 2 — the recovery address and the recovered state:
+    ///         the address in force now (0 = none), a pending setting or
+    ///         change still waiting and when it comes into force, and whether
+    ///         (and since when) the account was clawed back.
+    function protectionRecovery()
+        external
+        view
+        returns (address inForce, address pending, uint64 pendingAt, bool recovered, uint64 recoveredAt)
+    {
+        LibVaultProtectionStorage.Layout storage l = LibVaultProtectionStorage.layout();
+        inForce = LibVaultProtectionStorage.recoveryInForce(l);
+        pending = LibVaultProtectionStorage.recoveryPending(l);
+        if (pending != address(0)) pendingAt = l.pendingRecoveryAt;
+        return (inForce, pending, pendingAt, l.recovered, l.recoveredAt);
     }
 
     /// @notice `key`'s next signature nonce for `purpose`.

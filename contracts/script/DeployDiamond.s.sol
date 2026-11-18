@@ -73,9 +73,11 @@ import {CollectionOfferFacet} from "../src/facets/CollectionOfferFacet.sol";
 import {ReadyBalanceFacet} from "../src/facets/ReadyBalanceFacet.sol";
 import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
+import {RecoveryClawbackFacet} from "../src/facets/RecoveryClawbackFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {VaultProtection} from "../src/vault/VaultProtection.sol";
+import {VaultRecovery} from "../src/vault/VaultRecovery.sol";
 import {ISeaportOrderHash, IConduitController} from "../src/seaport/ISeaportOrderHash.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
@@ -181,6 +183,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     address internal backstopVault;
     /// @dev #3379 B2 — the VaultProtection code fixed in the vault code (5d).
     address internal vaultProtection;
+    address internal vaultRecovery;
     /// @dev OpenZeppelin's Initializable namespace (ERC-7201); a template
     ///      whose initializers are disabled reads `type(uint64).max` there.
     bytes32 internal constant _OZ_INITIALIZABLE_SLOT =
@@ -602,6 +605,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #3649 — the initiation fee's term schedule.
         FeeLevelsFacet feeLevelsFacet = FeeLevelsFacet(ArtifactDeploy.deploy(type(FeeLevelsFacet).name));
         SettlementLegFacet settlementLegFacet = SettlementLegFacet(ArtifactDeploy.deploy(type(SettlementLegFacet).name));
+        // #3246 part 2 — the clawback to a protected account's recovery address.
+        RecoveryClawbackFacet recoveryClawbackFacet =
+            RecoveryClawbackFacet(ArtifactDeploy.deploy(type(RecoveryClawbackFacet).name));
         // #1841 - the one sale-exit verdict: the lender exit chooser's view and
         // the guard both sale entries self-call.
         SaleExitVerdictFacet saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
@@ -650,7 +656,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](127);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](128);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -780,6 +786,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[124] = _buildCut(address(readyBalanceFacet), _getReadyBalanceSelectors());
         cuts[125] = _buildCut(address(feeLevelsFacet), _getFeeLevelsSelectors());
         cuts[126] = _buildCut(address(settlementLegFacet), _getSettlementLegSelectors());
+        cuts[127] = _buildCut(address(recoveryClawbackFacet), _getRecoveryClawbackSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1433,6 +1440,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeProtocolRegistry(protocolRegistry);
         Deployments.writeBackstopVault(backstopVault);
         Deployments.writeVaultProtection(vaultProtection);
+        Deployments.writeVaultRecovery(vaultRecovery);
         Deployments.writePriceGuard(priceGuard);
         Deployments.writePriceGuardReader(PriceGuard(priceGuard).READER());
         if (feedRegistryCreated) Deployments.writeFeedRegistry(feedRegistry);
@@ -1552,6 +1560,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("readyBalanceFacet", address(readyBalanceFacet));
         Deployments.writeFacet("feeLevelsFacet", address(feeLevelsFacet));
         Deployments.writeFacet("settlementLegFacet", address(settlementLegFacet));
+        Deployments.writeFacet("recoveryClawbackFacet", address(recoveryClawbackFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
         Deployments.writeFacet("refinancePayoffFacet", address(refinancePayoffFacet));
@@ -1713,7 +1722,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         e.priceGuard = priceGuard; // #3447, built in 5c-ii
         // #3379 B2 — the protected-mode code every vault delegatecalls:
         // stateless, not upgradeable, fixed in the vault code.
-        vaultProtection = ArtifactDeploy.deploy(type(VaultProtection).name);
+        // #3246 part 2 — the recovery-address and clawback code, fixed in it.
+        vaultRecovery = ArtifactDeploy.deploy(type(VaultRecovery).name);
+        vaultProtection = ArtifactDeploy.deploy(type(VaultProtection).name, abi.encode(vaultRecovery));
         e.protection = vaultProtection;
         bool production = Deployments.requiresProductionGovernance();
         if (production) {
@@ -2305,6 +2316,16 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[1] = FeeLevelsFacet.getLoanInitiationFeeTerms.selector;
         s[2] = FeeLevelsFacet.quoteLoanInitiationFee.selector;
         s[3] = FeeLevelsFacet.quoteExtensionFee.selector;
+    }
+
+    /// @dev Selectors for `RecoveryClawbackFacet` (#3246 part 2) — the
+    ///      clawback to a protected account's recovery address and the
+    ///      recovered account's sweep.
+    function _getRecoveryClawbackSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = RecoveryClawbackFacet.applyClawback.selector;
+        s[1] = RecoveryClawbackFacet.sweepRecovered.selector;
+        s[2] = RecoveryClawbackFacet.recoveryMovable.selector;
     }
 
     /// @dev Selectors for `SettlementLegFacet` (#3669) — the one host for a

@@ -98,6 +98,7 @@ import {OfferMaterializeFacet} from "../src/facets/OfferMaterializeFacet.sol";
 import {CollectionOfferFacet} from "../src/facets/CollectionOfferFacet.sol";
 import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
+import {RecoveryClawbackFacet} from "../src/facets/RecoveryClawbackFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
@@ -348,7 +349,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // 126 -> 127: SettlementLegFacet (#3669) - the one host for a settlement
     // leg the token refuses (park in the payer's vault under a lien, release
     // at the claim). Its selectors are new (Adds).
-    uint256 public constant EXPECTED_FACETS = 127;
+    // 127 -> 128: RecoveryClawbackFacet (#3246 part 2) - the clawback to a
+    // protected account's recovery address; its selectors are new (Adds).
+    uint256 public constant EXPECTED_FACETS = 128;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1427,6 +1430,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         );
         items[125] = Item("feeLevelsFacet", ArtifactDeploy.deploy(type(FeeLevelsFacet).name), _getFeeLevelsSelectors());
         items[126] = Item("settlementLegFacet", ArtifactDeploy.deploy(type(SettlementLegFacet).name), _getSettlementLegSelectors());
+        items[127] = Item(
+            "recoveryClawbackFacet", ArtifactDeploy.deploy(type(RecoveryClawbackFacet).name), _getRecoveryClawbackSelectors()
+        );
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

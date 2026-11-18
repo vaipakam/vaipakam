@@ -107,6 +107,50 @@ library LibVaultProtectionStorage {
         /// @dev Codex #3489 r16 — the last allowlist request number handed
         ///      out; every `addAllowlisted` takes the next one. Appended.
         uint64 allowRequests;
+        // ─── #3246 part 2 — the recovery address and the clawback ───────
+        /// @dev The recovery address in force (0 = none). Written only when a
+        ///      pending setting matures into it ({VaultProtection}), or by a
+        ///      clear while protected mode is off. A pending setting whose wait
+        ///      has passed also counts as in force before it is written here
+        ///      ({recoveryInForce} below). Appended.
+        address recovery;
+        /// @dev A pending first setting or change, the time it comes into
+        ///      force, and the epoch it was asked in: a lock, a replacement, a
+        ///      switch-off and a clawback advance the epoch, which drops it.
+        ///      Appended.
+        address pendingRecovery;
+        uint64 pendingRecoveryAt;
+        uint64 pendingRecoveryEpoch;
+        /// @dev Set by the first clawback and never cleared: the account stays
+        ///      locked, opens nothing and its positions cannot leave it.
+        ///      Appended.
+        bool recovered;
+        uint64 recoveredAt;
+    }
+
+    /// @notice #3246 part 2 — THE rule for the recovery address in force:
+    ///         a pending setting or change counts once its wait has passed,
+    ///         but only while the epoch it was asked in is still current (a
+    ///         lock, a replacement, a switch-off or a clawback advance the
+    ///         epoch, which drops it), else the written address. 0 = none.
+    ///         The protection code, the vault's own destination check and
+    ///         every Diamond read use this one function.
+    function recoveryInForce(Layout storage l) internal view returns (address) {
+        address p = l.pendingRecovery;
+        if (p != address(0) && l.pendingRecoveryEpoch == l.epoch && block.timestamp >= l.pendingRecoveryAt) {
+            return p;
+        }
+        return l.recovery;
+    }
+
+    /// @notice The pending setting or change still alive (its epoch is the
+    ///         current one and its wait has not passed), or 0.
+    function recoveryPending(Layout storage l) internal view returns (address) {
+        address p = l.pendingRecovery;
+        if (p != address(0) && l.pendingRecoveryEpoch == l.epoch && block.timestamp < l.pendingRecoveryAt) {
+            return p;
+        }
+        return address(0);
     }
 
     function layout() internal pure returns (Layout storage l) {

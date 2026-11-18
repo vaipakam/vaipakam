@@ -1,30 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {LibVaultProtectionStorage as P} from "./LibVaultProtectionStorage.sol";
-
-/// @dev The vault entries the protection code reaches through the vault
-///      itself (a call to `address(this)` while running in the vault).
-interface IProtectedVaultSelf {
-    function vaultOwner() external view returns (address);
-    function vaultDiamond() external view returns (address);
-    function vaultCreationOwner() external view returns (address);
-    function setOwnerFromProtection(address newOwner) external;
-}
-
-/// @dev The one platform read the protection code makes: the account's queued
-///      payout rows, which a switch-off waits for (they move into the vault
-///      with the liens in Stage B3).
-/// @dev The Diamond's permissionless application of a vault's protected
-///      posture ({ProtectedAccountFacet.applyProtection}).
-interface IProtectionApply {
-    function applyProtection(address account) external;
-}
-
-interface IPayoutRowsView {
-    function getPendingPayoutIds(address account) external view returns (uint256[] memory);
-}
+import {VaultProtectionBase, IProtectedVaultSelf, IPayoutRowsView} from "./VaultProtectionBase.sol";
 
 /**
  * @title  VaultProtection
@@ -59,173 +37,41 @@ interface IPayoutRowsView {
  *         the moment a majority of at least three signers is reached.
  *
  *         **One event per record write**, named for what it changed.
+ *
+ *         **The recovery address and the clawback** (#3246 part 2) live in
+ *         {VaultRecovery}, fixed in this code as {RECOVERY}: a selector this
+ *         contract does not carry is delegatecalled there, still inside the
+ *         vault, so the vault keeps one entry (`protect`) and one record.
  */
-contract VaultProtection {
-    // ─── Bounds (owner decisions, as today) ─────────────────────────────
+contract VaultProtection is VaultProtectionBase {
+    /// @notice The recovery-address and clawback code (#3246 part 2), fixed
+    ///         here like every other endpoint of the vault code.
+    address public immutable RECOVERY;
 
-    uint32 public constant MIN_DELAY = 2 days;
-    uint32 public constant MAX_DELAY = 5 days;
-    uint256 public constant MAX_SIGNERS = 5;
-    uint256 public constant MIN_RECOVERY_SIGNERS = 3;
-    uint256 public constant MAX_ALLOWLIST = 5;
+    /// @notice The recovery code address holds no code.
+    error RecoveryCodeMissing();
 
-    // ─── Purposes (nonce lanes, one typehash each) ──────────────────────
-
-    uint8 public constant PURPOSE_SETTINGS = 1;
-    uint8 public constant PURPOSE_ALLOWLIST_ADD = 2;
-    uint8 public constant PURPOSE_ALLOWLIST_CANCEL = 3;
-    uint8 public constant PURPOSE_SIGNER_CHANGE = 4;
-    uint8 public constant PURPOSE_REPLACEMENT = 5;
-    uint8 public constant PURPOSE_LOCK = 6;
-    uint8 public constant PURPOSE_VERIFY = 7;
-
-    // Actions inside a purpose.
-    uint8 public constant SETTINGS_ENABLE = 1;
-    uint8 public constant SETTINGS_DELAY = 2;
-    uint8 public constant SETTINGS_DISABLE = 3;
-    uint8 public constant SETTINGS_UNLOCK = 4;
-    uint8 public constant SIGNER_ADD = 1;
-    uint8 public constant SIGNER_ACCEPT = 2;
-    uint8 public constant SIGNER_REMOVE = 3;
-    uint8 public constant SIGNER_CANCEL = 4;
-    uint8 public constant REPLACE_PROPOSE = 1;
-    uint8 public constant REPLACE_APPROVE = 2;
-    uint8 public constant REPLACE_CANCEL = 3;
-
-    bytes32 private constant DOMAIN_TYPEHASH =
-        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
-    bytes32 private constant NAME_HASH = keccak256("Vaipakam Vault");
-    bytes32 private constant VERSION_HASH = keccak256("1");
-
-    bytes32 public constant SETTINGS_TYPEHASH =
-        keccak256("Settings(uint8 action,uint256 value,uint256 nonce,uint64 expiry)");
-    bytes32 public constant ALLOWLIST_ADD_TYPEHASH =
-        keccak256("AllowlistAdd(address destination,uint256 nonce,uint64 expiry)");
-    bytes32 public constant ALLOWLIST_CANCEL_TYPEHASH =
-        keccak256("AllowlistCancel(address destination,uint256 nonce,uint64 expiry)");
-    /// @dev Codex #3489 r1 — every operation has its OWN typehash, so a
-    ///      signature for one can never be replayed as another (a protective
-    ///      cancel as a loosening request) even where two nonce lanes meet.
-    bytes32 public constant ALLOWLIST_REMOVE_TYPEHASH =
-        keccak256("AllowlistRemove(address destination,uint256 nonce,uint64 expiry)");
-    bytes32 public constant SETTING_CANCEL_TYPEHASH =
-        keccak256("SettingCancel(uint8 action,uint256 nonce,uint64 expiry)");
-    bytes32 public constant SIGNER_CHANGE_TYPEHASH =
-        keccak256("SignerChange(uint8 action,address signer,uint256 nonce,uint64 expiry)");
-    /// @dev Codex #3489 r2/r3 — ONE signed shape for every replacement
-    ///      action (propose, approve, cancel), bound to the proposal ROUND in
-    ///      force when it is submitted, so no action's signature outlives the
-    ///      proposal it was given for: a cancel or an approval held from an
-    ///      earlier round is refused after a re-proposal, even of the same
-    ///      nominee. A proposal signs the round it replaces (0 for none).
-    bytes32 public constant REPLACEMENT_TYPEHASH =
-        keccak256("Replacement(uint8 action,address nominee,uint32 round,uint256 nonce,uint64 expiry)");
-    bytes32 public constant LOCK_TYPEHASH = keccak256("Lock(uint256 nonce,uint64 expiry)");
-    /// @dev #3415 — the destination names the account (the vault's creation
-    ///      owner), the Diamond and, through the domain, the chain and vault.
-    bytes32 public constant VERIFY_TYPEHASH =
-        keccak256("VerifyDestination(address account,address diamond,uint64 request,uint256 nonce,uint64 expiry)");
-
-    /// @notice How a key authorizes one write: `sig` empty means a direct call
-    ///         from `key`; otherwise its EIP-712 / ERC-1271 signature.
-    struct Auth {
-        address key;
-        uint64 expiry;
-        bytes sig;
+    constructor(address recovery) {
+        if (recovery.code.length == 0) revert RecoveryCodeMissing();
+        RECOVERY = recovery;
     }
 
-    address private immutable SELF;
-
-    // ─── Events (one per record write) ──────────────────────────────────
-    //
-    // #3719 — every event names the ACCOUNT (the vault's creation owner, the
-    // account's stable identity across a primary replacement) as its first,
-    // indexed field, so an alert service can filter one account's events
-    // without first mapping vault addresses to accounts.
-
-    event ProtectionEnabled(address indexed account, uint32 delay, address by);
-    event ProtectionSettingRequested(address indexed account, uint8 indexed action, uint256 value, uint64 at, address by);
-    event ProtectionSettingApplied(address indexed account, uint8 indexed action, uint256 value);
-    event ProtectionSettingCancelled(address indexed account, uint8 indexed action, address by);
-    event ProtectionDisabled(address indexed account);
-    event AllowlistAddRequested(address indexed account, address indexed destination, uint64 readyAt, address by);
-    event AllowlistAddCancelled(address indexed account, address indexed destination, address by);
-    event AllowlistAdded(address indexed account, address indexed destination);
-    event AllowlistRemoved(address indexed account, address indexed destination, address by);
-    event DestinationVerified(address indexed account, address indexed destination);
-    event SignerAddRequested(address indexed account, address indexed signer, uint64 readyAt, address by);
-    event SignerAccepted(address indexed account, address indexed signer);
-    event SignerAdded(address indexed account, address indexed signer);
-    event SignerRemoveRequested(address indexed account, address indexed signer, uint64 readyAt, address by);
-    event SignerChangeCancelled(address indexed account, address indexed signer, address by);
-    event SignerRemoved(address indexed account, address indexed signer);
-    event VaultLocked(address indexed account, address indexed by);
-    event ReplacementProposed(address indexed account, address indexed nominee, address indexed by, uint32 round);
-    event ReplacementApproved(address indexed account, address indexed nominee, address indexed signer, uint256 approvals, uint256 threshold);
-    event ReplacementScheduled(address indexed account, address indexed nominee, uint64 readyAt);
-    event ReplacementCancelled(address indexed account, address indexed nominee, address by);
-    event PrimaryReplaced(address indexed account, address indexed previousOwner, address indexed newOwner, uint64 cooldownUntil);
-    event NonceBurned(address indexed account, address indexed key, uint8 indexed purpose, uint256 nonce);
-
-    /// @notice #3719 — a role on the account changed: the owner (primary
-    ///         wallet), a secondary signer, or the recovery nominee (a
-    ///         replacement proposed, then cleared by its cancellation or
-    ///         completion). `oldAddr` 0 = the role was added; `newAddr` 0 =
-    ///         removed. Emitted beside the specific event, so one filter on
-    ///         this topic catches every change an alert must report.
-    event ProtectionRoleChanged(address indexed account, uint8 indexed role, address oldAddr, address newAddr);
-
-    /// @notice {ProtectionRoleChanged} roles.
-    uint8 public constant ROLE_OWNER = 0;
-    uint8 public constant ROLE_SIGNER = 1;
-    uint8 public constant ROLE_RECOVERY_NOMINEE = 2;
-
-    // ─── Errors ─────────────────────────────────────────────────────────
-
-    error NotDelegateCall();
-    error NotEnabled();
-    error AlreadyEnabled();
-    error Locked();
-    error NotLocked();
-    error InCooldown(uint64 until);
-    error BadDelay(uint32 delay);
-    error NotOwner(address key);
-    error NotOwnerOrSigner(address key);
-    error NotSigner(address key);
-    error BadSignature(address key);
-    error SignatureExpired(uint64 expiry);
-    error BadDestination(address destination);
-    error TooMany();
-    error NotRequested();
-    error NotReady(uint64 readyAt);
-    error Expired(uint64 expiredAt);
-    error BadNominee(address nominee);
-    /// @dev Codex #3489 r4 — a replacement may not name the account's own
-    ///      wallet: neither its creation owner (which would undo the
-    ///      retirement) nor the wallet that holds it now.
-    error NomineeIsAccountWallet(address nominee);
-    error NotEnoughSigners(uint256 have, uint256 need);
-    error AlreadyApproved();
-    error NoProposal();
-    error OwnerBlockedBySignerLock();
-    error PendingRowsExist();
-    /// @dev Codex #3489 r5 — a replaced account's protection is permanent.
-    error RetiredAccount();
-    error CannotCancelOwnRemoval(address signer);
-    /// @notice The platform application ran out of gas: the transaction was
-    ///         sent with too little gas for it, so the vault's change is
-    ///         refused rather than landing without its platform side.
-    error PlatformApplyOutOfGas();
-
-    constructor() {
-        SELF = address(this);
-    }
-
-    /// @dev Every write runs only inside a vault (a delegatecall), never on
-    ///      this contract's own storage.
-    modifier onlyDelegateCall() {
+    /// @dev Every selector this contract does not carry runs in {RECOVERY},
+    ///      still inside the vault (a nested delegatecall keeps its storage
+    ///      and caller). Refused on this contract's own storage.
+    fallback() external {
         if (address(this) == SELF) revert NotDelegateCall();
-        _;
+        (bool ok, bytes memory ret) = RECOVERY.delegatecall(msg.data);
+        // `ret` is a memory bytes this function already holds; both blocks
+        // read only inside it and end the call.
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(ret, 0x20), mload(ret))
+            }
+        }
+        assembly ("memory-safe") {
+            return(add(ret, 0x20), mload(ret))
+        }
     }
 
     // ─── Settings ───────────────────────────────────────────────────────
@@ -235,6 +81,9 @@ contract VaultProtection {
         P.Layout storage l = P.layout();
         if (l.enabled) revert AlreadyEnabled();
         _checkDelay(delay);
+        // #3246 part 2 — protected mode needs its exit first: a recovery
+        // address set, pending or in force (3.5).
+        if (!_hasRecovery(l)) revert RecoveryRequired();
         _asOwner(auth, PURPOSE_SETTINGS, keccak256(abi.encode(SETTINGS_TYPEHASH, SETTINGS_ENABLE, uint256(delay), _nonce(auth.key, PURPOSE_SETTINGS), auth.expiry)));
         l.enabled = true;
         l.delay = delay;
@@ -273,6 +122,9 @@ contract VaultProtection {
         // payouts keep their vault routing AND their delay (spec,
         // REPLACEMENT), so its protection cannot be switched off.
         if (l.retired) revert RetiredAccount();
+        // #3246 part 2 — and a recovered one, whose recovered state never
+        // clears (4.4).
+        if (l.recovered) revert RecoveredAccount();
         _loosenable(l);
         _asOwner(auth, PURPOSE_SETTINGS, keccak256(abi.encode(SETTINGS_TYPEHASH, SETTINGS_DISABLE, uint256(0), _nonce(auth.key, PURPOSE_SETTINGS), auth.expiry)));
         l.pendingDisableAt = _later(l);
@@ -283,6 +135,8 @@ contract VaultProtection {
     function requestUnlock(Auth calldata auth) external onlyDelegateCall {
         P.Layout storage l = _enabled();
         if (!l.locked) revert NotLocked();
+        // #3246 part 2 — a recovered account's lock never lifts (4.4).
+        if (l.recovered) revert RecoveredAccount();
         _noCooldown(l);
         _asOwner(auth, PURPOSE_SETTINGS, keccak256(abi.encode(SETTINGS_TYPEHASH, SETTINGS_UNLOCK, uint256(0), _nonce(auth.key, PURPOSE_SETTINGS), auth.expiry)));
         l.pendingUnlockAt = _later(l);
@@ -369,7 +223,10 @@ contract VaultProtection {
         _loosenable(l);
         _asOwner(auth, PURPOSE_ALLOWLIST_ADD, keccak256(abi.encode(ALLOWLIST_ADD_TYPEHASH, destination, _nonce(auth.key, PURPOSE_ALLOWLIST_ADD), auth.expiry)));
         P.Entry storage e = l.allow[destination];
-        if (destination == address(0) || _isAccountWallet(destination) || destination == address(this) || e.active) {
+        if (
+            destination == address(0) || _isAccountWallet(destination) || destination == address(this) || e.active
+                || _isRecovery(l, destination)
+        ) {
             revert BadDestination(destination);
         }
         if (l.allowlist.length >= MAX_ALLOWLIST) revert TooMany();
@@ -408,6 +265,8 @@ contract VaultProtection {
         if (l.locked) revert Locked();
         P.Entry storage e = l.allow[destination];
         if (e.active || e.readyAt == 0 || e.epoch != l.epoch) revert NotRequested();
+        // #3246 part 2 — checked again at finalization (3.1).
+        if (_isRecovery(l, destination)) revert BadDestination(destination);
         _inWindow(l, e.readyAt);
         if (l.allowlist.length >= MAX_ALLOWLIST) revert TooMany();
         e.active = true;
@@ -472,6 +331,10 @@ contract VaultProtection {
             // manages it (Codex #3489 r7).
             if (_isAccountWallet(who)) revert NomineeIsAccountWallet(who);
             if (who == address(0) || sg.active || l.allow[who].active) revert BadNominee(who);
+            // #3246 part 2 — a signer needs the exit first (3.5), and is
+            // never the recovery address (3.1).
+            if (!_hasRecovery(l)) revert RecoveryRequired();
+            if (_isRecovery(l, who)) revert BadNominee(who);
             if (l.signers.length >= MAX_SIGNERS) revert TooMany();
             if (sg.addAt == 0 || sg.epoch != l.epoch) {
                 address[] storage pending = l.pendingSigners[l.epoch];
@@ -528,6 +391,11 @@ contract VaultProtection {
             // Re-checked here: a replacement between the request and now may
             // have made the nominee one of the account's own wallets.
             if (_isAccountWallet(who)) revert NomineeIsAccountWallet(who);
+            // #3246 part 2 — finalizing a signer needs a recovery address IN
+            // FORCE; without one the addition stays pending until it expires
+            // (3.5). And the signer is never the recovery address (3.1).
+            if (P.recoveryInForce(l) == address(0)) revert RecoveryRequired();
+            if (_isRecovery(l, who)) revert BadNominee(who);
             _inWindow(l, sg.addAt);
             if (l.signers.length >= MAX_SIGNERS) revert TooMany();
             sg.addAt = 0;
@@ -636,7 +504,7 @@ contract VaultProtection {
                 revert NotEnoughSigners(l.signers.length, MIN_RECOVERY_SIGNERS);
             }
             if (_isAccountWallet(nominee)) revert NomineeIsAccountWallet(nominee);
-            if (nominee == address(0) || nominee == address(this) || l.signer[nominee].active) {
+            if (nominee == address(0) || nominee == address(this) || l.signer[nominee].active || _isRecovery(l, nominee)) {
                 revert BadNominee(nominee);
             }
             emit ProtectionRoleChanged(_account(), ROLE_RECOVERY_NOMINEE, l.nominee, nominee);
@@ -683,11 +551,15 @@ contract VaultProtection {
             (uint256 approvals, uint256 threshold) = _tally(l);
             if (l.signers.length < MIN_RECOVERY_SIGNERS || approvals < threshold) revert NotReady(l.readyAt);
         }
-        if (l.signer[nominee].active) revert BadNominee(nominee);
+        if (l.signer[nominee].active || _isRecovery(l, nominee)) revert BadNominee(nominee);
         _clearProposal(l);
-        l.locked = false;
-        l.lockedBy = address(0);
-        l.lockedAt = 0;
+        // #3246 part 2 — a recovered account stays locked through a
+        // replacement (4.4, 4.5); any other replacement lifts the lock.
+        if (!l.recovered) {
+            l.locked = false;
+            l.lockedBy = address(0);
+            l.lockedAt = 0;
+        }
         l.pendingUnlockAt = 0;
         _dropPending(l);
         while (l.allowlist.length != 0) _dropAllow(l, l.allowlist[l.allowlist.length - 1]);
@@ -711,212 +583,5 @@ contract VaultProtection {
     function burnNonce(uint8 purpose) external onlyDelegateCall {
         uint256 n = P.layout().nonces[msg.sender][purpose]++;
         emit NonceBurned(_account(), msg.sender, purpose, n);
-    }
-
-    // ─── Internals ──────────────────────────────────────────────────────
-
-    /// @dev The Diamond's refusal when its record already matches the vault
-    ///      (`LibProtectedAccount.ChangeNotRequested()`): nothing to apply.
-    bytes4 private constant CHANGE_NOT_REQUESTED = bytes4(keccak256("ChangeNotRequested()"));
-
-    /// @dev Apply this vault's posture on the platform side, through the
-    ///      Diamond's permissionless `applyProtection` (the queued payouts
-    ///      cancelled, the platform-held pending changes voided, the position
-    ///      NFTs held), in the same transaction as the vault's own change. It
-    ///      is STRICT (owner security review of #3489): a lock, an unlock, a
-    ///      switch-off and a replacement each change the posture the platform
-    ///      applies, so any refusal reverts the vault's change with it (the
-    ///      Diamond's reentrancy guard included); an out-of-gas failure, which
-    ///      carries no data, reverts as {PlatformApplyOutOfGas} so a gas
-    ///      estimate funds the application. The one tolerated answer is
-    ///      "nothing to apply" (the platform already matches the vault, as for
-    ///      a switch-off the platform never saw switched on).
-    function _applyPlatform() private {
-        IProtectedVaultSelf self = IProtectedVaultSelf(address(this));
-        IProtectionApply diamondApply = IProtectionApply(self.vaultDiamond());
-        try diamondApply.applyProtection(self.vaultCreationOwner()) {}
-        catch (bytes memory reason) {
-            if (reason.length == 0) revert PlatformApplyOutOfGas();
-            if (reason.length == 4 && bytes4(reason) == CHANGE_NOT_REQUESTED) return;
-            assembly ("memory-safe") {
-                revert(add(reason, 0x20), mload(reason))
-            }
-        }
-    }
-
-    /// @dev The ONE rule for "the account's own wallets" (Codex #3489 r7):
-    ///      its creation owner (the original wallet, retired for good once a
-    ///      replacement moved the owner record) and the wallet that holds it
-    ///      now. Neither may be named as a signer, a replacement nominee or a
-    ///      payout destination.
-    function _isAccountWallet(address a) private view returns (bool) {
-        return a == _owner() || a == IProtectedVaultSelf(address(this)).vaultCreationOwner();
-    }
-
-    /// @dev #3719 — the account every event names: the vault's creation
-    ///      owner, which a primary replacement does not change.
-    function _account() private view returns (address) {
-        return IProtectedVaultSelf(address(this)).vaultCreationOwner();
-    }
-
-    function _owner() private view returns (address) {
-        return IProtectedVaultSelf(address(this)).vaultOwner();
-    }
-
-    function _nonce(address key, uint8 purpose) private view returns (uint256) {
-        return P.layout().nonces[key][purpose];
-    }
-
-    /// @dev Authorizes `auth` as the owner; returns the owner.
-    function _asOwner(Auth calldata auth, uint8 purpose, bytes32 structHash) private returns (address owner) {
-        owner = _owner();
-        if (auth.key != owner) revert NotOwner(auth.key);
-        _authorize(auth, purpose, structHash);
-    }
-
-    function _asOwnerOrSigner(Auth calldata auth, uint8 purpose, bytes32 structHash) private {
-        if (auth.key != _owner() && !P.layout().signer[auth.key].active) revert NotOwnerOrSigner(auth.key);
-        _authorize(auth, purpose, structHash);
-    }
-
-    /// @dev THE authorization rule: a direct call from the key, or the key's
-    ///      EIP-712 signature (ERC-1271 for a contract) over `structHash`,
-    ///      unexpired, spending its nonce for `purpose`.
-    function _authorize(Auth calldata auth, uint8 purpose, bytes32 structHash) private {
-        if (auth.sig.length == 0) {
-            if (msg.sender != auth.key) revert BadSignature(auth.key);
-            return;
-        }
-        if (block.timestamp > auth.expiry) revert SignatureExpired(auth.expiry);
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSeparator(), structHash));
-        if (!SignatureChecker.isValidSignatureNow(auth.key, digest, auth.sig)) revert BadSignature(auth.key);
-        P.layout().nonces[auth.key][purpose]++;
-    }
-
-    /// @notice The EIP-712 domain of the vault this code runs in.
-    function domainSeparator() public view returns (bytes32) {
-        return keccak256(abi.encode(DOMAIN_TYPEHASH, NAME_HASH, VERSION_HASH, block.chainid, address(this)));
-    }
-
-    function _enabled() private view returns (P.Layout storage l) {
-        l = P.layout();
-        if (!l.enabled) revert NotEnabled();
-    }
-
-    function _checkDelay(uint32 delay) private pure {
-        if (delay < MIN_DELAY || delay > MAX_DELAY) revert BadDelay(delay);
-    }
-
-    /// @dev A loosening change is refused while locked or in a cool-down.
-    function _loosenable(P.Layout storage l) private view {
-        if (l.locked) revert Locked();
-        _noCooldown(l);
-    }
-
-    function _noCooldown(P.Layout storage l) private view {
-        if (block.timestamp < l.cooldownUntil) revert InCooldown(l.cooldownUntil);
-    }
-
-    function _later(P.Layout storage l) private view returns (uint64) {
-        return uint64(block.timestamp) + l.delay;
-    }
-
-    /// @dev Matured, and not past one further delay (then it expired).
-    function _inWindow(P.Layout storage l, uint64 readyAt) private view {
-        if (block.timestamp < readyAt) revert NotReady(readyAt);
-        uint64 expiresAt = readyAt + l.delay;
-        if (block.timestamp > expiresAt) revert Expired(expiresAt);
-    }
-
-    /// @dev Every pending change dies: a new epoch, and the setting requests
-    ///      that loosen (a pending lowering, a switch-off) are cleared.
-    function _dropPending(P.Layout storage l) private {
-        l.epoch += 1;
-        l.pendingDelayAt = 0;
-        l.pendingDisableAt = 0;
-    }
-
-    function _approve(P.Layout storage l, address signerKey) private {
-        if (l.approved[l.round][signerKey]) revert AlreadyApproved();
-        l.approved[l.round][signerKey] = true;
-        (uint256 approvals, uint256 threshold) = _tally(l);
-        emit ReplacementApproved(_account(), l.nominee, signerKey, approvals, threshold);
-        if (l.readyAt == 0 && approvals >= threshold) {
-            l.readyAt = _later(l);
-            emit ReplacementScheduled(_account(), l.nominee, l.readyAt);
-        }
-    }
-
-    /// @dev Approvals of the current round by ACTIVE signers, and the majority.
-    function _tally(P.Layout storage l) private view returns (uint256 approvals, uint256 threshold) {
-        uint256 n = l.signers.length;
-        for (uint256 i; i < n; ++i) {
-            if (l.approved[l.round][l.signers[i]]) ++approvals;
-        }
-        threshold = n / 2 + 1;
-    }
-
-    function _clearProposal(P.Layout storage l) private {
-        l.nominee = address(0);
-        l.proposedBy = address(0);
-        l.readyAt = 0;
-    }
-
-    function _dropAllow(P.Layout storage l, address destination) private {
-        delete l.allow[destination];
-        uint256 n = l.allowlist.length;
-        for (uint256 i; i < n; ++i) {
-            if (l.allowlist[i] == destination) {
-                l.allowlist[i] = l.allowlist[n - 1];
-                l.allowlist.pop();
-                return;
-            }
-        }
-    }
-
-    /// @dev Remove `who` from a pending list (at most five long).
-    function _remove(address[] storage list, address who) private {
-        uint256 n = list.length;
-        for (uint256 i; i < n; ++i) {
-            if (list[i] == who) {
-                list[i] = list[n - 1];
-                list.pop();
-                return;
-            }
-        }
-    }
-
-    function _dropSigner(P.Layout storage l, address who) private {
-        uint256 n = l.signers.length;
-        for (uint256 i; i < n; ++i) {
-            if (l.signers[i] == who) {
-                l.signers[i] = l.signers[n - 1];
-                l.signers.pop();
-                if (n == 1) ++l.signersEmptied;
-                return;
-            }
-        }
-    }
-
-    /// @dev Switch-off: the record returns to empty; nonces are kept, so no
-    ///      signature given before can be replayed after a re-enable.
-    function _clear(P.Layout storage l) private {
-        while (l.allowlist.length != 0) _dropAllow(l, l.allowlist[l.allowlist.length - 1]);
-        if (l.signers.length != 0) ++l.signersEmptied;
-        while (l.signers.length != 0) {
-            address s = l.signers[l.signers.length - 1];
-            delete l.signer[s];
-            l.signers.pop();
-        }
-        _clearProposal(l);
-        l.enabled = false;
-        l.locked = false;
-        l.lockedBy = address(0);
-        l.lockedAt = 0;
-        l.delay = 0;
-        l.pendingDelayAt = 0;
-        l.pendingUnlockAt = 0;
-        l.pendingDisableAt = 0;
-        l.epoch += 1;
     }
 }

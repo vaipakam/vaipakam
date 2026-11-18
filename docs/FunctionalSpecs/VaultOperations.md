@@ -167,6 +167,43 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   card currently offers only the connected wallet's own reserves, so it does
   not yet expose withdrawing a replaced account's reserve for its controller.
 
+## Recovery address and clawback
+
+The exit from a locked protected account (#3246 part 2; design:
+[RecoveryAddressClawbackDesign](../DesignsAndPlans/RecoveryAddressClawbackDesign.md)).
+
+- Protected mode needs a recovery address before it switches on, and a
+  signer can be finalized only while one is in force. The address proves it
+  is controlled (its own call or signature naming the account and the
+  platform) and can never be the account's wallets, its vault, the platform,
+  a signer, a nominee or an allowlisted destination, from either side.
+- A first setting comes into force after twice the account's delay (twice the
+  shortest delay while protected mode is off); a change after 30 days, the
+  current address staying in force until then. The owner or any signer may
+  cancel a pending one; a lock, a replacement, a switch-off or a clawback
+  drops it. An address whose wait has already passed is never dropped.
+- The address is cleared only while protected mode is off. Switching
+  protected mode off keeps it.
+- The owner or any signer may claw the account back, while it is locked or
+  not, by a direct call or a signature anyone submits. It pays only the
+  recovery address in force, which no trigger names, and it moves only what
+  the owner could withdraw: liened collateral, claims and offer backing stay
+  until released. It does not wait the delay, the queue or the outflow brake.
+  A linked-chat trigger is not offered yet; it will need its own permission.
+- The first clawback locks the account for good. It opens nothing new, its
+  lock never lifts, protected mode cannot be switched off, and its position
+  tokens cannot be transferred. Its open offers and Auto-lend funding can no
+  longer fill and anyone may release them back into its vault; its Ready
+  balance lapses.
+- Anything that later reaches a recovered account's vault is swept on to the
+  recovery address by any caller; the sweep moves only free balance, only to
+  that address. A recovery address that is itself a protected account is paid
+  into its own vault.
+- While a recovery address is in force, the paused-platform escape route pays
+  it, not the owner wallet.
+- Every setting, change, cancellation, drop, clawback and sweep is recorded
+  with the account, the address and the amounts.
+
 ## Pause escape and implementation pinning
 
 - A continuous administrative pause lasting the escape period opens the

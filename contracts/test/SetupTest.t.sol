@@ -58,6 +58,7 @@ import {OfferMaterializeFacet} from "../src/facets/OfferMaterializeFacet.sol";
 import {CollectionOfferFacet} from "../src/facets/CollectionOfferFacet.sol";
 import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
+import {RecoveryClawbackFacet} from "../src/facets/RecoveryClawbackFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {TestOfferFloor} from "./helpers/TestOfferFloor.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -450,6 +451,7 @@ contract SetupTest is Test {
     CollectionOfferFacet collectionOfferFacet;
     FeeLevelsFacet feeLevelsFacet;
     SettlementLegFacet settlementLegFacet;
+    RecoveryClawbackFacet recoveryClawbackFacet;
     SaleExitVerdictFacet saleExitVerdictFacet;
     SellerClaimFacet sellerClaimFacet;
     RefinancePayoffFacet refinancePayoffFacet;
@@ -639,6 +641,7 @@ contract SetupTest is Test {
         collectionOfferFacet = CollectionOfferFacet(ArtifactDeploy.deploy(type(CollectionOfferFacet).name));
         feeLevelsFacet = FeeLevelsFacet(ArtifactDeploy.deploy(type(FeeLevelsFacet).name));
         settlementLegFacet = SettlementLegFacet(ArtifactDeploy.deploy(type(SettlementLegFacet).name));
+        recoveryClawbackFacet = RecoveryClawbackFacet(ArtifactDeploy.deploy(type(RecoveryClawbackFacet).name));
         saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
         sellerClaimFacet = SellerClaimFacet(ArtifactDeploy.deploy(type(SellerClaimFacet).name));
         refinancePayoffFacet = RefinancePayoffFacet(ArtifactDeploy.deploy(type(RefinancePayoffFacet).name));
@@ -676,7 +679,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](128);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](129);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1238,6 +1241,12 @@ contract SetupTest is Test {
             facetAddress: address(settlementLegFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getSettlementLegFacetSelectors()
+        });
+        // #3246 part 2 — the clawback to a recovery address.
+        cuts[128] = IDiamondCut.FacetCut({
+            facetAddress: address(recoveryClawbackFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRecoveryClawbackFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).

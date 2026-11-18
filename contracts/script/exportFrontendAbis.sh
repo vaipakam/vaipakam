@@ -324,6 +324,8 @@ FACETS=(
   "FeeLevelsFacet"
   # A refused settlement leg's park and release (#3669).
   "SettlementLegFacet"
+  # #3246 part 2: the clawback to a recovery address.
+  "RecoveryClawbackFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"
@@ -458,6 +460,9 @@ FACETS=(
   # #3379 B2 — the protected-mode rules every vault delegatecalls; the app
   # encodes its calls for `protect` and the indexer decodes its events.
   "VaultProtection"
+  # #3246 part 2 — the recovery-address and clawback code VaultProtection
+  # delegatecalls; the app encodes those writes for `protect`.
+  "VaultRecovery"
   # #2399 — the Diamond PROXY itself. Not a facet: its fallback raises
   # `FunctionDoesNotExist()` for an unrouted selector, the revert a stale ABI
   # produces. Listed under `proxy` in diamond-facets.json, and the combined

@@ -603,6 +603,22 @@
   },
   {
     "type": "error",
+    "name": "TransferFromRecoveredAccount",
+    "inputs": [
+      {
+        "name": "from",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "TransferFromRetiredAccount",
     "inputs": [
       {
