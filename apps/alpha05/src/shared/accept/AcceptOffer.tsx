@@ -283,7 +283,7 @@ export function AcceptOffer({ flowKey, source, chain, own, meta, terms, onClose 
   /** A borrower's acceptance: the loan, the net principal credited to the
    *  vault, the fee share paid back, and the collateral locked in the vault. */
   const measureBorrower = async (r: AcceptReview, offerId: bigint | null, logs: readonly Log[], at: AnchoredReader): Promise<LegOutcome[]> => {
-    const f = acceptFigures(r.preview, r.offer.durationDays, r.matcherBps);
+    const f = acceptFigures(r.preview, r.offer.durationDays, r.matcher);
     const legs: LegOutcome[] = [];
     const opened = offerId === null ? null : openedLoan(logs, diamond, offerId, account);
     legs.push(loanLeg(r, opened, 'accept.legLoan'));
@@ -367,7 +367,7 @@ export function AcceptOffer({ flowKey, source, chain, own, meta, terms, onClose 
    *  fee share other than the preview's (the borrower's discount or Full
    *  tariff is settled as the loan opens) is named, never assumed. */
   const measureLender = (r: AcceptReview, offerId: bigint | null, logs: readonly Log[]): LegOutcome[] => {
-    const f = lenderFigures(r.preview, r.offer.durationDays, r.matcherBps, 0n);
+    const f = lenderFigures(r.preview, r.offer.durationDays, r.matcher, 0n);
     const lending = r.offer.lendingAsset;
     const legs: LegOutcome[] = [loanLeg(r, offerId === null ? null : openedLoan(logs, diamond, offerId, r.offer.creator), 'lendAccept.legLoan')];
     const lent = moved(logs, lending, account, null);

@@ -115,6 +115,9 @@ import { fileURLToPath } from 'node:url';
 
 import { createPublicClient, decodeEventLog, hashStruct, http as viemHttp, recoverTypedDataAddress, toEventSelector } from 'viem';
 import { canonicalOrderJson, parseStoredOrderJson, SIGNED_OFFER_FIELDS } from '@vaipakam/lib/signedOfferWire';
+// The one wire-to-message rule the app and the indexer use (bytes32 fields
+// such as the set root stay hex), so the stand-in cannot drift from it.
+import { signedOfferMessage } from '@vaipakam/lib/signedOfferSet';
 
 /** How long a slowed agent answer waits (see the agent's `slow` control). */
 const SLOW_ANSWER_MS = 6_000;
@@ -542,17 +545,7 @@ const SIGNED_TYPES = { SignedOffer: SIGNED_OFFER_FIELDS };
 const SIGNED_CANCELLED = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'SignedOfferCancelled'));
 const SIGNED_NONCE_BURNED = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'SignedOfferNonceBurned'));
 
-/** The wire order as viem's typed-data encoder takes it. */
-function signedMessage(order) {
-  const m = {};
-  for (const { name, type } of SIGNED_OFFER_FIELDS) {
-    const v = order[name];
-    m[name] = type === 'address' || type === 'bool' ? v : /^uint(8|16|32)$/.test(type) ? Number(v) : BigInt(v);
-  }
-  return m;
-}
-
-const signedHashOf = (order) => hashStruct({ data: signedMessage(order), primaryType: 'SignedOffer', types: SIGNED_TYPES });
+const signedHashOf = (order) => hashStruct({ data: signedOfferMessage(order), primaryType: 'SignedOffer', types: SIGNED_TYPES });
 
 /** `POST /signed-offers`: the indexer's checks in the indexer's order, with
  *  its answers. */
@@ -583,7 +576,7 @@ async function postSignedOrder(raw) {
       domain: { name: 'Vaipakam SignedOffer', version: '1', chainId: CHAIN_ID, verifyingContract: DEPLOYMENT.diamond },
       types: SIGNED_TYPES,
       primaryType: 'SignedOffer',
-      message: signedMessage(order),
+      message: signedOfferMessage(order),
       signature: b.signature,
     });
   } catch {

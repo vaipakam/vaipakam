@@ -56,6 +56,7 @@ function row(o: StoredOffer, over: Partial<MatchRow> = {}): MatchRow {
       lifEstimate: 2n,
       collateralResidualRefund: 0n,
       error: 'None',
+      referralCut: 0n,
     },
     ltv: { kind: 'bps', bps: 5_000n },
     blocked: null,
@@ -129,7 +130,7 @@ describe('take it now at posting (#3622 B1)', () => {
   });
   it('picks at most a few, in the list’s order, and none without a read', () => {
     const rows = [1n, 2n, 3n, 4n, 5n].map((id) => row(offer({ id })));
-    const m = { rows, unread: [], skipped: {}, total: 5n, scanned: 5, matcherBps: 100n } as unknown as Matches;
+    const m = { rows, unread: [], skipped: {}, total: 5n, scanned: 5, matcher: { bps: 100n, floorBps: 10n } } as unknown as Matches;
     expect(takeNowPicks(draft(), m).map((r) => r.offer.id)).toEqual([1n, 2n, 3n].slice(0, TAKE_NOW_SHOWN));
     expect(takeNowPicks(draft(), null)).toEqual([]);
   });

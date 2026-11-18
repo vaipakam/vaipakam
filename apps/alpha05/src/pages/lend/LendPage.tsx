@@ -293,7 +293,7 @@ export function LendPage() {
             side="lender"
             picks={takeNowPicks(choice, view.data)}
             stale={view.error !== null}
-            matcherBps={view.data?.matcherBps ?? null}
+            matcher={view.data?.matcher ?? null}
             meta={meta}
             takeDisabled={takeDisabled}
             onTake={(id) => {

@@ -1,6 +1,7 @@
 import { useCopy } from '../copy/useCopy';
 import { OfferRow } from '../offers/MatchingOffers';
 import type { MatchRow } from '../offers/matches';
+import type { MatcherTerms } from '../offers/reads';
 import type { TokenMetaMap } from '../reads/tokens';
 import type { PostSide } from './postModel';
 
@@ -23,7 +24,7 @@ export function TakeNowChoice({
   side,
   picks,
   stale,
-  matcherBps,
+  matcher,
   meta,
   takeDisabled,
   onTake,
@@ -33,7 +34,7 @@ export function TakeNowChoice({
   side: PostSide;
   picks: MatchRow[];
   stale: boolean;
-  matcherBps: bigint | null;
+  matcher: MatcherTerms | null;
   meta: TokenMetaMap | null;
   takeDisabled: boolean;
   onTake: (id: bigint) => void;
@@ -60,7 +61,7 @@ export function TakeNowChoice({
       ) : (
         <ul className="rows offer-rows">
           {picks.map((row) => (
-            <OfferRow key={row.offer.id.toString()} role={side} row={row} matcherBps={matcherBps} meta={meta} onTake={onTake} takeDisabled={takeDisabled} />
+            <OfferRow key={row.offer.id.toString()} role={side} row={row} matcher={matcher} meta={meta} onTake={onTake} takeDisabled={takeDisabled} />
           ))}
         </ul>
       )}

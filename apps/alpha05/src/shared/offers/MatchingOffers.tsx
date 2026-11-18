@@ -10,6 +10,7 @@ import { formatBps, formatUtc } from '../ui/format';
 import { needFromAcceptCode } from '../risk/riskAccess';
 import { acceptErrorText, cadenceText, gateBlockText, stateText } from '../accept/acceptReview';
 import { MATCH_PAGE, type Matches, type MatchRow } from './matches';
+import type { MatcherTerms } from './reads';
 import { applyLimits, parseLimit, rateLadder } from './ladder';
 
 type Hex = `0x${string}`;
@@ -85,14 +86,14 @@ export interface MatchesView {
 export function OfferRow({
   role,
   row,
-  matcherBps,
+  matcher,
   meta,
   onTake,
   takeDisabled,
 }: {
   role: AcceptRole;
   row: MatchRow;
-  matcherBps: bigint | null;
+  matcher: MatcherTerms | null;
   meta: TokenMetaMap | null;
   onTake: (id: bigint) => void;
   takeDisabled: boolean;
@@ -115,11 +116,11 @@ export function OfferRow({
   else if (blocked?.kind === 'gate') blockedText = gateBlockText(blocked.block, copy, role);
   else if (blocked?.kind === 'moved') blockedText = text('accept.blockPositionMoved');
   else if (blocked?.kind === 'unread') blockedText = blocked.reason;
-  const f = row.preview && matcherBps !== null ? acceptFigures(row.preview, o.durationDays, matcherBps) : null;
+  const f = row.preview && matcher !== null ? acceptFigures(row.preview, o.durationDays, matcher) : null;
   // A lender's line needs no protocol share: it states what leaves the
   // wallet and the fee share that comes back, both from the preview.
   const payoff = role === 'lender' ? refinancePayoff(o) : null;
-  const lf = role === 'lender' && row.preview && matcherBps !== null ? lenderFigures(row.preview, o.durationDays, matcherBps, 0n) : null;
+  const lf = role === 'lender' && row.preview && matcher !== null ? lenderFigures(row.preview, o.durationDays, matcher, 0n) : null;
 
   return (
     <li className="card offer-row" data-offer-id={o.id.toString()} data-takeable={blocked ? 'false' : 'true'} data-risk-step={ownStep ? 'true' : undefined}>
@@ -275,7 +276,7 @@ export function MatchingOffers({
   const hidden = limited.aboveRate + limited.aboveLtv;
   const ladder = borrower ? rateLadder(live) : null;
   const row = (r: MatchRow) => (
-    <OfferRow key={r.offer.id.toString()} role={role} row={r} matcherBps={m!.matcherBps} meta={meta} onTake={onTake} takeDisabled={takeDisabled} />
+    <OfferRow key={r.offer.id.toString()} role={role} row={r} matcher={m!.matcher} meta={meta} onTake={onTake} takeDisabled={takeDisabled} />
   );
 
   return (

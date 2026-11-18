@@ -10,6 +10,7 @@ import { encodeFunctionData, type Abi } from 'viem';
 import type { Party, ScenarioChain } from '@vaipakam/anvil-harness/scenarioChain';
 import type { VaultProtectionState } from '@vaipakam/lib/protectedAccountView';
 import { directAuth } from '@vaipakam/lib/vaultProtectionAuth';
+import { accountFor, type Role } from './wallets';
 
 type Hex = `0x${string}`;
 
@@ -29,6 +30,8 @@ function protectionCall(functionName: string, args: readonly unknown[]): Hex {
   return encodeFunctionData({ abi: VAULT_PROTECTION, functionName, args } as never);
 }
 const ZERO = /^0x0{40}$/i;
+/** `VaultProtection.PURPOSE_RECOVERY_PROOF`. */
+const PURPOSE_RECOVERY_PROOF = 9;
 
 /** `account`'s vault, created (permissionlessly) when it has none. */
 export async function vaultOf(sc: ScenarioChain, account: Hex, create = false): Promise<Hex> {
@@ -48,11 +51,47 @@ export async function protect(sc: ScenarioChain, who: Party, account: Hex, funct
   await sc.write(who, vault, VAULT, 'protect', [data]);
 }
 
+/** #3246 part 2 — ask for `recovery`'s wallet as the recovery address of
+ *  `who`'s own account (the vault must exist): protected mode can be switched
+ *  on only once one is set, pending or in force. The owner asks, by its direct
+ *  call; the second test wallet proves control by signing `RecoveryProof`
+ *  with its next proof nonce, as the app's recovery step has it do. It holds
+ *  no account of `who` and is no signer or destination in the specs that use
+ *  this. Returns the address asked for. */
+export async function requestRecovery(sc: ScenarioChain, who: Party, recovery: Role = 'freshBorrower'): Promise<Hex> {
+  const account = sc.address(who);
+  const vault = await vaultOf(sc, account);
+  const key = accountFor(recovery);
+  const [chainId, block, nonce] = await Promise.all([
+    sc.pub.getChainId(),
+    sc.pub.getBlock(),
+    sc.pub.readContract({ address: vault, abi: VAULT, functionName: 'protectionNonce', args: [key.address, PURPOSE_RECOVERY_PROOF] }) as Promise<bigint>,
+  ]);
+  const expiry = block.timestamp + 3600n;
+  const sig = await key.signTypedData({
+    domain: { name: 'Vaipakam Vault', version: '1', chainId, verifyingContract: vault },
+    types: {
+      RecoveryProof: [
+        { name: 'account', type: 'address' },
+        { name: 'diamond', type: 'address' },
+        { name: 'nonce', type: 'uint256' },
+        { name: 'expiry', type: 'uint64' },
+      ],
+    },
+    primaryType: 'RecoveryProof',
+    message: { account, diamond: sc.diamond, nonce, expiry },
+  });
+  await protect(sc, who, account, 'requestRecoveryAddress', [key.address, directAuth(account), { key: key.address, expiry, sig }], false);
+  return key.address;
+}
+
 /** Protected mode on for `who`'s own account with `delaySeconds` (what the
- *  retired `enableProtectedMode(delay, false)` did). */
+ *  retired `enableProtectedMode(delay, false)` did), after asking for the
+ *  recovery address the switch-on needs (#3246 part 2). */
 export async function enableProtection(sc: ScenarioChain, who: Party, delaySeconds: number): Promise<void> {
   const account = sc.address(who);
   await vaultOf(sc, account, true);
+  await requestRecovery(sc, who);
   await protect(sc, who, account, 'enable', [delaySeconds]);
 }
 
