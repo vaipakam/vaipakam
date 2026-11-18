@@ -51,6 +51,10 @@ import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessCont
  *      transaction of its own: a `multicall` with one {acceptTerms} item per
  *      version.
  *
+ *      An aggregator adapter never accepts and is never exempt: its standing
+ *      is its principal's, who accepts with its own wallet before the adapter
+ *      can be created or take new positions.
+ *
  *      The rule lives once, in `LibTerms`; {requireCurrentTerms} is its one
  *      runtime host, which the opening steps self-call. Nothing here is
  *      pause-gated: a wallet can accept while the protocol is paused.
@@ -244,8 +248,9 @@ contract LegalFacet is DiamondPausable, DiamondAccessControl {
     ///         a new position as far as the Terms go. The one runtime host of
     ///         the rule; every opening step self-calls it.
     function requireCurrentTerms(address wallet) external view {
-        (bool current, uint32 needed) = LibTerms.isCurrent(LibVaipakam.storageSlot(), wallet);
-        if (!current) revert LibTerms.TermsNotAccepted(wallet, needed);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        (bool current, uint32 needed) = LibTerms.isCurrent(s, wallet);
+        if (!current) revert LibTerms.TermsNotAccepted(LibTerms.subject(s, wallet), needed);
     }
 
     /// @notice Whether `wallet` may take on a new position as far as the
@@ -257,7 +262,8 @@ contract LegalFacet is DiamondPausable, DiamondAccessControl {
     }
 
     /// @notice The first of `a`, `b` that is not current, and the latest
-    ///         version it should accept; (0, 0) when both are. For the
+    ///         version it should accept; (0, 0) when both are. For an
+    ///         aggregator adapter, the wallet returned is its principal. For the
     ///         previews, which report a refusal before a transaction is sent.
     ///         A zero address is skipped.
     function termsBlocker(address a, address b) external view returns (address wallet, uint32 version) {
@@ -265,11 +271,11 @@ contract LegalFacet is DiamondPausable, DiamondAccessControl {
         bool current;
         if (a != address(0)) {
             (current, version) = LibTerms.isCurrent(s, a);
-            if (!current) return (a, version);
+            if (!current) return (LibTerms.subject(s, a), version);
         }
         if (b != address(0)) {
             (current, version) = LibTerms.isCurrent(s, b);
-            if (!current) return (b, version);
+            if (!current) return (LibTerms.subject(s, b), version);
         }
         return (address(0), 0);
     }

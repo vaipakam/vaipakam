@@ -27,13 +27,13 @@
 //      reserve panel (data-testid extend-reserve) shows the chain's figures,
 //      reserved 0, naming a charge "now" only while the window is open. A small reserve is added through its
 //      six-row receipt (the exact amount stated): approve if needed, then
-//      fundExtendReserve(loanId, amount); getExtendFunding shows it reserved
-//      and the receipt carries ExtendReserveFunded.
+//      fundLoanReserve(loanId, 0, amount); getExtendFunding shows it reserved
+//      and the receipt carries LoanReserveFunded.
 //   4. Borrower: the reserve is withdrawn through its receipt with exactly
-//      one withdrawExtendReserve(borrower, loanId, amount); reserved reads 0,
+//      one withdrawLoanReserve(borrower, loanId, 0, amount); reserved reads 0,
 //      the outcome banner stays in view after the panel empties, and the
 //      indexer files the deposit under the borrower
-//      (GET /activity?actor=…&kind=ExtendReserveFunded; read last, so the
+//      (GET /activity?actor=…&kind=LoanReserveFunded; read last, so the
 //      indexer's lag behind the head is spent on the steps that follow).
 //   5. A second reserve is added; the LENDER's /claims lists no reserve; the
 //      BORROWER's /claims lists it under "Extension reserves" and it is
@@ -45,8 +45,8 @@
 // FUNDS MOVED, all on Base Sepolia with testnet tokens: no funds move to set
 // limits (gas only). Each deposit moves RESERVE of the loan's principal asset
 // from the borrower's wallet into the borrower's own vault, reserved for this
-// loan (ExtendReserveFunded); each withdrawal moves it back from the vault to
-// the borrower's wallet (ExtendReserveWithdrawn). Nothing reaches the lender
+// loan (LoanReserveFunded); each withdrawal moves it back from the vault to
+// the borrower's wallet (LoanReserveWithdrawn). Nothing reaches the lender
 // or the treasury. Both wallets pay gas. The limits both sides set stay in
 // force afterwards (they are what a later extension of this loan would use);
 // turn them off from the card to clear them.
@@ -410,26 +410,26 @@ const MANIFEST = createManifest({
     },
     {
       id: 'fund',
-      claim: 'a reserve is added through its receipt as fundExtendReserve(loanId, amount), after at most an exact approval',
+      claim: 'a reserve is added through its receipt as fundLoanReserve(loanId, 0, amount), after at most an exact approval',
       checks: {
         receipt: SIX,
         added: 'the page says the reserve was added',
-        chain: 'the receipt carries ExtendReserveFunded(loanId, borrower, asset, amount, amount) and getExtendFunding reads it reserved at its block',
+        chain: 'the receipt carries LoanReserveFunded(loanId, borrower, 0, asset, amount, amount) and getExtendFunding reads it reserved at its block',
       },
     },
     {
       id: 'withdraw',
-      claim: 'the reserve is withdrawn through its receipt as exactly one withdrawExtendReserve(borrower, loanId, amount), and the outcome stays in view',
+      claim: 'the reserve is withdrawn through its receipt as exactly one withdrawLoanReserve(borrower, loanId, 0, amount), and the outcome stays in view',
       checks: {
         receipt: SIX,
-        chain: 'the receipt carries ExtendReserveWithdrawn and getExtendFunding reads 0 reserved at its block',
+        chain: 'the receipt carries LoanReserveWithdrawn and getExtendFunding reads 0 reserved at its block',
         outcome: 'the withdrawn banner is still visible once the panel reads 0 reserved and offers no withdrawal',
       },
     },
     {
       id: 'indexer',
       claim: 'the indexer files the deposit under the borrower',
-      checks: { row: 'GET /activity?chainId&actor=<borrower>&kind=ExtendReserveFunded returns the deposit’s row (loan, transaction, actor)' },
+      checks: { row: 'GET /activity?chainId&actor=<borrower>&kind=LoanReserveFunded returns the deposit’s row (loan, transaction, actor)' },
     },
     {
       id: 'claims',
@@ -438,7 +438,7 @@ const MANIFEST = createManifest({
         fund: 'a second reserve is added through the loan page, read reserved at its block',
         lenderNone: "the lender's /claims, after its reserve query answered, lists no reserve on the fixture loan",
         listed: "the borrower's /claims lists Loan #<id> under Extension reserves with the amount and that it pays this loan's extensions",
-        withdrawn: 'the withdrawal from Claims is ExtendReserveWithdrawn, 0 reserved at its block, with the outcome shown on Claims',
+        withdrawn: 'the withdrawal from Claims is LoanReserveWithdrawn, 0 reserved at its block, with the outcome shown on Claims',
       },
     },
     {
@@ -829,10 +829,10 @@ async function fundReserve(page, card, suffix) {
   await shot('borrower', `auto-extend-fund${suffix}-receipt`);
   await armedClick('borrower', page, panel.getByTestId('confirm-receipt-confirm'), panel.getByText(R.added), panel, `adding ${exact} to the reserve`);
   const receipt = await minedReceipt(`b-fund${suffix}`);
-  const ev = diamondEvents(receipt, 'ExtendReserveFunded');
+  const ev = diamondEvents(receipt, 'LoanReserveFunded');
   const f = await fundingAt(receipt.blockNumber);
   const evOk = ev.length === 1 && eq(ev[0].args.holder, BORROWER) && eq(ev[0].args.asset, pre.asset) && ev[0].args.amount === RESERVE && ev[0].args.reserved === RESERVE;
-  const detail = `ExtendReserveFunded ${ev.length === 1 ? `amount ${ev[0].args.amount}, reserved ${ev[0].args.reserved}` : `×${ev.length}`}; getExtendFunding reserved ${f[1]} — ${receipt.transactionHash}, block ${receipt.blockNumber}`;
+  const detail = `LoanReserveFunded ${ev.length === 1 ? `amount ${ev[0].args.amount}, reserved ${ev[0].args.reserved}` : `×${ev.length}`}; getExtendFunding reserved ${f[1]} — ${receipt.transactionHash}, block ${receipt.blockNumber}`;
   if (suffix) check('claims', 'fund', 'a second reserve is reserved on chain', evOk && f[1] === RESERVE, detail);
   else {
     check('fund', 'added', 'the page says the reserve was added', true);
@@ -851,7 +851,7 @@ async function withdrawReserve(page, scope, done, label, id) {
   if (id === 'withdraw') judgeReceipt('withdraw', rows, fill(R.receiptWithdraw.youReceive, { amount: shown }));
   await armedClick('borrower', page, scope.getByTestId('confirm-receipt-confirm'), done, scope, `withdrawing the reserve ${label}`);
   const receipt = await minedReceipt(id === 'withdraw' ? 'b-withdraw' : 'b-withdraw-2');
-  const ev = diamondEvents(receipt, 'ExtendReserveWithdrawn');
+  const ev = diamondEvents(receipt, 'LoanReserveWithdrawn');
   const f = await fundingAt(receipt.blockNumber);
   const ok = ev.length === 1 && eq(ev[0].args.holder, BORROWER) && ev[0].args.amount === RESERVE && ev[0].args.reserved === 0n && f[1] === 0n;
   const held = divertedPayouts(receipt);
@@ -859,7 +859,7 @@ async function withdrawReserve(page, scope, done, label, id) {
   return {
     receipt,
     ok,
-    detail: `ExtendReserveWithdrawn ×${ev.length}${ev[0] ? ` amount ${ev[0].args.amount}` : ''}; reserved ${f[1]}${held.length ? `; NOT paid to the wallet: ${held.join('; ')}` : ''} — ${receipt.transactionHash}, block ${receipt.blockNumber}`,
+    detail: `LoanReserveWithdrawn ×${ev.length}${ev[0] ? ` amount ${ev[0].args.amount}` : ''}; reserved ${f[1]}${held.length ? `; NOT paid to the wallet: ${held.join('; ')}` : ''} — ${receipt.transactionHash}, block ${receipt.blockNumber}`,
   };
 }
 
@@ -1026,7 +1026,7 @@ try {
   // Claims page read before the indexer has this loan's deposit says nothing
   // about the card. The deposits are already mined; this waits out the lag.
   const fundHash = PLAN.steps().find((s) => s.id === 'b-fund').record.hash;
-  const idxUrl = `${IDX}/activity?chainId=${CHAIN_ID}&actor=${BORROWER.toLowerCase()}&kind=ExtendReserveFunded`;
+  const idxUrl = `${IDX}/activity?chainId=${CHAIN_ID}&actor=${BORROWER.toLowerCase()}&kind=LoanReserveFunded`;
   const row = await pollUntil(
     'the indexer files the deposit',
     async () => {
@@ -1037,13 +1037,13 @@ try {
     { timeoutMs: 600_000, everyMs: 15_000 },
   );
   if (row) check('indexer', 'row', 'the indexer files the deposit under the borrower', true, `block ${row.blockNumber}, tx ${row.txHash}`);
-  else unsettled('indexer', 'row', `no ExtendReserveFunded row for ${fundHash} under the borrower within 600 s (${idxUrl}) — indexer lag cannot be told from a missing row`);
+  else unsettled('indexer', 'row', `no LoanReserveFunded row for ${fundHash} under the borrower within 600 s (${idxUrl}) — indexer lag cannot be told from a missing row`);
 
   // Settled to a boolean as it is created, so a timeout or a closed page can
   // never surface as an unhandled rejection that ends the run unsettled.
   const lenderQuery = lp
     .waitForResponse(
-      (res) => res.url().includes('/activity?') && res.url().includes(`actor=${LENDER.toLowerCase()}`) && res.url().includes('ExtendReserveFunded'),
+      (res) => res.url().includes('/activity?') && res.url().includes(`actor=${LENDER.toLowerCase()}`) && res.url().includes('LoanReserveFunded'),
       { timeout: 90_000 },
     )
     .then((r) => r.ok(), () => false);

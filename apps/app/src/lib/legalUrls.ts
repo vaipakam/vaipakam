@@ -17,7 +17,7 @@
  * current version still at `/terms`. The gate asks a wallet to accept
  * a specific on-chain version and content hash, so it links the
  * PINNED route for the version it read from chain — during a rollout
- * (new page published before `setCurrentTos` executes, per the
+ * (new page published before `publishTos` / `announceTos` executes, per the
  * runbook's ordering) `/terms` already shows N+1 while the gate asks
  * for N, and only the pinned link shows the text the acceptance
  * actually records. An unknown `/terms/v<N>` renders an honest

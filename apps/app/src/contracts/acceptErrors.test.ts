@@ -71,6 +71,10 @@ describe('the mirrored vocabulary', () => {
     // report it: a collection offer gets its own words.
     expect(ACCEPT_ERROR_NAMES.indexOf('CollectionParent')).toBe(lastSigned + 1);
     expect(acceptBlockReason(lastSigned + 1)).toBe(copy.errors.acceptBlocked.collectionParent);
+    // #3734 — appended after it, with its own words.
+    const termsNotAccepted = ACCEPT_ERROR_NAMES.indexOf('TermsNotAccepted');
+    expect(termsNotAccepted).toBe(lastSigned + 2);
+    expect(acceptBlockReason(termsNotAccepted)).toBe(copy.errors.acceptBlocked.termsNotAccepted);
   });
 
   it('treats an unrecognised code as a refusal, never as an all-clear', () => {

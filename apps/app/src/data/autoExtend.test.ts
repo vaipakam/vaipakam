@@ -264,7 +264,7 @@ describe('reserve discovery', () => {
       { events: [{ loanId: 2 }], nextBefore: null },
     ];
     expect(await reserveLoanIds(84532, ME)).toEqual({ loanIds: [5, 2], truncated: false });
-    expect(pages.calls[0]).toMatchObject({ actor: ME, kinds: ['ExtendReserveFunded'], limit: 200 });
+    expect(pages.calls[0]).toMatchObject({ actor: ME, kinds: ['LoanReserveFunded'], limit: 200 });
     expect(pages.calls[1].before).toBe('c1');
   });
 
@@ -300,7 +300,7 @@ describe('withdrawWholeReserve', () => {
     const screen = vi.fn(async () => {});
     const logs = await withdrawWholeReserve({ client, diamond: DIAMOND, account: ME, loanId: 6, write, screen });
     expect(screen).toHaveBeenCalled();
-    expect(write).toHaveBeenCalledWith('withdrawExtendReserve', [ME, 6n, 9n]);
+    expect(write).toHaveBeenCalledWith('withdrawLoanReserve', [ME, 6n, 0, 9n]);
     expect(logs).toEqual(['l']);
   });
 

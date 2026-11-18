@@ -381,7 +381,7 @@ const copySource = {
     reload: 'Reload the page',
     title: 'Accept the terms to continue',
     body:
-      'Vaipakam\u2019s operators have put a version of the terms in force. Accepting sends a one-off transaction that records which version you agreed to, so your wallet will ask you to confirm it and it costs a small network fee. You won\u2019t be asked again unless the terms change \u2014 or unless you switch to another network, since each network keeps its own record.',
+      'Vaipakam\u2019s operators have put a version of the terms in force. Accepting sends a one-off transaction that records which version you agreed to, so your wallet will ask you to confirm it and it costs a small network fee. Small changes never ask you again. A material change is announced with a date, and you can accept it any time before then. Each network keeps its own record, so another network asks once too.',
     currentVersion: 'Version in force',
     contentHash: 'Content fingerprint',
     readTerms: 'Read the Terms',
@@ -390,6 +390,16 @@ const copySource = {
     signing: 'Waiting for your wallet\u2026',
     footnote:
       'Your acceptance is recorded on-chain against the exact version and fingerprint shown above, so what you agreed to stays checkable later. Repaying, claiming and withdrawing are never blocked by this.',
+    // #3734 — what a wallet that passes the gate is told about a change.
+    materialTitle: tmpl('Terms version {{version}} takes effect on {{date}}', ['version', 'date']),
+    materialBody:
+      'This is a material change. Until that date nothing changes for you. From then, until you accept it, you can\u2019t open new positions on this network: offers you posted and automatic lending stop filling. Repaying, claiming and withdrawing are never blocked. Accepting now keeps everything running with no gap.',
+    smallLine: tmpl('Terms version {{version}} is out. It\u2019s a small change, so you don\u2019t need to accept it.', ['version']),
+    readVersion: tmpl('Read version {{version}}', ['version']),
+    acceptVersion: tmpl('Accept version {{version}}', ['version']),
+    acceptOptional: 'Accept it anyway',
+    later: 'Remind me later',
+    accepted: 'Accepted. Your acceptance is recorded on this network.',
   },
   /**
    * Data Rights (#1960) — the connected app's own export and local
@@ -6274,6 +6284,11 @@ const copySource = {
       // and the copy says so rather than pointing at a button that is not here.
       collectionParent:
         'This is a collection offer. It lends against one token of a collection per loan, and it can be taken only through the protocol’s collection-offer fill, which this app does not offer yet, not by accepting it directly. Nothing was sent.',
+      // #3734 — a party to the loan (the taker, or the offer's maker) has
+      // not accepted the Terms of Service in force on this network. The
+      // preview does not say which, so the copy names both cases.
+      termsNotAccepted:
+        'This offer can’t be taken right now: one side has not accepted the Terms of Service in force on this network. If it’s you, accept the Terms and try again. If it’s the offer’s creator, the offer can be taken once they accept. Nothing was sent.',
       // A refusal we have no words for — the app can be older than the
       // deployment it is talking to, and this vocabulary grows by
       // appending. Says only what is certainly true.
@@ -6785,9 +6800,26 @@ const copySource = {
       AutoExtendLenderCapsChanged: 'Automatic extension limits updated',
       AutoListOptOutCleared: 'Automatic grace-period listing on',
       AutoRefinanceCapsChanged: 'Automatic refinance limits updated',
-      ExtendReserveFunded: 'Extension reserve funded',
-      ExtendReserveWithdrawn: 'Extension reserve withdrawn',
+      LoanReserveFunded: 'Loan reserve funded',
+      LoanReserveWithdrawn: 'Loan reserve withdrawn',
       ExtendChargeDrawn: 'Extension charge paid',
+      InterestPaidFromReserve: 'Interest paid from loan reserve',
+      DueRepaymentRun: 'Repaid from loan reserve',
+      CollateralTopUpRun: 'Collateral topped up from loan reserve',
+      StandingInstructionsSet: 'Standing instructions set',
+      StandingInstructionsCleared: 'Standing instructions cleared',
+      StandingInstructionSkipped: 'Standing instruction skipped',
+      InterestPaymentBooked: 'Interest payment booked',
+      HolderWalletPaymentToVault: 'Payment credited to vault',
+      RepaymentLegsFromReserve: 'Repayment paid from loan reserve',
+      InterestPaymentAttemptFailed: 'Interest payment from reserve did not run',
+      IntentCalmCheckSet: 'Calm-price check changed',
+      LenderIntentIntegratorNamed: 'Integrator named for auto-lend',
+      IntegratorShareSettled: 'Integrator fee share settled',
+      InviterBound: 'Invitation linked',
+      ReferralShareSettled: 'Referral fee share settled',
+      AccountClawedBack: 'Account moved to recovery address',
+      RecoveredBalanceSwept: 'Remaining balance moved to recovery address',
       RefinancePayoffPermitSet: 'Refinance payoff permit signed',
       RefinancePayoffPermitCleared: 'Refinance payoff permit removed',
       RefinancePayoffPulled: 'Refinance payoff paid',

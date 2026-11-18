@@ -25,7 +25,7 @@ import "./LegalPage.css";
  * - `/terms/v<N>` — version N, frozen forever, so an acceptance
  *   recorded years ago still resolves to the text that was accepted,
  *   and the rollout window (new page published before
- *   `setCurrentTos` executes) can no longer show one text while the
+ *   `publishTos` / `announceTos` executes) can no longer show one text while the
  *   gate records another;
  * - `/terms/<anything else>` — an honest "not published here"
  *   explainer instead of a silent 404, covering a gate that links a
@@ -38,7 +38,7 @@ import "./LegalPage.css";
  * `docs/Terms/TermsOfService.md` at the commit that published the
  * version, which is the exact document `canonicalMdKeccak256`
  * fingerprints and governance hashes for
- * `LegalFacet.setCurrentTos(version, hash)`. A hand-maintained JSX
+ * `LegalFacet.publishTos(version, hash)` or `announceTos(version, hash, effectiveAt)`. A hand-maintained JSX
  * transcription was tried first and had ALREADY drifted from the
  * canonical text it claimed to mirror; rendering the source itself
  * removes the transcription step entirely, and
@@ -74,7 +74,7 @@ function termsSource(version: number): string | undefined {
  *  header; this line adds the one thing the document cannot say
  *  about itself — the fingerprint a reader can compare against the
  *  content hash the acceptance gate displays from chain, once
- *  governance records that derivation for `setCurrentTos`. */
+ *  governance records that derivation for `publishTos` / `announceTos`. */
 function VersionMeta({ version }: { version: number }) {
   const meta = termsVersionMeta(version);
   if (!meta) return null;

@@ -188,6 +188,9 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
 
     /// @notice Instruction 1 ran: `amount` moved from `holder`'s collateral
     ///         reserve into the loan's collateral, in the same vault.
+    /// @param newCollateralAmount The loan's collateral after the top-up, so
+    ///                    a reader records the result rather than adding
+    ///                    `amount` to its own copy (replay-safe).
     /// @param hfBefore    The health factor before (1e18).
     /// @param hfAfter     The health factor after (1e18; 0 if unreadable).
     /// @param reserveLeft What is left in the collateral reserve.
@@ -196,6 +199,7 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
         uint256 indexed loanId,
         address indexed holder,
         uint256 amount,
+        uint256 newCollateralAmount,
         uint256 hfBefore,
         uint256 hfAfter,
         uint256 reserveLeft,
@@ -528,7 +532,9 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
             bytes4(0)
         );
         (, uint256 hfAfter) = _healthFactor(loanId);
-        emit CollateralTopUpRun(loanId, holder, amount, hf, hfAfter, reserve - amount, msg.sender);
+        emit CollateralTopUpRun(
+            loanId, holder, amount, loan.collateralAmount, hf, hfAfter, reserve - amount, msg.sender
+        );
     }
 
     /// @notice Instruction 2: from the current period's end, pay its unpaid

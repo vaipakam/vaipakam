@@ -413,7 +413,12 @@ export function useRecordReserveOutcome(): (loanId: number, text: string | null)
 
 /** Every reserve starts with a funding, so the funding rows name every loan
  *  a wallet may hold a reserve on. */
-export const RESERVE_DISCOVERY_KINDS = ['ExtendReserveFunded'] as const;
+export const RESERVE_DISCOVERY_KINDS = ['LoanReserveFunded'] as const;
+
+/** #3681 — `StandingInstructionFacet`'s reserve kinds: the payment reserve
+ *  (the lending asset) is the one an auto-extension draws first. A
+ *  collateral reserve (kind 1) is never drawn by an extension. */
+export const PAYMENT_RESERVE = 0;
 const PAGE = 200;
 const MAX_PAGES = 5;
 
@@ -543,6 +548,11 @@ export async function withdrawWholeReserve(opts: {
   await opts.screen();
   const live = await readExtendFunding({ client: opts.client, diamond: opts.diamond }, opts.loanId, opts.account);
   if (live.reserved === 0n) return null;
-  const { receipt } = await opts.write('withdrawExtendReserve', [opts.account, BigInt(opts.loanId), live.reserved]);
+  const { receipt } = await opts.write('withdrawLoanReserve', [
+    opts.account,
+    BigInt(opts.loanId),
+    PAYMENT_RESERVE,
+    live.reserved,
+  ]);
   return receipt.logs;
 }

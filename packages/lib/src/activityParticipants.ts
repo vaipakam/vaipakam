@@ -104,6 +104,34 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['VaultRentalUpdated', ['lender', 'user']],
   // The limit-order fill's taker sent the fill the lot left in.
   ['SwapToRepayIntentLotPulled', ['taker']],
+  // #3681 — a loan's standing instructions and reserves. A run is filed
+  // under the reserve's holder; whoever submitted it (the holder or a
+  // keeper) is a party, as is whoever set or cleared the instructions for
+  // the position holder they name.
+  ['InterestPaidFromReserve', ['caller']],
+  ['DueRepaymentRun', ['caller']],
+  ['CollateralTopUpRun', ['caller']],
+  ['StandingInstructionSkipped', ['caller']],
+  ['StandingInstructionsSet', ['owner', 'setBy']],
+  ['StandingInstructionsCleared', ['owner', 'by']],
+  // A payment from a wallet credited to a position holder's vault.
+  ['HolderWalletPaymentToVault', ['payer', 'holder']],
+  // A due repayment drawn from the holder's reserve, with the legs it paid.
+  ['RepaymentLegsFromReserve', ['holder']],
+  // A lender intent slot's calm-price setting, set by its owner.
+  ['IntentCalmCheckSet', ['owner']],
+  // A lender intent slot naming the integrator its fills credit.
+  ['LenderIntentIntegratorNamed', ['owner']],
+  // A keeper permitted or refused on one loan or offer by its owner.
+  ['LoanKeeperEnabled', ['owner']],
+  ['OfferKeeperEnabled', ['owner']],
+  // A locked account's balance moved to its recovery address: the account,
+  // the recovery address and whoever submitted it are all parties.
+  ['AccountClawedBack', ['account', 'recovery', 'by']],
+  ['RecoveredBalanceSwept', ['account', 'recovery', 'by']],
+  // ── Referrals (#3727): the invited wallet and its inviter.
+  ['InviterBound', ['newUser', 'inviter']],
+  ['ReferralShareSettled', ['newUser', 'inviter']],
   // ── Offers and their sale routes.
   ['OfferCreatedDetails', ['creator']],
   ['OfferCanceledDetails', ['creator']],
@@ -288,6 +316,9 @@ const LOCAL_NOT_A_PARTY: ReadonlyMap<string, Readonly<Record<string, string>>> =
   ['KeeperRevoked', { keeper: 'the keeper being refused' }],
   ['LoanKeeperEnabled', { keeper: 'the keeper being permitted on the loan' }],
   ['OfferKeeperEnabled', { keeper: 'the keeper being permitted on the offer' }],
+  ['OfferModified', { integrator: 'the integrator the offer names' }],
+  ['LenderIntentIntegratorNamed', { integrator: 'the integrator the slot names' }],
+  ['IlliquidPairConsentSet', { lendAsset: 'an asset', collAsset: 'an asset' }],
   ['SwapToRepayIntentForceCancelled', { source: 'the Diamond itself' }],
   ['HourlyPriceCheckpointed', { guard: 'the price guard the price was read from' }],
   ['VaultOutflow', { vault: "the owner's own vault contract; the owner is a party" }],
@@ -324,6 +355,12 @@ const EXEMPT: ReadonlyMap<string, ExemptGroup> = new Map<string, ExemptGroup>([
   // admin
   ...(
     [
+      // The integrator registry, kept by governance roles (#3682).
+      'IntegratorContractsDeclared',
+      'IntegratorRemoved',
+      'IntegratorRestored',
+      'IntegratorSet',
+      'IntegratorSuspended',
       'AdapterImplementationUpgraded',
       'AdapterOperatorBound',
       'AdminTransferred',
@@ -435,6 +472,8 @@ const EXEMPT: ReadonlyMap<string, ExemptGroup> = new Map<string, ExemptGroup>([
   // serviceOperator
   ...(
     [
+      // An integrator's share of a loan's initiation fee (#3682).
+      'IntegratorShareSettled',
       'ArmingFeePaid',
       'AutoPaused',
       'CapacityBucketReset',

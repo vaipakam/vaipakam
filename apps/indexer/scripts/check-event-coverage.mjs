@@ -42,6 +42,20 @@ const CHAIN_INDEXER = join(REPO_ROOT, 'apps', 'indexer', 'src', 'chainIndexer.ts
  *  is a conscious decision; removing the corresponding contract event
  *  later just makes the allowlist entry dead (harmless). */
 const DELIBERATELY_NOT_HANDLED = {
+  IntentCalmCheckSet:
+    "a lender intent slot's calm-price setting; the indexer models no per-slot settings, and the app reads the slot from the contract",
+  StandingInstructionsSet:
+    "#3681 — a loan's standing instructions are settings the app reads from the contract; no loans-row field changes",
+  StandingInstructionsCleared:
+    "#3681 — as StandingInstructionsSet: settings only, no loans-row field changes",
+  InterestPaidFromReserve:
+    '#3681 — interest paid from the payment reserve; a payment that closes the period emits PeriodicInterestSettled in the same transaction, which advances last_period_settled_at',
+  InterestPaymentBooked:
+    'the one interest booking shared by the periodic sale and the reserve payment; the period advance it can cause is PeriodicInterestSettled, which the indexer handles',
+  RepaymentLegsFromReserve:
+    "#3681 — the legs of a repayment drawn from the reserve; the loan's state changes through LoanRepaid in the same transaction, which the indexer handles",
+  DueRepaymentRun:
+    '#3681 — a due repayment run from the reserve; the repayment itself is RepayFacet.repayLoan, whose LoanRepaid the indexer handles',
   ExtensionFeeCharged:
     '#3649 — the added initiation fee an extension charges; the term and rate the loans row tracks change through LoanExtended in the same transaction, which the indexer already handles. The fee and the term paid for are not loans-row fields today',
   PartialCollateralWithdrawn:

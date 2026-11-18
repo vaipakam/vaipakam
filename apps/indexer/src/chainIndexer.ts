@@ -6238,9 +6238,10 @@ export async function processLoanLogs(
           .bind(refreshedGraceEnd, now, chainId, loanId)
           .run();
       }
-    } else if (log.eventName === 'CollateralAdded') {
-      // Borrower topped up collateral — loan stays Active, but
-      // `collateral_amount` grows. The event carries `newCollateralAmount`.
+    } else if (log.eventName === 'CollateralAdded' || log.eventName === 'CollateralTopUpRun') {
+      // Borrower topped up collateral (directly, or by the #3681 standing
+      // instruction drawing the collateral reserve) — loan stays Active, but
+      // `collateral_amount` grows. Both events carry `newCollateralAmount`.
       const collateralAdded = await env.DB.prepare(
         `UPDATE loans SET collateral_amount = ?, updated_at = ?
          WHERE chain_id = ? AND loan_id = ?`,

@@ -225,9 +225,28 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   // the companion of `LoanExtended` in the same transaction, so it rides
   // inside that row (below the default of 20) and states where the charge
   // came from.
-  ExtendReserveFunded: { label: 'Extension reserve funded', category: 'loan-modify', priority: 40 },
-  ExtendReserveWithdrawn: { label: 'Extension reserve withdrawn', category: 'loan-modify', priority: 40 },
+  LoanReserveFunded: { label: 'Loan reserve funded', category: 'loan-modify', priority: 40 },
+  LoanReserveWithdrawn: { label: 'Loan reserve withdrawn', category: 'loan-modify', priority: 40 },
   ExtendChargeDrawn: { label: 'Extension charge paid', category: 'loan-modify', priority: 15 },
+  // #3681 — the loan reserves' runs and the standing instructions; the
+  // interest booking and extension fee ride inside their parent rows.
+  InterestPaidFromReserve: { label: 'Interest paid from loan reserve', category: 'loan-repay', priority: 30 },
+  DueRepaymentRun: { label: 'Repaid from loan reserve', category: 'loan-repay', priority: 30 },
+  CollateralTopUpRun: { label: 'Collateral topped up from loan reserve', category: 'collateral', priority: 30 },
+  StandingInstructionsSet: { label: 'Standing instructions set', category: 'loan-modify', priority: 40 },
+  StandingInstructionsCleared: { label: 'Standing instructions cleared', category: 'loan-modify', priority: 40 },
+  StandingInstructionSkipped: { label: 'Standing instruction skipped', category: 'loan-modify', priority: 40 },
+  InterestPaymentBooked: { label: 'Interest payment booked', category: 'loan-repay', priority: 15 },
+  HolderWalletPaymentToVault: { label: 'Payment credited to vault', category: 'other', priority: 30 },
+  RepaymentLegsFromReserve: { label: 'Repayment paid from loan reserve', category: 'loan-repay', priority: 15 },
+  InterestPaymentAttemptFailed: { label: 'Interest payment from reserve did not run', category: 'loan-modify', priority: 40 },
+  IntentCalmCheckSet: { label: 'Calm-price check changed', category: 'loan-modify', priority: 40 },
+  LenderIntentIntegratorNamed: { label: 'Integrator named for auto-lend', category: 'loan-modify', priority: 40 },
+  IntegratorShareSettled: { label: 'Integrator fee share settled', category: 'other', priority: 15 },
+  InviterBound: { label: 'Invitation linked', category: 'other', priority: 40 },
+  ReferralShareSettled: { label: 'Referral fee share settled', category: 'other', priority: 15 },
+  AccountClawedBack: { label: 'Account moved to recovery address', category: 'other', priority: 30 },
+  RecoveredBalanceSwept: { label: 'Remaining balance moved to recovery address', category: 'other', priority: 30 },
   // #1558 — the borrower's signed payoff permit on a refinance request. The
   // pull is the companion of `LoanRefinanced` in the same transaction, so it
   // rides inside that row and states where the payoff came from.

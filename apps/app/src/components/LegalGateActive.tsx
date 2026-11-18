@@ -21,6 +21,7 @@ import { useTosAcceptance } from '../contracts/useTosAcceptance';
 import { tosGateVerdict } from '../contracts/tosGate';
 import { LEGAL_URLS, termsUrlForVersion } from '../lib/legalUrls';
 import { TermsStatusCard } from './TermsStatusCard';
+import { TosNoticeBanner } from './TosNoticeBanner';
 import { LanguagePicker } from './LanguagePicker';
 
 export function LegalGateActive({
@@ -64,7 +65,18 @@ export function LegalGateActive({
   // rebuilt when this chunk resolves.
   if (exempt) return null;
 
-  if (verdict === 'pass-unconnected' || verdict === 'pass') return <>{children}</>;
+  // #3734: a wallet that passes may still be told about a change — an
+  // announced material change it has not accepted, or a newer small one.
+  // One tree for both pass verdicts, so connecting never remounts the
+  // page beneath it; the notice slot is simply empty while unconnected.
+  if (verdict === 'pass-unconnected' || verdict === 'pass') {
+    return (
+      <>
+        {verdict === 'pass' ? <TosNoticeBanner /> : null}
+        {children}
+      </>
+    );
+  }
 
   if (verdict === 'checking') return <TermsStatusCard />;
 

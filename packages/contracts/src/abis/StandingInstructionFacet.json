@@ -480,6 +480,12 @@
         "internalType": "uint256"
       },
       {
+        "name": "newCollateralAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
         "name": "hfBefore",
         "type": "uint256",
         "indexed": false,

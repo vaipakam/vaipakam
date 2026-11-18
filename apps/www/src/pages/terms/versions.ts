@@ -22,7 +22,7 @@
  * byte-copy of `docs/Terms/TermsOfService.md` at the commit that
  * published the version), which is also the text the page RENDERS —
  * the derivation the governance runbook proposes for the on-chain
- * `setCurrentTos` hash. `scripts/check-terms-canonical-hash.ts`
+ * `publishTos` / `announceTos` hash. `scripts/check-terms-canonical-hash.ts`
  * (wired into `typecheck`) recomputes every entry's hash from its
  * frozen file, cross-checks the registry and the file set in both
  * directions, and requires the current entry's frozen file to be
