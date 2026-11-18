@@ -141,8 +141,10 @@ abstract contract DiamondFacetNames {
     ///      125 → 126 with `FeeLevelsFacet` (#3649 — the initiation fee's
     ///      term schedule).
     ///      126 → 127 with `SettlementLegFacet` (#3669 — a settlement leg the
-    ///      token refuses parks in the payer's vault under a lien).
-    function cutFacetNames() internal pure returns (string[127] memory) {
+    ///      token refuses parks in the payer's vault under a lien); 127 → 130
+    ///      with `IntegratorFacet` (#3682), `StandingOfferCheckFacet` (#3720)
+    ///      and `ReferralFacet` (#3722).
+    function cutFacetNames() internal pure returns (string[130] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -323,6 +325,12 @@ abstract contract DiamondFacetNames {
             "FeeLevelsFacet",
             // A refused settlement leg's park and release (#3669).
             "SettlementLegFacet",
+            // The integrator registry and the share's delivery (#3682).
+            "IntegratorFacet",
+            // The check of one standing offer a borrow preview points to (#3720).
+            "StandingOfferCheckFacet",
+            // The referral share: binding, settings, quote, payment (#3722).
+            "ReferralFacet",
             "SwapToRepayFacet",
             "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",

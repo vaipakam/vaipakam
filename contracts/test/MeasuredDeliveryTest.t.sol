@@ -24,6 +24,7 @@ import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
+import {ITreasuryFeeHost} from "../src/interfaces/ITreasuryFeeHost.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
@@ -567,7 +568,7 @@ contract MeasuredDeliveryTest is SetupTest {
             "the default completed"
         );
         assertEq(_bal(mockERC20, address(diamond)), diamond0, "the Diamond's other holdings paid nothing");
-        uint256 treasuryFee = (l.prepayAmount * 500) / 10_000;
+        uint256 treasuryFee = (l.prepayAmount * 1000) / 10_000;
         uint256 shortfall = l.prepayAmount - _less(l.prepayAmount);
         assertLt(shortfall, treasuryFee, "fixture: the treasury fee covers the shortfall");
         (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
@@ -752,11 +753,11 @@ contract MeasuredDeliveryTest is SetupTest {
     /// @notice Both legs of the fee host are reachable only by the Diamond.
     function test_TreasuryFeeHost_RefusesOutsideCallers() public {
         vm.expectRevert(IVaipakamErrors.UnauthorizedCrossFacetCall.selector);
-        TreasuryFeeFacet(address(diamond)).collectFeeFromPayer(borrower, mockERC20, 1 ether);
+        TreasuryFeeFacet(address(diamond)).collectFeeFromPayer(borrower, mockERC20, 1 ether, ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Other, 0, 0));
         vm.expectRevert(IVaipakamErrors.UnauthorizedCrossFacetCall.selector);
-        TreasuryFeeFacet(address(diamond)).collectFeeFromVault(borrower, mockERC20, 1 ether);
+        TreasuryFeeFacet(address(diamond)).collectFeeFromVault(borrower, mockERC20, 1 ether, ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Other, 0, 0));
         vm.expectRevert(IVaipakamErrors.UnauthorizedCrossFacetCall.selector);
-        TreasuryFeeFacet(address(diamond)).collectFeeFromDiamond(mockERC20, 1 ether);
+        TreasuryFeeFacet(address(diamond)).collectFeeFromDiamond(mockERC20, 1 ether, ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Other, 0, 0));
     }
 
     /// @notice #2440 (Codex r3) — a treasury share the Diamond holds (a
@@ -772,7 +773,7 @@ contract MeasuredDeliveryTest is SetupTest {
         _chargesFee(mockERC20, address(diamond));
 
         vm.prank(address(diamond));
-        uint256 accrued = TreasuryFeeFacet(address(diamond)).collectFeeFromDiamond(mockERC20, 4 ether);
+        uint256 accrued = TreasuryFeeFacet(address(diamond)).collectFeeFromDiamond(mockERC20, 4 ether, ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Other, 0, 0));
 
         assertEq(accrued, _less(4 ether), "the host returns what arrived");
         assertEq(_bal(mockERC20, treasury), accrued, "the treasury holds what it was credited with");
@@ -792,7 +793,7 @@ contract MeasuredDeliveryTest is SetupTest {
 
         vm.recordLogs();
         vm.prank(address(diamond));
-        uint256 accrued = TreasuryFeeFacet(address(diamond)).collectFeeFromDiamond(mockERC20, 4 ether);
+        uint256 accrued = TreasuryFeeFacet(address(diamond)).collectFeeFromDiamond(mockERC20, 4 ether, ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Other, 0, 0));
 
         assertEq(accrued, 4 ether, "the whole share accrues");
         assertEq(
@@ -841,7 +842,7 @@ contract MeasuredDeliveryTest is SetupTest {
             )
         );
         vm.prank(address(diamond));
-        TreasuryFeeFacet(address(diamond)).collectFeeFromDiamond(mockERC20, 4 ether);
+        TreasuryFeeFacet(address(diamond)).collectFeeFromDiamond(mockERC20, 4 ether, ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Other, 0, 0));
     }
 
     /// @notice The same out of a user's vault: the vault's other positions
@@ -880,7 +881,7 @@ contract MeasuredDeliveryTest is SetupTest {
     function test_TreasuryFeeHost_WalletFee() public {
         uint256 accrued0 = TreasuryFacet(address(diamond)).getTreasuryBalance(mockERC20);
         vm.prank(address(diamond));
-        TreasuryFeeFacet(address(diamond)).collectFeeFromPayer(borrower, mockERC20, 3 ether);
+        TreasuryFeeFacet(address(diamond)).collectFeeFromPayer(borrower, mockERC20, 3 ether, ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Other, 0, 0));
         assertEq(
             TreasuryFacet(address(diamond)).getTreasuryBalance(mockERC20) - accrued0, 3 ether, "accrued in full"
         );
@@ -892,7 +893,7 @@ contract MeasuredDeliveryTest is SetupTest {
             )
         );
         vm.prank(address(diamond));
-        TreasuryFeeFacet(address(diamond)).collectFeeFromPayer(borrower, mockERC20, 3 ether);
+        TreasuryFeeFacet(address(diamond)).collectFeeFromPayer(borrower, mockERC20, 3 ether, ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Other, 0, 0));
     }
 
     /// @notice A vault fee never refuses: the treasury accrues, and the host
@@ -905,7 +906,7 @@ contract MeasuredDeliveryTest is SetupTest {
 
         LibTestGuard.hold(address(diamond)); // a fixture standing in for the guarded caller (#3432)
         vm.prank(address(diamond));
-        uint256 accrued = TreasuryFeeFacet(address(diamond)).collectFeeFromVault(borrower, mockERC20, 4 ether);
+        uint256 accrued = TreasuryFeeFacet(address(diamond)).collectFeeFromVault(borrower, mockERC20, 4 ether, ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Other, 0, 0));
         LibTestGuard.release(address(diamond));
 
         assertEq(accrued, _less(4 ether), "the host returns what arrived");
@@ -966,6 +967,7 @@ contract MeasuredDeliveryTest is SetupTest {
 
     function _lenderErc20Offer() internal view returns (LibVaipakam.CreateOfferParams memory) {
         return LibVaipakam.CreateOfferParams({
+            integrator: address(0),
             lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: mockERC20,
@@ -1004,6 +1006,7 @@ contract MeasuredDeliveryTest is SetupTest {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNft721,

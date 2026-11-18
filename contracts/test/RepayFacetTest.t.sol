@@ -11,10 +11,12 @@ import {LibTestVaultEndpoints} from "./helpers/LibTestVaultEndpoints.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {ITreasuryFeeHost} from "../src/interfaces/ITreasuryFeeHost.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -480,6 +482,7 @@ contract RepayFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -524,6 +527,7 @@ contract RepayFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNft721,
@@ -586,8 +590,8 @@ contract RepayFacetTest is Test {
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(1);
         assertEq(
             loan.treasuryFeeBpsAtInit,
-            500,
-            "treasury fee snapshotted at the 5% default at init (#3649)"
+            1000,
+            "treasury fee snapshotted at the 10% default at init (#3649)"
         );
         assertEq(
             loan.loanInitiationFeeBpsAtInit,
@@ -606,7 +610,7 @@ contract RepayFacetTest is Test {
         );
         assertEq(
             rental.treasuryFeeBpsAtInit,
-            500,
+            1000,
             "treasury fee still snapshotted on the NFT rental (#3649 default)"
         );
     }
@@ -910,6 +914,7 @@ contract RepayFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -971,6 +976,7 @@ contract RepayFacetTest is Test {
         vm.prank(borrower);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -2034,6 +2040,7 @@ contract RepayFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
@@ -2266,6 +2273,83 @@ contract RepayFacetTest is Test {
         assertGt(due20, 1000, "Due should be greater than principal");
     }
 
+    // ─── #3649 stage 3 — the interest floor holds per loan ──────────────
+
+    /// @notice A loan keeps the treasury share it opened with, so the
+    ///         setters' half rule alone would not hold for it: a loan opened
+    ///         at a 2% share, repaid after the share is 10% and the floor 5%,
+    ///         would send its whole fee to the treasury. The repay passes the
+    ///         loan's own share, and the reserve still receives at least half
+    ///         of the undiscounted fee.
+    function test_3649_OldLoanAtLowShare_ReserveKeepsHalf() public {
+        vm.prank(lender);
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: 1e15,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: 1e15,
+                durationDays: 365,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: true,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: 1e15,
+                interestRateBpsMax: 500,
+                collateralAmountMax: 1e15,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            }),
+            type(uint64).max
+        );
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
+
+        // The loan opened at a 2% share; since then the share is the 10%
+        // default and the interest floor is raised to 5%.
+        TestMutatorFacet(address(diamond)).setTreasuryFeeBpsAtInitRaw(loanId, 200);
+        TestMutatorFacet(address(diamond)).setFeeFloorsRaw(10, 500);
+
+        vm.warp(block.timestamp + 365 days);
+        vm.recordLogs();
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bool found;
+        uint256 treasuryPart;
+        uint256 reservePart;
+        for (uint256 i; i < logs.length; ++i) {
+            if (
+                logs[i].topics.length == 3 && logs[i].topics[0] == ITreasuryFeeHost.TreasuryFeeSplit.selector
+                    && uint256(logs[i].topics[2]) == uint256(ITreasuryFeeHost.FeeKind.Interest)
+            ) {
+                (treasuryPart, reservePart) = abi.decode(logs[i].data, (uint256, uint256));
+                found = true;
+            }
+        }
+        assertTrue(found, "the interest share was split");
+        uint256 fee = treasuryPart + reservePart;
+        assertGt(fee, 0, "a fee was charged");
+        // The floor in force (5% of the interest) is 2.5x this fee; the
+        // treasury keeps at most half of the fee.
+        assertLe(treasuryPart * 2, fee, "the treasury keeps at most half");
+        assertGe(reservePart * 2, fee, "the reserve receives at least half");
+    }
+
     // ─── #408 / #410 / #413 — floor-model regression tests ─────────────
 
     /// @dev Build a loan with `useFullTermInterest: true` so the floor
@@ -2274,6 +2358,7 @@ contract RepayFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,

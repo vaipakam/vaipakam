@@ -15,6 +15,8 @@ import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
+import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
@@ -319,7 +321,7 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
 
         // ── Settle waterfall — diamond-held pattern ──────────────────
         // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
-        LibFacet.transferToTreasury(loan.principalAsset, treasuryShare);
+        LibFacet.transferToTreasury(loan.principalAsset, treasuryShare, LibFeeFloor.interest(accrued, LibVaipakam.effectiveTreasuryFeeBps(loan)));
 
         // #3629 — the lender side's part is held for the lender position:
         // open seller claims first, out of the interest, then the rest into

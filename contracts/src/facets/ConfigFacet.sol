@@ -7,6 +7,7 @@ import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessCont
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibInitiationFee} from "../libraries/LibInitiationFee.sol";
+import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
 
 /**
  * @title ConfigFacet
@@ -160,7 +161,7 @@ contract ConfigFacet is DiamondAccessControl {
 
     /**
      * @notice Update the two protocol fees in one atomic call.
-     * @param treasuryFeeBps       Fee on lender interest (defaults to 500 ≡ 5%; #3649).
+     * @param treasuryFeeBps       Fee on lender interest (defaults to 1000 ≡ 10%; #3649, owner decision 2026-11-17).
      * @param loanInitiationFeeBps The initiation fee's BASE rate, for a loan up to the
      *                             base term (defaults to 20 ≡ 0.2%); longer terms pay
      *                             more ({LibInitiationFee}, #3649). At most the yearly rate.
@@ -180,6 +181,14 @@ contract ConfigFacet is DiamondAccessControl {
         // may not exceed the yearly rate, or the fee would fall with the term.
         (uint256 base, , uint256 yearly, ) = LibInitiationFee.terms();
         if (base > yearly) revert InvalidFeeBps(base, yearly);
+        // #3649 stage 3 — each fee stays at least twice its treasury floor,
+        // so the part above the floor never closes (`ShortfallReserveDesign`
+        // section 8, the half rule; `FeeLevelsFacet.setTreasuryFeeFloors`
+        // holds the other direction).
+        (uint256 initiationFloor, uint256 interestFloor) = LibFeeFloor.floorsBps();
+        if (base < 2 * initiationFloor) revert InvalidFeeBps(base, 2 * initiationFloor);
+        uint256 share = LibVaipakam.cfgTreasuryFeeBps();
+        if (share < 2 * interestFloor) revert InvalidFeeBps(share, 2 * interestFloor);
         emit FeesConfigSet(treasuryFeeBps, loanInitiationFeeBps);
     }
 

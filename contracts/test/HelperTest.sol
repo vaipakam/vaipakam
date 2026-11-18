@@ -127,6 +127,9 @@ import {CollectionOfferFacet} from "../src/facets/CollectionOfferFacet.sol";
 import {ReadyBalanceFacet} from "../src/facets/ReadyBalanceFacet.sol";
 import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {LibTestSettlementLeg} from "./helpers/LibTestSettlementLeg.sol";
+import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
+import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
+import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -138,7 +141,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](250); // #3538 +setFallbackGate (was 249); #3569 -setTreasuryAddress (was 250); #910 +setKeeperTierRaw +setTierLiqDiscountBpsRaw (was 248); #3272 p2 -setEthUsdFeedRaw -setWethContractRaw (was 250); #3205 -getLockedTokenCount -getOperatorApprovalEpoch -getOperatorApprovalGrantEpoch -forceSetLockWithoutCounter (was 254); #3204 -setVaultVersionRaw -setMandatoryVaultVersionRaw (was 256); #2828 -clearTransportBatchDaysRaw (was 257); protected vault +setTrackedHoldingRaw (was 256); #1209 r2 +pushSellerClaimRaw (was 255); #1209 -setLenderPaidThroughRaw -setLenderPaidThroughWithPrincipalRaw -setLenderMarkVoidedRaw -setLenderTenureStartRaw (was 259); #2961 +setPacketDisposedRaw (was 258); #2876 +setOfferPrepayListingExecutorRaw (was 257); #1980 -setBorrowerLifVpfiHeldRaw (was 258); #918 setDayDeliveryProvedByRaw -> setDayDeliveryLandedRaw (net 0); #2910 PR 2 -setRemitReservationFinalizedRaw -setReleasedRemitHistoryRaw -setRemitReservationReleasedRaw (was 261); #2910 -setRecoveryAttributionRaw (was 262); #2875 item 3 +setRecycleBucketAbsorbedRaw -setRecycleCustodyRelocatedRaw -setReleasedRemitStrandedRaw -setRemitReleasedCountRaw (was 264, net 262); #2875 -clearDayLapseClockRaw -setReceivedRemitRaw (was 266); #1944 +setDayDeliveryProvedByRaw -setMirrorCommitReservedRaw (net 0); #2740 -getPrincipalPlusAccruedInterest -getTreasuryAndPrecloseFee +getSaleLegs (was 267); #2736 +setTierLtvCacheRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
+        selectors = new bytes4[](251); // #3649 +setFeeFloorsRaw (was 250); #3538 +setFallbackGate (was 249); #3569 -setTreasuryAddress (was 250); #910 +setKeeperTierRaw +setTierLiqDiscountBpsRaw (was 248); #3272 p2 -setEthUsdFeedRaw -setWethContractRaw (was 250); #3205 -getLockedTokenCount -getOperatorApprovalEpoch -getOperatorApprovalGrantEpoch -forceSetLockWithoutCounter (was 254); #3204 -setVaultVersionRaw -setMandatoryVaultVersionRaw (was 256); #2828 -clearTransportBatchDaysRaw (was 257); protected vault +setTrackedHoldingRaw (was 256); #1209 r2 +pushSellerClaimRaw (was 255); #1209 -setLenderPaidThroughRaw -setLenderPaidThroughWithPrincipalRaw -setLenderMarkVoidedRaw -setLenderTenureStartRaw (was 259); #2961 +setPacketDisposedRaw (was 258); #2876 +setOfferPrepayListingExecutorRaw (was 257); #1980 -setBorrowerLifVpfiHeldRaw (was 258); #918 setDayDeliveryProvedByRaw -> setDayDeliveryLandedRaw (net 0); #2910 PR 2 -setRemitReservationFinalizedRaw -setReleasedRemitHistoryRaw -setRemitReservationReleasedRaw (was 261); #2910 -setRecoveryAttributionRaw (was 262); #2875 item 3 +setRecycleBucketAbsorbedRaw -setRecycleCustodyRelocatedRaw -setReleasedRemitStrandedRaw -setRemitReleasedCountRaw (was 264, net 262); #2875 -clearDayLapseClockRaw -setReceivedRemitRaw (was 266); #1944 +setDayDeliveryProvedByRaw -setMirrorCommitReservedRaw (net 0); #2740 -getPrincipalPlusAccruedInterest -getTreasuryAndPrecloseFee +getSaleLegs (was 267); #2736 +setTierLtvCacheRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -280,6 +283,7 @@ contract HelperTest {
         // #1918 — the pre-#957 `treasuryFeeBpsAtInit == 0` state, which no
         // originated fixture can reach.
         selectors[n++] = TestMutatorFacet.setTreasuryFeeBpsAtInitRaw.selector;
+        selectors[n++] = TestMutatorFacet.setFeeFloorsRaw.selector;
         // Layout-resilient mapping writers used by EarlyWithdrawal
         // tests to scaffold loan-sale state without slot math.
         selectors[n++] = TestMutatorFacet.setOfferIdToLoanIdRaw.selector;
@@ -1072,11 +1076,50 @@ contract HelperTest {
     /// @dev #3649 — the initiation fee's term schedule.
     ///      Mirrors `DeployDiamond._getFeeLevelsSelectors`.
     function getFeeLevelsFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](8);
         selectors[0] = FeeLevelsFacet.setLoanInitiationFeeTerms.selector;
         selectors[1] = FeeLevelsFacet.getLoanInitiationFeeTerms.selector;
         selectors[2] = FeeLevelsFacet.quoteLoanInitiationFee.selector;
         selectors[3] = FeeLevelsFacet.quoteExtensionFee.selector;
+        selectors[4] = FeeLevelsFacet.setTreasuryFeeFloors.selector;
+        selectors[5] = FeeLevelsFacet.getTreasuryFeeFloors.selector;
+        selectors[6] = FeeLevelsFacet.setFeeShareCeiling.selector;
+        selectors[7] = FeeLevelsFacet.getFeeShareCeiling.selector;
+    }
+
+    function getIntegratorFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](13);
+        selectors[0] = IntegratorFacet.setIntegrator.selector;
+        selectors[1] = IntegratorFacet.removeIntegrator.selector;
+        selectors[2] = IntegratorFacet.suspendIntegrator.selector;
+        selectors[3] = IntegratorFacet.restoreIntegrator.selector;
+        selectors[4] = IntegratorFacet.setIntegratorDefaultRate.selector;
+        selectors[5] = IntegratorFacet.deliverIntegratorShare.selector;
+        selectors[6] = IntegratorFacet.getIntegrator.selector;
+        selectors[7] = IntegratorFacet.getIntegrators.selector;
+        selectors[8] = IntegratorFacet.integratorOf.selector;
+        selectors[9] = IntegratorFacet.getPlatformContracts.selector;
+        selectors[10] = IntegratorFacet.getIntegratorShareSettings.selector;
+        selectors[11] = IntegratorFacet.integratorRateFor.selector;
+        selectors[12] = IntegratorFacet.nameLenderIntentIntegrator.selector;
+    }
+
+    function getStandingOfferCheckFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](2);
+        selectors[0] = StandingOfferCheckFacet.checkAgainstRequest.selector;
+        selectors[1] = StandingOfferCheckFacet.checkForAmount.selector;
+    }
+
+    function getReferralFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](8);
+        selectors[0] = ReferralFacet.bindInviter.selector;
+        selectors[1] = ReferralFacet.setReferralRates.selector;
+        selectors[2] = ReferralFacet.setReferralPeriodDays.selector;
+        selectors[3] = ReferralFacet.payReferralShare.selector;
+        selectors[4] = ReferralFacet.getReferral.selector;
+        selectors[5] = ReferralFacet.getReferralSettings.selector;
+        selectors[6] = ReferralFacet.getReferralTotals.selector;
+        selectors[7] = ReferralFacet.quoteBorrowerFee.selector;
     }
 
     /// @dev #3669 — the refused settlement leg host. Mirrors
@@ -2909,11 +2952,14 @@ contract HelperTest {
     /// #3358 — the maker's price-move guard. Mirrors
     /// `DeployDiamond._getOfferPriceGuardSelectors`.
     function getOfferPriceGuardFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](7);
         selectors[0] = OfferPriceGuardFacet.armOfferPriceGuard.selector;
         selectors[1] = OfferPriceGuardFacet.setOfferPriceGuard.selector;
         selectors[2] = OfferPriceGuardFacet.getOfferPriceGuard.selector;
         selectors[3] = OfferPriceGuardFacet.requireOfferPriceGuardsClear.selector;
+        selectors[4] = OfferPriceGuardFacet.setIntentCalmCheck.selector;
+        selectors[5] = OfferPriceGuardFacet.intentCalmStatus.selector;
+        selectors[6] = OfferPriceGuardFacet.requireIntentPairCalm.selector;
     }
 
     /// #3359 - the forced-sale floor rule. Mirrors

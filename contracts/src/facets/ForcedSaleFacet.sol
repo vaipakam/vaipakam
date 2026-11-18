@@ -7,6 +7,8 @@ import {SettlementLegFacet} from "./SettlementLegFacet.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
+import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibSaleSizing} from "../libraries/LibSaleSizing.sol";
@@ -583,9 +585,10 @@ contract ForcedSaleFacet is IVaipakamErrors {
         // `sp.lender` is already capped at the debt ({_split}), so the
         // interest it recovers never exceeds the interest owed.
         uint256 treasuryInterest;
+        uint256 interestRecovered;
         uint256 lenderNet = sp.lender;
         if (sp.lender > loan.principal) {
-            uint256 interestRecovered = sp.lender - loan.principal;
+            interestRecovered = sp.lender - loan.principal;
             // #1832 — terminal seam of the lifetime interest counter: what the
             // sale recovered, not what was owed.
             LibMetricsHooks.onInterestPaid(loan, interestRecovered);
@@ -596,8 +599,17 @@ contract ForcedSaleFacet is IVaipakamErrors {
             lenderNet = sp.lender - treasuryInterest;
         }
         // #3669 — a frozen treasury never stops the close-out: a refused share
-        // waits, liened, in the borrower's vault.
-        LibFacet.treasuryShareOrPark(2, loan.borrower, loan.principalAsset, sp.fee + treasuryInterest);
+        // waits, liened, in the borrower's vault. #3649 stage 3 — two legs:
+        // the handling fee is the treasury's whole, the interest share is
+        // split at its floor (fixed at parking when it waits).
+        LibFacet.treasuryShareOrPark(2, loan.borrower, loan.principalAsset, sp.fee);
+        LibFacet.treasuryShareOrPark(
+            2,
+            loan.borrower,
+            loan.principalAsset,
+            treasuryInterest,
+            LibFeeFloor.interest(interestRecovered, LibVaipakam.effectiveTreasuryFeeBps(loan))
+        );
 
         // #821 — through the receive-side exemption so a flagged stored lender
         // never blocks the close-out; the claim names what the vault received

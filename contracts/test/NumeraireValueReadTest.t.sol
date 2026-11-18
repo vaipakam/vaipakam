@@ -232,6 +232,7 @@ contract NumeraireValueReadTest is SetupTest {
         vm.prank(lender);
         return OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,

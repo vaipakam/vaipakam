@@ -93,6 +93,9 @@ import CollectionOfferFacetABI from './CollectionOfferFacet.json';
 import ReadyBalanceFacetABI from './ReadyBalanceFacet.json';
 import FeeLevelsFacetABI from './FeeLevelsFacet.json';
 import SettlementLegFacetABI from './SettlementLegFacet.json';
+import IntegratorFacetABI from './IntegratorFacet.json';
+import StandingOfferCheckFacetABI from './StandingOfferCheckFacet.json';
+import ReferralFacetABI from './ReferralFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
 import OracleAdminFacetABI from './OracleAdminFacet.json';
@@ -296,6 +299,9 @@ export {
   ReadyBalanceFacetABI,
   FeeLevelsFacetABI,
   SettlementLegFacetABI,
+  IntegratorFacetABI,
+  StandingOfferCheckFacetABI,
+  ReferralFacetABI,
   ClaimFacetABI,
   OracleFacetABI,
   OracleAdminFacetABI,

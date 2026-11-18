@@ -1,6 +1,6 @@
 # Referral share of the initiation fee: design
 
-**Status:** owner approved the shape on 2026-11-17. Card #3722. Design for review before build.
+**Status:** owner approved the shape on 2026-11-17. Card #3722. Built (section 12).
 **Period and inviter's page, 2026-11-17 (owner decision):** the referral runs for the first 180 days after the binding. There is no count of loans (the first version said 10 loans or 180 days, whichever came first; 100 days alone was chosen first the same day and replaced by 180, so that an honest inviter finds the invitation worth making). The inviter gets a page showing what their invitations have paid (section 6.1).
 **Rates changed 2026-11-17 (owner decision):** the new user's cut and the inviter's share are each 10% of the above-floor part, in place of 20%, together with the higher fee levels of `FeeLevelsDesign.md`. The same day the owner decided against a value cap per new wallet and against identity checks (sections 5 and 9).
 **Related:** `IntegratorFeeShareDesign.md` (#3682, #3720), `FeeLevelsDesign.md` (#3649), `ShortfallReserveDesign.md` (#3641, the treasury floor). This replaces the deferred referral half of `VpfiUsagePerksAndReferralDesign.md`, which paid in fee credits.
@@ -144,8 +144,15 @@ The accept facets are close to the size limit: everything is computed in the fee
 
 The design above: a matching 10% of the above-floor part to each side, for the first 180 days, bound once on-chain before the wallet's first loan, the inviter paid directly to their wallet, with the per-loan ceiling protecting the reserve.
 
-## 11. Open items for the builder to raise, not decide silently
+## 11. Open items for the builder, answered at build
 
-- Whether a mark for "has opened a loan as borrower" already exists per wallet or must be added.
-- The exact place in the fee host where the isolated wallet payment sits beside the integrator's vault delivery, so both redirect by one rule.
-- At which settings of the three rates the ceiling starts to reduce the matcher's share, with figures, so the matcher's bounds can be set to make that rare.
+- **The "has opened a loan as borrower" mark did not exist** and was added. It is set when a loan opens with the wallet as borrower (any kind except the vehicle a lender's loan sale uses, whose "borrower" opens nothing) and when the wallet takes over an obligation (design ruling: a takeover is the incoming wallet's first loan as borrower, so it cannot bind afterwards, and a binding it already had keeps its end time). A wallet that only receives a borrower position token by transfer is not marked; it gains nothing by binding, since the cut applies only to loans it opens itself.
+- **The payment sits beside the integrator's delivery in the fee host, under one rule.** Each share is paid as its own isolated step; a step that fails or delivers short is undone and that share stays in the treasury leg, above the floor, so it is the reserve's. The inviter's step also refuses an inviter the sanctions list flags at that moment, so the three redirect reasons come from the step itself. The payee is never named by the caller: the vault outflow policy derives it from the new user's own binding and refuses one whose period has ended.
+- **When the ceiling reduces the matcher.** The room the ceiling leaves after the cut is (ceiling − cut rate) of A; the inviter and the integrator give way first, so the matcher is reduced only when its own rate exceeds that room. The matcher's rate is 1% of A by default and may be set up to 50%. At the default ceiling (60%) and cut (10%) the room is 50%, so no allowed matcher setting is ever reduced. At the tightest settings (ceiling 40%, cut 30%) the room is 10%: a matcher rate above 10% of A would be reduced. Bounding the matcher's rate at 10% of A would make that impossible at every allowed setting; that bound is a separate decision and is not part of this build.
+
+## 12. Build notes
+
+- The binding, the settings, the views, the one fee quote and the isolated payment are a new small facet. The fee host and the borrow previews read one rule for the fee after the hold discount and the cut; the accept preview reports the cut beside the fee, and a quote view gives the fee, the cut, the share before the ceiling and the inviter for any borrow route.
+- The cut is the lesser of the cut rate of A and the allowance the hold discount leaves under the fee-discount ceiling (half the full fee). The inviter's share is its rate of A, then the per-loan ceiling.
+- The per-loan share event and the integrator's both name the loan they belong to; the loan's creation checks that id for any charge, not only one that names an integrator.
+- The two rates count only once set, so zero is a settable rate; before that the defaults (10% each) apply. The period setting is 30 to 365 days, 0 restoring 180.

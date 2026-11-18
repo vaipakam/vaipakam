@@ -139,6 +139,11 @@
             "internalType": "uint8"
           },
           {
+            "name": "integrator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
             "name": "creatorFull",
             "type": "bool",
             "internalType": "bool"

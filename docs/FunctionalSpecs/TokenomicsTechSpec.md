@@ -666,15 +666,24 @@ Testing requirements beyond §9:
 
 > **Fee levels (#3649, owner decision 2026-11-15; design
 > [`FeeLevelsDesign.md`](../DesignsAndPlans/FeeLevelsDesign.md)).** This
-> supersedes the list rates of the freeze below. The **yield fee is `5%`**
+> supersedes the list rates of the freeze below. The **yield fee is `10%`**
 > of the interest lenders earn. The **Loan Initiation Fee depends on the
 > loan's agreed term**: `0.2%` up to 30 days, rising in a straight line to
-> `0.5%` at 365 days, then `0.5%` for each year of term in proportion to its
-> days. Both are fixed on the loan when it opens. Every figure derived from
+> `1%` at 365 days, then `1%` for each year of term in proportion to its
+> days (owner decision 2026-11-17). Both are fixed on the loan when it opens. Every figure derived from
 > the initiation fee (previews, the matcher share, the discount, a signed
 > order's fee cap) reads the loan's term rate; the paid fee tariff's `C*`
 > reads the base rate because it already scales with the term. Discount
 > percentages apply to these bases unchanged.
+>
+> **Treasury floor (#3649 stage 3).** From the initiation fee the treasury
+> keeps `0.1%` of the principal, and from its share of an ERC-20 loan's
+> interest `1%` of the interest; the part of each above that floor is the
+> shortfall reserve's. A discount therefore reduces the reserve's part
+> first, and the §5a matcher share is sized on the part above the floor.
+> An extension's added fee is the reserve's whole; every other fee stays
+> the treasury's. Until a reserve exists both parts go to the treasury,
+> reported separately and counted per asset.
 
 > **Fee freeze — M2 PR-1 supersession (recycling completion plan §M2; D1
 > decided (b) 2026-07-18; source of intent:
@@ -697,7 +706,7 @@ Testing requirements beyond §9:
 > from genesis; the snapshot-at-init discipline is retained as
 > forward-protection for any post-launch retune — see umbrella #1349.)
 
-The protocol charges a **Yield Fee** on interest **and late fees** accrued by lenders — both are lender yield economically, so both are in the fee base at settlement. The list rate is `5%` (#3649; `2%` under the frozen package above, legacy `1%`).
+The protocol charges a **Yield Fee** on interest **and late fees** accrued by lenders — both are lender yield economically, so both are in the fee base at settlement. The list rate is `10%` (#3649, owner decision 2026-11-17; `2%` under the frozen package above, legacy `1%`).
 
 This fee is automatically collected and directed to Treasury for protocol sustainability, buybacks, reward distribution, and ecosystem growth.
 

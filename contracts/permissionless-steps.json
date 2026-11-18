@@ -215,6 +215,14 @@
       "flag": "EXPIRED_TEARDOWN_ENABLED",
       "evidence": "apps/keeper/src/expiredTeardown.ts"
     },
+    "OfferPriceGuardFacet.setIntentCalmCheck(address,address,uint8,bool)": {
+      "class": "user",
+      "why": "the caller's own lender intent slot setting; no step waits on it"
+    },
+    "ReferralFacet.bindInviter(address)": {
+      "class": "user",
+      "why": "the caller binds its own inviter, once, before its first loan as borrower; no step waits on it"
+    },
     "OfferPriceGuardFacet.armOfferPriceGuard(uint16)": {
       "class": "user",
       "why": "arms a price-move guard for the caller's own next offer in this transaction (transient, keyed by the caller); no step waits on it"

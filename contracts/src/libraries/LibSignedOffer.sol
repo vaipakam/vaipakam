@@ -68,6 +68,9 @@ library LibSignedOffer {
         // #3621 — the lender's "either" marks ({LibVaipakam.Offer.lifecycleFlex}),
         // signed so a match cannot widen what the maker agreed to take.
         uint8 lifecycleFlex;
+        // #3682 — the integrator a BORROWER's signed offer names (address(0) =
+        // none), signed so neither a matcher nor a taker can set or change it.
+        address integrator;
         // #1949 — the MAKER's Full tariff opt-in, carried on the artifact they
         // sign: a signed offer is materialized and accepted in one transaction,
         // so the post-create setter (`ProfileFacet.setOfferCreatorFullTariff`)
@@ -149,6 +152,7 @@ library LibSignedOffer {
         "uint256 refinanceTargetLoanId,"
         "bool useFullTermInterest,"
         "uint8 lifecycleFlex,"
+        "address integrator,"
         "bool creatorFull,"
         "uint256 creatorMaxCStar,"
         "bool creatorAllowFullDowngrade,"
@@ -267,7 +271,7 @@ library LibSignedOffer {
         "uint256 collateralTokenId,uint256 collateralQuantity,address prepayAsset,"
         "bool allowsPartialRepay,bool allowsPrepayListing,bool allowsParallelSale,"
         "uint64 expiresAt,uint8 fillMode,uint8 periodicInterestCadence,"
-        "uint256 refinanceTargetLoanId,bool useFullTermInterest,uint8 lifecycleFlex,bool creatorFull,"
+        "uint256 refinanceTargetLoanId,bool useFullTermInterest,uint8 lifecycleFlex,address integrator,bool creatorFull,"
         "uint256 creatorMaxCStar,bool creatorAllowFullDowngrade,uint16 maxTreasuryFeeBps,"
         "uint16 maxLoanInitiationFeeBps,address allowedTaker,address coSigner,address signer,"
         "uint256 nonce,uint256 deadline,uint8 setKind,uint256 setLow,uint256 setHigh,"
@@ -629,10 +633,11 @@ library LibSignedOffer {
                     o.refinanceTargetLoanId,
                     o.useFullTermInterest,
                     o.lifecycleFlex,
-                    o.creatorFull,
-                    o.creatorMaxCStar
+                    o.integrator,
+                    o.creatorFull
                 ),
                 abi.encode(
+                    o.creatorMaxCStar,
                     o.creatorAllowFullDowngrade,
                     o.maxTreasuryFeeBps,
                     o.maxLoanInitiationFeeBps,
@@ -773,6 +778,7 @@ library LibSignedOffer {
         p.refinanceTargetLoanId = o.refinanceTargetLoanId;
         p.useFullTermInterest = o.useFullTermInterest;
         p.lifecycleFlex = o.lifecycleFlex;
+        p.integrator = o.integrator;
     }
 
     /// @notice Map a `SignedOffer` to a SLICE of it sized `fillAmount` — used

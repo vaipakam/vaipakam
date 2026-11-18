@@ -13,6 +13,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {LibNumeraireValueRead} from "./LibNumeraireValueRead.sol";
 import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
+import {LibFeeFloor} from "./LibFeeFloor.sol";
 
 /// @title LibFacet
 /// @notice Shared facet-level helpers previously duplicated across
@@ -59,13 +60,27 @@ library LibFacet {
     ///      the host moves nothing and accrues all of `amount` (#2623).
     /// @return accrued What the treasury received and was credited with.
     function transferToTreasury(address asset, uint256 amount) internal returns (uint256 accrued) {
+        return transferToTreasury(asset, amount, LibFeeFloor.other());
+    }
+
+    /// @dev #3649 stage 3 — {transferToTreasury} for a fee that feeds the
+    ///      reserve: `basis` names it and its floor's base (built with
+    ///      {LibFeeFloor.initiation}, {LibFeeFloor.interest} or
+    ///      {LibFeeFloor.extension}). The host splits what arrived at the floor
+    ///      ({LibFeeFloor}).
+    function transferToTreasury(
+        address asset,
+        uint256 amount,
+        ITreasuryFeeHost.FeeBasis memory basis
+    ) internal returns (uint256 accrued) {
         if (amount == 0) return 0;
         return abi.decode(
             crossFacetCallReturn(
                 abi.encodeWithSelector(
                     ITreasuryFeeHost.collectFeeFromDiamond.selector,
                     asset,
-                    amount
+                    amount,
+                    basis
                 ),
                 IVaipakamErrors.TreasuryTransferFailed.selector
             ),
@@ -263,6 +278,17 @@ library LibFacet {
         address asset,
         uint256 amount
     ) internal {
+        transferFromPayerToTreasury(payer, asset, amount, LibFeeFloor.other());
+    }
+
+    /// @dev #3649 stage 3 — {transferFromPayerToTreasury} for a fee that
+    ///      feeds the reserve (see the four-argument {transferToTreasury}).
+    function transferFromPayerToTreasury(
+        address payer,
+        address asset,
+        uint256 amount,
+        ITreasuryFeeHost.FeeBasis memory basis
+    ) internal {
         if (amount == 0) return;
         // #1281-011 / #2440 — hosted on TreasuryFeeFacet, which refuses the pull
         // unless the treasury received all of it, so the accrual never records
@@ -275,7 +301,8 @@ library LibFacet {
                 ITreasuryFeeHost.collectFeeFromPayer.selector,
                 payer,
                 asset,
-                amount
+                amount,
+                basis
             ),
             IVaipakamErrors.TreasuryTransferFailed.selector
         );
@@ -292,6 +319,17 @@ library LibFacet {
         address asset,
         uint256 amount
     ) internal returns (uint256) {
+        return vaultFeeToTreasury(user, asset, amount, LibFeeFloor.other());
+    }
+
+    /// @dev #3649 stage 3 — {vaultFeeToTreasury} for a fee that feeds the
+    ///      reserve (see the four-argument {transferToTreasury}).
+    function vaultFeeToTreasury(
+        address user,
+        address asset,
+        uint256 amount,
+        ITreasuryFeeHost.FeeBasis memory basis
+    ) internal returns (uint256) {
         if (amount == 0) return 0;
         return abi.decode(
             crossFacetCallReturn(
@@ -299,7 +337,8 @@ library LibFacet {
                     ITreasuryFeeHost.collectFeeFromVault.selector,
                     user,
                     asset,
-                    amount
+                    amount,
+                    basis
                 ),
                 IVaipakamErrors.TreasuryTransferFailed.selector
             ),
@@ -351,10 +390,24 @@ library LibFacet {
         internal
         returns (uint256 accrued)
     {
+        return treasuryShareOrPark(source, owner, asset, amount, LibFeeFloor.other());
+    }
+
+    /// @dev #3649 stage 3 — {treasuryShareOrPark} for a share that feeds the
+    ///      reserve (see the four-argument {transferToTreasury}). A parked
+    ///      share keeps its floor, so its release splits as the settlement
+    ///      would have.
+    function treasuryShareOrPark(
+        uint8 source,
+        address owner,
+        address asset,
+        uint256 amount,
+        ITreasuryFeeHost.FeeBasis memory basis
+    ) internal returns (uint256 accrued) {
         if (amount == 0) return 0;
         (accrued, ) = abi.decode(
             crossFacetCallReturn(
-                abi.encodeCall(ISettlementLegHost.treasuryShareOrPark, (source, owner, asset, amount)),
+                abi.encodeCall(ISettlementLegHost.treasuryShareOrPark, (source, owner, asset, amount, basis)),
                 IVaipakamErrors.TreasuryTransferFailed.selector
             ),
             (uint256, bool)

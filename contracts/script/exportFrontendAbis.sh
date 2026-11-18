@@ -324,6 +324,9 @@ FACETS=(
   "FeeLevelsFacet"
   # A refused settlement leg's park and release (#3669).
   "SettlementLegFacet"
+  "IntegratorFacet"
+  "StandingOfferCheckFacet"
+  "ReferralFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"

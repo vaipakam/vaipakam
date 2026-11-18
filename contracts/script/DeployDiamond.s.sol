@@ -72,6 +72,9 @@ import {CollectionOfferFacet} from "../src/facets/CollectionOfferFacet.sol";
 import {ReadyBalanceFacet} from "../src/facets/ReadyBalanceFacet.sol";
 import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
+import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
+import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
+import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {VaultProtection} from "../src/vault/VaultProtection.sol";
@@ -601,6 +604,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #3649 — the initiation fee's term schedule.
         FeeLevelsFacet feeLevelsFacet = FeeLevelsFacet(ArtifactDeploy.deploy(type(FeeLevelsFacet).name));
         SettlementLegFacet settlementLegFacet = SettlementLegFacet(ArtifactDeploy.deploy(type(SettlementLegFacet).name));
+        IntegratorFacet integratorFacet = IntegratorFacet(ArtifactDeploy.deploy(type(IntegratorFacet).name));
+        StandingOfferCheckFacet standingOfferCheckFacet =
+            StandingOfferCheckFacet(ArtifactDeploy.deploy(type(StandingOfferCheckFacet).name));
+        // #3722 — the referral binding, settings, quote and payment.
+        ReferralFacet referralFacet = ReferralFacet(ArtifactDeploy.deploy(type(ReferralFacet).name));
         // #1841 - the one sale-exit verdict: the lender exit chooser's view and
         // the guard both sale entries self-call.
         SaleExitVerdictFacet saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
@@ -649,7 +657,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](127);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](130);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -779,6 +787,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[124] = _buildCut(address(readyBalanceFacet), _getReadyBalanceSelectors());
         cuts[125] = _buildCut(address(feeLevelsFacet), _getFeeLevelsSelectors());
         cuts[126] = _buildCut(address(settlementLegFacet), _getSettlementLegSelectors());
+        // #3682 — the integrator registry and the share's delivery.
+        cuts[127] = _buildCut(address(integratorFacet), _getIntegratorSelectors());
+        cuts[128] = _buildCut(address(standingOfferCheckFacet), _getStandingOfferCheckSelectors());
+        cuts[129] = _buildCut(address(referralFacet), _getReferralSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1544,6 +1556,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("readyBalanceFacet", address(readyBalanceFacet));
         Deployments.writeFacet("feeLevelsFacet", address(feeLevelsFacet));
         Deployments.writeFacet("settlementLegFacet", address(settlementLegFacet));
+        Deployments.writeFacet("integratorFacet", address(integratorFacet));
+        Deployments.writeFacet("standingOfferCheckFacet", address(standingOfferCheckFacet));
+        Deployments.writeFacet("referralFacet", address(referralFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
         Deployments.writeFacet("refinancePayoffFacet", address(refinancePayoffFacet));
@@ -2267,13 +2282,60 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     /// @dev Selectors for `FeeLevelsFacet` (#3649) — the initiation fee's
-    ///      term schedule: its bounded setter, its getter and the quote.
+    ///      term schedule (its bounded setter, its getter and the quotes) and the
+    ///      treasury floors' bounded setter and getter (stage 3).
     function _getFeeLevelsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](8);
         s[0] = FeeLevelsFacet.setLoanInitiationFeeTerms.selector;
         s[1] = FeeLevelsFacet.getLoanInitiationFeeTerms.selector;
         s[2] = FeeLevelsFacet.quoteLoanInitiationFee.selector;
         s[3] = FeeLevelsFacet.quoteExtensionFee.selector;
+        s[4] = FeeLevelsFacet.setTreasuryFeeFloors.selector;
+        s[5] = FeeLevelsFacet.getTreasuryFeeFloors.selector;
+        s[6] = FeeLevelsFacet.setFeeShareCeiling.selector;
+        s[7] = FeeLevelsFacet.getFeeShareCeiling.selector;
+    }
+
+    /// @dev Selectors for `IntegratorFacet` (#3682) — the integrator registry
+    ///      (governance and guardian steps, the public list and the platform's
+    ///      contracts) and the Diamond-internal share delivery.
+    function _getIntegratorSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](13);
+        s[0] = IntegratorFacet.setIntegrator.selector;
+        s[1] = IntegratorFacet.removeIntegrator.selector;
+        s[2] = IntegratorFacet.suspendIntegrator.selector;
+        s[3] = IntegratorFacet.restoreIntegrator.selector;
+        s[4] = IntegratorFacet.setIntegratorDefaultRate.selector;
+        s[5] = IntegratorFacet.deliverIntegratorShare.selector;
+        s[6] = IntegratorFacet.getIntegrator.selector;
+        s[7] = IntegratorFacet.getIntegrators.selector;
+        s[8] = IntegratorFacet.integratorOf.selector;
+        s[9] = IntegratorFacet.getPlatformContracts.selector;
+        s[10] = IntegratorFacet.getIntegratorShareSettings.selector;
+        s[11] = IntegratorFacet.integratorRateFor.selector;
+        s[12] = IntegratorFacet.nameLenderIntentIntegrator.selector;
+    }
+
+    /// @dev Selectors for `StandingOfferCheckFacet` (#3720) — the check of one
+    ///      standing lender offer a borrow preview points to.
+    function _getStandingOfferCheckSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = StandingOfferCheckFacet.checkAgainstRequest.selector;
+        s[1] = StandingOfferCheckFacet.checkForAmount.selector;
+    }
+
+    /// @dev Selectors for `ReferralFacet` (#3722) — the referral binding,
+    ///      its settings and views, the fee quote and the isolated payment.
+    function _getReferralSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](8);
+        s[0] = ReferralFacet.bindInviter.selector;
+        s[1] = ReferralFacet.setReferralRates.selector;
+        s[2] = ReferralFacet.setReferralPeriodDays.selector;
+        s[3] = ReferralFacet.payReferralShare.selector;
+        s[4] = ReferralFacet.getReferral.selector;
+        s[5] = ReferralFacet.getReferralSettings.selector;
+        s[6] = ReferralFacet.getReferralTotals.selector;
+        s[7] = ReferralFacet.quoteBorrowerFee.selector;
     }
 
     /// @dev Selectors for `SettlementLegFacet` (#3669) — the one host for a
@@ -4095,11 +4157,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      clear on a posted offer, the view, and the check loan creation
     ///      and the accept and match previews self-call.
     function _getOfferPriceGuardSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](7);
         s[0] = OfferPriceGuardFacet.armOfferPriceGuard.selector;
         s[1] = OfferPriceGuardFacet.setOfferPriceGuard.selector;
         s[2] = OfferPriceGuardFacet.getOfferPriceGuard.selector;
         s[3] = OfferPriceGuardFacet.requireOfferPriceGuardsClear.selector;
+        s[4] = OfferPriceGuardFacet.setIntentCalmCheck.selector;
+        s[5] = OfferPriceGuardFacet.intentCalmStatus.selector;
+        s[6] = OfferPriceGuardFacet.requireIntentPairCalm.selector;
     }
 
     function _getForcedSaleSelectors() internal pure returns (bytes4[] memory s) {

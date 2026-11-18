@@ -257,6 +257,9 @@ export interface DeploymentFacets {
   feeLevelsFacet?: HexAddress;
   /** #3669 — a refused settlement leg's park and release. */
   settlementLegFacet?: HexAddress;
+  integratorFacet?: HexAddress;
+  standingOfferCheckFacet?: HexAddress;
+  referralFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */

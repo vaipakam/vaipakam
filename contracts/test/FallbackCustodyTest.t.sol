@@ -1073,6 +1073,7 @@ contract FallbackCustodyTest is CustodyInvariantBase {
         _fcFund(lender_, lending, principal);
         _fcFund(borrower_, collateral, collateralAmount);
         LibVaipakam.CreateOfferParams memory p = LibVaipakam.CreateOfferParams({
+            integrator: address(0),
             lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: lending,

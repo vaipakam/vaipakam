@@ -8,6 +8,8 @@ import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
+import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
@@ -646,8 +648,15 @@ contract PrepayListingFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 lenderAmount = plan.lenderDue + lenderExtra;
         LibCloseoutFreeze.freezeLenderProceeds(s, loanId, loan, lenderAmount);
-        // #3669 — a refused share waits, liened, in the borrower's vault.
-        uint256 treasuryAmount = LibFacet.treasuryShareOrPark(2, loan.borrower, loan.principalAsset, treasuryNet);
+        // #3669 — a refused share waits, liened, in the borrower's vault; its
+        // floor split (#3649 stage 3) is fixed then and applied at release.
+        uint256 treasuryAmount = LibFacet.treasuryShareOrPark(
+            2,
+            loan.borrower,
+            loan.principalAsset,
+            treasuryNet,
+            LibFeeFloor.interest(plan.interest + plan.lateFee, LibVaipakam.effectiveTreasuryFeeBps(loan))
+        );
 
         // `lenderExtra + treasuryNet == plan.treasuryShare`, so this is
         // `proceeds - floor`, which the check above keeps non-negative.

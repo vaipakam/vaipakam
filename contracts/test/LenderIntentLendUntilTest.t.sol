@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibIntentFill} from "../src/libraries/LibIntentFill.sol";
+import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -59,6 +60,10 @@ contract LenderIntentLendUntilTest is SetupTest {
         ConfigFacet(address(diamond)).setPartialFillEnabled(true);
         vm.prank(owner);
         LenderIntentFacet(address(diamond)).setLenderIntentEnabled(true);
+        // This suite moves the clock by days between fills; the slot's
+        // calm-price check is covered in IntentCalmCheckTest, so it is off here.
+        vm.prank(lender);
+        OfferPriceGuardFacet(address(diamond)).setIntentCalmCheck(mockERC20, mockCollateralERC20, 0, false);
     }
 
     // ─── helpers ────────────────────────────────────────────────────────
@@ -112,6 +117,7 @@ contract LenderIntentLendUntilTest is SetupTest {
         vm.prank(creator);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,

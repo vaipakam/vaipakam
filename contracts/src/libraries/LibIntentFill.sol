@@ -14,6 +14,7 @@ import {LibOfferMatchExecute} from "./LibOfferMatchExecute.sol";
 import {OfferMaterializeFacet} from "../facets/OfferMaterializeFacet.sol";
 import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
 import {MarketLedgerFacet} from "../facets/MarketLedgerFacet.sol";
+import {OfferPriceGuardFacet} from "../facets/OfferPriceGuardFacet.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
@@ -25,7 +26,8 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *         borrow (`InstantFillFacet`, #3656). Both run the same admission
  *         (the slot is active and its terms aged, the fill is within its
  *         smallest fill, its exposure, its longest term and its lend-until
- *         time, its lifecycle terms admitted, its loan-to-value limit
+ *         time, its lifecycle terms admitted, the pair calm unless the slot's
+ *         owner switched that check off, its loan-to-value limit
  *         resolvable), draw the fill from the slot's capital lien the same
  *         way, materialize the lender slice the same way, and record the
  *         loan's slot origin the same way. A route adds only what is its own:
@@ -66,8 +68,8 @@ library LibIntentFill {
     }
 
     /// @dev The fill-level admission: smallest fill, exposure, longest term,
-    ///      lend-until, lifecycle terms, and the collateral the slot's LTV
-    ///      limit requires for `fillAmount`.
+    ///      lend-until, lifecycle terms, the calm-price check, and the
+    ///      collateral the slot's LTV limit requires for `fillAmount`.
     /// @return reqColl The collateral the slot's init-LTV ceiling requires.
     function admitFill(
         LibVaipakam.Storage storage s,
@@ -100,6 +102,10 @@ library LibIntentFill {
         if (verdict == LibIntentTerms.Lifecycle.PartialRepayNotAllowed) {
             revert LenderIntentPartialRepayNotAllowed();
         }
+        // The calm-price check (on unless the slot's owner switched it off):
+        // no fill while the pair moved past the calm bound in the last two
+        // hours, a checkpoint is missing, or a price cannot be read.
+        OfferPriceGuardFacet(address(this)).requireIntentPairCalm(lender, lendingAsset, collateralAsset, slot);
         reqColl = LibRiskMath.minCollateralForLtvCap(
             fillAmount, lendingAsset, collateralAsset, intent.maxInitLtvBps
         );

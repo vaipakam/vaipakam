@@ -208,6 +208,22 @@ else
   FAIL=1
 fi
 
+# ── 1d-ii. Intent-origin writer guard ─────────────────────────────────
+# A loan is recorded as made by a lender intent slot only in matchIntent,
+# where every slot check (terms, funding, the calm-price check) runs. Same
+# AST artifacts as 1d.
+echo
+echo "[predeploy 1d-ii/4] intent-origin writer guard"
+if [ "$BUILD_OK" -ne 1 ] || [ ! -d "$SCRIPT_DIR/../out-measured-delivery" ]; then
+  echo "  ✗ skipped — no AST artifacts to read (step 1 or 1c failed)" >&2
+  FAIL=1
+elif node "$SCRIPT_DIR/check-intent-origin-writer.mjs"; then
+  :
+else
+  echo "  ✗ intent-origin writer guard failed — open intent loans through matchIntent" >&2
+  FAIL=1
+fi
+
 # ── 1e. Permissionless-steps ledger ───────────────────────────────────
 # Every entry point anyone may call has a row in permissionless-steps.json
 # saying what backs it, and every keeper-backed row names a pass, flag and

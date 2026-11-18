@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestCalmPair} from "./helpers/LibTestCalmPair.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
@@ -61,6 +62,8 @@ contract LenderIntentCapitalTest is SetupTest {
         vm.stopPrank();
         vm.prank(owner);
         LenderIntentFacet(address(diamond)).setLenderIntentEnabled(true);
+        // Intent fills run the calm-price check: two hourly checkpoints.
+        LibTestCalmPair.checkpoint(address(diamond), mockCollateralERC20, mockERC20);
     }
 
     // ─── helpers ────────────────────────────────────────────────────────────
@@ -137,6 +140,7 @@ contract LenderIntentCapitalTest is SetupTest {
         vm.prank(creator);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
                 lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,

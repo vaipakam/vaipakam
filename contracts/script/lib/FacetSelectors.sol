@@ -496,10 +496,11 @@ library FacetSelectors {
     ///         (`getTreasuryFeeFacetSelectors`) return it, and
     ///         `RedeploySelectorParityTest` pins it to the compiled ABI.
     function treasuryFee() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = TreasuryFeeFacet.collectFeeFromPayer.selector;
         s[1] = TreasuryFeeFacet.collectFeeFromVault.selector;
         s[2] = TreasuryFeeFacet.collectFeeFromDiamond.selector;
+        s[3] = TreasuryFeeFacet.getReservePartHeldByTreasury.selector;
     }
 
     /// @notice Full external selector surface of {NotificationFeeFacet} (3).

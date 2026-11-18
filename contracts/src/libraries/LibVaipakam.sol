@@ -81,7 +81,7 @@ library LibVaipakam {
     ///      `MIN_HEALTH_FACTOR` (1.5e18) sits inside the band as the default.
     uint256 constant MIN_ADMISSION_HEALTH_FACTOR = 120 * 1e16; // 1.2e18
     uint256 constant MAX_ADMISSION_HEALTH_FACTOR = 200 * 1e16; // 2.0e18
-    uint256 constant TREASURY_FEE_BPS = 500; // 5% of interest (#3649 fee levels; was 200 = 2% under the #1352 freeze)
+    uint256 constant TREASURY_FEE_BPS = 1000; // 10% of interest (#3649 fee levels, owner decision 2026-11-17; was 200 = 2% under the #1352 freeze)
     /// @dev Pre-freeze 1% yield fee. The FROZEN grandfather fallback for a
     ///      snapshot-0 (pre-#957) open loan in {effectiveTreasuryFeeBps} — a
     ///      snapshot-0 loan resolves to this, NOT the live 200-bps default, so
@@ -466,8 +466,43 @@ library LibVaipakam {
     ///      (`FeeLevelsFacet.setLoanInitiationFeeTerms`); the rate is read only
     ///      through `LibInitiationFee`.
     uint256 constant LIF_BASE_TERM_DAYS_DEFAULT = 30;
-    uint256 constant LIF_YEARLY_BPS_DEFAULT = 50;
+    uint256 constant LIF_YEARLY_BPS_DEFAULT = 100; // 1% a year (owner decision 2026-11-17)
     uint256 constant LIF_YEAR_DAYS_DEFAULT = 365;
+
+    /// @dev #3649 stage 3 — the treasury floors' defaults (owner decision
+    ///      2026-11-15, `ShortfallReserveDesign.md` section 8): 0.1% of the
+    ///      principal for the initiation fee, taken once at acceptance, and
+    ///      1% of the interest for the treasury's share of interest.
+    uint256 constant FEE_FLOOR_INITIATION_BPS_DEFAULT = 10;
+    uint256 constant FEE_FLOOR_INTEREST_BPS_DEFAULT = 100;
+
+    /// @dev #3682 — the integrator's share of the initiation fee's part above
+    ///      the treasury floor (`IntegratorFeeShareDesign.md` section 3):
+    ///      default 10% (owner decision 2026-11-17), hard ceiling 50%.
+    uint256 constant INTEGRATOR_SHARE_BPS_DEFAULT = 1_000;
+    uint256 constant INTEGRATOR_SHARE_BPS_MAX = 5_000;
+    /// @dev #3682 / #3722 — the per-loan ceiling on the parts taken from the
+    ///      initiation fee's above-floor part (the new user's cut, the
+    ///      matcher's, the integrator's and the inviter's shares together):
+    ///      default 60%, a setting bounded 40% to 70%
+    ///      (`ReferralFeeShareDesign.md` 2.1).
+    uint256 constant FEE_SHARE_CEILING_BPS_DEFAULT = 6_000;
+    uint256 constant FEE_SHARE_CEILING_BPS_MIN = 4_000;
+    uint256 constant FEE_SHARE_CEILING_BPS_MAX = 7_000;
+    /// @dev #3722 — the referral (`ReferralFeeShareDesign.md`): the new user's
+    ///      cut and the inviter's share, each a rate of the initiation fee's
+    ///      above-floor part after the hold discount (default 10% each, owner
+    ///      decision 2026-11-17, a setting bounded 0 to 30%), for the period
+    ///      fixed when the user binds (default 180 days, bounded 30 to 365).
+    uint256 constant REFERRAL_CUT_BPS_DEFAULT = 1_000;
+    uint256 constant REFERRAL_SHARE_BPS_DEFAULT = 1_000;
+    uint256 constant REFERRAL_RATE_BPS_MAX = 3_000;
+    uint256 constant REFERRAL_PERIOD_DAYS_DEFAULT = 180;
+    uint256 constant REFERRAL_PERIOD_DAYS_MIN = 30;
+    uint256 constant REFERRAL_PERIOD_DAYS_MAX = 365;
+    /// @dev #3720 — an integrator's public record counts a loan that defaults
+    ///      or is liquidated within this long of opening.
+    uint256 constant INTEGRATOR_EARLY_DEFAULT_WINDOW = 7 days;
     // Fallback-path split (README §7): lender gets principal + accrued
     // interest + {FALLBACK_LENDER_BONUS_BPS} of principal; treasury gets
     // {FALLBACK_TREASURY_BPS} of principal; borrower gets the remainder.
@@ -1193,7 +1228,7 @@ library LibVaipakam {
      */
     struct ProtocolConfig {
         // ── Packed BPS slot (14 × uint16 = 224 bits; 32 bits of headroom) ──
-        uint16 treasuryFeeBps; // 0 ⇒ TREASURY_FEE_BPS (500)
+        uint16 treasuryFeeBps; // 0 ⇒ TREASURY_FEE_BPS (1000)
         uint16 loanInitiationFeeBps; // 0 ⇒ LOAN_INITIATION_FEE_BPS (20)
         uint16 liquidationHandlingFeeBps; // 0 ⇒ LIQUIDATION_HANDLING_FEE_BPS (200)
         uint16 maxLiquidationSlippageBps; // 0 ⇒ MAX_LIQUIDATION_SLIPPAGE_BPS (600)
@@ -1953,6 +1988,11 @@ library LibVaipakam {
         // #3621 — lender-only "either" marks for the partial-repay and
         // prepay-listing options ({Offer.lifecycleFlex}). 0 = both exact.
         uint8 lifecycleFlex;
+        // #3682 — the integrator a BORROWER's offer names (address(0) = none).
+        // Stored on the offer at creation; the fill credits it, and neither a
+        // matcher nor an accepting lender can set or change it. On a lender's
+        // offer it is attribution only (#3719) and earns no share.
+        address integrator;
     }
 
     /// @notice #193 — input bundle for `OfferMutateFacet.modifyOffer`.
@@ -2226,6 +2266,11 @@ library LibVaipakam {
         // sale vehicle and NFT rental (refused at posting). Immutable after
         // creation (no edit changes it). Appended.
         uint8 lifecycleFlex;
+        // #3682 — the integrator named at creation (address(0) = none). Paid a
+        // share of the initiation fee only when this is a BORROWER's offer;
+        // on a lender's offer it is attribution only (#3719). Set only by
+        // `OfferCreateFacet`.
+        address integrator;
     }
 
     /**
@@ -2496,7 +2541,7 @@ library LibVaipakam {
         // pre-#957 rate — NOT the live knob. That distinction is the whole
         // point of the field. The live knob is `cfgTreasuryFeeBps()`, which
         // returns the governance override in `protocolCfg.treasuryFeeBps`
-        // when set and otherwise `TREASURY_FEE_BPS` (500 since #3649; 200 under the rev-8 freeze
+        // when set and otherwise `TREASURY_FEE_BPS` (1000 since #3649; 200 under the rev-8 freeze
         // default, #1352) — so resolving a grandfathered loan against it
         // would reprice it at repay from 1% to WHATEVER IS LIVE THEN, in
         // EITHER DIRECTION. `setFeesConfig` bounds the override only from
@@ -3352,6 +3397,80 @@ library LibVaipakam {
         uint16 baseTermDays;
         uint16 yearlyBps;
         uint16 yearDays;
+    }
+
+    /// @dev #3649 stage 3 — the treasury floors (`ShortfallReserveDesign.md`
+    ///      section 8), in basis points. Zero in a field ⇒ its default:
+    ///      `initiationBps` ⇒ {FEE_FLOOR_INITIATION_BPS_DEFAULT} of the
+    ///      loan's principal, `interestBps` ⇒ {FEE_FLOOR_INTEREST_BPS_DEFAULT}
+    ///      of the interest the treasury's share is taken from.
+    struct FeeFloorConfig {
+        uint16 initiationBps;
+        uint16 interestBps;
+    }
+
+    /// @dev #3682 — a registered integrator's standing. `None` is never
+    ///      registered or removed. APPEND-ONLY.
+    enum IntegratorStatus {
+        None,
+        Active,
+        Suspended
+    }
+
+    /// @dev #3682 / #3720 — one registered integrator, keyed by its id (the
+    ///      address a borrower names). `rateBps` 0 ⇒ the default rate.
+    ///      `payout` is the account whose platform vault receives the share.
+    ///      `name` is its display name (1 to 32 printable ASCII characters,
+    ///      unique without regard to letter case). The three counters are its
+    ///      public record: loans brought, loans opened with a warning, and
+    ///      loans defaulted or liquidated within
+    ///      {INTEGRATOR_EARLY_DEFAULT_WINDOW} of opening. `declared` lists the
+    ///      contracts it operates; a loan whose borrower is the id, the payout
+    ///      account or one of them pays it nothing.
+    struct IntegratorEntry {
+        address payout;
+        uint16 rateBps;
+        IntegratorStatus status;
+        uint32 loansBrought;
+        uint32 loansWarned;
+        uint32 loansEarlyDefaulted;
+        string name;
+        address[] declared;
+    }
+
+    /// @dev #3682 / #3722 — the shared fee-share settings. Zero in a field ⇒
+    ///      its default ({INTEGRATOR_SHARE_BPS_DEFAULT},
+    ///      {FEE_SHARE_CEILING_BPS_DEFAULT}).
+    struct FeeShareConfig {
+        uint16 integratorDefaultBps;
+        uint16 ceilingBps;
+    }
+
+    /// @dev #3722 — the referral settings. A rate counts only once set
+    ///      (`ratesSet`), so 0 is a settable rate; before that the defaults
+    ///      apply. `periodDays` 0 ⇒ {REFERRAL_PERIOD_DAYS_DEFAULT}.
+    struct ReferralConfig {
+        uint16 cutBps;
+        uint16 shareBps;
+        uint16 periodDays;
+        bool ratesSet;
+    }
+
+    /// @dev #3722 — one wallet's referral: the inviter it bound and the end
+    ///      of its period, fixed at the binding.
+    struct ReferralRecord {
+        address inviter;
+        uint64 endsAt;
+    }
+
+    /// @dev #3722 — the public counters, per lending asset: the cut not
+    ///      charged, the shares paid to inviters, the shares sent to the
+    ///      reserve instead, and the loans that carried a cut or a share.
+    struct ReferralTotals {
+        uint256 cut;
+        uint256 sharePaid;
+        uint256 shareRedirected;
+        uint256 loans;
     }
 
     struct Storage {
@@ -8665,6 +8784,80 @@ library LibVaipakam {
         ///      `LibMarketLedger.syncIntent`. Appended — append-only.
         mapping(address => DeclaredCounter) availableByAsset;
         mapping(address => mapping(address => DeclaredCounter)) availableByPair;
+        /// @dev #3649 stage 3 — the treasury floors of the two fees that feed
+        ///      the reserve (`ShortfallReserveDesign.md` section 8). Zero in a
+        ///      field ⇒ its default. Written only by
+        ///      `FeeLevelsFacet.setTreasuryFeeFloors`; read only through
+        ///      `LibFeeFloor`. Appended — append-only.
+        FeeFloorConfig feeFloorCfg;
+        /// @dev #3649 stage 3 — per asset, the reserve's part of the fees
+        ///      collected that the treasury holds because no reserve is named
+        ///      yet. Only rises. Written only by `TreasuryFeeFacet`'s split.
+        ///      Appended — append-only.
+        mapping(address => uint256) reservePartHeldByTreasury;
+        /// @dev #3682 — the integrator registry, keyed by id. Written only by
+        ///      `IntegratorFacet`. Appended — append-only.
+        mapping(address => IntegratorEntry) integrators;
+        /// @dev #3682 — every id ever registered and not removed, for the
+        ///      public list. Written only by `IntegratorFacet`.
+        address[] integratorIds;
+        /// @dev #3682 — the display name's lower-case hash ⇒ the id carrying
+        ///      it, so no two entries carry one name. `IntegratorFacet` only.
+        mapping(bytes32 => address) integratorByName;
+        /// @dev #3682 — each integrator address (its id, payout account and
+        ///      declared contracts) ⇒ the id it belongs to. Read by the share
+        ///      (a borrower that is one earns nothing) and by the referral
+        ///      binding (none may be an inviter). `IntegratorFacet` only.
+        mapping(address => address) integratorOfAddress;
+        /// @dev #3682 / #3722 — the shared fee-share settings.
+        FeeShareConfig feeShareCfg;
+        /// @dev #3682 — the integrator credited on loan id, for its public
+        ///      record. Written once at acceptance.
+        mapping(uint256 => address) loanIntegrator;
+        /// @dev #3682 — the integrator the BORROWER named on a direct accept
+        ///      of a lender's offer, from its signed accept terms. Written on
+        ///      every direct accept entry and read only while
+        ///      `acceptAckActive`, like the other accept-ack fields.
+        address acceptAckIntegrator;
+        /// @dev #3682 / #3719 — the integrator named on the accept being
+        ///      charged, handed from the acceptance charge to the loan's
+        ///      creation in the same transaction, which records it on the loan
+        ///      and clears it.
+        address acceptIntegratorPending;
+        /// @dev #3682 / #3722 — the id of the loan an initiation-fee charge
+        ///      is for (the next loan id when the fee is charged), checked by
+        ///      the loan's creation so the integrator's and the referral's
+        ///      settlement events and the loan always name one loan.
+        uint256 acceptChargeLoanId;
+        /// @dev The calm-price check on a lender intent slot's fills, keyed
+        ///      like `lenderIntent`: true = the slot's owner switched it OFF.
+        ///      Default (false) = on. Written only by
+        ///      `OfferPriceGuardFacet.setIntentCalmCheck` and cleared when the
+        ///      intent is cancelled, so a new intent in the slot starts with
+        ///      the check on.
+        mapping(address => mapping(address => mapping(address => mapping(uint8 => bool)))) intentCalmCheckOff;
+        /// @dev #3722 — the referral settings. Written only by
+        ///      `ReferralFacet`'s admin setters.
+        ReferralConfig referralCfg;
+        /// @dev #3722 — each wallet's referral. One writer, the wallet's own
+        ///      binding (`ReferralFacet.bindInviter`); the fee host and the
+        ///      outflow policy only read it.
+        mapping(address => ReferralRecord) referralOf;
+        /// @dev #3722 — whether a wallet has been a loan's borrower: set when
+        ///      a loan opens with it as borrower and when it takes over an
+        ///      obligation. Read by the binding, which only a wallet that has
+        ///      never borrowed may make.
+        mapping(address => bool) hasBorrowed;
+        /// @dev #3722 — the public counters per lending asset. Written only
+        ///      by the acceptance charge.
+        mapping(address => ReferralTotals) referralTotals;
+        /// @dev #3669 with #3649 stage 3 — per owner and asset, the treasury's
+        ///      part of `parkedTreasury`: each parked share's floor, fixed
+        ///      from its own kind when it was parked, so its release splits
+        ///      between the treasury and the reserve as it would have at
+        ///      settlement. Never above `parkedTreasury`. Written only by
+        ///      `SettlementLegFacet`. Appended — append-only.
+        mapping(address => mapping(address => uint256)) parkedTreasuryFloor;
     }
 
     /// @notice #3344 — a protected account's Ready settings. See

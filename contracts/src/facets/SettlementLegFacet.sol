@@ -18,6 +18,7 @@ import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {LibTierRecord} from "../libraries/LibTierRecord.sol";
+import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
 
 /**
  * @title  SettlementLegFacet
@@ -191,20 +192,26 @@ contract SettlementLegFacet is IVaipakamErrors, DiamondReentrancyGuard, DiamondP
      *         treasury. `source` names where the share is ({FROM_WALLET}:
      *         `owner`'s wallet; {FROM_VAULT}: `owner`'s vault;
      *         {FROM_DIAMOND}: the Diamond, from proceeds of `owner`'s).
+     *         `basis` names the share for the treasury floor split (#3649
+     *         stage 3): applied as it arrives, or, when parked, fixed now as
+     *         the share's floor so its release splits the same way.
      * @return accrued What reached the treasury now (0 when parked).
      * @return parked  Whether the share was parked.
      */
-    function treasuryShareOrPark(uint8 source, address owner, address asset, uint256 amount)
-        external
-        returns (uint256 accrued, bool parked)
-    {
+    function treasuryShareOrPark(
+        uint8 source,
+        address owner,
+        address asset,
+        uint256 amount,
+        ITreasuryFeeHost.FeeBasis calldata basis
+    ) external returns (uint256 accrued, bool parked) {
         _onlySelf();
         if (amount == 0) return (0, false);
         bytes memory call_ = source == FROM_WALLET
-            ? abi.encodeCall(ITreasuryFeeHost.collectFeeFromPayer, (owner, asset, amount))
+            ? abi.encodeCall(ITreasuryFeeHost.collectFeeFromPayer, (owner, asset, amount, basis))
             : source == FROM_VAULT
-                ? abi.encodeCall(ITreasuryFeeHost.collectFeeFromVault, (owner, asset, amount))
-                : abi.encodeCall(ITreasuryFeeHost.collectFeeFromDiamond, (asset, amount));
+                ? abi.encodeCall(ITreasuryFeeHost.collectFeeFromVault, (owner, asset, amount, basis))
+                : abi.encodeCall(ITreasuryFeeHost.collectFeeFromDiamond, (asset, amount, basis));
         (bool ok, bytes memory ret) = _attempt(call_);
         if (ok) return (source == FROM_WALLET ? amount : abi.decode(ret, (uint256)), false);
 
@@ -234,6 +241,10 @@ contract SettlementLegFacet is IVaipakamErrors, DiamondReentrancyGuard, DiamondP
         }
         LibEncumbrance.encumberParkedLeg(owner, asset, held);
         s.parkedTreasury[owner][asset] += held;
+        {
+            uint256 floor = LibFeeFloor.floorOf(basis);
+            s.parkedTreasuryFloor[owner][asset] += floor < held ? floor : held;
+        }
         emit TreasuryShareParked(owner, asset, held);
         return (0, true);
     }
@@ -254,12 +265,17 @@ contract SettlementLegFacet is IVaipakamErrors, DiamondReentrancyGuard, DiamondP
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 amount = s.parkedTreasury[owner][asset];
         if (amount == 0) revert NoParkedTreasuryShare(owner, asset);
+        uint256 floor = s.parkedTreasuryFloor[owner][asset];
         delete s.parkedTreasury[owner][asset];
+        delete s.parkedTreasuryFloor[owner][asset];
         LibEncumbrance.releaseParkedLeg(owner, asset, amount);
         LibSanctionedLock.beginMoveOut(s, owner);
+        // A share the treasury keeps whole parked a floor equal to itself;
+        // only a reserve-feeding share leaves a part above its floor.
+        ITreasuryFeeHost.FeeBasis memory basis = floor >= amount ? LibFeeFloor.other() : LibFeeFloor.released(floor);
         accrued = abi.decode(
             LibFacet.crossFacetCallReturn(
-                abi.encodeCall(ITreasuryFeeHost.collectFeeFromVault, (owner, asset, amount)),
+                abi.encodeCall(ITreasuryFeeHost.collectFeeFromVault, (owner, asset, amount, basis)),
                 TreasuryTransferFailed.selector
             ),
             (uint256)
@@ -268,9 +284,17 @@ contract SettlementLegFacet is IVaipakamErrors, DiamondReentrancyGuard, DiamondP
         emit TreasuryShareReleased(owner, asset, amount, accrued);
     }
 
-    /// @notice The treasury shares parked in `owner`'s vault in `asset`.
-    function getParkedTreasury(address owner, address asset) external view returns (uint256) {
-        return LibVaipakam.storageSlot().parkedTreasury[owner][asset];
+    /// @notice The treasury shares parked in `owner`'s vault in `asset`,
+    ///         and the treasury's part of them (the floors fixed when they
+    ///         were parked). The rest is the reserve's part (#3649 stage 3),
+    ///         split when the shares are released.
+    function getParkedTreasury(address owner, address asset)
+        external
+        view
+        returns (uint256 amount, uint256 treasuryFloor)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (s.parkedTreasury[owner][asset], s.parkedTreasuryFloor[owner][asset]);
     }
 
     // ─── In-kind default ───────────────────────────────────────────────

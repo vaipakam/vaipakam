@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {OfferPriceGuardFacet} from "../facets/OfferPriceGuardFacet.sol";
+import {LibOfferPriceGuard} from "./LibOfferPriceGuard.sol";
 import {LibOfferAdmission} from "./LibOfferAdmission.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibTiming} from "./LibTiming.sol";
@@ -187,7 +189,16 @@ library LibOfferMatch {
         // after the intent's lend-until time (`LenderIntentPastLendUntil`).
         // Checked right after `DurationTooLong`, where `matchIntent` checks it.
         // APPENDED.
-        PastLendUntil
+        PastLendUntil,
+        // The intent slot's calm-price check refuses the fill
+        // (`OfferPriceGuardFacet.requireIntentPairCalm`): a checkpoint for one
+        // of the last two hours is missing, the pair moved past the calm
+        // bound, or a price cannot be read. Checked right after
+        // `PastLendUntil` and the lifecycle rule, where `matchIntent` checks
+        // it. APPENDED.
+        PairNoCheckpoint,
+        PairNotCalm,
+        PairUnpriced
     }
 
     /// @notice Structured outcome of `RiskPreviewFacet.previewIntent`. `ok` is
@@ -241,12 +252,15 @@ library LibOfferMatch {
         return true;
     }
 
-    /// @notice The 1% match-fee BPS slice of any totalFee. Pure.
+    /// @notice The matcher's share (default 1%) of `totalFee`.
     /// @dev    The LIF is charged in the lending asset at `_acceptOffer`
     ///         and split there; this is the single source of truth for
-    ///         the 99/1 split so its semantics never drift between call
+    ///         the matcher's rate so its semantics never drift between call
     ///         sites. (The VPFI path that deferred the split to settlement
-    ///         was removed in #1980.)
+    ///         was removed in #1980.) #3649 stage 3 — the caller passes the
+    ///         part of the fee ABOVE the treasury floor
+    ///         (`LibFeeFloor.aboveFloor`): the matcher is paid from the
+    ///         reserve's part, never from the treasury's floor.
     function matcherShareOf(uint256 totalFee) internal view returns (uint256) {
         // Reads governance-tunable BPS from storage so the kickback
         // can be dialed without a contract upgrade. Falls back to
@@ -943,6 +957,13 @@ library LibOfferMatch {
             if (verdict == LibIntentTerms.Lifecycle.PartialRepayNotAllowed) {
                 return _intentFail(res, IntentError.PartialRepayNotAllowed);
             }
+        }
+        {
+            LibOfferPriceGuard.Status calm = OfferPriceGuardFacet(address(this))
+                .intentCalmStatus(lender, lendingAsset, collateralAsset, slot);
+            if (calm == LibOfferPriceGuard.Status.NoCheckpoint) return _intentFail(res, IntentError.PairNoCheckpoint);
+            if (calm == LibOfferPriceGuard.Status.NotCalm) return _intentFail(res, IntentError.PairNotCalm);
+            if (calm == LibOfferPriceGuard.Status.Unpriced) return _intentFail(res, IntentError.PairUnpriced);
         }
 
         uint256 reqColl = LibRiskMath.minCollateralForLtvCap(
