@@ -1345,7 +1345,13 @@ contract ClaimFacet is
         LibVaipakam.Encumbrance storage lr = s.loanCollateralLien[loanId];
         address extraLienedAsset;
         uint256 extraLienedAmt;
-        if (!lr.released && lr.amount > 0 && lr.asset != claim.asset) {
+        // A lien that backs a parked lender leg (#3669) is the lender side's
+        // collateral, never the borrower's: it is neither paid here nor
+        // released (the release below leaves it in place).
+        if (
+            !lr.released && lr.amount > 0 && lr.asset != claim.asset
+                && !s.parkedLenderLeg[loanId].collateralLien
+        ) {
             extraLienedAsset = lr.asset;
             extraLienedAmt = lr.amount;
         }

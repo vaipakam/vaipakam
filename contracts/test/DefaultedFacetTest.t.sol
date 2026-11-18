@@ -1827,6 +1827,58 @@ contract DefaultedFacetTest is Test {
         _assertCollateralParked(loanId);
     }
 
+    /// @dev #3669 — collateral parked for the lender side by a refused
+    ///      in-kind default stays the lender's even when the borrower side
+    ///      has its own claim in another asset (as a periodic sale's held
+    ///      extra would leave): the borrower claim neither pays that
+    ///      collateral nor lifts its lien, and the lender claim still
+    ///      releases it whole.
+    function testParkedDefaultCollateralStaysOutOfBorrowerClaim() public {
+        mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Illiquid);
+        uint256 loanId = createAndAcceptOffer(
+            mockERC20, mockIlliquidERC20, LibVaipakam.AssetType.ERC20,
+            1000 ether, 1500 ether, 30, 0, 0
+        );
+        mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
+        vm.warp(block.timestamp + 33 days + 3);
+        MockVaultWithdraw.fails(address(diamond), VaultOutflowTypes.AssetKind.ERC20);
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
+        vm.clearMockedCalls();
+        _assertCollateralParked(loanId);
+
+        // A borrower claim in the principal asset, held in the borrower's vault.
+        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        deal(mockERC20, borrowerVault, IERC20(mockERC20).balanceOf(borrowerVault) + 5 ether);
+        TestMutatorFacet(address(diamond)).setBorrowerClaimAssetRaw(loanId, mockERC20);
+        TestMutatorFacet(address(diamond)).setBorrowerClaimAmountRaw(loanId, 5 ether);
+
+        uint256 collateralBefore = IERC20(mockIlliquidERC20).balanceOf(borrowerVault);
+        vm.prank(borrower);
+        ClaimFacet(address(diamond)).claimAsBorrower(loanId);
+        assertEq(
+            IERC20(mockIlliquidERC20).balanceOf(borrowerVault), collateralBefore, "the parked collateral did not move"
+        );
+        assertTrue(
+            SettlementLegFacet(address(diamond)).getParkedLenderLeg(loanId).collateralLien, "still parked for the lender"
+        );
+        assertGe(
+            TestMutatorFacet(address(diamond)).getEncumberedRaw(borrower, mockIlliquidERC20, 0),
+            1500 ether,
+            "the borrower claim left the lender's lien in place"
+        );
+
+        address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        uint256 lenderBefore = IERC20(mockIlliquidERC20).balanceOf(lender) + IERC20(mockIlliquidERC20).balanceOf(lenderVault);
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimAsLender(loanId);
+        assertEq(
+            IERC20(mockIlliquidERC20).balanceOf(lender) + IERC20(mockIlliquidERC20).balanceOf(lenderVault) - lenderBefore,
+            1500 ether,
+            "the lender claim released the whole collateral"
+        );
+    }
+
     function _assertCollateralParked(uint256 loanId) internal view {
         assertEq(
             uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),

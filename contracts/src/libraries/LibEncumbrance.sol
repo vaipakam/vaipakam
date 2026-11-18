@@ -159,6 +159,11 @@ library LibEncumbrance {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Encumbrance storage lien = s.loanCollateralLien[loanId];
         if (lien.released || lien.user == address(0)) return;
+        // #3669 — a lien that backs a parked lender leg (an in-kind default
+        // the token refused) is the lender side's: only the lender side's
+        // release lifts it, and that release deletes the parked row first.
+        // Every other release, the borrower claim's included, leaves it.
+        if (s.parkedLenderLeg[loanId].collateralLien) return;
         _decrementAggregate(lien.user, lien.asset, lien.tokenId, lien.amount);
         _unpledge(lien.asset, lien.assetType, lien.amount);
         lien.released = true;

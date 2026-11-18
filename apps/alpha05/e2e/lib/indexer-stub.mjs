@@ -135,7 +135,7 @@ const DEPLOYMENT = JSON.parse(fs.readFileSync(path.resolve(HERE, '..', '.state',
 // facet's file). Each carries the loan as topic 1 and its actor as topic 2.
 const DIAMOND_ABI = JSON.parse(fs.readFileSync(path.resolve(HERE, '..', '..', '..', '..', 'packages', 'contracts', 'src', 'diamondAbi.json'), 'utf8'));
 const SELLER_KINDS = ['SellerInterestClaimRecorded', 'SellerInterestPaid', 'SellerInterestClaimClosed', 'SellerInterestWithdrawn'];
-const RESERVE_KINDS = ['ExtendReserveFunded', 'ExtendReserveWithdrawn', 'ExtendChargeDrawn'];
+const RESERVE_KINDS = ['LoanReserveFunded', 'LoanReserveWithdrawn', 'ExtendChargeDrawn'];
 const ACTIVITY_KINDS = [...SELLER_KINDS, ...RESERVE_KINDS];
 const ACTIVITY_TOPICS = new Map(
   ACTIVITY_KINDS.map((name) => {

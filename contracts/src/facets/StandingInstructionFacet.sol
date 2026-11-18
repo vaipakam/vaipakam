@@ -593,13 +593,21 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
         LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
         _drawPayment(loanId, holder, loan.principalAsset, amount);
         // The one interest booking, shared with the periodic forced sale.
-        LibFacet.crossFacetCallReturn(
-            abi.encodeCall(
-                IInterestPaymentHost.bookInterestPayment,
-                (loanId, amount, amount, LibInterestPayment.SOURCE_PAYMENT_RESERVE)
+        (, uint256 settled) = abi.decode(
+            LibFacet.crossFacetCallReturn(
+                abi.encodeCall(
+                    IInterestPaymentHost.bookInterestPayment,
+                    (loanId, amount, amount, LibInterestPayment.SOURCE_PAYMENT_RESERVE)
+                ),
+                bytes4(0)
             ),
-            bytes4(0)
+            (uint256, uint256)
         );
+        // The period is credited only with interest that arrived. A lender
+        // delivery that arrives short (a token charging a fee on the way)
+        // undoes the whole attempt, which is then skipped by name, so the
+        // period's shortfall keeps its own settlement.
+        if (settled != amount) revert IVaipakamErrors.TokenDeliveryShort(loan.principalAsset, amount, settled);
         // The period's credit, through its one crediting function, which
         // closes the period inline once it is paid and over.
         LibPeriodicInterest.creditInterestPaid(loan, loanId, amount);

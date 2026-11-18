@@ -4,7 +4,7 @@ pragma solidity ^0.8.29;
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../src/libraries/LibEncumbrance.sol";
-import {LibInterestPayment} from "../src/libraries/LibInterestPayment.sol";
+import {LibInterestPayment, IInterestPaymentHost} from "../src/libraries/LibInterestPayment.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
@@ -573,6 +573,31 @@ contract StandingInstructionTest is SetupTest {
         vm.prank(runner);
         _si().runInterestPayment(LOAN);
         assertEq(_loan().interestSettled, shortfall, "paid once the leg is accepted");
+    }
+
+    /// A booking that settles less than the payment (a lender delivery that
+    /// arrived short) undoes the attempt and is skipped by name: the period is
+    /// not credited with interest that never arrived.
+    function test_interest_shortBooking_skipsAndCreditsNothing() public {
+        _fund(borrower, PAYMENT, 50 ether);
+        _set(0, 0, true, false, 0);
+        vm.warp(startTs + 30 days);
+        (, , , , , uint256 shortfall, ) = RepayPeriodicFacet(address(diamond)).previewPeriodicSettle(LOAN);
+        uint64 checkpoint0 = _loan().lastPeriodicInterestSettledAt;
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(IInterestPaymentHost.bookInterestPayment.selector),
+            abi.encode(uint256(0), shortfall - 1)
+        );
+        vm.expectEmit(true, false, false, true, address(diamond));
+        emit StandingInstructionFacet.InterestPaymentAttemptFailed(LOAN, IVaipakamErrors.TokenDeliveryShort.selector);
+        vm.prank(runner);
+        _si().runInterestPayment(LOAN);
+        vm.clearMockedCalls();
+
+        assertEq(_loan().lastPeriodicInterestSettledAt, checkpoint0, "the period is not credited");
+        assertEq(_view().paymentReserve, 50 ether, "nothing drawn");
     }
 
     /// The preview leaves nothing behind, also when a caller catches its
