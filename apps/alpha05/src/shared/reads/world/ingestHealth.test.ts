@@ -35,8 +35,8 @@ describe('freshnessOf', () => {
     };
     // No record: an indexer before its deployment table, or a cursor no pass attributed.
     expect(reason(null)).toBe('The index does not say which protocol contract its figures came from.');
-    // Mid-reset: the older contract's rows are being cleared.
-    expect(reason({ diamond: DIAMOND, resetPending: true, adoptedBlind: false })).toBe("The index is part-way through clearing an older contract's figures.");
+    // Mid-rebuild: the cause (new deployment or reorganised block) is not stated, so none is named.
+    expect(reason({ diamond: DIAMOND, resetPending: true, adoptedBlind: false })).toBe("The index is rebuilding this network's records, so figures may be incomplete. It does not say yet why it is rebuilding.");
     // Blind adoption: no prior record to compare, so the rows' origin is not known.
     expect(reason({ diamond: DIAMOND, resetPending: false, adoptedBlind: true })).toBe("The index cannot yet confirm its figures all came from this build's protocol contract.");
     // Proven, compared case-insensitively.

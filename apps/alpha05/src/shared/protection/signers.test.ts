@@ -141,7 +141,7 @@ describe('measureSigner', () => {
   const diamondLog = (eventName: string, args: Record<string, unknown>, data: Hex = '0x'): Log =>
     ({ address: DIAMOND, topics: encodeEventTopics({ abi: PROTECTED, eventName, args } as never), data }) as unknown as Log;
   const vaultLog = (eventName: string, args: Record<string, unknown>, data: Hex = '0x'): Log =>
-    ({ address: VAULT, topics: encodeEventTopics({ abi: VaultProtectionABI as Abi, eventName, args } as never), data }) as unknown as Log;
+    ({ address: VAULT, topics: encodeEventTopics({ abi: VaultProtectionABI as Abi, eventName, args: { account: ME, ...args } } as never), data }) as unknown as Log;
 
   it('reads what the vault recorded for this signer', () => {
     const at = BigInt(NOW + DAY);

@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { useModal } from 'connectkit';
 import { useAccount, useDisconnect, useSwitchChain } from 'wagmi';
 import { DEFAULT_CHAIN, SUPPORTED_CHAINS, getSupportedChain, supportedChainNames } from '../chain/chains';
@@ -7,6 +7,7 @@ import { refusalFromError } from '../shared/eligibility/refusal';
 import { WhyLink } from '../shared/help/WhyLink';
 import { shortAddress } from '../shared/ui/format';
 import { Notice } from '../shared/ui/Notice';
+import { ConnectTerms } from '../shared/terms/ConnectTerms';
 
 /**
  * The wallet control in the shell (matrix ACC-01, ACC-03): connect, the
@@ -15,7 +16,9 @@ import { Notice } from '../shared/ui/Notice';
  * switch to a served network). The control itself never hides which identity
  * the page's figures belong to.
  *
- * ConnectKit's modal is used to CONNECT only (its wallet list). Once a wallet
+ * Connect opens the Terms in force first (#3734, `ConnectTerms`); the
+ * wallet list opens only once they are ticked. ConnectKit's modal is used to
+ * CONNECT only (its wallet list). Once a wallet
  * is connected, the account surface is this app's own panel (#3476):
  * ConnectKit's connected surfaces (its button renderer, profile page and
  * avatar) each look up an ENS name on Ethereum mainnet, and with no mainnet
@@ -29,6 +32,12 @@ export function WalletControl() {
   const { switchChainAsync, isPending } = useSwitchChain();
   const { setOpen: openConnect } = useModal();
   const [switchError, setSwitchError] = useState<string | null>(null);
+  // #3734: Connect opens the Terms first; the wallet list follows the tick.
+  const [terms, setTerms] = useState(false);
+  const chooseWallet = useCallback(() => {
+    setTerms(false);
+    openConnect(true);
+  }, [openConnect]);
   const chain = getSupportedChain(chainId);
 
   const unsupported = status === 'connected' && chain === null;
@@ -54,10 +63,11 @@ export function WalletControl() {
       {status === 'connected' && address ? (
         <AccountPanel address={address} chainId={chainId} onSwitch={switchTo} switching={isPending} />
       ) : (
-        <button type="button" className="btn btn-primary" onClick={() => openConnect(true)}>
+        <button type="button" className="btn btn-primary" onClick={() => setTerms(true)}>
           {connecting ? text('wallet.connecting') : text('wallet.connect')}
         </button>
       )}
+      {terms && <ConnectTerms onChoose={chooseWallet} onClose={() => setTerms(false)} />}
       {unsupported && (
         <Notice tone="danger" tier="A">
           {format('wallet.unsupported', { chains: supportedChainNames() })}{' '}

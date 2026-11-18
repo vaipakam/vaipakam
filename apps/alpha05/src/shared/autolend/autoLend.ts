@@ -28,7 +28,7 @@
  */
 import { erc20Abi, formatUnits, parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
 import { LenderIntentFacetABI, LenderIntentViewFacetABI, NumeraireValueFacetABI } from '@vaipakam/contracts/abis';
-import { CONFIG, OFFER_PREVIEW } from '../offers/reads';
+import { CONFIG, RISK_PREVIEW } from '../offers/reads';
 import { readIntentGates, type IntentGate } from '../offers/intents';
 import { batchCall, type BatchStep } from '../tx/batch';
 import { parseAmount, parseDays, parseRateBps, type ParseError } from '../post/postModel';
@@ -37,7 +37,7 @@ type Hex = `0x${string}`;
 
 export const INTENT = LenderIntentFacetABI as Abi;
 /** The standing-intent reads (split off LenderIntentFacet). */
-const INTENT_VIEW = LenderIntentViewFacetABI as Abi;
+export const INTENT_VIEW = LenderIntentViewFacetABI as Abi;
 const NUMERAIRE = NumeraireValueFacetABI as Abi;
 
 const DAY = 86_400n;
@@ -180,14 +180,22 @@ export interface AutoLendDraft {
   parsed: ParsedAutoLend;
   /** The end date in unix seconds, 0 for none. */
   lendUntil: bigint;
+  /** Which of the wallet's Auto-lends on the pair (#3626: up to eight, slots
+   *  0 to 7). A new setup takes the first slot; a change keeps its own. */
+  slot: number;
   /** A change of the Auto-lend already on the pair (new limits, or starting
    *  a stopped or ended one again) rather than a new setup: the protocol
    *  replaces the recorded terms in place, and money may be added or not. */
   change: boolean;
 }
 
-export function autoLendDraft(lending: Hex, collateral: Hex, parsed: ParsedAutoLend, change = false): AutoLendDraft {
-  return { lending, collateral, parsed, lendUntil: parsed.lendUntilDate === null ? 0n : lendUntilSeconds(parsed.lendUntilDate), change };
+/** The slot a new setup takes. Several Auto-lends on one pair (#3626) are
+ *  read and managed by their slot; this app sets up one per pair, so a new
+ *  setup takes the first. */
+export const FIRST_SLOT = 0;
+
+export function autoLendDraft(lending: Hex, collateral: Hex, parsed: ParsedAutoLend, change = false, slot = FIRST_SLOT): AutoLendDraft {
+  return { lending, collateral, slot, parsed, lendUntil: parsed.lendUntilDate === null ? 0n : lendUntilSeconds(parsed.lendUntilDate), change };
 }
 
 /** The exposure cap the protocol records: the typed cap, else, for a change,
@@ -231,6 +239,7 @@ export function setupSteps(draft: AutoLendDraft, minFill: bigint, consent: boole
       args: [
         draft.lending,
         draft.collateral,
+        draft.slot,
         exposureOf(p, base),
         p.minRateBps,
         p.maxInitLtvBps,
@@ -244,7 +253,7 @@ export function setupSteps(draft: AutoLendDraft, minFill: bigint, consent: boole
       ],
     },
   ];
-  if (p.fund > 0n) steps.push({ abi: INTENT, functionName: 'fundLenderIntent', args: [draft.lending, draft.collateral, p.fund] });
+  if (p.fund > 0n) steps.push({ abi: INTENT, functionName: 'fundLenderIntent', args: [draft.lending, draft.collateral, draft.slot, p.fund] });
   return steps;
 }
 
@@ -272,8 +281,14 @@ export interface IntentRecord {
   acceptsProRata: boolean;
 }
 
-export async function readIntent(c: PublicClient, diamond: Hex, owner: Hex, lending: Hex, collateral: Hex, blockNumber?: bigint): Promise<IntentRecord> {
-  const raw = (await c.readContract({ address: diamond, abi: INTENT_VIEW, functionName: 'getLenderIntent', args: [owner, lending, collateral], blockNumber })) as IntentRecord;
+export async function readIntent(c: PublicClient, diamond: Hex, owner: Hex, lending: Hex, collateral: Hex, slot: number, blockNumber?: bigint): Promise<IntentRecord> {
+  const raw = (await c.readContract({
+    address: diamond,
+    abi: INTENT_VIEW,
+    functionName: 'getLenderIntent',
+    args: [owner, lending, collateral, slot],
+    blockNumber,
+  })) as IntentRecord;
   return {
     active: raw.active,
     maxExposure: raw.maxExposure,
@@ -314,20 +329,20 @@ export interface SetupFacts {
   allowance: bigint;
 }
 
-export async function readSetupFacts(c: PublicClient, diamond: Hex, account: Hex, lending: Hex, collateral: Hex): Promise<SetupFacts> {
+export async function readSetupFacts(c: PublicClient, diamond: Hex, account: Hex, lending: Hex, collateral: Hex, slot: number): Promise<SetupFacts> {
   const block = await c.getBlock({ blockTag: 'latest' });
   const blockNumber = block.number;
   const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => c.readContract({ address: diamond, abi, functionName, args, blockNumber }) as Promise<T>;
   const [existing, minFillValue, minTermsAgeSec, gates, balance, allowance, unlent, lent, priority] = await Promise.all([
-    readIntent(c, diamond, account, lending, collateral, blockNumber),
+    readIntent(c, diamond, account, lending, collateral, slot, blockNumber),
     read<bigint>(INTENT, 'getMinIntentFillNumeraire').catch(() => null),
     read<bigint>(CONFIG, 'getMinTermsAgeSec'),
     readIntentGates(c, diamond, blockNumber),
     c.readContract({ address: lending, abi: erc20Abi, functionName: 'balanceOf', args: [account], blockNumber }),
     c.readContract({ address: lending, abi: erc20Abi, functionName: 'allowance', args: [account, diamond], blockNumber }),
-    read<bigint>(INTENT_VIEW, 'getLenderIntentCapital', [account, lending, collateral]),
-    read<bigint>(INTENT_VIEW, 'getLenderIntentLivePrincipal', [account, lending, collateral]),
-    read<readonly [boolean, bigint, boolean, boolean]>(INTENT_VIEW, 'getLenderIntentPriority', [account, lending, collateral, ZERO, ZERO]).then(
+    read<bigint>(INTENT_VIEW, 'getLenderIntentCapital', [account, lending, collateral, slot]),
+    read<bigint>(INTENT_VIEW, 'getLenderIntentLivePrincipal', [account, lending, collateral, slot]),
+    read<readonly [boolean, bigint, boolean, boolean]>(INTENT_VIEW, 'getLenderIntentPriority', [account, lending, collateral, slot, ZERO, ZERO]).then(
       (x) => x[0],
       () => null,
     ),
@@ -428,7 +443,7 @@ const NO_LOANS = 2n ** 256n - 1n;
 export async function readLtvCap(c: PublicClient, diamond: Hex, lending: Hex, collateral: Hex, amount: bigint, ltvBps: number, blockNumber: bigint): Promise<LtvCap> {
   const [floor] = (await c.readContract({
     address: diamond,
-    abi: OFFER_PREVIEW,
+    abi: RISK_PREVIEW,
     functionName: 'initRiskBounds',
     args: [lending, collateral, amount, 0n],
     blockNumber,
@@ -464,13 +479,13 @@ export function fillPosture(gates: Record<IntentGate, boolean | null>): FillPost
 }
 
 /** What a setup's own logs record: the terms set and the amount funded, by
- *  this wallet on this pair. */
+ *  this wallet on this pair and slot. */
 export interface SetupLogs {
   set: boolean;
   funded: bigint | null;
 }
 
-export function setupLogs(logs: readonly Log[], diamond: Hex, account: Hex, lending: Hex, collateral: Hex): SetupLogs {
+export function setupLogs(logs: readonly Log[], diamond: Hex, account: Hex, lending: Hex, collateral: Hex, slot: number): SetupLogs {
   const same = (a: unknown, b: Hex) => typeof a === 'string' && a.toLowerCase() === b.toLowerCase();
   const mine = logs.filter((l) => l.address.toLowerCase() === diamond.toLowerCase());
   const events = parseEventLogs({ abi: INTENT, logs: mine as Log[], strict: false }) as unknown as { eventName: string; args: Record<string, unknown> }[];
@@ -478,7 +493,7 @@ export function setupLogs(logs: readonly Log[], diamond: Hex, account: Hex, lend
   let funded: bigint | null = null;
   for (const e of events) {
     const a = e.args;
-    if (!same(a.owner, account) || !same(a.lendingAsset, lending) || !same(a.collateralAsset, collateral)) continue;
+    if (!same(a.owner, account) || !same(a.lendingAsset, lending) || !same(a.collateralAsset, collateral) || Number(a.slot) !== slot) continue;
     if (e.eventName === 'LenderIntentSet') set = true;
     if (e.eventName === 'LenderIntentFunded' && typeof a.amount === 'bigint') funded = (funded ?? 0n) + a.amount;
   }

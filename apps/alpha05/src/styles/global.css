@@ -2404,3 +2404,17 @@ a.btn {
 .autolend-share-list p {
   margin: 0;
 }
+.connect-terms-fingerprint {
+  overflow-wrap: anywhere;
+}
+.connect-terms-tick {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 12px 0 4px;
+}
+.connect-terms-tick input {
+  margin-top: 4px;
+  min-width: 20px;
+  min-height: 20px;
+}

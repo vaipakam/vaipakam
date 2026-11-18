@@ -1,0 +1,11 @@
+## alpha05: the Terms come before the wallet, and the wallet records its acceptance (#3734)
+
+Pressing Connect in the new app now shows the Terms of Service in force first: the version, the whole fingerprint of its text, the link pinned to that version, the privacy notice and the key risks, with a box to tick. It says plainly that connecting a wallet means agreeing, and that the agreement is recorded on-chain. The wallet list opens only from "Agree and connect". "Not now" connects nothing. Where no Terms are in force, the wallet list opens at once.
+
+As soon as a wallet connects on a network whose Terms it has not accepted, the app asks it for its own acceptance transaction. That happens on a first connection, on another network, and when a new version is in force. The acceptance moves no funds, and the wallet pays only the network fee. Owner decision 2026-11-18: there is no free signature, and nobody records an acceptance for a wallet. Until the acceptance is read back from the chain, the app shows nothing of the wallet. A wallet short of gas is told the fee it needs and what it holds.
+
+A wallet that does not accept can disconnect, or choose to only close out what it already has. That covers repaying, closing, adding collateral, claiming, withdrawing and cancelling, which the Terms never stand in the way of. A standing notice says so. Every action that takes on a position still asks for the Terms first, and the contracts refuse it as well.
+
+The app follows the protocol's two numbers per network: the latest Terms version and the minimum one that still counts. After a small update, a wallet that is still current sees a quiet line and may accept the new text if it wants to. Before a material change, the wallet sees the date and what would stop on it, and can put the acceptance off until then. A wallet accepting during that window accepts both versions in one transaction. Settings names the version that counts and anything due by a date.
+
+During such a notice, the app also lists the other networks where the wallet has an open offer or an active Auto-lend that would stop, and walks through them one network at a time. Each network is read on its own; an acceptance on one never counts for another. The list says that loans set to extend and standing instructions are not checked there yet.

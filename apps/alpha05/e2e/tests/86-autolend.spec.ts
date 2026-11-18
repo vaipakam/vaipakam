@@ -124,7 +124,7 @@ test('a lender sets up Auto-lend: one choice, an exact approval, terms and fundi
   expect(flags.sentTransactions).toBe(sent + 2);
 
   // The chain agrees: the terms as typed, the funding behind them, the approval used up.
-  const intent = await sc.read<StoredIntent>('getLenderIntent', [lender, WETH, tliq]);
+  const intent = await sc.read<StoredIntent>('getLenderIntent', [lender, WETH, tliq, 0]);
   expect(intent.active).toBe(true);
   expect(intent.maxExposure).toBe(parseEther('0.5'));
   expect(intent.minRateBps).toBe(500n);
@@ -134,7 +134,7 @@ test('a lender sets up Auto-lend: one choice, an exact approval, terms and fundi
   expect(intent.requiresKeeperAuth).toBe(false);
   expect(intent.lendUntil).toBe(0n);
   expect(intent.acceptsProRata).toBe(true);
-  expect(await sc.read<bigint>('getLenderIntentCapital', [lender, WETH, tliq])).toBe(parseEther('0.5'));
+  expect(await sc.read<bigint>('getLenderIntentCapital', [lender, WETH, tliq, 0])).toBe(parseEther('0.5'));
   expect(await sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'allowance', args: [lender, sc.diamond] })).toBe(0n);
 
   // Positions shows it, with the money waiting to be lent.
@@ -166,7 +166,7 @@ test('a lender sets up Auto-lend: one choice, an exact approval, terms and fundi
   await expect(page.getByTestId('autolend-posture')).toContainText('switched off on this network now');
 
   // Stopped with its money still set aside: that money will not be lent, and the share says so.
-  await sc.diamondWrite('lender', 'cancelLenderIntent', [WETH, tliq]);
+  await sc.diamondWrite('lender', 'cancelLenderIntent', [WETH, tliq, 0]);
   await page.goto('/positions');
   await expect(page.getByTestId('autolend-card')).toHaveAttribute('data-state', 'stopped', { timeout: 60_000 });
   await expect(page.getByTestId('autolend-share-idle')).toContainText('0.5 WETH of the waiting money sits behind a stopped or ended Auto-lend');
@@ -198,9 +198,9 @@ test('on Positions a lender adds money, takes back money not lent, and stops, ea
   await sc.write('lender', WETH, WETH_ABI, 'deposit', [], parseEther('1'));
   // An Auto-lend already set up and funded with 0.5 WETH, as the setup flow does.
   await sc.write('lender', WETH, erc20Abi, 'approve', [sc.diamond, parseEther('0.5')]);
-  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, parseEther('1'), 500n, 5000, 30, parseEther('0.05'), false, 0n, false, true, await txDeadline(sc)]);
-  await sc.diamondWrite('lender', 'fundLenderIntent', [WETH, tliq, parseEther('0.5')]);
-  const capital = () => sc.read<bigint>('getLenderIntentCapital', [lender, WETH, tliq]);
+  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, 0, parseEther('1'), 500n, 5000, 30, parseEther('0.05'), false, 0n, false, true, await txDeadline(sc)]);
+  await sc.diamondWrite('lender', 'fundLenderIntent', [WETH, tliq, 0, parseEther('0.5')]);
+  const capital = () => sc.read<bigint>('getLenderIntentCapital', [lender, WETH, tliq, 0]);
   const allowance = () => sc.pub.readContract({ address: WETH, abi: erc20Abi, functionName: 'allowance', args: [lender, sc.diamond] });
 
   const { page, flags } = await launchWallet('lender');
@@ -263,7 +263,7 @@ test('on Positions a lender adds money, takes back money not lent, and stops, ea
   await expect(stop.locator('[data-phase="measured"]')).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
   await expect(stop.locator('[data-phase="measured"]')).toContainText('Auto-lend stopped on this pair');
   expect(flags.sentTransactions).toBe(sent + 1);
-  const intent = await sc.read<StoredIntent>('getLenderIntent', [lender, WETH, tliq]);
+  const intent = await sc.read<StoredIntent>('getLenderIntent', [lender, WETH, tliq, 0]);
   expect(intent.active).toBe(false);
   expect(await capital()).toBe(0n);
   // Stopped with nothing set aside, the protocol drops it from the wallet's
@@ -282,10 +282,10 @@ test('on Positions a lender changes the limits, stops keeping money set aside, a
   await sc.diamondWrite('admin', 'setLenderIntentEnabled', [true]);
   await sc.write('lender', WETH, WETH_ABI, 'deposit', [], parseEther('1'));
   await sc.write('lender', WETH, erc20Abi, 'approve', [sc.diamond, parseEther('0.5')]);
-  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, parseEther('1'), 500n, 5000, 30, parseEther('0.05'), false, 0n, false, true, await txDeadline(sc)]);
-  await sc.diamondWrite('lender', 'fundLenderIntent', [WETH, tliq, parseEther('0.5')]);
-  const capital = () => sc.read<bigint>('getLenderIntentCapital', [lender, WETH, tliq]);
-  const stored = () => sc.read<StoredIntent>('getLenderIntent', [lender, WETH, tliq]);
+  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, 0, parseEther('1'), 500n, 5000, 30, parseEther('0.05'), false, 0n, false, true, await txDeadline(sc)]);
+  await sc.diamondWrite('lender', 'fundLenderIntent', [WETH, tliq, 0, parseEther('0.5')]);
+  const capital = () => sc.read<bigint>('getLenderIntentCapital', [lender, WETH, tliq, 0]);
+  const stored = () => sc.read<StoredIntent>('getLenderIntent', [lender, WETH, tliq, 0]);
   const firstSetAt = (await stored()).termsSetAt;
 
   const { page, flags } = await launchWallet('lender');

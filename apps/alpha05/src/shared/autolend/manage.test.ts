@@ -39,7 +39,7 @@ const facts = (over: Partial<ManageFacts> = {}): ManageFacts => ({
   protection: null,
   ...over,
 });
-const draft = (kind: ManageDraft['kind'], amount: bigint): ManageDraft => ({ kind, lending: USDC, collateral: WETH, amount });
+const draft = (kind: ManageDraft['kind'], amount: bigint): ManageDraft => ({ kind, lending: USDC, collateral: WETH, slot: 0, amount });
 const kinds = (d: ManageDraft, f: ManageFacts) => manageBlocks(d, f).map((b) => b.kind);
 
 describe('manageBlocks', () => {
@@ -76,9 +76,9 @@ describe('manageBlocks', () => {
 describe('manageCall', () => {
   it('adds and takes back with one call each', () => {
     const add = manageCall(draft('add', 100n), ME);
-    expect(decodeFunctionData({ abi: INTENT, data: encode(add) })).toMatchObject({ functionName: 'fundLenderIntent', args: [USDC, WETH, 100n] });
+    expect(decodeFunctionData({ abi: INTENT, data: encode(add) })).toMatchObject({ functionName: 'fundLenderIntent', args: [USDC, WETH, 0, 100n] });
     const back = manageCall(draft('takeBack', 50n), ME);
-    expect(decodeFunctionData({ abi: INTENT, data: encode(back) })).toMatchObject({ functionName: 'withdrawLenderIntentCapital', args: [ME, USDC, WETH, 50n] });
+    expect(decodeFunctionData({ abi: INTENT, data: encode(back) })).toMatchObject({ functionName: 'withdrawLenderIntentCapital', args: [ME, USDC, WETH, 0, 50n] });
   });
 
   it('stops alone, or stops and takes back in one batch', () => {
@@ -96,23 +96,24 @@ function encode(call: ReturnType<typeof manageCall>): Hex {
 }
 
 describe('manageLogs', () => {
-  const log = (eventName: string, owner: Hex, data: readonly [bigint, bigint] | null): Log =>
+  const log = (eventName: string, owner: Hex, data: readonly [bigint, bigint] | null, slot = 0): Log =>
     ({
       address: DIAMOND,
       topics: encodeEventTopics({ abi: INTENT, eventName, args: { owner, lendingAsset: USDC, collateralAsset: WETH } } as never),
-      data: data === null ? '0x' : encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }], data),
+      data: data === null ? encodeAbiParameters([{ type: 'uint8' }], [slot]) : encodeAbiParameters([{ type: 'uint8' }, { type: 'uint256' }, { type: 'uint256' }], [slot, ...data]),
     }) as unknown as Log;
 
-  it('reads what this wallet funded, took back and stopped on this pair, and nothing else', () => {
+  it('reads what this wallet funded, took back and stopped on this pair and slot, and nothing else', () => {
     const other = '0x5555555555555555555555555555555555555555' as Hex;
     const logs = [
       log('LenderIntentFunded', ME, [100n, 500n]),
       log('LenderIntentCapitalWithdrawn', ME, [40n, 460n]),
       log('LenderIntentCancelled', ME, null),
       log('LenderIntentFunded', other, [999n, 999n]),
+      log('LenderIntentFunded', ME, [888n, 888n], 1),
     ];
-    expect(manageLogs(logs, DIAMOND, ME, USDC, WETH)).toEqual({ funded: 100n, withdrawn: 40n, stopped: true });
-    expect(manageLogs([], DIAMOND, ME, USDC, WETH)).toEqual({ funded: null, withdrawn: null, stopped: false });
+    expect(manageLogs(logs, DIAMOND, ME, USDC, WETH, 0)).toEqual({ funded: 100n, withdrawn: 40n, stopped: true });
+    expect(manageLogs([], DIAMOND, ME, USDC, WETH, 0)).toEqual({ funded: null, withdrawn: null, stopped: false });
   });
 });
 

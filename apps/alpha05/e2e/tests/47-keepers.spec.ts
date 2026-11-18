@@ -13,7 +13,7 @@ import { keccak256, toHex } from 'viem';
 import type { Page } from '@playwright/test';
 import { scenario } from '../lib/chain';
 import { accountFor } from '../lib/wallets';
-import { connectWallet, expect, test } from '../lib/wallet';
+import { closeOutOnly, connectWallet, expect, test } from '../lib/wallet';
 
 async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -99,6 +99,7 @@ test('with Terms in force, giving a keeper a permission asks for them first; rem
   const { page } = await launchWallet('freshBorrower');
   await page.goto('/settings');
   await connectWallet(page);
+  await closeOutOnly(page);
   await page.getByTestId('settings-mode').getByRole('button', { name: 'Advanced' }).click();
   const section = page.getByTestId('settings-keepers');
   const row = section.getByTestId('settings-keeper-row');

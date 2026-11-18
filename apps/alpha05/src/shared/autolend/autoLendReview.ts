@@ -123,7 +123,7 @@ async function readRiskNeed(own: OwnStateClient, diamond: Hex, lending: Hex, col
 
 export async function readAutoLendReview(own: OwnStateClient, diamond: Hex, draft: AutoLendDraft, identity: string): Promise<AutoLendReview> {
   const account = own.account;
-  const facts = (await own.read((c) => readSetupFacts(c, diamond, account, draft.lending, draft.collateral))).value;
+  const facts = (await own.read((c) => readSetupFacts(c, diamond, account, draft.lending, draft.collateral, draft.slot))).value;
   const fund = draft.parsed.fund;
   const approvalSteps =
     facts.allowance >= fund

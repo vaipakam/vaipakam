@@ -5,7 +5,7 @@
 // up), and where the Auto-lend option is open fills the form with small
 // figures, opens the review and prints it: the protocol's own dry-run
 // verdict, every figure bound and every consequence. Nothing is confirmed.
-// Then prints the Auto-lend cards on Positions, the manage steps each offers and the first card's change form. Checks that nothing scrolls
+// Then prints the share counted in loans per asset (#3664) and the Auto-lend cards on Positions, the manage steps each offers and the first card's change form. Checks that nothing scrolls
 // sideways and saves screenshots per device. A full setup is covered by the
 // CI-Anvil spec (86-autolend.spec.ts).
 // Usage: node e2e/live/autolend-watch.cjs <address>
@@ -63,6 +63,13 @@ async function session(b, opts, label) {
   await section.waitFor({ timeout: 90000 }).catch(() => {});
   await p.waitForTimeout(4000);
   console.log(`--- positions\n${(await section.count()) ? await text(section) : 'no Auto-lend section'}`);
+  // #3664: the per-asset share counted in loans, with each row's basis points as rendered.
+  const shareRows = p.getByTestId('autolend-share-row');
+  for (let i = 0; i < (await shareRows.count()); i++) {
+    const r = shareRows.nth(i);
+    console.log(`--- share ${await r.getAttribute('data-asset')} (${await r.getAttribute('data-share-bps')} bps): ${await text(r)}`);
+  }
+  if (!(await shareRows.count())) console.log('--- share: no rows');
   // Each card's manage steps (add, take back, stop), as offered; nothing is opened.
   const manage = p.getByTestId('autolend-manage');
   for (let i = 0; i < (await manage.count()); i++) console.log(`--- manage ${i + 1}: ${await text(manage.nth(i))}`);

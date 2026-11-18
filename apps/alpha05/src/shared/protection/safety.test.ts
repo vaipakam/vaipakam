@@ -61,7 +61,8 @@ function review(action: SafetyReview['action'], f: Partial<SafetyFacts> = {}, p:
 
 function eventLog(eventName: string, args: Record<string, unknown>, data: { types: { type: string }[]; values: unknown[] }, address: Hex = DIAMOND): Log {
   const abi = (address === VAULT ? VaultProtectionABI : ProtectedAccountFacetABI) as Abi;
-  const topics = encodeEventTopics({ abi, eventName, args } as never);
+  // Every vault event names the account it protects (indexed first).
+  const topics = encodeEventTopics({ abi, eventName, args: address === VAULT ? { account: ME, ...args } : args } as never);
   return { address, topics, data: data.types.length === 0 ? '0x' : encodeAbiParameters(data.types, data.values as never) } as unknown as Log;
 }
 

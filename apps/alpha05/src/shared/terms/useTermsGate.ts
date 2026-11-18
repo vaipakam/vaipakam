@@ -5,8 +5,9 @@ import type { SupportedChain } from '../../chain/chains';
 import { useCopy } from '../copy/useCopy';
 import { inFlight, useStoredValue } from '../tx/txStore';
 import { useTrackedTx, type TrackedTx } from '../tx/useTrackedTx';
+import type { LegOutcome } from '../tx/outcome';
 import { reviewIdentity } from '../ui/ActionFlow';
-import { LEGAL_ABI, readAcceptance, readTerms, type TermsState } from './terms';
+import { acceptTermsCall, readAcceptanceOf, readTerms, type TermsState } from './terms';
 
 export type NeededTerms = Extract<TermsState, { kind: 'needed' }>;
 
@@ -57,14 +58,7 @@ export function useTermsGate(key: string, chain: SupportedChain | null, own: Own
     sources: own?.sources ?? [],
     send: () => {
       if (!session || !chain) throw new Error('no Terms under review');
-      return sendWrite(config, {
-        address: diamond,
-        abi: LEGAL_ABI,
-        functionName: 'acceptTerms',
-        args: [session.terms.version, session.terms.hash],
-        chainId: chain.chainId,
-        account,
-      });
+      return sendWrite(config, { address: diamond, ...acceptTermsCall(session.terms), chainId: chain.chainId, account });
     },
     measure: async (_receipt, at) => {
       if (!session) return [];
@@ -73,13 +67,22 @@ export function useTermsGate(key: string, chain: SupportedChain | null, own: Own
       // What was sent is measured against the wallet's RECORDED acceptance,
       // not against which version is in force now: a version installed
       // after this one mined does not undo it, and is stated as its own leg.
-      const [record, now] = await Promise.all([at.read((c, b) => readAcceptance(c, diamond, account, b)), at.read((c, b) => readTerms(c, diamond, account, b))]);
-      if (!record || record.version !== reviewed.version || record.hash !== reviewed.hash) return [{ status: 'not-done', label, reason: text('terms.legMissing') }];
-      if (now.kind !== 'needed') return [{ status: 'done', label }];
-      return [
-        { status: 'done', label },
-        { status: 'not-done', label: format('terms.legAccepted', { version: String(now.version) }), reason: format('terms.legNewer', { version: String(now.version) }) },
-      ];
+      const also = reviewed.alsoAnnounced;
+      const [record, alsoRecord, now] = await Promise.all([
+        at.read((c, b) => readAcceptanceOf(c, diamond, account, reviewed.version, b)),
+        also ? at.read((c, b) => readAcceptanceOf(c, diamond, account, also.version, b)) : Promise.resolve(null),
+        at.read((c, b) => readTerms(c, diamond, account, b)),
+      ]);
+      if (!record || record.hash !== reviewed.hash) return [{ status: 'not-done', label, reason: text('terms.legMissing') }];
+      const legs: LegOutcome[] = [{ status: 'done', label }];
+      if (also) {
+        const alsoLabel = format('terms.legAccepted', { version: String(also.version) });
+        legs.push(alsoRecord && alsoRecord.hash === also.hash ? { status: 'done', label: alsoLabel } : { status: 'not-done', label: alsoLabel, reason: text('terms.legMissing') });
+      }
+      if (now.kind === 'needed' && now.version !== reviewed.version) {
+        legs.push({ status: 'not-done', label: format('terms.legAccepted', { version: String(now.version) }), reason: format('terms.legNewer', { version: String(now.version) }) });
+      }
+      return legs;
     },
   });
 

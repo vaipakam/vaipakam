@@ -47,7 +47,7 @@ test('the wallet’s history lists its loan’s events per transaction, with wha
   });
   await setWalletActivity(lender, {
     events: [
-      row({ blockNumber: 1, logIndex: 3, kind: 'ExtendReserveFunded', loanId: Number(loanId), asset: token, assetType: 0, amount: '1500000000000000000' }),
+      row({ blockNumber: 1, logIndex: 3, kind: 'LoanReserveFunded', loanId: Number(loanId), asset: token, assetType: 0, amount: '1500000000000000000' }),
       row({ blockNumber: 1, logIndex: 2, kind: 'SomethingNew', txHash: `0x${'d'.repeat(64)}` }),
       row({ blockNumber: 1, logIndex: 0, kind: 'CollateralAdded', txHash: `0x${'b'.repeat(64)}`, asset: token, assetType: 2, tokenId: '5' }),
       row({ blockNumber: 1, logIndex: 1, kind: 'Transfer', amount: 'not a number', txHash: `0x${'c'.repeat(64)}` }),
@@ -88,8 +88,8 @@ test('the wallet’s history lists its loan’s events per transaction, with wha
   await expect(repaid).toContainText('No amount recorded.');
 
   // An amount the index recorded is shown with its token; one it did not is said.
-  const funded = rows.locator('[data-kind="ExtendReserveFunded"]');
-  await expect(funded).toContainText('Funds were added to an extension reserve.');
+  const funded = rows.locator('[data-kind="LoanReserveFunded"]');
+  await expect(funded).toContainText('Funds were set aside in a loan reserve.');
   await expect(funded).toContainText('1.5');
   await expect(funded).toContainText('Recorded for you');
   await expect(rows.locator('[data-kind="SomethingNew"]')).toContainText('An event this app has no words for yet (SomethingNew).');

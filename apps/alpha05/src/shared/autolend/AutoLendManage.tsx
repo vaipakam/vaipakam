@@ -29,10 +29,10 @@ import { manageBlockers, manageKey, manageReceipt, manageRouteChanged, readManag
 
 type Hex = `0x${string}`;
 
-/** The store key one pair's management lives under (the typed amount, the
- *  draft, the review and its tracker), so it outlives the page. */
-export function manageKeyFor(lending: Hex, collateral: Hex): string {
-  return `autolend.manage.${lending.toLowerCase()}.${collateral.toLowerCase()}`;
+/** The store key one Auto-lend's management lives under (the typed amount,
+ *  the draft, the review and its tracker), so it outlives the page. */
+export function manageKeyFor(lending: Hex, collateral: Hex, slot: number): string {
+  return `autolend.manage.${lending.toLowerCase()}.${collateral.toLowerCase()}.${slot}`;
 }
 
 /** Which step a pair's panel is open on, or null; held while a step is in
@@ -40,17 +40,18 @@ export function manageKeyFor(lending: Hex, collateral: Hex): string {
 export function useManageOpen(
   lending: Hex,
   collateral: Hex,
+  slot: number,
   opener?: { who: string; unlent: bigint },
 ): { kind: ManageKind | null; held: boolean; open: (k: ManageKind | null) => void } {
-  const key = manageKeyFor(lending, collateral);
+  const key = manageKeyFor(lending, collateral, slot);
   const entry = useTxEntry(key);
   const [kind, setKind] = useStoredValue<ManageKind>(`${key}:kind`);
   const [, setOpen] = useStoredValue<readonly OpenManage[]>(OPEN_INDEX);
   const open = (k: ManageKind | null) => {
     setKind(k);
     setOpen((cur) => {
-      const rest = (cur ?? []).filter((e) => manageKeyFor(e.lending, e.collateral) !== key);
-      return k === null || opener === undefined ? rest : [...rest, { who: opener.who, lending, collateral, unlent: opener.unlent }];
+      const rest = (cur ?? []).filter((e) => manageKeyFor(e.lending, e.collateral, e.slot) !== key);
+      return k === null || opener === undefined ? rest : [...rest, { who: opener.who, lending, collateral, slot, unlent: opener.unlent }];
     });
   };
   return { kind, held: kind !== null || holdsFlow(entry.phase), open };
@@ -65,6 +66,7 @@ export interface OpenManage {
   who: string;
   lending: Hex;
   collateral: Hex;
+  slot: number;
   /** Set aside and not lent, as the list read it when the panel opened. */
   unlent: bigint;
 }
@@ -80,6 +82,7 @@ interface AutoLendManageProps {
   kind: ManageKind;
   lending: Hex;
   collateral: Hex;
+  slot: number;
   /** Set aside and not lent, as the list read it: the default a stop takes
    *  back, and the figure a take-back is checked against before the review
    *  reads it again. */
@@ -102,14 +105,14 @@ const LABEL: Record<ManageKind, CopyKey> = { add: 'autoLend.mAddLabel', takeBack
  * amount, and puts the approval back if the step does not go through. The
  * outcome is measured from the transaction's own logs.
  */
-export function AutoLendManage({ kind, lending, collateral, unlent, chain, own, meta, onClose }: AutoLendManageProps) {
+export function AutoLendManage({ kind, lending, collateral, slot, unlent, chain, own, meta, onClose }: AutoLendManageProps) {
   const copy = useCopy();
   const { text, format } = copy;
   const config = useConfig();
   const diamond = chain.diamondAddress;
   const account = own.account;
   const identity = reviewIdentity(own);
-  const key = manageKeyFor(lending, collateral);
+  const key = manageKeyFor(lending, collateral, slot);
   const [typed, setTyped] = useStoredValue<string>(`${key}:amount`);
   const [keepSetAside, setKeepSetAside] = useStoredValue<boolean>(`${key}:keep`);
   const [draft, setDraft] = useStoredValue<ManageDraft>(`${key}:draft`);
@@ -187,7 +190,7 @@ export function AutoLendManage({ kind, lending, collateral, unlent, chain, own, 
       if (!review) return [];
       approvalLeft.current = null;
       const d = review.draft;
-      const logs = manageLogs(receipt.logs, diamond, account, lending, collateral);
+      const logs = manageLogs(receipt.logs, diamond, account, lending, collateral, slot);
       const legs: LegOutcome[] = [];
       let vault: Hex | null = null;
       try {
@@ -357,11 +360,11 @@ export function AutoLendManage({ kind, lending, collateral, unlent, chain, own, 
   const confirm = () => {
     setAsked(true);
     if (kind === 'stop') {
-      setDraft({ kind, lending, collateral, amount: keepSetAside === true ? 0n : unlent });
+      setDraft({ kind, lending, collateral, slot, amount: keepSetAside === true ? 0n : unlent });
       return;
     }
     if (parsed === null || !parsed.ok) return;
-    setDraft({ kind, lending, collateral, amount: parsed.value });
+    setDraft({ kind, lending, collateral, slot, amount: parsed.value });
   };
 
   if (draft === null) {

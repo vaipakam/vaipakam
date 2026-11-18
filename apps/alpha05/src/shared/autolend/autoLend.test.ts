@@ -190,9 +190,9 @@ describe('the setup call', () => {
     expect(steps.map((s) => s.allowFailure)).toEqual([false, false]);
     const set = decodeFunctionData({ abi: INTENT, data: steps[0]!.callData });
     expect(set.functionName).toBe('setLenderIntent');
-    expect(set.args).toEqual([USDC, WETH, 1000n * E6, 800n, 6000, 30, 100n * E6, false, d.lendUntil, true, true, 99n]);
+    expect(set.args).toEqual([USDC, WETH, 0, 1000n * E6, 800n, 6000, 30, 100n * E6, false, d.lendUntil, true, true, 99n]);
     const fund = decodeFunctionData({ abi: INTENT, data: steps[1]!.callData });
-    expect(fund).toEqual({ functionName: 'fundLenderIntent', args: [USDC, WETH, 1000n * E6] });
+    expect(fund).toEqual({ functionName: 'fundLenderIntent', args: [USDC, WETH, 0, 1000n * E6] });
     // The batch ABI names the steps' errors, so a step's revert decodes.
     expect((call.abi as Abi).some((i) => i.type === 'error' && i.name === 'LenderIntentInvalidBounds')).toBe(true);
     expect((call.abi as Abi).some((i) => i.type === 'function' && i.name === 'multicall')).toBe(true);
@@ -226,9 +226,9 @@ describe('a change of an Auto-lend', () => {
     const call = setupCall(change(), 200n * E6, 99n, RECORD);
     expect(call.functionName).toBe('setLenderIntent');
     // The recorded most at once and the fill restriction are kept.
-    expect(call.args[2]).toBe(2000n * E6);
-    expect(call.args[7]).toBe(false);
-    expect(setupCall(change(), 200n * E6, 99n, { ...RECORD, requiresKeeperAuth: true }).args[7]).toBe(true);
+    expect(call.args[3]).toBe(2000n * E6);
+    expect(call.args[8]).toBe(false);
+    expect(setupCall(change(), 200n * E6, 99n, { ...RECORD, requiresKeeperAuth: true }).args[8]).toBe(true);
   });
 
   it('adds money in the same batch when an amount is typed', () => {
@@ -270,15 +270,31 @@ describe('what a setup’s logs record', () => {
       data,
     }) as unknown as Log;
   const setData = encodeAbiParameters(
-    [{ type: 'uint256' }, { type: 'uint256' }, { type: 'uint16' }, { type: 'uint32' }, { type: 'uint256' }, { type: 'bool' }, { type: 'uint64' }, { type: 'bool' }],
-    [1n, 1n, 1, 1, 1n, false, 0n, false],
+    [
+      { type: 'uint8' },
+      { type: 'uint256' },
+      { type: 'uint256' },
+      { type: 'uint16' },
+      { type: 'uint32' },
+      { type: 'uint256' },
+      { type: 'bool' },
+      { type: 'uint64' },
+      { type: 'bool' },
+    ],
+    [0, 1n, 1n, 1, 1, 1n, false, 0n, false],
   );
-  const fundData = encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }], [700n, 700n]);
+  const fundData = encodeAbiParameters([{ type: 'uint8' }, { type: 'uint256' }, { type: 'uint256' }], [0, 700n, 700n]);
+  const otherSlot = encodeAbiParameters([{ type: 'uint8' }, { type: 'uint256' }, { type: 'uint256' }], [1, 900n, 900n]);
 
-  it('reads the terms set and the amount funded, for this wallet and pair only', () => {
-    expect(setupLogs([log('LenderIntentSet', ME, setData), log('LenderIntentFunded', ME, fundData)], DIAMOND, ME, USDC, WETH)).toEqual({ set: true, funded: 700n });
+  it('reads the terms set and the amount funded, for this wallet, pair and slot only', () => {
+    expect(setupLogs([log('LenderIntentSet', ME, setData), log('LenderIntentFunded', ME, otherSlot), log('LenderIntentFunded', ME, fundData)], DIAMOND, ME, USDC, WETH, 0)).toEqual(
+      {
+        set: true,
+        funded: 700n,
+      },
+    );
     const other = '0x9999999999999999999999999999999999999999' as Hex;
-    expect(setupLogs([log('LenderIntentSet', other, setData)], DIAMOND, ME, USDC, WETH)).toEqual({ set: false, funded: null });
+    expect(setupLogs([log('LenderIntentSet', other, setData)], DIAMOND, ME, USDC, WETH, 0)).toEqual({ set: false, funded: null });
   });
 });
 
@@ -309,6 +325,7 @@ describe('the Auto-lend cards on Positions', () => {
       owner: ME,
       lendingAsset: USDC,
       collateralAsset: WETH,
+      slot: 0,
       maxExposure: 1000n,
       minRateBps: 800n,
       maxInitLtvBps: 6000,
