@@ -66,7 +66,7 @@ test('a sold position lists its interest from the index, offers nothing while th
   const row = section.locator(`[data-seller-row="${loanId}"]`);
 
   // Running: owed, stated net of the fee; nothing has reached the vault.
-  await expect(row).toContainText('Owed to you, after the protocol’s 2% share of interest', { timeout: 60_000 });
+  await expect(row).toContainText('Owed to you, after the protocol’s 10% share of interest', { timeout: 60_000 });
   await expect(row).toContainText('Paid from later interest on this loan, oldest claim first.');
   await expect(row).toContainText('Nothing has reached your vault yet.');
   await expect(row.getByTestId(`seller-withdraw-${loanId}`)).toHaveCount(0);
@@ -83,7 +83,7 @@ test('a sold position lists its interest from the index, offers nothing while th
   const flow = row.getByTestId(`seller-claim-panel-${loanId}`);
   const receipt = flow.locator('.receipt');
   await expect(receipt).toContainText(`Withdraw the interest loan #${loanId} owes you`, { timeout: 60_000 });
-  await expect(receipt).toContainText('Owed to you, after the protocol’s 2% share of interest');
+  await expect(receipt).toContainText('Owed to you, after the protocol’s 10% share of interest');
   await expect(receipt).toContainText('From the ended loan’s recovery');
   await expect(receipt).not.toContainText('Stays unpaid when your claim closes');
   await expect(receipt).toContainText('Your wallet');

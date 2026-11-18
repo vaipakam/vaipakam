@@ -24,7 +24,7 @@ export function lenderReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy: 
   const o = r.offer;
   // Read for a lender review; zero only if a borrower review reaches here.
   const shareBps = r.protocolShareBps ?? 0n;
-  const f = lenderFigures(r.preview, o.durationDays, r.matcherBps, shareBps);
+  const f = lenderFigures(r.preview, o.durationDays, r.matcher, shareBps);
   const lending = o.lendingAsset;
   const collateral = o.collateralAsset;
   const amount = (asset: Hex, value: bigint) => ({ kind: 'amount' as const, asset, amount: value });

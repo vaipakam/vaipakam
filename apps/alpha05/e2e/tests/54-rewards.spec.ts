@@ -175,7 +175,7 @@ test('the tier card states the tier the protocol applies, names the holding rule
   // and fees; the table and the rules below are stated from them.
   expect(await sc.read<readonly bigint[]>('getVpfiTierThresholds')).toEqual([parseEther('100'), parseEther('1000'), parseEther('5000'), parseEther('20000')]);
   expect(await sc.read<readonly bigint[]>('getVpfiTierDiscountBps')).toEqual([1000n, 1500n, 2000n, 2400n]);
-  expect(await sc.read<readonly bigint[]>('getFeesConfig')).toEqual([200n, 20n]);
+  expect(await sc.read<readonly bigint[]>('getFeesConfig')).toEqual([1000n, 20n]);
   expect(await sc.read<Record<string, number>>('getTwaConfig')).toMatchObject({ minStakedDays: 3, windowDays: 30, recentDays: 7, recentWeight: 3, lookbackCapDays: 30 });
   await sc.write('borrower', token, TOKEN_ABI, 'mint', [me, parseEther('200')]);
   const symbol = await sc.pub.readContract({ address: token, abi: erc20Abi, functionName: 'symbol' });
@@ -197,7 +197,7 @@ test('the tier card states the tier the protocol applies, names the holding rule
   await expect(rows.nth(4)).toContainText(`Above 20,000 ${symbol}`);
   await expect(rows.nth(4)).toContainText('24%');
   await expect(rows.nth(4)).toContainText('0.152%');
-  await expect(rows.nth(4)).toContainText('1.52%');
+  await expect(rows.nth(4)).toContainText('7.6%');
   await fitsWidth(page);
 
   // Consent on and 200 counted: the counted VPFI alone gives tier 1, but a

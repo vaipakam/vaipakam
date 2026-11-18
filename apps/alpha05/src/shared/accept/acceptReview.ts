@@ -23,7 +23,7 @@ import {
   readAcceptGate,
   readCreatorGate,
   readGraceSeconds,
-  readLifMatcherBps,
+  readMatcherTerms,
   readLinkedLoanId,
   readOffer,
   readOfferState,
@@ -36,6 +36,7 @@ import {
   readWalletFunds,
   tokenAcceptsApproval,
   type AcceptPreview,
+  type MatcherTerms,
   type OfferState,
   type TermsAge,
   type WalletFunds,
@@ -88,7 +89,7 @@ export interface AcceptReview {
   /** The initiation fee's term rule (#3649). */
   lif: LifTerms;
   /** The share of the fee paid back to the submitter (bps of the fee). */
-  matcherBps: bigint;
+  matcher: MatcherTerms;
   /** The protocol's share of the lender's interest under today's setting
    *  (bps), read for a lender; null for a borrower. */
   protocolShareBps: bigint | null;
@@ -168,7 +169,7 @@ export async function readAcceptReview(
   // otherwise (used, lapsed, cancelled) and it is bound to no loan. Its
   // risk-access gate has its own preview (#3577); a read that fails leaves
   // the gate to the dry run, which the review then says.
-  const [state, { preview, signed }, linkedLoanId, riskTermsHash, lendingClass, collateralClass, graceSeconds, lif, matcherBps, protocolShareBps, vault, funds, gates, consent, positionFlow] =
+  const [state, { preview, signed }, linkedLoanId, riskTermsHash, lendingClass, collateralClass, graceSeconds, lif, matcher, protocolShareBps, vault, funds, gates, consent, positionFlow] =
     await Promise.all([
       stored ? r<OfferState>((c) => readOfferState(c, diamond, id)) : Promise.resolve<OfferState>('open'),
       readFillPreview(),
@@ -178,7 +179,7 @@ export async function readAcceptReview(
       r<AssetClass>((c) => readAssetClass(c, diamond, offer.collateralAsset)),
       r<bigint>((c) => readGraceSeconds(c, diamond, offer.durationDays)),
       r<LifTerms>((c) => readLifTerms(c, diamond)),
-      r<bigint>((c) => readLifMatcherBps(c, diamond)),
+      r<MatcherTerms>((c) => readMatcherTerms(c, diamond)),
       role === 'lender' ? r<bigint>((c) => readTreasuryFeeBps(c, diamond)) : Promise.resolve(null),
       r<Hex>((c) => readVault(c, diamond, account)),
       r<WalletFunds>((c) => readWalletFunds(c, payAsset, account, diamond)),
@@ -213,7 +214,7 @@ export async function readAcceptReview(
     collateralClass,
     graceSeconds,
     lif,
-    matcherBps,
+    matcher,
     protocolShareBps,
     vault,
     funds,
@@ -419,7 +420,8 @@ export function changedBetween(a: AcceptReview, b: AcceptReview, copy: Pick<Copy
     a.creatorGate !== b.creatorGate ||
     a.graceSeconds !== b.graceSeconds ||
     !sameLifTerms(a.lif, b.lif) ||
-    a.matcherBps !== b.matcherBps ||
+    a.matcher.bps !== b.matcher.bps ||
+    a.matcher.floorBps !== b.matcher.floorBps ||
     a.protocolShareBps !== b.protocolShareBps
   )
     return copy.text('accept.changedClass');

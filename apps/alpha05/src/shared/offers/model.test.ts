@@ -11,6 +11,7 @@ import {
   notTakeable,
   rankFor,
   lenderFigures,
+  matcherShare,
   acceptorRole,
   offerFit,
   payLeg,
@@ -29,6 +30,7 @@ const preview = (over: Partial<AcceptPreview> = {}): AcceptPreview => ({
   lifEstimate: 4n * 10n ** 15n,
   collateralResidualRefund: 0n,
   error: 'None',
+  referralCut: 0n,
   ...over,
 });
 
@@ -113,23 +115,38 @@ describe('the suggested order for a lender', () => {
 describe('the lender figures', () => {
   it('fund the whole principal, return the fee share, and keep the protocol share out of interest', () => {
     const p = preview();
-    const f = lenderFigures(p, 365n, 100n, 200n);
+    const f = lenderFigures(p, 365n, { bps: 100n, floorBps: 10n }, 200n);
     expect(f.principal).toBe(p.effectivePrincipal);
-    expect(f.feeBack).toBe((p.lifEstimate * 100n) / 10_000n);
+    // 1% of the fee's part above the 0.1% treasury floor.
+    expect(f.feeBack).toBe(((p.lifEstimate - p.effectivePrincipal / 1000n) * 100n) / 10_000n);
     expect(f.interest).toBe((p.effectivePrincipal * p.interestRateBps) / 10_000n);
     expect(f.protocolShare).toBe((f.interest * 200n) / 10_000n);
     expect(f.backAtDue).toBe(p.effectivePrincipal + f.interest - f.protocolShare);
   });
 });
 
+describe('the submitter share', () => {
+  it('is sized above the treasury floor, on the fee before a referral cut, and is nothing at or under the floor', () => {
+    const terms = { bps: 100n, floorBps: 10n };
+    expect(matcherShare(preview(), terms)).toBe(2n * 10n ** 13n);
+    // A referral cut is off the fee charged, not off the part the share is sized on.
+    expect(matcherShare(preview({ lifEstimate: 3n * 10n ** 15n, referralCut: 10n ** 15n }), terms)).toBe(2n * 10n ** 13n);
+    expect(matcherShare(preview({ lifEstimate: 2n * 10n ** 15n }), terms)).toBe(0n);
+    expect(matcherShare(preview({ lifEstimate: 10n ** 15n }), terms)).toBe(0n);
+    // The floor rounds up, as the protocol's does.
+    expect(matcherShare(preview({ effectivePrincipal: 10_001n, lifEstimate: 111n }), { bps: 10_000n, floorBps: 10n })).toBe(100n);
+  });
+});
+
 describe('the acceptance figures', () => {
   it('net the initiation fee from the principal and add interest at due', () => {
-    const f = acceptFigures(preview(), 30n, 0n);
+    const f = acceptFigures(preview(), 30n, { bps: 0n, floorBps: 10n });
     expect(f.received).toBe(2n * E18 - 4n * 10n ** 15n);
-    // The sender's share of the fee (1% here) reaches the wallet too.
-    const g = acceptFigures(preview(), 30n, 100n);
-    expect(g.feeBack).toBe(4n * 10n ** 13n);
-    expect(g.received).toBe(2n * E18 - 4n * 10n ** 15n + 4n * 10n ** 13n);
+    // The sender's share (1% here) of the fee's part above the treasury
+    // floor (0.1% of the principal) reaches the wallet too.
+    const g = acceptFigures(preview(), 30n, { bps: 100n, floorBps: 10n });
+    expect(g.feeBack).toBe(2n * 10n ** 13n);
+    expect(g.received).toBe(2n * E18 - 4n * 10n ** 15n + 2n * 10n ** 13n);
     expect(f.owedAtDue).toBe(2n * E18 + interestAtDue(2n * E18, 500n, 30n));
     expect(listFee(2n * E18, { baseBps: 20n, baseTermDays: 30n, yearlyBps: 50n, yearDays: 365n }, 30)).toBe(4n * 10n ** 15n);
     expect(shortfall(10n, 4n)).toBe(0n);

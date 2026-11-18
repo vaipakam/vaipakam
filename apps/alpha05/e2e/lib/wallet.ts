@@ -52,7 +52,9 @@ export async function acceptTermsAtConnect(page: Page): Promise<void> {
  *  gate, which is what a spec of that gate drives next. */
 export async function closeOutOnly(page: Page): Promise<void> {
   const dialog = page.getByRole('dialog', { name: 'Terms of Service' });
-  await dialog.getByRole('button', { name: 'Close' }).click({ timeout: 60_000 });
+  // The review is still unsent, so its own way out reads "Cancel" ("Close"
+  // is only offered once it is blocked or finished).
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click({ timeout: 60_000 });
   await page.getByTestId('terms-hold-exits').click({ timeout: 30_000 });
   await page.getByTestId('terms-hold').waitFor({ state: 'detached', timeout: 30_000 });
 }

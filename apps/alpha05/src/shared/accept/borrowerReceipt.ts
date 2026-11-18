@@ -22,7 +22,7 @@ type Hex = `0x${string}`;
 export function borrowerReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>): Receipt {
   const { text, format } = copy;
   const o = r.offer;
-  const f = acceptFigures(r.preview, o.durationDays, r.matcherBps);
+  const f = acceptFigures(r.preview, o.durationDays, r.matcher);
   const lending = o.lendingAsset;
   const collateral = o.collateralAsset;
   const amount = (asset: Hex, value: bigint) => ({
