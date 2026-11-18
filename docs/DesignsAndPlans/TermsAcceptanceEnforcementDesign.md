@@ -117,6 +117,35 @@ with a position token, a replacement of a protected account, or any authority
 given to a keeper or an integrator. A contract that takes positions for
 others accepts for itself.
 
+**A lending adapter stands on its lender's acceptance.** An aggregator
+adapter is a contract the platform creates and owns so that one outside
+lender, its principal, can lend through it. The adapter is the lender the
+loan records, but the capital and the choice to lend are the principal's.
+So wherever this rule asks whether an adapter is current, it answers for the
+adapter's principal:
+
+- The principal accepts with its own address, by its own paid transaction,
+  on that network, like any wallet. The adapter has no way to accept and
+  needs none. Nobody accepts for the principal: not the keeper the adapter
+  names, and not the administrator who creates the adapter.
+- An adapter is not exempt. Unlike the backstop vault it carries an outside
+  party's capital.
+- Creating an adapter posts its standing lending instruction, so creation is
+  refused until the principal is current. Funding it and every fill are
+  refused the same way. Each refusal names the principal, and the preview and
+  the "is this wallet current" read for an adapter answer for the principal
+  too.
+- The platform records each adapter's principal when it creates the adapter.
+  The principal never changes.
+- When a material change comes into force and the principal has not accepted
+  the new minimum, the adapter's fills stop until it does. Its open loans run
+  to their agreed end.
+- Close-outs stay open (3.2). An adapter that collects on a loan normally
+  lends the proceeds again; that re-lending is a new position, so it is
+  skipped while the principal is not current, and the collection itself
+  always completes. The proceeds wait in the adapter for the principal, whose
+  withdrawals are never checked.
+
 ## 4. Accepting
 
 **A wallet accepts by its own transaction and in no other way.** The
@@ -412,6 +441,17 @@ date their commitments stop filling.
     A wallet that is not current is refused at a loan opening within a
     stated gas bound at that widest window.
 
+23. A lending adapter. With a version in force and a principal that has not
+    accepted: creating the adapter, funding it and a fill are each refused,
+    and each refusal names the principal, not the adapter and not the keeper.
+    The principal accepts with its own address and all three pass. Nothing
+    the keeper or the administrator can call changes the principal's
+    standing. After a material change comes into force the adapter's fills
+    stop, and resume when the principal accepts the new minimum. While the
+    principal is not current, a collection on one of the adapter's loans
+    completes, does not lend the proceeds again, and leaves them for the
+    principal to withdraw.
+
 ## 10. Residuals
 
 - **A position token moved by a plain transfer** can reach a wallet that
@@ -425,6 +465,12 @@ date their commitments stop filling.
   the connected app. The public site is where the platform is explained.
 - **Another website** can show the platform's public data without any
   acceptance. It cannot open a position for a wallet that has not accepted.
+- **A principal that cannot make the accepting call.** A lending adapter's
+  principal may itself be a contract. If that contract has no way to send
+  the acceptance, it cannot have an adapter. Whether a signed integration
+  agreement could stand in for the on-chain acceptance is a question for the
+  legal review before mainnet; until it is answered the contracts accept
+  nothing else.
 
 ## 11. Alternatives considered
 
@@ -480,6 +526,18 @@ date their commitments stop filling.
     still a question for the legal review before mainnet.
 11. **Require acceptance of matchers and liquidators.** Not taken: settling a
    loan must stay open to anyone, and they hold no position.
+12. **Let a lending adapter accept through a forwarder**, called by its
+    keeper or its principal, with a first acceptance made inside the
+    transaction that creates it. Not taken. An acceptance made in the
+    administrator's creation transaction, or by the keeper, is the platform
+    writing the record for an outside party, which the owner declined for
+    wallets (alternative 2). A forwarder only the principal may call is
+    sound, but it adds an entry to every adapter to reach the same place as
+    the principal accepting directly, and it makes the adapter, not the
+    party that agreed, the address the record names.
+13. **Exempt lending adapters, as the backstop vault is exempt.** Not taken.
+    The backstop vault is the platform. An adapter lends an outside party's
+    capital, so an exemption would let that party lend without agreeing.
 
 ## 12. Recommendation
 
