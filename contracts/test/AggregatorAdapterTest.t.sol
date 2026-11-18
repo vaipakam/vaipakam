@@ -811,6 +811,9 @@ contract AggregatorAdapterTest is SetupTest {
         // A material change comes into force: fills stop, then resume.
         LegalFacet(address(diamond)).announceTos(2, TOS2, uint64(vm.getBlockTimestamp() + 7 days));
         vm.warp(vm.getBlockTimestamp() + 7 days);
+        // The week's wait ages out the pair's hourly checkpoints; take fresh
+        // ones so the fill reaches the Terms check, not the calm-price one.
+        LibTestCalmPair.checkpoint(address(diamond), mockCollateralERC20, mockERC20);
         address b = makeAddr("adapterBorrower");
         vm.prank(b);
         LegalFacet(address(diamond)).acceptTerms(2, TOS2);

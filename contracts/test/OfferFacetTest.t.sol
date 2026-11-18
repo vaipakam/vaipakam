@@ -657,6 +657,7 @@ contract OfferFacetTest is Test {
         assertTrue(positionCore != address(0));
         LibVaipakam.CreateOfferParams memory p = LibVaipakam.CreateOfferParams({
             lifecycleFlex: 0,
+            integrator: address(0),
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: mockERC20,
             amount: 1000,
