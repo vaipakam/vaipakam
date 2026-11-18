@@ -210,11 +210,19 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   position NFTs are locked by the replacement, and it may not ask to unlock
   them. No position may leave the replaced account, whether the old wallet,
   an operator it approved earlier, or a marketplace sends it, except to the
-  new wallet. Anyone may move the account's position NFTs to the new wallet;
-  the NFT contract confirms the replacement from the account's own vault
-  record, so the platform cannot direct that move anywhere else. Until they
-  move, the new wallet acts on them for the account, and every payout still
-  goes to the account under its protected payout rules.
+  new wallet. Moving them to the new wallet is a delayed change of the
+  account (owner decision 2026-11-18): only the new wallet asks for it, once
+  the replacement and its cool-down are complete; it waits the account's
+  delay; the new wallet or any signer may cancel it; a lock drops it and
+  refuses the move while the account is locked, matured or not; a clawback
+  refuses it for good. Once it has waited, anyone may move the position NFTs,
+  until one further delay later, when it expires. The NFT contract confirms
+  the request and the replacement from the account's own vault record, so
+  nobody can direct that move anywhere else. Until they move, the new wallet
+  acts on them for the account, and every payout still goes to the account
+  under its protected payout rules. Positions that have moved are the new
+  wallet's own, covered only by that wallet's own protection; the app says
+  so before the request.
 - **Who may act on a position is its holder's manager (#3526).** Claims,
   collateral withdrawal and top-ups, swap-to-repay, consolidation, listing
   cancellation, per-loan keeper choices, refinance and extension consent,

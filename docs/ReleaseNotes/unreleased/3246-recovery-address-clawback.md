@@ -23,6 +23,13 @@ would have passed the contract size limit. The vault still has one entry
 point for every protected-mode write, and the deployment records both
 addresses.
 
+Moving a replaced account's positions to its replacement wallet is now a
+delayed change in the protected record, like any other. The replacing wallet
+asks for the move; it can run only once the account's delay has passed and
+before the request expires. A lock or a clawback ends a waiting move, so the
+positions stay with the account and follow the recovery path instead. A
+keeper pass applies an open move when it matures, and ships disarmed.
+
 The trigger from the owner's linked chat is not part of this change: a
 clawback cannot be undone, so it will get its own permission with the keeper
 mandate work (#3353) instead of riding on the lock permission. The keeper

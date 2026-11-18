@@ -7,6 +7,7 @@ import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {PositionNFT} from "../src/PositionNFT.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {VaultRecovery} from "../src/vault/VaultRecovery.sol";
+import {VaultProtectionBase} from "../src/vault/VaultProtectionBase.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
@@ -26,9 +27,9 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
  * @title  RecoveredReplacedAccountTest
  * @notice #3246 part 2 — a replacement (#3526) and a clawback on one
  *         account, in either order (design 4.4 / 4.5):
- *         - the #3526 move of the retired wallet's tokens to the current
- *           wallet is refused with the recovered error, the recovered rule
- *           running first;
+ *         - the move of the retired wallet's tokens to the current wallet
+ *           is refused: no request can be made, the token contract refuses,
+ *           and the Diamond's recovered rule runs before the retired one;
  *         - the current wallet still claims, repays, adds collateral and
  *           cancels the account's offers on those tokens;
  *         - every payout reaches the recovery address, never the retired
@@ -143,17 +144,29 @@ contract RecoveredReplacedAccountTest is SetupTest {
         );
     }
 
-    /// @dev The #3526 move of `account`'s token to {nominee} is refused with
-    ///      the recovered error, not the retired-holder one.
+    /// @dev The move of `account`'s token to {nominee} is refused at every
+    ///      layer: the replacing wallet cannot ask for it on a recovered
+    ///      account, the token contract refuses without an open request, and
+    ///      the Diamond's own check refuses a move out of a recovered account
+    ///      whatever the token contract does (the recovered rule first).
     function _expectMoveRefused(address account, uint256 tokenId) internal {
+        VaipakamVaultImplementation v = P.vaultOf(address(diamond), account);
+        vm.prank(nominee);
+        vm.expectRevert(VaultProtectionBase.RecoveredAccount.selector);
+        v.protect(abi.encodeCall(VaultRecovery.requestPositionMove, (P.direct(nominee))));
+
         uint256[] memory ids = new uint256[](1);
         ids[0] = tokenId;
         LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
         vm.prank(anyone);
+        vm.expectRevert(abi.encodeWithSelector(PositionNFT.PositionMoveNotOpen.selector, account, 0));
+        _core().recover(ids);
+
+        vm.prank(address(_core()));
         vm.expectRevert(
             abi.encodeWithSelector(VaipakamNFTFacet.TransferFromRecoveredAccount.selector, account, nominee)
         );
-        _core().recover(ids);
+        VaipakamNFTFacet(address(diamond)).checkPositionTransfer(anyone, account, nominee, tokenId);
         assertEq(_core().ownerOf(tokenId), account, "the token stays with the account");
     }
 
