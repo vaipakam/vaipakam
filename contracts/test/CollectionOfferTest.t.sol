@@ -313,6 +313,22 @@ contract CollectionOfferTest is SetupTest {
         assertEq(uint8(_take(id, 6, _noProof())), uint8(CollectionOfferFacet.TakeFailure.Closed));
     }
 
+    function test_drawingOnTheReserveMarksTheParentToken() public {
+        uint256 id = _create(_set(LibVaipakam.CollateralSetKind.Collection), 4);
+        uint256 token = OfferCancelFacet(address(diamond)).getOffer(id).positionTokenId;
+        (uint256 n0,,) = VaipakamNFTFacet(address(diamond)).positionState(token);
+        _fill(id, 4, _noProof());
+        (uint256 n1,,) = VaipakamNFTFacet(address(diamond)).positionState(token);
+        assertGt(n1, n0, "a fill moves the parent's state");
+        vm.prank(lender);
+        CollectionOfferFacet(address(diamond)).reduceCollectionLoans(id, 1);
+        (uint256 n2,, uint64 readyAt) = VaipakamNFTFacet(address(diamond)).positionState(token);
+        assertGt(n2, n1, "a reduction moves the parent's state");
+        assertGt(readyAt, block.timestamp, "the parent token waits");
+        vm.expectRevert();
+        VaipakamNFTFacet(address(diamond)).requirePositionState(token, n1);
+    }
+
     function test_reduceMustLeaveALoan() public {
         uint256 id = _create(_set(LibVaipakam.CollateralSetKind.Collection), 2);
         vm.prank(lender);

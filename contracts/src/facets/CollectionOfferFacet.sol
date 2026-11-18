@@ -492,11 +492,17 @@ contract CollectionOfferFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
         emit LibOfferMatchExecute.OfferClosed(offerId, LibOfferMatchExecute.OfferCloseReason.FullyFilled);
     }
 
+    /// @dev The one seam every draw on the parent's reserve passes (a fill or
+    ///      a reduction). The reserve is the parent token's backing, so the
+    ///      parent offer's own token is marked here (#3710 §3.1): its state
+    ///      number goes up and it waits, so a price agreed against the larger
+    ///      reserve cannot fill against the smaller one.
     function _decrementReserve(uint256 offerId, uint256 amount) private {
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(EncumbranceMutateFacet.decrementOfferPrincipalLien.selector, offerId, amount),
             bytes4(0)
         );
+        LibPositionNFT.markOfferValueOut(offerId);
     }
 
     function _checkShape(
