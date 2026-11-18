@@ -4,6 +4,7 @@ import { useMode } from './ModeContext';
 import { useTheme } from './ThemeContext';
 import { IdentityLine, WalletControl } from './WalletControl';
 import { TermsAtConnect, TermsHold, useTermsHoldsPage } from '../shared/terms/TermsAtConnect';
+import { OtherNetworksTerms } from '../shared/terms/OtherNetworksTerms';
 import { useCapabilities } from '../shared/capability/CapabilityContext';
 import { useCopy } from '../shared/copy/useCopy';
 import { HelpPanel } from '../shared/help/HelpPanel';
@@ -259,6 +260,7 @@ export function Shell() {
       </div>
       <div id="main">
         <TermsAtConnect />
+        <OtherNetworksTerms />
         <OutstandingTx />
         {holdPage ? <TermsHold /> : <Outlet />}
       </div>

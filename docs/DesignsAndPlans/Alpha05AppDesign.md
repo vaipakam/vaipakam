@@ -2936,6 +2936,19 @@ above. Each resolves here, so a route reviewer needs no private file:
   and every action that takes on a position keeps its own Terms gate, as the
   contract does. A wallet short of gas for the fee is told the fee it needs
   and what it holds before it tries.
+  Each network keeps two numbers, the latest version and the minimum that
+  still counts, and the protocol's own verdict decides whether a wallet is
+  current; the app never recomputes it. After a small update a current
+  wallet sees a quiet line and may accept the new text; it is never asked.
+  During the notice of a material change, Connect shows the date, and a
+  current wallet sees what stops on that date unless it accepts, with a
+  "Remind me later" that changes nothing before it; a wallet accepting in
+  that window accepts both versions in one transaction. The other networks
+  where the wallet is current, has not accepted the change and has an open
+  offer or an active Auto-lend are walked one at a time (switch, accept
+  there, next), each read from that network alone, its standing now and
+  the announced status shown apart. The step says that loans set to extend
+  and standing instructions are not checked there.
 - **RB-ACTIVITY** — The Activity page (#3677) reads one wallet's history
   from the index's own wallet filter, never by paging the whole network's feed
   and keeping the rows that look like the wallet's. The index answers with the
