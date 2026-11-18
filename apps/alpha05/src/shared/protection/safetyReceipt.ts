@@ -7,6 +7,7 @@
 import type { CopyAccess } from '../copy/useCopy';
 import type { Receipt, ReceiptRow } from '../receipt/types';
 import { formatSpan } from '../ui/format';
+import { recoveryWaitSeconds } from './recovery';
 import { changeText, pendingChanges, safetySteps, type SafetyReview } from './safety';
 
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
@@ -20,10 +21,38 @@ export function safetyReceipt(r: SafetyReview, copy: Copy): Receipt {
   const consequences: string[] = [];
   const unread: string[] = [];
   if (f.mode === null) unread.push(text('safety.modeUnread'));
-  if (f.paused === null && r.action !== 'lock') unread.push(text('safety.pauseUnread'));
+  if (f.paused === null && r.action !== 'lock' && r.action !== 'recovery' && r.action !== 'recoveryCancel') unread.push(text('safety.pauseUnread'));
   if (r.dryRun === 'unread') unread.push(text('safety.dryRunUnread'));
 
-  if (r.action === 'enable') {
+  if (r.action === 'recovery') {
+    const p = r.proof;
+    const rec = f.recovery;
+    rows.push({ label: text('recovery.rowAddress'), value: p === null ? unknown : { kind: 'text', text: p.recovery }, binding: true });
+    rows.push({
+      label: text('recovery.rowInForce'),
+      value:
+        rec === null || m === null || f.bounds === null
+          ? unknown
+          : { kind: 'text', text: format('recovery.afterWait', { wait: formatSpan(recoveryWaitSeconds(rec, m.enabled, m.delaySeconds, f.bounds.min)) }) },
+      binding: true,
+    });
+    if (rec !== null && rec.inForce !== null) rows.push({ label: text('recovery.rowReplaces'), value: { kind: 'text', text: rec.inForce }, binding: true });
+    if (rec !== null && rec.pending !== null) rows.push({ label: text('recovery.rowDropsPending'), value: { kind: 'text', text: rec.pending }, binding: true });
+    consequences.push(text('recovery.whatFor'), text('recovery.onlyPlace'), text('recovery.cancelWhilePending'), text('recovery.changeWaits'));
+    if (rec === null) unread.push(text('recovery.unread'));
+    if (f.bounds === null) unread.push(text('safety.boundsUnread'));
+  } else if (r.action === 'recoveryCancel') {
+    const rec = f.recovery;
+    rows.push({ label: text('recovery.rowCancels'), value: rec === null || rec.pending === null ? unknown : { kind: 'text', text: rec.pending }, binding: true });
+    rows.push({
+      label: text('recovery.rowAfterCancel'),
+      value: rec === null ? unknown : { kind: 'text', text: rec.inForce === null ? text('recovery.noneAfterCancel') : rec.inForce },
+      binding: true,
+    });
+    consequences.push(text('recovery.cancelKeeps'));
+    if (rec !== null && rec.inForce === null) consequences.push(text('recovery.cancelLeavesNone'));
+    if (rec === null) unread.push(text('recovery.unread'));
+  } else if (r.action === 'enable') {
     const d = r.draft;
     rows.push({ label: text('safety.rowDelay'), value: d === null ? unknown : { kind: 'text', text: formatSpan(d.delaySeconds) }, binding: true });
     rows.push({ label: text('safety.rowWaits'), value: { kind: 'text', text: text('safety.waitsWhat') }, binding: true });
@@ -90,10 +119,10 @@ export function safetyReceipt(r: SafetyReview, copy: Copy): Receipt {
   }
   consequences.push(...unread, text('vaultWithdraw.noApproval'));
   const title = text(
-    r.action === 'enable' ? 'safety.titleEnable' : r.action === 'lock' ? 'safety.titleLock' : r.action === 'unlock' ? 'safety.titleUnlock' : 'safety.titleFinalize',
+    r.action === 'recovery' ? 'recovery.title' : r.action === 'recoveryCancel' ? 'recovery.cancelTitle' : r.action === 'enable' ? 'safety.titleEnable' : r.action === 'lock' ? 'safety.titleLock' : r.action === 'unlock' ? 'safety.titleUnlock' : 'safety.titleFinalize',
   );
   // #3379 B2: an action can be several transactions (the vault's write, then
   // the Diamond applying it), each its own wallet prompt.
-  const prompts = Math.max(1, safetySteps(r.action, f.account, f.vault, r.draft, r.due).length);
+  const prompts = Math.max(1, safetySteps(r.action, f.account, f.vault, r.draft, r.due, r.proof).length);
   return { title, rows, consequences, prompts, readAt: r.readAt };
 }

@@ -23,11 +23,14 @@ const readAbi = (name: string): Abi =>
   JSON.parse(fs.readFileSync(new URL(`../../../../packages/contracts/src/abis/${name}.json`, import.meta.url), 'utf8')) as Abi;
 const VAULT = readAbi('VaipakamVaultImplementation');
 const VAULT_PROTECTION = readAbi('VaultProtection');
+/** The recovery address and clawback, which `protect(bytes)` runs from
+ *  `VaultRecovery` (#3246 part 2). */
+const VAULT_RECOVERY = readAbi('VaultRecovery').filter((e) => e.type === 'function' && !VAULT_PROTECTION.some((o) => o.type === 'function' && o.name === e.name));
 
 /** The `data` of `vault.protect(bytes)`: one encoded `VaultProtection` call
  *  (what `protectionCall` of `@vaipakam/lib/protectedAccountView` builds). */
 function protectionCall(functionName: string, args: readonly unknown[]): Hex {
-  return encodeFunctionData({ abi: VAULT_PROTECTION, functionName, args } as never);
+  return encodeFunctionData({ abi: [...VAULT_PROTECTION, ...VAULT_RECOVERY], functionName, args } as never);
 }
 const ZERO = /^0x0{40}$/i;
 /** `VaultProtection.PURPOSE_RECOVERY_PROOF`. */
