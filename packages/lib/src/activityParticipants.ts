@@ -104,6 +104,35 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['VaultRentalUpdated', ['lender', 'user']],
   // The limit-order fill's taker sent the fill the lot left in.
   ['SwapToRepayIntentLotPulled', ['taker']],
+  // #3681 — a loan's standing instructions and reserves. A run is filed
+  // under the reserve's holder; whoever submitted it (the holder or a
+  // keeper) is a party, as is whoever set or cleared the instructions for
+  // the position holder they name.
+  ['InterestPaidFromReserve', ['caller']],
+  ['DueRepaymentRun', ['caller']],
+  ['CollateralTopUpRun', ['caller']],
+  ['StandingInstructionSkipped', ['caller']],
+  ['StandingInstructionsSet', ['owner', 'setBy']],
+  ['StandingInstructionsCleared', ['owner', 'by']],
+  // The wallet that paid an extension's fee for the added term.
+  ['ExtensionFeeCharged', ['payer']],
+  // A payment from a wallet credited to a position holder's vault.
+  ['HolderWalletPaymentToVault', ['payer', 'holder']],
+  // Settled with the reserve's repayment legs, in the holder's name.
+  ['RepaymentLegsFromReserve', ['holder']],
+  // #3682 / #3722 — a fee share settled for a loan: the integrator that
+  // brought it, and the invited wallet and its inviter.
+  ['IntegratorShareSettled', ['integrator']],
+  ['ReferralShareSettled', ['newUser', 'inviter']],
+  // The new wallet's own one-time binding to the wallet that invited it.
+  ['InviterBound', ['newUser', 'inviter']],
+  // A keeper permitted on a position by its owner.
+  ['LoanKeeperEnabled', ['owner']],
+  ['OfferKeeperEnabled', ['owner']],
+  // #3246 — a protected account's balance moved to its recovery address:
+  // the account, the recovery address and whoever submitted it.
+  ['AccountClawedBack', ['account', 'recovery', 'by']],
+  ['RecoveredBalanceSwept', ['account', 'recovery', 'by']],
   // ── Offers and their sale routes.
   ['OfferCreatedDetails', ['creator']],
   ['OfferCanceledDetails', ['creator']],
@@ -127,6 +156,8 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['LenderIntentCapitalWithdrawn', ['owner']],
   ['LenderIntentPrioritySet', ['owner']],
   ['LenderIntentCancelled', ['owner']],
+  ['IntentCalmCheckSet', ['owner']],
+  ['LenderIntentIntegratorNamed', ['owner']],
   ['IntentMatched', ['lender', 'matcher']],
   // Whoever rolled the loan sent that transaction (the owner or a keeper).
   ['IntentLoanRolled', ['roller']],
@@ -250,6 +281,8 @@ const NOT_A_PARTY: ReadonlyMap<string, string> = new Map<string, string>([
   ['token', 'a token'],
   ['lendingAsset', 'an asset'],
   ['collateralAsset', 'an asset'],
+  ['lendAsset', 'an asset'],
+  ['collAsset', 'an asset'],
   ['principalAsset', 'an asset'],
   ['paymentToken', 'a token'],
   ['nftContract', 'an NFT contract'],
@@ -274,6 +307,9 @@ const LOCAL_NOT_A_PARTY: ReadonlyMap<string, Readonly<Record<string, string>>> =
   // where it came from, not a wallet acting in the row.
   ['Approval', { approved: 'the address approved for one position NFT' }],
   ['ApprovalForAll', { operator: 'the operator approved for every position NFT' }],
+  // #3682 — the integrator an offer or intent names is configured, not acting.
+  ['OfferModified', { integrator: 'the integrator the offer names' }],
+  ['LenderIntentIntegratorNamed', { integrator: 'the integrator the owner named' }],
   ['UntrackedAdopted', { declaredSource: 'the address the owner declared sent the asset' }],
   // Payout destinations are the owner's own wallet or
   // an address on the owner's allowlist: the owner's choice, not a party.
@@ -347,6 +383,13 @@ const EXEMPT: ReadonlyMap<string, ExemptGroup> = new Map<string, ExemptGroup>([
       // #3272 part 2 — the protocol registry the Diamond finds its price
       // guard through, recorded once at deploy.
       'ProtocolRegistrySet',
+      // #3682 — the integrator register, kept by governance (a pause role
+      // may suspend). The integrator's own fee share is a row (PARTIES).
+      'IntegratorContractsDeclared',
+      'IntegratorRemoved',
+      'IntegratorRestored',
+      'IntegratorSet',
+      'IntegratorSuspended',
       'RateModelSet',
       'RepatriationEndpointsSet',
       'RepatriationTokenAdminRegistrySet',

@@ -140,9 +140,11 @@ const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<string, ActorRead
   // find the loans they hold a reserve on (`/activity?actor=…&kind=…`).
   ['LoanReserveFunded', arg('holder')],
   ['LoanReserveWithdrawn', arg('holder')],
-  // #3681 — the reserve paying an ended period's interest: filed under the
-  // holder whose reserve paid it, not under whoever ran the instruction.
+  // #3681 — each run of a standing instruction draws the holder's reserve:
+  // filed under that holder, not under whoever ran it (the caller is a party).
   ['InterestPaidFromReserve', arg('holder')],
+  ['DueRepaymentRun', arg('holder')],
+  ['CollateralTopUpRun', arg('holder')],
   ['ExtendChargeDrawn', arg('holder')],
   ['RepayPartialPeriodAdvanced', arg('advancedBy')],
   ['VPFIDepositedToVault', arg('user')],
