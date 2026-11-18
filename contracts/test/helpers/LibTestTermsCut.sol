@@ -19,7 +19,7 @@ library LibTestTermsCut {
     /// @notice LegalFacet's routed surface; mirrors
     ///         `DeployDiamond._getLegalSelectors`.
     function legalSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](17);
+        s = new bytes4[](18);
         s[0] = LegalFacet.acceptTerms.selector;
         s[1] = LegalFacet.announceTos.selector;
         s[2] = LegalFacet.withdrawTosAnnouncement.selector;
@@ -37,6 +37,7 @@ library LibTestTermsCut {
         s[14] = LegalFacet.getTosVersions.selector;
         s[15] = LegalFacet.getTosVersionInForceAt.selector;
         s[16] = LegalFacet.getUserAcceptedTosVersions.selector;
+        s[17] = bytes4(keccak256("MAX_TOS_WINDOW()"));
     }
 
     /// @notice `cuts` with the Terms host appended.

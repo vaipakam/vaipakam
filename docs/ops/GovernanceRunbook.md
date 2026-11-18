@@ -864,7 +864,10 @@ publishes it on-chain as one of two kinds of change:
 
 - **Small change** — `publishTos(version, hash)`. The new version is
   the latest at once; the minimum does not move, so nobody loses
-  standing and the app shows only an optional notice.
+  standing and the app shows only an optional notice. The latest may
+  sit at most `MAX_TOS_WINDOW` (16) versions above the minimum; past
+  that `publishTos` reverts `TosVersionWindowTooWide`, and the minimum
+  must be raised first with `announceTosMinimum`.
 - **Material change** — `announceTos(version, hash, effectiveAt)`, or
   `announceTosMinimum(effectiveAt)` to raise the minimum to the version
   that is already latest. The notice is at least `MIN_TOS_NOTICE`

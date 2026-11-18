@@ -62,6 +62,11 @@ contract LegalFacet is DiamondPausable, DiamondAccessControl {
     ///         first version on a network needs none).
     uint64 public constant MIN_TOS_NOTICE = 7 days;
 
+    /// @notice The most a small change may put the latest version above the
+    ///         minimum. It bounds the read every opening step makes; past it,
+    ///         raise the minimum ({announceTosMinimum}) first.
+    uint32 public constant MAX_TOS_WINDOW = 16;
+
     // ─── Events ────────────────────────────────────────────────────────────
 
     /// @notice A wallet's acceptance of a Terms version was recorded.
@@ -119,6 +124,10 @@ contract LegalFacet is DiamondPausable, DiamondAccessControl {
     /// @notice No announcement is pending.
     error NoTosAnnouncement();
 
+    /// @notice A small change would put `version` more than {MAX_TOS_WINDOW}
+    ///         above the minimum `minimum`; raise the minimum first.
+    error TosVersionWindowTooWide(uint32 version, uint32 minimum);
+
     /// @notice The minimum is already the latest version (or none is in
     ///         force), so there is nothing to raise it to.
     error TosMinimumAlreadyLatest();
@@ -157,7 +166,8 @@ contract LegalFacet is DiamondPausable, DiamondAccessControl {
      * @notice A small change: Terms `version` with fingerprint `hash` is the
      *         latest at once, with no notice; the minimum does not move (the
      *         first version on a network sets it to itself).
-     * @dev `version` must exceed every number used before. Refused while an
+     * @dev `version` must exceed every number used before, and may sit at
+     *      most {MAX_TOS_WINDOW} above the minimum. Refused while an
      *      announcement is pending.
      */
     function publishTos(uint32 version, bytes32 hash) external onlyRole(LibAccessControl.ADMIN_ROLE) {
@@ -165,6 +175,10 @@ contract LegalFacet is DiamondPausable, DiamondAccessControl {
         _settle(s);
         _requireNoAnnouncement(s);
         _requireNewNumber(s, version, hash);
+        uint32 minimum = s.minTosVersion;
+        if (s.currentTosVersion != 0 && version - minimum > MAX_TOS_WINDOW) {
+            revert TosVersionWindowTooWide(version, minimum);
+        }
         s.highestTosVersionAnnounced = version;
         if (s.currentTosVersion == 0) s.minTosVersion = version;
         s.currentTosVersion = version;
