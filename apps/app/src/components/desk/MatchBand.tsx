@@ -19,10 +19,11 @@
  *    alone could still render a band the contract would refuse.
  *
  * Execution is PERMISSIONLESS — `matchOffers(lenderOfferId,
- * borrowerOfferId)`; `msg.sender` earns the LIF matcher kickback (1% of
- * the fee by default). The write goes through the desk's shared
- * `useDiamondWrite` + `captureTxError` pattern (same as the Open orders
- * panel's cancel).
+ * borrowerOfferId)`; `msg.sender` earns the matcher share of the
+ * initiation fee: the matcher rate (`getLifMatcherFeeBps`) on the fee's part
+ * above the treasury floor, sized on the fee before any referral cut
+ * (#3649). The write goes through the desk's shared `useDiamondWrite` +
+ * `captureTxError` pattern (same as the Open orders panel's cancel).
  */
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
