@@ -138,6 +138,12 @@ gaps and the `_CodeVsDocsAudit.md` findings.
 
 ## Action matrix — Terms-of-Service gate
 
+> **Design decided, not built (#3734, owner decision 2026-11-18):** the
+> contracts will refuse a new position for a wallet that has not accepted the
+> Terms in force, and the app will take the acceptance at Connect. See
+> [Terms of Service acceptance enforced by the contracts](TermsAcceptanceEnforcementDesign.md).
+> Until that is built, everything below describes today's app-side gate.
+
 The Terms gate is a **versioned on-chain acceptance** (`LegalFacet`): a user must
 have accepted the **current** Terms version **and** content hash before the gated
 app routes. Governance bumps the version/hash via `setCurrentTos`; a bump or hash

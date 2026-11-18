@@ -49,11 +49,35 @@ export interface OwnStateClient {
   read<T>(fn: (client: PublicClient) => Promise<T>): Promise<{ value: T; via: OwnSource }>;
 }
 
+/** How long one source may take over one question before it is passed over
+ *  like an outage. A wallet provider that never answers (a connector waiting
+ *  on a pairing that will not come) would otherwise hold a review's re-check
+ *  until the wallet library gives up, minutes later, with nothing said. */
+export const SOURCE_DEADLINE_MS = 15_000;
+
+/** `work`, or a failure naming the deadline when it has not settled within
+ *  `ms`. A late answer is dropped, never used. */
+export function withinDeadline<T>(work: Promise<T>, ms: number = SOURCE_DEADLINE_MS): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`no answer within ${Math.round(ms / 1000)} s`)), ms);
+    work.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e: unknown) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
+
 export async function readThrough<T>(sources: readonly OwnStateSource[], fn: (client: PublicClient) => Promise<T>): Promise<{ value: T; via: OwnSource }> {
   const failures: unknown[] = [];
   for (const source of sources) {
     try {
-      return { value: await fn(source.client), via: source.via };
+      return { value: await withinDeadline(fn(source.client)), via: source.via };
     } catch (e) {
       failures.push(e);
     }

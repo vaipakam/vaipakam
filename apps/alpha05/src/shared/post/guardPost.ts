@@ -12,8 +12,9 @@
  * Without a guard the post is the plain `createOffer` call, unchanged. The
  * guard's rule and its wording are the offer page's (shared/offers/priceGuard).
  */
-import { encodeFunctionData, type Abi, type Log, type PublicClient } from 'viem';
-import { MulticallFacetABI, OracleFacetABI } from '@vaipakam/contracts/abis';
+import { type Abi, type Log, type PublicClient } from 'viem';
+import { OracleFacetABI } from '@vaipakam/contracts/abis';
+import { batchCall } from '../tx/batch';
 import type { CopyAccess } from '../copy/useCopy';
 import { answerOrNull } from '../reads/answer';
 import { bpsPercent, guardRecorded, PRICE_GUARD } from '../offers/priceGuard';
@@ -24,24 +25,7 @@ import type { ParsedPost } from './postModel';
 type Hex = `0x${string}`;
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
 
-const MULTICALL = MulticallFacetABI as Abi;
 const ORACLE = OracleFacetABI as Abi;
-
-/** The batch entry plus every error either step can raise, so a refusal is
- *  named (and its arguments decoded) as it would be from the step alone:
- *  the batch re-raises the step's revert verbatim. */
-function batchAbi(create: Abi): Abi {
-  const seen = new Set<string>();
-  const out: Abi[number][] = [];
-  for (const item of [...MULTICALL, ...create.filter((i) => i.type === 'error'), ...PRICE_GUARD.filter((i) => i.type === 'error')]) {
-    const key =
-      item.type === 'error' || item.type === 'function' || item.type === 'event' ? `${item.type}:${item.name}:${JSON.stringify(item.inputs)}` : item.type;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(item);
-  }
-  return out as Abi;
-}
 
 /** The post as one contract call: `createOffer(params, validUntil)` alone,
  *  or, with a guard, the batch arming it first. The dry run and the write
@@ -50,11 +34,10 @@ function batchAbi(create: Abi): Abi {
  *  clock right before the call is built (`../tx/deadline`). */
 export function postCall(create: Abi, params: unknown, guardBps: number | null, validUntil: bigint) {
   if (guardBps === null) return { abi: create, functionName: 'createOffer', args: [params, validUntil] as const };
-  const calls = [
-    { callData: encodeFunctionData({ abi: PRICE_GUARD, functionName: 'armOfferPriceGuard', args: [guardBps] }), allowFailure: false },
-    { callData: encodeFunctionData({ abi: create, functionName: 'createOffer', args: [params, validUntil] }), allowFailure: false },
-  ];
-  return { abi: batchAbi(create), functionName: 'multicall', args: [calls] as const };
+  return batchCall([
+    { abi: PRICE_GUARD, functionName: 'armOfferPriceGuard', args: [guardBps] },
+    { abi: create, functionName: 'createOffer', args: [params, validUntil] },
+  ]);
 }
 
 /**

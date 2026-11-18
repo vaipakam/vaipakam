@@ -36,7 +36,7 @@ import { cleanUpLeg } from "../tx/cleanUp";
 import { nftApproval } from "../tx/nftApproval";
 import { operatorApproval } from "../tx/operatorApproval";
 import type { LegOutcome } from "../tx/outcome";
-import { askThrough } from "../tx/simulate";
+import { askAfter, askThrough } from "../tx/simulate";
 import {
   holdsFlow,
   useStoredValue,
@@ -614,9 +614,7 @@ function DepositFlow({
       nonce: now.nonce,
       deadline: now.block.timestamp + BigInt(PERMIT_DEADLINE_SECONDS),
     };
-    say(
-      format("vpfiPermit.stepSign", { amount: exact(d.asset, d.amount) }),
-    );
+    say(format("vpfiPermit.stepSign", { amount: exact(d.asset, d.amount) }));
     const signature = await signTypedData(config, {
       account,
       domain: permitDomain(chain.chainId),
@@ -676,6 +674,9 @@ function DepositFlow({
       // 1. The approval, read again first so a change since the review stops
       //    before any prompt, and a stop puts back exactly what was there.
       let putItBack: (() => Promise<{ sentence: string }>) | null = null;
+      // The block the approval landed in: the dry run is asked of a source
+      // that has reached it, never one that has not seen the approval yet.
+      let approvedAt: bigint | null = null;
       const h = r.holding;
       if (h.kind === "erc721") {
         const ap = tokenApproval(d.asset, d.tokenId);
@@ -696,6 +697,7 @@ function DepositFlow({
             }),
           );
           const since = await ap.approve(now.approved);
+          approvedAt = since;
           approvalLeft.current = {
             kind: "erc721",
             token: d.asset,
@@ -717,6 +719,7 @@ function DepositFlow({
             }),
           );
           const since = await ap.grant();
+          approvedAt = since;
           grantLeft.current = { token: d.asset, tokenId: d.tokenId, since };
           putItBack = () => {
             grantLeft.current = null;
@@ -738,6 +741,7 @@ function DepositFlow({
         if (steps.length !== h.approvalSteps) throw allowanceMoved(copy);
         if (steps.length > 0) {
           const since = await approveExactly(io, d.asset, d.amount, prior);
+          approvedAt = since;
           approvalLeft.current = {
             kind: "erc20",
             token: d.asset,
@@ -770,8 +774,8 @@ function DepositFlow({
       // 2. The dry run with the approval in place: the protocol's verdict on
       //    the whole deposit, the full-arrival check included.
       const call = depositCall(d);
-      const dry = await askThrough(own, (c) =>
-        c.simulateContract({ address: diamond, ...call, account }),
+      const dry = await askAfter(own, approvedAt, (c, blockNumber) =>
+        c.simulateContract({ address: diamond, ...call, account, blockNumber }),
       );
       if (dry.kind === "reverted")
         return stop(
@@ -1111,7 +1115,10 @@ function DepositFlow({
                   />
                   <span>
                     {text("vpfiPermit.approve")}
-                    <span className="tier-b"> {text("vpfiPermit.approveHint")}</span>
+                    <span className="tier-b">
+                      {" "}
+                      {text("vpfiPermit.approveHint")}
+                    </span>
                   </span>
                 </label>
                 <label className="choice">
@@ -1124,7 +1131,10 @@ function DepositFlow({
                   />
                   <span>
                     {text("vpfiPermit.sign")}
-                    <span className="tier-b"> {text("vpfiPermit.signHint")}</span>
+                    <span className="tier-b">
+                      {" "}
+                      {text("vpfiPermit.signHint")}
+                    </span>
                   </span>
                 </label>
               </fieldset>

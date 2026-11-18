@@ -17,7 +17,7 @@ import { allowanceSteps } from '../tx/approval';
 import { allowanceMoved, approvalFlow } from '../tx/approvalFlow';
 import { cleanUpLeg } from '../tx/cleanUp';
 import type { LegOutcome } from '../tx/outcome';
-import { askThrough } from '../tx/simulate';
+import { askAfter } from '../tx/simulate';
 import { holdsFlow, useStoredValue, useTxEntry, useTxNote } from '../tx/txStore';
 import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
 import { useTrackedTx } from '../tx/useTrackedTx';
@@ -226,7 +226,7 @@ function PartialFlow({ loanId, chain, own, meta, amount, onChangeAmount, onClose
 
       // The dry run: the protocol's own verdict on this payment, now.
       const args = [loanId, r.amount] as const;
-      const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, abi: REPAY_ABI, functionName: 'repayPartial', args, account }));
+      const dry = await askAfter(own, since, (c, blockNumber) => c.simulateContract({ address: diamond, abi: REPAY_ABI, functionName: 'repayPartial', args, account, blockNumber }));
       if (dry.kind === 'reverted') return stop(format('repay.dryRunRefused', { reason: refusalFromError(dry.error).reason }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
 

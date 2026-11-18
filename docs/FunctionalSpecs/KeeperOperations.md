@@ -2,7 +2,7 @@
 
 This document describes the intended behavior of the protocol-operated keeper.
 It consolidates the operational decisions in the release notes from August 13
-through November 4, 2026, while retaining later recorded intent decisions.
+through November 15, 2026, while retaining later recorded intent decisions.
 The deployment destination incorporates the owner's
 October 27 direction: a dedicated Cloudflare database and a separate always-on
 keeper VM in Oracle Cloud. This is the required deployment arrangement, not
@@ -17,9 +17,11 @@ evidence that the migration has completed.
   includes scan progress, pending work, prior acknowledgement attempts,
   health-factor band memory, reward observation work, and the deployment each
   chain's records belong to. Other services must not write that state.
-- Shared user-facing records remain with their owning services: alert
-  preferences, the inbox, Telegram links, indexed events, and shared oracle
-  and liquidity observations. A dedicated operational database does not turn
+- User-facing records remain with their owning services: alert
+  preferences, the inbox, indexed events, and shared oracle and liquidity
+  observations. Telegram links, handshake codes, protected unlink requests,
+  and LOCK requests live only in the agent's private store, outside shared
+  database writes. A dedicated operational database does not turn
   those records into keeper-owned data. A keeper inbox notice must still reach
   the user's shared inbox.
 - The keeper requires both its operational store and the shared data it uses
@@ -38,6 +40,11 @@ evidence that the migration has completed.
 - The keeper is a convenience service. Permissionless actions remain open to
   other eligible callers, and no keeper schedule guarantees a fill, an
   extension, or a successful liquidation.
+- The global keeper pause stops every keeper-role action, including tier
+  relays, reward reports, and keeper remittances. Owners, permissionless
+  liquidation callers, and the administrator's own remittance retain their
+  independent routes. Pausing does not revoke a compromised key: its role
+  and remittance designation must be removed before resuming.
 - Delegation permits only the actions the position holder granted. Keeper
   approval never permits claims, withdrawals, position transfers, or changing
   the destination of another person's funds. Position ownership and the
@@ -222,6 +229,24 @@ evidence that the migration has completed.
   addresses and credentials before becoming text. They retain useful refusal
   names and identifiers, so redaction does not hide why an action was skipped.
 
+### Signing ceilings and private-send timing
+
+- Built-in fee ceilings are 20 gwei, a 2 gwei tip, and 0.01 ETH total per
+  send on Base and Arbitrum; 30 gwei and 0.03 BNB on BNB; and 300 gwei,
+  a 20 gwei tip, and 0.3 ETH on Ethereum. Operators may set per-chain
+  overrides. The guard compares fixed bounds, not a second fee source.
+- Private endpoints get eight seconds each in configured order. Accepted
+  signed bytes are retained in the private database for restart-safe fallback.
+  An explicitly enabled public fallback waits 24–180 seconds, default 60,
+  then runs on the next minute tick, potentially another minute later.
+- The nonce window lasts seven minutes from its durable reservation before
+  the first private attempt. No public copy is sent in its last minute.
+  Unknown outcomes, including possibly public copies, retain that status.
+  Public-fallback alerts name the transaction, at most once per chain per
+  ten minutes, while every occurrence is logged. Route reports show provider
+  domains and methods without credentials. The recorded testnets have no configured private route; this capability
+  requires explicit configuration and its private-state migration before use.
+
 ## Liquidation, default, and standing intents
 
 - Liquidation and past-grace default follow the loan's authoritative status,
@@ -312,6 +337,39 @@ evidence that the migration has completed.
   even if its current owner sold and later bought the position back. Auto-roll
   must not reinvest interest owed to a previous seller.
 
+- Matching gives each lender-wallet/borrower-wallet pair one preview per
+  round in a market bucket; standing intents share the borrower-wallet rule.
+  Buckets and starting points rotate and a borrower in flight is excluded
+  across lenders. This limits repeated candidates, not multi-wallet Sybils.
+- Defaults and liquidation use the published sequencer-recovery deadline.
+  Own-funds full and partial repayments remain possible during the recovery
+  hour; price-dependent sales wait, and the keeper does not invent an earlier
+  grace end from the original term alone.
+
+### Matching across terms and prioritizing changed offers
+
+- Ordinary matching groups by asset pair, not exact term. Equal terms are
+  eligible; different terms are previewed only when both offers chose pro-rata
+  and the borrower requested the shorter term. The loan runs that borrower
+  term. The live contract preview remains binding, so older deployments may
+  refuse these candidates without any match being sent.
+- A fresh-offer lane considers offers created or repriced in the last ten
+  minutes once terms seasoning has passed. It receives at most a configured
+  share of preview, match, and time budgets: one quarter by default, zero
+  disables it, and one half is the maximum. The ordinary rotating walk keeps
+  its reserved remainder even if the fresh lane leaves some unused, and does
+  not preview a pair twice in the same run.
+- Creation earns one priority turn. Repricing earns another only an hour
+  after its previous turn; both lanes keep creator-pair fairness. This memory
+  is process-local, so restart may grant one additional recent turn, bounded
+  by the same share. No strict chain-level price/time priority is promised.
+  On a large book the ordinary walk may take more runs because it retains
+  at least one minus that share, not its former entire budget.
+- Intent candidates apply their lend-until and pro-rata choices before
+  preview. Expiring intent capital is never silently withdrawn or rolled
+  past its permissible one-day-loan window. Partial principal payments do
+  not recommit working capital or free the original exposure cap early.
+
 ### Periodic settlement and in-place extension
 
 - Periodic-interest settlement has its own fifteen-minute duty and ships
@@ -394,6 +452,9 @@ evidence that the migration has completed.
   a delivery that arrived after its reservation was released. Ordinary
   pending acknowledgements have first call on the send budget; late work and
   slow destinations cannot block them or other destinations.
+- An acknowledgement without final evidence waits one hour before retry,
+  three times the slowest source finality window. An overdue remittance is
+  still reported at eight hours; an unknown broadcast is not presumed unsent.
 - Acknowledging is armed separately from sending new remittances. An
   acknowledgement only completes a remittance already sent, so an operator
   can stop new remittances, for example to drain them before a fresh
@@ -414,6 +475,11 @@ evidence that the migration has completed.
   stranded amount and no compensation gate. A missing figure stays unknown.
   Alerts close once current chain evidence establishes completion, without
   requiring a reconstruction or stamping of retired remittance history.
+
+- A remittance refused by the contract produces a per-lane operator alert
+  naming the refusal and its figures, repeated every six hours while it
+  persists and cleared after the lane next completes. Provider or transport
+  failures are reported separately, never attributed to a contract refusal.
 
 ## Sending reward budgets
 
@@ -488,6 +554,13 @@ evidence that the migration has completed.
   produce standing operations alerts. A failed read cannot clear an alert.
   Deployment or role changes close obsolete alerts with an explanatory
   notice and start work under the new deployment's identity.
+
+- Reward close-out simulates retirement and forfeiture sweeps and sends only
+  when the protocol's own progress result says settlement state would advance.
+  Preparing records or advancing a cursor can count even with zero value paid.
+  It repeats within the run while progress remains; no-progress work costs a
+  simulation and no send. All served chains must support that progress result;
+  an older shortened result cannot be interpreted as completion.
 
 ## Closing out finished reward days
 
@@ -685,6 +758,23 @@ evidence that the migration has completed.
   fee above the ceiling, an unread value or a Diamond that names another
   chain stops the affected step and is stated in the run's report.
 
+### Returning a closed mirror day's leftover
+
+- The return-transport pass has an additional, separately armed step for a
+  mirror's delivered reward batches. It reads indexed batches a page at a
+  time, verifies on chain that every obligation for the day has ended and
+  nothing can claim again, and returns the remaining value only to the Base
+  deployment that delivered it. Amounts trimmed by per-loan or daily caps
+  remain accounted in that batch until this proof permits return.
+- Each part fits the batch balance, its unclassified delivery, and both
+  transport lanes. Base must be served, its Diamond must match the issuer,
+  and its receiver must deliver there. Unread or mismatched routes hold funds.
+- Operator-acknowledged leftovers are left for operator classification.
+  Staging references and live stranded-recovery records must resolve first.
+  The keeper pays transport fees, announces sends, and requires the return
+  pass, this subsidiary step, and its mirror role to be armed. It ships off;
+  until arming the leftover remains held on the mirror.
+
 ## Claim-horizon and sanctions observation
 
 - The reward heartbeat discovers all unsettled reward entries and touches
@@ -783,7 +873,7 @@ evidence that the migration has completed.
   An intent that is still live, filled or already expired is left alone.
 - The per-tier loan-to-value cache is refreshed from the peer protocols
   before it can lapse; a cached tier stops counting after fourteen days and
-  the governance tier cap applies instead. The keeper first previews the
+  the tier's default, clipped to its governance ceiling, applies instead. The keeper first previews the
   refresh and sends it only when it would write a tier whose value changes,
   or one cached long enough ago to need renewing, so a chain whose peers give
   no reading costs nothing. Each tier the refresh rejects is reported with
@@ -1157,7 +1247,7 @@ serves. Each ships switched off behind its own flag.
   reader sees either the old list or the new one. Every entry of a list
   carries the time it was fetched. An address listed for two coins keeps the
   better rank.
-- A day whose fetch fails, whose ranked list is short, or whose chain maps
+- A day whose fetch fails, whose ranked list contains fewer than 400 coins, or whose chain maps
   to no address at all keeps the last good list and records that the day
   failed and why, so the app can state the date of the list it shows. The
   keeper retries a failed day hourly and fetches a successful one once a
@@ -1304,8 +1394,10 @@ backup, not a second keeper:
   the second its delay ends.
 - A held payout is released only when the protocol's
   own record says it can go: still held, past its release time by the chain's
-  clock, the account not locked, and co-signed while the account requires a
-  co-sign. A payout whose destination has since left the account's allowed
+  clock, the vault account not locked, and co-signed whenever the protocol
+  reports that this individual payout needs it. That includes unverified
+  destinations while signers exist; the account-level switch alone is not
+  sufficient to decide it. A co-signer cannot be the payee. A payout whose destination has since left the account's allowed
   destinations is cancelled by the release itself, and the asset stays in the
   vault; the report names it apart from a paid one. A payout to a recipient
   the sanctions screen flags is refused by the protocol and stays held; the
@@ -1350,6 +1442,11 @@ backup, not a second keeper:
   account's own recipient from the account's own vault. It needs no
   permission from the owner.
 
+- Position NFTs have a separate holder lock. The platform's former queued
+  NFT transfers are not payout work. Executing a matured position-NFT unlock
+  or lock-delay lowering is permissionless, but its automatic keeper pass
+  remains a separate follow-up; payout processing does not imply that service.
+
 ## Locking a protected vault from Telegram, and owner alerts
 
 - An owner who has linked their wallet to the user bot in a private chat can
@@ -1380,15 +1477,13 @@ backup, not a second keeper:
   confirmation never leads to a second lock for the same request. It can lock only for an owner who has granted the keeper
   permission to lock their vault; without that grant the protocol refuses
   and the owner is told so. A lock is a safety action and works while the
-  protocol is paused. Locking cancels every queued payout and position
-  transfer, so the lock is made before any release in the same run. A
+  protocol is paused. Locking cancels every queued payout and applies the position-NFT
+  holder lock, so the lock is made before any release in the same run. A
   request the keeper could not reach in a run (its share of calls used, the
-  run's time spent) still holds back that account's payouts and position
-  transfers until it is handled: an owner's lock is never overtaken by the
+  run's time spent) still holds back that account's payouts until it is handled: an owner's lock is never overtaken by the
   payout it was sent to stop. When the keeper cannot tell which requests are
   still open, it releases nothing that run. This hold binds the keeper only:
-  release is permissionless, so another caller can still release a payout or
-  transfer already past its delay until the lock lands on chain. The request
+  release is permissionless, so another caller can still release a payout already past its delay until the lock lands on chain. The request
   promises protection from the lock, not from the moment it is sent, which
   is why the bot's reply says nothing is locked yet; every surface showing a
   request must say the same (owner decision #3177). The keeper starts locks only in
@@ -1532,6 +1627,22 @@ it. Reports retain
 unknowns and partial coverage. An unreadable
 dependency is never turned into an empty queue or a successful run.
 
+## Vault-held protection coverage at Stage B2
+
+- Protection state is read from the vault, not a second platform record.
+  Locks and the required platform effects are applied atomically, and payout
+  release observes the vault lock even before a row's cancellation is recorded.
+  A replaced account routes only to its latest manager and stays protected.
+- The keeper's linked-chat lock goes through the vault. General relay support
+  in the contract is not support for arbitrary user-signed lock delivery in
+  this keeper; that surface awaits Stage B4 along with the app's relayed forms.
+- Until vault events are indexed, only matured vault changes named by a ledger
+  row can be discovered for finalization. Owner alerts for a lock or a proposed
+  replacement do not fire in that interval. These limits override descriptions
+  of the fully available alert service elsewhere in this document.
+- The agent owns the user bot and its links; the keeper has no user-bot handle
+  or token role. The keeper's operator-alert bot remains an independent route.
+
 ## Sources
 
 - [August 23](../ReleaseNotes/ReleaseNotes-2026-08-23.md) and
@@ -1573,3 +1684,20 @@ dependency is never turned into an empty queue or a successful run.
 - [November 4](../ReleaseNotes/ReleaseNotes-2026-11-04.md): independent remit
   acknowledgements, protected releases and locks, fair upkeep budgets,
   staging, rental limits, sanctions freshness, and required current interfaces.
+- [November 5](../ReleaseNotes/ReleaseNotes-2026-11-05.md) and
+  [November 6](../ReleaseNotes/ReleaseNotes-2026-11-06.md): close-out progress,
+  lock races, remittance refusal alerts, and acknowledgement retry timing.
+- [November 7](../ReleaseNotes/ReleaseNotes-2026-11-07.md) and
+  [November 8](../ReleaseNotes/ReleaseNotes-2026-11-08.md): fair matching,
+  private sends, delayed vault code, checkpoints, and holder locks.
+- [November 9](../ReleaseNotes/ReleaseNotes-2026-11-09.md) and
+  [November 10](../ReleaseNotes/ReleaseNotes-2026-11-10.md): moved-route
+  cleanup, backup automation, guarded-offer checkpoints, rankings, and pause.
+- [November 11](../ReleaseNotes/ReleaseNotes-2026-11-11.md): private leases,
+  agent-owned Telegram state, fee and chain checks, private fallback timing,
+  sequencer recovery, budget-paid tier reductions, and closed-day returns.
+- [November 12](../ReleaseNotes/ReleaseNotes-2026-11-12.md): tier defaults
+  clipped to ceilings and fixed seven-day vault-code changes.
+- [November 15](../ReleaseNotes/ReleaseNotes-2026-11-15.md): cross-term
+  pro-rata candidates, bounded fresh-offer priority, intent end dates, and
+  vault-owned protection with explicit discovery and alert limitations.

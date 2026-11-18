@@ -52,6 +52,14 @@ Audience: release engineer + signing multisig.
 
 ## TL;DR — pick the right script
 
+> **Full fresh testnet deploy:** follow
+> [`TestnetFreshDeployGuide.md`](TestnetFreshDeployGuide.md), the
+> end-to-end operator guide for the active testnet set (Base Sepolia,
+> Arbitrum Sepolia, BNB testnet): the pre-deploy gate, every
+> `deploy-testnet.sh` phase in order, the manual steps the scripts do not
+> perform, the reward-launch ordering, the off-chain steps, and the places
+> where this runbook and the code disagree.
+
 Three deploy scripts after the 2026-05-10 modernization sweep
 (see ReleaseNotes-2026-05-10.md for the full story):
 

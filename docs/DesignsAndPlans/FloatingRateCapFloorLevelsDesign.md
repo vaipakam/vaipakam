@@ -66,7 +66,7 @@ While the quorum is in its "previous reference holds" state, levels accrue again
 
 - **Health factor and liquidation** read the loan's current effective rate, `clamp(reference, floor, cap) + margin`, and accrued interest by the formula in section 3. A capped loan's liquidation distance has a computable worst case, which the review shows (#3637).
 - **Lender sale, seller claims, roll, claim:** unchanged in shape. They settle interest through the one ledger (`LibInterestLedger`), which gains the two cumulatives in its floating accrual. No second writer of accrued interest.
-- **The averaged reference** of #3635 reads the base index only. Levels do not affect market-linked limits or the guidance figure.
+- **The averaged reference** of #3635 and the term average of #3713 read the base index only. Levels do not affect market-linked limits or the averages shown beside a rate field. The warning band of `TermAverageAndLinkGuardsDesign.md` 6.4 applies to fixed rates only; a floating loan's protection is its cap level.
 - **The own-rate quorum member** of #3337 uses fixed-rate loans; floating loans are copies of the reference and stay out of it, capped or not.
 
 ## 7. Contract changes (with #3337 part 2)

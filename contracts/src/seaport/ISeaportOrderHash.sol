@@ -120,7 +120,7 @@ interface ISeaportOrderHash {
     ///         the diamond resolves a borrower-supplied
     ///         `conduitKey` to its deployed conduit address via
     ///         `IConduitController.getConduit(conduitKey)`.
-    function conduitController() external view returns (address);
+    function information() external view returns (string memory version, bytes32 domainSeparator, address conduitController);
 }
 
 /**
