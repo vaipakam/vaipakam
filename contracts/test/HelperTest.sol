@@ -1125,7 +1125,7 @@ contract HelperTest {
     }
 
     function getRateLinkFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](14);
+        selectors = new bytes4[](15);
         selectors[0] = RateLinkFacet.getRateReference.selector;
         selectors[1] = RateLinkFacet.rateLinkBound.selector;
         selectors[2] = RateLinkFacet.offerRateBounds.selector;
@@ -1140,6 +1140,7 @@ contract HelperTest {
         selectors[11] = bytes4(keccak256("WARN_FAR_BELOW()"));
         selectors[12] = RateLinkFacet.matchRate.selector;
         selectors[13] = RateLinkFacet.linkedFloor.selector;
+        selectors[14] = RateLinkFacet.effectiveRateBounds.selector;
     }
 
     function getReferralFacetSelectors() public pure returns (bytes4[] memory selectors) {

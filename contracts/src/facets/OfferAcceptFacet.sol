@@ -2020,7 +2020,17 @@ contract OfferAcceptFacet is
         // #3734 — a party of the loan has not accepted the Terms in force
         // (`LibTerms.TermsNotAccepted`); `LegalFacet.termsBlocker` names it.
         // APPENDED.
-        TermsNotAccepted
+        TermsNotAccepted,
+        // #3635 A — the offer's rate is linked to the market reference and
+        // the link cannot be used now (`RateLinkFacet.RateLinkUnavailable`):
+        // the reference is unavailable for the fill's term, or, for a term
+        // over 30 days, the market is unusual or not known. APPENDED.
+        RateReferenceUnavailable,
+        RateReferenceUnusual,
+        // #3635 A — the linked bound crosses the offer's unlinked opposite
+        // bound, so no rate is acceptable now (`RateLinkFacet.RateRangeEmpty`).
+        // APPENDED.
+        RateRangeEmpty
     }
 
     /// @notice Projection of the loan that would land if the supplied

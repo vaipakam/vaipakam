@@ -90,6 +90,65 @@
   },
   {
     "type": "function",
+    "name": "effectiveRateBounds",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "termDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "marginBps",
+        "type": "int16",
+        "internalType": "int16"
+      },
+      {
+        "name": "lenderSide",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "typedLoBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "typedHiBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "loBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "hiBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "refusal",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getRateReference",
     "inputs": [],
     "outputs": [

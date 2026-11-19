@@ -508,6 +508,20 @@ contract RateReferenceTest is Test {
         assertFalse(ok24, "the 24-hour read waits for the new series' own day");
     }
 
+    /// A long window spanning two series changes continues through both
+    /// predecessors and equals the uninterrupted average.
+    function test_LongWindowContinuesAcrossSeveralSeriesChanges() public {
+        _open(3);
+        _hourly(24 * 25);
+        _open(4);
+        _hourly(24 * 7);
+        _open(5);
+        _hourly(24);
+        (bool ok, uint256 avg,) = rr.averaged(ASSET, 30 days);
+        assertTrue(ok, "the 30-day read continues back two series");
+        assertEq(avg, 5 * PCT);
+    }
+
     function test_DailyCheckpointFoundAcrossMissedHours() public {
         _open(3);
         // Update every 3 hours with a 6-hour interval series would be

@@ -176,14 +176,37 @@ contract RateLinkFacet {
         returns (uint256 loBps, uint256 hiBps, uint8 refusal)
     {
         LibVaipakam.Offer storage o = LibVaipakam.storageSlot().offers[offerId];
-        loBps = o.interestRateBps;
-        hiBps = o.interestRateBpsMax == 0 ? o.interestRateBps : o.interestRateBpsMax;
-        if (o.linkKind == 0) return (loBps, hiBps, 0);
-        bool lender = o.offerType == LibVaipakam.OfferType.Lender;
+        return effectiveRateBounds(
+            o.lendingAsset,
+            termDays,
+            o.linkKind,
+            o.linkMarginBps,
+            o.offerType == LibVaipakam.OfferType.Lender,
+            o.interestRateBps,
+            o.interestRateBpsMax
+        );
+    }
+
+    /// @notice {offerRateBounds} over an offer's VALUES, for an offer that is
+    ///         not stored yet (a signed offer's fill) and for the accept
+    ///         preview, so a quote and the fill read one rule. `typedHiBps`
+    ///         zero means a single typed rate.
+    function effectiveRateBounds(
+        address asset,
+        uint256 termDays,
+        uint8 kind,
+        int16 marginBps,
+        bool lenderSide,
+        uint256 typedLoBps,
+        uint256 typedHiBps
+    ) public view returns (uint256 loBps, uint256 hiBps, uint8 refusal) {
+        loBps = typedLoBps;
+        hiBps = typedHiBps == 0 ? typedLoBps : typedHiBps;
+        if (kind == 0) return (loBps, hiBps, 0);
         uint256 bound;
-        (bound, refusal) = rateLinkBound(o.lendingAsset, termDays, o.linkKind, o.linkMarginBps, lender);
+        (bound, refusal) = rateLinkBound(asset, termDays, kind, marginBps, lenderSide);
         if (refusal != 0) return (loBps, hiBps, refusal);
-        if (lender) {
+        if (lenderSide) {
             if (bound > loBps) loBps = bound;
         } else if (bound < hiBps) {
             hiBps = bound;

@@ -33,6 +33,12 @@ offer-created, offer-modified, intent rate-terms and loan-opened events carry
 the warnings mask the contract derives, and an integrator's count of warned
 loans now moves.
 
+A long average now continues back through several earlier series of an
+asset, not only the one before, so a window that spans more than one series
+change still reads. The accept preview quotes the rate a linked offer would
+actually open at, and names a link refusal (reference unavailable, unusual, or
+no acceptable rate left) instead of quoting the typed rate.
+
 Breaking for integrators: `CreateOfferParams`, `OfferModifyParams`,
 `setOfferRate`, `setLenderIntent`, the signed-offer and accept-terms typed
 data, `MatchResult` and several events gained fields. The next fresh deploy

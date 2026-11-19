@@ -93,6 +93,11 @@ contract RateReference is IRateReference, Ownable2Step {
     ///         never does (#3713 section 4).
     uint256 public constant CONTINUE_ABOVE = 72 hours;
 
+    /// @notice How many earlier series a long-window read may continue
+    ///         through: bounded reads, and more than a 90-day window can
+    ///         plausibly cross.
+    uint256 public constant MAX_CONTINUE_HOPS = 8;
+
     /// @notice The term (days) of each row of the term-average weight table.
     uint256 private constant ROWS = 5;
 
@@ -773,11 +778,27 @@ contract RateReference is IRateReference, Ownable2Step {
                 dIdx = idxNow - cp.index;
                 dHeld = heldNow - cp.held;
             }
-        } else if (window > CONTINUE_ABOVE && s.prev != 0) {
-            (found, cp) = _find(s.prev, t);
-            if (found) {
-                dIdx = s.prevIndexAtOpen - cp.index + idxNow;
-                dHeld = uint256(s.prevHeldAtOpen) - cp.held + heldNow;
+        } else if (window > CONTINUE_ABOVE) {
+            // A long read continues back through the asset's earlier series
+            // until it reaches the one in force at `t`. Each series' index
+            // and held time start at zero at its open, so the growth carried
+            // across a boundary is the predecessor's total at that moment.
+            uint256 carriedIdx = idxNow;
+            uint256 carriedHeld = heldNow;
+            Series storage cur = s;
+            for (uint256 hop; hop < MAX_CONTINUE_HOPS && cur.prev != 0; ++hop) {
+                carriedIdx += cur.prevIndexAtOpen;
+                carriedHeld += cur.prevHeldAtOpen;
+                uint32 p = cur.prev;
+                cur = _series[p];
+                if (cur.openedAt <= t) {
+                    (found, cp) = _find(p, t);
+                    if (found) {
+                        dIdx = carriedIdx - cp.index;
+                        dHeld = carriedHeld - cp.held;
+                    }
+                    break;
+                }
             }
         }
         if (!found) return (false, 0, AvgReason.NoCheckpoint);

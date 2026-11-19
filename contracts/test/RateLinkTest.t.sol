@@ -11,6 +11,7 @@ import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {RateLinkFacet} from "../src/facets/RateLinkFacet.sol";
 import {IRateReference} from "../src/interfaces/IRateReference.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
@@ -304,6 +305,29 @@ contract RateLinkTest is SetupTest {
         vm.prank(borrower);
         vm.expectRevert(abi.encodeWithSelector(RateLinkFacet.RateRangeEmpty.selector, 1000, 800));
         OfferAcceptFacet(address(diamond)).acceptOffer(offerId, t, sig);
+    }
+
+    /// The accept preview quotes the rate the fill opens at, through the same
+    /// rule, and names a link that cannot be used or a range it emptied.
+    function test_previewAccept_quotesTheEffectiveRateAndNamesLinkRefusals() public {
+        _install();
+        uint256 offerId = _linkedLender();
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(offerId, borrower);
+        assertEq(p.interestRateBps, 500, "the linked floor, not the typed 3%");
+        assertEq(uint8(p.errorCode), uint8(OfferAcceptFacet.AcceptError.None));
+
+        ref.setLinked(0, uint8(IRateReference.LinkRefusal.ReferenceUnavailable));
+        p = OfferPreviewFacet(address(diamond)).previewAccept(offerId, borrower);
+        assertEq(uint8(p.errorCode), uint8(OfferAcceptFacet.AcceptError.RateReferenceUnavailable));
+
+        ref.setLinked(0, uint8(IRateReference.LinkRefusal.ReferenceUnusual));
+        p = OfferPreviewFacet(address(diamond)).previewAccept(offerId, borrower);
+        assertEq(uint8(p.errorCode), uint8(OfferAcceptFacet.AcceptError.RateReferenceUnusual));
+
+        ref.setLinked(9e16, 0);
+        p = OfferPreviewFacet(address(diamond)).previewAccept(offerId, borrower);
+        assertEq(uint8(p.errorCode), uint8(OfferAcceptFacet.AcceptError.RateRangeEmpty));
     }
 
     /// An unlinked offer still binds the signed rate exactly.

@@ -1043,9 +1043,11 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // submitted the match.
         LibVaipakam.MatchOverride storage mo =
             LibVaipakam.storageSlot().matchOverride;
+        // The rate agreed before the link is applied; written once, below.
+        uint256 agreedRateBps;
         if (mo.active) {
             loan.principal = mo.amount;
-            loan.interestRateBps = mo.rateBps;
+            agreedRateBps = mo.rateBps;
             loan.collateralAmount = mo.collateralAmount;
             loan.matcher = mo.matcher;
         } else {
@@ -1086,7 +1088,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
                 : (isERC20
                     ? (isLender ? offer.amountMax : offer.amount)
                     : offer.amount);
-            loan.interestRateBps = isERC20
+            agreedRateBps = isERC20
                 ? (isLender ? offer.interestRateBps : offer.interestRateBpsMax)
                 : offer.interestRateBps;
             loan.collateralAmount = offer.collateralAmount;
@@ -1098,7 +1100,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // keeps its rate, and a taker step is band-checked on the actual rate
         // with its acknowledgement.
         (loan.interestRateBps, loan.rateFromLink) =
-            RateLinkFacet(address(this)).originationRate(offerId, loan.interestRateBps);
+            RateLinkFacet(address(this)).originationRate(offerId, agreedRateBps);
     }
 
     function _copyAssetFields(

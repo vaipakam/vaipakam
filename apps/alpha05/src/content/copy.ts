@@ -5206,6 +5206,9 @@ export const copy = {
       TermsNotAccepted: A(
         'This offer cannot be taken now: the protocol reports that you or its creator has not accepted the Terms of Service in force on this network, without saying which. It can be taken once both have.',
       ),
+      RateReferenceUnavailable: A("This offer's rate follows the market reference, and that reference cannot be read for this term now, so it cannot be taken. It may clear later."),
+      RateReferenceUnusual: A("This offer's rate follows the market reference, and the market is unusual now, so an offer for a term over 30 days cannot be taken. It may clear later."),
+      RateRangeEmpty: A("This offer's rate follows the market reference, which has moved past the offer's own limit, so no rate is acceptable now. It may clear later."),
       Unrecognised: A('The protocol refused this offer with a code this build cannot name.'),
       // OFF-60 — a signed order's own refusals, reported only by the
       // protocol's preview of a signed order's fill (#3552).

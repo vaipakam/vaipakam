@@ -2473,7 +2473,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      bound, the warning band check and the link admission every offer,
     ///      intent, match and accept path self-calls.
     function _getRateLinkSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](14);
+        s = new bytes4[](15);
         s[0] = RateLinkFacet.getRateReference.selector;
         s[1] = RateLinkFacet.rateLinkBound.selector;
         s[2] = RateLinkFacet.offerRateBounds.selector;
@@ -2488,6 +2488,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[11] = bytes4(keccak256("WARN_FAR_BELOW()"));
         s[12] = RateLinkFacet.matchRate.selector;
         s[13] = RateLinkFacet.linkedFloor.selector;
+        s[14] = RateLinkFacet.effectiveRateBounds.selector;
     }
 
     function _getReferralSelectors() internal pure returns (bytes4[] memory s) {
