@@ -16,6 +16,8 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {LibTestCalmPair} from "./helpers/LibTestCalmPair.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {LibTestProtection} from "./helpers/LibTestProtection.sol";
+import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
 
 /**
  * @title  InstantTakeoverTest
@@ -225,6 +227,16 @@ contract InstantTakeoverTest is InstantMarketBase {
         vm.prank(owner);
         LenderIntentFacet(address(diamond)).setLenderIntentEnabled(false);
         vm.expectRevert(abi.encodeWithSignature("FunctionDisabled(uint8)", uint8(4)));
+        _takeover(lender, loanId, lender2);
+    }
+
+    /// @dev A locked incoming account opens no new commitment, so its slot
+    ///      cannot take a loan over.
+    function test_refusedWhenTheIncomingAccountIsLocked() public {
+        uint256 loanId = _openAndOffer(500, TERM, true);
+        LibTestProtection.enable(address(diamond), lender2, 2 days);
+        LibTestProtection.lock(address(diamond), lender2, lender2);
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.ProtectedVaultLocked.selector, lender2));
         _takeover(lender, loanId, lender2);
     }
 

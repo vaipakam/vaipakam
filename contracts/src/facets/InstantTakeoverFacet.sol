@@ -170,6 +170,9 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.LenderIntent memory intent =
             s.lenderIntent[incoming][loan.principalAsset][loan.collateralAsset][slot];
         LibIntentFill.requireSlotLive(intent, incoming);
+        // A paused asset opens no new exposure, as on every other slot fill.
+        LibFacet.requireAssetNotPaused(loan.principalAsset);
+        LibFacet.requireAssetNotPaused(loan.collateralAsset);
         {
             LibVaipakam.InstantSlot memory consent =
                 s.instantSlot[incoming][loan.principalAsset][loan.collateralAsset][slot];

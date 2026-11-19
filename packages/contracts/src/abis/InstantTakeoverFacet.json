@@ -146,6 +146,17 @@
   },
   {
     "type": "error",
+    "name": "AssetPaused",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "CountriesNotCompatible",
     "inputs": []
   },
