@@ -4,7 +4,7 @@ Owner request, 2026-11-19: design and build now the features of the platform sur
 
 Cards: #3769 (borrow for someone, and alerts for a loan one does not hold), #3770 (group and team accounts), #3771 (goals, and giving a loan), #3772 (the credit line view, renting access, the agent page), #3773 (the embedded lending kit), #3774 (the public data feed).
 
-Features that do change contracts have their own documents: payments on a schedule from a protected account, interest paid from growing collateral, the repayment record, and savings circles.
+Other survey features have their own documents: payments on a schedule from a protected account (#3776) and interest paid from collateral (#3777), which change contracts, and the repayment record (#3778), which does not.
 
 Related designs: `VaultOutflowPolicyDesign.md`, `PayoutDestinationRuleDesign.md`, `InstantMarketDesign.md`, `IdleLiquidityMatchingDesign.md`, `AutoLendLendUntilDesign.md`, `IntegratorFeeShareDesign.md`, `PositionSaleStateGuardDesign.md`, `StandingInstructionsDesign.md`, `DefaultPathsDesign.md`.
 
