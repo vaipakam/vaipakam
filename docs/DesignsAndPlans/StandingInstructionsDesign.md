@@ -20,17 +20,19 @@ Banks solve this with a standing order: the customer authorises, once and within
 
 ## 2. What the user gets
 
-For each loan, the holder of the borrower position may fund a **loan reserve** in their own vault and switch on up to three instructions:
+**Amended 2026-11-19 (#3808, `BorrowingDesign.md`).** The reserve and the instructions belong to the borrower's **borrowing**, not to one loan. A borrowing is a record over the loans a borrower holds on one pair; a loan with none gets a borrowing of its own when its holder first funds a reserve or sets an instruction. Where this document says "per loan" for a reserve or a setting, read "per borrowing". The rules below are otherwise unchanged, and the sections that changed say so.
+
+For each borrowing, the holder may fund a **reserve** in their own vault and switch on up to three instructions:
 
 1. **Keep my loan healthy.** When the health factor falls below a level I choose, move collateral from my reserve into the loan until it is back at my target.
 2. **Pay my interest.** When a periodic interest payment falls due, pay it from my reserve.
 3. **Repay at the due date.** Shortly before the due date, repay the loan in full from my reserve.
 
-The reserve is the limit. An instruction can never spend anything the user did not put in that loan's reserve, and it can spend it on that loan only. Money moves from the user's own vault into their own loan: to the collateral lien for instruction 1, to the lender as a payment the user already owes for instructions 2 and 3.
+The reserve is the limit. An instruction can never spend anything the user did not put in that borrowing's reserve, and it can spend it on that borrowing's loans only. Money moves from the user's own vault into their own loan: to the collateral lien for instruction 1, to the lender as a payment the user already owes for instructions 2 and 3.
 
-## 3. The loan reserve
+## 3. The reserve
 
-One reserve per loan and depositor, holding up to two balances:
+One reserve per borrowing and depositor (amended 2026-11-19; one per loan as first designed and built), holding up to two balances. Any loan of the borrowing may draw on them:
 
 | Balance | Asset | Used by |
 | --- | --- | --- |
@@ -43,7 +45,7 @@ Rules carried over from #2814 unchanged:
 
 - The reserve sits in the depositor's own vault, recorded in the shared encumbrance total, so the withdrawal guard treats it as not free and no offer, intent or claim can take it. One library writes it.
 - Funding goes through the vault's deposit route, which records the tracked balance and refuses a short arrival. Only the current holder of the borrower position may fund. Funding is refused for a loan that is not Active, for a paused asset, and for a sanctioned wallet.
-- **The reserve follows the depositor, not the position.** If the borrower position moves, the old holder withdraws their reserve and the new holder funds their own. An instruction runs only while the position's holder is the wallet that set the instruction and owns the reserve; otherwise it is skipped and says why.
+- **The reserve follows the depositor, not the loan's borrower token.** If a loan's borrower token moves, that loan no longer counts as in the old holder's borrowing: the old holder keeps their reserve for their other loans or withdraws it, and the new holder funds their own. An instruction runs for a loan only while the holder of its borrower token is the wallet that set the instruction and owns the reserve; otherwise that loan is skipped and the event says why.
 - The depositor may withdraw unused reserve at any time, whatever the loan's state. The withdrawal is an ordinary vault payout under the outflow policy.
 - Nothing else takes the reserve. Repayment by another route, default and liquidation never touch it. The collateral reserve is **not** collateral: a liquidation cannot seize it, and it counts for nothing in the loan's health factor until an instruction moves it into the lien.
 
@@ -54,7 +56,9 @@ New rules:
 
 ## 4. The three instructions
 
-Each instruction is a per-loan setting written by the current borrower-position holder (or that holder's protected-account manager), and cleared by the same wallet at any time. Setting one is refused where the matching manual action could not run on that loan.
+Each instruction is a setting of the borrowing (amended 2026-11-19; per loan as first built), written by the borrowing's owner (or that owner's protected-account manager), and cleared by the same wallet at any time. Setting one is refused where the matching manual action could not run on a loan of the borrowing, with that loan named.
+
+**The executors take a borrowing, not a loan** (amended 2026-11-19). With one reserve for several loans, a step that named one loan would let its caller choose which loan is paid when the reserve cannot pay them all. Each executor walks the borrowing's open loans in a fixed order: payments to the loan that falls due earliest first, top-ups to the lowest health factor first, ties to the lower loan id. A loan whose step cannot run is skipped with its reason and the walk goes on (`BorrowingDesign.md` section 5).
 
 ### 4.1 Keep my loan healthy
 
@@ -101,7 +105,7 @@ An instruction is skipped, with an event naming the reason, when: the position h
 
 ## 5. Who may run it, and why no keeper permission
 
-All three executors are permissionless. Every input is fixed by the loan, the user's setting and the reserve; the caller chooses nothing and receives nothing. This differs from #1206, which proposed a new keeper permission bit. A permission would tie the user's protection to one named keeper being alive, and it guards nothing here because there is no discretion to guard.
+All three executors are permissionless. Every input is fixed by the borrowing's loans, the user's setting and the reserve; the caller chooses nothing, not even which loan of the borrowing is served first, and receives nothing. This differs from #1206, which proposed a new keeper permission bit. A permission would tie the user's protection to one named keeper being alive, and it guards nothing here because there is no discretion to guard.
 
 Sanctions follow the manual action each instruction stands in for: funding is refused for a flagged wallet; the collateral top-up is skipped (reason: sanctioned) while the reserve's owner is flagged, as adding collateral by hand is refused; paying interest and repaying stay open, as repayment does today, so the lender is made whole.
 
@@ -117,8 +121,8 @@ Per the platform rule, every permissionless step is keeper-backed: one new keepe
 
 | Where | Change |
 | --- | --- |
-| Reserve record and its one writer | The extension reserve becomes the payment reserve; a collateral reserve is added beside it. Fund, withdraw and view take the reserve kind. |
-| New facet for the instructions | Settings, the three executors, the views. Its own facet from the start; the repay, periodic and collateral facets are all near the size limit. |
+| Reserve record and its one writer | The extension reserve becomes the payment reserve; a collateral reserve is added beside it. Fund, withdraw and view take the reserve kind. Amended 2026-11-19: both are keyed by borrowing and depositor. |
+| New facet for the instructions | Settings, the three executors, the views. Its own facet from the start; the repay, periodic and collateral facets are all near the size limit. Amended 2026-11-19: settings and executors by borrowing. |
 | Collateral top-up | A vault-internal move from the collateral reserve to the loan's lien, reached only from executor 4.1. It reuses the lien bookkeeping of the manual add-collateral path, not a copy. |
 | Interest payment | One shared interest-only booking function (4.2), lifted from the periodic forced sale and called by both it and the executor: interest ledger, treasury share, interest counted as settled, period credit and inline close. Reached from executor 4.2 by self-call, paying from the holder's payment reserve. |
 | Full repayment | The existing repayment path gains a payer source of "the holder's payment reserve", reached only from executor 4.3 by self-call. The amounts, splits and events are the existing ones. |
@@ -144,13 +148,13 @@ The swap mode of #1206 (sell part of the pledged collateral to pay down the debt
 1. **Pull from the wallet when the time comes.** Needs a standing token approval to the platform, the pattern #1558 removed. Rejected.
 2. **A keeper permission per instruction (#1206).** Adds a grant the user must manage and a dependency on one keeper, and protects nothing because the caller has no discretion. Rejected in favour of open execution.
 3. **Spend any free balance in the vault, not a named reserve.** Makes the limit unclear and lets one loan's instruction spend money the user meant for another. Rejected: the reserve is the limit.
-4. **One reserve per user across all loans.** Fewer deposits, but one failing loan could drain protection the user intended for another, and position transfers become ambiguous. Rejected for now; the per-loan reserve is the simpler promise.
+4. **One reserve per user across all loans.** Fewer deposits, but one failing loan could drain protection the user intended for another, and position transfers become ambiguous. Rejected. As first designed the reserve was per loan; since 2026-11-19 it is per borrowing, which covers a borrower's loans on one pair (`BorrowingDesign.md` section 17, alternative 3).
 5. **Count the collateral reserve as collateral.** Then it would be pledged from the start and the user could simply post more collateral. The reserve exists for the user who wants the money free unless needed.
 6. **Leave it to the app (reminders only).** The status quo. It does not help a user who is asleep or travelling when the price moves.
 
 ## 10. Recommendation
 
-Build the per-loan reserve with the three instructions and open execution, as sections 3 to 5. It reuses the reserve the platform already has, adds no standing approval and no keeper permission, and every unit it spends was placed there by the user for that loan.
+Build the reserve with the three instructions and open execution, as sections 3 to 5 (per loan as first built; per borrowing since 2026-11-19). It reuses the reserve the platform already has, adds no standing approval and no keeper permission, and every unit it spends was placed there by the user for that borrowing.
 
 ## 11. Open items for the builder to raise, not decide silently
 
