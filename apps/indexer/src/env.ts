@@ -110,6 +110,9 @@ export interface WorkerEnv {
   // (the signed-offer book ingest), under the one fail-closed rule in
   // `@vaipakam/lib/rateLimit` (#2756): a missing binding refuses the post.
   SIGNED_OFFERS_RATELIMIT?: RateLimitBinding;
+  // #3435 — per-IP rate-limit on `GET /vaults/<chainId>/<owner>/unrecognised`,
+  // whose first page reads chain logs. Fails closed like every limiter here.
+  VAULT_ARRIVALS_RATELIMIT?: RateLimitBinding;
   // #757 Phase A — Alchemy webhook HMAC signing key. Read DIRECTLY from this
   // raw `WorkerEnv` in the `/hooks/chain-event` route (which is dispatched
   // BEFORE the global `resolveEnv`, so an unauthenticated POST never triggers
@@ -292,6 +295,8 @@ export interface Env {
   // (`@vaipakam/lib/rateLimit`, #2756): a deployment without it refuses
   // every post, so `wrangler.jsonc` declares it.
   SIGNED_OFFERS_RATELIMIT?: RateLimitBinding;
+  // #3435 — per-IP rate-limit for the vault arrivals route. Fails closed.
+  VAULT_ARRIVALS_RATELIMIT?: RateLimitBinding;
 }
 
 /**
@@ -357,6 +362,7 @@ export async function resolveEnv(
     OPENSEA_API_KEY: secrets.OPENSEA_API_KEY,
     // #1131 — pass through the signed-offer book rate-limit binding.
     SIGNED_OFFERS_RATELIMIT: raw.SIGNED_OFFERS_RATELIMIT,
+    VAULT_ARRIVALS_RATELIMIT: raw.VAULT_ARRIVALS_RATELIMIT,
     RPC_BASE: secrets.RPC_BASE,
     RPC_ETH: secrets.RPC_ETH,
     RPC_ARB: secrets.RPC_ARB,

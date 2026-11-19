@@ -245,6 +245,16 @@
         "namespace_id": "2003",
         "simple": { "limit": 30, "period": 60 },
       },
+      // #3435 — per-IP cap on `GET /vaults/<chainId>/<owner>/unrecognised`.
+      // Its first page reads up to ten block ranges of token logs, so it is
+      // the one read route that spends chain requests per call. 30 a minute
+      // covers a page polling while its scan completes. Fails closed.
+      {
+        "name": "VAULT_ARRIVALS_RATELIMIT",
+        "type": "ratelimit",
+        "namespace_id": "2004",
+        "simple": { "limit": 30, "period": 60 },
+      },
     ],
   },
 

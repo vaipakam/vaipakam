@@ -52,6 +52,12 @@ const API_INDEX = {
     { method: 'GET', path: '/loans/{id}', description: 'One loan by id.' },
     { method: 'GET', path: '/activity', description: 'Recent protocol activity feed. With pending=1, also the events above the chain\'s safe block, marked not final. With wallet=, one wallet\'s whole history: the events on its loans and the events that name it.' },
     { method: 'GET', path: '/claimables/{address}', description: 'Claimable payouts for a wallet.' },
+    {
+      method: 'GET',
+      path: '/vaults/{chainId}/{owner}/unrecognised',
+      description:
+        "Token arrivals in the owner's vault, read from the token contracts' own Transfer logs (ERC-20, ERC-721, ERC-1155) from the vault's creation block. One candidate per asset, kind and token id, with the first and last block seen; no name, symbol, metadata, sender or amount. Whether the protocol's records name a candidate is for the reader to decide. The first page reads a few more block ranges each call and states how far it has read (`scannedFromBlock`, `scannedToBlock`, `headBlock`, `complete`); the indexer keeps a vault current for 30 days after it was last asked about. Newest first, 200 per page (`truncated`, `nextCursor` → ?cursor=). 404 `no-vault` when the Diamond reports no vault for the owner; rate-limited per IP; never cached.",
+    },
     { method: 'GET', path: '/claim-candidates/{address}', description: 'Claim-candidate hints for a wallet.' },
     { method: 'GET', path: '/notifications/{address}', description: "A wallet's loan-update notification feed." },
     {

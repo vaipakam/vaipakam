@@ -117,6 +117,7 @@ import { redactedError } from '@vaipakam/lib/errorDescription';
 // #757 — the per-chain ingest Durable Object. Re-exported from the Worker
 // entry so `wrangler.jsonc`'s `durable_objects` binding can resolve the class.
 export { ChainIngestDO } from './chainIngestDO';
+import { handleVaultArrivals, runVaultArrivalCron } from './vaultArrivals';
 import { DO_PATH_CADENCE_MINUTES, shouldRunCronTick } from './cronRouting';
 
 /**
@@ -404,6 +405,14 @@ export default {
       sweepUnpublishedListings(resolved, budget).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[indexer] sweepUnpublishedListings pass failed:', redactedError(err));
+      }),
+    );
+    // #3435 — keep the vaults whose arrivals were asked about current. Last
+    // in the post-ingest queue, and it asks the live budget before each range.
+    afterIngestPass(() =>
+      runVaultArrivalCron(resolved, budget).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[indexer] runVaultArrivalCron pass failed:', redactedError(err));
       }),
     );
     // WHAT THE TICK ACTUALLY SPENT, once every pass has settled. `allSettled`
@@ -705,6 +714,15 @@ export default {
         const byId = url.pathname.match(/^\/loans\/(\d+)$/);
         if (byId) return handleLoanById(req, resolved, byId[1]);
       }
+      return new Response('Not found', { status: 404 });
+    }
+
+    // ─── /vaults/:chainId/:owner/unrecognised ───────────────────
+    // #3435 — token arrivals in the owner's vault (vaultArrivals.ts).
+    if (url.pathname.startsWith('/vaults/')) {
+      if (req.method === 'OPTIONS') return handleLoansPreflight();
+      const m = url.pathname.match(/^\/vaults\/([^/]+)\/([^/]+)\/unrecognised$/);
+      if (m && req.method === 'GET') return handleVaultArrivals(req, resolved, m[1]!, m[2]!);
       return new Response('Not found', { status: 404 });
     }
 

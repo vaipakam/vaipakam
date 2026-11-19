@@ -133,6 +133,8 @@ const CLASSIFICATION = {
   loan_participants: { class: 'replay-derived', reason: 'append-only chain history (#1450 r31)' },
   activity_participants: { class: 'replay-derived', reason: 'per-event participants, derived from activity_events (#3677)' },
   activity_participants_state: { class: 'replay-derived', reason: 'backfill watermark over activity_events (#3677)' },
+  vault_arrival_scan: { class: 'replay-derived', reason: 'per-vault arrival scan state; rebuilt lazily from token logs (#3435)' },
+  vault_arrival_candidates: { class: 'replay-derived', reason: 'token arrivals into a vault, rebuilt lazily from token logs (#3435)' },
   loan_lifecycle_state: {
     class: 'replay-derived',
     reason: 'the status each loan last announced, read off LoanInitiated / LoanStatusChanged (#2337)',

@@ -1652,6 +1652,8 @@ wrangler d1 execute vaipakam-warm --remote --command="\
 DELETE FROM activity_events; \
 DELETE FROM activity_participants; \
 DELETE FROM activity_participants_state; \
+DELETE FROM vault_arrival_scan; \
+DELETE FROM vault_arrival_candidates; \
 DELETE FROM loan_participants; \
 DELETE FROM loan_lifecycle_state; \
 DELETE FROM loan_lifecycle_violation; \
