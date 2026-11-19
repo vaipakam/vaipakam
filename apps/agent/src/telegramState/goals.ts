@@ -47,14 +47,26 @@ type GoalRowDb = {
   target_amount: string;
   target_date: number;
   attach_kind: 'slot' | 'loans';
-  attach_ids: string;
+  attach_json: string;
   created_at: number;
   updated_at: number;
 };
 
-function attachmentOf(kind: 'slot' | 'loans', ids: string): GoalAttachment {
-  const list = (JSON.parse(ids) as number[]).map(Number);
-  return kind === 'slot' ? { kind: 'slot', slotId: list[0]! } : { kind: 'loans', loanIds: list };
+/** The attachment as stored: the checked fields of {@link GoalAttachment}
+ *  without its kind, which has its own column. */
+function attachmentOf(kind: 'slot' | 'loans', json: string): GoalAttachment {
+  const v = JSON.parse(json) as Record<string, unknown>;
+  return kind === 'slot'
+    ? { kind: 'slot', lendingAsset: String(v.lendingAsset), collateralAsset: String(v.collateralAsset), slot: Number(v.slot) }
+    : { kind: 'loans', loanIds: (v.loanIds as number[]).map(Number) };
+}
+
+function attachmentJson(a: GoalAttachment): string {
+  return JSON.stringify(
+    a.kind === 'slot'
+      ? { lendingAsset: a.lendingAsset, collateralAsset: a.collateralAsset, slot: a.slot }
+      : { loanIds: a.loanIds },
+  );
 }
 
 export class GoalStore {
@@ -85,7 +97,7 @@ export class GoalStore {
   save(dep: ChainDeployment, walletRaw: string, id: number | null, goal: GoalInput, now: number, limits: GoalLimits): GoalSaveOutcome {
     const wallet = lower(walletRaw);
     const diamond = lower(dep.diamond);
-    const ids = JSON.stringify(goal.attachTo.kind === 'slot' ? [goal.attachTo.slotId] : goal.attachTo.loanIds);
+    const ids = attachmentJson(goal.attachTo);
     return this.tx((): GoalSaveOutcome => {
       if (id !== null) {
         const mine =
@@ -95,7 +107,7 @@ export class GoalStore {
         if (!mine) return { kind: 'not-found' };
         if (!this.takeChange(wallet, now, limits)) return { kind: 'changes-spent' };
         this.sql.exec(
-          `UPDATE goals SET name = ?, asset = ?, target_amount = ?, target_date = ?, attach_kind = ?, attach_ids = ?, updated_at = ?
+          `UPDATE goals SET name = ?, asset = ?, target_amount = ?, target_date = ?, attach_kind = ?, attach_json = ?, updated_at = ?
             WHERE id = ?`,
           goal.name,
           lower(goal.asset),
@@ -114,7 +126,7 @@ export class GoalStore {
       if (held >= limits.maxPerWallet) return { kind: 'too-many-goals' };
       if (!this.takeChange(wallet, now, limits)) return { kind: 'changes-spent' };
       const inserted = this.sql.exec<{ id: number }>(
-        `INSERT INTO goals (wallet, chain_id, diamond, name, asset, target_amount, target_date, attach_kind, attach_ids, created_at, updated_at)
+        `INSERT INTO goals (wallet, chain_id, diamond, name, asset, target_amount, target_date, attach_kind, attach_json, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
         wallet,
         dep.chainId,
@@ -154,7 +166,7 @@ export class GoalStore {
     for (const dep of deps) {
       for (const r of this.sql
         .exec<GoalRowDb>(
-          `SELECT id, chain_id, name, asset, target_amount, target_date, attach_kind, attach_ids, created_at, updated_at
+          `SELECT id, chain_id, name, asset, target_amount, target_date, attach_kind, attach_json, created_at, updated_at
              FROM goals WHERE wallet = ? AND chain_id = ? AND diamond = ? ORDER BY id`,
           wallet,
           dep.chainId,
@@ -168,7 +180,7 @@ export class GoalStore {
           asset: r.asset,
           targetAmount: r.target_amount,
           targetDate: Number(r.target_date),
-          attachTo: attachmentOf(r.attach_kind, r.attach_ids),
+          attachTo: attachmentOf(r.attach_kind, r.attach_json),
           createdAt: Number(r.created_at),
           updatedAt: Number(r.updated_at),
         });

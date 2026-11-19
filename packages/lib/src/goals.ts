@@ -15,7 +15,7 @@
  * before it is placed in a message, so it cannot add a line of its own.
  *
  * The app builds the save message from what {@link parseGoalInput} returns
- * (the asset lower-cased, loan ids de-duplicated and sorted), exactly as the
+ * (the addresses lower-cased, loan ids de-duplicated and sorted), exactly as the
  * agent does, so both sides sign and check the same text.
  */
 
@@ -27,8 +27,16 @@ export const GOAL_MAX_LOANS = 50;
 /** The longest goal name, in characters. */
 export const GOAL_NAME_MAX = 60;
 
-/** What a goal is attached to. */
-export type GoalAttachment = { kind: 'slot'; slotId: number } | { kind: 'loans'; loanIds: number[] };
+/** The highest Auto-lend slot number: an owner has slots 0 to this for each
+ *  (lending asset, collateral asset) pair. */
+export const GOAL_MAX_SLOT = 7;
+
+/** What a goal is attached to. An Auto-lend slot is named on chain by the
+ *  owner, the pair and its number, so a goal names the pair and the number
+ *  (the owner is the wallet that signs); addresses are lower-cased. */
+export type GoalAttachment =
+  | { kind: 'slot'; lendingAsset: string; collateralAsset: string; slot: number }
+  | { kind: 'loans'; loanIds: number[] };
 
 /** A goal as the wallet saves it. */
 export interface GoalInput {
@@ -71,8 +79,23 @@ export function parseGoalInput(raw: unknown): { ok: true; goal: GoalInput } | { 
   }
   const a = g.attachTo as Record<string, unknown> | undefined;
   let attachTo: GoalAttachment;
-  if (a && a.kind === 'slot' && isId(a.slotId)) {
-    attachTo = { kind: 'slot', slotId: a.slotId };
+  if (
+    a &&
+    a.kind === 'slot' &&
+    typeof a.lendingAsset === 'string' &&
+    ADDRESS.test(a.lendingAsset) &&
+    typeof a.collateralAsset === 'string' &&
+    ADDRESS.test(a.collateralAsset) &&
+    Number.isInteger(a.slot) &&
+    (a.slot as number) >= 0 &&
+    (a.slot as number) <= GOAL_MAX_SLOT
+  ) {
+    attachTo = {
+      kind: 'slot',
+      lendingAsset: a.lendingAsset.toLowerCase(),
+      collateralAsset: a.collateralAsset.toLowerCase(),
+      slot: a.slot as number,
+    };
   } else if (
     a &&
     a.kind === 'loans' &&
@@ -84,7 +107,10 @@ export function parseGoalInput(raw: unknown): { ok: true; goal: GoalInput } | { 
     const ids = [...new Set(a.loanIds as number[])].sort((x, y) => x - y);
     attachTo = { kind: 'loans', loanIds: ids };
   } else {
-    return { ok: false, reason: `attachTo must be a slot id or 1 to ${GOAL_MAX_LOANS} loan ids` };
+    return {
+      ok: false,
+      reason: `attachTo must be an Auto-lend slot (lending asset, collateral asset, slot 0 to ${GOAL_MAX_SLOT}) or 1 to ${GOAL_MAX_LOANS} loan ids`,
+    };
   }
   return {
     ok: true,
@@ -99,8 +125,14 @@ const footer = (wallet: string, chainId: number, issuedAt: number) => [
   `Issued at (unix): ${issuedAt}`,
 ];
 
-const attachmentLine = (a: GoalAttachment) =>
-  a.kind === 'slot' ? `Attached to: auto-lend slot ${a.slotId}` : `Attached to: loans ${a.loanIds.join(', ')}`;
+const attachmentLines = (a: GoalAttachment): string[] =>
+  a.kind === 'slot'
+    ? [
+        `Attached to: auto-lend slot ${a.slot}`,
+        `Slot lending asset: ${a.lendingAsset.toLowerCase()}`,
+        `Slot collateral asset: ${a.collateralAsset.toLowerCase()}`,
+      ]
+    : [`Attached to: loans ${a.loanIds.join(', ')}`];
 
 /**
  * Save a goal: a new one (`goalId` null) or a change to one. The goal must
@@ -120,7 +152,7 @@ export function buildSaveGoalMessage(wallet: string, chainId: number, goalId: nu
     `Name: ${goal.name}`,
     `Target: ${goal.targetAmount} (smallest unit) of ${goal.asset.toLowerCase()}`,
     `By (unix): ${goal.targetDate}`,
-    attachmentLine(goal.attachTo),
+    ...attachmentLines(goal.attachTo),
     ...footer(wallet, chainId, issuedAt),
   ].join('\n');
 }

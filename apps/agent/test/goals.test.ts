@@ -43,7 +43,21 @@ describe('goal shape and messages', () => {
     expect(parseGoalInput({ ...goal(), targetAmount: '0' }).ok).toBe(false);
     expect(parseGoalInput({ ...goal(), targetAmount: '1.5' }).ok).toBe(false);
     expect(parseGoalInput({ ...goal(), attachTo: { kind: 'loans', loanIds: [] } }).ok).toBe(false);
-    expect(parseGoalInput({ ...goal(), attachTo: { kind: 'slot', slotId: 4 } })).toMatchObject({ ok: true });
+    const slot = { kind: 'slot', lendingAsset: ASSET, collateralAsset: OTHER, slot: 7 };
+    expect(parseGoalInput({ ...goal(), attachTo: slot })).toEqual({
+      ok: true,
+      goal: goal({ attachTo: { kind: 'slot', lendingAsset: ASSET.toLowerCase(), collateralAsset: OTHER, slot: 7 } }),
+    });
+    for (const bad of [
+      { kind: 'slot', slotId: 4 },
+      { ...slot, slot: 8 },
+      { ...slot, slot: -1 },
+      { ...slot, slot: 1.5 },
+      { ...slot, lendingAsset: 'usdc' },
+      { ...slot, collateralAsset: undefined },
+    ]) {
+      expect(parseGoalInput({ ...goal(), attachTo: bad }).ok).toBe(false);
+    }
   });
 
   it('names every saved value in the signed message', () => {
@@ -55,6 +69,16 @@ describe('goal shape and messages', () => {
     expect(m).toContain('Attached to: loans 3, 9');
     expect(m).toContain('it locks nothing and changes nothing on chain');
     expect(buildSaveGoalMessage(W, 84532, 5, goal(), 1)).toContain('Goal: id 5');
+    const s = buildSaveGoalMessage(
+      W,
+      84532,
+      null,
+      goal({ attachTo: { kind: 'slot', lendingAsset: ASSET.toLowerCase(), collateralAsset: OTHER, slot: 0 } }),
+      1,
+    );
+    expect(s).toContain('Attached to: auto-lend slot 0');
+    expect(s).toContain(`Slot lending asset: ${ASSET.toLowerCase()}`);
+    expect(s).toContain(`Slot collateral asset: ${OTHER}`);
   });
 });
 
@@ -84,6 +108,13 @@ describe('goal store', () => {
     store.save(dep, W, 1, goal(), 10, LIMITS);
     expect(store.save(dep, W, 1, goal(), 10, LIMITS)).toEqual({ kind: 'changes-spent' });
     expect(store.delete(dep, W, 1, 10 + 86_400, LIMITS)).toBe('deleted');
+  });
+
+  it('keeps a slot attachment whole', () => {
+    const { store } = goals();
+    const attachTo = { kind: 'slot' as const, lendingAsset: ASSET.toLowerCase(), collateralAsset: OTHER, slot: 3 };
+    store.save(dep, W, null, goal({ attachTo }), 10, LIMITS);
+    expect(store.list(W, [dep])[0]!.attachTo).toEqual(attachTo);
   });
 
   it('does not list a goal saved against a retired Diamond', () => {

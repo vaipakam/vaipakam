@@ -203,8 +203,8 @@ const SCHEMA: readonly string[] = [
      PRIMARY KEY (wallet, day)
    );`,
   // Version 3 (#3771): a wallet's goals, its private notes. Kept per
-  // deployment because a goal can name loan ids and a slot id, which name
-  // something only on one Diamond. No comment or literal may hold a semicolon.
+  // deployment because a goal can name loan ids or an Auto-lend slot,
+  // which name something only on one Diamond. No comment or literal may hold a semicolon.
   `CREATE TABLE IF NOT EXISTS goals (
      id            INTEGER PRIMARY KEY AUTOINCREMENT,
      wallet        TEXT    NOT NULL,
@@ -215,7 +215,7 @@ const SCHEMA: readonly string[] = [
      target_amount TEXT    NOT NULL,
      target_date   INTEGER NOT NULL,
      attach_kind   TEXT    NOT NULL CHECK (attach_kind IN ('slot', 'loans')),
-     attach_ids    TEXT    NOT NULL,
+     attach_json   TEXT    NOT NULL,
      created_at    INTEGER NOT NULL,
      updated_at    INTEGER NOT NULL
    );
