@@ -52,7 +52,7 @@ contract VaultProtection is VaultProtectionBase {
     /// @notice The recovery code address holds no code.
     error RecoveryCodeMissing();
 
-    /// @notice A selector neither this code nor {VaultRecovery}'s five
+    /// @notice A selector neither this code nor {VaultRecovery}'s listed
     ///         endpoints carry. Refused here, by name, before anything runs.
     error UnknownProtectionSelector(bytes4 selector);
 
@@ -61,7 +61,7 @@ contract VaultProtection is VaultProtectionBase {
         RECOVERY = recovery;
     }
 
-    /// @dev {VaultRecovery}'s five endpoints run in {RECOVERY}, still inside
+    /// @dev {VaultRecovery}'s endpoints run in {RECOVERY}, still inside
     ///      the vault (a nested delegatecall keeps its storage and caller).
     ///      Any other selector is refused by name, so a selector added to
     ///      {VaultRecovery} reaches nothing until it is listed here too.
@@ -77,6 +77,11 @@ contract VaultProtection is VaultProtectionBase {
                 && sel != VaultRecovery.clawback.selector
                 && sel != VaultRecovery.requestPositionMove.selector
                 && sel != VaultRecovery.cancelPositionMove.selector
+                && sel != VaultRecovery.setRecoveryClaim.selector
+                && sel != VaultRecovery.cancelRecoveryClaimSetting.selector
+                && sel != VaultRecovery.requestRecoveryClaim.selector
+                && sel != VaultRecovery.cancelRecoveryClaim.selector
+                && sel != VaultRecovery.runRecoveryClaim.selector
         ) revert UnknownProtectionSelector(sel);
         (bool ok, bytes memory ret) = RECOVERY.delegatecall(msg.data);
         // `ret` is a memory bytes this function already holds; both blocks
@@ -456,7 +461,7 @@ contract VaultProtection is VaultProtectionBase {
         if (!was || !l.signer[l.lockedBy].active) l.lockedBy = auth.key;
         l.pendingUnlockAt = 0;
         l.lockCount += 1;
-        _dropPending(l);
+        _dropPending(l, auth.key, CLAIM_END_LOCK);
         if (l.nominee != address(0) && l.proposedBy == _owner()) {
             emit ReplacementCancelled(_account(), l.nominee, auth.key);
             emit ProtectionRoleChanged(_account(), ROLE_RECOVERY_NOMINEE, l.nominee, address(0));
@@ -487,7 +492,7 @@ contract VaultProtection is VaultProtectionBase {
         }
         l.pendingUnlockAt = 0;
         l.lockCount += 1;
-        _dropPending(l);
+        _dropPending(l, by, CLAIM_END_LOCK);
         if (l.nominee != address(0) && l.proposedBy == _owner()) {
             emit ReplacementCancelled(_account(), l.nominee, by);
             emit ProtectionRoleChanged(_account(), ROLE_RECOVERY_NOMINEE, l.nominee, address(0));
@@ -578,7 +583,7 @@ contract VaultProtection is VaultProtectionBase {
             l.lockedAt = 0;
         }
         l.pendingUnlockAt = 0;
-        _dropPending(l);
+        _dropPending(l, address(0), CLAIM_END_REPLACEMENT);
         while (l.allowlist.length != 0) _dropAllow(l, l.allowlist[l.allowlist.length - 1]);
         l.cooldownUntil = _later(l);
         l.retired = true; // one-way (Codex #3489 r4)

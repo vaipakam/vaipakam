@@ -886,6 +886,14 @@
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
+    "VaultRecovery.cancelRecoveryClaim(struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultRecovery.cancelRecoveryClaimSetting(struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
     "VaultRecovery.clawback(struct:VaultOutflowTypes.ClawbackAsset[],struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
@@ -898,7 +906,19 @@
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
+    "VaultRecovery.requestRecoveryClaim(struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
     "VaultRecovery.requestRecoveryAddress(address,struct:VaultProtectionBase.Auth,struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultRecovery.runRecoveryClaim(struct:VaultOutflowTypes.ClawbackAsset[],struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultRecovery.setRecoveryClaim(bool,uint32,struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },

@@ -30,6 +30,7 @@ key can steer.
 | 2026-11-08 | Clawback is manual only: the owner, any recovery signer, or the keeper acting on the owner's linked chat. No automatic or permissionless trigger. The recovery address must prove control by its own signature. Only the owner requests a change; the owner or any signer can cancel it; a lock or a replacement voids it. No contract switch pauses clawbacks while a change is pending. |
 | 2026-11-18 | **A lock stays firm, and the clawback is the exit from a locked account.** No rule lets the owner remove a signer who holds a lock, and no lock lapses by time. The conditions in sections 3 and 4 follow from this. |
 | 2026-11-18 | Build defaults reviewed by the design thread: the permissionless sweep, a change after recovery, offer backing held, the Ready balance lapsing, a protected recovery address paid into its own vault and switch-off keeping the address are accepted (marked **Default** below). The linked-chat trigger on the LOCK grant is NOT accepted: an irreversible action never rides on a grant given for a reversible one, so it gets its own grant bit with #3353. |
+| 2026-11-19 | **The recovery address may trigger the clawback after an owner-set wait** of 30 to 365 days, only where the owner switched it on (`RecoveryClaimDesign.md`, #3756). This amends "manual only" of 2026-11-08: the recovery address asks, the owner or any signer may cancel during the wait, and only the recovery address runs it once the wait has passed. |
 
 ## 3. The recovery address
 
@@ -134,9 +135,10 @@ irreversible action never rides on a grant given for a reversible one. It
 arrives with the keeper mandate work (#3353) under its own grant bit, which
 the owner grants separately. The trigger record reserves its role value.
 
-Nobody else may trigger it, and the recovery address itself may not. A cold
-key that could pull the account to itself would turn the theft of that one
-key into the loss of everything.
+Nobody else may trigger it, and the recovery address itself may not, except
+by a claim the owner allowed, after the owner's wait
+(`RecoveryClaimDesign.md`). A cold key that could pull the account to itself
+at once would turn the theft of that one key into the loss of everything.
 
 Triggering it is safe in any hands that are allowed to: it pays only the
 recovery address in force, which no trigger can choose.
@@ -350,7 +352,10 @@ every amount that went to the recovery address.
 ## 8. Residuals
 
 - **The recovery key is stolen as well as the others.** The clawback then
-  pays the thief. This is the residual the threat model already states.
+  pays the thief. This is the residual the threat model already states. With
+  a recovery claim allowed (`RecoveryClaimDesign.md`), a stolen recovery key
+  alone can take the account if neither the owner nor a signer cancels within
+  the wait.
 - **The recovery key is lost while a signer is hostile.** The owner can
   request a change, but any signer can cancel it and a lock drops it. The
   account stays locked with no exit until the signer relents. Keeping the
@@ -376,7 +381,10 @@ every amount that went to the recovery address.
    (2026-11-08): a contested account always has an honest party who can
    trigger it by hand, and an automatic one could pay an address whose key
    the owner no longer holds.
-5. **The recovery address may trigger its own clawback.** Not taken (4.1).
+5. **The recovery address may trigger its own clawback.** Not taken as an
+   immediate trigger (4.1). Taken on 2026-11-19 in a bounded form: a claim
+   the owner switches on, run only after the owner's wait with nobody
+   cancelling (`RecoveryClaimDesign.md`).
 6. **A first setting that counts at once.** Not taken (3.2).
 
 ## 10. Recommendation
