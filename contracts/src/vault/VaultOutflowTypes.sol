@@ -1,13 +1,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-// #3437 step 5 — how many earlier price guards, and earlier
-// listing conduits, one vault code may accept beside the current
-// one. A loan still on an older guard or conduit has to be moved
-// off it (the announced retirement of #3437 step 4) before a
-// vault version that no longer lists it ships.
-uint256 constant MAX_PRIOR_ENDPOINTS = 2;
-
 /**
  * @title  VaultOutflowTypes
  * @author Vaipakam Developer Team
@@ -22,6 +15,16 @@ uint256 constant MAX_PRIOR_ENDPOINTS = 2;
  *         does not add an entry point or a field.
  */
 library VaultOutflowTypes {
+    /// @notice #3437 step 5 — how many earlier price guards, and earlier
+    ///         listing conduits, one vault code may accept beside the
+    ///         current one. A loan still on an older guard or conduit has to
+    ///         be moved off it (the announced retirement of #3437 step 4)
+    ///         before a vault version that no longer lists it ships.
+    /// @dev    Declared in the library, not at file level: the static
+    ///         analyser CI runs cannot resolve a file-level constant used as
+    ///         an array length inside a library struct, and stops.
+    uint256 internal constant MAX_PRIOR_ENDPOINTS = 2;
+
     /// @notice What kind of asset moves.
     enum AssetKind {
         ERC20,
