@@ -34,7 +34,7 @@ import { BorrowNowForm, BORROW_NOW_KEY } from '../../shared/instant/BorrowNowFor
 import { BorrowNowFlow, type BorrowNowRest } from '../../shared/instant/BorrowNowFlow';
 import { restRequestInput, type BorrowNowTerms } from '../../shared/instant/borrowNow';
 import { ReceiptAddendum } from '../../shared/receipt/addendum';
-import { KitNotice, useKitUse } from '../../shared/kit/KitNotice';
+import { KitNotice, useIntegratorLines, useKitUse } from '../../shared/kit/KitNotice';
 import { BorrowFor } from './BorrowFor';
 
 type Hex = `0x${string}`;
@@ -104,6 +104,9 @@ export function BorrowPage() {
   // #3773 — a kit link's "borrow against this" opens on its collateral (and
   // its suggested lending asset), on the link's own network only.
   const kit = useKitUse('borrow', walletChain, address ?? null);
+  // A posting review states the integrator its own draft signs in, not the
+  // current hand-off's, which another link may have replaced since.
+  const draftKitLines = useIntegratorLines('borrow', walletChain, draft?.integrator ?? null, address ?? null);
   const kitPair = (base: { lending: Hex | null; collateral: Hex | null }) =>
     kit.handoff?.request.action === 'borrow' ? { lending: kit.handoff.request.lendingAsset ?? base.lending, collateral: kit.handoff.request.asset } : base;
   const pair = chain ? (pairByChain[chain.chainId] ?? kitPair(initialPair(chain.chainId, suggested))) : { lending: null, collateral: null };
@@ -392,7 +395,7 @@ export function BorrowPage() {
           <h2 id="borrow-request-review" className="sr-only">
             {text('borrow.stepSign')}
           </h2>
-          <ReceiptAddendum lines={[...forLines, ...(draft.integrator !== undefined ? kit.lines : [])]}>
+          <ReceiptAddendum lines={[...forLines, ...draftKitLines]}>
             <PostOffer
               flowKey={REQUEST_KEY}
               draft={draft}

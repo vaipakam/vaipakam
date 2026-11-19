@@ -30,17 +30,28 @@ export interface KitUse {
  *  names no integrator (it pays no initiation fee), so a rent page signs
  *  none in. */
 export function useKitUse(action: KitAction, chain: SupportedChain | null, account: Hex | null): KitUse {
-  const { format } = useCopy();
   const [handoff] = useStoredValue<KitHandoff>(KIT_HANDOFF_KEY);
   const applies = handoff !== null && handoff.request.action === action && chain !== null && handoff.request.chainId === chain.chainId;
   const named = applies && action !== 'rent' ? handoff.integrator : null;
+  const lines = useIntegratorLines(action, chain, named, account);
+  if (!applies) return { handoff: null, integrator: null, lines: [] };
+  return { handoff, integrator: named, lines };
+}
+
+/**
+ * What a review says about `integrator`, built from the integrator the
+ * signed terms will actually carry. A review of a draft passes the draft's
+ * own integrator, never the current hand-off's, so continuing another link
+ * afterwards cannot change, or drop, what that draft's review discloses.
+ */
+export function useIntegratorLines(action: KitAction, chain: SupportedChain | null, integrator: Hex | null, account: Hex | null): string[] {
+  const { format } = useCopy();
+  const named = action !== 'rent' && chain !== null ? integrator : null;
   const entry = useIntegratorEntry(named !== null ? chain : null, named);
   const share = useIntegratorShare(action === 'borrow' && named !== null ? chain : null, named, account);
-  if (!applies) return { handoff: null, integrator: null, lines: [] };
-  if (named === null) return { handoff, integrator: null, lines: [] };
+  if (named === null) return [];
   const who = kitWho(named, entry.data, format);
-  const lines = action === 'borrow' ? [borrowerShareLine(who, share, format)] : [format('kit.reviewAttribution', { who })];
-  return { handoff, integrator: named, lines };
+  return action === 'borrow' ? [borrowerShareLine(who, share, format)] : [format('kit.reviewAttribution', { who })];
 }
 
 /** The hand-off's notice on a page for `action`. */

@@ -24,7 +24,7 @@ import { TakeNowChoice } from '../../shared/post/TakeNowChoice';
 import { takeNowPicks } from '../../shared/post/takeNow';
 import { LEND_OFFER_KEY, OfferForm } from '../../shared/post/OfferForm';
 import { PostOffer } from '../../shared/post/PostOffer';
-import { KitNotice, useKitUse } from '../../shared/kit/KitNotice';
+import { KitNotice, useIntegratorLines, useKitUse } from '../../shared/kit/KitNotice';
 import { ReceiptAddendum } from '../../shared/receipt/addendum';
 import { ArmTariff, tariffStoreKeys, type ArmContext } from '../../shared/post/ArmTariff';
 import type { PostAssets } from '../../shared/post/postModel';
@@ -123,6 +123,9 @@ export function LendPage() {
   // #3773 — a kit link's "lend this" opens on its asset, on the link's own
   // network only.
   const kit = useKitUse('lend', walletChain, address ?? null);
+  // A posting review states the integrator its own draft signs in, not the
+  // current hand-off's, which another link may have replaced since.
+  const draftKitLines = useIntegratorLines('lend', walletChain, draft?.integrator ?? null, address ?? null);
   const kitPair = (base: { lending: Hex | null; collateral: Hex | null }) => (kit.handoff?.request.action === 'lend' ? { ...base, lending: kit.handoff.request.asset } : base);
   const pair = chain ? (pairByChain[chain.chainId] ?? kitPair(initialPair(chain.chainId, suggested))) : { lending: null, collateral: null };
   const setPair = (next: { lending: Hex | null; collateral: Hex | null }) => {
@@ -366,7 +369,7 @@ export function LendPage() {
           <h2 id="lend-offer-review" className="sr-only">
             {text('lend.stepSign')}
           </h2>
-          <ReceiptAddendum lines={draft.integrator !== undefined ? kit.lines : []}>
+          <ReceiptAddendum lines={draftKitLines}>
             <PostOffer
               flowKey={LEND_OFFER_KEY}
               draft={draft}
