@@ -50,6 +50,7 @@ const API_INDEX = {
     { method: 'GET', path: '/loans/by-current-holder/{address}', description: 'Loans where a wallet currently holds either position.' },
     { method: 'GET', path: '/loans/by-participant', description: "A wallet's historical loan participation, all statuses (?wallet=…)." },
     { method: 'GET', path: '/loans/{id}', description: 'One loan by id.' },
+    { method: 'GET', path: '/vault-beacon/events', description: 'The chain\'s vault-code events (proposals, executions, cancels, revokes) and, with vault=, that vault\'s pin changes, newest first, with the block the indexer has read through.' },
     { method: 'GET', path: '/activity', description: 'Recent protocol activity feed. With pending=1, also the events above the chain\'s safe block, marked not final. With wallet=, one wallet\'s whole history: the events on its loans and the events that name it.' },
     { method: 'GET', path: '/claimables/{address}', description: 'Claimable payouts for a wallet.' },
     { method: 'GET', path: '/claim-candidates/{address}', description: 'Claim-candidate hints for a wallet.' },

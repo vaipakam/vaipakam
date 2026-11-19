@@ -75,6 +75,7 @@ import {
 import { handleApiIndex } from './apiIndex';
 import { handleIngestHealth } from './healthRoutes';
 import { handleAssetRankings } from './assetRankings';
+import { handleVaultBeaconEvents } from './vaultBeacon';
 import { handleConfigSnapshot } from './configSnapshot';
 import {
   resolveEnv,
@@ -705,6 +706,16 @@ export default {
         const byId = url.pathname.match(/^\/loans\/(\d+)$/);
         if (byId) return handleLoanById(req, resolved, byId[1]);
       }
+      return new Response('Not found', { status: 404 });
+    }
+
+    // ─── /vault-beacon/events ───────────────────────────────────
+    // #3281 / #3422 — the chain's VaultBeacon events (code proposals,
+    // executions, cancels, revokes, and each vault's pin changes), newest
+    // first; `vault=` adds that vault's own events to the chain-wide ones.
+    if (url.pathname === '/vault-beacon/events') {
+      if (req.method === 'OPTIONS') return handleLoansPreflight();
+      if (req.method === 'GET') return handleVaultBeaconEvents(req, resolved);
       return new Response('Not found', { status: 404 });
     }
 

@@ -170,6 +170,7 @@ import {
 } from './walletActivity';
 import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
 import { POSITION_NFT_EVENTS, positionNftForDiamond, readPositionHolder, scannedAddresses } from './positionNft';
+import { beaconRowStatements, decodeBeaconLogs, isFromBeacon, vaultBeaconForDiamond, type BeaconLog } from './vaultBeacon';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -2670,6 +2671,10 @@ async function runChainPass(
   // (Alchemy free tier, publicnode) reject ranges > 10k blocks, so we
   // page through MAX_RANGE_PER_CALL at a time.
   const allLogs: DecodedLog[] = [];
+  // #3281 / #3422 — the chain's VaultBeacon logs, read in the same request
+  // and decoded by address with the beacon's own ABI (vaultBeacon.ts).
+  const beacon = vaultBeaconForDiamond(diamond);
+  const beaconLogs: BeaconLog[] = [];
   let cursor = scanFrom;
   while (cursor <= windowTo) {
     const chunkEnd =
@@ -2692,11 +2697,12 @@ async function runChainPass(
       const rawLogs = await client.getLogs({
         // #3205: plus the chain's PositionNFT, whose `Transfer` events
         // keep the holder columns current.
-        address: scannedAddresses(diamond),
+        address: beacon ? [...scannedAddresses(diamond), beacon] : scannedAddresses(diamond),
         fromBlock: cursor,
         toBlock: chunkEnd,
       });
-      allLogs.push(...decodeScannedLogs(rawLogs));
+      allLogs.push(...decodeScannedLogs(rawLogs.filter((r) => !isFromBeacon(r, beacon))));
+      beaconLogs.push(...decodeBeaconLogs(rawLogs.filter((r) => isFromBeacon(r, beacon))));
     } catch (err) {
       console.error(
         `[chainIndexer] getLogs ${cursor}-${chunkEnd} failed`,
@@ -2788,6 +2794,21 @@ async function runChainPass(
       // A REFUSED read is the budget stop, handled as one below.
       if (isRefusing(budget)) throw err;
       throw new BlockTimeUnavailable(blockNumber, err);
+    }
+
+    // The block's beacon events, written before its Diamond rows so a block
+    // is finished only with both (#3281). One batch, only when there are any.
+    const blockBeacon = beaconByBlock.get(blockNumber);
+    if (blockBeacon) {
+      await env.DB.batch(beaconRowStatements(env.DB, chainId, blockBeacon, chainTimeOf(blockTimestamps, blockNumber)));
+    }
+    if (logs.length === 0) {
+      return {
+        offer: { newOffers: 0, statusUpdates: 0 },
+        loan: { newLoans: 0, statusUpdates: 0, entitlementUpdates: 0, ownershipTransfers: 0 },
+        signed: 0,
+        activity: 0,
+      };
     }
 
     const offer = await processOfferLogs(
@@ -2886,7 +2907,21 @@ async function runChainPass(
   /** The logs of the blocks this pass FINISHED — everything after the cursor
    *  write (notifications, push hints, the config refresh) reads these. */
   const scannedLogs: DecodedLog[] = [];
-  const blocks = logsByBlock(allLogs);
+  // The blocks with any log of ours, Diamond or beacon, in chain order: a
+  // block with only beacon events is still a unit the cursor passes.
+  const beaconByBlock = new Map<bigint, BeaconLog[]>();
+  for (const l of beaconLogs) {
+    const list = beaconByBlock.get(l.blockNumber);
+    if (list) list.push(l);
+    else beaconByBlock.set(l.blockNumber, [l]);
+  }
+  const diamondBlocks = logsByBlock(allLogs);
+  const blocks = [
+    ...diamondBlocks,
+    ...[...beaconByBlock.keys()]
+      .filter((b) => !diamondBlocks.some((d) => d.blockNumber === b))
+      .map((blockNumber) => ({ blockNumber, logs: [] as DecodedLog[] })),
+  ].sort((a, b) => (a.blockNumber < b.blockNumber ? -1 : a.blockNumber > b.blockNumber ? 1 : 0));
   let stoppedAt: bigint | null = null;
   /** #2757 — the stop was a block whose time could not be read, not the
    *  budget: nothing of that block was written, and the pass is a failure
