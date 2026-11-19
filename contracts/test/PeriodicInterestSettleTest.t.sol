@@ -383,9 +383,14 @@ contract PeriodicInterestSettleTest is SetupTest {
 
         vm.warp(startTs + 61 days + 1);
         (uint256 expected, uint256 paid, uint256 shortfall) = _preview();
-        assertEq(expected, _interest(1000 ether, 60 days), "owed through the second boundary");
-        assertEq(paid, first);
-        assertEq(shortfall, expected - first, "29.5 days short, not 30");
+        // The preview shows the second period's own figures: its 30 days of
+        // interest, and the half day paid ahead toward it. The 30 days paid
+        // for the first period are not shown as paid toward this one.
+        uint256 throughFirst = _interest(1000 ether, 30 days);
+        assertEq(expected, _interest(1000 ether, 60 days) - throughFirst, "the second period's own interest");
+        assertEq(paid, first - throughFirst, "the half day paid ahead");
+        assertEq(shortfall, expected - paid, "29.5 days short, not 30");
+        assertEq(shortfall, _interest(1000 ether, 60 days) - first, "the same as the segment's accrual less all settled");
 
         _friendPays(100 ether);
         l = LoanFacet(address(diamond)).getLoanDetails(loanId);

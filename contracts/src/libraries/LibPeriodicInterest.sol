@@ -110,6 +110,32 @@ library LibPeriodicInterest {
         return LibEntitlement.creditSettledInterest(loan, periodOwed(loan, boundary));
     }
 
+    /// @notice #3779 — the current period's own figures, for display: what
+    ///         the period itself accrues, what has been paid toward it, and
+    ///         what is owed by its boundary.
+    /// @dev    The accrual segment can span several periods, so
+    ///         {periodOwed} and the settled credit are cumulative over the
+    ///         segment. The period's own interest is the segment's accrual
+    ///         through `boundary` less its accrual through the previous
+    ///         boundary (`prevBoundary`, zero before the segment began). What
+    ///         was paid toward it is the settled credit beyond what the
+    ///         earlier periods of the segment accrued, at most `expected`.
+    ///         `shortfall` is {periodShortfall}: normally `expected - paid`,
+    ///         and more only when an earlier period of the segment is still
+    ///         short, because that arrear is owed by this boundary too.
+    function periodFigures(LibVaipakam.Loan storage loan, uint256 prevBoundary, uint256 boundary)
+        internal
+        view
+        returns (uint256 expected, uint256 paid, uint256 shortfall)
+    {
+        uint256 owedBefore = periodOwed(loan, prevBoundary);
+        expected = periodOwed(loan, boundary) - owedBefore;
+        uint256 settled = uint256(loan.interestSettled);
+        paid = settled > owedBefore ? settled - owedBefore : 0;
+        if (paid > expected) paid = expected;
+        shortfall = periodShortfall(loan, boundary);
+    }
+
     /// @dev Period boundary timestamp — `lastPeriodicInterestSettledAt +
     ///      intervalDays`, moved by the loan's pause credit
     ///      ({LibLoanClock.pauseCredit}, #668 / #935) like every other loan

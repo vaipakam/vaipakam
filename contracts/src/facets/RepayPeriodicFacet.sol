@@ -423,12 +423,16 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     /// @return graceEndsAt `periodEndAt + gracePeriod(intervalDays)` —
     ///         the earliest moment a permissionless settler call is
     ///         allowed. Zero when cadence is None.
-    /// @return expected The interest the current accrual segment owes
-    ///         through the boundary ({LibPeriodicInterest.periodOwed}, #3779).
-    /// @return paidByBorrower The settled interest toward it, at most
-    ///         `expected`.
-    /// @return shortfall `expected - paidByBorrower`
-    ///         ({LibPeriodicInterest.periodShortfall}).
+    /// @return expected The interest this period itself accrues
+    ///         ({LibPeriodicInterest.periodFigures}, #3779): not what earlier
+    ///         periods accrued.
+    /// @return paidByBorrower What has been paid toward this period, at most
+    ///         `expected`: payments that covered earlier periods are not
+    ///         counted here.
+    /// @return shortfall What is owed by the boundary
+    ///         ({LibPeriodicInterest.periodShortfall}): `expected -
+    ///         paidByBorrower`, plus any earlier period of the segment still
+    ///         short.
     /// @return canSettleNow True iff `block.timestamp >= graceEndsAt`
     ///         AND the loan is `Active` AND cadence is non-None — i.e.
     ///         a permissionless settler call would clear the
@@ -453,9 +457,11 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         }
         periodEndAt = LibPeriodicInterest.periodEndAt(loan);
         graceEndsAt = LibPeriodicInterest.settleAllowedFromAt(loan);
-        expected = LibPeriodicInterest.periodOwed(loan, periodEndAt);
-        shortfall = LibPeriodicInterest.periodShortfall(loan, periodEndAt);
-        paidByBorrower = expected - shortfall;
+        (expected, paidByBorrower, shortfall) = LibPeriodicInterest.periodFigures(
+            loan,
+            periodEndAt - LibVaipakam.intervalDays(loan.periodicInterestCadence) * LibVaipakam.ONE_DAY,
+            periodEndAt
+        );
         canSettleNow =
             loan.status == LibVaipakam.LoanStatus.Active &&
             block.timestamp >= graceEndsAt;
