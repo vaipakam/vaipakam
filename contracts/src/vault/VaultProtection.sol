@@ -75,6 +75,8 @@ contract VaultProtection is VaultProtectionBase {
                 && sel != VaultRecovery.clearRecoveryAddress.selector
                 && sel != VaultRecovery.settleRecoveryAddress.selector
                 && sel != VaultRecovery.clawback.selector
+                && sel != VaultRecovery.requestPositionMove.selector
+                && sel != VaultRecovery.cancelPositionMove.selector
         ) revert UnknownProtectionSelector(sel);
         (bool ok, bytes memory ret) = RECOVERY.delegatecall(msg.data);
         // `ret` is a memory bytes this function already holds; both blocks

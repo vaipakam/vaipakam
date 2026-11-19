@@ -16,8 +16,8 @@ On a floating-rate loan the borrower carries the risk that the market rate rises
 - A floating offer may state a **cap level**, a **floor level**, both or neither. They are terms of the loan, signed by both parties with the margin, and never change during the loan.
 - Levels bound the **reference**, not the margin. While the reference is above the loan's cap level, the loan accrues as if the reference were at the cap; while below its floor level, as if at the floor. The margin is added afterwards and is not affected.
 - So the loan's rate at any moment is `clamp(reference, floor, cap) + margin`, and the borrower's worst case is `cap + margin`, the lender's least is `floor + margin`. The app states both as plain all-in rates.
-- A loan with no cap keeps the protocol maximum as its only ceiling, and the review says so in those words. A loan with no floor may fall to its margin alone.
-- Floor must be below cap. `cap + margin` must not exceed the protocol maximum interest rate; an offer that would is refused at creation.
+- A loan with no cap has its series' own ceiling as its cap: the reference can never pass it, so the loan's rate can never pass that ceiling plus the margin, which is itself within the protocol maximum. The review states that figure and that it comes from the reference's ceiling, not from a cap the parties chose (`FloatingRateLoansDesign.md` section 6, which replaces this document's first wording, "only the protocol maximum"). A loan with no floor may fall to its margin alone.
+- Floor must be below cap. `cap + margin` must not exceed the protocol maximum interest rate; an offer that would is refused at creation. The mirror holds for a floor: `floor + margin` must not be below zero, so a negative margin needs a floor at least as large.
 
 ## 3. How the index tracks a level
 
@@ -28,7 +28,7 @@ The same update also keeps, per listed level `L`:
 - for a cap level: **excess above L** += `max(r − L, 0) × dt`
 - for a floor level: **shortfall below L** += `max(L − r, 0) × dt`
 
-A loan stores the level ids it signed and the value of each of its two cumulatives at its last interest settlement, beside the index value #3337 already stores. Interest owed since then is:
+A loan stores the level ids it signed. Because they never change, the three running totals combine into one number for the loan, the **clamped sum** (`index − excess at its cap + shortfall at its floor`), and a loan snapshots that one number at each moment it prices interest from (`FloatingRateLoansDesign.md` sections 2 and 5). Each level's total is kept per series, since each series has its own reference; a level's id and value are per asset. Interest owed since a snapshot is:
 
 `principal × ( index growth − excess growth at its cap + shortfall growth at its floor + margin × elapsed time )`
 
@@ -76,7 +76,7 @@ While the quorum is in its "previous reference holds" state, levels accrue again
 | Per-asset reference state (new in #3337) | Level table: id, rate, open/retired, open-loan count, cumulative. Appended at the tail of storage. |
 | The index update | Accrue each tracked level (section 3); the update event states each level's new cumulative when it changed. |
 | `Offer` and the signed-offer type | Append `capLevelId`, `floorLevelId` (zero = none), used only by floating offers. |
-| Loan record | The two level ids and their two cumulative snapshots, beside the index snapshot. |
+| Loan record | The two level ids and one snapshot of the clamped sum per book (`FloatingRateLoansDesign.md` section 5). |
 | `LibInterestLedger` floating accrual | The formula in section 3. |
 | Match core and previews | Level equality in the lifecycle-terms check; intent acceptance bounds; new error members appended. |
 | Level configuration | Add and retire, behind the Timelock delay. Each rate is range-checked against the protocol maximum, and an addition must keep every tracked floor below every tracked cap. |
@@ -122,6 +122,6 @@ Reaches a chain by fresh deploy, with the rest of #3337. Run the storage-layout 
 
 ## 11. Open items for the builder to raise, not decide silently
 
-- How #3337 enforces the protocol maximum on an uncapped floating loan without breaking index exactness; a capped loan satisfies it by construction (section 2).
-- Whether the level table fits the reference host facet or needs its own.
+- Settled 2026-11-19: the protocol maximum on an uncapped loan is held by the series' ceiling (`FloatingRateLoansDesign.md` section 6).
+- Settled 2026-11-19: the level table and its accrual stay in the rate reference, the contract that owns the index. If it does not fit, the read side is split out, never the levels.
 - The starting level lists per asset (section 4) are an owner configuration decision at deploy time.

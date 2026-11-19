@@ -2258,7 +2258,10 @@ async function runChainPass(
   // duplicated these per-path once and got it wrong (the recycling one
   // sat inside a helper the quiet path never reached). The structural
   // guard in oneTimeBackfillReachability.test.ts pins this ordering.
-  // Cheap after the first run — one flag SELECT each.
+  // Cheap after the first run — one flag SELECT each, ONCE PER PASS. The
+  // per-block ledger writers below (`applyRewardLoopLedger`,
+  // `applyRecycleDaySeries`) rely on this block as their precondition and no
+  // longer repeat the checks per event block (#2835).
   //
   // The reported-cumulative projection is the third of them, and it was the
   // same mistake a second time (Codex #2836 r1): it was reachable only from

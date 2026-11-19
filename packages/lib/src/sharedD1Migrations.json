@@ -94,5 +94,6 @@
   "0095_activity_participants.sql",
   "0096_drop_shared_keeper_runner_lease.sql",
   "0097_collection_offer_set.sql",
-  "0098_keeper_step_status.sql"
+  "0098_keeper_step_status.sql",
+  "0104_recycle_backing_block_settled.sql"
 ]

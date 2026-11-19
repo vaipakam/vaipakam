@@ -390,17 +390,19 @@ contract RecoveryClawbackTest is SetupTest {
     /// The selectors VaultRecovery adds to the shared base are exactly the
     /// five the fallback forwards, and none of them is carried by
     /// VaultProtection or by the vault itself.
-    function test_recoverysOwnSelectorsAreTheForwardedFive_andCollideWithNothing() public view {
+    function test_recoverysOwnSelectorsAreTheForwardedSeven_andCollideWithNothing() public view {
         bytes4[] memory rec_ = _ids("VaultRecovery");
         bytes4[] memory base = _ids("VaultProtectionBase");
         bytes4[] memory prot = _ids("VaultProtection");
         bytes4[] memory vlt = _ids("VaipakamVaultImplementation");
-        bytes4[5] memory forwarded = [
+        bytes4[7] memory forwarded = [
             VaultRecovery.requestRecoveryAddress.selector,
             VaultRecovery.cancelRecoveryAddress.selector,
             VaultRecovery.clearRecoveryAddress.selector,
             VaultRecovery.settleRecoveryAddress.selector,
-            VaultRecovery.clawback.selector
+            VaultRecovery.clawback.selector,
+            VaultRecovery.requestPositionMove.selector,
+            VaultRecovery.cancelPositionMove.selector
         ];
         uint256 own;
         for (uint256 i; i < rec_.length; ++i) {
@@ -414,7 +416,7 @@ contract RecoveryClawbackTest is SetupTest {
             assertFalse(_has(prot, rec_[i]), "collides with VaultProtection");
             assertFalse(_has(vlt, rec_[i]), "collides with the vault");
         }
-        assertEq(own, forwarded.length, "VaultRecovery's own endpoints are the forwarded five");
+        assertEq(own, forwarded.length, "VaultRecovery's own endpoints are the forwarded seven");
     }
 
     /// Any other selector reaching the fallback is refused by name.

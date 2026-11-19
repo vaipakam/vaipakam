@@ -94,6 +94,7 @@ const backing = (over: Obj = {}): Obj => {
     holderBalance: '0',
     holderAttributed: '0',
     blockNumber: '12345678',
+    blockSettled: true,
     diamond: '0xd89f0000000000000000000000000000000000ab',
     unavailableReason: null,
     asOf: '2026-08-03T00:00:00.000Z',
@@ -656,6 +657,21 @@ describe('RecyclingAccount — a floored figure must not hide a shortfall', () =
     const r = render(series({ backing: backing({ releasedRemitStranded: null }) }));
     expect(r.has('recycling-backing-unavailable')).toBe(true);
     expect(r.has('recycling-retained')).toBe(false);
+  });
+
+  it('says whether the chain confirmed the block as settled, in all three cases (#2210)', () => {
+    const settled = render(series({ backing: backing({ blockSettled: true }) }));
+    expect(settled.textOf('recycling-block-finality')).toBe(R.blockFinalitySettled);
+    const guessed = render(series({ backing: backing({ blockSettled: false }) }));
+    expect(guessed.textOf('recycling-block-finality')).toBe(R.blockFinalityEstimated);
+    // The block number is still shown — the estimate is qualified, not hidden.
+    expect(guessed.textOf('recycling-asof')).toContain('12345678');
+    // Only the estimate carries the note on what an estimated block means.
+    expect(guessed.textOf('recycling-block-finality-note')).toBe(R.blockFinalityEstimatedNote);
+    expect(settled.has('recycling-block-finality-note')).toBe(false);
+    const unknown = render(series({ backing: backing({ blockSettled: null }) }));
+    expect(unknown.textOf('recycling-block-finality')).toBe(R.blockFinalityUnknown);
+    expect(unknown.has('recycling-block-finality-note')).toBe(false);
   });
 
   it('RENDERS the capture time, since the figures are not live', () => {

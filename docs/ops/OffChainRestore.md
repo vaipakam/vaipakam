@@ -1294,10 +1294,18 @@ anything but the ledger bucket:
 
 ```bash
 cd ops/offchain-data-warm
-# A key confined to the LEDGER bucket that can list it and read retentions
-# and nothing else (listFiles + readFileRetentions; the tool refuses a key
-# that can write, delete or bypass a retention). Create it for the restore
-# and delete it afterwards.
+# A key confined to the LEDGER bucket alone that can list it and read
+# retentions and nothing else. Create it for the restore with the B2
+# command line (version 4), signed in with the master key, and let it expire
+# after a day:
+#   b2 account authorize
+#   b2 key create --bucket vaipakam-offchain-backup-ledger --duration 86400 \
+#     restore-ledger-read listBuckets,listFiles,readFiles,readFileRetentions
+#   b2 account clear
+# The console's "Read Only" key is too broad: it carries about ten
+# capabilities outside the tool's allowlist, and the tool refuses it by
+# design, as it refuses a key confined to more than one bucket or to a name
+# prefix.
 export B2_LEDGER_READ_KEY_ID=...  B2_LEDGER_READ_KEY=...
 
 # A public-key archive (written from slice 2 on): a recipient private key.

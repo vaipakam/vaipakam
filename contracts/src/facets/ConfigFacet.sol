@@ -2499,6 +2499,17 @@ contract ConfigFacet is DiamondAccessControl {
         emit GraceBucketsUpdated(0);
     }
 
+    /// @notice The late-fee schedule every loan pays past its due date, in
+    ///         BPS of the principal the fee is based on (the whole agreed rent
+    ///         for an NFT rental): `firstDayBps` on the first day past due,
+    ///         `perDayBps` more each further day, never above `capBps`.
+    /// @dev    Reads the constants {LibVaipakam.lateFeeBpsAt} applies, so the
+    ///         figure shown cannot drift from the fee charged. They are not
+    ///         settings; no role can change them.
+    function getLateFeeSchedule() external pure returns (uint256 firstDayBps, uint256 perDayBps, uint256 capBps) {
+        return (LibVaipakam.LATE_FEE_FIRST_DAY_BPS, LibVaipakam.LATE_FEE_PER_DAY_BPS, LibVaipakam.LATE_FEE_CAP_BPS);
+    }
+
     /**
      * @notice Read the current grace-bucket schedule.
      * @return buckets The configured array. Empty when the protocol is

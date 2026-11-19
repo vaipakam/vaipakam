@@ -330,8 +330,9 @@
       "why": "the holder locks its own tokens; it only tightens"
     },
     "PositionNFT.recover(uint256[])": {
-      "class": "user",
-      "why": "moves a replaced (retired) account's position NFTs to the wallet its vault names as the replacement (#3526); the replacement wallet calls it for its own account. Anyone may, because the destination is the vault's record, not the caller's choice. Nothing waits on it: the replacement wallet already acts on the positions where they are, and payouts follow the account"
+      "class": "gap",
+      "issue": "#3246",
+      "why": "moves a replaced account's position NFTs to the wallet its vault names as the replacement, only while the replacing wallet's move request is open: matured after the account's delay, not expired, the account neither locked nor recovered (owner decision 2026-11-18). Anyone may call it then, because the destination is the vault's record, not the caller's choice. The keeper pass that applies an open request ships disarmed with the keeper follow-up of #3246 part 2"
     },
     "PositionNFT.requestUnlock()": {
       "class": "user",
@@ -883,6 +884,10 @@
       "flag": "PROTOCOL_UPKEEP_ENABLED",
       "evidence": "apps/keeper/src/protocolUpkeep.ts"
     },
+    "VaultRecovery.cancelPositionMove(struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
     "VaultRecovery.cancelRecoveryAddress(struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
@@ -892,6 +897,10 @@
       "class": "gated"
     },
     "VaultRecovery.clearRecoveryAddress(struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultRecovery.requestPositionMove(struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
