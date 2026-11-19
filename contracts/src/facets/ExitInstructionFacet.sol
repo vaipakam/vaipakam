@@ -278,6 +278,21 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
     uint8 private constant CALM_NOT_READ = 3;
     uint256 private constant WAD = 1e18;
     uint256 private constant BPS_TO_WAD = 1e14;
+    /// @dev A reduction's bounds, as the sizing checks them: the tolerance,
+    ///      the accrued interest (paid first), the liquidation threshold `L`
+    ///      and health factor `h` (WAD), and the opening limit (bps, 0 = none).
+    struct Reach {
+        uint256 tolerance;
+        uint256 interest;
+        uint256 minPartial;
+        uint256 L;
+        uint256 h;
+        uint256 capBps;
+    }
+
+    /// @dev The most candidate sales a reduction's sizing checks on the
+    ///      route's rounded figures before keeping its conservative bound.
+    uint256 private constant LEAST_SALE_CHECKS = 64;
 
     // ─── Errors ──────────────────────────────────────────────────────
 
@@ -645,20 +660,30 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
         }
     }
 
-    /// @dev A reduction. With `r` the loan's debt over its collateral value,
-    ///      `L` its liquidation threshold, `t` the tolerance and `H` the health
-    ///      factor to reach, selling a fraction `f` of the collateral and
-    ///      repaying with the floor of its value gives
-    ///      `HF = L(1-f) / (r - f(1-t))`, so the least fraction is
-    ///      `f = (H·r - L) / (H(1-t) - L)`. `H` is the higher of the holder's
-    ///      target and `L / c`, the health factor at the opening loan-to-value
-    ///      limit `c` (the partial route refuses a result above that limit).
-    ///      `r` is taken as `L / hf`: the health factor rounds down, so `r`
-    ///      reads high and the sale errs larger, the safe side. The sale is at
-    ///      least the loan's smallest partial repayment plus the accrued
-    ///      interest (paid first). Where the oracle value of the sale would
-    ///      cover the interest and the whole principal, the partial route
-    ///      would refuse it, so the plan becomes a close.
+    /// @dev A reduction, sized in whole token units against the route's own
+    ///      rounding, by a closed form that needs no search.
+    ///
+    ///      The plan picks the repayment `R` (principal units, interest first)
+    ///      and sells the least collateral whose floor covers it, through the
+    ///      manual route's own rule (`LibSaleSizing`). Write `P` for the
+    ///      principal, `I` the accrued interest, `K` the tolerance's keep
+    ///      (`10000 - t`, in bps) and `V` the collateral's whole value in
+    ///      principal units, rounded down. Selling for `R` spends at most
+    ///      `R·10000/K + 1` of value, plus less than one collateral unit
+    ///      (`u`, rounded up), so what remains is worth at least
+    ///      `V' - R·10000/K` with `V' = V - u - 1`, and the debt left is at
+    ///      most `P + I - R`. That lower bound is LINEAR in `R`, so the least
+    ///      `R` meeting each bound has a closed form:
+    ///      - the health factor `h` (the higher of the holder's target and the
+    ///        opening limit's own, `L / c`): `L·value >= h·debt`;
+    ///      - the opening loan-to-value limit `c`: `debt·10000 <= c·value`.
+    ///      `R` is also at least the interest plus the loan's smallest partial
+    ///      repayment. The bound is conservative by at most one collateral
+    ///      unit and one principal unit of value, so the sale is the least to
+    ///      within that rounding and never short of either bound; no search
+    ///      over the rounded figures (which are not monotone in the sale) is
+    ///      needed. A repayment that would retire the whole principal is a
+    ///      close instead, since the partial route refuses it.
     function _sizeReduce(
         LibVaipakam.Storage storage s,
         LibVaipakam.Loan storage loan,
@@ -667,69 +692,53 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
         Plan memory p
     ) private view {
         uint256 L = uint256(loan.liquidationLtvBpsAtInit) * BPS_TO_WAD;
-        uint256 c = LibVaipakam.effectiveLoanInitLtvCapBps(
+        uint256 capBps = LibVaipakam.effectiveLoanInitLtvCapBps(
             loan.initLtvCapBpsAtInit, LibVaipakam.assetInitLtvCeilingBps(loan.collateralAsset)
-        ) * BPS_TO_WAD;
+        );
         uint256 h = st.targetHf;
-        if (c != 0) {
-            uint256 hAtCap = Math.mulDiv(L, WAD, c, Math.Rounding.Ceil);
+        if (capBps != 0) {
+            uint256 hAtCap = Math.mulDiv(L, LibVaipakam.BASIS_POINTS, capBps, Math.Rounding.Ceil);
             if (hAtCap > h) (h, p.targetIsLtvCap) = (hAtCap, true);
         }
         p.targetUsed = h > type(uint64).max ? type(uint64).max : uint64(h);
-        uint256 r = Math.mulDiv(L, WAD, p.hf, Math.Rounding.Ceil);
-        uint256 hr = Math.mulDiv(h, r, WAD, Math.Rounding.Ceil);
-        uint256 hk = Math.mulDiv(h, WAD - uint256(p.tolerance) * BPS_TO_WAD, WAD);
-        if (hk <= L) {
-            p.skip = LibStandingInstructions.SKIP_CANNOT_COVER;
-            return;
-        }
-        uint256 f = hr > L ? Math.mulDiv(hr - L, WAD, hk - L, Math.Rounding.Ceil) : 0;
-        if (f >= WAD) {
-            p.skip = LibStandingInstructions.SKIP_CANNOT_COVER;
-            return;
-        }
-        uint256 sell = Math.mulDiv(loan.collateralAmount, f, WAD, Math.Rounding.Ceil);
 
-        // The smallest partial repayment, after the interest it pays first.
+        uint256 keep = LibVaipakam.BASIS_POINTS - uint256(p.tolerance);
         (uint256 interest,) = LibEntitlement.splitSettledInterest(
             loan, LibEntitlement.accruedInterestToTime(loan, block.timestamp)
         );
-        uint256 minPartial = (loan.principal * s.assetRiskParams[loan.principalAsset].minPartialBps)
-            / LibVaipakam.BASIS_POINTS;
-        if (minPartial == 0) minPartial = 1;
-        (bool covers, uint256 least,) =
-            LibSaleSizing.sizeSaleAtRate(rate, interest + minPartial, loan.collateralAmount, p.tolerance);
-        if (!covers) {
-            p.skip = LibStandingInstructions.SKIP_CANNOT_COVER;
-            return;
-        }
-        if (least > sell) sell = least;
-
-        // The closed form works in continuous value; the route settles in
-        // whole token units, flooring the oracle conversion and the
-        // tolerance. Check the candidate against those rounded figures; if it
-        // falls short, find the least sale that reaches `h` (the higher of the
-        // holder's target and the opening limit) inside that limit by
-        // bisection. Selling more only raises the result (`hk > L` above), so
-        // the search is exact and bounded by the collateral's bit length,
-        // whatever the two tokens' decimals.
-        uint256 capBps = c / BPS_TO_WAD;
-        if (!_reduceReaches(loan, rate, sell, p.tolerance, interest, L, h, capBps)) {
-            uint256 hi = loan.collateralAmount - 1;
-            if (sell >= hi || !_reduceReaches(loan, rate, hi, p.tolerance, interest, L, h, capBps)) {
+        uint256 owed = loan.principal + interest;
+        uint256 repay;
+        {
+            // V' = V - u - 1: the collateral's value less the rounding slack.
+            uint256 value = LibFallback.toPrincipal(rate, loan.collateralAmount);
+            uint256 slack = Math.mulDiv(1, rate.den, rate.num, Math.Rounding.Ceil) + 1;
+            // Below `hk > L` (h·keep > 10000·L) or `keep > cap`, selling more
+            // never reaches the bound.
+            if (value <= slack || h * keep <= LibVaipakam.BASIS_POINTS * L || (capBps != 0 && keep <= capBps)) {
                 p.skip = LibStandingInstructions.SKIP_CANNOT_COVER;
                 return;
             }
-            uint256 lo = sell; // fails
-            while (hi - lo > 1) {
-                uint256 mid = lo + (hi - lo) / 2;
-                if (_reduceReaches(loan, rate, mid, p.tolerance, interest, L, h, capBps)) hi = mid;
-                else lo = mid;
+            value -= slack;
+            // Health factor: R·(h·K - 10000·L) >= h·K·owed - L·K·V'.
+            uint256 need = h * keep * owed;
+            uint256 have = L * keep * value;
+            if (need > have) repay = Math.ceilDiv(need - have, h * keep - LibVaipakam.BASIS_POINTS * L);
+            // Opening limit: R·10000·(K - c) >= K·(10000·owed - c·V').
+            if (capBps != 0 && LibVaipakam.BASIS_POINTS * owed > capBps * value) {
+                uint256 rCap = Math.ceilDiv(
+                    keep * (LibVaipakam.BASIS_POINTS * owed - capBps * value),
+                    LibVaipakam.BASIS_POINTS * (keep - capBps)
+                );
+                if (rCap > repay) repay = rCap;
             }
-            sell = hi;
         }
+        // At least the interest and the smallest partial repayment.
+        uint256 minPartial = (loan.principal * s.assetRiskParams[loan.principalAsset].minPartialBps)
+            / LibVaipakam.BASIS_POINTS;
+        if (minPartial == 0) minPartial = 1;
+        if (repay < interest + minPartial) repay = interest + minPartial;
 
-        if (LibFallback.toPrincipal(rate, sell) >= interest + loan.principal) {
+        if (repay >= owed) {
             // It would retire the whole principal: close instead.
             p.form = LibVaipakam.EXIT_FORM_CLOSE;
             p.targetUsed = 0;
@@ -737,9 +746,96 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
             _sizeClose(loan.id, loan, rate, p);
             return;
         }
+        (bool covers, uint256 sell,) =
+            LibSaleSizing.sizeSaleAtRate(rate, repay, loan.collateralAmount, p.tolerance);
+        // The bound above guarantees both checks at the floor; the second is
+        // the route's own figures, kept as a guard against any drift.
+        Reach memory b = Reach(p.tolerance, interest, minPartial, L, h, capBps);
+        if (!covers || !_reduceReaches(loan, rate, sell, b)) {
+            p.skip = LibStandingInstructions.SKIP_CANNOT_COVER;
+            return;
+        }
+        sell = _leastReach(loan, rate, b, sell);
+        uint256 floor = LibSaleSizing.floorAtRate(rate, sell, p.tolerance);
+        if (LibFallback.toPrincipal(rate, sell) >= owed) {
+            // The sale's oracle value would cover the whole debt; the partial
+            // route refuses that, so close instead.
+            p.form = LibVaipakam.EXIT_FORM_CLOSE;
+            p.targetUsed = 0;
+            p.targetIsLtvCap = false;
+            _sizeClose(loan.id, loan, rate, p);
+            return;
+        }
         p.sell = sell;
-        p.floor = LibSaleSizing.floorAtRate(rate, sell, p.tolerance);
-        p.debt = p.floor > interest ? p.floor : interest;
+        p.floor = floor;
+        p.debt = floor > interest ? floor : interest;
+    }
+
+    /// @dev The least sale at or below `safe` that reaches both bounds on the
+    ///      route's own rounded figures. `safe` (from the conservative closed
+    ///      form) always does. The rounded figures are not monotone in the
+    ///      sale, so this checks candidates in order from a NECESSARY lower
+    ///      bound `sLo`: no sale below it can reach the bounds even before
+    ///      rounding. Where the gap is short in collateral units it checks
+    ///      every sale in it; where a collateral unit is worth far less than
+    ///      a principal unit it checks, per repayment level, the least sale
+    ///      reaching that level (any other sale at the same level only leaves
+    ///      less collateral). Either way the first that reaches is the least.
+    ///      A gap too wide for `LEAST_SALE_CHECKS` checks keeps `safe`, which
+    ///      exceeds the least by at most the closed form's rounding slack.
+    function _leastReach(LibVaipakam.Loan storage loan, LibFallback.Rate memory rate, Reach memory b, uint256 safe)
+        private
+        view
+        returns (uint256)
+    {
+        uint256 sLo = _necessarySale(loan, rate, b);
+        if (sLo >= safe) return safe;
+
+        if (safe - sLo <= LEAST_SALE_CHECKS) {
+            for (uint256 sale = sLo; sale < safe; ++sale) {
+                if (_reduceReaches(loan, rate, sale, b)) return sale;
+            }
+            return safe;
+        }
+        // Per repayment level: the least sale reaching each.
+        uint256 rLo = LibSaleSizing.floorAtRate(rate, sLo, b.tolerance);
+        uint256 rHi = LibSaleSizing.floorAtRate(rate, safe, b.tolerance);
+        if (rLo < b.interest + b.minPartial) rLo = b.interest + b.minPartial;
+        if (rHi <= rLo || rHi - rLo > LEAST_SALE_CHECKS) return safe;
+        for (uint256 r = rLo; r < rHi; ++r) {
+            (bool ok, uint256 sale,) = LibSaleSizing.sizeSaleAtRate(rate, r, loan.collateralAmount, b.tolerance);
+            if (ok && sale < safe && _reduceReaches(loan, rate, sale, b)) return sale;
+        }
+        return safe;
+    }
+
+    /// @dev A sale below which no reduction can reach the bounds even before
+    ///      rounding: the collateral's value rounded UP, the floor unrounded.
+    ///      With `x` the value sold, both of
+    ///      `L·(V+1-x) >= h·(owed - x·K/10000)` and
+    ///      `10000·(owed - x·K/10000) <= c·(V+1-x)` are necessary.
+    function _necessarySale(LibVaipakam.Loan storage loan, LibFallback.Rate memory rate, Reach memory b)
+        private
+        view
+        returns (uint256 sLo)
+    {
+        uint256 keep = LibVaipakam.BASIS_POINTS - b.tolerance;
+        uint256 owed = loan.principal + b.interest;
+        uint256 v1 = LibFallback.toPrincipal(rate, loan.collateralAmount) + 1;
+        uint256 xLo;
+        {
+            uint256 a = LibVaipakam.BASIS_POINTS * b.h * owed;
+            uint256 c = LibVaipakam.BASIS_POINTS * b.L * v1;
+            if (a > c) xLo = (a - c) / (b.h * keep - LibVaipakam.BASIS_POINTS * b.L);
+            if (b.capBps != 0 && LibVaipakam.BASIS_POINTS * owed > b.capBps * v1) {
+                uint256 xc = (LibVaipakam.BASIS_POINTS * owed - b.capBps * v1) / (keep - b.capBps);
+                if (xc > xLo) xLo = xc;
+            }
+        }
+        sLo = Math.mulDiv(xLo, rate.num, rate.den);
+        (, uint256 sMin,) =
+            LibSaleSizing.sizeSaleAtRate(rate, b.interest + b.minPartial, loan.collateralAmount, b.tolerance);
+        if (sMin > sLo) sLo = sMin;
     }
 
     /// @dev True when selling `sell` and repaying exactly its floor (interest
@@ -754,21 +850,17 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
         LibVaipakam.Loan storage loan,
         LibFallback.Rate memory rate,
         uint256 sell,
-        uint256 tolerance,
-        uint256 interest,
-        uint256 liqThresholdWad,
-        uint256 h,
-        uint256 capBps
+        Reach memory b
     ) private view returns (bool) {
-        uint256 floor = LibSaleSizing.floorAtRate(rate, sell, tolerance);
-        if (floor <= interest) return false;
-        uint256 retired = floor - interest;
+        uint256 floor = LibSaleSizing.floorAtRate(rate, sell, b.tolerance);
+        if (floor <= b.interest) return false;
+        uint256 retired = floor - b.interest;
         if (retired >= loan.principal) return true;
         uint256 debt = loan.principal - retired;
         uint256 value = LibFallback.toPrincipal(rate, loan.collateralAmount - sell);
         if (value == 0) return false;
-        if (Math.mulDiv(value, liqThresholdWad, debt) < h) return false;
-        return capBps == 0 || Math.mulDiv(debt, LibVaipakam.BASIS_POINTS, value, Math.Rounding.Ceil) <= capBps;
+        if (Math.mulDiv(value, b.L, debt) < b.h) return false;
+        return b.capBps == 0 || Math.mulDiv(debt, LibVaipakam.BASIS_POINTS, value, Math.Rounding.Ceil) <= b.capBps;
     }
 
     /// @dev True when the holder's collateral top-up could run now and would

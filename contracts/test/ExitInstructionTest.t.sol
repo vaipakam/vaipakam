@@ -430,9 +430,13 @@ contract ExitInstructionTest is SetupTest {
     /// @dev A loan of 1,000 principal against 2,000 collateral, opening limit
     ///      `cap`, in tokens with `pDec` and `cDec` decimals.
     function _unitLoan(uint8 pDec, uint8 cDec, uint16 cap) internal {
+        _unitLoanOf(pDec, cDec, cap, 1_000, 2_000);
+    }
+
+    function _unitLoanOf(uint8 pDec, uint8 cDec, uint16 cap, uint256 principal, uint256 collateral) internal {
         principalAsset = new ERC20Mock("PrincipalU", "PRINU", pDec);
         collateralAsset = new ERC20Mock("CollateralU", "COLLU", cDec);
-        uint256 coll = 2_000 * 10 ** cDec;
+        uint256 coll = collateral * 10 ** cDec;
         collateralAsset.mint(borrowerVault, coll);
         TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(
             borrowerEoa, address(collateralAsset), coll
@@ -442,7 +446,7 @@ contract ExitInstructionTest is SetupTest {
         principalAsset.mint(address(adapter1), 10_000 * 10 ** pDec);
         _scaffold(true);
         LibVaipakam.Loan memory l = _withCap(cap);
-        l.principal = 1_000 * 10 ** pDec;
+        l.principal = principal * 10 ** pDec;
         l.collateralAmount = coll;
         TestMutatorFacet(address(diamond)).setLoan(LOAN, l);
     }
@@ -485,6 +489,23 @@ contract ExitInstructionTest is SetupTest {
         vm.prank(runner);
         _x().runReduce(LOAN, _routes(1), type(uint64).max);
         assertGe(_hf(), 1.25e18, "target reached");
+    }
+
+    /// @dev The rounded result is not monotone in the sale (here 12 reaches
+    ///      the target, 13 does not, 14 does): the least is still found.
+    function test_7_reduceFindsTheLeastSaleThoughRoundingIsNotMonotone() public {
+        _unitLoanOf(0, 0, 8000, 11, 20);
+        _set(REDUCE, LEVEL, 1.5e18, 100, false);
+        _price(address(collateralAsset), 0.75e8);
+        LibTestCalmPair.checkpoint(address(diamond), address(collateralAsset), address(principalAsset));
+        ExitInstructionFacet.ExitPreview memory pv = _x().previewExit(LOAN);
+        assertEq(pv.skip, 0, "due");
+        assertEq(pv.form, REDUCE);
+        assertEq(pv.collateralToSell, 12, "the least sale");
+        adapter1.setOutputMultiplierBps(7425);
+        vm.prank(runner);
+        _x().runReduce(LOAN, _routes(1), type(uint64).max);
+        assertGe(_hf(), 1.5e18, "target reached");
     }
 
     function test_7_reduceHoldsTheCapInWholeUnits() public {
