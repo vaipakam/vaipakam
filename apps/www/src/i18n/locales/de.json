@@ -359,7 +359,7 @@
       },
       "keepers": {
         "q": "Was sind Keeper, und können sie meine Vermögenswerte nehmen?",
-        "a1": "Keeper sind optionale <s>delegierte Rollenverwalter</s>. Ein Keeper, den Sie freigeben, kann die Schritte, die Sie ihm erlaubt haben, in Ihrem Namen ausführen (zum Beispiel einen von Ihnen begonnenen Kreditverkauf oder Offset abschließen oder einen Kredit verlängern), aber er <s2>kann keine Vermögenswerte beanspruchen</s2>. Ansprüche sind immer an den aktuellen Inhaber des betreffenden Vaipakam-Positions-NFT gebunden – also an den Nutzer, sofern er es nicht übertragen hat.",
+        "a1": "Keeper sind optionale <s>delegierte Rollenverwalter</s>. Ein Keeper, den Sie freigeben, kann die Schritte, die Sie ihm erlaubt haben, in Ihrem Namen ausführen (zum Beispiel einen Kredit innerhalb der Grenzen verlängern, die beide Seiten gesetzt haben, oder Ihr geschütztes Konto sperren, wenn Sie den Befehl LOCK aus Ihrem verknüpften Chat senden), aber er <s2>kann keine Vermögenswerte beanspruchen</s2>. Ansprüche sind immer an den aktuellen Inhaber des betreffenden Vaipakam-Positions-NFT gebunden – also an den Nutzer, sofern er es nicht übertragen hat.",
         "a2": "Einen Keeper zu aktivieren erfordert konstruktionsbedingt <s>zwei Zustimmungen</s>:",
         "li1": "<s>Nutzerebene:</s> In den erweiterten Einstellungen muss der Nutzer den Keeper-Zugriff aktivieren und den Keeper freigeben, wobei er auswählt, welche Schritte dieser ausführen darf.",
         "li2": "<s>Auf Positionsebene:</s> Der Angebots- (oder Annahme-) Ablauf muss die Keeper-Ausführung für genau diese Position aktiviert haben.",

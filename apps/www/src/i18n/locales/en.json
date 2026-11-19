@@ -422,7 +422,7 @@
       },
       "keepers": {
         "q": "What are keepers, and can they take my assets?",
-        "a1": "Keepers are optional <s>delegated role-managers</s>. A keeper you approve can take the steps you allowed it on your behalf (for example, finishing a loan sale or an offset you started, or extending a loan), but it <s2>cannot claim assets</s2>. Claims are always locked to whoever currently holds the relevant Vaipakam position NFT, which is the user unless they have transferred it.",
+        "a1": "Keepers are optional <s>delegated role-managers</s>. A keeper you approve can take the steps you allowed it on your behalf (for example, extending a loan within the limits both sides set, or locking your protected account when you send the LOCK command from your linked chat), but it <s2>cannot claim assets</s2>. Claims are always locked to whoever currently holds the relevant Vaipakam position NFT, which is the user unless they have transferred it.",
         "a2": "Enabling a keeper takes <s>two opt-ins</s>, by design:",
         "li1": "<s>User-level:</s> in advanced settings, the user must turn on keeper access and approve the keeper, choosing which steps it may take.",
         "li2": "<s>Position-level:</s> the offer (or accept) flow must have keeper execution enabled for that specific position.",

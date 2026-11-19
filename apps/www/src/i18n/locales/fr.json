@@ -359,7 +359,7 @@
       },
       "keepers": {
         "q": "Que sont les keepers, et peuvent-ils prendre mes actifs ?",
-        "a1": "Les keepers sont des <s>gestionnaires de rôles délégués</s> optionnels. Un keeper que vous approuvez peut effectuer en votre nom les étapes que vous lui avez permises (par exemple finaliser une vente de prêt ou un offset que vous avez lancé, ou prolonger un prêt), mais il <s2>ne peut pas réclamer d'actifs</s2>. Les réclamations restent toujours liées au détenteur actuel du NFT de position Vaipakam concerné, c'est-à-dire l'utilisateur, sauf s'il l'a transféré.",
+        "a1": "Les keepers sont des <s>gestionnaires de rôles délégués</s> optionnels. Un keeper que vous approuvez peut effectuer en votre nom les étapes que vous lui avez permises (par exemple prolonger un prêt dans les limites fixées par les deux parties, ou verrouiller votre compte protégé quand vous envoyez la commande LOCK depuis votre chat lié), mais il <s2>ne peut pas réclamer d'actifs</s2>. Les réclamations restent toujours liées au détenteur actuel du NFT de position Vaipakam concerné, c'est-à-dire l'utilisateur, sauf s'il l'a transféré.",
         "a2": "Activer un keeper requiert <s>deux opt-ins</s>, par conception :",
         "li1": "<s>Au niveau de l'utilisateur :</s> dans les paramètres avancés, l'utilisateur doit activer l'accès keeper et approuver le keeper, en choisissant les étapes qu'il peut effectuer.",
         "li2": "<s>Au niveau position :</s> le flux d'offre (ou d'acceptation) doit avoir l'exécution keeper activée pour cette position précise.",
