@@ -26,9 +26,15 @@
  * (claimables, notifications, by-participant): they are chain data, but they
  * exist to serve one wallet's own page, not a public feed.
  *
- * LIMITS. A per-IP budget (`PUBLIC_FEED_RATELIMIT`, 120 a minute, fails
- * closed like every limiter here) taken before any read, and each route's
- * own cache time, stated in `about.cacheSeconds`.
+ * PARAMETERS. Each route lists the query parameters it takes. Only those
+ * and `chainId` reach the handler; any other is refused with a 400 naming
+ * it, so a caller never relies on an app-only switch that may change.
+ *
+ * LIMITS. One per-IP budget for every feed route (`PUBLIC_FEED_RATELIMIT`,
+ * 120 a minute, fails closed like every limiter here) taken before any
+ * read. Cloudflare counts it per location, so the figure is approximate. A
+ * 429 states the limit and period and carries Retry-After. Each response
+ * states its own cache time in `about.cacheSeconds`.
  */
 import { type Env } from './env';
 import { redactedError } from '@vaipakam/lib/errorDescription';
@@ -63,6 +69,12 @@ export interface FeedAbout {
   excludes: string[];
 }
 
+/** The per-IP budget `wrangler.jsonc` declares for `PUBLIC_FEED_RATELIMIT`. */
+export const FEED_RATE_LIMIT = Object.freeze({ perIp: 120, periodSeconds: 60 });
+
+const PAGE = ['limit', 'before'] as const;
+const PAIR_TERM = ['lendingAsset', 'collateralAsset', 'durationDays'] as const;
+
 type Handler = (req: Request, env: Env, ...params: string[]) => Promise<Response>;
 
 interface FeedRoute {
@@ -73,6 +85,8 @@ interface FeedRoute {
   /** The app route the handler serves, with `$1` for the captured id. */
   target: string;
   handler: Handler;
+  /** The query parameters the route takes, besides `chainId`. */
+  params: readonly string[];
   about: FeedAbout;
 }
 
@@ -88,6 +102,7 @@ export const FEED_ROUTES: readonly FeedRoute[] = Object.freeze([
     path: '/offers/active',
     target: '/offers/active',
     handler: handleOffersActive,
+    params: [...PAGE, ...PAIR_TERM, 'excludeExpired', 'excludeSaleVehicles', 'excludeOffsetVehicles'],
     about: {
       what: 'The open offer book, paginated.',
       source: CHAIN_EVENTS,
@@ -99,6 +114,7 @@ export const FEED_ROUTES: readonly FeedRoute[] = Object.freeze([
     path: '/offers/recent',
     target: '/offers/recent',
     handler: handleOffersRecent,
+    params: [...PAGE, ...PAIR_TERM],
     about: { what: 'Recently created offers.', source: CHAIN_EVENTS, excludes: [] },
   },
   {
@@ -106,8 +122,9 @@ export const FEED_ROUTES: readonly FeedRoute[] = Object.freeze([
     path: '/offers/markets',
     target: '/offers/markets',
     handler: handleOffersMarkets,
+    params: [],
     about: {
-      what: 'Quotable (lending asset, collateral asset, term) markets with their open-offer aggregates.',
+      what: 'Each pair and term (lending asset, collateral asset, term) with open offers, and their open-offer aggregates.',
       source: CHAIN_EVENTS,
       excludes: ['offers that are not open'],
     },
@@ -117,6 +134,7 @@ export const FEED_ROUTES: readonly FeedRoute[] = Object.freeze([
     path: '/offers/stats',
     target: '/offers/stats',
     handler: handleOffersStats,
+    params: [],
     about: { what: 'Open-offer counts and totals.', source: CHAIN_EVENTS, excludes: [] },
   },
   {
@@ -124,6 +142,7 @@ export const FEED_ROUTES: readonly FeedRoute[] = Object.freeze([
     path: '/offers/{id}',
     target: '/offers/$1',
     handler: handleOfferById,
+    params: [],
     about: { what: 'One offer by id.', source: CHAIN_EVENTS, excludes: [] },
   },
   {
@@ -131,6 +150,7 @@ export const FEED_ROUTES: readonly FeedRoute[] = Object.freeze([
     path: '/loans/active',
     target: '/loans/active',
     handler: handleLoansActive,
+    params: [...PAGE],
     about: { what: 'Active loans, paginated.', source: CHAIN_EVENTS, excludes: ['closed loans'] },
   },
   {
@@ -138,10 +158,11 @@ export const FEED_ROUTES: readonly FeedRoute[] = Object.freeze([
     path: '/loans/recent',
     target: '/loans/recent',
     handler: handleLoansRecent,
+    params: [...PAGE, ...PAIR_TERM, 'excludeSaleVehicles'],
     about: {
-      what: 'Recently opened loans, optionally for one market.',
+      what: 'Recently opened loans, optionally for one pair and term.',
       source: CHAIN_EVENTS,
-      excludes: ['with a market filter: loans whose agreed terms the chain has not yet confirmed'],
+      excludes: ['with a pair-and-term filter: loans whose agreed terms the chain has not yet confirmed'],
     },
   },
   {
@@ -149,6 +170,7 @@ export const FEED_ROUTES: readonly FeedRoute[] = Object.freeze([
     path: '/loans/stats',
     target: '/loans/stats',
     handler: handleLoansStats,
+    params: [],
     about: {
       what: 'Loan counts by status and the totals the transparency page shows.',
       source: CHAIN_EVENTS,
@@ -160,8 +182,10 @@ export const FEED_ROUTES: readonly FeedRoute[] = Object.freeze([
     path: '/loans/rate-candles',
     target: '/loans/rate-candles',
     handler: handleLoansRateCandles,
+    params: [...PAIR_TERM, 'interval', 'range'],
     about: {
-      what: 'The agreed rates of filled loans in one market, by interval (open, high, low, close).',
+      what:
+        "The agreed rates of this platform's own past loans for one pair and term, by interval (open, high, low, close). `fills` is each interval's sample size.",
       source: `${CHAIN_EVENTS}: each loan's rate and term as agreed when it opened`,
       excludes: [
         'loans whose agreed terms the chain has not yet confirmed (counted as `unplaced`)',
@@ -176,6 +200,7 @@ export const FEED_ROUTES: readonly FeedRoute[] = Object.freeze([
     path: '/loans/{id}',
     target: '/loans/$1',
     handler: handleLoanById,
+    params: [],
     about: { what: 'One loan by id, with its status.', source: CHAIN_EVENTS, excludes: [] },
   },
 ]);
@@ -192,17 +217,28 @@ export function feedCatalogue() {
     prefix: PUBLIC_FEED_PREFIX,
     docs: 'https://github.com/vaipakam/vaipakam/blob/main/docs/PublicDataFeed.md',
     notice: FEED_NOTICE,
-    rateLimit: { perIp: 120, periodSeconds: 60, overLimit: 429 },
+    rateLimit: {
+      ...FEED_RATE_LIMIT,
+      scope: 'one budget across every feed route',
+      overLimit: '429, stating the limit and period, with Retry-After',
+      note: 'Cloudflare counts the budget per location, so the figure is approximate.',
+    },
+    parameters: 'Each route lists its parameters. Any other parameter is refused with a 400 naming it.',
     chainParam: 'Every route takes ?chainId=<id>. Without it the default chain is used.',
     envelope: {
       version: 'v1',
       chainId: 'the chain answered for',
       asOf: '{ block, scannedAt } — the indexer had reached this block when the read began; null when the chain has no cursor yet',
-      about: '{ what, source, excludes[] }',
+      about: '{ what, source, excludes[], cacheSeconds }',
       notice: 'as above',
       data: 'the route’s own answer',
     },
-    routes: FEED_ROUTES.map((r) => ({ method: 'GET', path: `${PUBLIC_FEED_PREFIX}${r.path}`, ...r.about })),
+    routes: FEED_ROUTES.map((r) => ({
+      method: 'GET',
+      path: `${PUBLIC_FEED_PREFIX}${r.path}`,
+      params: ['chainId', ...r.params],
+      ...r.about,
+    })),
   };
 }
 
@@ -243,15 +279,44 @@ export function matchFeedRoute(rest: string): { route: FeedRoute; params: string
   return null;
 }
 
+/** The `max-age` a Cache-Control value states, or null when it states none. */
+export function maxAge(cacheControl: string): number | null {
+  const m = cacheControl.match(/(?:^|,)\s*max-age=(\d+)/);
+  return m ? Number(m[1]) : null;
+}
+
 /** GET /public/v1[/…] */
 export async function handlePublicFeed(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
   const refusal = slotRefusalStatus(await takeCallerSlot(req, env.PUBLIC_FEED_RATELIMIT));
-  if (refusal) return json({ error: refusal.error }, refusal.status, 'no-store');
+  if (refusal) {
+    const res = json(
+      { error: refusal.error, limit: { ...FEED_RATE_LIMIT, per: 'caller IP address, counted per Cloudflare location' } },
+      refusal.status,
+      'no-store',
+    );
+    if (refusal.status === 429) res.headers.set('Retry-After', String(FEED_RATE_LIMIT.periodSeconds));
+    return res;
+  }
   if (url.pathname === PUBLIC_FEED_PREFIX) return json(feedCatalogue(), 200, 'public, max-age=3600');
 
   const hit = matchFeedRoute(url.pathname.slice(PUBLIC_FEED_PREFIX.length));
   if (!hit) return json({ error: 'not-in-feed', catalogue: PUBLIC_FEED_PREFIX }, 404, 'public, max-age=60');
+
+  // Only the route's own parameters and chainId reach the handler.
+  const allowed = new Set(['chainId', ...hit.route.params]);
+  const unknown = [...new Set([...url.searchParams.keys()].filter((k) => !allowed.has(k)))];
+  if (unknown.length > 0) {
+    return json(
+      { error: 'unknown-parameter', parameters: unknown, allowed: [...allowed] },
+      400,
+      'public, max-age=60',
+    );
+  }
+  const forwarded = new URLSearchParams();
+  for (const [k, v] of url.searchParams) if (allowed.has(k)) forwarded.append(k, v);
+  const query = forwarded.toString();
+  const search = query ? `?${query}` : '';
 
   const chainId = requestedChainId(url);
   // The cursor is read BEFORE the data, so `asOf.block` is a floor: every
@@ -272,7 +337,7 @@ export async function handlePublicFeed(req: Request, env: Env): Promise<Response
 
   // The app's own handler answers, on the app's own path.
   const target = hit.route.target.replace('$1', hit.params[0] ?? '');
-  const inner = await hit.route.handler(new Request(`${url.origin}${target}${url.search}`, req), env, ...hit.params);
+  const inner = await hit.route.handler(new Request(`${url.origin}${target}${search}`, req), env, ...hit.params);
   const cache = inner.headers.get('Cache-Control') ?? 'public, max-age=10';
   if (inner.status !== 200) {
     // An error is passed through as it came, with the feed's version so a
@@ -285,7 +350,14 @@ export async function handlePublicFeed(req: Request, env: Env): Promise<Response
   }
   const data: unknown = await inner.json();
   return json(
-    { version: PUBLIC_FEED_VERSION, chainId, asOf, about: hit.route.about, notice: FEED_NOTICE, data },
+    {
+      version: PUBLIC_FEED_VERSION,
+      chainId,
+      asOf,
+      about: { ...hit.route.about, cacheSeconds: maxAge(cache) },
+      notice: FEED_NOTICE,
+      data,
+    },
     200,
     cache,
   );

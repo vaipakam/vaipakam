@@ -2,7 +2,7 @@
 
 The indexer serves a small, versioned, read-only subset of its data for
 anyone to use: the open offer book, loans and their states, the agreed rates
-of filled loans by market, and the totals the transparency page shows. This
+of this platform's own past loans by pair and term, and the totals the transparency page shows. This
 page is the feed's documentation. The feed also describes itself: a `GET` of
 the prefix returns the same catalogue as JSON.
 
@@ -49,7 +49,7 @@ A successful answer is wrapped:
 | `version` | `"v1"` |
 | `chainId` | the chain answered for |
 | `asOf` | `{ block, scannedAt }`: the block the indexer had reached on that chain when the read began, and the time (Unix seconds) it recorded reaching it. `null` when the indexer has not yet scanned that chain. |
-| `about` | `{ what, source, excludes[] }`: what the route returns, where its figures come from, and what they leave out |
+| `about` | `{ what, source, excludes[], cacheSeconds }`: what the route returns, where its figures come from, what they leave out, and how long the answer may be cached (`null` when the route states no cache time) |
 | `notice` | the notice above |
 | `data` | the route's own answer |
 
@@ -67,29 +67,39 @@ today are testnets; the platform is not live on any mainnet.
 
 ## Limits
 
-- **120 requests a minute per IP address**, counted across all feed routes
-  together. Over the limit the feed answers `429`. If the limiter itself is
-  unavailable the feed refuses with `503` rather than serving unmetered.
-- Each route states its own cache time in `Cache-Control`. A caller polling
-  faster than that receives the same answer.
+- **120 requests a minute per IP address**, one budget across all feed
+  routes together. Cloudflare counts it per location, so the figure is
+  approximate. Over the limit the feed answers `429`, with a body stating
+  the limit and the period and a `Retry-After` header. If the limiter
+  itself is unavailable the feed refuses with `503` rather than serving
+  unmetered.
+- Each route states its own cache time in `Cache-Control` and in
+  `about.cacheSeconds`. A caller polling faster than that receives the same
+  answer.
 
 ## Routes
 
 | Route | What it returns | Query parameters |
 | --- | --- | --- |
-| `/offers/active` | The open offer book, paginated. | `limit`, `before`, `excludeExpired`, `excludeSaleVehicles`, `excludeOffsetVehicles` |
-| `/offers/recent` | Recently created offers. | `limit`, `before` |
-| `/offers/markets` | Quotable markets (lending asset, collateral asset, term) with their open-offer aggregates. | |
+| `/offers/active` | The open offer book, paginated. | `limit`, `before`, `lendingAsset`, `collateralAsset`, `durationDays`, `excludeExpired`, `excludeSaleVehicles`, `excludeOffsetVehicles` |
+| `/offers/recent` | Recently created offers. | `limit`, `before`, `lendingAsset`, `collateralAsset`, `durationDays` |
+| `/offers/markets` | Each pair and term (lending asset, collateral asset, term) with open offers, and their open-offer aggregates. | |
 | `/offers/stats` | Open-offer counts and totals. | |
 | `/offers/{id}` | One offer by id. | |
 | `/loans/active` | Active loans, paginated. | `limit`, `before` |
-| `/loans/recent` | Recently opened loans, optionally for one market. | `limit`, `before`, `excludeSaleVehicles`, and together `lendingAsset`, `collateralAsset`, `durationDays` |
+| `/loans/recent` | Recently opened loans, optionally for one pair and term. | `limit`, `before`, `excludeSaleVehicles`, and together `lendingAsset`, `collateralAsset`, `durationDays` |
 | `/loans/stats` | Loan counts by status and the totals the transparency page shows. | |
-| `/loans/rate-candles` | The agreed rates of filled loans in one market, by interval (open, high, low, close). | `lendingAsset`, `collateralAsset`, `durationDays` (all required), `interval` (`1h`, `4h`, `1d`), `range` (`7d`, `30d`, `90d`, `all`) |
+| `/loans/rate-candles` | The agreed rates of this platform's own past loans for one pair and term, by interval (open, high, low, close). `fills` is each interval's sample size. | `lendingAsset`, `collateralAsset`, `durationDays` (all required), `interval` (`1h`, `4h`, `1d`), `range` (`7d`, `30d`, `90d`, `all`) |
 | `/loans/{id}` | One loan by id, with its status. | |
 
+Each route takes only the parameters listed (and `chainId`). Any other
+parameter is refused with `400` and `{"error": "unknown-parameter",
+"parameters": [...], "allowed": [...]}` naming it.
+
 Each route's `data` is exactly the answer the indexer's own route at the
-same path gives the app; the indexer's README describes those shapes.
+same path gives the app; the indexer's README describes those shapes. The
+field names each route returns in v1 are pinned by a test: a field may be
+added, never removed or renamed.
 
 ### What the figures leave out
 
@@ -104,16 +114,16 @@ Each response's `about.excludes` lists this for the route. In short:
   loans whose agreed terms the chain has not yet confirmed (these are
   counted, as `unplaced`, but not drawn). An interval with no filled loan
   has no figure; nothing is filled in for it.
-- **Recent loans for one market** leave out loans whose agreed terms the
+- **Recent loans for one pair and term** leave out loans whose agreed terms the
   chain has not yet confirmed.
 
 ## Errors
 
 | Status | Meaning |
 | --- | --- |
-| `400` | a query parameter is outside what the route accepts |
+| `400` | a parameter the route does not take (named in the body), or a value outside what the route accepts |
 | `404` | not a feed route, or the offer or loan does not exist |
-| `429` | the per-IP limit is spent; try again after a minute |
+| `429` | the per-IP limit is spent; the body states the limit and period, and `Retry-After` says when to try again |
 | `503` | the chain is not served, or the feed cannot read its data right now |
 
 An error from a route is passed through with its own body and the
