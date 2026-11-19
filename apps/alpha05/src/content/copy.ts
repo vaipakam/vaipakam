@@ -4100,10 +4100,10 @@ export const copy = {
       'If the borrower repays after the due date, a late fee is added for you. Once the grace period of {{span}} ends, anyone can start the default, which settles the loan from the collateral.',
     ),
     lateBorrowerFee: A(
-      'If you repay after the due date, a late fee is added: {{first}} of the principal on the first day, {{perDay}} more each further day, at most {{cap}}. Once the grace period of {{span}} ends, anyone can start the default, which settles the loan from your collateral.',
+      'If you repay after the due date, a late fee is added: {{first}}% of the principal on the first day, {{perDay}}% more each further day, at most {{cap}}%. Once the grace period of {{span}} ends, anyone can start the default, which settles the loan from your collateral.',
     ),
     lateLenderFee: A(
-      'If the borrower repays after the due date, a late fee is added for you: {{first}} of the principal on the first day, {{perDay}} more each further day, at most {{cap}}. Once the grace period of {{span}} ends, anyone can start the default, which settles the loan from the collateral.',
+      'If the borrower repays after the due date, a late fee is added for you: {{first}}% of the principal on the first day, {{perDay}}% more each further day, at most {{cap}}%. Once the grace period of {{span}} ends, anyone can start the default, which settles the loan from the collateral.',
     ),
     earlyFullBorrower: A('If you repay early, the whole term’s interest, {{full}}, is still owed. The initiation fee is not returned.'),
     earlyProRataBorrower: A('If you repay halfway through the term, you pay about {{half}} in interest instead of {{full}}. The initiation fee is not returned.'),
