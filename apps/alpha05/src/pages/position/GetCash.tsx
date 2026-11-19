@@ -522,6 +522,7 @@ function CashFlow(props: GetCashProps & { route: Route; read: GetCashRead | null
         tx={tx}
         identity={identity}
         reviewedFor={openedFor ?? tx.frozen?.identity ?? identity}
+        publicQueue
         receipt={receipt}
         recheck={recheck}
         describeAsset={describeAsset}

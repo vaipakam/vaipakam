@@ -449,6 +449,7 @@ export function BorrowNowFlow({ terms, chain, own, meta, termsState, onEdit, onR
           tx={tx}
           identity={identity}
           reviewedFor={review?.identity ?? tx.frozen?.identity ?? identity}
+          publicQueue
           receipt={review ? borrowNowReceipt(review, diamond, meta, copy) : null}
           recheck={recheck}
           describeAsset={describeAsset}

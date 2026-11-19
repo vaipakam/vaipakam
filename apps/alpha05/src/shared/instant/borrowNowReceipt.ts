@@ -97,7 +97,14 @@ export function borrowNowReceipt(r: BorrowNowReview, diamond: Hex, meta: TokenMe
       });
     }
   }
-  if (r.walletPart > 0n) rows.push({ label: text('borrowNow.rowFromWallet'), value: { kind: 'amount', asset: t.collateral, amount: r.walletPart }, binding: true, movesOut: true });
+  // The split between vault and wallet is worked out again when the call
+  // runs: if the vault's free collateral drops before then, more comes from
+  // the wallet, up to what the approval allows. So the planned wallet part
+  // is an estimate, and the binding figure is that ceiling.
+  const allowanceAfter = r.approvalNeeded ? r.walletPart : r.allowance;
+  const walletMost = allowanceAfter < t.collateralOffered ? allowanceAfter : t.collateralOffered;
+  if (r.walletPart > 0n) rows.push({ label: text('borrowNow.rowFromWallet'), value: { kind: 'amount', asset: t.collateral, amount: r.walletPart }, binding: false });
+  if (walletMost > 0n) rows.push({ label: text('borrowNow.rowWalletMost'), value: { kind: 'amount', asset: t.collateral, amount: walletMost }, binding: true, movesOut: true });
   rows.push(
     r.approvalSteps > 0
       ? {
