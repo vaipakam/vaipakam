@@ -32,6 +32,7 @@ import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.so
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibDelivery} from "../src/libraries/LibDelivery.sol";
+import {LibMetricsHooks} from "../src/libraries/LibMetricsHooks.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
@@ -656,6 +657,7 @@ contract MeasuredDeliveryTest is SetupTest {
         ERC20Mock(mockERC20).mint(address(diamond), amount);
         _chargesFee(mockERC20, address(diamond));
 
+        vm.recordLogs();
         vm.prank(address(diamond));
         uint256 delivered = EncumbranceMutateFacet(address(diamond)).holdActiveLenderResident(
             LOAN, mockERC20, amount, amount, amount
@@ -664,6 +666,32 @@ contract MeasuredDeliveryTest is SetupTest {
         assertEq(delivered, _less(amount), "the vault received less than was sent");
         (, uint256 interestPaid) = MetricsFacet(address(diamond)).getLifetimeLendingTotals(mockERC20);
         assertEq(interestPaid, delivered, "only the interest that arrived is counted");
+        // #3755 — the per-loan events state the same figure: the whole slice
+        // paid, then the part that did not arrive taken back.
+        (uint256 paid, uint256 takenBack) = _interestEvents(vm.getRecordedLogs(), LOAN);
+        assertEq(paid, amount, "LoanInterestPaid states the whole slice");
+        assertEq(takenBack, amount - delivered, "LoanInterestUndelivered states the shortfall");
+        assertEq(paid - takenBack, interestPaid, "the events net to the counter");
+    }
+
+    /// @dev #3755 — the sums of `LoanInterestPaid` and
+    ///      `LoanInterestUndelivered` for `loanId` in `logs`, each checked to
+    ///      name the principal asset.
+    function _interestEvents(Vm.Log[] memory logs, uint256 loanId)
+        internal
+        view
+        returns (uint256 paid, uint256 takenBack)
+    {
+        for (uint256 i; i < logs.length; ++i) {
+            bytes32 t = logs[i].topics[0];
+            bool isPaid = t == LibMetricsHooks.LoanInterestPaid.selector;
+            if (!isPaid && t != LibMetricsHooks.LoanInterestUndelivered.selector) continue;
+            if (uint256(logs[i].topics[1]) != loanId) continue;
+            assertEq(address(uint160(uint256(logs[i].topics[2]))), mockERC20, "the principal asset");
+            uint256 gross = abi.decode(logs[i].data, (uint256));
+            if (isPaid) paid += gross;
+            else takenBack += gross;
+        }
     }
 
     /// @notice The control: the same frozen park arriving in full counts the
@@ -676,6 +704,7 @@ contract MeasuredDeliveryTest is SetupTest {
         uint256 amount = 100 ether;
         ERC20Mock(mockERC20).mint(address(diamond), amount);
 
+        vm.recordLogs();
         vm.prank(address(diamond));
         uint256 delivered = EncumbranceMutateFacet(address(diamond)).holdActiveLenderResident(
             LOAN, mockERC20, amount, amount, amount
@@ -684,6 +713,9 @@ contract MeasuredDeliveryTest is SetupTest {
         assertEq(delivered, amount, "the whole payout arrived");
         (, uint256 interestPaid) = MetricsFacet(address(diamond)).getLifetimeLendingTotals(mockERC20);
         assertEq(interestPaid, amount, "the whole slice is counted");
+        (uint256 paid, uint256 takenBack) = _interestEvents(vm.getRecordedLogs(), LOAN);
+        assertEq(paid, amount, "#3755: LoanInterestPaid states the whole slice");
+        assertEq(takenBack, 0, "#3755: nothing taken back");
     }
 
     // -- Voluntary flows refuse a short arrival at every hop ----------------
