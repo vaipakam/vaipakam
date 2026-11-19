@@ -22,6 +22,13 @@ the reward messenger already knew and now passes on. A new public read
 reports, for tier traffic and for the day broadcast separately, the
 chain a Diamond accepts it from, or zero when it accepts none.
 
+Because the messenger now calls its Diamond through a different entry,
+the reward messenger's published wire generation goes up by one. The
+all-facets refresh upgrades a messenger whose generation is below the
+build's, so a refresh installs the new messenger alongside the new
+receiver; otherwise every day broadcast on a refreshed mirror would be
+refused as an unknown function.
+
 The next deploy is fresh, so no running chain has to cross this change
 in place.
 
