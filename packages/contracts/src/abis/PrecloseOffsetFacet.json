@@ -65,6 +65,11 @@
         "internalType": "address"
       },
       {
+        "name": "rateFarFromAverageAcknowledged",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
         "name": "validUntil",
         "type": "uint64",
         "internalType": "uint64"

@@ -17,6 +17,7 @@ import {LibOfferAdmission} from "../libraries/LibOfferAdmission.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
 import {LegalFacet} from "./LegalFacet.sol";
+import {RateLinkFacet} from "./RateLinkFacet.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {OfferPriceGuardFacet} from "./OfferPriceGuardFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
@@ -146,6 +147,25 @@ contract OfferPreviewFacet {
             ? (_isLender ? offer.interestRateBps : offer.interestRateBpsMax)
             : offer.interestRateBps;
         preview.collateralAmount = offer.collateralAmount;
+
+        // #3635 A — a rate-linked offer opens at its EFFECTIVE endpoint for
+        // its term (`RateLinkFacet.originationRate`), so the preview quotes
+        // that rate, read through the same rule, and reports a link that
+        // cannot be used at its place in the chain below.
+        uint8 _linkRefusal;
+        if (_isErc20 && offer.linkKind != 0) {
+            (uint256 _lo, uint256 _hi, uint8 _refusal) = RateLinkFacet(address(this)).effectiveRateBounds(
+                offer.lendingAsset,
+                offer.durationDays,
+                offer.linkKind,
+                offer.linkMarginBps,
+                _isLender,
+                offer.interestRateBps,
+                offer.interestRateBpsMax
+            );
+            _linkRefusal = _refusal;
+            if (_refusal == 0) preview.interestRateBps = _isLender ? _lo : _hi;
+        }
 
         // #951 v2 (Codex #959 bind-to-live) — for a lender-sale vehicle the buyer
         // binds principal / collateral against the LIVE loan (not the immutable
@@ -511,6 +531,17 @@ contract OfferPreviewFacet {
             return preview;
         }
 
+        // #3635 A — loan creation then sets a linked offer's rate, refusing
+        // a link that cannot be used or a range the link has emptied.
+        if (_linkRefusal != 0) {
+            preview.errorCode = _linkRefusal == 1
+                ? OfferAcceptFacet.AcceptError.RateReferenceUnavailable
+                : _linkRefusal == 2
+                    ? OfferAcceptFacet.AcceptError.RateReferenceUnusual
+                    : OfferAcceptFacet.AcceptError.RateRangeEmpty;
+            return preview;
+        }
+
         // #2407 — a refinance-tagged offer completes only if it is its target
         // loan's recorded request and no offset is open on that loan;
         // otherwise the refinance hook, which runs after every check above,
@@ -703,6 +734,8 @@ contract OfferPreviewFacet {
         offer.expiresAt = params.expiresAt;
         offer.periodicInterestCadence = params.periodicInterestCadence;
         offer.refinanceTargetLoanId = params.refinanceTargetLoanId;
+        offer.linkKind = params.linkKind;
+        offer.linkMarginBps = params.linkMarginBps;
         offer.creatorRiskAndTermsConsent = true;
     }
 

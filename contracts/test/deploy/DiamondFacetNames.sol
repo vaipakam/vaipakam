@@ -155,7 +155,8 @@ abstract contract DiamondFacetNames {
     ///      reads, split off LenderIntentFacet the same way).
     ///      133 → 136 with `IntegratorFacet` (#3682), `StandingOfferCheckFacet`
     ///      (#3720) and `ReferralFacet` (#3722).
-    function cutFacetNames() internal pure returns (string[136] memory) {
+    ///      136 → 137 with `RateLinkFacet` (#3635 A, #3713).
+    function cutFacetNames() internal pure returns (string[137] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -460,7 +461,9 @@ abstract contract DiamondFacetNames {
             // per-loan fee-entitlement record PR-5c / PR-6 read. Its own facet
             // for a fresh viaIR stack frame off the at-budget accept path and
             // to keep the Full-tariff bytecode off the large OfferAcceptFacet.
-            "FeeEntitlementFacet"
+            "FeeEntitlementFacet",
+            // #3635 A / #3713 — the rate link and the warning band.
+            "RateLinkFacet"
         ];
     }
 }

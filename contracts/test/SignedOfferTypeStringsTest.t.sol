@@ -19,12 +19,12 @@ contract SignedOfferTypeStringsTest is Test {
         "uint256 collateralTokenId,uint256 collateralQuantity,address prepayAsset,"
         "bool allowsPartialRepay,bool allowsPrepayListing,bool allowsParallelSale,"
         "uint64 expiresAt,uint8 fillMode,uint8 periodicInterestCadence,"
-        "uint256 refinanceTargetLoanId,bool useFullTermInterest,uint8 lifecycleFlex,bool creatorFull,"
+        "uint256 refinanceTargetLoanId,bool useFullTermInterest,uint8 lifecycleFlex,address integrator,bool creatorFull,"
         "uint256 creatorMaxCStar,bool creatorAllowFullDowngrade,uint16 maxTreasuryFeeBps,"
         "uint16 maxLoanInitiationFeeBps,address allowedTaker,address coSigner,address signer,"
         "uint256 nonce,uint256 deadline,uint8 setKind,uint256 setLow,uint256 setHigh,"
         "bytes32 setRoot,uint32 setListCount,bytes32 setListHash,bytes32 exclusionsHash,"
-        "uint16 loans,uint64 startTime)";
+        "uint16 loans,uint64 startTime,uint8 linkKind,int16 linkMarginBps,bool rateFarFromAverageAcknowledged)";
 
     function test_offerTypehashIsTheBody() public pure {
         assertEq(LibSignedOffer.SIGNED_OFFER_TYPEHASH, keccak256(bytes(BODY)));
@@ -52,6 +52,6 @@ contract SignedOfferTypeStringsTest is Test {
         bytes memory b = bytes(BODY);
         uint256 commas;
         for (uint256 i; i < b.length; ++i) if (b[i] == ",") ++commas;
-        assertEq(commas + 1, 45);
+        assertEq(commas + 1, 49);
     }
 }

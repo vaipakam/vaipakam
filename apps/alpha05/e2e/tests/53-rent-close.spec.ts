@@ -77,6 +77,9 @@ test('a renter closes a rental: nothing from the wallet, the rent and claim stat
       useFullTermInterest: false,
       lifecycleFlex: 0,
       integrator: '0x0000000000000000000000000000000000000000',
+      linkKind: 0, // #3635 A — no market link
+      linkMarginBps: 0,
+      rateFarFromAverageAcknowledged: false, // #3713
     },
     await txDeadline(sc),
   ]);

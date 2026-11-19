@@ -235,7 +235,10 @@ contract RefinanceFacetTest is SetupTest {
             // is partial-fillable so the matcher can fill it.
             fillMode: target != 0 ? LibVaipakam.FillMode.Aon : LibVaipakam.FillMode.Partial,
             refinanceTargetLoanId: target,
-            useFullTermInterest: false
+            useFullTermInterest: false,
+            linkKind: 0,
+            linkMarginBps: 0,
+            rateFarFromAverageAcknowledged: false
         });
     }
 

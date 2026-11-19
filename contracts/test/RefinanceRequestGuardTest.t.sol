@@ -111,7 +111,10 @@ contract RefinanceRequestGuardTest is SetupTest {
             expiresAt: expiresAt,
             fillMode: fillMode,
             refinanceTargetLoanId: targetLoanId,
-            useFullTermInterest: false
+            useFullTermInterest: false,
+            linkKind: 0,
+            linkMarginBps: 0,
+            rateFarFromAverageAcknowledged: false
         });
     }
 
@@ -157,7 +160,7 @@ contract RefinanceRequestGuardTest is SetupTest {
         calls[2] = abi.encodeCall(PrecloseFacet.transferObligationViaOffer, (loanId, 0, type(uint64).max));
         calls[3] = abi.encodeCall(
             PrecloseOffsetFacet.offsetWithNewOffer,
-            (loanId, 500, 30, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20, type(uint64).max)
+            (loanId, 500, 30, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20, false, type(uint64).max)
         );
         calls[4] = abi.encodeCall(PartialWithdrawalFacet.partialWithdrawCollateral, (loanId, 1));
         calls[5] = abi.encodeCall(SwapToRepayPartialFacet.swapToRepayPartial, (loanId, 1, none, type(uint64).max));
@@ -438,6 +441,7 @@ contract RefinanceRequestGuardTest is SetupTest {
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
         uint256 offsetOfferId = PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(
             loanId, 500, 30, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20,
+            false,
             type(uint64).max
         );
         AutoLifecycleSettingsFacet(address(diamond)).setAutoRefinanceCaps(
@@ -616,6 +620,7 @@ contract RefinanceRequestGuardTest is SetupTest {
         // 29 days: the position waited out its cooldown, so a 30-day offset would outlast the loan.
         uint256 offsetOfferId = PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(
             loanId, 500, 29, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20,
+            false,
             type(uint64).max
         );
         assertGt(offsetOfferId, 0, "precondition: the offset is open");
@@ -655,6 +660,7 @@ contract RefinanceRequestGuardTest is SetupTest {
         // 29 days: the position waited out its cooldown, so a 30-day offset would outlast the loan.
         uint256 offsetOfferId = PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(
             loanId, 500, 29, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20,
+            false,
             type(uint64).max
         );
         vm.stopPrank();

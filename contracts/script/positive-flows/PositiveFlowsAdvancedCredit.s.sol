@@ -631,7 +631,10 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsStaged {
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
         });
     }
 
@@ -677,7 +680,10 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsStaged {
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
         });
     }
 
@@ -795,7 +801,10 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsStaged {
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: false,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
         });
     }
 
@@ -859,7 +868,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsStaged {
             address(weth),
             COLLATERAL_AMOUNT,
             true,                   // creatorRiskAndTermsConsent
-            address(usdc),           // prepayAsset (unused on ERC20 path)
+            address(usdc),           false,           // prepayAsset (unused on ERC20 path)
             type(uint64).max
         );
         vm.stopBroadcast();

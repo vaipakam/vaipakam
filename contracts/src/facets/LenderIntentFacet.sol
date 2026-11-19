@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {RateLinkFacet} from "./RateLinkFacet.sol";
 import {MarketLedgerFacet} from "./MarketLedgerFacet.sol";
 import {OfferPriceGuardFacet} from "./OfferPriceGuardFacet.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
@@ -86,6 +87,23 @@ contract LenderIntentFacet is
         bool requiresKeeperAuth,
         uint64 lendUntil,
         bool acceptsProRata
+    );
+
+    /// @notice #3635 A / #3713 — companion to {LenderIntentSet}, emitted by
+    ///         the same write: the slot's market link on its rate floor and
+    ///         the warnings the floor carries (bit 1 far above the term
+    ///         average for `maxDurationDays`, bit 2 far below). The warnings
+    ///         are derived by the contract, never a caller input. A separate
+    ///         event so {LenderIntentSet}'s emit stays within the stack.
+    /// @custom:event-category state-change/offer-mutation
+    event LenderIntentRateTermsSet(
+        address indexed owner,
+        address indexed lendingAsset,
+        address indexed collateralAsset,
+        uint8 slot,
+        uint8 linkKind,
+        int16 linkMarginBps,
+        uint8 warnings
     );
 
     /// @notice A lender tore down a standing intent for an asset-pair.
@@ -265,6 +283,12 @@ contract LenderIntentFacet is
     ///                           commitment, so the lender consents to the
     ///                           risk/terms framework here, once, at registration
     ///                           (the loans it later materializes inherit it).
+    /// @param rate       #3635 A / #3713 — the market link on the slot's rate
+    ///                   floor (the effective floor is the higher of
+    ///                   `minRateBps` and the linked rate) and the
+    ///                   acknowledgement of a floor outside the warning band
+    ///                   around the term average for `maxDurationDays`. A
+    ///                   re-set that keeps the floor asks for no new flag.
     /// @param validUntil The caller's MANDATORY transaction deadline (#3412):
     ///                   a standing intent is a standing offer, so setting or
     ///                   re-pricing one is price-exposed and a transaction that
@@ -285,6 +309,7 @@ contract LenderIntentFacet is
         uint64 lendUntil,
         bool acceptsProRata,
         bool riskAndTermsConsent,
+        LibVaipakam.IntentRateTerms calldata rate,
         uint64 validUntil
     ) external nonReentrant whenNotPaused {
         LibTiming.requireDeadline(validUntil);
@@ -332,6 +357,13 @@ contract LenderIntentFacet is
         _assertIntentAdmissible(lendingAsset, collateralAsset, minFillAmount);
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint8 warnings = _admitIntentRate(
+            s.lenderIntent[msg.sender][lendingAsset][collateralAsset][slot],
+            lendingAsset,
+            minRateBps,
+            maxDurationDays,
+            rate
+        );
         s.lenderIntent[msg.sender][lendingAsset][collateralAsset][slot] = LibVaipakam
             .LenderIntent({
             active: true,
@@ -344,7 +376,9 @@ contract LenderIntentFacet is
             // #3443 — a fill waits until these terms have stood the minimum age.
             termsSetAt: uint64(block.timestamp),
             lendUntil: lendUntil,
-            acceptsProRata: acceptsProRata
+            acceptsProRata: acceptsProRata,
+            linkKind: rate.linkKind,
+            linkMarginBps: rate.linkMarginBps
         });
 
         // #625 WI-2a — sync the discovery registry. A bare registration commits NO
@@ -374,6 +408,28 @@ contract LenderIntentFacet is
             requiresKeeperAuth,
             lendUntil,
             acceptsProRata
+        );
+        emit LenderIntentRateTermsSet(
+            msg.sender, lendingAsset, collateralAsset, slot, rate.linkKind, rate.linkMarginBps, warnings
+        );
+    }
+
+    /// @dev #3635 A / #3713 — the slot's rate terms through their one host
+    ///      (`RateLinkFacet`): the link is admitted, then the band is checked
+    ///      on the floor for the longest term the slot lends at. A re-set of
+    ///      a live slot that keeps its floor asks for no new flag. Returns
+    ///      the warnings mask.
+    function _admitIntentRate(
+        LibVaipakam.LenderIntent storage current,
+        address lendingAsset,
+        uint256 minRateBps,
+        uint32 maxDurationDays,
+        LibVaipakam.IntentRateTerms calldata rate
+    ) private view returns (uint8) {
+        RateLinkFacet(address(this)).requireLinkAdmissible(lendingAsset, rate.linkKind, rate.linkMarginBps);
+        bool floorKept = current.active && current.minRateBps == minRateBps;
+        return RateLinkFacet(address(this)).checkRateWrite(
+            lendingAsset, maxDurationDays, minRateBps, rate.rateFarFromAverageAcknowledged || floorKept
         );
     }
 

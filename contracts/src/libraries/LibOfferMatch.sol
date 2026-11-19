@@ -14,6 +14,7 @@ import {LibAuth} from "./LibAuth.sol";
 import {LibPausable} from "./LibPausable.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 import {RiskPreviewFacet} from "../facets/RiskPreviewFacet.sol";
+import {RateLinkFacet} from "../facets/RateLinkFacet.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {LibIntentTerms} from "./LibIntentTerms.sol";
 
@@ -116,7 +117,15 @@ library LibOfferMatch {
         // #3734 — a party of the loan has not accepted the Terms in force
         // (`LibTerms.TermsNotAccepted`); `LegalFacet.termsBlocker` names it.
         // Reported by the match and intent previews. Appended.
-        TermsNotAccepted
+        TermsNotAccepted,
+        // #3635 A — a maker's rate limit is linked to the rate reference and
+        // the link cannot be used now: the reference is not available for the
+        // window this loan's term reads (`ReferenceUnavailable`), or the term
+        // is over 30 days and the reference is unusual or not known
+        // (`ReferenceUnusual`). `matchOffers` reverts
+        // `RateLinkUnavailable(refusal)`. Transient. Appended.
+        ReferenceUnavailable,
+        ReferenceUnusual
     }
 
     /// @notice Structured return from `previewMatch`. Bots check
@@ -131,6 +140,10 @@ library LibOfferMatch {
         uint256 matchRateBps;
         uint256 reqCollateral;
         uint256 lenderRemainingPostMatch;
+        // #3635 A — a maker's market link set the bound the rate overlap
+        // used (a linked floor above the typed floor, or a linked ceiling
+        // below the typed ceiling). The loan records it as `rateFromLink`.
+        bool rateFromLink;
     }
 
     /// @notice #625 WI-2b — intent-fill preview failure codes. Each mirrors,
@@ -299,13 +312,6 @@ library LibOfferMatch {
         }
         // floor(c * a / m) <= available  <=>  c * a < (available + 1) * m.
         return Math.mulDiv(available + 1, L.amountMax, L.collateralAmount, Math.Rounding.Ceil) - 1;
-    }
-
-    /// @notice Pure midpoint helper: `(a + b) / 2`. Both args must be
-    ///         > 0 in normal use; caller is responsible for guarding
-    ///         `a + b` overflow (BPS / fee-amount math always fits).
-    function midpoint(uint256 a, uint256 b) internal pure returns (uint256) {
-        unchecked { return (a + b) / 2; }
     }
 
     // Note: `_effBorrowerAmountMax` was deleted in #183 (Canonical
@@ -659,18 +665,32 @@ library LibOfferMatch {
             }
         }
 
-        // Range overlap on rate.
-        uint256 rateLo = L.interestRateBps > B.interestRateBps
-            ? L.interestRateBps
-            : B.interestRateBps;
-        uint256 rateHi = L.interestRateBpsMax < B.interestRateBpsMax
-            ? L.interestRateBpsMax
-            : B.interestRateBpsMax;
-        if (rateLo > rateHi) {
-            r.errorCode = MatchError.RateNoOverlap;
-            return r;
+        // Rate: the overlap of each maker's EFFECTIVE bounds (the typed range
+        // tightened by its market link for this loan's term) and its
+        // midpoint, by the one rule on `RateLinkFacet` (#3635 A).
+        {
+            uint8 rateRefusal;
+            (r.matchRateBps, rateRefusal, r.rateFromLink) = RateLinkFacet(address(this)).matchRate(
+                RateLinkFacet.PairRates({
+                    asset: L.lendingAsset,
+                    termDays: B.durationDays,
+                    lenderFloor: L.interestRateBps,
+                    lenderMax: L.interestRateBpsMax,
+                    lenderKind: L.linkKind,
+                    lenderMargin: L.linkMarginBps,
+                    borrowerFloor: B.interestRateBps,
+                    borrowerMax: B.interestRateBpsMax,
+                    borrowerKind: B.linkKind,
+                    borrowerMargin: B.linkMarginBps
+                })
+            );
+            if (rateRefusal != 0) {
+                r.errorCode = rateRefusal == 3
+                    ? MatchError.RateNoOverlap
+                    : rateRefusal == 1 ? MatchError.ReferenceUnavailable : MatchError.ReferenceUnusual;
+                return r;
+            }
         }
-        r.matchRateBps = midpoint(rateLo, rateHi);
 
         // Pro-rated collateral required for THIS match (§10.4).
         // Lender's `collateralAmount` is the requirement at amountMax;
@@ -1092,7 +1112,7 @@ library LibOfferMatch {
             collateralAsset,
             fillAmount,
             reqColl,
-            intent.minRateBps,
+            intent,
             cp
         );
         MatchResult memory mr = _previewMatchCore(slice, cp, s, 0);
@@ -1130,7 +1150,7 @@ library LibOfferMatch {
         address collateralAsset,
         uint256 fillAmount,
         uint256 reqColl,
-        uint256 minRateBps,
+        LibVaipakam.LenderIntent memory intent,
         LibVaipakam.Offer storage cp
     ) private view returns (LibVaipakam.Offer memory o) {
         o.creator = creator;
@@ -1141,7 +1161,10 @@ library LibOfferMatch {
         o.collateralAssetType = LibVaipakam.AssetType.ERC20;
         o.amount = fillAmount;
         o.amountMax = fillAmount; // single-fill slice
-        o.interestRateBps = minRateBps; // the lender's floor
+        o.interestRateBps = intent.minRateBps; // the lender's floor
+        // #3635 A — the slot's market link, as the materialized slice carries.
+        o.linkKind = intent.linkKind;
+        o.linkMarginBps = intent.linkMarginBps;
         o.interestRateBpsMax = LibVaipakam.MAX_INTEREST_BPS; // accept any rate ≥ floor
         o.collateralAmount = reqColl; // init-LTV-cap requirement
         o.collateralAmountMax = reqColl;

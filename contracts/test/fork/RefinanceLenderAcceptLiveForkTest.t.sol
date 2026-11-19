@@ -172,7 +172,10 @@ contract RefinanceLenderAcceptLiveForkTest is Test {
             // Refinance-tagged requests are all-or-nothing.
             fillMode: LibVaipakam.FillMode.Aon,
             refinanceTargetLoanId: refinanceTarget,
-            useFullTermInterest: false
+            useFullTermInterest: false,
+            linkKind: 0,
+            linkMarginBps: 0,
+            rateFarFromAverageAcknowledged: false
         });
     }
 

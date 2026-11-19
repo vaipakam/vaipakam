@@ -58,6 +58,8 @@ function record(p: Partial<EditOfferRecord> = {}): EditOfferRecord {
     parallelSaleOrderHash: ZERO_HASH,
     refinanceTargetLoanId: 0n,
     backstopEligibleAfter: 0n,
+    linkKind: 0,
+    linkMarginBps: 0,
     ...p,
   };
 }
@@ -255,8 +257,8 @@ function modifiedLog(offerId: bigint, t: EditTerms): Log {
   const abi = OfferMutateFacetABI as Abi;
   const topics = encodeEventTopics({ abi, eventName: 'OfferModified', args: { offerId, creator: ME } });
   const data = encodeAbiParameters(
-    [{ type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'address' }],
-    [t.amount, t.amountMax, t.interestRateBps, t.interestRateBpsMax, t.collateralAmount, t.collateralAmountMax, ZERO_ADDRESS],
+    [{ type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'address' }, { type: 'uint8' }, { type: 'int16' }, { type: 'uint8' }],
+    [t.amount, t.amountMax, t.interestRateBps, t.interestRateBpsMax, t.collateralAmount, t.collateralAmountMax, ZERO_ADDRESS, 0, 0, 0],
   );
   return { address: DIAMOND, topics, data } as unknown as Log;
 }

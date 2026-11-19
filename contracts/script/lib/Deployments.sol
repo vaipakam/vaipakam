@@ -607,6 +607,9 @@ library Deployments {
     function writePriceGuard(address a) internal { _writeAddr(".priceGuard", a); }
     /// @notice #3437 — the reader whose code answers that guard's price reads.
     function writePriceGuardReader(address a) internal { _writeAddr(".priceGuardReader", a); }
+    /// @notice #3337 part 1 — the rate reference the registry's
+    ///         RATE_REFERENCE pointer names at deploy.
+    function writeRateReference(address a) internal { _writeAddr(".rateReference", a); }
     function writeTimelock(address a)        internal { _writeAddr(".timelock",        a); }
     function writeVpfiToken(address a)       internal { _writeAddr(".vpfiToken",       a); }
     function writeVpfiTokenImpl(address a)   internal { _writeAddr(".vpfiTokenImpl",   a); }
