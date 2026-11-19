@@ -643,8 +643,9 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
         if (p.skip != 0) return p;
 
         LibFallback.Rate memory rate = LibFallback.oracleRate(address(this), loan.collateralAsset, loan.principalAsset);
+        // A reduction that turns into a close sizes the close itself.
         if (p.form == LibVaipakam.EXIT_FORM_REDUCE) _sizeReduce(s, loan, st, rate, p);
-        if (p.form == LibVaipakam.EXIT_FORM_CLOSE) _sizeClose(loanId, loan, rate, p);
+        else _sizeClose(loanId, loan, rate, p);
     }
 
     /// @dev A close: the least collateral whose floor covers the whole debt
@@ -719,9 +720,10 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
             uint256 value = LibFallback.toPrincipal(rate, loan.collateralAmount);
             uint256 slack = Math.mulDiv(1, rate.den, rate.num, Math.Rounding.Ceil) + 1;
             // Below `hk > L` (h·keep > 10000·L) selling more never reaches
-            // the health factor.
+            // the health factor, and a value inside the rounding slack leaves
+            // no partial sale to size: only a close reaches the bounds.
             if (value <= slack || h * keep <= LibVaipakam.BASIS_POINTS * L) {
-                p.skip = LibStandingInstructions.SKIP_CANNOT_COVER;
+                _closeInstead(loan, rate, p);
                 return;
             }
             value -= slack;
@@ -764,32 +766,37 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
             // The bound guarantees both checks at the floor; the second is
             // the route's own figures, kept as a guard against any drift.
             if (!covers || !_reduceReaches(loan, rate, safe, b)) {
-                p.skip = LibStandingInstructions.SKIP_CANNOT_COVER;
+                _closeInstead(loan, rate, p);
                 return;
             }
         }
         uint256 sell = _leastReach(loan, rate, b, safe);
         if (closeBound && sell == safe) {
             // No partial sale reaches the bounds: close instead.
-            p.form = LibVaipakam.EXIT_FORM_CLOSE;
-            p.targetUsed = 0;
-            p.targetIsLtvCap = false;
-            _sizeClose(loan.id, loan, rate, p);
+            _closeInstead(loan, rate, p);
             return;
         }
         uint256 floor = LibSaleSizing.floorAtRate(rate, sell, p.tolerance);
         if (LibFallback.toPrincipal(rate, sell) >= owed) {
             // The sale's oracle value would cover the whole debt; the partial
             // route refuses that, so close instead.
-            p.form = LibVaipakam.EXIT_FORM_CLOSE;
-            p.targetUsed = 0;
-            p.targetIsLtvCap = false;
-            _sizeClose(loan.id, loan, rate, p);
+            _closeInstead(loan, rate, p);
             return;
         }
         p.sell = sell;
         p.floor = floor;
         p.debt = floor > interest ? floor : interest;
+    }
+
+    /// @dev The one rule for a reduction no partial sale can carry: it closes
+    ///      the loan (design 4.3, "where it would repay the whole principal,
+    ///      the call closes"), and skips as "cannot cover" only when the close
+    ///      itself cannot cover the debt at the floor.
+    function _closeInstead(LibVaipakam.Loan storage loan, LibFallback.Rate memory rate, Plan memory p) private view {
+        p.form = LibVaipakam.EXIT_FORM_CLOSE;
+        p.targetUsed = 0;
+        p.targetIsLtvCap = false;
+        _sizeClose(loan.id, loan, rate, p);
     }
 
     /// @dev The least sale at or below `safe` that reaches both bounds on the

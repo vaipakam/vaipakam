@@ -539,6 +539,25 @@ contract ExitInstructionTest is SetupTest {
         assertGe(_hf(), 1.3e18, "target reached");
     }
 
+    /// @dev One coarse collateral unit: no partial sale exists, so the
+    ///      reduction closes the loan rather than skipping.
+    function test_7_reduceClosesWhenNoPartialSaleExists() public {
+        _unitLoanOf(0, 0, 8000, 1_000, 1);
+        _price(address(collateralAsset), 1_600e8);
+        _set(REDUCE, LEVEL, 1.3e18, 100, false);
+        _price(address(collateralAsset), 1_400e8);
+        LibTestCalmPair.checkpoint(address(diamond), address(collateralAsset), address(principalAsset));
+        ExitInstructionFacet.ExitPreview memory pv = _x().previewExit(LOAN);
+        assertEq(pv.skip, 0, "due");
+        assertEq(pv.form, CLOSE, "closes instead");
+        adapter1.setTokenPrice(address(collateralAsset), 1_400);
+        adapter1.setTokenPrice(address(principalAsset), 1);
+        adapter1.setOutputMultiplierBps(9900);
+        vm.prank(runner);
+        _x().runReduce(LOAN, _routes(1), type(uint64).max);
+        assertEq(uint256(_loan().status), uint256(LibVaipakam.LoanStatus.Repaid), "closed");
+    }
+
     function test_7_reduceHoldsTheCapInWholeUnits() public {
         _wholeUnitLoan(7000);
         _set(REDUCE, 1.1e18, 1.15e18, 100, false);
