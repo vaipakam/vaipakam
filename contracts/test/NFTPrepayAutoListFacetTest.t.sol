@@ -28,7 +28,7 @@ import {IVaipakamPrepayContext} from "../src/seaport/IVaipakamPrepayContext.sol"
 import {LibPositionNFT} from "../src/libraries/LibPositionNFT.sol";
 import {MockSequencerUptimeFeed} from "./mocks/MockSequencerUptimeFeed.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
-import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {PriceGuardState} from "../src/oracle/PriceGuardState.sol";
 
 /**
  * @notice T-086 Round-7 (Issue #355) — facet-level integration tests
@@ -202,7 +202,7 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
         _scaffoldActiveLoan();
         _warpIntoGrace();
         MockSequencerUptimeFeed feed = new MockSequencerUptimeFeed(1, block.timestamp);
-        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.SequencerFeed, address(feed));
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.SequencerFeed, address(feed));
 
         vm.prank(keeperCaller);
         vm.expectRevert(NFTPrepayAutoListFacet.SequencerUnhealthy.selector);

@@ -16,6 +16,7 @@ import { useTrackedTx } from '../tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
 import { landedBeforeOutcome, measureSafety, readSafetyReview, safetyBlockers, safetyChanged, safetyLogs, safetySteps, sendSafetySteps, stepCall, type SafetyAction, type SafetyDraft, type SafetyReview, type SafetySend } from './safety';
+import type { RecoveryProof } from './recovery';
 import { safetyReceipt } from './safetyReceipt';
 
 /** The store key the card's safety action keeps its state under: one at a
@@ -27,6 +28,8 @@ export const SAFETY_KEY = 'vault.safety';
 export interface SafetyChoice {
   action: SafetyAction;
   draft: SafetyDraft | null;
+  /** `recovery` only: the recovery wallet's signed answer. */
+  proof?: RecoveryProof | null;
 }
 
 export function useSafetyHeld(): { choice: SafetyChoice | null; inFlight: boolean; open: (c: SafetyChoice | null) => void } {
@@ -42,7 +45,7 @@ interface SafetyActionProps {
   onClose: () => void;
 }
 
-const STEP = { enable: 'safety.stepEnable', lock: 'safety.stepLock', unlock: 'safety.stepUnlock', finalize: 'safety.stepFinalize' } as const;
+const STEP = { enable: 'safety.stepEnable', lock: 'safety.stepLock', unlock: 'safety.stepUnlock', finalize: 'safety.stepFinalize', recovery: 'recovery.step', recoveryCancel: 'recovery.cancelStep' } as const;
 
 /**
  * ACC-37 / ACC-43 — one safety action on the wallet's own account: turn
@@ -61,10 +64,13 @@ export function SafetyActionFlow({ chain, own, choice, onClose }: SafetyActionPr
   const account = own.account;
   const identity = reviewIdentity(own);
   const { action, draft } = choice;
+  const proof = choice.proof ?? null;
+  const proofKey = proof === null ? null : `${proof.recovery}:${proof.nonce}:${proof.sig}`;
   const [review, setReview] = useStoredValue<SafetyReview>(`${SAFETY_KEY}:review`);
   const [loadError, setLoadError] = useState<string | null>(null);
   const setStep = useTxNote(SAFETY_KEY);
-  const sameChoice = (r: SafetyReview | null) => r !== null && r.action === action && JSON.stringify(r.draft) === JSON.stringify(draft);
+  const sameProof = (p: RecoveryProof | null) => (p === null ? null : `${p.recovery}:${p.nonce}:${p.sig}`) === proofKey;
+  const sameChoice = (r: SafetyReview | null) => r !== null && r.action === action && JSON.stringify(r.draft) === JSON.stringify(draft) && sameProof(r.proof);
 
   // What the last send landed, for its measurement (Codex #3489 r1).
   const sentRef = useRef<SafetySend | null>(null);
@@ -83,7 +89,7 @@ export function SafetyActionFlow({ chain, own, choice, onClose }: SafetyActionPr
       // is kept with its logs, so the outcome is measured over all of them;
       // a step that cannot be sent after an earlier one landed is reported
       // as a leg of the outcome rather than as a failure of the whole action.
-      const steps = safetySteps(action, account, review.facts.vault, draft, review.due);
+      const steps = safetySteps(action, account, review.facts.vault, draft, review.due, review.proof);
       if (steps.length === 0) return stop(text('safety.nothingDue'));
       let vault = review.facts.vault;
       const what = (i: number) => format('accept.stepOf', { n: String(i + 1), total: String(steps.length), what: text(STEP[action]) });
@@ -129,7 +135,7 @@ export function SafetyActionFlow({ chain, own, choice, onClose }: SafetyActionPr
   });
 
   const mounted = useMounted();
-  const read = (who: string) => readSafetyReview(own, diamond, action, draft, who, copy);
+  const read = (who: string) => readSafetyReview(own, diamond, action, draft, proof, who, copy);
   const load = async () => {
     try {
       const next = await read(identity);
@@ -148,7 +154,7 @@ export function SafetyActionFlow({ chain, own, choice, onClose }: SafetyActionPr
     active: onReview,
     review,
     read: (before) => read(before.identity),
-    sameSubject: (a, b) => a.action === b.action && JSON.stringify(a.draft) === JSON.stringify(b.draft),
+    sameSubject: (a, b) => a.action === b.action && JSON.stringify(a.draft) === JSON.stringify(b.draft) && a.proof?.sig === b.proof?.sig,
     changed: (before, next) => safetyChanged(before, next, copy) !== null,
     setReview,
     onChanged: () => undefined,
@@ -181,7 +187,7 @@ export function SafetyActionFlow({ chain, own, choice, onClose }: SafetyActionPr
     }
     // Opened once per choice; the tracker and the stored review carry the rest.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [action, draft?.delaySeconds, draft?.protectNfts]);
+  }, [action, draft?.delaySeconds, draft?.protectNfts, proofKey]);
 
   const recheck = async (current: () => boolean): Promise<Recheck> => {
     if (!review) return { kind: 'unreadable', reason: text('flow.reading') };

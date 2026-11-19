@@ -129,6 +129,18 @@
 /:locale/terms/v*
   X-Robots-Tag: noindex
 
+# Position NFT artwork. The Diamond's default position-NFT image URI is
+# https://vaipakam.com/nft/position.jpg (VaipakamNFTFacet.initializeNFT), so
+# marketplaces, wallets and indexers fetch it from their own servers. The
+# name is NOT content-hashed, so the cache is a day rather than immutable: a
+# replaced image reaches viewers within a day. Any origin may read it.
+# The permanent copy of the same bytes is pinned on IPFS
+# (QmaejkrKx9e9AHZUVPojuANYRwzsskXbRcghvEX45N1dAn).
+
+/nft/*
+  Cache-Control: public, max-age=86400
+  Access-Control-Allow-Origin: *
+
 # Immutable static assets (Vite emits content-hashed filenames in /assets/*).
 
 /assets/*

@@ -19,7 +19,7 @@ import {
   type OffsetReview,
 } from "./offsetAcceptReview";
 
-const DIAMOND = DEPLOYMENTS[84532]!.diamond as `0x${string}`; // a legacy-mode record (#3205)
+const DIAMOND = DEPLOYMENTS[84532]!.diamond as `0x${string}`; // a recorded Diamond (#3205)
 const ASSET = "0x00000000000000000000000000000000000000a1" as const;
 const POSTER = "0x00000000000000000000000000000000000000b0" as const;
 const OTHER = "0x00000000000000000000000000000000000000c0" as const;
@@ -107,6 +107,8 @@ function client(setup: Setup, asked: string[] = []): PublicClient {
           asked.push("ownerOf");
           if (setup.holder === "burned") throw new Error("ERC721NonexistentToken");
           return setup.holder ?? POSTER;
+        case "isPositionRetired":
+          return setup.holder === "burned";
         case "allowance":
           asked.push(`allowance:${String(args?.[0])}`);
           return setup.allowance ?? 10n ** 30n;

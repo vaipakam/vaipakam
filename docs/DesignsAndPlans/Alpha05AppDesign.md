@@ -173,7 +173,11 @@ only when the platform supplied it. A change of network, deployment,
 wallet, position or asset pair mid-flow clears every answer at once and
 holds signing until the new context has its own. Once a transaction has
 been handed to the wallet there is no silent retry that could leave it
-ambiguous whether the action may still confirm.
+ambiguous whether the action may still confirm. A Confirm that stops
+without opening the wallet always says why on the review: what the re-read
+found, or, when the consent was cleared while it ran (by the reader, or by
+a re-read that found new figures), that the consent was cleared and the
+wallet was not opened. A review never quietly resets.
 
 ### RB-GAS — every write carries the shared gas margin
 
@@ -437,6 +441,19 @@ since a transaction earlier in the same block, or the block's own later
 time, can change it. A replay that goes through says that one of those two
 changed what the call relied on, without claiming which; a replay that
 cannot run says so. The reason never changes the verdict.
+
+The protocol's dry run that follows an approval is asked only of a chain
+source that has reached the block the approval landed in, at that source's
+head, never at whatever latest a lagging or load-balanced node reports: a
+source still behind it would read the allowance as it stood before the
+approval and refuse a step the approval already allows, and the flow would
+then put a good approval back. A source that is behind is passed over for
+the next; when every source is behind, the flow waits briefly and asks
+again, and a check that still cannot run is stated as unread, never as a
+refusal. Each source gets a bounded time to answer one question (fifteen
+seconds); one that has not answered by then is passed over like an outage,
+so a wallet provider that never answers cannot hold a review's re-check
+for minutes.
 
 A token amount is written for reading: digit groups, and a fraction
 shortened to four places once there is a whole part, or to four significant
@@ -1766,6 +1783,102 @@ above. Each resolves here, so a route reviewer needs no private file:
   what left or reached the wallet. The why-match panel's rate gap links to
   this flow filled in with the rate that closes the gap: the bound of the
   reader's range on the counterparty's side moves to their nearest bound.
+- **RB-AUTOLEND** — the Lend page asks once how a lend runs (#3624,
+  IdleLiquidityMatchingDesign §4a): a one-time offer, or "keep lending when
+  repaid", which sets up Auto-lend, the lender's standing intent. Auto-lend is
+  the intent everywhere in the app; the old auto-post-on-deposit switch is
+  named as unused in the console and is not built on (#3691). The option is
+  closed, with the reason, while the protocol is paused or matching or the
+  intent switch is off, and when the pair already carries an intent (shown on
+  Positions); an unread switch leaves it open and the review reads it again.
+  The form parses every figure exactly and checks the term against the
+  network's maximum; an end date is a local day, refused before today. The
+  review is read at one block and is the protocol's dry run of `setLenderIntent`
+  and `fundLenderIntent` batched through the multicall, from the wallet: the
+  terms alone while the allowance does not cover the amount, the whole batch
+  after an exact approval. It states every bound figure (the smallest loan
+  resolved from the network floor, or said to be unread), the first fill
+  time after the terms-age wait, and the consequences: nothing promises a
+  fill, the collateral is sized at fill prices, repaid money is lent again
+  until stopped or the end date, the money stays in the wallet's own vault,
+  the end-date copy follows AutoLendLendUntilDesign §3 ("no new loan will be
+  agreed to run past" it, never a return date), and pro-rata follows §9. The
+  matcher pass's state is disclosed, and so is whether the protocol's keeper
+  may roll repaid loans for the wallet (keeper access and the auto-roll
+  action): without it repaid money comes back as a claim, and the review says
+  so instead of promising relending; with it, the review still says the
+  keeper re-lends only a repayment worth a hundred times its fee (and none
+  while it cannot price the fee), a skipped one waiting as a claim; a VPFI lend is never rolled, and the
+  review says that whatever the keeper settings. The smallest loan defaults
+  to a tenth of what can be lent from the start (the funding or the most at
+  once, whichever is smaller), and one above the funding is refused, since
+  no fill can exceed the money set aside. The review reads the protocol's
+  own loan-start bound for the pair (`initRiskBounds`, valued with
+  `getNumeraireValue`) and refuses a ceiling above it at today's prices, or
+  any setup when the network opens no loan against the collateral; an
+  unread bound is stated. A risk-access step a fill would need
+  (the level, the illiquid pair consent, the strict acknowledgement) is
+  offered before the setup, since the protocol checks it at each fill. A
+  failed re-read on Positions is stated beside the figures it kept. The
+  terms and the money go in one transaction, so neither lands alone; an
+  unused approval is put back. The finish card measures the set and funded
+  events and the token's move into the vault. Positions lists each intent
+  with its waiting amount, the amount counted against its most at once (each
+  loan counts in full until its repayment is claimed or lent again, so it is
+  never called "lent now"), and its state; above the cards it reads the
+  same fill gates at the same block and says when the network does not fill
+  Auto-lend now (paused, switched off, the service paused, or unread) (lending, ended, stopped).
+  Each card then offers the steps that fit where its Auto-lend stands: add
+  money while it can still lend, take back money not lent while some waits,
+  and stop while it runs. Each step has its own review read at one block and
+  the protocol's dry run from the wallet, and states the figures it binds and
+  its consequences: money added above the most at once waits until loans
+  end; nothing promises a fill; a stop ends new loans at once and leaves open
+  loans to run, and the money it does not take back stays set aside. Adding
+  needs a running Auto-lend that has not ended, neither asset nor the
+  protocol paused, and an exact approval put back if the step fails. Taking
+  back is capped at the money not lent, stays open while an asset is paused
+  but not while the protocol is, and states its route the way a vault
+  withdrawal does (paid now, queued behind the protected-mode delay, or held
+  in the vault). A stop alone stays open while the protocol is paused; a stop
+  that takes the money back goes as one batched transaction, so the
+  Auto-lend is never stopped with its take-back failing alone. A stop that
+  leaves nothing set aside ends the Auto-lend and the protocol drops it from
+  the wallet's list; its finish card stays, saying so, until closed. Each finish
+  card measures the step from the transaction's own logs and the token's
+  moves. A card also changes the limits, or starts a stopped Auto-lend
+  again: the setup's own form opens on the limits recorded now, money may be
+  added in the same transaction, and a limit not typed (the most at once, the
+  smallest loan, the keeper-only setting) keeps its recorded value. The
+  protocol replaces the terms in place, so the review states what that
+  resets: the wait before the next loan starts again even for limits kept,
+  a priority-routing opt-in is switched off (or that it could not be read),
+  loans already made keep their own terms, and a most-at-once at or below
+  the amount counted against it makes no new loan until enough loans end.
+  A smallest loan above the most at once, or above the money that would
+  wait, is refused before the dry run. Like a setup it is new exposure, so
+  newer Terms in force are accepted first, through the same prompt.
+  A 0% lowest rate is taken, as the protocol takes it, and shown as any
+  rate. While the token's decimals are read, or when they cannot be, the
+  change says so and can be closed, which keeps the card's other steps.
+  Above the cards, Positions states per lending asset how much of the money
+  behind Auto-lend is in loans (#3664): the share in loans, the amount in
+  loans and the amount waiting in the wallet's own vault, read at the same
+  block as the cards. A share is rounded down, never up. Amounts in
+  different assets are never added together, since no total across assets
+  exists without a price. Waiting money behind a stopped or ended Auto-lend
+  is named on its own, as money that will not be lent until it is taken
+  back or the Auto-lend starts again. When the wallet has more Auto-lend
+  settings than one read lists, the figures say they cover only those listed.
+  The figures always say they cover only the listed settings: the protocol
+  drops a stopped Auto-lend with nothing left waiting from the wallet's list
+  while its loans run on, and no on-chain list of those loans exists, so the
+  page names that gap and points to each loan's own page rather than
+  presenting a share that silently leaves them out. The figure is what the
+  protocol counts against the Auto-lend's limits, not what the wallet owns:
+  a loan the lender has sold keeps counting until its repayment is claimed,
+  so the page says "counted in loans" and states that a sold loan still
+  counts though it is no longer the wallet's.
 - **RB-PRICE-GUARD** — the maker's price-move guard (#3358) is shown on the
   page of an open or ended loan offer of a token against token collateral.
   Read at the offer's own block, it states the limit, when it was set, and whether
@@ -2800,6 +2913,42 @@ above. Each resolves here, so a route reviewer needs no private file:
   resumes: a connect the picker started (a phone connection prepares its
   link as the picker opens) can stay pending after the picker closes, and
   must never leave the visitor with a button that cannot be pressed.
+- **RB-TERMS-CONNECT** — The Terms come before the wallet, and the wallet
+  records its own acceptance (#3734, owner decisions 2026-11-18). Connect
+  opens the Terms in force on the network the screen describes: the
+  version, the whole fingerprint, the link pinned to that version, the
+  privacy notice, the key risks and a box to tick, with a plain statement
+  that connecting a wallet means agreeing and that the agreement is
+  recorded on-chain by a transaction the wallet pays for. The wallet list
+  opens only from "Agree and connect" once the box is ticked; "Not now"
+  connects nothing; no Terms in force opens the list at once; a failed read
+  connects nothing. As soon as a wallet is connected on a served network
+  whose Terms it has not accepted (first connection, another network, a new
+  version), the Terms review opens by itself for its own `acceptTerms`
+  transaction. No free signature and no submission by anyone else: the
+  platform and its keeper never record an acceptance for a wallet. Until the
+  acceptance is read back from the chain, every page but the public ones
+  shows a hold in place of its body: checking, unreadable with a retry (never
+  "accepted"), or not accepted with three choices: accept, only close out
+  what the wallet has, or disconnect. The close-out choice is the exception
+  the Terms never take away (design section 3.2): repay, close, add
+  collateral, claim, withdraw and cancel stay open with a standing notice,
+  and every action that takes on a position keeps its own Terms gate, as the
+  contract does. A wallet short of gas for the fee is told the fee it needs
+  and what it holds before it tries.
+  Each network keeps two numbers, the latest version and the minimum that
+  still counts, and the protocol's own verdict decides whether a wallet is
+  current; the app never recomputes it. After a small update a current
+  wallet sees a quiet line and may accept the new text; it is never asked.
+  During the notice of a material change, Connect shows the date, and a
+  current wallet sees what stops on that date unless it accepts, with a
+  "Remind me later" that changes nothing before it; a wallet accepting in
+  that window accepts both versions in one transaction. The other networks
+  where the wallet is current, has not accepted the change and has an open
+  offer or an active Auto-lend are walked one at a time (switch, accept
+  there, next), each read from that network alone, its standing now and
+  the announced status shown apart. The step says that loans set to extend
+  and standing instructions are not checked there.
 - **RB-ACTIVITY** — The Activity page (#3677) reads one wallet's history
   from the index's own wallet filter, never by paging the whole network's feed
   and keeping the rows that look like the wallet's. The index answers with the

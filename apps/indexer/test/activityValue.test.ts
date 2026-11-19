@@ -84,6 +84,8 @@ const offerFields = (o: Partial<Record<string, unknown>>) => ({
   fillMode: 0,
   allowsPrepayListing: false,
   refinanceTargetLoanId: 0n,
+  lifecycleFlex: 0,
+  integrator: '0x0000000000000000000000000000000000000000',
   ...o,
 });
 
@@ -113,6 +115,7 @@ const loanDetails = (d: Partial<Record<string, unknown>>) => ({
   borrowerTokenId: 2n,
   treasuryFeeBpsAtInit: 200,
   loanInitiationFeeBpsAtInit: 20,
+  integrator: '0x0000000000000000000000000000000000000000',
   ...d,
 });
 
@@ -285,7 +288,7 @@ describe('offer creation and cancellation', () => {
     const h = createSqliteD1(migrations());
     seedOffer(h, 3, { lending_asset: WETH });
     const rows = await record(h, [
-      realLog('OfferModified', { offerId: 3n, creator: A1, amount: 40n, amountMax: 0n, interestRateBps: 1n, interestRateBpsMax: 0n, collateralAmount: 1n, collateralAmountMax: 0n }, 1, 0),
+      realLog('OfferModified', { offerId: 3n, creator: A1, amount: 40n, amountMax: 0n, interestRateBps: 1n, interestRateBpsMax: 0n, collateralAmount: 1n, collateralAmountMax: 0n, integrator: '0x0000000000000000000000000000000000000000' }, 1, 0),
     ]);
     expect(value(rows[0])).toEqual({ asset: WETH, assetType: 0, amount: '40', amountMax: null, tokenId: null, quantity: null });
   });

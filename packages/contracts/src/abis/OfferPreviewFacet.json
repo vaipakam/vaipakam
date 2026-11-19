@@ -49,6 +49,11 @@
             "name": "errorCode",
             "type": "uint8",
             "internalType": "enum OfferAcceptFacet.AcceptError"
+          },
+          {
+            "name": "referralCut",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
@@ -154,35 +159,6 @@
             ]
           }
         ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "previewOriginationRefusal",
-    "inputs": [
-      {
-        "name": "offerId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "principal",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "otherOfferId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint8",
-        "internalType": "enum OfferPreviewFacet.OriginationRefusal"
       }
     ],
     "stateMutability": "view"
@@ -322,6 +298,16 @@
             "internalType": "bool"
           },
           {
+            "name": "lifecycleFlex",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "integrator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
             "name": "creatorFull",
             "type": "bool",
             "internalType": "bool"
@@ -370,6 +356,51 @@
             "name": "deadline",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "setKind",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "setLow",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "setHigh",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "setRoot",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "setListCount",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "setListHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "exclusionsHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "loans",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "startTime",
+            "type": "uint64",
+            "internalType": "uint64"
           }
         ]
       },
@@ -458,6 +489,11 @@
                 "name": "errorCode",
                 "type": "uint8",
                 "internalType": "enum OfferAcceptFacet.AcceptError"
+              },
+              {
+                "name": "referralCut",
+                "type": "uint256",
+                "internalType": "uint256"
               }
             ]
           },

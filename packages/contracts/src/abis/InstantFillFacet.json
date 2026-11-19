@@ -259,6 +259,17 @@
   },
   {
     "type": "error",
+    "name": "CrossFacetCallFailed",
+    "inputs": [
+      {
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "DurationMismatch",
     "inputs": []
   },
@@ -301,6 +312,17 @@
         "name": "available",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "FunctionDisabled",
+    "inputs": [
+      {
+        "name": "whichFlag",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ]
   },

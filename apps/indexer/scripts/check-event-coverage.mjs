@@ -42,6 +42,26 @@ const CHAIN_INDEXER = join(REPO_ROOT, 'apps', 'indexer', 'src', 'chainIndexer.ts
  *  is a conscious decision; removing the corresponding contract event
  *  later just makes the allowlist entry dead (harmless). */
 const DELIBERATELY_NOT_HANDLED = {
+  LoanInterestPaid:
+    '#3755 — the per-loan interest a settlement paid; no loans-row field changes yet. The indexer change that records it per loan (and moves the #3751 rate band onto it) removes this entry',
+  LoanInterestUndelivered:
+    '#3755 — the take-back counterpart of LoanInterestPaid; handled together with it, so this entry goes with that one',
+  IntentCalmCheckSet:
+    "a lender intent slot's calm-price setting; the indexer models no per-slot settings, and the app reads the slot from the contract",
+  StandingInstructionsSet:
+    "#3681 — a loan's standing instructions are settings the app reads from the contract; no loans-row field changes",
+  StandingInstructionsCleared:
+    "#3681 — as StandingInstructionsSet: settings only, no loans-row field changes",
+  InterestPaidFromReserve:
+    '#3681 — interest paid from the payment reserve; a payment that closes the period emits PeriodicInterestSettled in the same transaction, which advances last_period_settled_at',
+  InterestPaymentBooked:
+    'the one interest booking shared by the periodic sale and the reserve payment; the period advance it can cause is PeriodicInterestSettled, which the indexer handles',
+  RepaymentLegsFromReserve:
+    "#3681 — the legs of a repayment drawn from the reserve; the loan's state changes through LoanRepaid in the same transaction, which the indexer handles",
+  DueRepaymentRun:
+    '#3681 — a due repayment run from the reserve; the repayment itself is RepayFacet.repayLoan, whose LoanRepaid the indexer handles',
+  ExtensionFeeCharged:
+    '#3649 — the added initiation fee an extension charges; the term and rate the loans row tracks change through LoanExtended in the same transaction, which the indexer already handles. The fee and the term paid for are not loans-row fields today',
   PartialCollateralWithdrawn:
     'TEMPORARY — the handler needs the `newCollateralAmount` field added to the event in commit bd0e4aa, which is not yet on-chain. When the next contracts redeploy lands (+ ABI re-export + indexer redeploy), add a `log.eventName === "PartialCollateralWithdrawn"` branch (UPDATE loans SET collateral_amount = newCollateralAmount) and REMOVE this entry — the deadAllowlist check will flag it if you forget the removal',
   LoanFallbackPending:
@@ -54,6 +74,10 @@ const DELIBERATELY_NOT_HANDLED = {
     '#1566 slice 2 — custody provenance for liquidation-fallback collateral held in the borrower vault under a lien: one event per row move (entry, each settlement slice, retry pull and restore, match legs, return to the pledge) with its amount and the amount still held. Loan status still derives from the status events (LoanFallbackPending, LoanCuredFromFallback and the terminal events), so no loans-row field changes; indexer surfacing of the custody trail is deferred',
   HeldRecommittedToIntent:
     '#3629 — held payments of an OPEN intent loan moved back behind the owner\'s standing intent. The loan stays Active with the same principal and collateral, so no loans-row field changes; the intent\'s capital is read live (getLenderIntentCapital), and the event is surfaced through activity_events',
+  SettlementLegParked:
+    '#3669 — custody provenance for a settlement leg the token refused: it waits in the payer\'s vault under a lien for the lender side. The loan still reaches its terminal state through LoanRepaid / LoanDefaulted, which the indexer handles, so no loans-row field changes; the app reads getParkedLenderLeg, and indexer surfacing of the parked row is deferred',
+  SettlementLegReleased:
+    '#3669 — pairs with SettlementLegParked: the lender claim moved the parked leg to the lender side\'s vault, inside the claim the indexer already records',
   LoanKeeperEnabled: 'per-loan keeper authorization — not modelled in the indexer schema',
   OfferKeeperEnabled: 'per-offer keeper authorization — not modelled',
   OfferPriceGuardSet:

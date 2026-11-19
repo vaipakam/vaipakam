@@ -6,7 +6,7 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
-import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
+import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
@@ -148,6 +148,8 @@ contract BorrowerPartialFillTest is SetupTest {
         vm.prank(creator);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: amountMin,
@@ -211,6 +213,8 @@ contract BorrowerPartialFillTest is SetupTest {
         vm.prank(creator);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: amountMin,
@@ -803,6 +807,145 @@ contract BorrowerPartialFillTest is SetupTest {
     }
 
     // ─────────────────────────────────────────────────────────────────
+    // #3621 — a lender may take partial repay and the prepay listing
+    // "either way" (`Offer.lifecycleFlex`); the loan then takes the
+    // borrower's choice. Interest mode and cadence stay exact.
+    // ─────────────────────────────────────────────────────────────────
+
+    /// @dev The canonical lender offer of `_pairForTerms`, posted through
+    ///      `createOffer` with `flex` and the given asset type / side, so the
+    ///      admission rule runs for real.
+    function _flexParams(uint8 flex, LibVaipakam.OfferType side)
+        internal
+        view
+        returns (LibVaipakam.CreateOfferParams memory p)
+    {
+        p = LibVaipakam.CreateOfferParams({
+            integrator: address(0),
+            lifecycleFlex: flex,
+            offerType: side,
+            lendingAsset: mockERC20,
+            amount: 2_000,
+            interestRateBps: 500,
+            collateralAsset: mockCollateralERC20,
+            collateralAmount: 500,
+            durationDays: 30,
+            assetType: LibVaipakam.AssetType.ERC20,
+            tokenId: 0,
+            quantity: 0,
+            creatorRiskAndTermsConsent: true,
+            prepayAsset: mockERC20,
+            collateralAssetType: LibVaipakam.AssetType.ERC20,
+            collateralTokenId: 0,
+            collateralQuantity: 0,
+            allowsPartialRepay: false,
+            allowsPrepayListing: false,
+            allowsParallelSale: false,
+            amountMax: 2_000,
+            interestRateBpsMax: 600,
+            collateralAmountMax: side == LibVaipakam.OfferType.Lender ? 500 : 5_000,
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+            expiresAt: 0,
+            fillMode: LibVaipakam.FillMode.Partial,
+            refinanceTargetLoanId: 0,
+            useFullTermInterest: false
+        });
+    }
+
+    function _pairWithFlex(uint8 flex) internal returns (uint256 lo, uint256 bo) {
+        bo = _postBorrowerOffer({
+            creator: borrower, amountMin: 1_000, amountMax: 5_000, rateMin: 500, rateMax: 600,
+            collateralMin: 500, collateralMax: 5_000
+        });
+        vm.prank(lender);
+        lo = OfferCreateFacet(address(diamond)).createOffer(
+            _flexParams(flex, LibVaipakam.OfferType.Lender), type(uint64).max
+        );
+        LibTestTiming.waitOutTermsAge(address(diamond), lo);
+    }
+
+    function _setPrepay(uint256 offerId, bool allows) internal {
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(offerId);
+        o.allowsPrepayListing = allows;
+        TestMutatorFacet(address(diamond)).setOffer(offerId, o);
+    }
+
+    function test_3621_flexIsStoredOnTheLenderOffer() public {
+        (uint256 lo,) = _pairWithFlex(3);
+        assertEq(OfferCancelFacet(address(diamond)).getOffer(lo).lifecycleFlex, 3, "stored");
+    }
+
+    function test_3621_eitherPartialRepayTakesTheBorrowersYes() public {
+        (uint256 lo, uint256 bo) = _pairWithFlex(LibVaipakam.LIFECYCLE_FLEX_PARTIAL_REPAY);
+        _setTerms(bo, false, true); // borrower asks for partial repay; lender offer says no, but either
+        assertEq(uint8(_preview(lo, bo).errorCode), uint8(LibOfferMatch.MatchError.Ok), "preview agrees");
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchOffers(lo, bo);
+        assertTrue(LoanFacet(address(diamond)).getLoanDetails(loanId).allowsPartialRepay, "loan takes the borrower's yes");
+    }
+
+    function test_3621_eitherPartialRepayTakesTheBorrowersNo() public {
+        (uint256 lo, uint256 bo) = _pairWithFlex(LibVaipakam.LIFECYCLE_FLEX_PARTIAL_REPAY);
+        _setTerms(lo, false, true); // the lender's own value is yes; the borrower's is no
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchOffers(lo, bo);
+        assertFalse(LoanFacet(address(diamond)).getLoanDetails(loanId).allowsPartialRepay, "loan takes the borrower's no");
+    }
+
+    function test_3621_eitherPrepayListingTakesTheBorrowersChoice() public {
+        (uint256 lo, uint256 bo) = _pairWithFlex(LibVaipakam.LIFECYCLE_FLEX_PREPAY_LISTING);
+        _setPrepay(bo, true);
+        assertEq(uint8(_preview(lo, bo).errorCode), uint8(LibOfferMatch.MatchError.Ok), "preview agrees");
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchOffers(lo, bo);
+        assertTrue(LoanFacet(address(diamond)).getLoanDetails(loanId).allowsPrepayListing, "loan takes the borrower's choice");
+    }
+
+    /// @dev Each bit covers only its own option.
+    function test_3621_eachBitCoversOnlyItsOption() public {
+        (uint256 lo, uint256 bo) = _pairWithFlex(LibVaipakam.LIFECYCLE_FLEX_PARTIAL_REPAY);
+        _setPrepay(bo, true);
+        _assertTermsMismatch(lo, bo);
+        (lo, bo) = _pairWithFlex(LibVaipakam.LIFECYCLE_FLEX_PREPAY_LISTING);
+        _setTerms(bo, false, true);
+        _assertTermsMismatch(lo, bo);
+    }
+
+    /// @dev Interest mode and cadence stay exact whatever the lender marks.
+    function test_3621_flexLeavesInterestModeAndCadenceExact() public {
+        (uint256 lo, uint256 bo) = _pairWithFlex(LibVaipakam.LIFECYCLE_FLEX_MASK);
+        _setTerms(bo, true, false);
+        _assertTermsMismatch(lo, bo);
+        (lo, bo) = _pairWithFlex(LibVaipakam.LIFECYCLE_FLEX_MASK);
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(bo);
+        o.periodicInterestCadence = LibVaipakam.PeriodicInterestCadence.Monthly;
+        TestMutatorFacet(address(diamond)).setOffer(bo, o);
+        _assertTermsMismatch(lo, bo);
+    }
+
+    /// @dev The marks are the lender's alone: on the borrower's side they
+    ///      would decide nothing, so a matcher reading them must not.
+    function test_3621_borrowerFlexIsIgnoredByTheMatch() public {
+        (uint256 lo, uint256 bo) = _pairForTerms();
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(bo);
+        o.lifecycleFlex = LibVaipakam.LIFECYCLE_FLEX_MASK;
+        o.allowsPartialRepay = true;
+        TestMutatorFacet(address(diamond)).setOffer(bo, o);
+        _assertTermsMismatch(lo, bo);
+    }
+
+    function test_3621_borrowerOfferCannotCarryFlex() public {
+        vm.prank(borrower);
+        vm.expectRevert(abi.encodeWithSignature("LifecycleFlexNotAllowed()"));
+        OfferCreateFacet(address(diamond)).createOffer(
+            _flexParams(LibVaipakam.LIFECYCLE_FLEX_PARTIAL_REPAY, LibVaipakam.OfferType.Borrower), type(uint64).max
+        );
+    }
+
+    function test_3621_unknownBitsAreRefused() public {
+        vm.prank(lender);
+        vm.expectRevert(abi.encodeWithSignature("LifecycleFlexUnknownBits(uint8)", uint8(4)));
+        OfferCreateFacet(address(diamond)).createOffer(_flexParams(4, LibVaipakam.OfferType.Lender), type(uint64).max);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
     // #3326 — the match lends the largest amount both offers accept
     // ─────────────────────────────────────────────────────────────────
 
@@ -882,10 +1025,10 @@ contract BorrowerPartialFillTest is SetupTest {
     ///         so every collateral level that covers the minimum matches —
     ///         where an uncapped pick was refused for HF.
     function test_3326_largestAmountAlsoPassesTheInitRiskGate() public {
-        (uint256 reqAtMax,,) = OfferPreviewFacet(address(diamond)).initRiskBounds(
+        (uint256 reqAtMax,,) = RiskPreviewFacet(address(diamond)).initRiskBounds(
             mockERC20, mockCollateralERC20, 10_000, 0
         );
-        (uint256 reqAtMin,,) = OfferPreviewFacet(address(diamond)).initRiskBounds(
+        (uint256 reqAtMin,,) = RiskPreviewFacet(address(diamond)).initRiskBounds(
             mockERC20, mockCollateralERC20, 1_000, 0
         );
         assertGt(reqAtMax, 2 * reqAtMin, "room for two fills");
@@ -911,7 +1054,7 @@ contract BorrowerPartialFillTest is SetupTest {
 
             LibOfferMatch.MatchResult memory r = _preview(lo, bo);
             assertEq(uint8(r.errorCode), uint8(LibOfferMatch.MatchError.Ok), "every covering collateral level matches");
-            (uint256 floorAt,,) = OfferPreviewFacet(address(diamond)).initRiskBounds(
+            (uint256 floorAt,,) = RiskPreviewFacet(address(diamond)).initRiskBounds(
                 mockERC20, mockCollateralERC20, r.matchAmount, 0
             );
             assertGe(r.reqCollateral, floorAt, "locks at least the gate's floor");

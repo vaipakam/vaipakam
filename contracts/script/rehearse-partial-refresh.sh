@@ -87,11 +87,12 @@ RISK_PREVIEW_SELECTORS=(
   0x012c433a  # assertObligationTransferAllowed
   0x978e1471  # acceptMidTierAckPair
   0x314efc12  # previewCreatorBlock
-  0x1835a83c  # previewIntent  (#2459 r4: gained the route's initiator; was 0xa7aaae7f)
+  0x51e43cd9  # previewIntent  (#3626: gained the intent slot; was 0x1835a83c, before #2459 r4 0xa7aaae7f)
   0x2c87c1a3  # saleAdmission
   0xda39c1e5  # quoteSellerBounds       (#1503 item 4)
   0x1a3370e0  # getSaleListingBounds    (#2672)
   0x4e69fd7d  # previewSignedOfferRiskBlocks (#3577)
+  0xa81cd082  # initRiskBounds (#3326; moved from OfferPreviewFacet in #3328)
 )
 
 # KNOWN FAILURE — ReplaceStaleFacets still fails at step 6, and the failure is

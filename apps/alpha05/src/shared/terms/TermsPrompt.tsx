@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useMode } from '../../app/ModeContext';
@@ -10,7 +10,7 @@ import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
 import { KeyRiskList } from '../risk/KeyRiskList';
 import { formatUtc } from '../ui/format';
-import { LEGAL_ABI, PRIVACY_URL, fingerprint, readTerms, termsUrl } from './terms';
+import { PRIVACY_URL, acceptTermsCall, fingerprint, readTerms, termsUrl } from './terms';
 import { inFlight } from '../tx/txStore';
 import type { TermsGate, TermsSession } from './useTermsGate';
 
@@ -37,6 +37,7 @@ export function TermsPrompt({
   own,
   onAccepted,
   onClose,
+  notice,
 }: {
   /** The action that asked, as a phrase ("Turning on the fee discount"). */
   asker: string;
@@ -46,6 +47,9 @@ export function TermsPrompt({
   own: OwnStateClient;
   onAccepted: () => void;
   onClose: () => void;
+  /** A statement the asker adds above the review (the Connect step's
+   *  missing-gas notice). */
+  notice?: ReactNode;
 }) {
   const { text, format } = useCopy();
   const { mode } = useMode();
@@ -74,7 +78,7 @@ export function TermsPrompt({
       return { kind: 'changed', what: text('terms.changedVersion') };
     }
     if (current()) gate.update({ readAt: Date.now() });
-    return simulateCall(own, { address: diamond, abi: LEGAL_ABI, functionName: 'acceptTerms', args: [reviewed.version, reviewed.hash] });
+    return simulateCall(own, { address: diamond, ...acceptTermsCall(reviewed) });
   };
 
   const receipt: Receipt = {
@@ -142,6 +146,7 @@ export function TermsPrompt({
       <h3>{text('keyRisks.title')}</h3>
       <p className="tier-b">{text('keyRisks.lead')}</p>
       <KeyRiskList testId="terms-key-risks" />
+      {notice}
       {session.settled ? (
         <>
           <p className="actions">{proceed}</p>

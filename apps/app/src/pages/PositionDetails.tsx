@@ -344,8 +344,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // THROW on transport errors so the query lands in error state.
       // Collapsing burned and unreadable into one null previously let
       // the historical party look actionable on burned positions.
-      // #3205: a standalone-mode token is retired, not burned, when its
-      // position closes; `readPositionHolder` reads both as 'gone'.
+      // #3205: a token is retired, not burned, when its position closes;
+      // `readPositionHolder` reads a retired or never-minted token as
+      // 'gone', which this sentinel carries.
       const ownerOf = async (
         tokenId: string,
       ): Promise<string | 'burned'> => {
@@ -672,7 +673,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         : null;
 
   // Lender-side sibling: a live Option-2 sale listing. Existence is
-  // the CHAIN's say-so (positionLock on the lender NFT), so a listing
+  // the CHAIN's say-so (positionRoute on the lender NFT), so a listing
   // made on another device still shows and interlocks here.
   const sale = useLoanSalePending(
     loanId,
@@ -4724,7 +4725,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       ) : null}
 
       {/* The live sale listing's standing surface — chain-authoritative
-          (positionLock), outside the strategy gates so it survives
+          (positionRoute), outside the strategy gates so it survives
           data hiccups, mode switches, and other-device listings. */}
       {sale.state?.listed &&
       !isRental &&

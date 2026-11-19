@@ -169,7 +169,7 @@ export interface LoanView {
    *  internal match and every outside liquidation route refuses. Live loans
    *  only; `null` when unread. */
   matchWindow: { enabled: boolean; windowBps: bigint } | null;
-  /** The borrower position's lock (`positionLock`); null when unread. */
+  /** The borrower position's lock (`positionRoute`); null when unread. */
   borrowerLock: number | null;
   /** The latest block's time, which the actions' rules compare dates with
    *  (never the device clock); null when unread. */

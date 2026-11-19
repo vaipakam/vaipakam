@@ -31,7 +31,7 @@ library LibTestProtectedCut {
         s[10] = ProtectedAccountFacet.isProtectionOn.selector;
         s[11] = ProtectedAccountFacet.protectionManagerOf.selector;
         s[12] = ProtectedAccountFacet.requireCanOpenFor.selector;
-        s[13] = ProtectedAccountFacet.protectsNftsOf.selector;
+        s[13] = ProtectedAccountFacet.positionExitOf.selector;
     }
 
     /// @dev The facet's Add cut, deployed from its artifact.

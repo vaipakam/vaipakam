@@ -166,7 +166,7 @@ describe('the write seam — the guard inside the statement', () => {
     // The seam is exercised, not vacuous: the keeper does write such tables.
     // (The LOCK tables left this list with #1722: the agent owns them now,
     // and its route refuses a request naming another Diamond instead.)
-    expect([...written].sort()).toEqual(['liquidity_confidence', 'notifications', 'notify_state', 'oracle_snapshot_state', 'pre_grace_notify_state']);
+    expect([...written].sort()).toEqual(['keeper_step_status', 'liquidity_confidence', 'notifications', 'notify_state', 'oracle_snapshot_state', 'pre_grace_notify_state']);
   });
 });
 

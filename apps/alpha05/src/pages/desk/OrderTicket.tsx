@@ -21,6 +21,7 @@ import {
 import { readSignTerms, signDraftFrom, type SignDraft } from '../../shared/desk/signNew';
 import { refusalFromError } from '../../shared/eligibility/refusal';
 import { readTreasuryFeeBps } from '../../shared/offers/reads';
+import { lifRateText } from '../../shared/offers/initiationFee';
 import { PostOffer } from '../../shared/post/PostOffer';
 import { FILL_MODES, lenderPostFigures, postFigures, type FillMode, type ParseError, type PostSide } from '../../shared/post/postModel';
 import { readPostFormInputs, type PostDraft } from '../../shared/post/postReview';
@@ -189,10 +190,10 @@ export function OrderTicket({
     check.ok && inputs.data
       ? lender
         ? share.data !== null
-          ? { kind: 'lender' as const, f: lenderPostFigures(check.amount, check.rateBps, market.durationDays, inputs.data.lifBps, share.data) }
+          ? { kind: 'lender' as const, f: lenderPostFigures(check.amount, check.rateBps, market.durationDays, inputs.data.lif, share.data) }
           : null
         : // Taken directly, a request lends its smallest amount.
-          { kind: 'borrower' as const, f: postFigures(check.minFill, check.rateBps, market.durationDays, inputs.data.lifBps) }
+          { kind: 'borrower' as const, f: postFigures(check.minFill, check.rateBps, market.durationDays, inputs.data.lif) }
       : null;
 
   return (
@@ -404,12 +405,12 @@ export function OrderTicket({
             <p className="tier-b" data-testid="desk-ticket-fees" aria-live="polite">
               {figures.kind === 'lender'
                 ? format('ticket.feesLend', {
-                    lif: formatBps(inputs.data!.lifBps),
+                    lif: lifRateText(inputs.data!.lif, market.durationDays),
                     share: formatBps(share.data!),
                     back: amountOf(figures.f.backAtDue, market.lending),
                   })
                 : format('ticket.feesBorrow', {
-                    lif: formatBps(inputs.data!.lifBps),
+                    lif: lifRateText(inputs.data!.lif, market.durationDays),
                     receive: amountOf(figures.f.received, market.lending),
                     owe: amountOf(figures.f.owedAtDue, market.lending),
                   })}

@@ -17,9 +17,17 @@
       "class": "user",
       "why": "the holder's own ERC-20 approval"
     },
+    "AggregatorAdapterImplementation.deposit(uint256,address)": {
+      "class": "user",
+      "why": "a depositor puts its own assets into the adapter for shares (refused until the adapter's principal has accepted the current Terms); it serves the depositor alone, so no keeper is owed"
+    },
     "AggregatorAdapterImplementation.initialize(address,address,address,address,uint16,address,string,string,uint256,uint256,uint16,uint32,uint256)": {
       "class": "init",
       "why": "the deployment, or the Diamond's factory, initializes each proxy once in the transaction that creates it"
+    },
+    "AggregatorAdapterImplementation.mint(uint256,address)": {
+      "class": "user",
+      "why": "as deposit, sized in shares: the depositor's own assets for its own shares; no keeper is owed"
     },
     "AggregatorAdapterImplementation.transfer(address,uint256)": {
       "class": "user",
@@ -62,6 +70,10 @@
     "CollectionOfferFacet.fillCollectionOffer(uint256,uint256,bytes32[],struct:LibAcceptTerms.AcceptTerms,bytes)": {
       "class": "user",
       "why": "the borrower opens its own loan against its own token, under its own signed acceptance"
+    },
+    "CollectionOfferFacet.fillSignedCollectionOffer(struct:LibSignedOffer.SignedOffer,bytes,struct:LibSignedOffer.OfferSet,struct:CollectionOfferFacet.SignedTake,struct:LibAcceptTerms.AcceptTerms,bytes,struct:LibSignedOffer.FillAuth)": {
+      "class": "user",
+      "why": "the borrower opens its own loan against its own token, from a lender's signed collection offer, under its own signed acceptance"
     },
     "CollectionOfferFacet.matchCollectionOffer(uint256,uint256,bytes32[])": {
       "class": "keeper",
@@ -143,9 +155,14 @@
       "flag": "HELD_RECOMMIT_ENABLED",
       "evidence": "apps/keeper/src/matcher.ts"
     },
-    "MarketLedgerFacet.rollDeclaredLedger(address,address,uint256)": {
+    "LenderIntentFacet.withdrawLenderIntentCapital(address,address,address,uint8,uint256)": {
+      "class": "gap",
+      "issue": "#3246",
+      "why": "the account's manager withdraws its own un-lent intent capital; for a RECOVERED account anyone may return it to the account's vault, where the recovered account's sweep moves it to the recovery address. The keeper pass is to be built, disarmed, with the protected-account work"
+    },
+    "MarketLedgerFacet.rollMarketLedger(address,address,uint256)": {
       "class": "user",
-      "why": "housekeeping a lender or app may run before a slot write after a long quiet gap; no keeper is owed because no figure depends on it: reads subtract the unrolled days themselves and every slot write rolls its own asset and pair"
+      "why": "housekeeping a lender or app may run before a slot write after a long quiet gap; no keeper is owed because no figure depends on it: reads subtract the unrolled days themselves (Declared and Available) and every slot write rolls its own asset and pair"
     },
     "InstantMarketFacet.borrowInstant(struct:InstantMarketFacet.InstantBorrowRequest,struct:InstantFillFacet.InstantSource[])": {
       "class": "user",
@@ -204,13 +221,21 @@
       "pass": "expiredTeardown",
       "flag": "EXPIRED_TEARDOWN_ENABLED",
       "evidence": "apps/keeper/src/expiredTeardown.ts",
-      "why": "the creator cancels its own offer; anyone may cancel an expired offer (refund to the creator, no keeper owed) or a vehicle offer whose route is dead (#3336), which the keeper sweeps"
+      "why": "the creator cancels its own offer; anyone may cancel an expired offer (refund to the creator, no keeper owed) or a vehicle offer whose route is dead (#3336), which the keeper sweeps; anyone may also cancel a recovered account's offer (#3246 part 2: refund to the account's vault, swept on from there)"
     },
     "OfferCancelFacet.teardownStaleSaleListing(uint256)": {
       "class": "keeper",
       "pass": "expiredTeardown",
       "flag": "EXPIRED_TEARDOWN_ENABLED",
       "evidence": "apps/keeper/src/expiredTeardown.ts"
+    },
+    "OfferPriceGuardFacet.setIntentCalmCheck(address,address,uint8,bool)": {
+      "class": "user",
+      "why": "the caller's own lender intent slot setting; no step waits on it"
+    },
+    "ReferralFacet.bindInviter(address)": {
+      "class": "user",
+      "why": "the caller binds its own inviter, once, before its first loan as borrower; no step waits on it"
     },
     "OfferPriceGuardFacet.armOfferPriceGuard(uint16)": {
       "class": "user",
@@ -233,6 +258,16 @@
       "pass": "matcher",
       "flag": "KEEPER_ENABLED",
       "evidence": "apps/keeper/src/matcher.ts"
+    },
+    "RecoveryClawbackFacet.sweepRecovered(address,struct:VaultOutflowTypes.ClawbackAsset[])": {
+      "class": "gap",
+      "issue": "#3246",
+      "why": "moves a recovered account's free balance on to the recovery address its own record names (a payout that reached it after the clawback); the keeper pass is to be built, disarmed, with the protected-account work"
+    },
+    "SettlementLegFacet.releaseParkedTreasury(address,address)": {
+      "class": "gap",
+      "issue": "#3669",
+      "why": "moves treasury shares a token refused at a close-out from the payer's vault to the treasury the vault code names, once the token allows it; the destination is fixed. The keeper pass (read TreasuryShareParked rows, retry while getParkedTreasury is non-zero, shipped disarmed) lands with the contract batch"
     },
     "SignedOfferMatchFacet.matchSignedOffer(struct:LibSignedOffer.SignedOffer,bytes,struct:LibSignedOffer.OfferSet,uint256,uint256,struct:LibSignedOffer.FillAuth)": {
       "class": "alternative",
@@ -293,6 +328,10 @@
     "PositionNFT.lock()": {
       "class": "user",
       "why": "the holder locks its own tokens; it only tightens"
+    },
+    "PositionNFT.recover(uint256[])": {
+      "class": "user",
+      "why": "moves a replaced (retired) account's position NFTs to the wallet its vault names as the replacement (#3526); the replacement wallet calls it for its own account. Anyone may, because the destination is the vault's record, not the caller's choice. Nothing waits on it: the replacement wallet already acts on the positions where they are, and payouts follow the account"
     },
     "PositionNFT.requestUnlock()": {
       "class": "user",
@@ -369,65 +408,9 @@
       "class": "user",
       "why": "the user's own profile"
     },
-    "ProtectedAccountFacet.acceptSignerRole(address)": {
+    "ProtectedAccountFacet.applyProtection(address)": {
       "class": "user",
-      "why": "the nominee accepts its own nomination"
-    },
-    "ProtectedAccountFacet.addAllowlisted(address,address)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.addSigner(address,address)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.cancelAddAllowlisted(address,address)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.cancelAddSigner(address,address)": {
-      "class": "user",
-      "why": "the account manager cancels its own nomination"
-    },
-    "ProtectedAccountFacet.cancelRemoveSigner(address,address)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.cancelReplacement(address)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.cancelSettingChange(address,uint8)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.enableProtectedMode(uint32,bool)": {
-      "class": "user",
-      "why": "the account owner's own setting"
-    },
-    "ProtectedAccountFacet.finalizeAddAllowlisted(address,address)": {
-      "class": "keeper",
-      "pass": "protectedAccount",
-      "flag": "PROTECTED_ACCOUNT_ENABLED",
-      "evidence": "apps/keeper/src/protectedAccount.ts"
-    },
-    "ProtectedAccountFacet.finalizeAddSigner(address,address)": {
-      "class": "keeper",
-      "pass": "protectedAccount",
-      "flag": "PROTECTED_ACCOUNT_ENABLED",
-      "evidence": "apps/keeper/src/protectedAccount.ts"
-    },
-    "ProtectedAccountFacet.finalizeRemoveSigner(address,address)": {
-      "class": "keeper",
-      "pass": "protectedAccount",
-      "flag": "PROTECTED_ACCOUNT_ENABLED",
-      "evidence": "apps/keeper/src/protectedAccount.ts"
-    },
-    "ProtectedAccountFacet.finalizeReplacement(address)": {
-      "class": "keeper",
-      "pass": "protectedAccount",
-      "flag": "PROTECTED_ACCOUNT_ENABLED",
-      "evidence": "apps/keeper/src/protectedAccount.ts"
+      "why": "the vault's own lock, unlock, switch-off and replacement apply it in their transaction (#3489 r9, r10, r12), and the owner's switch-on sends it; a separate call only retries a best-effort application, which never leaves a lock's cancellations undone (they bind by lock number)"
     },
     "ProtectedAccountFacet.finalizeSettingChanges(address)": {
       "class": "keeper",
@@ -435,53 +418,31 @@
       "flag": "PROTECTED_ACCOUNT_ENABLED",
       "evidence": "apps/keeper/src/protectedAccount.ts"
     },
-    "ProtectedAccountFacet.lockPositionNfts(address)": {
-      "class": "user",
-      "why": "the account manager locks its own account's position NFTs at the PositionNFT core (called with its own account; a caller naming another account is refused unless it manages it); it can only tighten"
-    },
-    "ProtectedAccountFacet.lockVault(address)": {
-      "class": "user",
-      "why": "the account manager or one of its signers locks its own account"
-    },
-    "ProtectedAccountFacet.proposeReplacement(address,address)": {
-      "class": "user",
-      "why": "a signer or the manager proposes; approvals and the delay follow"
-    },
-    "ProtectedAccountFacet.removeAllowlisted(address,address)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.requestRemoveSigner(address,address)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.requestUnlock(address)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.setProtectedDelay(address,uint32)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
-    "ProtectedAccountFacet.setRequireCosign(address,bool)": {
-      "class": "user",
-      "why": "the account manager's own protected-account setting (called with its own account; a caller naming another account is refused unless it manages it)"
-    },
     "ProtocolBroadcastFacet.deliverTierPush(address)": {
       "class": "keeper",
       "pass": "protocolUpkeep",
       "flag": "TIER_PUSH_RETRY_ENABLED",
       "evidence": "apps/keeper/src/tierPushRetry.ts"
     },
+    "ProtocolBroadcastFacet.broadcastTierTableVersionTo(uint256)": {
+      "class": "gap",
+      "issue": "#912",
+      "why": "sends Base's tier-table version to one mirror after governance changes the tier table, so the mirror stops honouring caches stamped with the old table; the caller pays the lane. The keeper pass (compare each mirror's getCurrentTierTableVersion with getTierTableVersion, send where behind, shipped disarmed) lands with the contract batch"
+    },
     "ProtocolBroadcastFacet.topUpBroadcastBudget()": {
       "class": "user",
       "why": "a payment into the protocol broadcast budget; no step waits on it"
     },
-    "PriceGuard.executeChange(enum:PriceGuard.Kind,bytes32)": {
+    "PriceGuard.executeChange(enum:PriceGuardState.Kind,bytes32)": {
       "class": "user",
       "why": "governance applies a config change it proposed through the Timelock once the guard's own delay has passed; a change nobody executes leaves the current entry in place"
     },
-    "PriceGuard.executeSecondaryRemoval(enum:PriceGuard.Source)": {
+    "PriceGuard.recordRate(address,bytes32)": {
+      "class": "gap",
+      "issue": "#3683",
+      "why": "records a rate-priced token's exchange rate under its binding, bounded by the binding's daily rise and fall rules; no one chooses the value. Unrecorded, the accepted rate stops following honest growth, which undervalues the collateral and never overvalues it. The keeper's hourly price checkpoint pass is to call it for every binding a token has had, shipped disarmed"
+    },
+    "PriceGuard.executeSecondaryRemoval(enum:PriceGuardState.Source)": {
       "class": "user",
       "why": "the owner or the guardian applies a secondary-source removal it proposed once the fixed 48-hour wait has passed; a removal nobody executes leaves the source muted, still able to refuse a price"
     },
@@ -881,6 +842,10 @@
       "class": "user",
       "why": "the signer cancels its own signed offers below a floor"
     },
+    "StandingInstructionFacet.clearStandingInstructions(uint256)": {
+      "class": "user",
+      "why": "the current borrower-position holder clears its own standing instructions; any other caller is refused"
+    },
     "StandingInstructionFacet.runCollateralTopUp(uint256)": {
       "class": "keeper",
       "pass": "standingInstructions",
@@ -899,6 +864,11 @@
       "flag": "STANDING_INTEREST_ENABLED",
       "evidence": "apps/keeper/src/standingInstructions.ts"
     },
+    "StandingInstructionFacet.withdrawLoanReserve(address,uint256,uint8,uint256)": {
+      "class": "gap",
+      "issue": "#3246",
+      "why": "the account's manager withdraws its own unused loan reserve; for a RECOVERED account anyone may return it to the account's vault, where the recovered account's sweep moves it to the recovery address. The keeper pass is to be built, disarmed, with the protected-account work"
+    },
     "SwapToRepayIntentFacet.cancelExpiredIntent(uint256)": {
       "class": "keeper",
       "pass": "expiredTeardown",
@@ -910,6 +880,26 @@
       "pass": "protocolUpkeep",
       "flag": "PROTOCOL_UPKEEP_ENABLED",
       "evidence": "apps/keeper/src/protocolUpkeep.ts"
+    },
+    "VaultRecovery.cancelRecoveryAddress(struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultRecovery.clawback(struct:VaultOutflowTypes.ClawbackAsset[],struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultRecovery.clearRecoveryAddress(struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultRecovery.requestRecoveryAddress(address,struct:VaultProtectionBase.Auth,struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultRecovery.settleRecoveryAddress()": {
+      "class": "user",
+      "why": "tidies the account's own record by writing a recovery address that has come into force; nothing depends on it (the address counts from its time on), so no keeper is owed. Runs only inside a vault (onlyDelegateCall)"
     },
     "VPFIDiscountFacet.pokeMyTier()": {
       "class": "user",
@@ -950,6 +940,18 @@
     "VaipakamTimelock.renounceRole(bytes32,address)": {
       "class": "user",
       "why": "a holder gives up its own role; the confirmation argument must be the caller"
+    },
+    "VaipakamVaultImplementation.closeGrant()": {
+      "class": "gated",
+      "gate": "within the transaction that opened the grant only the Diamond may close it (a transient flag); afterwards anyone may, and closing can only bring a leftover allowance to zero and report it: it moves nothing"
+    },
+    "VaipakamVaultImplementation.initialize(address,address)": {
+      "class": "init",
+      "why": "the Diamond's factory creates each vault (CREATE2) and initializes it in the same transaction"
+    },
+    "VaipakamVaultImplementation.protect(bytes)": {
+      "class": "gated",
+      "gate": "runs only the vault's fixed VaultProtection code, whose every write is authorized by its key (a direct call from the key, or the key's EIP-712 / ERC-1271 signature bound to the chain, the vault, a per-purpose nonce and an expiry); its four finalizers are the permissionless steps recorded under VaultProtection"
     },
     "VaultBeacon.cancelPin(address,bytes)": {
       "class": "gated",
@@ -1001,6 +1003,82 @@
       "flag": "PROTECTED_ACCOUNT_ENABLED",
       "evidence": "apps/keeper/src/protectedAccount.ts"
     },
+    "VaultProtection.addAllowlisted(address,struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultProtection.burnNonce(uint8)": {
+      "class": "user",
+      "why": "a key voids its own next signature nonce for a purpose, through the vault (a direct call to this code is refused)"
+    },
+    "VaultProtection.cancelAllowlisted(address,struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultProtection.cancelSetting(uint8,struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultProtection.enable(uint32,struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultProtection.finalizeAllowlisted(address)": {
+      "class": "keeper",
+      "pass": "protectedAccount",
+      "flag": "PROTECTED_ACCOUNT_ENABLED",
+      "evidence": "apps/keeper/src/protectedAccount.ts"
+    },
+    "VaultProtection.finalizeReplacement()": {
+      "class": "keeper",
+      "pass": "protectedAccount",
+      "flag": "PROTECTED_ACCOUNT_ENABLED",
+      "evidence": "apps/keeper/src/protectedAccount.ts"
+    },
+    "VaultProtection.finalizeSettings()": {
+      "class": "keeper",
+      "pass": "protectedAccount",
+      "flag": "PROTECTED_ACCOUNT_ENABLED",
+      "evidence": "apps/keeper/src/protectedAccount.ts"
+    },
+    "VaultProtection.finalizeSigner(address)": {
+      "class": "keeper",
+      "pass": "protectedAccount",
+      "flag": "PROTECTED_ACCOUNT_ENABLED",
+      "evidence": "apps/keeper/src/protectedAccount.ts"
+    },
+    "VaultProtection.lock(struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultProtection.removeAllowlisted(address,struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultProtection.replacement(uint8,address,struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultProtection.requestDisable(struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultProtection.requestUnlock(struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultProtection.setDelay(uint32,struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultProtection.signerChange(uint8,address,struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultProtection.verifyDestination(address,address,struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
     "VpfiReturnReceiver.initialize(address,address,address)": {
       "class": "init",
       "why": "the deployment, or the Diamond's factory, initializes each proxy once in the transaction that creates it"
@@ -1008,6 +1086,18 @@
     "VpfiReturnSender.initialize(address,address,address,address,uint256)": {
       "class": "init",
       "why": "the deployment, or the Diamond's factory, initializes each proxy once in the transaction that creates it"
+    },
+    "ReadyBalanceFacet.cancelReadyTopUp(address,address)": {
+      "class": "gated",
+      "gate": "the account itself or one of its active signers (`_requireOwnerOrSigner` refuses any other msg.sender); it only cancels a pending Protected-to-Ready top-up (#3344)"
+    },
+    "ReadyBalanceFacet.releaseReady(address,address,uint256)": {
+      "class": "gated",
+      "gate": "the account itself or one of its active signers (`_requireOwnerOrSigner` refuses any other msg.sender); it only moves Ready back to the Protected balance (#3344)"
+    },
+    "StandingInstructionFacet.previewInterestPayment(uint256)": {
+      "class": "user",
+      "why": "a keeper's eth_call preview of the pay-my-interest instruction: it always reverts with the skip reason it would record, so it changes nothing and no keeper is owed"
     }
   }
 }

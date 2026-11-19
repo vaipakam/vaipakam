@@ -133,6 +133,7 @@ contract RefreshChangedFacetsInPlace is RefreshAllFacetsInPlace {
         PriceGuardCrossing.requireRecorded(diamond);
         _requireNoOpenErc1155RentalAcross902(diamond);
         _requireNoOpenLoanAcrossInterestLedger(diamond);
+        _requireNoOpenLoanAcrossCollateralPledge(diamond);
         // The per-token tracked vault ledger is fresh-deploy only; see
         // TrackedHoldingRollout.
         TrackedHoldingRollout.assertInstalled(diamond);

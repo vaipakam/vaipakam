@@ -303,6 +303,26 @@ Rotating the admin multisig → governance timelock is the final step.
 
 ## 8. Post-deploy operational steps
 
+### Reward remittances: send each mirror only what it needs soon
+
+A mirror chain pays reward claims out of the VPFI it holds for them. What it
+holds is the most a fault on that chain, or on the lane to it, can put at
+risk, so keep it small on purpose:
+
+- Remit to each mirror only the VPFI its claims over the next few days need,
+  read from its outstanding claim total, not a round figure or a month ahead.
+  Top it up again as claims are paid.
+- Keep every VPFI pool lane at the rate limits in §6 gate 2 (capacity 50,000
+  VPFI, refill about 5.8 VPFI/s). Raising one is a governance change with a
+  stated reason (see "Changing lane rate limits after deployment" below), never
+  a way to clear a backlog faster.
+- If a mirror's held balance is well above its near-term claims, stop remitting
+  to it until claims bring it down, and say so in the ops channel.
+
+The contracts bound each delivery by the lane limits and credit a mirror only
+with VPFI that actually arrived. This rule keeps the amount exposed at any
+moment small as well.
+
 ### Rotation: outstanding compensations must survive the cutover (#1434 P2-w6)
 
 Before retiring a canonical Base deployment, read

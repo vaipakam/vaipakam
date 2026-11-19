@@ -36,6 +36,7 @@
  * rendered on 2026-10-05 (the lender's review) and with the permit-route
  * borrower review that replaced the approval-route one (#3295).
  */
+import { describeLifTerms, lifRatePercentText } from './initiationFeeRule.mjs';
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -273,12 +274,19 @@ function comparer(rows, en) {
     compared.push(label);
     L.want(label, percentMatches(parsePercentBps(shown ?? ''), bps), shown, `${Number(bps) / 100}%`);
   };
+  /** The initiation fee's rate at `termDays` under the live term-rule
+   *  settings (#3649), as the app prints it: exactly that text. */
+  const lifRate = (label, shown, lifTerms, termDays) => {
+    compared.push(label);
+    const truth = `${lifRatePercentText(lifTerms, termDays)}%`;
+    L.want(label, squash(shown ?? '') === truth, shown, `${truth} (the rate at ${termDays} days: ${describeLifTerms(lifTerms)})`);
+  };
   const exact = (key, text) => {
     compared.push(`"${en.receipt[key]}" text`);
     const v = valueOf(key);
     if (v !== null) L.want(`"${en.receipt[key]}" row`, v === squash(text), v, JSON.stringify(text));
   };
-  return { L, compared, valueOf, fit, amount, amountIn, percent, exact };
+  return { L, compared, valueOf, fit, amount, amountIn, percent, lifRate, exact };
 }
 
 /**
@@ -353,8 +361,9 @@ export function compareLenderReceipt(rows, ctx) {
  *     the share can be above zero (`permitNeeded`), with the share figure;
  *   - the wallet top-up (the share today: payoff interest + the new loan's
  *     LIF);
- *   - the LIF and treasury rates, and the request's lifetime branch (30
- *     days after posting, or clamped to the loan's grace end — then dated);
+ *   - the LIF rate AT THE NEW LOAN'S TERM under the live term-rule settings
+ *     (#3649 — never the base rate alone), and the treasury rate;
+ *   - the request's lifetime branch (30 days after posting, or clamped to the loan's grace end — then dated);
  *   - the card's wallet-steps note (`permit.multiStepNote`: "up to five
  *     wallet steps … the Permit2 approval if needed, the request, your
  *     signature on the payoff permit, and the transaction that attaches
@@ -378,7 +387,7 @@ export function compareLenderReceipt(rows, ctx) {
  * figure it shows must still lie inside the bracket.
  *
  * ctx: { en, principal: { decimals, symbol }, payoffNow, headroom, topUp,
- *   bound, lifBps, treasuryFeeBps, clamped, graceEndDates: string[],
+ *   bound, lifTerms, termDays, treasuryFeeBps, clamped, graceEndDates: string[],
  *   requestWindowDays, cardText }
  */
 export function compareBorrowerReceipt(rows, ctx) {
@@ -432,7 +441,7 @@ export function compareBorrowerReceipt(rows, ctx) {
   if (!wallet) c.L.want('wallet top-up note', false, owe, 'present');
   else c.amountIn('wallet top-up (payoff interest + LIF)', wallet.topUp, ctx.topUp, P.decimals, P.symbol);
   const g2 = c.fit('fees', en.fees.borrowerLIF, { prefix: true });
-  if (g2) c.percent('loan initiation fee (live LIF)', g2.pct, ctx.lifBps);
+  if (g2) c.lifRate('loan initiation fee (live term rule, at the new term)', g2.pct, ctx.lifTerms, ctx.termDays);
   const tre = matchTemplate(Rf.feesTreasuryNote, c.valueOf('fees') ?? '', { anywhere: true });
   if (!tre) c.L.want('treasury-cut note', false, c.valueOf('fees'), 'present');
   else c.percent('treasury cut (treasuryFeeBps)', tre.cut, ctx.treasuryFeeBps);

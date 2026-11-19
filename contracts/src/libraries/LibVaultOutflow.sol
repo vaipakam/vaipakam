@@ -254,6 +254,51 @@ library LibVaultOutflow {
         return _go(user, ERC20, asset, 0, amount, actor, VaultOutflowTypes.OutflowClass.Incentive, ref, 0, reason);
     }
 
+    /// @notice #3682 — a registered integrator's share of a new loan's
+    ///         initiation fee, from `user`'s (the lender's) vault into the
+    ///         vault of integrator `integratorId`'s payout account. The
+    ///         policy derives the destination from the registry and refuses
+    ///         an integrator that is not active.
+    function toIntegratorShare(address user, address asset, uint256 amount, address integratorId, uint256 offerId)
+        internal
+        returns (uint256)
+    {
+        return _go(
+            user,
+            ERC20,
+            asset,
+            0,
+            amount,
+            integratorId,
+            VaultOutflowTypes.OutflowClass.IntegratorShare,
+            offerId,
+            0,
+            OutflowReason.INTEGRATOR_SHARE
+        );
+    }
+
+    /// @notice #3722 — the inviter's share of a new loan's initiation fee,
+    ///         from `user`'s (the lender's) vault to the wallet of the inviter
+    ///         `newUser` bound. The policy derives the inviter from that
+    ///         binding and refuses one whose period has ended.
+    function toReferralShare(address user, address asset, uint256 amount, address newUser, uint256 offerId)
+        internal
+        returns (uint256)
+    {
+        return _go(
+            user,
+            ERC20,
+            asset,
+            0,
+            amount,
+            newUser,
+            VaultOutflowTypes.OutflowClass.ReferralShare,
+            offerId,
+            0,
+            OutflowReason.REFERRAL_SHARE
+        );
+    }
+
     /// @notice To the liquidator that paid loan `loanId`'s debt in this same
     ///         transaction: the caller passes `msg.sender` of its entry.
     function toLiquidationBuyer(
@@ -343,6 +388,18 @@ library LibVaultOutflow {
     }
 
     // ─── The one encoding ────────────────────────────────────────────────
+
+    // ─── Recovery (#3246 part 2) ─────────────────────────────────────────
+
+    /// @notice To `user`'s recovery address in force, which the policy host
+    ///         reads from `user`'s own vault (no caller names it): a clawback
+    ///         or a recovered account's sweep. Passes no payout queue.
+    function toRecovery(address user, uint8 kind, address asset, uint256 tokenId, uint256 amount, uint8 reason)
+        internal
+        returns (uint256)
+    {
+        return _go(user, kind, asset, tokenId, amount, address(0), VaultOutflowTypes.OutflowClass.Recovery, 0, 0, reason);
+    }
 
     function _go(
         address user,

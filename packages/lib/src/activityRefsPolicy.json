@@ -36,6 +36,10 @@
     "SignedOfferMatched.offerId": {
       "path": "counterpartyOfferId",
       "why": "Same rule as IntentMatched: the counterparty is the standing on-chain offer a person created; the slice is synthesized for the signed order, whose owner follows it by orderHash (in args_json)."
+    },
+    "CollectionOfferFilled.offerId": {
+      "path": "offerId",
+      "why": "#3328: the row belongs on the collection offer's timeline, the standing offer the lender posted and follows by id. The one-token slice is synthesized for this fill and its own acceptance files the loan under it; sliceOfferId stays in args_json."
     }
   },
   "notScoped": {
@@ -68,6 +72,18 @@
         "loanId"
       ],
       "why": "The input named loanId is not always a loan: on an offer-cancel refund it carries the OFFER id cast to uint256 (LibSanctionedLock), so filing the number under a loan could put the row on an unrelated loan. The recipient is in args_json."
+    },
+    "LoanInterestPaid.loanId": {
+      "aliases": [
+        "loanId"
+      ],
+      "why": "#3755: a companion statement of the interest inside a payment or settlement whose own event is already on the loan's timeline; filing it too would show the payment twice. The indexer reads it for the lending totals, and the loan id stays in args_json."
+    },
+    "LoanInterestUndelivered.loanId": {
+      "aliases": [
+        "loanId"
+      ],
+      "why": "#3755: a companion statement of the interest left undelivered by a payment or settlement whose own event is already on the loan's timeline; filing it too would show the payment twice. The indexer reads it for the lending totals, and the loan id stays in args_json."
     }
   }
 }

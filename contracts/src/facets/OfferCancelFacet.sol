@@ -181,7 +181,12 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // refund still goes to `offer.creator`, whose protected payout gate
         // queues it to the controller.
         address creator = offer.creator;
-        bool routeDead = _vehicleRouteDead(s, offerId);
+        // #3246 part 2 — and anyone against an offer of a RECOVERED account:
+        // a clawed-back account opens nothing, so its offers can never fill,
+        // and its owner key may be lost. The backing returns to the account's
+        // vault (the locked account's payout gate keeps it there, free), and
+        // the recovered account's sweep moves it to the recovery address.
+        bool routeDead = _vehicleRouteDead(s, offerId) || LibProtectedAccount.isRecovered(creator);
         // #3205 — and anyone against an offset or sale vehicle whose route is
         // dead: the position it is bound to moved (or its route was closed),
         // so it can never complete, and only its creator could otherwise

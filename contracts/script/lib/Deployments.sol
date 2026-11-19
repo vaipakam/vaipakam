@@ -317,7 +317,20 @@ library Deployments {
     function readDiamond()         internal view returns (address) { return _readAddr(".diamond",         "DIAMOND_ADDRESS"); }
     function readVaultImpl()      internal view returns (address) { return _readAddr(".vaultImpl",      "VAULT_IMPL_ADDRESS"); }
     function readTimelock()        internal view returns (address) { return _readAddr(".timelock",        "TIMELOCK_ADDRESS"); }
-    function readVpfiToken()       internal view returns (address) { return _readAddr(".vpfiToken",       "VPFI_TOKEN_ADDRESS"); }
+    /// @notice The chain's VPFI token: the canonical `.vpfiToken`, else on a
+    ///         mirror chain its `.vpfiMirror` (FreshDeployHardeningPlan
+    ///         lesson 5: a mirror records its VPFI under that key, and a
+    ///         mirror's reward-custody activation stopped for want of a
+    ///         hand-passed address), else the legacy `<PREFIX>VPFI_TOKEN_ADDRESS`
+    ///         env fallback, which reverts when unset. A chain carries one of
+    ///         the two keys, never both (the omit-keys policy).
+    function readVpfiToken() internal view returns (address) {
+        address token = _tryReadAddr(".vpfiToken");
+        if (token != address(0)) return token;
+        token = _tryReadAddr(".vpfiMirror");
+        if (token != address(0)) return token;
+        return _readAddr(".vpfiToken", "VPFI_TOKEN_ADDRESS");
+    }
 
     /// @notice Optional read of `.vpfiToken` from the ARTIFACT ONLY — never the
     ///         legacy env fallback, and never reverts. Returns address(0) when
@@ -588,9 +601,12 @@ library Deployments {
     function writeProtocolRegistry(address a) internal { _writeAddr(".protocolRegistry", a); }
     function writeBackstopVault(address a)   internal { _writeAddr(".backstopVault",   a); }
     function writeVaultProtection(address a) internal { _writeAddr(".vaultProtection", a); }
+    function writeVaultRecovery(address a) internal { _writeAddr(".vaultRecovery", a); }
     /// @notice #3272 — the chain's PriceGuard, the one price source the
     ///         Diamond and the vaults read (through the registry pointer).
     function writePriceGuard(address a) internal { _writeAddr(".priceGuard", a); }
+    /// @notice #3437 — the reader whose code answers that guard's price reads.
+    function writePriceGuardReader(address a) internal { _writeAddr(".priceGuardReader", a); }
     function writeTimelock(address a)        internal { _writeAddr(".timelock",        a); }
     function writeVpfiToken(address a)       internal { _writeAddr(".vpfiToken",       a); }
     function writeVpfiTokenImpl(address a)   internal { _writeAddr(".vpfiTokenImpl",   a); }

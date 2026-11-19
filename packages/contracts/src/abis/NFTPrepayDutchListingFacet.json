@@ -331,17 +331,6 @@
   },
   {
     "type": "error",
-    "name": "AccountRetired",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "AlreadyLaunched",
     "inputs": []
   },
@@ -2535,6 +2524,11 @@
   },
   {
     "type": "error",
+    "name": "PositionTokenNotAccepted",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "PrepayGraceWindowClosed",
     "inputs": [
       {
@@ -2617,17 +2611,6 @@
     "type": "error",
     "name": "PriceReadOutOfGas",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ProtectedVaultLocked",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",

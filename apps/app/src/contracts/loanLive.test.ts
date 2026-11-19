@@ -90,7 +90,8 @@ describe('refinancePayoffOf', () => {
 describe('refinanceWalletPullOf', () => {
   // #3042 — the new principal less its initiation fee pays the old lender
   // inside the accept, so the wallet pays only the rest of the payoff.
-  const lifBps = 20;
+  // #3649 — the fee is term-scaled; at a 30-day request it is the base rate.
+  const lif = { requestAmount: 0n, lifTerms: { baseBps: 20, baseTermDays: 30, yearlyBps: 50, yearDays: 365 }, termDays: 30 };
   const net = (amount: bigint) => amount - (amount * 20n) / 10_000n;
 
   it('is the payoff minus the net new principal (interest + initiation fee)', () => {
@@ -98,14 +99,14 @@ describe('refinanceWalletPullOf', () => {
     expect(
       refinanceWalletPullOf(
         live,
-        { requestAmount: live.principal, loanInitiationFeeBps: lifBps },
+        { ...lif, requestAmount: live.principal },
         asOf,
       ),
     ).toBe(interestFor(30n) + (live.principal * 20n) / 10_000n);
     expect(
       refinanceWalletPullOf(
         live,
-        { requestAmount: live.principal, loanInitiationFeeBps: lifBps },
+        { ...lif, requestAmount: live.principal },
         asOf,
       ),
     ).toBe(refinancePayoffOf(live, asOf) - net(live.principal));
@@ -117,10 +118,18 @@ describe('refinanceWalletPullOf', () => {
     expect(
       refinanceWalletPullOf(
         live,
-        { requestAmount: half, loanInitiationFeeBps: lifBps },
+        { ...lif, requestAmount: half },
         asOf,
       ),
     ).toBe(refinancePayoffOf(live, asOf) - net(half));
+  });
+
+  it('takes the fee at the request\'s own term (#3649)', () => {
+    const asOf = live.startTime + DAY;
+    // A one-year request pays the yearly rate (50 bps), not the base rate.
+    expect(
+      refinanceWalletPullOf(live, { ...lif, requestAmount: live.principal, termDays: 365 }, asOf),
+    ).toBe(refinancePayoffOf(live, asOf) - (live.principal - (live.principal * 50n) / 10_000n));
   });
 });
 

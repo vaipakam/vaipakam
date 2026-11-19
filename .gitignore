@@ -86,6 +86,11 @@ contracts/deployments/*/storage-layout.anchor.prior-rehearsal.*.json
 # timestamped subdirectory under .archive/<ISO-8601>/ before wiping.
 # Forensic value only; rebuilds on every --fresh redeploy.
 contracts/deployments/*/.archive/
+# The records a --fresh run carries into the new artifact (keeper wallet,
+# standalone sanctions contracts), saved while the old artifact is archived
+# and removed once merged (FreshDeployHardeningPlan lesson 3). One left behind
+# means the merge did not run; the deploy names it.
+contracts/deployments/*/.carry-forward.json
 # The staged-run record of a post-then-fill positive-flow module (#3502):
 # written by `PositiveFlowsStaged.stage()` and removed by its read-only
 # `finish()` once the last stage has landed. Same scope as the one above.

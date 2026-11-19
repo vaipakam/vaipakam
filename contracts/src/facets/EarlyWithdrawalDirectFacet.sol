@@ -16,6 +16,7 @@ import {LibLoan} from "../libraries/LibLoan.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -400,6 +401,10 @@ contract EarlyWithdrawalDirectFacet is
         // direct `acceptOffer` path; reject it as a sale vehicle here, same as the
         // matcher rejects it (`OffsetVehicleNotMatchable`).
         if (s.offsetOfferToLoanId[buyOfferId] != 0) revert InvalidSaleOffer();
+        // #3328 — a collection offer is not a standing buy offer.
+        if (s.collectionOffer[buyOfferId].set.kind != LibVaipakam.CollateralSetKind.None) {
+            revert IVaipakamErrors.CollectionParentNotFillable(buyOfferId);
+        }
         // #1503 design item 21 — and note this is a DIFFERENT question from the
         // line above, which is why the gap survived review: that one asks "is the
         // OFFER I am consuming an offset vehicle" (`offsetOfferToLoanId[offerId]`),
@@ -663,6 +668,9 @@ contract EarlyWithdrawalDirectFacet is
         // If the shortfall exceeds what Noah brings, net settlement cannot
         // complete — liam would owe tokens we never collected from him.
         if (shortfall > loan.principal) revert RateShortfallTooHigh();
+        // #3339 — a seller whose positions are under the holder lock sells
+        // only at the loan's own terms: no shortfall out of their principal.
+        LibProtectedAccount.requireLockedSaleFloor(msg.sender, shortfall);
 
         // #1922 (#1503 item 6) — the seller's reviewed-economics bound, checked
         // HERE against the SAME figures the settlement below uses (one
@@ -732,11 +740,13 @@ contract EarlyWithdrawalDirectFacet is
 
 
         uint256 toLiam = loan.principal - shortfall;
-        if (toLiam > 0) {
-            // #2440 — a voluntary sale: the seller's net is refused unless it
-            // all arrived, so the `minSellerNet` the seller set is what they
-            // actually receive, never a figure a token shrank on the way.
-            LibDelivery.pushExact(loan.principalAsset, msg.sender, toLiam);
+        // #3629 — the seller's net is credited to the seller's OWN vault as
+        // free balance, never paid to a wallet. #2440 — measured there: the
+        // `minSellerNet` the seller reviewed is checked against what actually
+        // arrived, never a figure a token shrank on the way.
+        {
+            uint256 credited = LibFacet.creditOwnVault(loan.principalAsset, msg.sender, toLiam);
+            if (credited < b.minSellerNet) revert SaleNetBelowReviewed(credited, b.minSellerNet);
         }
         LibFacet.depositForNewLender(
             loan.principalAsset,

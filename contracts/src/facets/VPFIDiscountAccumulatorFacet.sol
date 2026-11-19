@@ -80,6 +80,12 @@ contract VPFIDiscountAccumulatorFacet {
     ///         `FunctionDoesNotExist()`, so that selector, seen by
     ///         {LibTierRecord.refresh}, can only mean this facet is not cut.
     function syncTierRecord(address user) external onlyInternal {
+        // A move under a fixed gas allowance defers the rollup to its caller
+        // (LibTierRecord deferral, #3669).
+        if (LibTierRecord.deferring()) {
+            LibTierRecord.defer(user);
+            return;
+        }
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         _rollupCore(
             s,

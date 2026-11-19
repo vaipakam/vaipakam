@@ -8,6 +8,7 @@ import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 import {LibTestPositionNFT} from "./LibTestPositionNFT.sol";
 import {VaultOutflowTypes} from "../../src/vault/VaultOutflowTypes.sol";
 import {VaultProtection} from "../../src/vault/VaultProtection.sol";
+import {VaultRecovery} from "../../src/vault/VaultRecovery.sol";
 import {Vm} from "forge-std/Vm.sol";
 
 /// @dev The Diamond reads the test-side endpoint sync makes (each optional:
@@ -55,7 +56,9 @@ library LibTestVaultBeacon {
         VaultOutflowTypes.VaultEndpoints memory e;
         e.treasury = _configuredTreasury(diamond);
         e.priceGuard = LibTestPriceGuard.guardOf(diamond);
-        e.protection = ArtifactDeploy.deploy(type(VaultProtection).name);
+        e.protection = ArtifactDeploy.deploy(
+            type(VaultProtection).name, abi.encode(ArtifactDeploy.deploy(type(VaultRecovery).name))
+        );
         address impl = ArtifactDeploy.deploy(type(VaipakamVaultImplementation).name, abi.encode(nft, e));
         beacon = VaultBeacon(
             ArtifactDeploy.deploy(type(VaultBeacon).name, abi.encode(owner, diamond, owner, impl))

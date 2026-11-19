@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {LibTestFallbackGate} from "./helpers/LibTestFallbackGate.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -15,6 +16,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
@@ -181,6 +183,7 @@ contract FallbackCustodyTest is CustodyInvariantBase {
 
         LibVaipakam.Loan memory l = _fcLoan(id);
         vm.warp(uint256(l.startTime) + l.durationDays * 1 days + FC_PAST_EVERY_GRACE);
+        LibTestFallbackGate.open(address(diamond), id);
         uint256 sellQuote = defaultQuote(address(diamond), id);
         vm.recordLogs();
         DefaultedFacet(address(diamond)).triggerDefault(id, sellQuote, _fcRoute(true));
@@ -319,7 +322,7 @@ contract FallbackCustodyTest is CustodyInvariantBase {
         assertEq(_fcBal(vpfi, treasuryEOA) - treasury0, t, "the treasury slice reaches the treasury");
         assertEq(_fcRow(id), 0, "the row is spent");
         assertEq(_fcLien(id), b + 1, "the lien is exactly the retained slice plus the top-up");
-        (address asset, uint256 owed,) = ClaimFacet(address(diamond)).getClaimableAmount(id, false);
+        (address asset, uint256 owed,) = ClaimViewFacet(address(diamond)).getClaimableAmount(id, false);
         assertEq(asset, vpfi, "the borrower is owed collateral");
         assertEq(owed, b + 1, "exactly the retained slice plus the top-up");
         assertEq(_fcTracked(fcBorrower, vpfi), u + b + 1, "the vault keeps the free deposit, the slice and the top-up");
@@ -557,7 +560,7 @@ contract FallbackCustodyTest is CustodyInvariantBase {
         assertEq(bVpfi, bVpfi0, "for the same amount");
         (, uint256 dayClose) = _fcDayMinClose(fcBorrower);
         assertEq(dayClose, tracked0 - FC_COLLATERAL, "and the stamp is back to the borrower's own VPFI");
-        (,,,,,, bool retried) = ClaimFacet(address(diamond)).getFallbackSnapshot(id);
+        (,,,,,, bool retried) = ClaimViewFacet(address(diamond)).getFallbackSnapshot(id);
         assertTrue(retried, "the one-shot retry is spent");
     }
 
@@ -804,7 +807,7 @@ contract FallbackCustodyTest is CustodyInvariantBase {
         assertEq(_fcBal(weth, address(diamond)), diamond0, "the Diamond is never a waypoint");
         assertEq(_fcLien(a), residual, "the lien is exactly the residual");
         assertEq(_fcRow(a), 0, "the row returned to the pledge");
-        (, uint256 owed,) = ClaimFacet(address(diamond)).getClaimableAmount(a, false);
+        (, uint256 owed,) = ClaimViewFacet(address(diamond)).getClaimableAmount(a, false);
         assertEq(owed, residual, "the borrower is owed exactly the residual");
         (uint256 returned, uint256 nReturned) = _fcSum(_fcMoves(logs, a), LibFallbackCustody.Move.ReturnedToPledge);
         assertEq(nReturned, 1, "one ReturnedToPledge move");
@@ -938,7 +941,7 @@ contract FallbackCustodyTest is CustodyInvariantBase {
         (uint256 row, uint256 legacy) = _fcCustody(a);
         assertEq(row, 0, "fixture-live: an empty row");
         assertEq(legacy, 0, "fixture-live: which is not legacy");
-        (,,,,, bool active,) = ClaimFacet(address(diamond)).getFallbackSnapshot(a);
+        (,,,,, bool active,) = ClaimViewFacet(address(diamond)).getFallbackSnapshot(a);
         assertTrue(active, "fixture-live: under a still-active snapshot");
         assertEq(_fcSnapshotTotal(a), 0, "fixture-live: scaled to zero");
 
@@ -1071,6 +1074,8 @@ contract FallbackCustodyTest is CustodyInvariantBase {
         _fcFund(lender_, lending, principal);
         _fcFund(borrower_, collateral, collateralAmount);
         LibVaipakam.CreateOfferParams memory p = LibVaipakam.CreateOfferParams({
+            integrator: address(0),
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: lending,
             amount: principal,
@@ -1110,6 +1115,7 @@ contract FallbackCustodyTest is CustodyInvariantBase {
     ///      top-up does not cure it unless the cell restores them.
     function _fcLiquidateToFallback(uint256 loanId) internal {
         _fcSetRisk(loanId, FC_HF_LIQUIDATABLE, FC_LTV_LIQUIDATABLE);
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         RiskFacet(address(diamond)).triggerLiquidation(loanId, sellQuote, _fcRoute(true));
         assertEq(
@@ -1138,7 +1144,7 @@ contract FallbackCustodyTest is CustodyInvariantBase {
     ///      total (and so the row) unchanged, the lender claim emptied with it.
     function _fcZeroLenderSliceRaw(uint256 loanId) internal {
         (uint256 l, uint256 t, uint256 b, , uint256 tpd, bool active, bool retried) =
-            ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);
+            ClaimViewFacet(address(diamond)).getFallbackSnapshot(loanId);
         TestMutatorFacet(address(diamond)).setFallbackSnapshotRaw(
             loanId,
             LibVaipakam.FallbackSnapshot({
@@ -1253,7 +1259,7 @@ contract FallbackCustodyTest is CustodyInvariantBase {
     }
 
     function _fcSlices(uint256 loanId) internal view returns (uint256 l, uint256 t, uint256 b) {
-        (l, t, b,,,,) = ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);
+        (l, t, b,,,,) = ClaimViewFacet(address(diamond)).getFallbackSnapshot(loanId);
     }
 
     function _fcSnapshotTotal(uint256 loanId) internal view returns (uint256) {

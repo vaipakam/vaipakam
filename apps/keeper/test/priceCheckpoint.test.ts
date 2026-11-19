@@ -50,7 +50,12 @@ function revert(errorName: string, args: readonly unknown[] = []): ContractFunct
 function checkpointLog(a: Address, hour: number, price: bigint): { address: Address; data: Hex; topics: Hex[] } {
   const ev = ABI.find((x) => x.type === 'event' && x.name === 'HourlyPriceCheckpointed') as AbiEvent;
   const topics = encodeEventTopics({ abi: [ev], eventName: 'HourlyPriceCheckpointed', args: { asset: a, hourIndex: BigInt(hour) } } as never) as Hex[];
-  return { address: DIAMOND, topics, data: encodeAbiParameters([{ type: 'uint256' }], [price]) };
+  // The checkpoint's price, then the guard and price version it was read at (#3437).
+  const data = encodeAbiParameters(
+    [{ type: 'uint256' }, { type: 'address' }, { type: 'uint64' }, { type: 'uint64' }],
+    [price, asset(0xa11), 1n, 1n],
+  );
+  return { address: DIAMOND, topics, data };
 }
 
 class FakeDiamond {

@@ -8,12 +8,11 @@
  * protocol's dry run of this very withdrawal, which names a hold no view
  * exposes (a lender's linked sale listing, #3308).
  *
- * Nothing leaves the wallet and no approval is asked: the protocol sends
- * the collateral from the borrower's vault to the wallet that asks. When
- * that wallet runs protected account mode, the protocol queues the owner's
- * own withdrawal for the account's delay instead (`LibProtectedAccount.gate`,
- * stated through the shared payout route), so the review reads the wallet's
- * mode too.
+ * Nothing leaves the wallet and no approval is asked: the protocol releases
+ * the collateral in the borrower's vault from the loan, as the holder's own
+ * free balance (#3710, "all to the vault, one Withdraw"). Taking it to the
+ * wallet is the vault's own Withdraw, where protected account mode applies;
+ * the review reads the mode only to say so.
  */
 import type { Abi, PublicClient } from 'viem';
 import { AdminFacetABI, LoanFacetABI, OracleFacetABI, PartialWithdrawalFacetABI, RefinanceFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
@@ -24,7 +23,10 @@ import { refusalFromError } from '../eligibility/refusal';
 import { checkTakeBack, takeBackVerdict, type TakeBackCheck } from '../eligibility/takeBack';
 import type { Refusal, Verdict } from '../eligibility/types';
 import type { LoanDetails } from '../positions/loanView';
-import { payoutRoute, readProtection, type PayoutRoute, type Protection } from '../protection/payout';
+import { readProtection, type PayoutRoute, type Protection } from '../protection/payout';
+import { readVault } from '../offers/reads';
+
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 import { routeChanged } from '../protection/payoutCopy';
 import { askThrough } from '../tx/simulate';
 import { answerOrNull } from '../reads/answer';
@@ -56,9 +58,13 @@ export interface TakeBackReview {
   /** The wallet's protected account mode, or null when it could not be
    *  read. */
   protection: Protection | null;
-  /** Where the collateral lands: the wallet, or the account's payout queue;
-   *  `unknown` when the mode could not be read. */
+  /** Where the collateral lands: always the holder's own vault, as free
+   *  balance (`credit`); the wallet is reached by the vault's own Withdraw,
+   *  the one place protected account mode applies. */
   route: PayoutRoute;
+  /** The holder's vault, where the withdrawal's credit is measured; null
+   *  when it could not be read. */
+  vault: Hex | null;
   amountCheck: TakeBackCheck;
   /** The protocol's dry run of this withdrawal now: null when it passes,
    *  its refusal when it refuses, 'unread' when it could not be run. Asked
@@ -81,9 +87,9 @@ export async function readTakeBackReview(
     .read(async (c: PublicClient) => {
       const loan = (await c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [loanId] })) as LoanDetails;
       const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => answerOrNull(c.readContract({ address: diamond, abi, functionName, args }) as Promise<T>);
-      const [borrowerHolder, borrowerLock, paused, refinance, liquidity, maxWithdrawable, healthFactor, ltvBps, protectedAccount] = await Promise.all([
-        // #3205: through the position-NFT door (the standalone PositionNFT or
-        // the legacy Diamond); a retired token has no holder.
+      const [borrowerHolder, borrowerLock, paused, refinance, liquidity, maxWithdrawable, healthFactor, ltvBps, protectedAccount, vault] = await Promise.all([
+        // #3205: through the position-NFT door (the PositionNFT); a retired
+        // token has no holder.
         readLiveHolderOrNull(c, diamond, loan.borrowerTokenId),
         answerOrNull(c.readContract(positionRouteCallFor(diamond, loan.borrowerTokenId))).then((v) => (v === null ? null : Number(v))),
         read<boolean>(ADMIN, 'paused'),
@@ -93,6 +99,7 @@ export async function readTakeBackReview(
         read<bigint>(RISK, 'calculateHealthFactor', [loanId]),
         read<bigint>(RISK, 'calculateLTV', [loanId]),
         readProtection(c, diamond, account),
+        answerOrNull(readVault(c, diamond, account)).then((v) => (v === null || v.toLowerCase() === ZERO_ADDRESS ? null : v)),
       ]);
       return {
         loan,
@@ -105,6 +112,7 @@ export async function readTakeBackReview(
         healthFactor,
         ltvBps,
         protection: protectedAccount,
+        vault,
       };
     })
     .then((x) => x.value);
@@ -136,7 +144,11 @@ export async function readTakeBackReview(
   // only a loan in fallback, a rental, an illiquid NFT collateral's sale
   // listing, a live swap-to-repay order or a sanctioned holder, each of which
   // the rule above or the dry run already refuses.
-  const route = payoutRoute(facts.protection, account, account);
+  // #3710 (owner decision 2026-11-19, "all to the vault, one Withdraw"):
+  // the released collateral becomes free balance in the holder's own vault,
+  // whatever the account's protected mode; only the later Withdraw reaches
+  // the wallet.
+  const route: PayoutRoute = 'credit';
   return { identity, loanId, amount, ...facts, route, amountCheck, dryRun, verdict, readAt };
 }
 

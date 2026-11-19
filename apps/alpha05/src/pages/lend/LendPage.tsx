@@ -28,7 +28,12 @@ import { ArmTariff, tariffStoreKeys, type ArmContext } from '../../shared/post/A
 import type { PostAssets } from '../../shared/post/postModel';
 import type { PostDraft } from '../../shared/post/postReview';
 import { indexerPositionFlowReader } from '../../shared/offers/positionFlow';
+import { LendChoice } from '../../shared/autolend/LendChoice';
 import { useWorldRail } from '../../shared/reads/world/WorldRailContext';
+import { AUTOLEND_KEY, AutoLendForm } from '../../shared/autolend/AutoLendForm';
+import { AutoLendSetup } from '../../shared/autolend/AutoLendSetup';
+import { readLendChoice, type LendChoiceFacts } from '../../shared/autolend/lendChoice';
+import type { AutoLendDraft, AutoLendInput } from '../../shared/autolend/autoLend';
 
 type Hex = `0x${string}`;
 
@@ -55,8 +60,12 @@ function initialPair(chainId: number, suggested: readonly { address: Hex }[]): {
  * page's request uses, from the other side: the amount lent is what locks.
  * In Advanced the lender may lend in parts, choose a fill mode, an interest
  * schedule and the Full fee tariff, which is set by its own step here after
- * posting. A request that locks an NFT and an offer that asks for one follow
- * in later updates; the page says so instead of hiding them.
+ * posting. #3624: one choice decides what the lender's own lend creates: a
+ * one-time offer, or Auto-lend ("keep lending when repaid"), a funded
+ * standing instruction a matching service fills and that lends repaid money
+ * again (shared/autolend). A request that locks an NFT and an offer that
+ * asks for one follow in later updates; the page says so instead of hiding
+ * them.
  */
 export function LendPage() {
   const { text, format } = useCopy();
@@ -85,6 +94,13 @@ export function LendPage() {
   /** OFF-22: the Full tariff step for an offer just posted, kept apart from
    *  the offer's review so it outlives that card. */
   const [armContext, setArmContext] = useStoredValue<ArmContext>(tariffStoreKeys(LEND_OFFER_KEY).ctx);
+  /** #3624: how the lender's own lend runs (a one-time offer, or Auto-lend),
+   *  and the Auto-lend form and its confirmed draft, kept like the offer's. */
+  const [runs, setRuns] = useStoredValue<'once' | 'keep'>(`${AUTOLEND_KEY}:runs`);
+  const [autoComposing, setAutoComposing] = useStoredValue<boolean>(`${AUTOLEND_KEY}:composing`);
+  const [autoDraft, setAutoDraft] = useStoredValue<AutoLendDraft>(`${AUTOLEND_KEY}:draft`);
+  const [pendingAuto, setPendingAuto] = useStoredValue<AutoLendDraft>(`${AUTOLEND_KEY}:pending`);
+  const [, setAutoTyped] = useStoredValue<AutoLendInput>(`${AUTOLEND_KEY}:input`);
 
   const suggested = chain ? suggestedAssets(chain) : [];
   const [pairByChain, setPairByChain] = useState<Record<number, { lending: Hex | null; collateral: Hex | null }>>({});
@@ -118,8 +134,16 @@ export function LendPage() {
   const meta = useTokenMeta(assets).data;
 
   const termsOpen = termsGate.session !== null;
-  const offering = composing === true || draft !== null || choice !== null;
+  const autoOpen = autoComposing === true || autoDraft !== null;
+  const offering = composing === true || draft !== null || choice !== null || autoOpen;
   const flowOpen = taking !== null || offering;
+  // #3624: whether Auto-lend can run on this network and whether the wallet
+  // already has one on this pair, read before the choice is offered.
+  const lendChoice = useOwnRead<LendChoiceFacts>(
+    ['lend', 'choice', lending.toLowerCase(), collateral.toLowerCase()],
+    (c) => readLendChoice(c, diamond, own!.account, lending, collateral),
+    { enabled: ready && walletChain !== null },
+  );
 
   // OFF-35: funding a request is new exposure, so an unaccepted Terms
   // version is accepted first; the request is taken once that is recorded.
@@ -147,7 +171,16 @@ export function LendPage() {
 
   const termsUnknown = connected && walletChain !== null && terms.state === 'failed';
   const takeDisabled = !connected || walletChain === null || terms.state !== 'ready' || termsOpen;
-  const step = taking !== null || draft !== null || choice !== null ? 2 : ready ? 1 : 0;
+  // Auto-lend is new exposure too (OFF-35): Terms are accepted first.
+  const reviewAuto = (next: AutoLendDraft) => {
+    if (terms.data?.kind === 'needed') {
+      setPendingAuto(next);
+      termsGate.start(terms.data);
+      return;
+    }
+    setAutoDraft(next);
+  };
+  const step = taking !== null || draft !== null || choice !== null || autoDraft !== null ? 2 : ready ? 1 : 0;
   // OFF-06: an offer lends an ERC-20 against ERC-20 collateral here; what
   // each leg's contract claims is read, and an unread standard offers no
   // offer rather than a guessed one.
@@ -187,15 +220,42 @@ export function LendPage() {
               {format('lendOffer.heldForTariff', { id: armContext.offerId.toString() })}
             </p>
           )}
-          <button
-            type="button"
-            className="btn"
+          <LendChoice
+            runs={runs ?? 'once'}
+            onRuns={setRuns}
+            facts={lendChoice.data}
+            failed={lendChoice.state === 'failed'}
             disabled={takeDisabled || offerPair === null || armContext !== null}
-            onClick={() => setComposing(true)}
-            data-testid="lend-offer-open"
-          >
-            {text('lend.postOpen')}
-          </button>
+            onOpen={(chosen) => (chosen === 'keep' ? setAutoComposing(true) : setComposing(true))}
+          />
+        </section>
+      )}
+      {autoComposing === true && autoDraft === null && !termsOpen && walletChain && own && offerPair && (
+        <section className="borrow-section" aria-labelledby="autolend-form-title">
+          <AutoLendForm chain={walletChain} own={own} lending={offerPair.lending} collateral={offerPair.collateral} meta={meta} onReview={reviewAuto} onCancel={() => setAutoComposing(null)} />
+        </section>
+      )}
+      {autoDraft !== null && walletChain && own && (
+        <section className="borrow-section" aria-labelledby="lend-autolend-review">
+          <h2 id="lend-autolend-review" className="sr-only">
+            {text('lend.stepSign')}
+          </h2>
+          <AutoLendSetup
+            draft={autoDraft}
+            chain={walletChain}
+            own={own}
+            meta={meta}
+            terms={terms.data}
+            onEdit={() => setAutoDraft(null)}
+            onClose={(recorded) => {
+              setAutoDraft(null);
+              setAutoComposing(null);
+              if (recorded) {
+                setAutoTyped(null);
+                lendChoice.refetch();
+              }
+            }}
+          />
         </section>
       )}
       {composing === true && draft === null && choice === null && !termsOpen && walletChain && own && offerPair && (
@@ -214,12 +274,15 @@ export function LendPage() {
             termsGate.end();
             if (pendingTake !== null) setTaking(pendingTake);
             if (pendingDraft !== null) openReview(pendingDraft);
+            if (pendingAuto !== null) setAutoDraft(pendingAuto);
             setPendingTake(null);
             setPendingDraft(null);
+            setPendingAuto(null);
           }}
           onClose={() => {
             setPendingTake(null);
             setPendingDraft(null);
+            setPendingAuto(null);
             termsGate.end();
           }}
         />
@@ -230,7 +293,7 @@ export function LendPage() {
             side="lender"
             picks={takeNowPicks(choice, view.data)}
             stale={view.error !== null}
-            matcherBps={view.data?.matcherBps ?? null}
+            matcher={view.data?.matcher ?? null}
             meta={meta}
             takeDisabled={takeDisabled}
             onTake={(id) => {

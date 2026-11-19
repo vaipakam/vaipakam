@@ -16,7 +16,7 @@ import { readFile } from 'node:fs/promises';
 import { keccak256, toHex } from 'viem';
 import type { Page } from '@playwright/test';
 import { scenario } from '../lib/chain';
-import { connectWallet, expect, openMenu, test } from '../lib/wallet';
+import { closeOutOnly, connectWallet, expect, openMenu, test } from '../lib/wallet';
 
 async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -137,8 +137,9 @@ test('with a wallet: the Terms state on this network and the fee-discount settin
   await expect(terms).toContainText('No Terms of Service are in force on');
   await expect(page.getByTestId('settings-fees').getByTestId('consent-toggle')).toBeVisible({ timeout: 30_000 });
 
-  await sc.diamondWrite('admin', 'setCurrentTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
+  await sc.diamondWrite('admin', 'publishTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
   await page.reload();
+  await closeOutOnly(page);
   await expect(terms).toHaveAttribute('data-terms', 'needed', { timeout: 30_000 });
   await expect(terms).toContainText('Version 1 is in force on');
   await expect(terms).toContainText('Repaying, claiming and withdrawing never do.');

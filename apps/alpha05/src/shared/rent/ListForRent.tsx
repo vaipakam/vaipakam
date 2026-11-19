@@ -22,7 +22,7 @@ import { cleanUpLeg } from '../tx/cleanUp';
 import { nftApproval } from '../tx/nftApproval';
 import { operatorApproval } from '../tx/operatorApproval';
 import type { LegOutcome } from '../tx/outcome';
-import { askThrough } from '../tx/simulate';
+import { askAfter } from '../tx/simulate';
 import { readValidUntil } from '../tx/deadline';
 import { useStoredValue, useTxNote } from '../tx/txStore';
 import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
@@ -119,6 +119,8 @@ export function ListForRent({ draft, chain, own, meta, terms, onEdit, onClose }:
       //    before any prompt: the one ERC-721 token, or, for an ERC-1155
       //    token, the operator approval for this listing alone.
       let putItBack: (() => Promise<{ sentence: string }>) | null = null;
+      // The block the approval landed in: the dry run is asked at or after it.
+      let approvedAt: bigint | null = null;
       if (d.standard === 'erc721') {
         const ap = tokenApproval(d.nft, d.tokenId);
         const now = await ap.read();
@@ -127,6 +129,7 @@ export function ListForRent({ draft, chain, own, meta, terms, onEdit, onClose }:
         if (needed) {
           say(format('nftApproval.step', { token: listedNftName(r, meta, format) }));
           const since = await ap.approve(now.approved);
+          approvedAt = since;
           approvalLeft.current = { token: d.nft, tokenId: d.tokenId, prior: now.approved, since };
           putItBack = () => ap.putBack(now.approved, since);
         }
@@ -137,6 +140,7 @@ export function ListForRent({ draft, chain, own, meta, terms, onEdit, onClose }:
         if (!now.approvedForAll) {
           say(format('operatorApproval.step', { collection: assetName(d.nft, meta) }));
           const since = await ap.grant();
+          approvedAt = since;
           grantLeft.current = { token: d.nft, tokenId: d.tokenId, since };
           putItBack = () => {
             grantLeft.current = null;
@@ -157,7 +161,7 @@ export function ListForRent({ draft, chain, own, meta, terms, onEdit, onClose }:
       //    The deadline (#3412) is read from the chain's clock now, so the
       //    dry run and the write carry the same one.
       const validUntil = await readValidUntil(own);
-      const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, abi: CREATE_ABI, functionName: 'createOffer', args: [r.params, validUntil], account }));
+      const dry = await askAfter(own, approvedAt, (c, blockNumber) => c.simulateContract({ address: diamond, abi: CREATE_ABI, functionName: 'createOffer', args: [r.params, validUntil], account, blockNumber }));
       if (dry.kind === 'reverted') return stop(format('rentList.dryRunRefused', { reason: listRefusal(dry.error, copy) }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
 

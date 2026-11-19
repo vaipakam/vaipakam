@@ -11,6 +11,7 @@ import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
@@ -1206,7 +1207,7 @@ contract InternalMatchExecutionTest is SetupTest {
             0,
             "no interest was recovered, so the seller claim takes nothing"
         );
-        (, uint256 shown,,,,,,) = ClaimFacet(address(diamond)).getClaimable(LOAN_A, true);
+        (, uint256 shown,,,,,,) = ClaimViewFacet(address(diamond)).getClaimable(LOAN_A, true);
         assertEq(shown, 990, "the holder is shown the whole recovered principal");
 
         _mockLenderNft(LOAN_A, lender);

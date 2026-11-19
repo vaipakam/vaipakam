@@ -5,6 +5,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
@@ -204,11 +205,11 @@ contract DefaultedRestampTest is SetupTest {
             "fixture: the default completed"
         );
         (address claimAsset, uint256 claimAmount, ) =
-            ClaimFacet(address(diamond)).getClaimableAmount(LOAN, true);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(LOAN, true);
         assertEq(claimAsset, mockCollateralERC20, "fixture: swap route (lender claim in the principal asset)");
         assertGt(claimAmount, 0, "fixture: the swap paid the lender");
         (address keptAsset, uint256 kept, ) =
-            ClaimFacet(address(diamond)).getClaimableAmount(LOAN, false);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(LOAN, false);
         assertEq(keptAsset, vpfi, "fixture: the borrower claim is the unsold VPFI collateral");
         assertGt(kept, 0, "fixture: a covered sale leaves collateral unsold");
         assertLt(kept, COLLATERAL, "fixture: the sale took some collateral");
@@ -230,7 +231,7 @@ contract DefaultedRestampTest is SetupTest {
             "fixture: the default completed"
         );
         (address claimAsset, uint256 claimAmount, ) =
-            ClaimFacet(address(diamond)).getClaimableAmount(LOAN, true);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(LOAN, true);
         assertEq(claimAsset, vpfi, "fixture: in-kind route (lender claim in the VPFI collateral)");
         assertEq(claimAmount, COLLATERAL, "fixture: the whole collateral went to the lender");
 

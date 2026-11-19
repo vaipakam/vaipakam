@@ -8,6 +8,7 @@ import { fairPairs, pairSpaceFrom } from '../src/fairPairs';
 import {
   MAX_PREVIEW_CALLS_PER_TICK,
   intentFillUnits,
+  groupIntentLadders,
   offerMatchUnits,
   runIntentFillPass,
   type LenderIntentSummary,
@@ -177,7 +178,7 @@ describe('offerMatchUnits — one wallet\'s offers cannot crowd out a genuine ma
 });
 
 describe('intentFillUnits', () => {
-  const intent = (o: `0x${string}`) => ({ owner: o, lendingAsset: LEND, collateralAsset: COLL }) as LenderIntentSummary;
+  const intent = (o: `0x${string}`) => ({ owner: o, lendingAsset: LEND, collateralAsset: COLL, slot: 0, minRateBps: 0n }) as LenderIntentSummary;
 
   it('gives every intent a candidate from every borrower creator in round 0', () => {
     const spam = Array.from({ length: 3000 }, (_, i) => offer(1000 + i, SPAMMER, 1));
@@ -186,6 +187,28 @@ describe('intentFillUnits', () => {
     for (const i of intents) {
       expect(pairs.some(([x, b]) => x === i && b.creator === HONEST)).toBe(true);
     }
+  });
+});
+
+describe('groupIntentLadders (#3626)', () => {
+  const rung = (o: `0x${string}`, slot: number, minRateBps: bigint) =>
+    ({ owner: o, lendingAsset: LEND, collateralAsset: COLL, slot, minRateBps }) as LenderIntentSummary;
+
+  it("holds one lender's slots on a pair together, lowest floor first, ties to the lower slot", () => {
+    const a = addr(0xa);
+    const b = addr(0xb);
+    const ladders = groupIntentLadders([rung(a, 2, 600n), rung(b, 0, 100n), rung(a, 0, 200n), rung(a, 1, 200n)]);
+    expect(ladders.map((l) => l.map((i) => [i.owner, i.slot]))).toEqual([
+      [[a, 0], [a, 1], [a, 2]],
+      [[b, 0]],
+    ]);
+  });
+
+  it('gives a lender with several slots one unit per borrower creator, not one per slot', () => {
+    const a = addr(0xa);
+    const units = [...intentFillUnits([rung(a, 0, 100n), rung(a, 1, 500n)], [offer(2, HONEST, 1)], 0)];
+    expect(units).toHaveLength(1);
+    expect(units[0].as.map((i) => i.slot)).toEqual([0, 1]);
   });
 });
 

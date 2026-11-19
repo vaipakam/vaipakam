@@ -13,6 +13,7 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
+import {LibInterestPayment} from "../libraries/LibInterestPayment.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
@@ -105,11 +106,8 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     /// @param treasuryShare Handling fee to the treasury (2% of the
     ///        shortfall, subordinated to the lender).
     /// @param borrowerExtra What the sale raised above the lender's
-    ///        interest and the charges, returned to the borrower.
-    /// @param borrowerExtraHeld True when `borrowerExtra` was held in the
-    ///        borrower's vault for their claim at loan end (a flagged holder,
-    ///        or a wallet payment that could not complete) instead of paid to
-    ///        the borrower-position holder's wallet.
+    ///        interest and the charges, held in the stored borrower's vault
+    ///        for the borrower-position holder's claim (#3629).
     /// @param settler `msg.sender` of the settle call.
     /// @custom:event-category state-change/loan-mutation
     event PeriodicInterestAutoLiquidated(
@@ -121,7 +119,6 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         uint256 settlerBonus,
         uint256 treasuryShare,
         uint256 borrowerExtra,
-        bool borrowerExtraHeld,
         address indexed settler
     );
 
@@ -218,27 +215,14 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // (D-2 forbids VPFI as a rental prepay asset, so the prepay pool
         // has no side-door drain to protect against). No decrement here.
 
-        // #654 — route the daily rental fee to the CURRENT lender-position
-        // holder, not the stale `loan.lender`. This is a DIRECT payout (no
-        // `lenderClaims` indirection, unlike `repayLoan` / `markDefaulted`
-        // which deposit to the lender vault + write a claim the holder pulls),
-        // so a lender-NFT transfer would otherwise keep paying the departed
-        // lender every day. Resolve `ownerOf(lenderTokenId)` + apply the
-        // direct-recipient sanctions gate, mirroring
-        // `_autoLiquidatePeriodShortfall` + `RepayFacet.repayPartial`. The loan
-        // is Active here, so the lender NFT is live and `ownerOf` holds.
-        // #998 S10 (#1006) Class B — the daily lender share is funded from the
-        // borrower's prepay vault. Pay the CURRENT lender-position holder inline
-        // when clean, or FREEZE fail-closed (park borrower-vault → stored-lender
-        // vault + `heldForLender` + encumber + marker) when the holder is
-        // registry-flagged, replacing the prior fail-open `_assertNotSanctioned`
-        // (a previously-confirmed-flagged holder would otherwise be paid during an
-        // oracle outage). Hosted on `EncumbranceMutateFacet`; the host resolves
-        // `ownerOf(lenderTokenId)` and arms the from-side move-out exemption so a
-        // borrower flagged after init can still be serviced (Tier-2 stays open).
+        // #3629 — the daily rental fee moves from the renter's prepay vault
+        // into the STORED `loan.lender`'s vault, held for the lender position
+        // (whoever holds the lender token claims it, #654), never paid to a
+        // wallet. The host arms the from-side move-out exemption so a renter
+        // flagged after init can still be serviced (Tier-2 stays open).
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector,
+                EncumbranceMutateFacet.holdActiveLenderFromVault.selector,
                 loanId,
                 loan.borrower,
                 loan.prepayAsset,
@@ -462,6 +446,21 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
 
     // ─── T-034 — settlePeriodicInterest entry point ───────────────────────
 
+    /// @notice #3681 — the one host of {LibInterestPayment.book}: book
+    ///         `recovered` of `gross` interest, already in the Diamond, as paid
+    ///         on the open loan `loanId` (treasury share, lender side with
+    ///         sellers first, settled interest). Reached by self-call from the
+    ///         periodic forced sale (`ForcedSaleFacet`) and the "pay my
+    ///         interest" standing instruction (`StandingInstructionFacet`);
+    ///         each closes the period its own way, once.
+    function bookInterestPayment(uint256 loanId, uint256 gross, uint256 recovered, uint8 source)
+        external
+        returns (uint256 lenderPaid, uint256 settled)
+    {
+        if (msg.sender != address(this)) revert IVaipakamErrors.UnauthorizedCrossFacetCall();
+        return LibInterestPayment.book(loanId, gross, recovered, source);
+    }
+
     /// @notice Permissionless settler. Closes the loan's current
     ///         periodic-interest period, advancing
     ///         `lastPeriodicInterestSettledAt` by exactly one cadence
@@ -629,7 +628,6 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             out.keeperBonus,
             out.handlingFee,
             out.borrowerExtra,
-            out.borrowerExtraHeld,
             msg.sender
         );
     }

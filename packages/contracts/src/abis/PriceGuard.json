@@ -15,7 +15,7 @@
       {
         "name": "id",
         "type": "tuple",
-        "internalType": "struct PriceGuard.Identity",
+        "internalType": "struct PriceGuardState.Identity",
         "components": [
           {
             "name": "numeraireDenominator",
@@ -47,12 +47,12 @@
       {
         "name": "initial",
         "type": "tuple[]",
-        "internalType": "struct PriceGuard.Change[]",
+        "internalType": "struct PriceGuardState.Change[]",
         "components": [
           {
             "name": "kind",
             "type": "uint8",
-            "internalType": "enum PriceGuard.Kind"
+            "internalType": "enum PriceGuardState.Kind"
           },
           {
             "name": "subject",
@@ -65,6 +65,11 @@
             "internalType": "bytes32"
           }
         ]
+      },
+      {
+        "name": "reader_",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "nonpayable"
@@ -266,6 +271,123 @@
   },
   {
     "type": "function",
+    "name": "RATE_FEED_GRACE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "RATE_MAX_FALL_BPS_MAX",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "RATE_MAX_FALL_BPS_MIN",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "RATE_MAX_RISE_BPS_PER_DAY",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "RATE_OBSERVATION_DEFAULT",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "RATE_OBSERVATION_MAX",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "RATE_OBSERVATION_MIN",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "RATE_READ_GAS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "READER",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "SECONDARY_MAX_DEVIATION_BPS_MAX",
     "inputs": [],
     "outputs": [
@@ -440,7 +562,7 @@
       {
         "name": "kind",
         "type": "uint8",
-        "internalType": "enum PriceGuard.Kind"
+        "internalType": "enum PriceGuardState.Kind"
       },
       {
         "name": "subject",
@@ -458,7 +580,78 @@
       {
         "name": "source",
         "type": "uint8",
-        "internalType": "enum PriceGuard.Source"
+        "internalType": "enum PriceGuardState.Source"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "config",
+    "inputs": [
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "enum PriceGuardState.Kind"
+      },
+      {
+        "name": "subject",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "configAt",
+    "inputs": [
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "enum PriceGuardState.Kind"
+      },
+      {
+        "name": "subject",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "at",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "confirmRate",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "hash",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [],
@@ -469,7 +662,7 @@
     "name": "countLiveSecondaryOracleFeeds",
     "inputs": [
       {
-        "name": "asset",
+        "name": "",
         "type": "address",
         "internalType": "address"
       }
@@ -491,6 +684,19 @@
   {
     "type": "function",
     "name": "delay",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "epoch",
     "inputs": [],
     "outputs": [
       {
@@ -547,7 +753,7 @@
       {
         "name": "kind",
         "type": "uint8",
-        "internalType": "enum PriceGuard.Kind"
+        "internalType": "enum PriceGuardState.Kind"
       },
       {
         "name": "subject",
@@ -565,7 +771,7 @@
       {
         "name": "source",
         "type": "uint8",
-        "internalType": "enum PriceGuard.Source"
+        "internalType": "enum PriceGuardState.Source"
       }
     ],
     "outputs": [],
@@ -627,9 +833,43 @@
     "name": "getAssetPrice",
     "inputs": [
       {
-        "name": "asset",
+        "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "price",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "decimals",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getAssetPriceAt",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [
@@ -651,9 +891,48 @@
     "name": "getAssetPriceStatus",
     "inputs": [
       {
-        "name": "asset",
+        "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "status",
+        "type": "uint8",
+        "internalType": "enum IPriceGuard.PriceStatus"
+      },
+      {
+        "name": "price",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "decimals",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getAssetPriceStatusAt",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [
@@ -690,12 +969,44 @@
   },
   {
     "type": "function",
+    "name": "isRatePriced",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "muteRateSource",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "muteSecondary",
     "inputs": [
       {
         "name": "source",
         "type": "uint8",
-        "internalType": "enum PriceGuard.Source"
+        "internalType": "enum PriceGuardState.Source"
       }
     ],
     "outputs": [],
@@ -747,7 +1058,7 @@
       {
         "name": "kind",
         "type": "uint8",
-        "internalType": "enum PriceGuard.Kind"
+        "internalType": "enum PriceGuardState.Kind"
       },
       {
         "name": "subject",
@@ -784,12 +1095,53 @@
   },
   {
     "type": "function",
+    "name": "priceFloor",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "guardEpoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "registry",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "registryEpoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "priceVersion",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "guardEpoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "registryEpoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "proposeChange",
     "inputs": [
       {
         "name": "kind",
         "type": "uint8",
-        "internalType": "enum PriceGuard.Kind"
+        "internalType": "enum PriceGuardState.Kind"
       },
       {
         "name": "subject",
@@ -807,12 +1159,78 @@
   },
   {
     "type": "function",
+    "name": "proposeRateBinding",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "binding",
+        "type": "tuple",
+        "internalType": "struct PriceGuardState.RateBinding",
+        "components": [
+          {
+            "name": "underlying",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "source",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "sourceIsReader",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "rateHeartbeat",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "marketFeed",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "marketHeartbeat",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "maxRiseBpsPerDay",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxFallBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "hash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "proposeSecondaryRemoval",
     "inputs": [
       {
         "name": "source",
         "type": "uint8",
-        "internalType": "enum PriceGuard.Source"
+        "internalType": "enum PriceGuardState.Source"
       }
     ],
     "outputs": [],
@@ -898,15 +1316,159 @@
   },
   {
     "type": "function",
-    "name": "readFeed",
+    "name": "rateBindingOf",
     "inputs": [
       {
-        "name": "feed",
+        "name": "hash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct PriceGuardState.RateBinding",
+        "components": [
+          {
+            "name": "underlying",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "source",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "sourceIsReader",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "rateHeartbeat",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "marketFeed",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "marketHeartbeat",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "maxRiseBpsPerDay",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxFallBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "rateMuted",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "rateObservation",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "rateStateOf",
+    "inputs": [
+      {
+        "name": "token",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "allowStablePeg",
+        "name": "hash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct PriceGuardState.RateState",
+        "components": [
+          {
+            "name": "accepted",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "at",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "observedSince",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "lowest",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "preFall",
+            "type": "uint128",
+            "internalType": "uint128"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "readFeed",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
         "type": "bool",
         "internalType": "bool"
       }
@@ -929,6 +1491,37 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "readThroughReader",
+    "inputs": [
+      {
+        "name": "data",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "recordRate",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "hash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -970,7 +1563,7 @@
       {
         "name": "",
         "type": "uint8",
-        "internalType": "enum PriceGuard.Source"
+        "internalType": "enum PriceGuardState.Source"
       }
     ],
     "outputs": [
@@ -987,9 +1580,9 @@
     "name": "secondarySource",
     "inputs": [
       {
-        "name": "",
+        "name": "source",
         "type": "uint8",
-        "internalType": "enum PriceGuard.Source"
+        "internalType": "enum PriceGuardState.Source"
       }
     ],
     "outputs": [
@@ -1008,14 +1601,14 @@
       {
         "name": "",
         "type": "uint8",
-        "internalType": "enum PriceGuard.Source"
+        "internalType": "enum PriceGuardState.Source"
       }
     ],
     "outputs": [
       {
         "name": "",
         "type": "uint8",
-        "internalType": "enum PriceGuard.SecondaryState"
+        "internalType": "enum PriceGuardState.SecondaryState"
       }
     ],
     "stateMutability": "view"
@@ -1039,7 +1632,7 @@
     "inputs": [],
     "outputs": [
       {
-        "name": "",
+        "name": "healthy",
         "type": "bool",
         "internalType": "bool"
       }
@@ -1050,6 +1643,30 @@
     "type": "function",
     "name": "sequencerOutageWindow",
     "inputs": [],
+    "outputs": [
+      {
+        "name": "downAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "windowEnd",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "sequencerOutageWindowAt",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
     "outputs": [
       {
         "name": "downAt",
@@ -1102,7 +1719,7 @@
     "inputs": [],
     "outputs": [
       {
-        "name": "",
+        "name": "out",
         "type": "bytes32[]",
         "internalType": "bytes32[]"
       }
@@ -1127,9 +1744,48 @@
     "name": "tryGetAssetPrice",
     "inputs": [
       {
-        "name": "asset",
+        "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "price",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "decimals",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "tryGetAssetPriceAt",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [
@@ -1172,7 +1828,7 @@
         "name": "kind",
         "type": "uint8",
         "indexed": true,
-        "internalType": "enum PriceGuard.Kind"
+        "internalType": "enum PriceGuardState.Kind"
       },
       {
         "name": "subject",
@@ -1197,7 +1853,7 @@
         "name": "kind",
         "type": "uint8",
         "indexed": true,
-        "internalType": "enum PriceGuard.Kind"
+        "internalType": "enum PriceGuardState.Kind"
       },
       {
         "name": "subject",
@@ -1228,7 +1884,7 @@
         "name": "kind",
         "type": "uint8",
         "indexed": true,
-        "internalType": "enum PriceGuard.Kind"
+        "internalType": "enum PriceGuardState.Kind"
       },
       {
         "name": "subject",
@@ -1260,6 +1916,19 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "EpochAdvanced",
+    "inputs": [
+      {
+        "name": "epoch",
+        "type": "uint64",
+        "indexed": true,
+        "internalType": "uint64"
       }
     ],
     "anonymous": false
@@ -1323,13 +1992,273 @@
   },
   {
     "type": "event",
+    "name": "PriceFloorLapsed",
+    "inputs": [
+      {
+        "name": "guardEpoch",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "registryEpoch",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PriceFloorRaised",
+    "inputs": [
+      {
+        "name": "guardEpoch",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "registry",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "registryEpoch",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RateBindingRegistered",
+    "inputs": [
+      {
+        "name": "hash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "binding",
+        "type": "tuple",
+        "indexed": false,
+        "internalType": "struct PriceGuardState.RateBinding",
+        "components": [
+          {
+            "name": "underlying",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "source",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "sourceIsReader",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "rateHeartbeat",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "marketFeed",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "marketHeartbeat",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "maxRiseBpsPerDay",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxFallBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          }
+        ]
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RateConfirmed",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "hash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "accepted",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RateDistrusted",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "hash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "preFall",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "reported",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RateObserved",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "hash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "reported",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "lowest",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "observedSince",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RateRecorded",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "hash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "reported",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "accepted",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RateSourceMuted",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "SecondaryMuted",
     "inputs": [
       {
         "name": "source",
         "type": "uint8",
         "indexed": true,
-        "internalType": "enum PriceGuard.Source"
+        "internalType": "enum PriceGuardState.Source"
       },
       {
         "name": "by",
@@ -1348,7 +2277,7 @@
         "name": "source",
         "type": "uint8",
         "indexed": true,
-        "internalType": "enum PriceGuard.Source"
+        "internalType": "enum PriceGuardState.Source"
       },
       {
         "name": "by",
@@ -1367,7 +2296,7 @@
         "name": "source",
         "type": "uint8",
         "indexed": true,
-        "internalType": "enum PriceGuard.Source"
+        "internalType": "enum PriceGuardState.Source"
       },
       {
         "name": "by",
@@ -1392,7 +2321,7 @@
         "name": "source",
         "type": "uint8",
         "indexed": true,
-        "internalType": "enum PriceGuard.Source"
+        "internalType": "enum PriceGuardState.Source"
       }
     ],
     "anonymous": false
@@ -1404,7 +2333,7 @@
       {
         "name": "kind",
         "type": "uint8",
-        "internalType": "enum PriceGuard.Kind"
+        "internalType": "enum PriceGuardState.Kind"
       },
       {
         "name": "subject",
@@ -1441,7 +2370,7 @@
       {
         "name": "kind",
         "type": "uint8",
-        "internalType": "enum PriceGuard.Kind"
+        "internalType": "enum PriceGuardState.Kind"
       },
       {
         "name": "subject",
@@ -1478,7 +2407,7 @@
       {
         "name": "source",
         "type": "uint8",
-        "internalType": "enum PriceGuard.Source"
+        "internalType": "enum PriceGuardState.Source"
       }
     ]
   },
@@ -1489,7 +2418,7 @@
       {
         "name": "kind",
         "type": "uint8",
-        "internalType": "enum PriceGuard.Kind"
+        "internalType": "enum PriceGuardState.Kind"
       },
       {
         "name": "value",
@@ -1516,7 +2445,7 @@
       {
         "name": "kind",
         "type": "uint8",
-        "internalType": "enum PriceGuard.Kind"
+        "internalType": "enum PriceGuardState.Kind"
       },
       {
         "name": "subject",
@@ -1532,12 +2461,17 @@
   },
   {
     "type": "error",
+    "name": "NotSelf",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NothingPending",
     "inputs": [
       {
         "name": "kind",
         "type": "uint8",
-        "internalType": "enum PriceGuard.Kind"
+        "internalType": "enum PriceGuardState.Kind"
       },
       {
         "name": "subject",
@@ -1606,6 +2540,107 @@
   },
   {
     "type": "error",
+    "name": "PriceVersionRetired",
+    "inputs": [
+      {
+        "name": "guardEpoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "registryEpoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RateNotDistrusted",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "hash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RateObservationNotOver",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "hash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "confirmableAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RatePriceDistrusted",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RateReadOutOfGas",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RateStillMoving",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "hash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "reported",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReaderMismatch",
+    "inputs": [
+      {
+        "name": "reader",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RenounceDisabled",
     "inputs": []
   },
@@ -1616,7 +2651,7 @@
       {
         "name": "source",
         "type": "uint8",
-        "internalType": "enum PriceGuard.Source"
+        "internalType": "enum PriceGuardState.Source"
       }
     ]
   },
@@ -1627,7 +2662,7 @@
       {
         "name": "source",
         "type": "uint8",
-        "internalType": "enum PriceGuard.Source"
+        "internalType": "enum PriceGuardState.Source"
       },
       {
         "name": "executableAt",
@@ -1643,7 +2678,7 @@
       {
         "name": "source",
         "type": "uint8",
-        "internalType": "enum PriceGuard.Source"
+        "internalType": "enum PriceGuardState.Source"
       },
       {
         "name": "executableAt",
@@ -1675,6 +2710,38 @@
         "name": "max",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnknownPriceVersion",
+    "inputs": [
+      {
+        "name": "guardEpoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "registryEpoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnknownRateBinding",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "hash",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ]
   },

@@ -142,8 +142,7 @@ export function Help() {
               <div key={c.chainId} className="receipt-row">
                 <dt>{c.name}</dt>
                 <dd style={{ overflowWrap: 'anywhere' }}>
-                  {/* #3205: the position tokens' contract — the PositionNFT
-                      where the chain has one, else the Diamond. */}
+                  {/* #3205: the position tokens' contract, the PositionNFT. */}
                   <a
                     href={`${c.blockExplorer}/address/${c.positionNft.nft}`}
                     target="_blank"

@@ -37,6 +37,56 @@
   },
   {
     "type": "event",
+    "name": "LoanInterestPaid",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "gross",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "LoanInterestUndelivered",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "gross",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "LoanObligationTransferred",
     "inputs": [
       {
@@ -169,17 +219,6 @@
       }
     ],
     "anonymous": false
-  },
-  {
-    "type": "error",
-    "name": "AccountRetired",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",
@@ -2232,19 +2271,13 @@
   },
   {
     "type": "error",
-    "name": "PriceReadOutOfGas",
+    "name": "PositionTokenNotAccepted",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "ProtectedVaultLocked",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
+    "name": "PriceReadOutOfGas",
+    "inputs": []
   },
   {
     "type": "error",

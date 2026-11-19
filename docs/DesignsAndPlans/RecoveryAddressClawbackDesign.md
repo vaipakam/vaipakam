@@ -1,0 +1,353 @@
+# Recovery address and clawback for protected accounts (#3246 part 2)
+
+Status: **design, decided by the owner** (2026-11-06, 2026-11-08 and
+2026-11-18). Built 2026-11-18 on the security work branch (owner and signer
+triggers; the linked-chat trigger waits for #3353, see 4.1). It builds on the protected record each vault holds
+([one vault outflow policy](VaultOutflowPolicyDesign.md), Stage B2) and on the
+[outflow limiter](OutflowLimiterDesign.md), which already exempts a clawback.
+Fresh deploy, no migration. Choices the decisions left open are marked
+**Default**.
+
+## 1. The problem
+
+Protected account mode makes a loosening change wait, and lets the owner or
+any recovery signer lock the account. A lock is deliberately firm: it drops
+every pending change, an unlock is itself a waiting change, and signers
+cannot be removed while the account is locked. That is what makes one honest
+signer enough to stop a thief who holds the owner key.
+
+The same firmness means a locked account can stay locked for as long as the
+people who hold its keys disagree. Protected mode then ends in a stalemate:
+nothing is lost, loans can still be serviced, but the free balance cannot
+leave. The account needs one exit that no single key can block and no single
+key can steer.
+
+## 2. The decisions
+
+| Date | Decision (owner) |
+| --- | --- |
+| 2026-11-06 | A recovery address and a clawback are added. A recovery address is mandatory to switch protected mode on. A change of address waits 30 days. Positions stay open after a clawback and pay the recovery address. Every clawback leaves a full record. |
+| 2026-11-08 | Clawback is manual only: the owner, any recovery signer, or the keeper acting on the owner's linked chat. No automatic or permissionless trigger. The recovery address must prove control by its own signature. Only the owner requests a change; the owner or any signer can cancel it; a lock or a replacement voids it. No contract switch pauses clawbacks while a change is pending. |
+| 2026-11-18 | **A lock stays firm, and the clawback is the exit from a locked account.** No rule lets the owner remove a signer who holds a lock, and no lock lapses by time. The conditions in sections 3 and 4 follow from this. |
+| 2026-11-18 | Build defaults reviewed by the design thread: the permissionless sweep, a change after recovery, offer backing held, the Ready balance lapsing, a protected recovery address paid into its own vault and switch-off keeping the address are accepted (marked **Default** below). The linked-chat trigger on the LOCK grant is NOT accepted: an irreversible action never rides on a grant given for a reversible one, so it gets its own grant bit with #3353. |
+
+## 3. The recovery address
+
+### 3.1 What it may be
+
+One address per account, held in the vault's own protected record and read by
+the vault itself. Only the owner (the account's manager) sets or changes it.
+
+It may not be the owner wallet, the wallet the account was created for, a
+recovery signer, a signer whose addition is pending, the nominee of an open
+replacement, or an allowlisted destination. The reverse is refused too:
+adding a signer, proposing a nominee or adding an allowlisted destination is
+refused, at the request and again when it is finalized, if the address is the
+recovery address in force or a pending one.
+
+Setting it, and every change, needs a signature from the new recovery address
+itself (a wallet signature, or the contract-wallet form), bound to the chain,
+the vault, a nonce for this purpose and an expiry. A request without that
+proof is refused, so a typo or an address whose key is already lost can never
+become the only place a clawback pays.
+
+### 3.2 The first setting waits
+
+The first setting does not count at once. It comes into force after twice the
+account's delay. With protected mode still off, the wait is twice the
+shortest delay an account may choose.
+
+The reason: a clawback pays at once. If a first setting counted immediately,
+a thief holding the owner key could set an address and claw back in the same
+hour, which would go round the delay on wallet outflows. A wait of one delay
+opens nothing a direct withdrawal does not already allow; two is the cautious
+figure and costs an honest owner one setup wait.
+
+While it is pending, the owner or any signer may cancel it, and a lock or a
+replacement drops it, like an allowlist addition.
+
+**Default.** An address comes into force when its wait has passed, with no
+second transaction, so an owner who sets an address and walks away is not
+left without one. Two things make that safe:
+
+- A pending setting or change is stored with the vault's epoch at the
+  request, like an allowlist or signer request. A lock, a replacement and a
+  clawback advance the epoch. The read that answers "which address is in
+  force" counts a pending one only while its epoch is still the vault's
+  current one, so a setting that was dropped can never come into force by
+  the passing of time.
+- An address that has already matured is never dropped. Every step that
+  advances the epoch, and every cancellation, first writes a pending address
+  whose wait has passed into the record as the address in force, and only
+  then invalidates what is still waiting. So a first setting that matured, let
+  a signer be finalized, and was followed by that signer's lock is still the
+  address the clawback pays.
+- The identity rules of 3.1 are checked from both sides at every request.
+  Because a signer, a nominee or a destination equal to a pending recovery
+  address is refused during the wait, nothing can have become one by the
+  time the address comes into force, and no check is needed at that moment.
+
+### 3.3 Changing it
+
+A change waits 30 days. Until then the current address stays in force and is
+the only place a clawback pays; the pending one never counts. The change is
+announced on every alert channel. The owner or any signer may cancel it. A
+lock, a replacement or a clawback drops it.
+
+### 3.4 Removing it
+
+The address cannot be cleared while protected mode is on, while a signer is
+active, or while a signer addition is pending. An account with signers
+therefore always has a recovery address in force.
+
+**Default.** Switching protected mode off keeps the address (a switched-off
+account keeps its exit for when it is switched on again). Clearing it is
+allowed only while protected mode is off, which also means with no signers,
+since switching off removes them. Protected mode cannot be switched off on a
+recovered account (4.4), so a recovered account's address can never be
+cleared.
+
+### 3.5 Signers need it
+
+Switching protected mode on needs a recovery address set, pending or in
+force, so the first setup is one sitting. Requesting a signer needs the same.
+Finalizing a signer needs an address **in force**: without one the addition
+is refused and stays pending until it expires. If a pending first setting is
+cancelled or dropped, the account has no clawback until an address is set
+again, and no signer can be finalized meanwhile.
+
+This is the rule that keeps section 1's promise. An account can only have a
+signer able to lock it if it already has the exit.
+
+## 4. The clawback
+
+### 4.1 Who may trigger it
+
+The owner, any recovery signer, or the keeper acting on the owner's linked
+chat. Each can act by a direct call or by a signature someone else submits,
+like every other write to the protected record. It is one transaction and
+cannot be cancelled once sent.
+
+**Built now: the owner and any signer.** The linked-chat trigger is not built
+on the existing LOCK grant: a clawback cannot be undone and a lock can, and an
+irreversible action never rides on a grant given for a reversible one. It
+arrives with the keeper mandate work (#3353) under its own grant bit, which
+the owner grants separately. The trigger record reserves its role value.
+
+Nobody else may trigger it, and the recovery address itself may not. A cold
+key that could pull the account to itself would turn the theft of that one
+key into the loss of everything.
+
+Triggering it is safe in any hands that are allowed to: it pays only the
+recovery address in force, which no trigger can choose.
+
+### 4.2 What it needs, and what it does not
+
+It needs protected mode on (or an account already replaced, see 4.5) and a
+recovery address in force. It refuses while the first setting is still
+waiting.
+
+It does not need a signer's co-signature. It does not need the destination to
+have verified itself, because the address proved control when it was set. It
+does not wait the outflow delay, is not held by the outflow caps and does not
+trip the outflow brake. It **runs while the account is locked**, whoever
+placed the lock. It does not pass through the queue of waiting payouts, which
+a lock cancels; it pays the recovery address directly as its own typed
+destination in the vault's outflow policy, and the vault checks that
+destination against its own record.
+
+### 4.3 What it moves
+
+The account's free balance of every asset the caller names, and every queued
+payout, at once. It can be called again for further assets.
+
+It does not move what is not free. Collateral under a lien and amounts held
+for an open position stay where they are until the loan or the position ends;
+what is released then pays the recovery address. Position tokens stay with
+the account and cannot leave it (4.4); what they pay out follows the same
+rule.
+
+**Default.** The backing of an open offer counts as **held**. A recovered
+account's open offers, its Auto-lend funding and its standing instructions are
+dead: none can fill again (a recovered account is locked and opens nothing).
+Anyone may release them: cancelling a recovered account's offer, or returning
+its Auto-lend capital, is open to any caller, waives the usual wait, and pays
+the account's own vault, never a caller's address. The released backing lands
+free and is then swept to the recovery address (section 5). A keeper pass,
+shipped disarmed, does both.
+
+**Default.** The Ready balance (#3344) lapses at the clawback: it is tied to
+the vault's epoch, which the clawback advances, so it is free at once and
+moves with the rest.
+
+**Default.** A recovery address that is itself a protected account is paid
+into its own vault, like every other payout to a protected account, never to
+its wallet. If that account is recovered too, the amount is swept on to its own
+recovery address.
+
+### 4.4 The recovered state
+
+After a clawback the account is locked and stays locked. It opens nothing
+new. Every later payout it would have paid its owner goes to the recovery
+address. Open positions stay open and settle normally.
+
+The recovered state never clears, and an unlock of a recovered account is
+refused. The position tokens the account holds can no longer be transferred,
+sold or handed over. The platform's own transfer check refuses the move, and
+each sale and handover refuses at fill, from the account's recovered record.
+This does not rest on the token contract's holder lock, which belongs to the
+holder's key and follows that contract's own delay. Without this rule a
+position could be moved to another wallet and its proceeds claimed there
+instead of reaching the recovery address.
+
+**Default.** A change of address after recovery is still allowed (a recovered
+account's lock never lifts, so the usual "not while locked" rule would leave
+a lost recovery key with no remedy). It waits the same 30 days, and the owner
+or any signer may cancel it.
+
+Whenever a recovery address is in force, recovered or not, the
+paused-platform escape route pays it and not the owner wallet. The vault-side
+owner exit keeps its own two routes (#3424).
+
+### 4.5 Replacement
+
+A replacement does not clear or change the recovery address. The replaced
+account keeps it, a clawback works on a replaced account, and its trigger
+keys are that account's current manager, its signers and the linked-chat
+keeper. A change requested after a replacement waits the same 30 days.
+
+**Default (design thread, 2026-11-18).** On a recovered account the
+replacement's token move (#3526: anyone may move a retired wallet's position
+tokens to the replacement wallet) is refused, and the recovered rule runs
+first, so the refusal names the recovered account
+(`TransferFromRecoveredAccount`), not the retired holder. The same holds in
+both orders: replaced and then recovered, or recovered and then replaced (a
+replacement remains possible after a clawback, and the account stays locked
+through it). The tokens stay with the account; the current wallet still
+claims, repays, adds collateral and cancels the account's offers on them, as
+the account's manager, and what they pay out reaches the account's vault and
+from there the recovery address. The recovered record is read from the
+account itself, so it answers the same whichever wallet acts, and neither the
+retired wallet nor the current one receives a payout. The app offers no "Move
+positions to your new wallet" on a recovered account and says why.
+
+**Open (2026-11-18).** A token already moved to the replacement wallet BEFORE
+the clawback is that wallet's own position from then on: the clawback of the
+replaced account does not reach it, and its payouts go to the replacement
+wallet. Raised with the design thread.
+
+## 5. Events and the record
+
+- A first setting, a change request, a cancellation and a drop each emit an
+  event naming the account, the address and the time it comes into force.
+- A clawback emits one event naming the account, the recovery address, who
+  triggered it (owner, signer or linked-chat keeper) and each asset and
+  amount moved, beside the vault's usual outflow event.
+- Each later payout routed to the recovery address is marked as such.
+
+**Default.** A later payout reaches a recovered account's vault (the platform's
+payout rule holds every owner payout of a locked account there), and a
+permissionless **sweep** moves it on to the recovery address in force. The
+sweep moves only what the account could withdraw, only from a recovered
+account and only to the address its own record names, so any caller steers
+nothing. Its event names the account, the recovery address, the caller and
+each asset and amount, and every move carries the outflow reason "recovery
+sweep". A keeper pass, shipped disarmed, backs it, and the account page states
+any free balance not yet swept.
+
+The account page and an exportable statement show the recovered state and
+every amount that went to the recovery address.
+
+## 6. App
+
+- Setup asks for the recovery address before protected mode and before any
+  signer, shows when it comes into force, and reminds the owner to keep that
+  key cold and safe.
+- A locked account's page names the clawback as the way out and shows where
+  it would pay.
+- While a change is pending, the clawback action names the current
+  destination, says it is the address being replaced and that the pending one
+  will not be used, and asks for an extra confirmation.
+- Alerts go out for every setting, change, cancellation and clawback.
+
+## 7. Tests (acceptance)
+
+1. A locked account, with the lock renewed by one signer on every unlock
+   request, is emptied of its free balance to the recovery address by the
+   owner's clawback.
+2. A clawback before the first setting is in force is refused. A setting,
+   protected mode switched on and a clawback in one block moves nothing.
+3. No sequence of the owner's own actions makes a clawback pay an address
+   requested less than 30 days earlier (twice the delay for a first setting).
+   A signer cancels a change; a lock drops it.
+4. A signer cannot be finalized without an address in force. The address
+   cannot be cleared while a signer is active or pending.
+5. The recovery address cannot be, or become, a signer, a nominee, the owner
+   wallet or an allowlisted destination, from either side.
+6. A replaced account keeps its address and its clawback pays it.
+7. Liened collateral and held positions do not move; what they release later
+   pays the recovery address.
+8. The recovery address cannot trigger the clawback. A caller outside 4.1 is
+   refused.
+   **Default (added).** A recovery address that is itself a protected account
+   is paid into its own vault; when that account is clawed back too, the
+   amount moves on to its own recovery address. A payout reaching a recovered
+   account after its clawback is swept on by any caller, and a second sweep
+   with nothing free is refused.
+9. The authority-order suite (#3568) includes the recovery address among the
+   records whose changes it orders against locks, replacements and delays.
+10. An address matures and a lock, a replacement or a cancellation follows in
+    the next block: the address is still in force and a clawback pays it. A
+    change still waiting at that moment is dropped.
+11. After a clawback, the holder lifts the token contract's holder lock after
+    its delay. A transfer, a sale and a handover of the account's positions
+    are each refused, and what the positions pay out reaches the recovery
+    address.
+12. **(added, 4.5 Default)** Replaced then recovered, and recovered then
+    replaced, with the tokens still at the retired wallet: the replacement's
+    token move is refused with the recovered error; the current wallet
+    claims, repays, adds collateral and cancels the account's offers; every
+    payout reaches the recovery address and neither wallet.
+13. **(added, the code split)** The vault's protection code forwards to its
+    recovery code only that code's five endpoints and refuses any other
+    selector by name; none of the five collides with the protection code or
+    the vault; both code contracts refuse a direct call; both are under
+    EIP-170.
+
+## 8. Residuals
+
+- **The recovery key is stolen as well as the others.** The clawback then
+  pays the thief. This is the residual the threat model already states.
+- **The recovery key is lost while a signer is hostile.** The owner can
+  request a change, but any signer can cancel it and a lock drops it. The
+  account stays locked with no exit until the signer relents. Keeping the
+  recovery key safe is the owner's part; the app says so at setup.
+- **An honest signer cannot stop a clawback.** By design: it pays only the
+  address the owner fixed in advance.
+- **Default (added). A thief holding the owner key, on an account with no
+  signer, can change the recovery address after 30 days.** Nobody is there to
+  cancel the change, and the account's own lock drops it only if someone
+  places one. Protected mode without a signer protects against a stolen owner
+  key only for those 30 days; the app says so, and recommends a signer.
+
+## 9. Alternatives considered
+
+1. **The owner may remove a signer who holds a lock, after the delay.**
+   Declined. A thief holding the owner key would remove the one honest signer
+   the same way, and the lock would stop meaning anything.
+2. **A lock lapses unless it is renewed.** Declined for the same reason: the
+   thief only has to wait, and an honest signer who is travelling loses.
+3. **Accept the stalemate and state it.** Declined: funds frozen without an
+   end date is the outcome protected mode exists to prevent.
+4. **An automatic clawback after repeated contested changes.** Declined
+   (2026-11-08): a contested account always has an honest party who can
+   trigger it by hand, and an automatic one could pay an address whose key
+   the owner no longer holds.
+5. **The recovery address may trigger its own clawback.** Not taken (4.1).
+6. **A first setting that counts at once.** Not taken (3.2).
+
+## 10. Recommendation
+
+Build this with #3246 part 2, before any release in which an account can
+both have recovery signers and hold value: the signer rule of 3.5 and the
+clawback of section 4 are one behaviour and ship together.

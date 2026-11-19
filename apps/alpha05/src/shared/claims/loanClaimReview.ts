@@ -14,7 +14,7 @@
  */
 import { readLiveHolderOrNull } from '../positions/positionNft';
 import type { Abi, Log, PublicClient } from 'viem';
-import { AdminFacetABI, ClaimFacetABI, LoanFacetABI, MetricsFacetABI, SellerClaimFacetABI } from '@vaipakam/contracts/abis';
+import { AdminFacetABI, ClaimFacetABI, ClaimViewFacetABI, LoanFacetABI, MetricsFacetABI, SellerClaimFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
 import { claimVerdict } from '../eligibility/claim';
@@ -37,6 +37,8 @@ const ADMIN = AdminFacetABI as Abi;
 const METRICS = MetricsFacetABI as Abi;
 const SELLER = SellerClaimFacetABI as Abi;
 export const CLAIM = ClaimFacetABI as Abi;
+/** The claim reads live on ClaimViewFacet, split off ClaimFacet. */
+const CLAIM_VIEW = ClaimViewFacetABI as Abi;
 
 /** The call each side's claim runs. */
 export const claimFunction = (side: ClaimSide) => (side === 'lender' ? 'claimAsLender' : 'claimAsBorrower');
@@ -76,8 +78,8 @@ export async function readSideClaim(c: PublicClient, diamond: Hex, loanId: bigin
   const read = <T>(abi: Abi, functionName: string, args: readonly unknown[]) => answerOrNull(c.readContract({ address: diamond, abi, functionName, args, ...at }) as Promise<T>);
   const lender = side === 'lender';
   const [row, surplus, lien] = await Promise.all([
-    read<ClaimableTuple>(CLAIM, 'getClaimable', [loanId, lender]),
-    lender ? null : read<readonly [Hex, bigint, boolean]>(CLAIM, 'getBorrowerSurplusClaim', [loanId]),
+    read<ClaimableTuple>(CLAIM_VIEW, 'getClaimable', [loanId, lender]),
+    lender ? null : read<readonly [Hex, bigint, boolean]>(CLAIM_VIEW, 'getBorrowerSurplusClaim', [loanId]),
     lender ? null : read<{ asset: Hex; amount: bigint; released: boolean }>(METRICS, 'getLoanCollateralLien', [loanId]),
   ]);
   if (row === null || (!lender && (surplus === null || lien === null))) return null;

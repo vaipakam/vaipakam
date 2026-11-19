@@ -2,8 +2,14 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestCollateralCut} from "./helpers/LibTestCollateralCut.sol";
+import {LibTestTermsCut} from "./helpers/LibTestTermsCut.sol";
+import {LibTestClaimViewCut} from "./helpers/LibTestClaimViewCut.sol";
 import {LibTestProtectedCut} from "./helpers/LibTestProtectedCut.sol";
 import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
+import {LibTestFallbackGate} from "./helpers/LibTestFallbackGate.sol";
+import {LibFallbackGate} from "../src/libraries/LibFallbackGate.sol";
+import {LibTestSettlementLeg} from "./helpers/LibTestSettlementLeg.sol";
 import {LibTestVaultEndpoints} from "./helpers/LibTestVaultEndpoints.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
@@ -53,6 +59,7 @@ import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 // For cutting
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -228,6 +235,10 @@ contract RiskFacetTest is Test {
     // address allowanceTarget = mockZeroExProxy; //makeAddr("allowanceTarget"); // Mock for tests
 
     function setUp() public {
+        // #3538: start the clock past the fallback gate's span, so a test that
+        // records an earlier failed sale (LibTestFallbackGate.open) never has
+        // to move the clock, and accrued interest stays what each test expects.
+        vm.warp(LibFallbackGate.MIN_SPAN);
         owner = address(this);
         lender = makeAddr("lender");
         (borrower, borrowerPk) = makeAddrAndKey("borrower");
@@ -548,7 +559,11 @@ contract RiskFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
+        cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
+        cuts = LibTestTermsCut.withTermsHost(cuts); // #3734
+        cuts = LibTestClaimViewCut.withClaimView(cuts); // the claim reads
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
+        LibTestSettlementLeg.install(address(diamond)); // #3669
         LibTestForcedSalePreview.install(address(diamond));
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
@@ -944,6 +959,8 @@ contract RiskFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000 ether,
@@ -1622,7 +1639,7 @@ contract RiskFacetTest is Test {
             "split liquidation drives the loan terminal"
         );
         (address claimAsset, uint256 claimAmt, bool claimTaken, , , , , ) =
-            ClaimFacet(address(diamond)).getClaimable(loanId, /*isLender=*/ true);
+            ClaimViewFacet(address(diamond)).getClaimable(loanId, /*isLender=*/ true);
         assertEq(claimAsset, mockERC20, "lender claim recorded in the principal asset");
         assertGt(claimAmt, 0, "lender claim amount recorded");
         // ABSOLUTE, not just positive (Codex #1957 r7 P2). Every other assertion
@@ -1704,13 +1721,13 @@ contract RiskFacetTest is Test {
         // writes unguarded: deleting either, or marking it claimed, would
         // leave this test green with the borrower unable to recover them.
         (address bAsset, uint256 bAmt, bool bTaken, , , , , ) =
-            ClaimFacet(address(diamond)).getClaimable(loanId, /*isLender=*/ false);
+            ClaimViewFacet(address(diamond)).getClaimable(loanId, /*isLender=*/ false);
         assertEq(bAsset, mockCollateralERC20, "borrower claim is the unsold collateral");
         assertEq(bAmt, l0.collateralAmount - soldInput, "unsold = pledged - sold");
         assertGt(bAmt, 0, "a covered sale leaves collateral unsold");
         assertFalse(bTaken, "borrower collateral claim is unclaimed - actionable");
         (address sAsset, uint256 sAmt, bool sTaken) =
-            ClaimFacet(address(diamond)).getBorrowerSurplusClaim(loanId);
+            ClaimViewFacet(address(diamond)).getBorrowerSurplusClaim(loanId);
         assertEq(sAsset, mockERC20, "borrower surplus claim in the principal asset");
         assertGt(sAmt, 0, "borrower surplus recorded");
         assertFalse(sTaken, "borrower surplus claim is unclaimed - actionable");
@@ -1878,6 +1895,8 @@ contract RiskFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000 ether,
@@ -2030,6 +2049,7 @@ contract RiskFacetTest is Test {
 
         // Slim form: only loanId is indexed (informational/liquidation per
         // EventSourcingAudit §1.4 + §1.5).
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectEmit(true, false, false, true);
         emit RiskFacet.LiquidationFallback(loanId);
@@ -2306,6 +2326,7 @@ contract RiskFacetTest is Test {
 
         // Slim form: only loanId is indexed (informational/liquidation per
         // EventSourcingAudit §1.4 + §1.5).
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectEmit(true, false, false, true);
         emit RiskFacet.LiquidationFallback(loanId);
@@ -2426,7 +2447,7 @@ contract RiskFacetTest is Test {
 
         // Lender is paid first: every unit after the bonus, no treasury fee
         // since allocated < principal.
-        (, uint256 lenderAmt, ) = ClaimFacet(address(diamond))
+        (, uint256 lenderAmt, ) = ClaimViewFacet(address(diamond))
             .getClaimableAmount(loanId, true);
         assertEq(lenderAmt, 900 ether - 27 ether, "lender takes all proceeds after the bonus");
         assertLt(
@@ -2436,10 +2457,10 @@ contract RiskFacetTest is Test {
         );
 
         // Nothing left for the borrower: no collateral, no surplus
-        (, uint256 borrowerAmt, ) = ClaimFacet(address(diamond))
+        (, uint256 borrowerAmt, ) = ClaimViewFacet(address(diamond))
             .getClaimableAmount(loanId, false);
         assertEq(borrowerAmt, 0, "Borrower should have no collateral left");
-        (, uint256 surplusAmt, ) = ClaimFacet(address(diamond)).getBorrowerSurplusClaim(loanId);
+        (, uint256 surplusAmt, ) = ClaimViewFacet(address(diamond)).getBorrowerSurplusClaim(loanId);
         assertEq(surplusAmt, 0, "Borrower should have no surplus");
 
         vm.clearMockedCalls();
@@ -2558,6 +2579,7 @@ contract RiskFacetTest is Test {
         LibSwap.AdapterCall[] memory calls = new LibSwap.AdapterCall[](1);
         calls[0] = LibSwap.AdapterCall({adapterIdx: idx, data: ""});
 
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectEmit(true, false, false, true);
         emit RiskFacet.LiquidationFallback(loanId);
@@ -2642,7 +2664,7 @@ contract RiskFacetTest is Test {
         assertEq(sellQuote, 1800 ether, "an uncovered sale sells all the collateral");
         RiskFacet(address(diamond)).triggerLiquidation(loanId, sellQuote, defaultAdapterCalls());
 
-        (, uint256 lenderAmt, ) = ClaimFacet(address(diamond))
+        (, uint256 lenderAmt, ) = ClaimViewFacet(address(diamond))
             .getClaimableAmount(loanId, true);
         assertEq(
             lenderAmt,
@@ -2705,7 +2727,7 @@ contract RiskFacetTest is Test {
 
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         RiskFacet(address(diamond)).triggerLiquidation(loanId, sellQuote, defaultAdapterCalls());
-        (, uint256 borrowerSurplus, ) = ClaimFacet(address(diamond))
+        (, uint256 borrowerSurplus, ) = ClaimViewFacet(address(diamond))
             .getBorrowerSurplusClaim(loanId);
         assertEq(
             borrowerSurplus,
@@ -2800,12 +2822,12 @@ contract RiskFacetTest is Test {
         );
 
         // Verify borrower surplus exists
-        (, uint256 borrowerAmt, ) = ClaimFacet(address(diamond))
+        (, uint256 borrowerAmt, ) = ClaimViewFacet(address(diamond))
             .getClaimableAmount(loanId, false);
         assertGt(borrowerAmt, 0, "Borrower should have surplus");
 
         // Verify lender got at least principal (interest minus treasury fee)
-        (, uint256 lenderAmt, ) = ClaimFacet(address(diamond))
+        (, uint256 lenderAmt, ) = ClaimViewFacet(address(diamond))
             .getClaimableAmount(loanId, true);
         assertGe(lenderAmt, 1000 ether, "Lender should get at least principal");
 
@@ -2864,6 +2886,8 @@ contract RiskFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000 ether,
@@ -2953,7 +2977,7 @@ contract RiskFacetTest is Test {
         );
 
         // Verify: lender gets everything after the bonus, no treasury fee
-        (, uint256 lenderAmt, ) = ClaimFacet(address(diamond))
+        (, uint256 lenderAmt, ) = ClaimViewFacet(address(diamond))
             .getClaimableAmount(loanId, true);
         assertEq(lenderAmt, lowProceeds - (lowProceeds * 300) / 10_000, "lender paid first, in full of what remains");
         assertLt(
@@ -2964,7 +2988,7 @@ contract RiskFacetTest is Test {
         assertGt(lenderAmt, 0);
 
         // No borrower surplus
-        (, uint256 borrowerAmt, ) = ClaimFacet(address(diamond))
+        (, uint256 borrowerAmt, ) = ClaimViewFacet(address(diamond))
             .getClaimableAmount(loanId, false);
         assertEq(borrowerAmt, 0);
 
@@ -3065,7 +3089,7 @@ contract RiskFacetTest is Test {
         );
 
         // Verify borrower has surplus
-        (, uint256 borrowerAmt, ) = ClaimFacet(address(diamond))
+        (, uint256 borrowerAmt, ) = ClaimViewFacet(address(diamond))
             .getClaimableAmount(loanId, false);
         assertGt(
             borrowerAmt,
@@ -3074,7 +3098,7 @@ contract RiskFacetTest is Test {
         );
 
         // Verify lender got at least principal (may be equal if treasury takes all interest)
-        (, uint256 lenderAmt, ) = ClaimFacet(address(diamond))
+        (, uint256 lenderAmt, ) = ClaimViewFacet(address(diamond))
             .getClaimableAmount(loanId, true);
         assertGe(lenderAmt, 1000 ether, "Lender should get at least principal");
 
@@ -3114,6 +3138,7 @@ contract RiskFacetTest is Test {
 
         // Slim form: only loanId is indexed (informational/liquidation per
         // EventSourcingAudit §1.4 + §1.5).
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectEmit(true, false, false, true);
         emit RiskFacet.LiquidationFallback(loanId);
@@ -3134,7 +3159,7 @@ contract RiskFacetTest is Test {
         // README section 7 fallback: claims are recorded in collateral units
         // and the collateral is back in the borrower's vault under the lien
         // (#1566 S2b) until ClaimFacet resolves it.
-        (address claimAsset, uint256 lenderAmt, ) = ClaimFacet(address(diamond))
+        (address claimAsset, uint256 lenderAmt, ) = ClaimViewFacet(address(diamond))
             .getClaimableAmount(loanId, true);
         assertEq(claimAsset, mockCollateralERC20);
         assertGt(
@@ -3145,7 +3170,7 @@ contract RiskFacetTest is Test {
 
         // Borrower may now have a non-zero surplus when collateral value
         // exceeds the lender's 3% fallback entitlement (README §7 line 153).
-        (address borrowerAsset, uint256 borrowerAmt, ) = ClaimFacet(
+        (address borrowerAsset, uint256 borrowerAmt, ) = ClaimViewFacet(
             address(diamond)
         ).getClaimableAmount(loanId, false);
         assertEq(borrowerAsset, mockCollateralERC20);
@@ -3219,6 +3244,7 @@ contract RiskFacetTest is Test {
         // ever reaching our event. recordLogs + topic-0 search is
         // robust to the intervening events.
         vm.recordLogs();
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
@@ -3259,7 +3285,7 @@ contract RiskFacetTest is Test {
 
         // Lender absorbs the full 1800-ether collateral; borrower's
         // share is zero (the fair-value split was impossible).
-        (address claimAsset, uint256 lenderAmt, ) = ClaimFacet(address(diamond))
+        (address claimAsset, uint256 lenderAmt, ) = ClaimViewFacet(address(diamond))
             .getClaimableAmount(loanId, true);
         assertEq(claimAsset, mockCollateralERC20);
         assertEq(
@@ -3267,7 +3293,7 @@ contract RiskFacetTest is Test {
             1800 ether,
             "stale oracle => lender absorbs full collateral"
         );
-        (, uint256 borrowerAmt, ) = ClaimFacet(address(diamond))
+        (, uint256 borrowerAmt, ) = ClaimViewFacet(address(diamond))
             .getClaimableAmount(loanId, false);
         assertEq(
             borrowerAmt,
@@ -3342,6 +3368,7 @@ contract RiskFacetTest is Test {
             "nft update fail"
         );
 
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectRevert(bytes("nft update fail"));
         RiskFacet(address(diamond)).triggerLiquidation(
@@ -3382,6 +3409,7 @@ contract RiskFacetTest is Test {
             "swap revert"
         );
 
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
@@ -3389,9 +3417,9 @@ contract RiskFacetTest is Test {
             defaultAdapterCalls()
         );
 
-        (, uint256 lenderAmt, ) = ClaimFacet(address(diamond))
+        (, uint256 lenderAmt, ) = ClaimViewFacet(address(diamond))
             .getClaimableAmount(loanId, true);
-        (, uint256 borrowerAmt, ) = ClaimFacet(address(diamond))
+        (, uint256 borrowerAmt, ) = ClaimViewFacet(address(diamond))
             .getClaimableAmount(loanId, false);
         assertEq(lenderAmt, 1030 ether, "lender = principal + 3%");
         assertEq(
@@ -3435,6 +3463,7 @@ contract RiskFacetTest is Test {
             "swap revert"
         );
 
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
@@ -3442,9 +3471,9 @@ contract RiskFacetTest is Test {
             defaultAdapterCalls()
         );
 
-        (, uint256 lenderAmt, ) = ClaimFacet(address(diamond))
+        (, uint256 lenderAmt, ) = ClaimViewFacet(address(diamond))
             .getClaimableAmount(loanId, true);
-        (, uint256 borrowerAmt, bool borrowerClaimed) = ClaimFacet(
+        (, uint256 borrowerAmt, bool borrowerClaimed) = ClaimViewFacet(
             address(diamond)
         ).getClaimableAmount(loanId, false);
         assertEq(lenderAmt, 1800 ether, "lender takes full collateral");
@@ -3498,6 +3527,7 @@ contract RiskFacetTest is Test {
             abi.encodeWithSelector(IZeroExProxy.swap.selector),
             "swap revert"
         );
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
@@ -3624,6 +3654,7 @@ contract RiskFacetTest is Test {
         );
         uint256 diamondCol0 = IERC20(mockCollateralERC20).balanceOf(address(diamond));
 
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
@@ -3638,7 +3669,7 @@ contract RiskFacetTest is Test {
             diamondCol0,
             "fixture-live: the entry left nothing in the Diamond"
         );
-        (, uint256 treasuryCol, , , , , ) = ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);
+        (, uint256 treasuryCol, , , , , ) = ClaimViewFacet(address(diamond)).getFallbackSnapshot(loanId);
         assertGt(treasuryCol, 0, "fixture-live: a treasury slice");
 
         // Retry also reverts.
@@ -3719,6 +3750,7 @@ contract RiskFacetTest is Test {
             "nft update fail"
         );
 
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectRevert(bytes("nft update fail"));
         RiskFacet(address(diamond)).triggerLiquidation(
@@ -4156,9 +4188,9 @@ contract RiskFacetTest is Test {
 
         // Learn the lender payout from an uncharged run, then rewind.
         uint256 snap = vm.snapshotState();
-        uint256 lender0 = IERC20(mockERC20).balanceOf(lender);
         RiskFacet(address(diamond)).triggerPartialLiquidation(loanId, 5_000, defaultAdapterCalls());
-        uint256 payout = IERC20(mockERC20).balanceOf(lender) - lender0;
+        // #3629 — the payout is held for the position in the lender's vault.
+        uint256 payout = _heldForLender(loanId);
         assertGt(payout, 0, "fixture: the partial pays the lender");
         vm.revertToState(snap);
 
@@ -5555,25 +5587,25 @@ contract RiskFacetTest is Test {
         );
 
         // ── the property ──────────────────────────────────────────────────
-        // Paid to the holder's WALLET, not a vault: on the clean branch
-        // `freezeOrPayActiveLenderResident` does a direct `safeTransfer`, the
-        // same as `RepayPeriodicFacet`'s auto-liquidation leg on this identical
-        // shape (Active loan, funds resident in the Diamond, no claim record).
-        // Only the FROZEN branch vaults, and it vaults to the STORED lender
-        // deliberately, parking + encumbering rather than paying.
-        assertGt(
-            IERC20(mockERC20).balanceOf(newHolder),
-            0,
-            "current holder received the recovered lender share"
-        );
+        // #3629 — the share is held for the POSITION in the stored lender's
+        // vault (custody), and only the current holder can claim it; the
+        // stored lender cannot take it.
+        uint256 held = _heldForLender(loanId);
+        assertGt(held, 0, "the recovered lender share is held for the position");
+        assertEq(IERC20(mockERC20).balanceOf(newHolder), 0, "nothing reaches a wallet");
 
-        storedVault =
-            VaultFactoryFacet(address(diamond)).getUserVaultAddress(storedLender);
-        assertEq(
-            storedVault == address(0) ? 0 : IERC20(mockERC20).balanceOf(storedVault),
-            storedBefore,
-            "stored lender received NOTHING"
-        );
+        vm.prank(storedLender);
+        vm.expectRevert();
+        ClaimFacet(address(diamond)).claimHeldForLender(loanId);
+
+        // This suite stubs the vault outflow (nothing physically moves), so
+        // the claim is checked through its event and the cleared ledger.
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit ClaimFacet.HeldForLenderClaimed(loanId, newHolder, mockERC20, held);
+        vm.prank(newHolder);
+        ClaimFacet(address(diamond)).claimHeldForLender(loanId);
+        assertEq(_heldForLender(loanId), 0, "the current holder took the whole share");
+        storedBefore;
 
         vm.clearMockedCalls();
     }
@@ -5581,7 +5613,7 @@ contract RiskFacetTest is Test {
     /// @dev #1955 — run ONE partial liquidation on an existing loan, optionally
     ///      stamping the lender `Full` first, and return what the treasury took
     ///      and what the lender received. The lender's share lands in their
-    ///      WALLET: `freezeOrPayActiveLenderResident`'s clean branch is a direct
+    ///      WALLET: `holdActiveLenderResident`'s clean branch is a direct
     ///      transfer (only the frozen branch vaults, and it vaults to the STORED
     ///      lender deliberately).
     function _partialAndMeasure(
@@ -5608,7 +5640,10 @@ contract RiskFacetTest is Test {
             );
         }
         uint256 tBefore = IERC20(mockERC20).balanceOf(treasuryEoa);
-        uint256 lBefore = IERC20(mockERC20).balanceOf(lenderAddr);
+        // #3629 — the lender share is held for the position (the holder
+        // claims it), so the lender side is measured as the held amount.
+        lenderAddr;
+        uint256 lBefore = _heldForLender(loanId);
         if (stampFull) {
             _expectResolverKeyedOnHolder(loanId);
         }
@@ -5616,7 +5651,12 @@ contract RiskFacetTest is Test {
             loanId, 2_000, defaultAdapterCalls()
         );
         toTreasury = IERC20(mockERC20).balanceOf(treasuryEoa) - tBefore;
-        toLender = IERC20(mockERC20).balanceOf(lenderAddr) - lBefore;
+        toLender = _heldForLender(loanId) - lBefore;
+    }
+
+    /// @dev #3629 — what is held for the lender position of `loanId`.
+    function _heldForLender(uint256 loanId) private view returns (uint256 held) {
+        (, , , , , , held, ) = ClaimViewFacet(address(diamond)).getClaimable(loanId, true);
     }
 
     /// @notice #1955 — the Full stamp reaches the interest a PARTIAL liquidation
@@ -5651,7 +5691,7 @@ contract RiskFacetTest is Test {
         // Partial liquidation is the ONE recovery entry that pays the holder
         // DIRECTLY: it writes no `lenderClaims` row, so there is no
         // `ownerOf`-gated claim behind the deposit to correct a stale address,
-        // and `freezeOrPayActiveLenderResident` resolves the resident itself
+        // and `holdActiveLenderResident` resolves the resident itself
         // (RiskFacet:1239-1257). The measured party therefore has to be the
         // HOLDER — measuring `lenderAddr` here reported a zero lender delta
         // against a real treasury reduction, which is the misrouted-principal

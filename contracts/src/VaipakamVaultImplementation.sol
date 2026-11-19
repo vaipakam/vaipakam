@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {ERC165Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/introspection/ERC165Upgradeable.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -51,8 +50,11 @@ interface IVaultBeaconInitHash {
  * @notice The code every per-user vault runs, resolved through the VaultBeacon (#3204).
  * @dev Each vault is a `BeaconProxy`; the code it runs changes only through the
  *      beacon's timelocked registration and the owner's own pin, never through
- *      an upgrade entry on the vault. Ownable (owned by the Diamond) gates the
- *      deposit entry.
+ *      an upgrade entry on the vault. One rule says who may move assets:
+ *      only the Diamond recorded at creation ({onlyDiamond}); the vault
+ *      itself is not trusted by it (#3432). The one self-call, the
+ *      protection code updating the owner record, has its own named gate
+ *      ({setOwnerFromProtection}).
  *      It handles ERC20 deposits and NFT (ERC721/1155) deposits. Every movement
  *      OUT passes {transferOut} or {grantAllowance}, which check the
  *      destination themselves (#3205 part 2, `VaultOutflowPolicyDesign.md` §3).
@@ -60,13 +62,19 @@ interface IVaultBeaconInitHash {
  *      Implements IERC721Receiver and IERC1155Receiver for safe transfers.
  *      For ERC721 rentals: Vault calls setUser without necessarily holding the NFT (assumes operator approval).
  *      For ERC1155: Holds tokens, calls setUser if the contract supports IERC4907 (try-catch to handle non-support).
- *      Custom errors for gas efficiency. No reentrancy as asset ops are atomic.
- *      A proxy's initialize sets its owner to the Diamond; the implementation itself
- *      is never initialized (its constructor disables that, #905).
+ *      Custom errors for gas efficiency.
+ *      Reentrancy: an NFT outflow calls the receiver's hook and a grant hands
+ *      control to its spender, so asset moves are NOT atomic by themselves.
+ *      The vault carries no guard of its own; every gated entry is reached
+ *      only from a Diamond path that holds the Diamond's reentrancy guard,
+ *      and a hook that re-enters the Diamond is refused there (#3432;
+ *      `VaultReentrancyTest` holds it for the outflow and grant entries).
+ *      A proxy's initialize records the Diamond and the owner wallet; the
+ *      implementation itself is never initialized (its constructor disables
+ *      that, #905).
  *      Expand for Phase 2 (e.g., multi-asset batches).
  */
 contract VaipakamVaultImplementation is
-    OwnableUpgradeable,
     ERC165Upgradeable,
     IERC721Receiver,
     IERC1155Receiver
@@ -92,9 +100,11 @@ contract VaipakamVaultImplementation is
     ///         whose owner record is it). SEAPORT / ORDER_PROTOCOL: the only
     ///         callers this vault's ERC-1271 answers, each for the orders it
     ///         hashed. CONDUIT / CONDUIT_KEY: the one listing conduit a vault
-    ///         or its escrow approves, and the key a listing must name.
-    ///         PRICE_GUARD: the standalone price guard (#3447), read from
-    ///         #3268 on.
+    ///         or its escrow approves for new listings, and its key.
+    ///         PRICE_GUARD: the standalone price guard new loans use (#3447),
+    ///         read from #3268 on. The PRIOR_* constants (#3437 step 5) are
+    ///         the earlier guards and conduits open loans still use, accepted
+    ///         beside the current ones; zero is an unused slot.
     address public immutable TREASURY;
     address public immutable BACKSTOP;
     address public immutable SEAPORT;
@@ -104,6 +114,12 @@ contract VaipakamVaultImplementation is
     address public immutable PRICE_GUARD;
     /// @notice #3379 B2 — the protected-mode code this vault delegatecalls.
     address public immutable PROTECTION;
+    address public immutable PRIOR_PRICE_GUARD_0;
+    address public immutable PRIOR_PRICE_GUARD_1;
+    address public immutable PRIOR_CONDUIT_0;
+    address public immutable PRIOR_CONDUIT_1;
+    bytes32 public immutable PRIOR_CONDUIT_KEY_0;
+    bytes32 public immutable PRIOR_CONDUIT_KEY_1;
 
     /// @dev Vault-side rental wrapper state. Authoritative for this platform:
     ///      external integrators SHOULD query the vault (via the factory
@@ -112,7 +128,7 @@ contract VaipakamVaultImplementation is
     ///      list of concurrent rentals so ERC-1155 can expose the active
     ///      aggregate quantity and the minimum active expiry. ERC-721
     ///      rentals always collapse to a single entry with quantity = 1.
-    ///      Storage kept at the tail of the layout for UUPS-upgrade safety.
+    ///      Storage kept at the tail of the layout so a new vault version registered on the beacon keeps it.
     ///      `rentalId` (#902) keys an ERC-1155 row to the one rental (the
     ///      Diamond's loan id) it records, so concurrent rentals of the same
     ///      token are separate rows and closing one leaves the others; it is
@@ -165,13 +181,11 @@ contract VaipakamVaultImplementation is
     ///      Storage layout note: appended to the tail of the
     ///      pre-gap layout, paired with a corresponding decrement
     ///      of `__gap` below to keep the overall slot footprint
-    ///      constant across UUPS upgrades.
+    ///      constant across vault versions.
     mapping(bytes32 => address) private _listingExecutor;
 
     // Custom errors for clarity and gas efficiency.
-    /// @dev Caller is not the Diamond (or this contract itself via
-    ///      self-call). Replaces the prior string revert
-    ///      `"Only Diamond can execute"`.
+    /// @dev Caller is not the Diamond this vault recorded at creation.
     error NotAuthorized();
     error InvalidAmount();
     error TransferFailed();
@@ -195,16 +209,15 @@ contract VaipakamVaultImplementation is
     ///      ledger entry and could only be recovered by an admin sweep.
     error UnauthorizedNFTSender();
 
-    /// @dev Shared check for every function that must be callable only by
-    ///      the owning Diamond (or via a controlled self-call). Consolidates
-    ///      the repeated `msg.sender == diamond || msg.sender == address(this)`
-    ///      guard into one site so any future hardening (e.g. routing via
-    ///      a dedicated facet) only has to change here.
+    /// @dev The one check for "who may call the vault": the Diamond recorded
+    ///      at creation, and nothing else (#3432). The vault is not exempt: an
+    ///      entry that needs a self-call names that one call with its own gate
+    ///      ({setOwnerFromProtection}) rather than widen this rule.
     /// @dev Extracted modifier body to keep the modifier itself a thin
     ///      wrapper — every call site inlines the modifier, so the
     ///      check living in a private function dedupes the bytecode.
     function _checkDiamond() private view {
-        if (msg.sender != diamond && msg.sender != address(this)) {
+        if (msg.sender != diamond) {
             revert NotAuthorized();
         }
     }
@@ -218,9 +231,8 @@ contract VaipakamVaultImplementation is
      * @notice Locks the implementation contract itself (#905).
      * @dev Only a proxy is ever initialized. The implementation's own
      *      storage is never used, so its initializer is disabled at
-     *      construction: nobody can call `initialize` on it to become its
-     *      owner, whatever path deployed it, and with no owner nobody can
-     *      reach `_authorizeUpgrade` on it either. This used to depend on
+     *      construction: nobody can call `initialize` on it to name a
+     *      Diamond of their choosing, whatever path deployed it. This used to depend on
      *      every deployer remembering to initialize the template in the
      *      same transaction; `upgradeVaultImplementation` checks only that
      *      the new implementation has code, so a template deployed without
@@ -241,6 +253,59 @@ contract VaipakamVaultImplementation is
         CONDUIT_KEY = e.conduitKey;
         PRICE_GUARD = e.priceGuard;
         PROTECTION = e.protection;
+        _requirePriorEndpoints(e);
+        PRIOR_PRICE_GUARD_0 = e.priorPriceGuards[0];
+        PRIOR_PRICE_GUARD_1 = e.priorPriceGuards[1];
+        PRIOR_CONDUIT_0 = e.priorConduits[0];
+        PRIOR_CONDUIT_1 = e.priorConduits[1];
+        PRIOR_CONDUIT_KEY_0 = e.priorConduitKeys[0];
+        PRIOR_CONDUIT_KEY_1 = e.priorConduitKeys[1];
+    }
+
+    /// @dev #3437 step 5 — the earlier lists are filled from the first slot,
+    ///      name each entry once, never repeat the current entry, and pair
+    ///      every conduit with its key. Checked once, at construction.
+    function _requirePriorEndpoints(VaultOutflowTypes.VaultEndpoints memory e) private pure {
+        address[2] memory c = e.priorConduits;
+        bytes32[2] memory k = e.priorConduitKeys;
+        bool bad = _badPriors(e.priorPriceGuards[0], e.priorPriceGuards[1], e.priceGuard)
+            || _badPriors(c[0], c[1], e.conduit)
+            || (k[0] != bytes32(0) && (k[0] == k[1] || k[0] == e.conduitKey))
+            || (k[1] != bytes32(0) && k[1] == e.conduitKey)
+            || (c[0] == address(0)) != (k[0] == bytes32(0))
+            || (c[1] == address(0)) != (k[1] == bytes32(0));
+        if (bad) revert PriorEndpointsInvalid();
+    }
+
+    /// @dev An earlier list of two is bad when its second slot is filled and
+    ///      its first is not, when it names one entry twice, or when it
+    ///      repeats the current entry.
+    function _badPriors(address p0, address p1, address current) private pure returns (bool) {
+        if (p0 == address(0)) return p1 != address(0);
+        return p0 == p1 || p0 == current || (p1 != address(0) && p1 == current);
+    }
+
+    /// @notice #3437 step 5 — whether this vault code accepts `guard` as the
+    ///         price guard a loan is on: the guard new loans use, or one of
+    ///         the earlier guards this code lists. The guard itself refuses a
+    ///         price version below its floor, whoever asks.
+    function isAcceptedPriceGuard(address guard) public view returns (bool) {
+        return guard != address(0)
+            && (guard == PRICE_GUARD || guard == PRIOR_PRICE_GUARD_0 || guard == PRIOR_PRICE_GUARD_1);
+    }
+
+    /// @notice #3437 step 5 — whether this vault code accepts `conduit`, the
+    ///         one new listings use or an earlier one this code lists.
+    function isAcceptedConduit(address conduit) public view returns (bool) {
+        return conduit != address(0)
+            && (conduit == CONDUIT || conduit == PRIOR_CONDUIT_0 || conduit == PRIOR_CONDUIT_1);
+    }
+
+    /// @notice #3437 step 5 — whether a listing may name `conduitKey`: the key
+    ///         of the conduit new listings use, or of an earlier one listed.
+    function isAcceptedConduitKey(bytes32 conduitKey) public view returns (bool) {
+        return conduitKey != bytes32(0)
+            && (conduitKey == CONDUIT_KEY || conduitKey == PRIOR_CONDUIT_KEY_0 || conduitKey == PRIOR_CONDUIT_KEY_1);
     }
 
     /// @notice #3431 — the endpoints fixed in this vault code, as one record.
@@ -253,13 +318,16 @@ contract VaipakamVaultImplementation is
             conduit: CONDUIT,
             conduitKey: CONDUIT_KEY,
             priceGuard: PRICE_GUARD,
-            protection: PROTECTION
+            protection: PROTECTION,
+            priorPriceGuards: [PRIOR_PRICE_GUARD_0, PRIOR_PRICE_GUARD_1],
+            priorConduits: [PRIOR_CONDUIT_0, PRIOR_CONDUIT_1],
+            priorConduitKeys: [PRIOR_CONDUIT_KEY_0, PRIOR_CONDUIT_KEY_1]
         });
     }
 
     /**
      * @notice Initializes one user's vault proxy.
-     * @dev Sets the owner to the Diamond. Called once, by the factory, in
+     * @dev Records the Diamond and the owner wallet. Called once, by the factory, in
      *      the proxy's construction ({VaultFactoryFacet.getOrCreateUserVault}).
      *      Never callable on the implementation itself (see the constructor).
      */
@@ -267,7 +335,6 @@ contract VaipakamVaultImplementation is
         address diamondAddress,
         address vaultOwnerWallet
     ) external initializer {
-        __Ownable_init(diamondAddress); // Diamond as owner
         __ERC165_init();
         diamond = diamondAddress;
         ownerWallet = vaultOwnerWallet;
@@ -289,12 +356,12 @@ contract VaipakamVaultImplementation is
 
     /**
      * @notice Deposits ERC-20 tokens into this vault.
-     * @dev Safe transfer from caller. Callable by owner (Diamond/facets).
+     * @dev Safe transfer from the Diamond, which pulled the tokens first.
      * @param token The ERC-20 token address.
      * @param amount The amount to deposit.
      */
     // forge-lint: disable-next-line(mixed-case-function)
-    function depositERC20(address token, uint256 amount) external onlyOwner {
+    function depositERC20(address token, uint256 amount) external onlyDiamond {
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
     }
 
@@ -368,8 +435,13 @@ contract VaipakamVaultImplementation is
     /// @dev #3431 — an order's terms name another maker or offerer than this
     ///      vault (or one of its own listing escrows).
     error OrderNotThisVaults(address maker);
-    /// @dev #3431 — a listing names another conduit key than the constant's.
+    /// @dev #3431 — a listing names a conduit key this vault code does not
+    ///      accept (#3437 step 5: the current one or an earlier one listed).
     error OrderConduitRefused(bytes32 conduitKey);
+    /// @dev #3437 step 5 — the earlier guards or conduits given at
+    ///      construction are out of order, repeated, repeat the current entry,
+    ///      or leave a conduit without its key.
+    error PriorEndpointsInvalid();
     /// @dev #3431 — the protocol this order needs is not set in this code.
     error OrderProtocolUnset();
     /// @dev #3431 — {swapOut}'s adapter took more than offered, or delivered
@@ -409,7 +481,7 @@ contract VaipakamVaultImplementation is
         if (escrowKey == bytes32(0) ? offerer != address(this) : offerer != listingEscrowAddress(escrowKey)) {
             revert OrderNotThisVaults(offerer);
         }
-        if (c.conduitKey != CONDUIT_KEY) revert OrderConduitRefused(c.conduitKey);
+        if (!isAcceptedConduitKey(c.conduitKey)) revert OrderConduitRefused(c.conduitKey);
         orderHash = ISeaportOrderHash(seaport).getOrderHash(c);
         _recordOrder(orderHash, seaport);
     }
@@ -774,12 +846,25 @@ contract VaipakamVaultImplementation is
         if (
             c == VaultOutflowTypes.OutflowClass.ClaimCustody || c == VaultOutflowTypes.OutflowClass.PrincipalToBorrower
                 || c == VaultOutflowTypes.OutflowClass.MatchedCounterparty
+                || c == VaultOutflowTypes.OutflowClass.IntegratorShare
         ) {
             return _isGenuineVault(o.to);
         }
+        // #3246 part 2 — the recovery address in force on this vault's OWN
+        // record, or the genuine vault created for it when that address is
+        // itself a protected account (the outflow policy redirects it there).
+        // No trigger names it: the record does.
+        if (c == VaultOutflowTypes.OutflowClass.Recovery) {
+            address r = LibVaultProtectionStorage.recoveryInForce(LibVaultProtectionStorage.layout());
+            if (r == address(0)) return false;
+            if (o.to == r) return true;
+            return o.to != address(this) && _isGenuineVault(o.to) && IVaultOwnerView(o.to).vaultCreationOwner() == r;
+        }
         // Stage A residuals, checked by the Diamond only until Stage B3
         // (#3379): the incentive and liquidation-buyer actors (bounded by the
-        // lien's budgets) and a recorded seller (the signed sale terms). None
+        // lien's budgets), a referral share's inviter (the Diamond derives it
+        // from the new user's own binding, #3722) and a recorded seller (the
+        // signed sale terms). None
         // may name this vault or the Diamond.
         return o.to != address(this) && o.to != diamond;
     }
@@ -901,6 +986,13 @@ contract VaipakamVaultImplementation is
         return LibVaultProtectionStorage.layout().lockCount;
     }
 
+    /// @notice #3344 — the protection epoch: bumped by a lock, a replacement
+    ///         and a switch-off. The Diamond's Ready balance counts only while
+    ///         the epoch it was set in is current.
+    function protectionEpoch() external view returns (uint64) {
+        return LibVaultProtectionStorage.layout().epoch;
+    }
+
     /// @notice How many times this record's signer set has gone from
     ///         non-empty to empty (Codex #3489 r14): the Diamond's co-sign
     ///         requirement binds only under the number it was set at.
@@ -972,6 +1064,22 @@ contract VaipakamVaultImplementation is
         threshold = n / 2 + 1;
     }
 
+    /// @notice #3246 part 2 — the recovery address and the recovered state:
+    ///         the address in force now (0 = none), a pending setting or
+    ///         change still waiting and when it comes into force, and whether
+    ///         (and since when) the account was clawed back.
+    function protectionRecovery()
+        external
+        view
+        returns (address inForce, address pending, uint64 pendingAt, bool recovered, uint64 recoveredAt)
+    {
+        LibVaultProtectionStorage.Layout storage l = LibVaultProtectionStorage.layout();
+        inForce = LibVaultProtectionStorage.recoveryInForce(l);
+        pending = LibVaultProtectionStorage.recoveryPending(l);
+        if (pending != address(0)) pendingAt = l.pendingRecoveryAt;
+        return (inForce, pending, pendingAt, l.recovered, l.recoveredAt);
+    }
+
     /// @notice `key`'s next signature nonce for `purpose`.
     function protectionNonce(address key, uint8 purpose) external view returns (uint256) {
         return LibVaultProtectionStorage.layout().nonces[key][purpose];
@@ -1009,12 +1117,15 @@ contract VaipakamVaultImplementation is
 
     /// @dev THE rule for every spender right this vault grants or causes (a
     ///      just-in-time allowance, a listing escrow's conduit approval): the
-    ///      spender must be the constant its class names (#3431): CONDUIT for
-    ///      a marketplace conduit, ORDER_PROTOCOL for an order taker. No
+    ///      spender must be the constant its class names (#3431): an accepted
+    ///      conduit (#3437 step 5) for a marketplace conduit, ORDER_PROTOCOL
+    ///      for an order taker. No
     ///      approval path may skip it.
     function _requireSpender(VaultOutflowTypes.GrantClass c, address spender) private view {
-        address allowed = c == VaultOutflowTypes.GrantClass.Conduit ? CONDUIT : ORDER_PROTOCOL;
-        if (spender == address(0) || spender != allowed) revert GrantRefused(c, spender);
+        bool ok = c == VaultOutflowTypes.GrantClass.Conduit
+            ? isAcceptedConduit(spender)
+            : spender != address(0) && spender == ORDER_PROTOCOL;
+        if (!ok) revert GrantRefused(c, spender);
     }
 
     /**

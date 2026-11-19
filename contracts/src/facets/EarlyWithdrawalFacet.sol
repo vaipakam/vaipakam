@@ -19,9 +19,9 @@ import {LibLoan} from "../libraries/LibLoan.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
-import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LenderIntentFacet} from "./LenderIntentFacet.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -32,6 +32,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
+import {CollateralLienFacet} from "./CollateralLienFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
 import {SaleExitVerdictFacet} from "./SaleExitVerdictFacet.sol";
@@ -110,6 +111,10 @@ contract EarlyWithdrawalFacet is
     ///         its stored/economic identity unified, so it can't be safely sold
     ///         until the held VPFI is resolved. See LenderSaleVehicleRedesign.md D1.
     error SalePositionNotConsolidatable();
+    /// @notice A keeper listed a lender's loan above the loan's own rate
+    ///         (#3353 keeper scope, G9). The seller pays any above-rate
+    ///         shortfall out of the sale, so only the holder may choose one.
+    error KeeperSaleRateAbove(uint256 saleRateBps, uint256 loanRateBps);
     /// @notice Lender-sale lifecycle (design item 1 + borrower action window) —
     ///         the seller-chosen listing window is outside the permitted
     ///         [MIN_SALE_LISTING_SECONDS, MAX_SALE_LISTING_SECONDS] range, or,
@@ -266,6 +271,16 @@ contract EarlyWithdrawalFacet is
         address seller = LibPositionNFT.ownerOf(loan.lenderTokenId);
         if (msg.sender != seller && msg.sender != address(this)) {
             LibServiceCapacity.chargeKeeper();
+        }
+        // #3339 — a seller under the holder lock lists at the loan's own rate
+        // or below (the completion re-checks the shortfall itself).
+        LibProtectedAccount.requireLockedSaleRate(seller, interestRateBps, loan.interestRateBps);
+        // #3353 keeper scope (G9) — a listing above the loan's own rate makes
+        // the seller pay the difference to the buyer out of the sale, so that
+        // price is the holder's to choose, never a keeper's: a keeper-started
+        // listing is at the loan's own rate or below.
+        if (msg.sender != seller && interestRateBps > loan.interestRateBps) {
+            revert KeeperSaleRateAbove(interestRateBps, loan.interestRateBps);
         }
 
         // #951 (redesign D1) — consolidate the lender position to its CURRENT
@@ -659,6 +674,10 @@ contract EarlyWithdrawalFacet is
         uint256 saleShortfall = saleRemainingInterest > originalRemainingInterest
             ? saleRemainingInterest - originalRemainingInterest
             : 0;
+        // #3339 — a seller whose positions are under the holder lock sells
+        // only at the loan's own terms: no shortfall, from the escrowed
+        // proceeds or otherwise.
+        LibProtectedAccount.requireLockedSaleFloor(originalLender, saleShortfall);
 
         // #1659 — NET SETTLEMENT out of the escrowed proceeds (canonical spec,
         // "Smart Contract Actions": the sale flow prefers net settlement so the
@@ -699,11 +718,18 @@ contract EarlyWithdrawalFacet is
             // fail closed with the named error.
             if (saleShortfall > proceeds) revert RateShortfallTooHigh();
 
-            uint256 toLiam = proceeds - saleShortfall;
-            if (toLiam > 0) {
-                // #2440 — a voluntary sale: the seller's net is refused unless
-                // it all arrived, so the floor checked above is what arrives.
-                LibDelivery.pushExact(loan.principalAsset, originalLender, toLiam);
+            // #3629 — the seller's net is credited to the seller's OWN vault
+            // as free balance, never paid to a wallet. #2440 — measured there:
+            // while the listing's projection is enforced, the floor the seller
+            // reviewed is checked against what actually arrived.
+            {
+                uint256 credited =
+                    LibFacet.creditOwnVault(loan.principalAsset, originalLender, proceeds - saleShortfall);
+                if (
+                    s.saleListingBoundsRecorded[loanId] &&
+                    block.timestamp <= s.saleListingBoundsExpiry[loanId] &&
+                    credited < s.saleListingMinSellerNet[loanId]
+                ) revert SaleBelowSellerFloor(s.saleListingMinSellerNet[loanId], credited);
             }
             if (saleShortfall > 0) {
                 // #831 — vault-lock the buyer's receive: a buyer flagged AFTER
@@ -886,7 +912,7 @@ contract EarlyWithdrawalFacet is
         // NFT rentals (D-1). EncumbranceLifecycleMap.md §4.6.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.releaseCollateralLien.selector,
+                CollateralLienFacet.releaseCollateralLien.selector,
                 tempLoanId
             ),
             bytes4(0)

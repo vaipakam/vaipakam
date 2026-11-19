@@ -81,7 +81,7 @@ export type LegSubject =
   /** `tier`: the offer lends VPFI, and its capital counts toward the
    *  fee-discount tier (`LibVPFIDiscount.tierVpfiBalance`); null when the
    *  VPFI token could not be read, so that is not known. */
-  | { kind: 'intent'; lendingAsset: Hex; collateralAsset: Hex; active: boolean; tier: boolean | null }
+  | { kind: 'intent'; lendingAsset: Hex; collateralAsset: Hex; slot: number; active: boolean; tier: boolean | null }
   | { kind: 'vpfi' }
   | { kind: 'payroll'; streamId: bigint };
 
@@ -121,7 +121,7 @@ export interface ClaimAllInputs {
   held: HeldRewards | null;
   /** The protocol's VPFI token (null: unread; the zero address: none set). */
   vpfiToken: Hex | null;
-  intents: { rows: { lendingAsset: Hex; collateralAsset: Hex; available: bigint; active: boolean }[]; complete: boolean } | null;
+  intents: { rows: { lendingAsset: Hex; collateralAsset: Hex; slot: number; available: bigint; active: boolean }[]; complete: boolean } | null;
   /** Free VPFI in the wallet's vault (null: unread). */
   vpfiFree: bigint | null;
   payroll: { rows: { streamId: bigint; asset: Hex; withdrawable: bigint }[]; complete: boolean } | null;
@@ -139,13 +139,13 @@ const ZERO = '0x0000000000000000000000000000000000000000';
 
 const lower = (a: Hex) => a.toLowerCase();
 
-/** The leg's key: one per loan side, intent pair and stream. */
+/** The leg's key: one per loan side, intent (pair and slot, #3626) and stream. */
 export function legKey(s: LegSubject): string {
   switch (s.kind) {
     case 'loan':
       return `loan:${s.side}:${s.loanId.toString()}`;
     case 'intent':
-      return `intent:${lower(s.lendingAsset)}:${lower(s.collateralAsset)}`;
+      return `intent:${lower(s.lendingAsset)}:${lower(s.collateralAsset)}:${s.slot}`;
     case 'payroll':
       return `payroll:${s.streamId.toString()}`;
     default:
@@ -243,7 +243,7 @@ export function claimAllList(i: ClaimAllInputs, copy: Pick<CopyAccess, 'text'>, 
       const tier = i.vpfiToken === null ? null : vpfi !== null && lower(r.lendingAsset) === lower(vpfi);
       legs.push(
         leg(
-          { kind: 'intent', lendingAsset: r.lendingAsset, collateralAsset: r.collateralAsset, active: r.active, tier },
+          { kind: 'intent', lendingAsset: r.lendingAsset, collateralAsset: r.collateralAsset, slot: r.slot, active: r.active, tier },
           [erc20(r.lendingAsset, r.available)],
           self(),
           r.active || tier !== false,
@@ -290,7 +290,7 @@ export function legCall(l: ClaimAllLeg, account: Hex): { abi: Abi; functionName:
     case 'held':
       return { abi: REWARD_CLAIM_ABI, functionName: 'claimHeldInteractionRewards', args: [VENUE_VAULT] };
     case 'intent':
-      return { abi: INTENT, functionName: 'withdrawLenderIntentCapital', args: [account, s.lendingAsset, s.collateralAsset, l.payouts[0]!.amount] };
+      return { abi: INTENT, functionName: 'withdrawLenderIntentCapital', args: [account, s.lendingAsset, s.collateralAsset, s.slot, l.payouts[0]!.amount] };
     case 'vpfi':
       return { abi: DISCOUNT, functionName: 'withdrawVPFIFromVault', args: [l.payouts[0]!.amount] };
     case 'payroll':
@@ -355,7 +355,7 @@ export function legTitle(l: Pick<ClaimAllLeg, 'subject'>, copy: Copy, symbol: (a
     case 'held':
       return text('claimAll.held');
     case 'intent':
-      return format('claimAll.intent', { lend: symbol(s.lendingAsset), collateral: symbol(s.collateralAsset) });
+      return format('claimAll.intent', { n: String(s.slot + 1), lend: symbol(s.lendingAsset), collateral: symbol(s.collateralAsset) });
     case 'vpfi':
       return text('claimAll.vpfi');
     case 'payroll':
@@ -538,7 +538,7 @@ export function claimAllReceipt(r: ClaimAllReview, copy: Copy, describe: { symbo
 // ─── The transaction's own record ─────────────────────────────────────────
 
 const LEG_EVENTS = parseAbi([
-  'event LenderIntentCapitalWithdrawn(address indexed owner, address indexed lendingAsset, address indexed collateralAsset, uint256 amount, uint256 remainingCapital)',
+  'event LenderIntentCapitalWithdrawn(address indexed owner, address indexed lendingAsset, address indexed collateralAsset, uint8 slot, uint256 amount, uint256 remainingCapital)',
   'event VPFIWithdrawnFromVault(address indexed user, uint256 amount, uint256 newVaultBalance)',
   'event SalaryWithdrawn(uint256 indexed streamId, address indexed beneficiary, uint256 amount)',
 ]);
@@ -580,7 +580,8 @@ export function legRecord(l: ClaimAllLeg, logs: readonly Log[], diamond: Hex, ac
         e.eventName === 'LenderIntentCapitalWithdrawn' &&
         same(e.args.owner, account) &&
         same(e.args.lendingAsset, s.lendingAsset) &&
-        same(e.args.collateralAsset, s.collateralAsset),
+        same(e.args.collateralAsset, s.collateralAsset) &&
+        Number(e.args.slot) === s.slot,
     );
     return hit ? { paid: [{ asset: s.lendingAsset, amount: BigInt(String(hit.args.amount)) }] } : null;
   }

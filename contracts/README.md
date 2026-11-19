@@ -543,7 +543,6 @@ VPFI tokenomics constants (in `VPFIToken.sol`):
 | `UpgradeOracleFacet.s.sol`         | Swap the OracleFacet implementation                             |
 | `AddKeeperSelectors.s.sol`         | Grant keeper selector access                                    |
 | `CheckSelectors.s.sol`             | Diff the diamond's live selector map vs. local facet bytecode   |
-| `SepoliaActiveLoan.s.sol`          | Testnet scenario: stand up an active loan                       |
 | `PositiveFlows.s.sol`              | Positive-flow smoke suite: simulates every module in `positive-flows/` (local Anvil or a rehearsal Diamond only); it sends nothing |
 | `positive-flows/run-staged.sh`     | Broadcasts one staged positive-flow module in stages, waiting out the offer-age rule and the position transfer cooldown between them (#3502) |
 

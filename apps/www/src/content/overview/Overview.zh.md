@@ -45,7 +45,7 @@ Vaipakam 面向四类用户：
 - 你们双方都会收到一个 position NFT - 你的表示“我应收到 1,000 USDC + interest”；他们的表示“我 repay 后应取回我的 WETH”
 - Loan clock 开始计时
 
-系统会从 loaned amount 中收取一笔很小的 **Loan Initiation Fee (`{liveValue:loanInitiationFeeBps}`%)**，并转入 protocol treasury。因此 borrower 收到的是 `{liveValue:exampleBorrowerReceives}` USDC，而不是 1,000。（持有 **VPFI** 可以降低该 fee——前提是 borrower 已开启折扣设置且所借 asset 为流动资产——从而保留更多的 1,000；折扣直接从 fee 中减免，而不是事后返还。VPFI 会在下文说明。）
+系统会从 loaned amount 中收取一笔很小的 **Loan Initiation Fee**（由 loan 的期限决定，见下文 fees），并转入 protocol treasury。因此 borrower 收到的是 `{liveValue:exampleBorrowerReceives}` USDC，而不是 1,000。（持有 **VPFI** 可以降低该 fee——前提是 borrower 已开启折扣设置且所借 asset 为流动资产——从而保留更多的 1,000；折扣直接从 fee 中减免，而不是事后返还。VPFI 会在下文说明。）
 
 ### Step 3 — 时间经过；borrower 还款
 
@@ -113,13 +113,13 @@ Rental 结束后（无论是 expiry 还是 default），NFT 会回到 owner 的 
 只有两项 fees，且都很小：
 
 - **Yield Fee — `{liveValue:treasuryFeeBps}`%**，按你作为 lender 赚到的 **interest** 比例收取（不是 principal 的比例）。在一笔 1,000 USDC、30-day、8% APR 的 loan 中，lender 赚取约 6.58 USDC interest，其中按默认费率约 0.132 USDC 是 Yield Fee。
-- **Loan Initiation Fee — `{liveValue:loanInitiationFeeBps}`%**，按 lending amount 收取，由 borrower 在 origination 时支付。1,000 USDC loan 在默认费率下的费用是 2 USDC。
+- **Loan Initiation Fee**，按 lending amount 收取、由 loan 期限决定，由 borrower 在 origination 时支付：期限不超过 `{liveValue:lifBaseTermDays}` 天为 `{liveValue:loanInitiationFeeBps}`%，之后均匀上升，至 `{liveValue:lifYearDays}` 天时为 `{liveValue:lifYearlyBps}`%；超过后按期限每 `{liveValue:lifYearDays}` 天 `{liveValue:lifYearlyBps}`% 按比例计算。上文 30 天、1,000 USDC 的 loan 费用为 `{liveValue:exampleInitiationFee}` USDC。
 
 这两项 fees 都可以通过在 vault 中持有 VPFI 获得**最高 `{liveValue:tier4DiscountBps}`% discount**（见下文）。在 default 或 liquidation 时，recovered interest 不会收取 Yield Fee - protocol 不会从 failed loan 中获利。
 
 没有 withdrawal fees，没有 idle fees，没有 streaming fees，也没有针对 principal 的 “performance” fees。Protocol 收取的只有上面两个数字。
 
-> **关于 blockchain 网络 gas 费用的说明。** 当你 create offer、accept loan、repay、claim 或进行其他任何 on-chain action 时，你还会向把你的 transaction 写入 block 的 blockchain validators 支付一笔小额 **网络 gas 费**。这笔 gas 费支付给网络，**不归 Vaipakam**——这与你在同一条 chain 上转账任何 token 时支付的费用是同一笔费用。金额取决于 chain 和那一刻的网络拥堵程度，与 loan 大小无关。上面提到的 protocol fees（Yield Fee `{liveValue:treasuryFeeBps}`%、Loan Initiation Fee `{liveValue:loanInitiationFeeBps}`%）与网络 gas 完全独立，是协议本身收取的全部费用。
+> **关于 blockchain 网络 gas 费用的说明。** 当你 create offer、accept loan、repay、claim 或进行其他任何 on-chain action 时，你还会向把你的 transaction 写入 block 的 blockchain validators 支付一笔小额 **网络 gas 费**。这笔 gas 费支付给网络，**不归 Vaipakam**——这与你在同一条 chain 上转账任何 token 时支付的费用是同一笔费用。金额取决于 chain 和那一刻的网络拥堵程度，与 loan 大小无关。上面提到的 protocol fees（Yield Fee `{liveValue:treasuryFeeBps}`%、Loan Initiation Fee）与网络 gas 完全独立，是协议本身收取的全部费用。
 
 ---
 
@@ -179,7 +179,7 @@ Vaipakam 在每条 supported chain 上都是 independent deployment：**Ethereum
 
 1. 打开 app，连接 wallet。
 2. 在 **Offer Book** 中浏览与你的 collateral 和可接受 APR 匹配的 offer。
-3. 点击 **Accept**，签署两笔 transactions，你会在 wallet 中收到 loan amount（扣除 `{liveValue:loanInitiationFeeBps}`% Loan Initiation Fee 后）。
+3. 点击 **Accept**，签署两笔 transactions，你会在 wallet 中收到 loan amount（扣除 Loan Initiation Fee 后）。
 4. 在 due date plus grace period 前 repay。你的 collateral 会 unlock 回 wallet。
 
 如果你想 **rent 或 list an NFT**：

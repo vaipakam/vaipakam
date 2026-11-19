@@ -276,6 +276,16 @@
             "name": "termsSetAt",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "lifecycleFlex",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "integrator",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       }
@@ -512,6 +522,16 @@
             "name": "termsSetAt",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "lifecycleFlex",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "integrator",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       }
@@ -2716,6 +2736,11 @@
   {
     "type": "error",
     "name": "PositionNFTNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PositionTokenNotAccepted",
     "inputs": []
   },
   {

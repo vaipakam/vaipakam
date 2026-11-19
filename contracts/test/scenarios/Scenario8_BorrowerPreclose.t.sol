@@ -2,8 +2,12 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestCollateralCut} from "../helpers/LibTestCollateralCut.sol";
+import {LibTestTermsCut} from "../helpers/LibTestTermsCut.sol";
+import {LibTestClaimViewCut} from "../helpers/LibTestClaimViewCut.sol";
 import {LibTestProtectedCut} from "../helpers/LibTestProtectedCut.sol";
 import {LibTestPositionNFT} from "../helpers/LibTestPositionNFT.sol";
+import {LibTestSettlementLeg} from "../helpers/LibTestSettlementLeg.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "../helpers/LibTestVaultBeacon.sol";
 import {VaipakamDiamond} from "../../src/VaipakamDiamond.sol";
@@ -280,7 +284,11 @@ contract Scenario8_BorrowerPreclose is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
+        cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
+        cuts = LibTestTermsCut.withTermsHost(cuts); // #3734
+        cuts = LibTestClaimViewCut.withClaimView(cuts); // the claim reads
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
+        LibTestSettlementLeg.install(address(diamond)); // #3669
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
         AccessControlFacet(address(diamond)).initializeAccessControl();
@@ -343,6 +351,8 @@ contract Scenario8_BorrowerPreclose is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -388,6 +398,8 @@ contract Scenario8_BorrowerPreclose is Test {
         vm.prank(newBorrower);
         uint256 borrowerOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,

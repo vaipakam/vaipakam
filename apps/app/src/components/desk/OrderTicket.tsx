@@ -63,6 +63,7 @@ import {
   type OfferTerms,
 } from '../../lib/offerSchema';
 import { readLiveProtocolFees, useProtocolFees } from '../../data/fees';
+import { lifFeeOf, lifRateBpsUp, lifRatePercentText, sameLifTerms } from '../../lib/initiationFee';
 import { readSignedOfferCancelFloor } from '../../data/signedTakerRefusal';
 import { useOfferBookFloor } from '../../data/offerFloor';
 import {
@@ -398,7 +399,7 @@ export function OrderTicket({
     makerFull.maxCStar,
     makerFull.allowDowngrade,
     fees.treasuryFeeBps,
-    fees.loanInitiationFeeBps,
+    fees.lifTerms,
     address,
     walletChain?.chainId,
   ]);
@@ -895,7 +896,7 @@ export function OrderTicket({
       // caps the maker never saw.
       if (
         liveFees.treasuryFeeBps !== fees.treasuryFeeBps ||
-        liveFees.loanInitiationFeeBps !== fees.loanInitiationFeeBps
+        !sameLifTerms(liveFees.lifTerms, fees.lifTerms)
       ) {
         void queryClient.invalidateQueries({ queryKey: ['protocolFees'] });
         throw new Error(copy.desk.ticket.feesChanged);
@@ -1010,7 +1011,11 @@ export function OrderTicket({
         deadline,
         {
           maxTreasuryFeeBps: liveFees.treasuryFeeBps,
-          maxLoanInitiationFeeBps: liveFees.loanInitiationFeeBps,
+          // #3649 — the initiation fee is term-scaled and the contract
+          // compares the cap with the rate at the order's term rounded UP
+          // (`LibInitiationFee.rateBpsUp`), so the cap is that rate. The
+          // base rate would refuse every fill of a term past the base term.
+          maxLoanInitiationFeeBps: lifRateBpsUp(liveFees.lifTerms, days),
         },
         makerFullIntent,
       );
@@ -1099,7 +1104,7 @@ export function OrderTicket({
   }, [postMode, fieldsComplete, decimalsReady, side, form, fillMode, expiry, customExpiry, lendingMeta.data, collateralMeta.data]);
 
   const feePreview = useMemo((): { commit: string; fee: string; capNote: string | null } | null => {
-    if (!fieldsComplete || !decimalsReady || !fees.ready) return null;
+    if (!fieldsComplete || !decimalsReady || !fees.ready || !fees.lifTerms) return null;
     const payload = buildPayload(false, nowSec);
     if (!payload) return null;
     const lendDec = lendingMeta.data?.decimals ?? 18;
@@ -1109,7 +1114,10 @@ export function OrderTicket({
     const gasless = postMode === 'gasless';
     // #3327 — a gasless order signs both fees as its caps; say so.
     const capNote = gasless
-      ? text.feeCapNote(String(fees.treasuryFeeBps / 100), String(fees.loanInitiationFeeBps / 100))
+      ? text.feeCapNote(
+          String(fees.treasuryFeeBps / 100),
+          String(lifRateBpsUp(fees.lifTerms, days) / 100),
+        )
       : null;
     if (side === 'lender') {
       const escrow = formatTokenAmountExact(payload.amountMax, lendDec);
@@ -1126,13 +1134,14 @@ export function OrderTicket({
       };
     }
     const lock = formatTokenAmountExact(payload.collateralAmountMax, collDec);
-    const lifAmt = (payload.amountMax * BigInt(fees.loanInitiationFeeBps)) / 10000n;
+    // #3649 — the fee at this order's term, under the live rule.
+    const lifAmt = lifFeeOf(payload.amountMax, fees.lifTerms, days);
     return {
       commit: gasless
         ? text.lockAtFill(lock, collSym)
         : text.lockNow(lock, collSym),
       fee: text.lifNote(
-        String(fees.loanInitiationFeeBps / 100),
+        lifRatePercentText(fees.lifTerms, days),
         formatTokenAmountExact(lifAmt, lendDec),
         lendSym,
       ),
@@ -1147,7 +1156,8 @@ export function OrderTicket({
     decimalsReady,
     fees.ready,
     fees.treasuryFeeBps,
-    fees.loanInitiationFeeBps,
+    fees.lifTerms,
+    days,
     side,
     rate,
     postMode,

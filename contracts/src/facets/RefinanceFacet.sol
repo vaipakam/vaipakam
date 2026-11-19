@@ -13,7 +13,10 @@ import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
+import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
+import {CollateralLienFacet} from "./CollateralLienFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibInitRiskGate} from "../libraries/LibInitRiskGate.sol";
@@ -436,7 +439,7 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
         //     because they refinance rather than repay directly.
         // `...Net` also credits any periodic `interestSettled` (paid once).
         // #411 fix — the rate-shortfall top-up is gone (see {_exitingLenderDue}).
-        (uint256 treasuryFee, uint256 lenderDue) = _exitingLenderDue(oldLoan, oldLoanId);
+        (uint256 treasuryFee, uint256 lenderDue, uint256 interestBase) = _exitingLenderDue(oldLoan, oldLoanId);
         // #3042 — the new lender's net principal pays the old lender inside
         // the Diamond; the holder's wallet pays only the rest of the due and
         // the treasury fee, once, through the request's payoff permit (#1558).
@@ -446,7 +449,8 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
             borrowerOfferId,
             currentBorrowerNftOwner,
             treasuryFee,
-            lenderDue
+            lenderDue,
+            interestBase
         );
 
         // Record lender's claimable. heldForLender handled by ClaimFacet.
@@ -707,7 +711,8 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
         uint256 borrowerOfferId,
         address holder,
         uint256 treasuryFee,
-        uint256 lenderDue
+        uint256 lenderDue,
+        uint256 interestBase
     ) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage oldLoan = s.loans[oldLoanId];
@@ -745,7 +750,8 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
 
         // The treasury's share, out of what the Diamond now holds (#2440: the
         // host accrues what the treasury received).
-        LibFacet.transferToTreasury(asset, treasuryFee);
+        // #3649 stage 3 — split at the floor on the interest it came from.
+        LibFacet.transferToTreasury(asset, treasuryFee, LibFeeFloor.interest(interestBase, LibVaipakam.effectiveTreasuryFeeBps(oldLoan)));
         emit RefinancePayoffSettled(
             oldLoanId,
             newLoanId,
@@ -764,7 +770,7 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
     ///      budget.
     function _exitingLenderDue(LibVaipakam.Loan storage oldLoan, uint256 oldLoanId)
         private
-        returns (uint256 treasuryFee, uint256 lenderDue)
+        returns (uint256 treasuryFee, uint256 lenderDue, uint256 interestPortion)
     {
         uint256 oldInterest = LibEntitlement.settlementInterestNet(
             oldLoan,
@@ -812,7 +818,7 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
         // whole `interest + lateFee` for the lender (mirrors RepayFacet), so the
         // penalty is never silently dropped on the discounted path.
         uint256 lateFee = LibVaipakam.calculateLateFee(oldLoanId);
-        uint256 interestPortion = oldInterest + lateFee;
+        interestPortion = oldInterest + lateFee;
         // #1832 — terminal seam of the lifetime interest counter.
         LibMetricsHooks.onInterestPaid(oldLoan, interestPortion);
         uint256 lenderInterest;
@@ -884,7 +890,7 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
     function _releaseOldLienAtRefinance(uint256 oldLoanId) private {
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.releaseCollateralLien.selector,
+                CollateralLienFacet.releaseCollateralLien.selector,
                 oldLoanId
             ),
             bytes4(0)
@@ -920,7 +926,7 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
         if (!LibInitRiskGate.applies(newLoan.principalLiquidity, newLoan.collateralLiquidity)) return;
 
         // Mirrors
-        // `LoanFacet._checkInitialLtvAndHf` exactly so refinance can't
+        // `LibNewLoanRisk.requireAdmissible` exactly so refinance can't
         // admit a position that would have been rejected at init —
         // both regimes (depth-tiered ON / OFF) must agree.
         //

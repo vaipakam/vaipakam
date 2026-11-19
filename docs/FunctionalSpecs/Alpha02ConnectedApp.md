@@ -7,10 +7,53 @@ destinations and flipped the cutover switch; the `/recover` guide links
 alone stay on the legacy host, held by same-origin recovery state rather
 than by any missing route). It is the app-specific functional
 spec consolidated against the release notes from 2026-08-13 through
-2026-11-04, inclusive, while retaining later recorded intent decisions. It is intentionally
+2026-11-15, inclusive, while retaining later recorded intent decisions. It is intentionally
 written without implementation snippets. (The app was called `alpha02` and
 served `alpha02.vaipakam.com` until #1854 renamed it; this file keeps the old
 name only in its filename.)
+
+The separate [alpha05 specification](Alpha05ConnectedApp.md) defines the new
+app's presentation and implemented feature slices. This document continues
+to govern the existing app until explicit parity and cutover. Shared funds,
+ownership, and safety rules follow the platform and vault specifications.
+
+## Consolidated shared behavior through November 15
+
+- Net principal and ordinary claims credit the payee's own vault; reviews
+  distinguish credit from a subsequent wallet withdrawal and its protection.
+  The separately documented swap-to-repay exceptions retain their stated routes.
+- Position NFTs are standalone ownership records and closed tokens remain
+  retired receipts. Optional NFT protection uses a holder lock; no platform
+  NFT-transfer queue is offered. Routes bound to an earlier transfer count
+  are dead after any position move, including a move away and back.
+- Token-loan interest is per second. Effective loan clocks come from the
+  protocol's published deadlines, including pause and sequencer recovery;
+  the pause-escape period is read from the running pause's own snapshot.
+- Every price-exposed write carries a required valid-until time distinct
+  from offer expiry. Rescue actions remain deadline-free. A transaction's
+  gas estimate receives the shared 30% margin, with unused gas uncharged.
+- Illiquid-pair access needs previously armed standing consent from both
+  parties as applicable; an acceptance acknowledgement cannot replace it.
+  Risk-setting changes are the owner's direct transactions, never gasless
+  authorizations a third party can submit later.
+- Rewards show bounded work and the next claim window. A partial large-wallet
+  window and a zero-payment action that advances it are stated explicitly,
+  and a thirty-day ceiling does not promise completion in one call.
+- Pending indexed activity is labelled not final and can disappear after a
+  reorganisation. Missing or stale recent coverage is unknown. Signed orders
+  held during replay are excluded from shared-book completeness claims, while
+  a maker retains cancellation after fresh chain standing.
+
+- Signed orders bind the two reviewed protocol fee caps, use nonces at or
+  above the maker's cancellation floor, and carry validated set placement
+  where applicable. Unsupported taker or co-signer restrictions disable Fill
+  while retaining the order as labelled depth. The apps do not offer a set-
+  signing screen or co-signing service merely because contracts support them.
+- Protection screens read and write the vault's record directly, show each
+  step, and use the per-payout co-sign verdict. Replaced accounts remain
+  protected and the latest manager signs for their vault, including code pins.
+  General relayed protection controls and vault-event owner alerts retain the
+  Stage B4 limitations described in [Vault Operations](VaultOperations.md).
 
 ## Purpose
 
@@ -1415,7 +1458,7 @@ The app uses chain reads and indexed reads for different jobs.
 - The Activity feed's "is this event mine" filter covers the wallet's WHOLE
   loan history, not just currently-held positions: a settlement or
   keeper-triggered default on a loan whose position NFT was since claimed
-  (burned) or transferred away still appears in the wallet's feed. If the
+  (retired) or transferred away still appears in the wallet's feed. If the
   participation history can't be read, the feed reports unavailable rather
   than silently narrowing to held positions only; a wallet with more
   participation history than one read returns folds into the page's
@@ -1448,7 +1491,7 @@ The app uses chain reads and indexed reads for different jobs.
   the fallback.
 - The push signal covers every class of change a holder-keyed view depends on —
   including position-ownership transfers (a position NFT changing hands, a
-  claim burning one) and entitlement changes that alter what a party is owed
+  claim retiring one) and entitlement changes that alter what a party is owed
   without changing the loan's status (for example a partial rescue of a
   pending-fallback loan). The push rail also reports its own freshness (how
   recently ingestion advanced, and how often it is expected to), so the app
@@ -1679,11 +1722,10 @@ progress.
 - A lender's review of a refinance request says what accepting it does
   (#2421): it names the running loan, and says that accepting opens the
   lender's loan and, in the same transaction, pays off and closes that loan.
-  It states how that payoff is funded: the amount the accepting lender lends
-  goes to the borrower's wallet as with any loan, less the borrower's
-  loan-initiation fee, and the payoff to the running
-  loan's current lender is then drawn from that wallet, so the new loan can
-  fund part or all of it, with the borrower covering any difference. The
+  It states how that payoff is funded: the accepting lender's net principal
+  pays the running loan's lender directly from vault to vault, after the
+  borrower's initiation fee. Only the remaining payoff is funded by the
+  borrower; no temporary wallet receipt or later refinance step is implied. The
   collateral is described from the request's
   own recorded decision: either the stake already locked under the running loan
   carries over to the new loan (not a new pledge), or the borrower pledged a
@@ -4250,7 +4292,7 @@ Its intended behaviour, as the test oracle for this surface:
 - Live chain state always outranks the indexed snapshot for the
   wallet's own positions: a just-cancelled offer must not linger as
   cancellable, and a loan whose position token the wallet no longer
-  holds (transferred away or burned at claim) must not keep rendering
+  holds (transferred away or retired at claim) must not keep rendering
   as the wallet's active position, even while background ingestion
   lags.
 - The SHARED offer book applies the same principle one-sidedly: before
@@ -4270,7 +4312,7 @@ Its intended behaviour, as the test oracle for this surface:
   positively stalled. Completeness scope, recorded as intent: the
   feed currently covers positions the history service can still link
   to the wallet — events for a loan whose position token the wallet
-  burned at claim or transferred away long ago join the feed once
+  retired at claim or transferred away long ago join the feed once
   the history service answers participant-history queries (a tracked
   indexer follow-up), and until then the feed must not present its
   narrower scope as the wallet's complete history.
@@ -5074,7 +5116,7 @@ Its intended behaviour, as the test oracle for this surface:
   token id can be checked on: a live token shows its current holder,
   the side it controls, its linked loan, and any transfer lock; a
   token that doesn't currently exist is stated as either retired
-  by the protocol (a claimed position — or a token burned when its
+  by the protocol (a claimed position — or a token retired when its
   offer was cancelled or consumed without becoming a loan) or never
   minted — the network doesn't record which, and the verifier says
   so rather than guessing (the
@@ -5200,7 +5242,7 @@ Its intended behaviour, as the test oracle for this surface:
   "protection off". When the account's settings cannot be read the page
   shows no controls at all, because "off" drawn over a failed read would
   invite turning protection on twice or hide a lock. When the payout
-  queue, the transfer queue, the payout addresses or the signers cannot
+  queue, the payout addresses or the signers cannot
   be read, each says so and says not to assume it is empty; a partly read
   list counts as unread, since the one missing row could be the one an
   attacker queued. Each queued payout shows its request code (the same
@@ -5331,7 +5373,16 @@ Its intended behaviour, as the test oracle for this surface:
   a gasless order, movement at fill) alongside the protocol fee that
   applies to the user's side: a lender's yield after the fee on interest,
   a borrower's one-time initiation fee on the principal, quoted from the
-  live deployed fee values. The user's own
+  live deployed fee values. The initiation fee is term-based, so every
+  surface quotes it at the rate for that order's or loan's own term, never
+  at one flat rate, and a signed order's initiation-fee cap is that term's
+  rate rounded up, the figure the protocol compares it with. Until the
+  live fee settings are read, the fee shows as not yet known rather than
+  as a default figure; the help page's fee answer states the rule with
+  the live settings, and the protocol console lists all four settings
+  (the base rate labelled as the base rate, never as the fee). The
+  operator's live review drives judge a review's initiation fee by the
+  same rule at the new loan's term, read from the protocol. The user's own
   open offers can be repriced or resized in place in one transaction —
   only by their creator; a bought offer position is view-only — and an
   amend that increases the locked amount asks for the token approval

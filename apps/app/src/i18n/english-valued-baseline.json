@@ -865,12 +865,6 @@
       "hi"
     ]
   },
-  "copy.nftVerifier.lockLabel": {
-    "source": "Transfer lock",
-    "locales": [
-      "hi"
-    ]
-  },
   "copy.nftVerifier.ownerLabel": {
     "source": "Current holder",
     "locales": [

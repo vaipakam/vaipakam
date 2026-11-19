@@ -44,7 +44,7 @@ import {
   type ExtendCaps,
 } from './autoExtend';
 
-const DIAMOND = DEPLOYMENTS[84532]!.diamond as Address; // a legacy-mode record (#3205)
+const DIAMOND = DEPLOYMENTS[84532]!.diamond as Address; // a recorded Diamond (#3205)
 const ME = '0x00000000000000000000000000000000000000aA' as Address;
 const OTHER = '0x00000000000000000000000000000000000000bb' as Address;
 const USDC = '0x0000000000000000000000000000000000000001' as Address;
@@ -56,6 +56,7 @@ const on = (over: Partial<ExtendCaps> = {}): ExtendCaps => ({
   maxRateBps: 10_000,
   maxNewExpiry: 2_000_000_000,
   setter: ME,
+  maxExtensionFee: 0n,
   ...over,
 });
 const off = (over: Partial<ExtendCaps> = {}): ExtendCaps => ({ ...on(over), enabled: false });
@@ -127,7 +128,8 @@ describe('windowPhase', () => {
 
 describe('capsArgs', () => {
   it('bounds the borrower’s rate from above and the lender’s from below', () => {
-    expect(capsArgs('borrower', 7, { enabled: true, rateBps: 900, latestEnd: 123 }, 10_000)).toEqual([7n, true, 0, 900, 123n]);
+    expect(capsArgs('borrower', 7, { enabled: true, rateBps: 900, latestEnd: 123 }, 10_000)).toEqual([7n, true, 0, 900, 123n, 0n]);
+    expect(capsArgs('borrower', 7, { enabled: true, rateBps: 900, latestEnd: 123, maxExtensionFee: 55n }, 10_000)).toEqual([7n, true, 0, 900, 123n, 55n]);
     expect(capsArgs('lender', 7, { enabled: true, rateBps: 500, latestEnd: 123 }, 10_000)).toEqual([7n, true, 500, 10_000, 123n]);
   });
   it('turns a side off with nothing else set', () => {
@@ -213,6 +215,8 @@ function clientFor(over: {
         case 'ownerOf':
           if (over.owner instanceof Error) throw over.owner;
           return over.owner ?? ME;
+        case 'isPositionRetired':
+          return false;
       }
       throw new Error(`unexpected ${functionName}`);
     }),
@@ -260,7 +264,7 @@ describe('reserve discovery', () => {
       { events: [{ loanId: 2 }], nextBefore: null },
     ];
     expect(await reserveLoanIds(84532, ME)).toEqual({ loanIds: [5, 2], truncated: false });
-    expect(pages.calls[0]).toMatchObject({ actor: ME, kinds: ['ExtendReserveFunded'], limit: 200 });
+    expect(pages.calls[0]).toMatchObject({ actor: ME, kinds: ['LoanReserveFunded'], limit: 200 });
     expect(pages.calls[1].before).toBe('c1');
   });
 
@@ -296,7 +300,7 @@ describe('withdrawWholeReserve', () => {
     const screen = vi.fn(async () => {});
     const logs = await withdrawWholeReserve({ client, diamond: DIAMOND, account: ME, loanId: 6, write, screen });
     expect(screen).toHaveBeenCalled();
-    expect(write).toHaveBeenCalledWith('withdrawExtendReserve', [ME, 6n, 9n]);
+    expect(write).toHaveBeenCalledWith('withdrawLoanReserve', [ME, 6n, 0, 9n]);
     expect(logs).toEqual(['l']);
   });
 

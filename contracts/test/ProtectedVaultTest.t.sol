@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibTestOutflow} from "./helpers/LibTestOutflow.sol";
 import {PositionNFT} from "../src/PositionNFT.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
@@ -17,6 +18,7 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
 import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
+import {ReadyBalanceFacet} from "../src/facets/ReadyBalanceFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
@@ -33,6 +35,7 @@ import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 import {VaultProtection} from "../src/vault/VaultProtection.sol";
+import {VaultProtectionBase} from "../src/vault/VaultProtectionBase.sol";
 import {LibTestProtection as P} from "./helpers/LibTestProtection.sol";
 
 /**
@@ -72,7 +75,7 @@ contract ProtectedVaultTest is Test {
         DiamondCutFacet cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(address(this), address(cutFacet));
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](8);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](9);
         cuts[0] = _cut(type(VaultFactoryFacet).name, helperTest.getVaultFactoryFacetSelectorsExtended());
         cuts[1] = _cut(type(AdminFacet).name, helperTest.getAdminFacetSelectors());
         cuts[2] = _cut(type(ProfileFacet).name, helperTest.getProfileFacetSelectors());
@@ -81,6 +84,8 @@ contract ProtectedVaultTest is Test {
         cuts[5] = _cut(type(ProtectedAccountFacet).name, helperTest.getProtectedAccountFacetSelectors());
         cuts[6] = _cut(type(VaultPayoutFacet).name, helperTest.getVaultPayoutFacetSelectors());
         cuts[7] = _cut(type(VaultDepositoryFacet).name, helperTest.getVaultDepositoryFacetSelectors());
+        // #3344 — the depository withdraw reads a protected account's Ready.
+        cuts[8] = _cut(type(ReadyBalanceFacet).name, helperTest.getReadyBalanceFacetSelectors());
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
         AccessControlFacet(address(diamond)).initializeAccessControl();
@@ -415,7 +420,7 @@ contract ProtectedVaultTest is Test {
         P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.addAllowlisted, (friend, P.direct(user))));
         _expectFinalizeRevert(
             abi.encodeCall(VaultProtection.finalizeAllowlisted, (friend)),
-            abi.encodeWithSelector(VaultProtection.NotReady.selector, uint64(block.timestamp + DELAY))
+            abi.encodeWithSelector(VaultProtectionBase.NotReady.selector, uint64(block.timestamp + DELAY))
         );
         vm.warp(block.timestamp + DELAY);
         _v().protect(abi.encodeCall(VaultProtection.finalizeAllowlisted, (friend)));
@@ -473,7 +478,7 @@ contract ProtectedVaultTest is Test {
         _expectProtectRevert(
             user,
             abi.encodeCall(VaultProtection.addAllowlisted, (address(0xDEAD), P.direct(user))),
-            abi.encodeWithSelector(VaultProtection.TooMany.selector)
+            abi.encodeWithSelector(VaultProtectionBase.TooMany.selector)
         );
     }
 
@@ -484,7 +489,7 @@ contract ProtectedVaultTest is Test {
         vm.warp(at + DELAY + 1);
         _expectFinalizeRevert(
             abi.encodeCall(VaultProtection.finalizeAllowlisted, (friend)),
-            abi.encodeWithSelector(VaultProtection.Expired.selector, at + DELAY)
+            abi.encodeWithSelector(VaultProtectionBase.Expired.selector, at + DELAY)
         );
     }
 
@@ -509,7 +514,7 @@ contract ProtectedVaultTest is Test {
         P.finalizeSettings(address(diamond), user);
         assertFalse(_locked());
 
-        bytes memory notRequested = abi.encodeWithSelector(VaultProtection.NotRequested.selector);
+        bytes memory notRequested = abi.encodeWithSelector(VaultProtectionBase.NotRequested.selector);
         _expectFinalizeRevert(abi.encodeCall(VaultProtection.finalizeAllowlisted, (friend)), notRequested);
         _expectFinalizeRevert(abi.encodeCall(VaultProtection.finalizeSigner, (s2)), notRequested);
         _expectFinalizeRevert(abi.encodeCall(VaultProtection.finalizeSigner, (s1)), notRequested);
@@ -535,13 +540,13 @@ contract ProtectedVaultTest is Test {
         assertFalse(_enabled());
 
         _enable();
-        bytes memory notRequested = abi.encodeWithSelector(VaultProtection.NotRequested.selector);
+        bytes memory notRequested = abi.encodeWithSelector(VaultProtectionBase.NotRequested.selector);
         _expectFinalizeRevert(abi.encodeCall(VaultProtection.finalizeAllowlisted, (friend)), notRequested);
         // The old nominee's acceptance belongs to the cleared posture: it is
         // refused, and the addition can never be applied.
         VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
         vm.prank(s2);
-        vm.expectRevert(VaultProtection.NotRequested.selector);
+        vm.expectRevert(VaultProtectionBase.NotRequested.selector);
         v.protect(abi.encodeCall(VaultProtection.signerChange, (uint8(2), s2, P.direct(s2))));
         vm.warp(block.timestamp + DELAY);
         _expectFinalizeRevert(abi.encodeCall(VaultProtection.finalizeSigner, (s2)), notRequested);
@@ -639,13 +644,13 @@ contract ProtectedVaultTest is Test {
         vm.warp(block.timestamp + DELAY);
         _expectFinalizeRevert(
             abi.encodeCall(VaultProtection.finalizeSigner, (s1)),
-            abi.encodeWithSelector(VaultProtection.NotRequested.selector)
+            abi.encodeWithSelector(VaultProtectionBase.NotRequested.selector)
         );
         // Only the nominee's own key accepts.
         _expectProtectRevert(
             user,
             abi.encodeCall(VaultProtection.signerChange, (uint8(2), s1, P.direct(user))),
-            abi.encodeWithSelector(VaultProtection.NotRequested.selector)
+            abi.encodeWithSelector(VaultProtectionBase.NotRequested.selector)
         );
     }
 
@@ -780,11 +785,47 @@ contract ProtectedVaultTest is Test {
             // owner's cool-down. (A replaced account takes no payout
             // destination at all: testAReplacedAccountTakesNoPayoutDestination.)
             abi.encodeCall(VaultProtection.signerChange, (uint8(1), s3, P.direct(nominee))),
-            abi.encodeWithSelector(VaultProtection.InCooldown.selector, uint64(block.timestamp + DELAY))
+            abi.encodeWithSelector(VaultProtectionBase.InCooldown.selector, uint64(block.timestamp + DELAY))
         );
         vm.warp(block.timestamp + DELAY);
         _pay().releasePayout(id);
         assertEq(token.balanceOf(nominee), 4 ether);
+    }
+
+    /// @dev #3719 — every protection event names the account first, and each
+    ///      role change (signer added, nominee proposed, owner replaced,
+    ///      nominee cleared) also emits one ProtectionRoleChanged.
+    function testProtectionEventsNameTheAccountAndReportRoleChanges() public {
+        _enable();
+        vm.recordLogs();
+        _replaceWithNominee();
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        address vault = address(_v());
+        bytes32 roleTopic = keccak256("ProtectionRoleChanged(address,uint8,address,address)");
+        bytes32 accountTopic = bytes32(uint256(uint160(user)));
+        uint256 signers;
+        uint256 nominees;
+        uint256 owners;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter != vault) continue;
+            assertEq(logs[i].topics[1], accountTopic, "every vault event names the account");
+            if (logs[i].topics[0] != roleTopic) continue;
+            uint8 role = uint8(uint256(logs[i].topics[2]));
+            (address oldAddr, address newAddr) = abi.decode(logs[i].data, (address, address));
+            if (role == 1) {
+                ++signers;
+                assertEq(oldAddr, address(0));
+            } else if (role == 2) {
+                ++nominees;
+            } else {
+                ++owners;
+                assertEq(oldAddr, user, "the old owner");
+                assertEq(newAddr, nominee, "the new owner");
+            }
+        }
+        assertEq(signers, 3, "three signers added");
+        assertEq(nominees, 2, "nominee proposed, then cleared at completion");
+        assertEq(owners, 1, "one owner change");
     }
 
     function testReplacementDropsEveryPendingChangeTheOldKeyRequested() public {
@@ -815,7 +856,7 @@ contract ProtectedVaultTest is Test {
         assertEq(pendingCosignOffAt, 0);
         (, , uint256 unlockAt, , ) = _core().lockOf(user);
         assertEq(unlockAt, 0, "the replacement voided the pending unlock");
-        bytes memory notRequested = abi.encodeWithSelector(VaultProtection.NotRequested.selector);
+        bytes memory notRequested = abi.encodeWithSelector(VaultProtectionBase.NotRequested.selector);
         _expectFinalizeRevert(abi.encodeCall(VaultProtection.finalizeSigner, (s3)), notRequested);
         _expectFinalizeRevert(abi.encodeCall(VaultProtection.finalizeAllowlisted, (thief)), notRequested);
         assertTrue(_v().signerEntry(s3).active, "the voided removal left s3 a signer");
@@ -862,7 +903,7 @@ contract ProtectedVaultTest is Test {
         _expectProtectRevert(
             s1,
             abi.encodeCall(VaultProtection.replacement, (uint8(1), nominee, P.direct(s1))),
-            abi.encodeWithSelector(VaultProtection.NotEnoughSigners.selector, 2, 3)
+            abi.encodeWithSelector(VaultProtectionBase.NotEnoughSigners.selector, 2, 3)
         );
     }
 
@@ -874,7 +915,7 @@ contract ProtectedVaultTest is Test {
         _expectProtectRevert(
             user,
             abi.encodeCall(VaultProtection.replacement, (uint8(3), nominee, P.direct(user))),
-            abi.encodeWithSelector(VaultProtection.OwnerBlockedBySignerLock.selector)
+            abi.encodeWithSelector(VaultProtectionBase.OwnerBlockedBySignerLock.selector)
         );
     }
 
@@ -895,7 +936,7 @@ contract ProtectedVaultTest is Test {
         // The switch-off waits while a row is queued: it was the one change
         // due, so it says so rather than succeed doing nothing.
         address v = address(P.vaultOf(address(diamond), user));
-        vm.expectRevert(VaultProtection.PendingRowsExist.selector);
+        vm.expectRevert(VaultProtectionBase.PendingRowsExist.selector);
         VaipakamVaultImplementation(v).protect(abi.encodeCall(VaultProtection.finalizeSettings, ()));
         assertTrue(_enabled(), "not while a row is queued");
         _pay().releasePayout(id);
@@ -952,11 +993,19 @@ contract ProtectedVaultTest is Test {
 
     // ─── The escape period knob (#3173) ──────────────────────────────────
 
-    function testEscapePeriodDefaultsToThreeDays() public view {
+    function testEscapePeriodDefaultsToTheVaultCodeDelay() public view {
         (uint256 nextPause, uint256 currentPause) = AdminFacet(address(diamond)).getEscapeGraceSeconds();
-        assertEq(nextPause, 3 days);
+        assertEq(nextPause, 7 days);
         assertEq(currentPause, 0);
         assertEq(_pay().escapeOpensAt(), 0);
+    }
+
+    /// @dev #3441 — the rule "escape period >= vault code delay": a vault code
+    ///      fix registered when a pause starts is live before the escape opens.
+    ///      `VaultBeaconTest` pins the floor against the beacon's code delay.
+    function testEscapePeriodDefaultIsTheFloorAndStaysUnderTheVaultExit() public pure {
+        assertEq(LibPausable.ESCAPE_GRACE_DEFAULT, LibPausable.MIN_ESCAPE_GRACE);
+        assertLt(LibPausable.MAX_ESCAPE_GRACE, 14 days, "the vault-side exit (#3424) stays the longest wait");
     }
 
     function testEscapePeriodBoundsAndZeroRestoresTheDefault() public {
@@ -971,66 +1020,78 @@ contract ProtectedVaultTest is Test {
         admin.setEscapeGraceSeconds(justOver);
 
         vm.expectEmit(address(diamond));
-        emit LibPausable.EscapeGraceSet(49 hours);
-        admin.setEscapeGraceSeconds(49 hours);
+        emit LibPausable.EscapeGraceSet(10 days);
+        admin.setEscapeGraceSeconds(10 days);
         (uint256 nextPause,) = admin.getEscapeGraceSeconds();
-        assertEq(nextPause, 49 hours);
+        assertEq(nextPause, 10 days);
         admin.setEscapeGraceSeconds(7 days);
         (nextPause,) = admin.getEscapeGraceSeconds();
         assertEq(nextPause, 7 days);
         admin.setEscapeGraceSeconds(0);
         (nextPause,) = admin.getEscapeGraceSeconds();
-        assertEq(nextPause, 3 days);
+        assertEq(nextPause, 7 days);
     }
 
     function testOnlyTheAdminSetsTheEscapePeriod() public {
         vm.prank(thief);
         vm.expectRevert();
-        AdminFacet(address(diamond)).setEscapeGraceSeconds(5 days);
+        AdminFacet(address(diamond)).setEscapeGraceSeconds(9 days);
         (uint256 nextPause,) = AdminFacet(address(diamond)).getEscapeGraceSeconds();
-        assertEq(nextPause, 3 days);
+        assertEq(nextPause, 7 days);
     }
 
     function testAChangeDuringAPauseDoesNotMoveItsEscape() public {
         _deposit20(10 ether);
         AdminFacet admin = AdminFacet(address(diamond));
+        admin.setEscapeGraceSeconds(10 days);
         admin.pause();
         uint256 start = block.timestamp;
-        assertEq(_pay().escapeOpensAt(), start + 3 days);
+        assertEq(_pay().escapeOpensAt(), start + 10 days);
 
         // Shortening the period mid-pause does not open the escape early...
-        admin.setEscapeGraceSeconds(49 hours);
-        assertEq(_pay().escapeOpensAt(), start + 3 days);
+        admin.setEscapeGraceSeconds(7 days);
+        assertEq(_pay().escapeOpensAt(), start + 10 days);
         (uint256 nextPause, uint256 currentPause) = admin.getEscapeGraceSeconds();
-        assertEq(nextPause, 49 hours);
-        assertEq(currentPause, 3 days);
-        vm.warp(start + 49 hours);
+        assertEq(nextPause, 7 days);
+        assertEq(currentPause, 10 days);
+        vm.warp(start + 7 days);
         assertFalse(_pay().isEscapeOpen());
         vm.prank(user);
         vm.expectRevert(LibProtectedAccount.EscapeClosed.selector);
         _pay().escapeWithdraw(K20, address(token), 0, 10 ether);
 
-        // ...and lengthening it does not close an escape the users were promised.
-        admin.setEscapeGraceSeconds(7 days);
-        vm.warp(start + 3 days);
-        assertTrue(_pay().isEscapeOpen());
-
         // A repeat pause inside the same manual pause keeps the period too.
         admin.pause();
-        assertEq(_pay().escapeOpensAt(), start + 3 days);
+        assertEq(_pay().escapeOpensAt(), start + 10 days);
+        vm.warp(start + 10 days);
         assertTrue(_pay().isEscapeOpen());
+    }
+
+    function testLengtheningDuringAPauseDoesNotCloseItsEscape() public {
+        _deposit20(10 ether);
+        AdminFacet admin = AdminFacet(address(diamond));
+        admin.pause();
+        uint256 start = block.timestamp;
+        assertEq(_pay().escapeOpensAt(), start + 7 days);
+        admin.setEscapeGraceSeconds(10 days);
+        assertEq(_pay().escapeOpensAt(), start + 7 days);
+        vm.warp(start + 7 days);
+        assertTrue(_pay().isEscapeOpen());
+        vm.prank(user);
+        _pay().escapeWithdraw(K20, address(token), 0, 10 ether);
+        assertEq(token.balanceOf(user), 1_000 ether);
     }
 
     function testTheNextPauseUsesTheNewPeriod() public {
         _deposit20(10 ether);
         AdminFacet admin = AdminFacet(address(diamond));
-        admin.setEscapeGraceSeconds(5 days);
+        admin.setEscapeGraceSeconds(9 days);
         admin.pause();
         uint256 start = block.timestamp;
-        assertEq(_pay().escapeOpensAt(), start + 5 days);
-        vm.warp(start + 5 days - 1);
+        assertEq(_pay().escapeOpensAt(), start + 9 days);
+        vm.warp(start + 9 days - 1);
         assertFalse(_pay().isEscapeOpen());
-        vm.warp(start + 5 days);
+        vm.warp(start + 9 days);
         assertTrue(_pay().isEscapeOpen());
         vm.prank(user);
         _pay().escapeWithdraw(K20, address(token), 0, 10 ether);
@@ -1043,7 +1104,7 @@ contract ProtectedVaultTest is Test {
         assertEq(currentPause, 0);
         admin.setEscapeGraceSeconds(0);
         admin.pause();
-        assertEq(_pay().escapeOpensAt(), block.timestamp + 3 days);
+        assertEq(_pay().escapeOpensAt(), block.timestamp + 7 days);
     }
 
     // ─── Implementation pin ──────────────────────────────────────────────
@@ -1061,7 +1122,7 @@ contract ProtectedVaultTest is Test {
         vm.expectRevert(abi.encodeWithSelector(PositionNFT.HolderIsLocked.selector, user));
         _core().transferFrom(user, friend, 1);
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(PositionNFT.HolderIsLocked.selector, user));
+        vm.expectRevert(PositionNFT.OperatorApprovalRefused.selector);
         _core().setApprovalForAll(friend, true);
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(PositionNFT.HolderIsLocked.selector, user));
@@ -1173,7 +1234,7 @@ contract ProtectedVaultTest is Test {
         vm.warp(block.timestamp + DELAY);
         _expectFinalizeRevert(
             abi.encodeCall(VaultProtection.finalizeReplacement, ()),
-            abi.encodeWithSelector(VaultProtection.NoProposal.selector)
+            abi.encodeWithSelector(VaultProtectionBase.NoProposal.selector)
         );
     }
 
@@ -1346,7 +1407,7 @@ contract ProtectedVaultTest is Test {
         _expectProtectRevert(
             user,
             abi.encodeCall(VaultProtection.replacement, (uint8(1), friend, P.direct(user))),
-            abi.encodeWithSelector(VaultProtection.OwnerBlockedBySignerLock.selector)
+            abi.encodeWithSelector(VaultProtectionBase.OwnerBlockedBySignerLock.selector)
         );
     }
 
@@ -1396,6 +1457,9 @@ contract ProtectedVaultTest is Test {
     function testSecondReplacementDropsTheOutgoingControllersPendingChanges() public {
         _deposit20(10 ether);
         _enable();
+        // #3246 part 2 — a replacement drops a recovery address still
+        // waiting; let it come into force first so a signer can be added.
+        vm.warp(vm.getBlockTimestamp() + 4 days);
         P.propose(address(diamond), user, user, nominee);
         vm.warp(vm.getBlockTimestamp() + DELAY);
         P.finalizeReplacement(address(diamond), user);
@@ -1710,16 +1774,19 @@ contract ProtectedVaultTest is Test {
     ///      wallet cannot be finalized.
     function testTheAccountsOwnWalletsCannotBecomeSigners() public {
         _enable();
+        // #3246 part 2 — a replacement drops a recovery address still
+        // waiting; let it come into force first so a signer can be added.
+        vm.warp(vm.getBlockTimestamp() + 4 days);
         P.propose(address(diamond), user, user, nominee);
         vm.warp(vm.getBlockTimestamp() + DELAY);
         P.finalizeReplacement(address(diamond), user);
         vm.warp(vm.getBlockTimestamp() + DELAY + 1); // past the cool-down
         VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
         vm.prank(nominee);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.NomineeIsAccountWallet.selector, user));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.NomineeIsAccountWallet.selector, user));
         v.protect(abi.encodeCall(VaultProtection.signerChange, (uint8(1), user, P.direct(nominee))));
         vm.prank(nominee);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.NomineeIsAccountWallet.selector, nominee));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.NomineeIsAccountWallet.selector, nominee));
         v.protect(abi.encodeCall(VaultProtection.signerChange, (uint8(1), nominee, P.direct(nominee))));
         // An ordinary signer can still be added.
         P.addSigner(address(diamond), user, nominee, s1, DELAY);
@@ -1737,10 +1804,10 @@ contract ProtectedVaultTest is Test {
         vm.warp(vm.getBlockTimestamp() + DELAY + 1); // past the cool-down
         VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
         vm.prank(nominee);
-        vm.expectRevert(VaultProtection.RetiredAccount.selector);
+        vm.expectRevert(VaultProtectionBase.RetiredAccount.selector);
         v.protect(abi.encodeCall(VaultProtection.addAllowlisted, (user, P.direct(nominee))));
         vm.prank(nominee);
-        vm.expectRevert(VaultProtection.RetiredAccount.selector);
+        vm.expectRevert(VaultProtectionBase.RetiredAccount.selector);
         v.protect(abi.encodeCall(VaultProtection.addAllowlisted, (friend, P.direct(nominee))));
     }
 
@@ -1753,7 +1820,7 @@ contract ProtectedVaultTest is Test {
         P.call(address(diamond), user, user, abi.encodeCall(VaultProtection.signerChange, (uint8(3), s1, P.direct(user))));
         VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
         vm.prank(s1);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.CannotCancelOwnRemoval.selector, s1));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.CannotCancelOwnRemoval.selector, s1));
         v.protect(abi.encodeCall(VaultProtection.signerChange, (uint8(4), s1, P.direct(s1))));
         assertGt(v.signerEntry(s1).removeAt, 0, "still being removed");
         P.call(address(diamond), user, s2, abi.encodeCall(VaultProtection.signerChange, (uint8(4), s1, P.direct(s2))));
@@ -1775,10 +1842,10 @@ contract ProtectedVaultTest is Test {
         vm.warp(vm.getBlockTimestamp() + DELAY + 1);
         VaipakamVaultImplementation v = P.vaultOf(address(diamond), user);
         vm.prank(nominee);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.NomineeIsAccountWallet.selector, user));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.NomineeIsAccountWallet.selector, user));
         v.protect(abi.encodeCall(VaultProtection.replacement, (uint8(1), user, P.direct(nominee))));
         vm.prank(nominee);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.NomineeIsAccountWallet.selector, nominee));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.NomineeIsAccountWallet.selector, nominee));
         v.protect(abi.encodeCall(VaultProtection.replacement, (uint8(1), nominee, P.direct(nominee))));
     }
 
@@ -1799,7 +1866,7 @@ contract ProtectedVaultTest is Test {
         _expectProtectRevert(
             third,
             abi.encodeCall(VaultProtection.requestDisable, (P.direct(third))),
-            abi.encodeWithSelector(VaultProtection.RetiredAccount.selector)
+            abi.encodeWithSelector(VaultProtectionBase.RetiredAccount.selector)
         );
         (bool on,,,, bool retired) = P.vaultOf(address(diamond), user).protectionCore();
         assertTrue(on, "a retired account cannot be switched off");
@@ -1876,7 +1943,7 @@ contract ProtectedVaultTest is Test {
         _expectProtectRevert(
             nominee,
             abi.encodeCall(VaultProtection.requestDisable, (P.direct(nominee))),
-            abi.encodeWithSelector(VaultProtection.RetiredAccount.selector)
+            abi.encodeWithSelector(VaultProtectionBase.RetiredAccount.selector)
         );
         uint256 before = token.balanceOf(user);
         vm.prank(nominee);

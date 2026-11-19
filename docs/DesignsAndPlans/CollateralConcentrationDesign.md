@@ -39,9 +39,22 @@ The multiples are above one because only part of the pledged collateral is ever 
 
 All three apply to **new loans only**, judged when the loan opens. An open loan is never changed by a later rise in the ratio.
 
-1. **At or above caution: the app warns.** Offers, matches and Auto-lend settings for that collateral show that an unusually large amount of it is already pledged on the platform, with the ratio. A view returns the pledged amount, the depth reference, the ratio and which threshold applies.
+1. **At or above caution: the app warns.** Offers, matches and Auto-lend settings for that collateral show that an unusually large amount of it is already pledged on the platform, with the ratio. A view returns the pledged amount, the depth reference, the ratio and which threshold applies. The loan-opened event's `warnings` mask (#3719) carries one bit, set by the contract from the concentration level the loan records at opening, when a loan opens with its collateral at or above caution, so the platform's own alert can say so whichever website the borrower used. There is no acknowledgement step: the response is a warning and the two rules below, and nothing is asked of the user.
 2. **At or above caution: no reserve eligibility.** A loan opened while its collateral asset is at or above caution is not eligible for the shortfall reserve, whatever its tiers. This is recorded on the loan at opening with the tiers the reserve design already records.
 3. **At or above high: a lower loan-to-value cap.** The loan-opening cap for that collateral is the cap of the next lower liquidity tier. For an asset already in the lowest liquid tier, that tier's cap is reduced by a governed step. Borrowing against the asset stays possible with more cushion.
+
+**How rule 3 applies in each loan-to-value regime (design decision 2026-11-16).** At High the cap is the lower of the regime's own cap and the lowered tier cap, in both regimes, and the health-factor floor is not changed:
+
+- *Depth-tiered regime:* the regime's cap is the lower of the asset's own ceiling and its tier's cap. At High the next lower tier's cap replaces the tier cap.
+- *Untiered regime:* the loan-opening check enforces the asset's own ceiling and the health-factor floor. The loan-to-value that floor allows is the tier's liquidation loan-to-value divided by the floor. The lowered tier cap applies on top; where it is not below what the floor already allows (for example a tier-3 asset: the next tier's 60% against 90% / 1.5 = 60%), it lowers nothing.
+- *The lowest liquid tier:* its cap less the step, 10 percentage points to start, bounded 5 to 25.
+- *Tier 0* is not lowered: the tiered regime already caps it at 0.
+
+The per-asset view and the loan-opening cap read both say whether the lowered cap actually binds. The app's High warning must not claim a lower cap where it does not bind; at High with no binding cap it says only that much of the asset is pledged.
+
+**Rule 2's record.** The shortfall reserve (#3641) is not built yet, so each loan records the concentration level (normal, caution, high) its collateral had when the loan opened. The reserve reads that record; caution or high means not eligible.
+
+**Thresholds are stored in hundredths of a multiple** (500 = 5x), so a per-asset override can be set between whole multiples.
 
 Nothing here refuses an offer, an intent or a loan. A hard limit remains possible later as one more threshold on the same measure, if the numbers ever call for it.
 
@@ -68,6 +81,8 @@ Auto-lend and matches need no special rule: the cap in 3 is applied by the one l
 
 Run the storage-layout guard's `write`; check facet sizes with the deploy-sanity suite.
 
+As built: the cap rule and the views live on one new facet that every loan-opening path and preview self-calls. The four collateral-lien entries moved off the encumbrance facet to their own facet, because the pledged-total write pushed it over the size limit. A lien from before this change is not in the total, so the change reaches a chain by fresh deploy; the in-place refreshes refuse to cross it while a loan is open.
+
 ## 6. Tests
 
 1. The pledged total follows every lien change: open, add, partial withdrawal, repayment, liquidation, default, fallback entry and exit, consolidation, obligation handover.
@@ -90,6 +105,19 @@ Run the storage-layout guard's `write`; check facet sizes with the deploy-sanity
 The graded response of section 3: a per-asset pledged total, a warning and reserve exclusion at the caution multiple, a one-tier-lower cap at the high multiple, and no refusal.
 
 ## 9. Open items for the builder to raise, not decide silently
+
+Decided with the design thread on 2026-11-16 (recorded in section 3):
+
+- At High the cap is min(the regime's cap, the lowered tier cap) in both regimes, with no change to the health-factor floor; the views say whether it binds.
+- The lowest-tier step starts at 10 percentage points, bounded 5 to 25.
+- Thresholds are stored in hundredths of a multiple.
+- The level is recorded per loan at opening, for the reserve to read.
+
+Built later, not here: a rate-priced token's one-step-tighter start (#3683) and the reserve itself (#3641). Until #3437 stamps loan settings, the check reads the live price and tier the loan-opening check already reads.
+
+A refinance's carried-over collateral is still in the pledged total when the replacement loan is judged, because the old lien moves to the new loan inside the same transaction. The replacement therefore sees its own collateral counted once. This is conservative and is left as is.
+
+Still open:
 
 - The starting multiples, once testnet figures for pledged totals and tier sizes can be read.
 - Whether the lending asset needs a matching measure. This design covers collateral only.

@@ -1,6 +1,6 @@
 /**
- * #3088 — the protected account pass: releases of queued payouts and
- * position transfers, and the finalize calls of matured protected-mode
+ * #3088 — the protected account pass: releases of queued payouts, and the
+ * finalize calls of matured protected-mode
  * changes, run against a fake Diamond that applies the contract's own
  * admission rules to each call.
  */
@@ -22,6 +22,7 @@ import {
   CHANGE_FLOOR_ITEM,
   CHANGE_EVENTS,
   armedAlertSteps,
+  changeApplied,
   changeOf,
   publishAlertSteps,
   resetAlertSteps,
@@ -30,8 +31,6 @@ import {
   PAYOUT_FLOOR_ITEM,
   protectedOnce,
   stepOrder,
-  TRANSFER_EVENT,
-  TRANSFER_FLOOR_ITEM,
   type ProtectedAccount,
 } from '../src/protectedAccount';
 import { VaultProtectionABI } from '@vaipakam/contracts/abis';
@@ -43,6 +42,7 @@ import type { Alert, ChannelResult, DeliveryOutcome } from '../src/alertDelivery
 import { AgentDiamondMismatch } from '../src/agentClient';
 import { ALERT_NEXT_ITEM, shortDigits, type LockOutcome, type LockRequest, type ProtectedStore, type Subscriber } from '../src/protectedTelegram';
 import { renderTelegramAlert } from '@vaipakam/lib/telegramAlerts/message';
+import { armHeldFence } from './helpers/epochFence';
 
 const CHAIN = 84532;
 const DIAMOND: Address = '0x00000000000000000000000000000000000000c1';
@@ -74,7 +74,6 @@ function account(over: Partial<ProtectedAccount> = {}): ProtectedAccount {
   return {
     enabled: true,
     locked: false,
-    protectNfts: false,
     requireCosign: false,
     retired: false,
     delaySeconds: 3600,
@@ -82,7 +81,6 @@ function account(over: Partial<ProtectedAccount> = {}): ProtectedAccount {
     pendingDelayAt: 0n,
     pendingDisableAt: 0n,
     pendingUnlockAt: 0n,
-    pendingNftOffAt: 0n,
     pendingCosignOffAt: 0n,
     cooldownUntil: 0n,
     lockedAt: 0n,
@@ -103,14 +101,6 @@ interface Payout {
   amount: bigint;
 }
 
-interface Transfer {
-  from: Address;
-  state: number;
-  releaseAt: bigint;
-  to: Address;
-  tokenId: bigint;
-}
-
 /** #3379 B2 — each account's vault, where its protected record lives. */
 const vaultOf = (a: Address): Address => `0x9${a.slice(3)}` as Address;
 const PROTECTION_ABI = VaultProtectionABI as Abi;
@@ -121,7 +111,6 @@ class FakeDiamond {
   paused = false;
   accounts = new Map<Address, ProtectedAccount>();
   payouts = new Map<bigint, Payout>();
-  transfers = new Map<bigint, Transfer>();
   /** The release's co-sign rule (Codex #3489 r2): accounts whose co-sign
    *  setting does not bind (no signer left), and unverified destinations. */
   signerless = new Set<Address>();
@@ -212,10 +201,6 @@ class FakeDiamond {
         const p = this.payouts.get(a[0]);
         return p !== undefined && p.state === 1 && this.needsCosign(p);
       }
-      case 'getPendingPositionTransfer': {
-        const t = this.transfers.get(a[0]);
-        return { from: t?.from ?? ZERO, state: t?.state ?? 0, releaseAt: t?.releaseAt ?? 0n, to: t?.to ?? ZERO, tokenId: t?.tokenId ?? 0n };
-      }
       case 'getProtection': {
         const r = this.acct(a[0]);
         return [vaultOf(a[0]), r.requireCosign, r.pendingCosignOffAt];
@@ -259,7 +244,8 @@ class FakeDiamond {
   private admitVault(vault: Address, fn: string, a: readonly any[]): () => void {
     const owner = this.ownerOfVault(vault);
     const acct = this.acct(owner);
-    const vlog = (eventName: string, args: Record<string, unknown>) => ({ ...logOf(eventName, args), address: vault });
+    // #3719: a vault's protection events name the account first.
+    const vlog = (eventName: string, args: Record<string, unknown>) => ({ ...logOf(eventName, { account: owner, ...args }), address: vault });
     if (!acct.enabled) throw revert('NotEnabled');
     switch (fn) {
       case 'finalizeSettings': {
@@ -340,17 +326,6 @@ class FakeDiamond {
         return () => {
           p.state = 2;
           this.lastLogs = [logOf('PayoutReleased', { account: p.user, id: a[0], asset: ASSET, amount: p.amount, delivered: p.amount - 1n, recipient: p.recipient })];
-        };
-      }
-      case 'releasePositionTransfer': {
-        if (this.paused) throw revert('EnforcedPause');
-        const t = this.transfers.get(a[0]);
-        if (!t || t.state !== 1) throw revert('RowNotQueued', [a[0]]);
-        if (this.now < t.releaseAt) throw revert('PayoutNotDue', [a[0], t.releaseAt]);
-        if (this.acct(t.from).locked) throw revert('ProtectedVaultLocked', [t.from]);
-        return () => {
-          t.state = 2;
-          this.lastLogs = [];
         };
       }
       case 'lockVaultFor': {
@@ -476,15 +451,16 @@ describe('the alert status the app reads (#3756)', () => {
 
   it('publishes every alert step of every chain, armed or not', async () => {
     resetAlertSteps();
+    armHeldFence([{ id: 84532, diamond: '0x2c300b26bc15359E7948dA61a1960303772b0335' }]);
     const batches: unknown[][][] = [];
     const db = {
       prepare(sql: string) {
         expect(sql).toMatch(/INSERT INTO keeper_step_status/);
-        return { bind: (...v: unknown[]) => v };
+        return { bind: (...v: unknown[]) => v.slice(0, 6) };
       },
       async batch(stmts: unknown[][]) {
         batches.push(stmts);
-        return [];
+        return stmts.map(() => ({ meta: { changes: 1 } }));
       },
     } as unknown as D1Database;
     await publishAlertSteps(db, [{ id: 84532, diamond: '0x2c300b26bc15359E7948dA61a1960303772b0335' }], armedAlertSteps(true, true, false), 1_000);
@@ -496,6 +472,23 @@ describe('the alert status the app reads (#3756)', () => {
         [84532, d, 'protectedAccount', 'alertsPush', 0, 1_000],
       ],
     ]);
+  });
+});
+
+describe('changeApplied', () => {
+  // #3719: every vault protection event names the account first, so a
+  // receipt carrying the right event for ANOTHER account is not this change.
+  const VAULT = '0x00000000000000000000000000000000000000c1' as Address;
+  const DIAMOND = '0x00000000000000000000000000000000000000d1' as Address;
+  const vlog = (account: Address, eventName: string, args: Record<string, unknown>) => ({ ...logOf(eventName, { account, ...args }), address: VAULT });
+  const allow = { t: 'allow', account: ALICE.toLowerCase(), other: DEST.toLowerCase(), at: 1n } as const;
+
+  it('counts the vault event that names the account', () => {
+    expect(changeApplied([vlog(ALICE, 'AllowlistAdded', { destination: DEST })], DIAMOND, VAULT, allow as never)).toBe(true);
+  });
+
+  it('does not count the same event for another account', () => {
+    expect(changeApplied([vlog(BOB, 'AllowlistAdded', { destination: DEST })], DIAMOND, VAULT, allow as never)).toBe(false);
   });
 });
 
@@ -550,12 +543,8 @@ describe('a run', () => {
     it("reads the rows' records and their accounts in one batch, so the accounts never wait for the records", async () => {
       queuePayout(1n);
       queuePayout(2n, { user: BOB, recipient: BOB });
-      d.transfers.set(3n, { from: ALICE, state: 1, releaseAt: NOW - 1n, to: DEST, tokenId: 7n });
-      ledger.add(TRANSFER_EVENT, { account: ALICE, id: '3', tokenId: '7' });
       await run();
       expect(d.batches.find((b) => b.includes('getPendingPayout'))).toEqual(['getPendingPayout', 'getProtection']);
-      // The transfer's account was read with the payouts: its batch adds none.
-      expect(d.batches.find((b) => b.includes('getPendingPositionTransfer'))).toEqual(['getPendingPositionTransfer']);
       expect(d.batches.filter((b) => b.length === 1 && b[0] === 'getProtection'), 'no follow-up account read').toEqual([]);
     });
 
@@ -680,16 +669,13 @@ describe('a run', () => {
       expect(cursors.rows.get(PAYOUT_FLOOR_ITEM)).toBe(encodePos(ledger.rows[0]));
     });
 
-    it('keeps a share of sends for every step, so a long payout queue cannot hold back a transfer or an unlock', async () => {
+    it('keeps a share of sends for every step, so a long payout queue cannot hold back an unlock', async () => {
       for (let i = 1n; i <= 6n; i++) queuePayout(i);
-      d.transfers.set(1n, { from: ALICE, state: 1, releaseAt: NOW - 1n, to: DEST, tokenId: 7n });
-      ledger.add(TRANSFER_EVENT, { account: ALICE, id: '1', tokenId: '7' });
       // #3379 B2: the co-sign switch-off is the setting whose time is readable.
       d.accounts.set(BOB, account({ pendingCosignOffAt: NOW - 5n }));
       ledger.add('SettingChangeRequested', { account: BOB, kind: 4, value: '0', effectiveAt: String(NOW - 5n) });
       const r = await run();
       expect(r.released.map((x) => x.id), 'the payout step stops at its share').toEqual([1n, 2n, 3n, 4n]);
-      expect(r.transferred).toEqual([1n]);
       expect(r.finalized).toEqual([`cosign-off:${BOB.slice(0, 10)}`]);
       expect([...r.budgetReached]).toEqual(['release']);
       expect(r.stopped, 'reaching one step\'s share does not stop the run').toBeNull();
@@ -698,17 +684,15 @@ describe('a run', () => {
       expect((await run()).released.map((x) => x.id)).toEqual([5n, 6n]);
     });
 
-    it('rotates which step runs first, so each starts a run with the whole read window one run in three', async () => {
+    it('rotates which step runs first, so each starts a run with the whole read window every other run', async () => {
       expect([0, 1, 2, 3, -1].map((v) => stepOrder(v).join('>'))).toEqual([
-        'release>transfer>finalize',
-        'transfer>finalize>release',
-        'finalize>release>transfer',
-        'release>transfer>finalize',
-        'finalize>release>transfer',
+        'release>finalize',
+        'finalize>release',
+        'release>finalize',
+        'finalize>release',
+        'finalize>release',
       ]);
       queuePayout(1n);
-      d.transfers.set(1n, { from: ALICE, state: 1, releaseAt: NOW - 1n, to: DEST, tokenId: 7n });
-      ledger.add(TRANSFER_EVENT, { account: ALICE, id: '1', tokenId: '7' });
       d.accounts.set(BOB, account({ pendingCosignOffAt: NOW - 5n }));
       ledger.add('SettingChangeRequested', { account: BOB, kind: 4, value: '0', effectiveAt: String(NOW - 5n) });
       await protectedOnce(CHAIN, DIAMOND, {
@@ -718,9 +702,9 @@ describe('a run', () => {
         sendDeadline: Number.POSITIVE_INFINITY,
         cursors,
         ledger,
-        visit: 2,
+        visit: 1,
       });
-      expect(fns()).toEqual(['finalizeSettingChanges', 'releasePayout', 'releasePositionTransfer']);
+      expect(fns()).toEqual(['finalizeSettingChanges', 'releasePayout']);
     });
 
     it('stops the run when the protocol is paused, and says so', async () => {
@@ -729,21 +713,6 @@ describe('a run', () => {
       const r = await run();
       expect(fns()).toEqual([]);
       expect(r.stopped).toBe('EnforcedPause');
-    });
-  });
-
-  describe('position transfers', () => {
-    it('moves a due transfer and leaves a locked account\'s', async () => {
-      d.accounts.set(BOB, account({ locked: true }));
-      d.transfers.set(1n, { from: ALICE, state: 1, releaseAt: NOW - 1n, to: DEST, tokenId: 7n });
-      d.transfers.set(2n, { from: BOB, state: 1, releaseAt: NOW - 1n, to: DEST, tokenId: 8n });
-      ledger.add(TRANSFER_EVENT, { account: ALICE, id: '1', tokenId: '7' });
-      ledger.add(TRANSFER_EVENT, { account: BOB, id: '2', tokenId: '8' });
-      const r = await run();
-      expect(d.sent.map((s) => [s.fn, s.args])).toEqual([['releasePositionTransfer', [1n]]]);
-      expect(r.transferred).toEqual([1n]);
-      expect(r.waiting.get('transfer-account-locked')).toBe(1);
-      expect(cursors.rows.get(TRANSFER_FLOOR_ITEM)).toBe(encodePos(ledger.rows[0]));
     });
   });
 
@@ -758,7 +727,7 @@ describe('a run', () => {
       const r = await run();
       // The vault's settings go to the vault (its finalizer applies the
       // unlock's platform side itself); the co-sign switch-off stays the
-      // Diamond's. The retired NFT switch-off has nothing pending.
+      // Diamond's. The retired NFT switch-off kind (3) nominates nothing.
       expect(d.sent.map((s) => [s.fn, s.args])).toEqual([
         ['protect:finalizeSettings', []],
         ['protect:finalizeSettings', []],
@@ -1249,14 +1218,10 @@ describe('the Telegram steps', () => {
     const last = owners[4]!;
     d.payouts.set(1n, { user: last, state: 1, cosigned: false, releaseAt: NOW - 1n, recipient: DEST, amount: 100n });
     ledger.add(PAYOUT_EVENT, { account: last, id: '1' });
-    d.transfers.set(2n, { from: last, state: 1, releaseAt: NOW - 1n, to: DEST, tokenId: 7n });
-    ledger.add(TRANSFER_EVENT, { from: last, id: '2' });
     const r = await run(true, false);
     expect(d.sent.filter((s) => s.fn === 'lockVaultFor')).toHaveLength(4);
     expect(r.released).toEqual([]);
-    expect(r.transferred).toEqual([]);
     expect(r.waiting.get('payout-lock-requested')).toBe(1);
-    expect(r.waiting.get('transfer-lock-requested')).toBe(1);
     // The next run locks it, and the lock cancels the payout.
     const again = await run(true, false);
     expect(again.locks!.map((l) => [l.wallet, l.outcome])).toEqual([[last, 'locked']]);
@@ -1269,7 +1234,7 @@ describe('the Telegram steps', () => {
     store.pendingFails = true;
     const r = await run(true, false);
     expect(r.released).toEqual([]);
-    expect(r.unread.get('release')).toMatch(/no payout or transfer is released this run/);
+    expect(r.unread.get('release')).toMatch(/no payout is released this run/);
     store.pendingFails = false;
     expect((await run(true, false)).released.map((x) => x.id)).toEqual([1n]);
   });

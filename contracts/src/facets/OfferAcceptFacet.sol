@@ -526,6 +526,9 @@ contract OfferAcceptFacet is
         s.acceptAckAcceptorFull = terms.acceptorFull;
         s.acceptAckAcceptorAllowFullDowngrade = terms.acceptorAllowFullDowngrade;
         s.acceptAckAcceptorMaxCStar = terms.acceptorMaxCStar;
+        // #3682 — the integrator the acceptor named; the charge reads it only
+        // when the acceptor is the borrower (a lender's offer).
+        s.acceptAckIntegrator = terms.integrator;
     }
 
     /// @dev Equality-bind every loan-affecting `AcceptTerms` field against the
@@ -800,6 +803,10 @@ contract OfferAcceptFacet is
         // originate a loan. Covers every cancellation path, not just sale
         // teardown.
         if (s.offerCancelled[offerId]) revert OfferCancelled(uint96(offerId));
+        // #3328 — a collection offer fills only through its own entry.
+        if (s.collectionOffer[offerId].set.kind != LibVaipakam.CollateralSetKind.None) {
+            revert CollectionParentNotFillable(offerId);
+        }
         // T-407-C (#566) Codex P1 — a partially-filled offer (amountFilled
         // > 0 but not yet dust-closed, so accepted == false) is a
         // matchOffers-managed entity: the matcher consumes its remaining
@@ -1996,7 +2003,14 @@ contract OfferAcceptFacet is
         SignedOfferTakerNotAllowed,
         // The order names a co-signer, and the fill carries no live
         // co-signature from it.
-        SignedOfferCoSignatureInvalid
+        SignedOfferCoSignatureInvalid,
+        // #3328 — the offer is a collection offer, which fills only through
+        // `CollectionOfferFacet` (`CollectionParentNotFillable`). APPENDED.
+        CollectionParent,
+        // #3734 — a party of the loan has not accepted the Terms in force
+        // (`LibTerms.TermsNotAccepted`); `LegalFacet.termsBlocker` names it.
+        // APPENDED.
+        TermsNotAccepted
     }
 
     /// @notice Projection of the loan that would land if the supplied
@@ -2019,14 +2033,13 @@ contract OfferAcceptFacet is
     /// @param collateralAmount         Collateral the loan would lock
     ///                                  (`offer.collateralAmount` for
     ///                                  every direct-accept path).
-    /// @param lifEstimate              0.1% Loan Initiation Fee the lender
-    ///                                  would pay out of principal,
-    ///                                  expressed in lending-asset wei.
-    ///                                  Zero if the borrower has a live
-    ///                                  VPFI discount (tier ≥ 1, consent
-    ///                                  flipped, vault holds ≥ the FULL
-    ///                                  LIF-equivalent VPFI). NFT rentals
-    ///                                  do not charge LIF.
+    /// @param lifEstimate              The Loan Initiation Fee the accept
+    ///                                  would take out of principal, in
+    ///                                  lending-asset wei: the fee for the
+    ///                                  offer's term (#3649) after the
+    ///                                  borrower's hold-tier discount and
+    ///                                  its referral cut. NFT rentals and
+    ///                                  loan-sale accepts charge none.
     /// @param collateralResidualRefund For borrower offers with
     ///                                  `collateralAmountMax > collateralAmount`,
     ///                                  the excess pre-vaulted collateral
@@ -2036,6 +2049,11 @@ contract OfferAcceptFacet is
     /// @param errorCode                `None` on the happy path; the first
     ///                                  failing precondition's classifier
     ///                                  otherwise.
+    /// @param referralCut              #3722 — the part of the fee not
+    ///                                  charged because the borrower bound an
+    ///                                  inviter and is inside its period
+    ///                                  (already taken off `lifEstimate`;
+    ///                                  0 otherwise).
     struct AcceptPreview {
         uint256 effectivePrincipal;
         uint256 interestRateBps;
@@ -2043,5 +2061,6 @@ contract OfferAcceptFacet is
         uint256 lifEstimate;
         uint256 collateralResidualRefund;
         AcceptError errorCode;
+        uint256 referralCut;
     }
 }

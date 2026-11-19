@@ -10,8 +10,7 @@ import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
-import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
-import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
+import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibNumeraireValue} from "../libraries/LibNumeraireValue.sol";
@@ -22,7 +21,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
-import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
+import {CollateralLienFacet} from "./CollateralLienFacet.sol";
 
 /**
  * @title PartialWithdrawalFacet
@@ -72,7 +71,9 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
 
     /**
      * @notice Allows borrower to withdraw partial collateral from an active loan.
-     * @dev Checks liquidity (must be liquid), simulates post-HF >= min and post-LTV <= max, withdraws from vault, updates loan.collateralAmount.
+     * @dev Checks liquidity (must be liquid), simulates post-HF >= min and post-LTV <= max, releases the
+     *      amount into the borrower token holder's vault as free balance (#3710), updates loan.collateralAmount.
+     *      Moving it to a wallet is the holder's own vault withdrawal.
      *      Reverts if illiquid, low HF, or high LTV post-withdrawal.
      *      Emits PartialCollateralWithdrawn.
      * @param loanId The active loan ID.
@@ -123,7 +124,7 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         // `loan.borrower == msg.sender` let a borrower who had SOLD their
         // position still pass the HF/LTV checks, decrement the lien, and
         // withdraw collateral (including the transferee's top-up) out of
-        // that vault. Requiring the NFT owner — and delivering to them —
+        // that vault. Requiring the NFT owner — and releasing into their vault —
         // aligns the authority with the entitlement. Common case
         // (`msg.sender == loan.borrower == NFT owner`) is unchanged.
         LibAuth.requireBorrowerNftOwner(loan);
@@ -174,7 +175,7 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         // withdraw failure rolls back the decrement.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.decrementCollateralLien.selector,
+                CollateralLienFacet.decrementCollateralLien.selector,
                 loanId,
                 amount
             ),
@@ -183,47 +184,27 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
 
         // #569 round-10 P1 — withdraw from the STORED `loan.borrower`'s
         // vault (where the collateral physically sits and the lien is
-        // keyed) and deliver to `msg.sender` (the verified current
-        // borrower-NFT holder). Sourcing from `msg.sender` would pull the
-        // caller's own vault — wrong after a position transfer.
-        // Protected account mode: a release to the account's own manager is
-        // paid through the payout gate, so it is queued or refused, never
-        // held in the vault as a success that moved nothing. A release to
-        // another holder of the position is not gated.
-        if (msg.sender == LibProtectedAccount.manager(loan.borrower)) {
-            LibProtectedAccount.requirePayoutRoom(loan.borrower);
-        }
-        // #3205 part 2 — through the one policy. The side was consolidated
-        // above, so the caller is normally the stored borrower and is paid to
-        // its own wallet (Owner). A retired protected account's controller is
-        // an allowlisted payee; any other holder is paid into its vault.
-        if (msg.sender == loan.borrower) {
-            LibVaultOutflow.toOwner(
-                loan.borrower, LibVaultOutflow.ERC20, loan.collateralAsset, 0, amount, OutflowReason.PARTIAL_WITHDRAWAL
-            );
-        } else if (msg.sender == LibProtectedAccount.manager(loan.borrower)) {
-            LibVaultOutflow.toAllowlisted(
-                loan.borrower, LibVaultOutflow.ERC20, loan.collateralAsset, 0, amount, msg.sender, OutflowReason.PARTIAL_WITHDRAWAL
-            );
-        } else {
-            LibVaultOutflow.toPositionHolder(
-                loan.borrower,
-                LibVaultOutflow.ERC20,
-                loan.collateralAsset,
-                0,
-                amount,
-                loanId,
-                loan.borrowerTokenId,
-                OutflowReason.PARTIAL_WITHDRAWAL
-            );
-        }
+        // keyed). #3710 (owner decision 2026-11-19) — the released collateral
+        // lands in the borrower token holder's VAULT as free balance, read
+        // from the token by the outflow policy, never chosen here. The side
+        // was consolidated above, so the holder normally owns that vault and
+        // nothing moves: only the lien drops and the amount becomes its own.
+        // Reaching a wallet is the holder's own vault withdrawal, under
+        // protected mode's delay and lock.
+        LibVaultOutflow.toPositionHolder(
+            loan.borrower,
+            LibVaultOutflow.ERC20,
+            loan.collateralAsset,
+            0,
+            amount,
+            loanId,
+            loan.borrowerTokenId,
+            OutflowReason.PARTIAL_WITHDRAWAL
+        );
 
-        // Update loan collateral
-        loan.collateralAmount -= amount;
-        // #3413 — collateral left the position, whichever branch paid it:
-        // the loan's tokens cool down, so a sale cannot fill against it.
-        LibPositionNFT.markLoanValueOut(loanId);
-
+        // #3710 — the one collateral writer: it marks the loan (cooldown,
+        // state number, metadata refresh).
+        LibLoanCollateral.reduce(loan, amount);
 
         emit PartialCollateralWithdrawn(
             loanId,

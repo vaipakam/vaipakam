@@ -63,9 +63,18 @@ describe('the mirrored vocabulary', () => {
     // read as the generic refusal here: never as an all-clear.
     const firstSigned = ACCEPT_ERROR_NAMES.indexOf('SignedOfferMalformed');
     expect(firstSigned).toBe(ACCEPT_ERROR_NAMES.indexOf('TermsTooFresh') + 1);
-    for (let code = firstSigned; code < ACCEPT_ERROR_NAMES.length; code += 1) {
+    const lastSigned = ACCEPT_ERROR_NAMES.indexOf('SignedOfferCoSignatureInvalid');
+    for (let code = firstSigned; code <= lastSigned; code += 1) {
       expect(acceptBlockReason(code)).toBe(copy.errors.acceptBlocked.unknown);
     }
+    // #3328 — appended after the signed members, and `previewAccept` does
+    // report it: a collection offer gets its own words.
+    expect(ACCEPT_ERROR_NAMES.indexOf('CollectionParent')).toBe(lastSigned + 1);
+    expect(acceptBlockReason(lastSigned + 1)).toBe(copy.errors.acceptBlocked.collectionParent);
+    // #3734 — appended after CollectionParent, with its own words.
+    const termsNotAccepted = ACCEPT_ERROR_NAMES.indexOf('TermsNotAccepted');
+    expect(termsNotAccepted).toBe(lastSigned + 2);
+    expect(acceptBlockReason(termsNotAccepted)).toBe(copy.errors.acceptBlocked.termsNotAccepted);
   });
 
   it('treats an unrecognised code as a refusal, never as an all-clear', () => {

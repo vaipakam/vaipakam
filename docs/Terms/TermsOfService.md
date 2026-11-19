@@ -1,7 +1,7 @@
 # Vaipakam Terms of Service
 
-**Version:** 2
-**Effective:** 2026-11-15
+**Version:** 4
+**Effective:** 2026-11-19
 
 ## What this document is
 
@@ -37,14 +37,17 @@ you accept these Terms.
 
 - You can lose some or all of your funds. Nothing here is insured or
   guaranteed, and no one can reverse a transaction.
-- If you lend: when a borrower does not repay, their collateral is
-  sold to repay you. If it cannot be sold, you receive the collateral
-  itself, in part or in full, and it may be worth less than you are
-  owed.
+- If you lend: your funds stay in the loan until the borrower repays,
+  and you cannot withdraw them before that. You may be able to sell
+  the loan to another lender, but only if one accepts. When a borrower
+  does not repay, their collateral is sold to repay you. If it cannot
+  be sold, you receive the collateral itself, in part or in full, and
+  it may be worth less than you are owed.
 - If you borrow: your collateral can be sold if its value falls or you
   repay late, and you may lose it.
 - The software, price feeds, tokens and networks this platform relies
-  on can fail or be attacked. It is new technology.
+  on can fail or be attacked. These risks come with every blockchain
+  system.
 - You alone control your wallet. If you lose access, no one can
   recover it.
 - This is not financial advice. Decide for yourself, and only use what

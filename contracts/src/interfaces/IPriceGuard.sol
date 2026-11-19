@@ -37,6 +37,16 @@ interface IPriceGuard {
     error SequencerDown();
     error SequencerGracePeriod();
     error PadNumeraireRateUnavailable();
+    /// @notice A rate-priced token's price is distrusted (#3683): its rate
+    ///         source is muted, or its rate fell past the binding's bound and
+    ///         the new level is not confirmed yet. Read as a distrusted
+    ///         price, never as a missing one.
+    error RatePriceDistrusted(address token);
+    /// @notice The price version does not exist on this guard (#3437).
+    error UnknownPriceVersion(uint64 guardEpoch, uint64 registryEpoch);
+    /// @notice The price version is below the guard's floor (#3437): it was
+    ///         retired, and no read is answered at it.
+    error PriceVersionRetired(uint64 guardEpoch, uint64 registryEpoch);
 
     /// @notice The asset's numeraire price and its decimals. Reverts with one
     ///         of the errors above when no accepted price exists.
@@ -85,6 +95,50 @@ interface IPriceGuard {
         external
         view
         returns (bool ok, uint256 price, uint8 decimals);
+
+    // ─── As-of reads (#3437) ──────────────────────────────────────────────
+    //
+    // A price version is the guard's config epoch together with the feed
+    // registry's epoch. Every read below answers with the settings that
+    // version had. It reverts {UnknownPriceVersion} or {PriceVersionRetired}
+    // before anything is read, also in the status and success-flag forms, so
+    // a retired version can never read as a missing price.
+
+    /// @notice The current price version: the one a new loan takes.
+    function priceVersion() external view returns (uint64 guardEpoch, uint64 registryEpoch);
+
+    /// @notice The lowest price version the guard still answers (#3437): a
+    ///         read is refused when its guard epoch is below `guardEpoch`, or
+    ///         when its registry is `registry` and its registry epoch is below
+    ///         `registryEpoch`. All zero while nothing is retired.
+    function priceFloor() external view returns (uint64 guardEpoch, address registry, uint64 registryEpoch);
+
+    /// @notice {getAssetPrice} at a price version.
+    function getAssetPriceAt(address asset, uint64 guardEpoch, uint64 registryEpoch)
+        external
+        view
+        returns (uint256 price, uint8 decimals);
+
+    /// @notice {getAssetPriceStatus} at a price version.
+    function getAssetPriceStatusAt(address asset, uint64 guardEpoch, uint64 registryEpoch)
+        external
+        view
+        returns (PriceStatus status, uint256 price, uint8 decimals);
+
+    /// @notice {tryGetAssetPrice} at a price version.
+    function tryGetAssetPriceAt(address asset, uint64 guardEpoch, uint64 registryEpoch)
+        external
+        view
+        returns (bool ok, uint256 price, uint8 decimals);
+
+    /// @notice {sequencerOutageWindow} at a guard epoch (the uptime feed is
+    ///         guard config; the registry plays no part).
+    function sequencerOutageWindowAt(uint64 guardEpoch) external view returns (uint256 downAt, uint256 windowEnd);
+
+    /// @notice Whether `asset` is priced from an exchange rate at the current
+    ///         version (#3683). Such a token may be collateral only, never
+    ///         the lending asset.
+    function isRatePriced(address asset) external view returns (bool);
 
     // ─── Config the Diamond reads for its own rules (#3272 part 2) ───────
     //

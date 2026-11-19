@@ -17,6 +17,44 @@ The goal of this file is to guide the design and development of:
 - basic and advanced product interaction modes
 - visual design system decisions
 
+## Functional consolidation through November 15, 2026
+
+This website spec includes the November 4–15 release decisions. The
+[alpha05 spec](Alpha05ConnectedApp.md) defines the new connected app, including
+its own Home, Rewards, Rate Desk, rental, and Protection pages. Existing-app
+route descriptions below retain that scope until parity and explicit cutover;
+a new app feature is not evidence that the current app was replaced.
+
+- Marketing and alpha05 use indigo in both themes, retaining the navy-and-green
+  logo, with readable controls and text at a 4.5:1 contrast ratio.
+- Public copy explains fixed agreed rates, own-vault credits, withdrawal
+  protection, and the extension and handover exceptions. It offers no bounty
+  programme or promised yield. Existing frozen Terms are not rewritten. The published version 2 contains
+  the approved new risk and legal clauses, version 3 rewords one risk line
+  and version 4 extends the lending risk line (both below); wallets accept a
+  version only once it is configured on their network.
+- Position verification distinguishes live rights, retired receipt tokens,
+  and never-minted identifiers. Retired tokens remain visible as receipts
+  with their final position record, and convey no right to claim again.
+- Governance changes are readable without a wallet. The queue uses the
+  timelock's operation identities and times, validates reconstructed calls,
+  and retains unknown calls with exact targets and data. A ready operation
+  has no expiry; only cancellation or execution removes it.
+- Every six hours the served-build monitor compares the recorded source
+  commit's app assets and security headers on both domains. Missing stamps,
+  dirty builds, unexpected traffic splits, non-main sources, or unread evidence
+  cannot pass. A changing deployment is deferred rather than falsely approved.
+  Marketing checks compare bundles, since its pre-rendered figures can change.
+- Mainnet promotion requires verification of the exact zero-traffic preview
+  and a signed human approval before that version receives traffic. The
+  approval gate is built but remains off on the recorded testnets. Unapproved
+  direct deployments or rollback are alerted, not silently trusted.
+- DNSSEC, restrictive certificate-authority authorization, and strict HTTPS
+  policy are part of the recorded domain posture. These controls do not
+  prove the application build safe. Foreign service workers are removed when
+  genuine page code runs, but a page wholly controlled by a hostile worker
+  cannot be assumed to run that cleanup.
+
 ## Website Goals
 
 The Vaipakam website should:
@@ -34,11 +72,30 @@ The Vaipakam website should:
 
 The website, the connected app and the whitepaper describe the product as **non-custodial, vault-to-vault lending and borrowing at a fixed rate and term that the lender and borrower agree, with no pool and no middleman**. The rules behind that wording:
 
-- **Vault-to-vault, not peer-to-peer.** Public copy does not call the product a "peer-to-peer (P2P) lending platform", which is a regulated category in several jurisdictions. It says what actually happens, and only that: a lender's offered funds wait in the lender's own vault and are paid from it to the borrower's wallet when the loan opens; the borrower's collateral stays locked in the borrower's own vault; repayment goes into the lender's vault. Copy must not claim that the loan amount lands in the borrower's vault or that every asset stays in a vault throughout. Search keywords may still include "p2p"; headings, titles, taglines and body copy do not.
+- **Vault-to-vault, not peer-to-peer.** Public copy does not call the product a "peer-to-peer (P2P) lending platform", which is a regulated category in several jurisdictions. It says what actually happens, and only that: a lender's offered funds wait in the lender's own vault and are credited from it to the borrower's own vault when the loan opens; the borrower's collateral stays locked in the borrower's own vault; repayment goes into the lender's vault. Copy distinguishes that vault credit from a later withdrawal to the owner's wallet, and names the documented swap-route exceptions rather than claiming every asset always stays in a vault. Search keywords may still include "p2p"; headings, titles, taglines and body copy do not.
 - **"Vault" is always non-custodial.** Wherever the word could suggest that Vaipakam holds people's assets, it is paired with "non-custodial", "your own vault" or an equivalent, because custody is a regulated activity and Vaipakam does not perform it.
 - **The rate is fixed, and the copy says who fixes it.** The rate and term are agreed by the lender and borrower when the loan opens and hold for the whole loan; no pool or utilization curve moves them. The copy must not say that every rate change needs both parties' agreement. Two things can change it: an extension near maturity, which both position holders agree to within limits each sets; and a handover to a replacement borrower, which the borrower starts alone and which needs no lender consent, the lender instead being paid any interest the new terms would cost them. A refinance replaces the loan rather than changing its rate.
 - **No promised return.** Copy never says "earn a fixed yield", "start earning" or anything implying that Vaipakam promises or pays a return. Interest is what a borrower agreed to pay a lender; the protocol neither sets it nor lends its own money.
-- The frozen Terms of Service versions are not rewritten to apply this wording; a future Terms version adopts it.
+- Frozen Terms versions are not rewritten. Published version 2 adopts the approved new clauses. Published version 3 changes one risk line and nothing else: the software, price feed, token and network line no longer ends by calling this new technology, and says instead that these risks come with every blockchain system (owner decision 2026-11-18). Published version 4 changes the lending risk line and nothing else: it now opens by saying that lent funds stay in the loan until the borrower repays and cannot be withdrawn before that, and that the loan may be sold to another lender only if one accepts (owner decision 2026-11-19). The list of key risks stays at six. A published version becomes current only when configured on each network.
+
+### Wallet and key-risk disclosure
+
+- Before connection, explain that the user supplies a self-custody wallet,
+  controls its keys, and loses access if those keys are lost. Brand-neutral
+  wallet guidance is linked from connection, FAQ, guide, and footer.
+- The public Key risks page and Terms prompt state uninsured irreversible
+  loss, collateral loss, lender recovery risk, software, oracle, token and
+  network failure, depegs, third-party transfers, and user responsibility for
+  tax and local rules. Loan and rental reviews retain their side-specific
+  consequence without requiring an extra signature.
+- Approved Terms version 2 identifies the interface's non-party role and
+  non-custody, eligibility, as-is service, indemnity, and the liability ceiling
+  based on twelve months' fees bounded from $10 to $1,000. No governing law or
+  dispute clause is invented. Publication and on-chain version activation
+  are separate, and existing-loan rescue actions retain their Terms exemptions.
+- Public Analytics and Console follow the alpha05 specification's source,
+  coverage, stale-data, current-code treasury, token-supply, and unknown-value
+  rules. Their wallet-free availability does not open wallet-gated offer books.
 
 ## Search And AI Discoverability
 
@@ -644,6 +701,7 @@ VPFI vault and discount UX:
 - the borrower fee model is the two-mode **HoldOnly** (tier discount delivered as a direct reduction of the lending-asset LIF at acceptance — no VPFI moved) / **Full** (an optional per-party native-VPFI **tariff** paid into the recycle bucket for an extra own-side discount) model (TokenomicsTechSpec §6/§6b). The older "pay the full LIF up front in VPFI → rebate" custody model is removed from the platform (#1980); no copy may tell a borrower they pay the LIF in VPFI, that VPFI is held for the loan, or that a rebate follows. **Copy rule for the Full tariff:** it is a fee (a native-VPFI quantity), never framed as buying/redeeming VPFI, a token price, a yield, or a rebate on itself — the same no-purchase-price, no-APR discipline as the deposit/hold copy above.
 - borrower VPFI-discount copy must follow the effective-tier model: the tier discount reduces the lending-asset Loan Initiation Fee at acceptance, the tier is pinned then, and nothing about the fee changes at close, default, or HF liquidation
 - the Offer Book accept-review modal should show the Loan Initiation Fee in the lending asset, after any tier discount, and the principal the borrower receives net of it
+- the Loan Initiation Fee is term-based (TokenomicsTechSpec §5): marketing, FAQ, overview, user-guide and whitepaper copy state it by term — the base rate up to the base term, rising evenly to the yearly rate at the one-year point, then the yearly rate a year, pro rata — and never as one flat percentage for every loan; a worked example names its term; the four settings are read live from the published configuration snapshot when it carries them, and a setting the site cannot read live is shown as the default and labelled so, never as a live figure (a figure computed from the settings is live only when all four were read live)
 - borrower-facing shortcut copy may say the tier discount lowers the Loan Initiation Fee, but should never describe a later VPFI rebate
 - the Claim Center shows no borrower VPFI rebate line; a borrower claim carries none
 - when a user's canonical balance has satisfied the min-history gate but a mirror chain has not yet received the updated tier, the app should surface a manual `Push my tier to mirrors now` action wired to the tier-poke path; this should be presented as an edge-case refresh, not a normal required sync step
@@ -1002,10 +1060,10 @@ The website/app should clearly communicate:
   contract address for the network, explains that names and images can be
   copied, and links every verdict to the same token on the independent chain
   explorer. Help lists the official addresses by supported network.
-- the Vaipakam NFT verifier must distinguish between a valid live NFT, a burned NFT, and a token ID that was never minted on the current chain
+- the Vaipakam NFT verifier must distinguish between a valid live NFT, a retired receipt NFT, and a token ID that was never minted on the current chain
 - a valid NFT should continue to show a normal verified success state with owner and on-chain metadata
-- a burned NFT should be shown as a warning state rather than a hard error, because the position NFT was previously valid but is no longer claim-capable after the underlying loan terminated
-- when historical indexed data is available for a burned NFT, the verifier should additionally show the related loan ID, whether that NFT represented the lender or borrower side, the final loan status, principal, collateral, interest rate, and duration
+- a retired NFT should be shown as a warning state rather than a hard error, because the position NFT was previously valid but is no longer claim-capable after the underlying loan terminated
+- when historical indexed data is available for a retired NFT, the verifier should additionally show the related loan ID, whether that NFT represented the lender or borrower side, the final loan status, principal, collateral, interest rate, and duration
 - for a live NFT whose underlying ERC-20 (lending) loan is still Active and would settle in-kind on default, the verifier should disclose that settlement caveat: a labelled `Settlement on default` line distinguishing the liquid (collateral is swapped to the lending asset) from the in-kind (collateral transferred as-is) case, and a prominent warning that the position pays the raw collateral asset rather than the lending asset, regardless of market value, so a prospective NFT buyer sees the downside before acquiring the position. The in-kind determination is collateral-driven — the time-default fallback is chosen from the collateral's liquidity, so it fires for NFT collateral or an illiquid / no-oracle ERC-20 collateral, NOT for a liquid collateral whose only illiquid leg is the principal. For an ERC-20 collateral the verdict should reflect the collateral's LIVE on-chain liquidity (the same active-network check the default path routes on), not the loan's init-time liquidity snapshot, which can go stale before default; fall back to the snapshot only when the live read is unavailable. The disclosure is shown only for lending loans (NFT-principal rentals use a different default model) and only while the loan can still default (Active) — it is hidden once the loan is terminal even if the position NFT is still live until claim
 - when the current owner of a live Vaipakam position NFT is sanctions-flagged on a chain with sanctions screening, the verifier should show a frozen-position warning: the owner cannot transfer the position or claim proceeds while flagged, and a prospective buyer should not treat the NFT as freely tradable until the flag clears. A sanctions flag on a stale original loan party should not be shown as freezing a position now held by a clean current owner.
 - when the token ID was never minted on the selected chain, the verifier should show a clear chain-specific error explaining that the token does not exist on that chain and the user may need to switch to the chain where the position was originally opened

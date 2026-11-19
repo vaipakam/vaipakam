@@ -151,8 +151,7 @@ contract RefreshReaderProbe is RefreshAllFacetsInPlace {
  *         ledger, and the only code that reads it returns early when the
  *         artifact root is redirected — it is deliberately outside the
  *         redirect, because a scratch run has no publication to match against.
- *         `SepoliaOpenOffers` has the string inside an error message telling a
- *         human where to look. And the shell wrappers (`deploy-chain.sh`,
+ *         And the shell wrappers (`deploy-chain.sh`,
  *         `redeploy-testnet-inplace.sh`) build the committed path directly:
  *         the redirect is a Solidity-side, test-only capability those scripts
  *         cannot carry at all.

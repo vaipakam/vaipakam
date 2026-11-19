@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {VaultOutflowFacet} from "../../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes, OutflowReason} from "../../src/vault/VaultOutflowTypes.sol";
+import {LibTestGuard} from "./LibTestGuard.sol";
 
 /// @title  LibTestOutflow
 /// @notice #3205 part 2 — the test-side replacement for the retired
@@ -12,7 +13,8 @@ import {VaultOutflowTypes, OutflowReason} from "../../src/vault/VaultOutflowType
 ///         recipient implies: the Diamond itself (Diamond transient), the
 ///         vault's own owner (Owner), or anyone else (Incentive, the class
 ///         whose recipient the caller names). The caller must be pranked as
-///         the Diamond, as before.
+///         the Diamond, as before; the call runs with the Diamond's guard
+///         marked held, as every real vault move does (#3432).
 library LibTestOutflow {
     function withdrawERC20(address diamond, address user, address token, address recipient, uint256 amount)
         internal
@@ -43,7 +45,8 @@ library LibTestOutflow {
         VaultOutflowTypes.OutflowClass c = recipient == diamond
             ? VaultOutflowTypes.OutflowClass.DiamondTransient
             : (recipient == user ? VaultOutflowTypes.OutflowClass.Owner : VaultOutflowTypes.OutflowClass.Incentive);
-        return VaultOutflowFacet(diamond).vaultOutflow(
+        LibTestGuard.hold(diamond);
+        uint256 delivered = VaultOutflowFacet(diamond).vaultOutflow(
             user,
             VaultOutflowTypes.Outflow({
                 kind: kind,
@@ -58,5 +61,7 @@ library LibTestOutflow {
                 counterRef: 0
             })
         );
+        LibTestGuard.release(diamond);
+        return delivered;
     }
 }

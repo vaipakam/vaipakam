@@ -2213,6 +2213,11 @@
   },
   {
     "type": "error",
+    "name": "PositionTokenNotAccepted",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RateShortfallTooHigh",
     "inputs": []
   },
@@ -2693,6 +2698,11 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "ReentrancyGuardReentrantCall",
+    "inputs": []
   },
   {
     "type": "error",

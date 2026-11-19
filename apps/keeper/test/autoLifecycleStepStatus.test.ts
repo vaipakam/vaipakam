@@ -1,15 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { publishAutoLifecycleStep, resetAutoLifecycleSteps } from '../src/autoLifecycle';
+import { armHeldFence } from './helpers/epochFence';
 
 function fakeDb(batches: unknown[][][]): D1Database {
   return {
     prepare(sql: string) {
       expect(sql).toMatch(/INSERT INTO keeper_step_status/);
-      return { bind: (...v: unknown[]) => v };
+      return { bind: (...v: unknown[]) => v.slice(0, 6) };
     },
     async batch(stmts: unknown[][]) {
       batches.push(stmts);
-      return [];
+      return stmts.map(() => ({ meta: { changes: 1 } }));
     },
   } as unknown as D1Database;
 }
@@ -20,6 +21,7 @@ describe('the auto-extend status the app reads (#3763)', () => {
 
   it('publishes extend armed or not, and again at once when it changes', async () => {
     resetAutoLifecycleSteps();
+    armHeldFence([chain]);
     const batches: unknown[][][] = [];
     const db = fakeDb(batches);
     await publishAutoLifecycleStep(db, chain, false, 1_000);

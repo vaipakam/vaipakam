@@ -14,7 +14,7 @@ import { allowanceSteps } from '../tx/approval';
 import { allowanceMoved, approvalFlow } from '../tx/approvalFlow';
 import { cleanUpLeg } from '../tx/cleanUp';
 import { sendWrite } from '../tx/send';
-import { askThrough } from '../tx/simulate';
+import { askAfter } from '../tx/simulate';
 import { holdsFlow, useStoredValue, useTxEntry, useTxNote } from '../tx/txStore';
 import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
 import { useTrackedTx } from '../tx/useTrackedTx';
@@ -338,8 +338,8 @@ function EditFlow({ id, chain, own, meta, terms, onChangeTerms, onClose }: EditO
         throw new StatedRefusal({ code: 'OfferEditStopped', reason: `${reason} ${after.sentence}`, reopensAt: null, remedy: null });
       };
       // The protocol's own verdict on this change, now.
-      const dry = await askThrough(own, async (c) =>
-        c.simulateContract({ address: diamond, abi: OFFER_MUTATE, functionName: 'modifyOffer', args: await modifyArgs(c, id, r.terms), account }),
+      const dry = await askAfter(own, since, async (c, blockNumber) =>
+        c.simulateContract({ address: diamond, abi: OFFER_MUTATE, functionName: 'modifyOffer', args: await modifyArgs(c, id, r.terms), account, blockNumber }),
       );
       if (dry.kind === 'reverted') return stop(format('offerEdit.dryRunRefused', { reason: refusalFromError(dry.error).reason }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));

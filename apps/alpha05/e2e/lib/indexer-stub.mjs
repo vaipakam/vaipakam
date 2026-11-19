@@ -115,6 +115,9 @@ import { fileURLToPath } from 'node:url';
 
 import { createPublicClient, decodeEventLog, hashStruct, http as viemHttp, recoverTypedDataAddress, toEventSelector } from 'viem';
 import { canonicalOrderJson, parseStoredOrderJson, SIGNED_OFFER_FIELDS } from '@vaipakam/lib/signedOfferWire';
+// The one wire-to-message rule the app and the indexer use (bytes32 fields
+// such as the set root stay hex), so the stand-in cannot drift from it.
+import { signedOfferMessage } from '@vaipakam/lib/signedOfferSet';
 
 /** How long a slowed agent answer waits (see the agent's `slow` control). */
 const SLOW_ANSWER_MS = 6_000;
@@ -135,7 +138,11 @@ const DEPLOYMENT = JSON.parse(fs.readFileSync(path.resolve(HERE, '..', '.state',
 // facet's file). Each carries the loan as topic 1 and its actor as topic 2.
 const DIAMOND_ABI = JSON.parse(fs.readFileSync(path.resolve(HERE, '..', '..', '..', '..', 'packages', 'contracts', 'src', 'diamondAbi.json'), 'utf8'));
 const SELLER_KINDS = ['SellerInterestClaimRecorded', 'SellerInterestPaid', 'SellerInterestClaimClosed', 'SellerInterestWithdrawn'];
-const RESERVE_KINDS = ['ExtendReserveFunded', 'ExtendReserveWithdrawn', 'ExtendChargeDrawn'];
+// The same list the app's reserve discovery asks for (`RESERVE_KINDS` in
+// src/shared/claims/reserve.ts): the stand-in refuses a kind it does not
+// serve, so a kind the app adds must be added here too (#3681 added the
+// standing-instruction runs, each filed under the holder, topic 2).
+const RESERVE_KINDS = ['LoanReserveFunded', 'LoanReserveWithdrawn', 'ExtendChargeDrawn', 'InterestPaidFromReserve', 'DueRepaymentRun'];
 const ACTIVITY_KINDS = [...SELLER_KINDS, ...RESERVE_KINDS];
 const ACTIVITY_TOPICS = new Map(
   ACTIVITY_KINDS.map((name) => {
@@ -542,17 +549,7 @@ const SIGNED_TYPES = { SignedOffer: SIGNED_OFFER_FIELDS };
 const SIGNED_CANCELLED = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'SignedOfferCancelled'));
 const SIGNED_NONCE_BURNED = toEventSelector(DIAMOND_ABI.find((e) => e.type === 'event' && e.name === 'SignedOfferNonceBurned'));
 
-/** The wire order as viem's typed-data encoder takes it. */
-function signedMessage(order) {
-  const m = {};
-  for (const { name, type } of SIGNED_OFFER_FIELDS) {
-    const v = order[name];
-    m[name] = type === 'address' || type === 'bool' ? v : /^uint(8|16|32)$/.test(type) ? Number(v) : BigInt(v);
-  }
-  return m;
-}
-
-const signedHashOf = (order) => hashStruct({ data: signedMessage(order), primaryType: 'SignedOffer', types: SIGNED_TYPES });
+const signedHashOf = (order) => hashStruct({ data: signedOfferMessage(order), primaryType: 'SignedOffer', types: SIGNED_TYPES });
 
 /** `POST /signed-offers`: the indexer's checks in the indexer's order, with
  *  its answers. */
@@ -583,7 +580,7 @@ async function postSignedOrder(raw) {
       domain: { name: 'Vaipakam SignedOffer', version: '1', chainId: CHAIN_ID, verifyingContract: DEPLOYMENT.diamond },
       types: SIGNED_TYPES,
       primaryType: 'SignedOffer',
-      message: signedMessage(order),
+      message: signedOfferMessage(order),
       signature: b.signature,
     });
   } catch {

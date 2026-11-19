@@ -1039,6 +1039,11 @@
   },
   {
     "type": "error",
+    "name": "NotOfferCreator",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "OfferNotBackstopEligible",
     "inputs": []
   },

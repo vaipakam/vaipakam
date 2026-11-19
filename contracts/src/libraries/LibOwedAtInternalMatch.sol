@@ -34,7 +34,7 @@ import {LibOwedAtDefault} from "./LibOwedAtDefault.sol";
  *         already held proceeds (`heldForLender`) when the first recorded step
  *         ran — a step taken before this record existed, or a preclose or
  *         offset that paid the lender in part, so neither the cleared debt
- *         nor the lender's total payout would be the whole of it. `ClaimFacet.getOwedAtInternalMatch` reports a stamped
+ *         nor the lender's total payout would be the whole of it. `ClaimViewFacet.getOwedAtInternalMatch` reports a stamped
  *         record only while the loan stands `InternalMatched`. Nothing is
  *         cleared: a loan that steps and is then repaid or defaults never
  *         reaches `InternalMatched` from `Active`, and `InternalMatched` is

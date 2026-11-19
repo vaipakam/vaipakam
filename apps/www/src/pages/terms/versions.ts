@@ -22,7 +22,7 @@
  * byte-copy of `docs/Terms/TermsOfService.md` at the commit that
  * published the version), which is also the text the page RENDERS —
  * the derivation the governance runbook proposes for the on-chain
- * `setCurrentTos` hash. `scripts/check-terms-canonical-hash.ts`
+ * `publishTos` / `announceTos` hash. `scripts/check-terms-canonical-hash.ts`
  * (wired into `typecheck`) recomputes every entry's hash from its
  * frozen file, cross-checks the registry and the file set in both
  * directions, and requires the current entry's frozen file to be
@@ -64,6 +64,18 @@ export const TERMS_VERSION_METAS: readonly TermsVersionMeta[] = [
     effective: '2026-11-15',
     canonicalMdKeccak256:
       '0xecbdf420b0b626087e8549f00c68c663ebac79c220eb1f65c55f11b4b3c2605e',
+  },
+  {
+    version: 3,
+    effective: '2026-11-18',
+    canonicalMdKeccak256:
+      '0xcb4518feedc5580707caccaf5c42024ff8cc4f111d60ef10135094e67b7f8245',
+  },
+  {
+    version: 4,
+    effective: '2026-11-19',
+    canonicalMdKeccak256:
+      '0x6f7480be70c9c176725083139c9869a4285e83993c73beb0f6be805c7f013a78',
   },
 ];
 

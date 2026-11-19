@@ -59,7 +59,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *                                  `ORACLE_ADMIN_ROLE` on the
  *                                  Diamond so OracleAdminFacet
  *                                  setters pass)
- *           - BASE_SEPOLIA_WETH  : optional override on Base Sepolia.
+ *           - BASE_SEPOLIA_WETH_ADDRESS : optional override on Base Sepolia.
  *                                  Defaults to `0x4200…0006` predeploy.
  *           - SEPOLIA_WETH       : optional override on Ethereum Sepolia.
  *                                  Defaults to canonical WETH9
@@ -93,7 +93,7 @@ contract DeployTestnetLiquidityMocks is Script {
     // NOTE: no BNB Testnet WBNB default any more — WBNB is NOT WETH.
     // The guard's `Weth` entry is the bridged-WETH oracle reference and the
     // ETH/USD feed would misprice WBNB as ETH, so chain 97 REQUIRES an
-    // explicit BNB_TESTNET_WETH (bridged/mock WETH), matching
+    // explicit BNB_TESTNET_WETH_ADDRESS (bridged/mock WETH), matching
     // DeployTestnetMocks / DeployTestnetVPFI (#982 review).
 
     /// @dev Canonical Arbitrum Sepolia WETH9 — published by the
@@ -151,23 +151,23 @@ contract DeployTestnetLiquidityMocks is Script {
         uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
         address weth;
         if (cid == 84532) {
-            weth = vm.envOr("BASE_SEPOLIA_WETH", BASE_WETH_DEFAULT);
+            weth = vm.envOr("BASE_SEPOLIA_WETH_ADDRESS", BASE_WETH_DEFAULT);
         } else if (cid == 11155111) {
-            weth = vm.envOr("SEPOLIA_WETH", SEPOLIA_WETH_DEFAULT);
+            weth = vm.envOr("SEPOLIA_WETH_ADDRESS", SEPOLIA_WETH_DEFAULT);
         } else if (cid == 97) {
             // BNB Smart Chain Testnet — chainid 97. WBNB is NOT WETH:
             // require an explicit bridged/mock WETH (see note on the
             // removed default above).
-            weth = vm.envAddress("BNB_TESTNET_WETH");
+            weth = vm.envAddress("BNB_TESTNET_WETH_ADDRESS");
         } else if (cid == 421614) {
             // Arbitrum Sepolia — chainid 421614. Canonical WETH9
             // published by the Arbitrum bridge. Required so the
             // testnet mesh's mirror chains can run flow tests.
-            weth = vm.envOr("ARB_SEPOLIA_WETH", ARB_SEPOLIA_WETH_DEFAULT);
+            weth = vm.envOr("ARB_SEPOLIA_WETH_ADDRESS", ARB_SEPOLIA_WETH_DEFAULT);
         } else if (cid == 11155420) {
             // OP Sepolia — chainid 11155420. OP-stack predeploy
             // shares the canonical 0x4200…0006 address with Base.
-            weth = vm.envOr("OP_SEPOLIA_WETH", OP_SEPOLIA_WETH_DEFAULT);
+            weth = vm.envOr("OP_SEPOLIA_WETH_ADDRESS", OP_SEPOLIA_WETH_DEFAULT);
         } else {
             // Anvil (31337): no canonical WETH contract — fall back to
             // an env-supplied address (when a prior step deployed a
@@ -266,8 +266,8 @@ contract DeployTestnetLiquidityMocks is Script {
         // The direct-feed path resolved via `getFeed(asset, USD)`
         // above is enough.
 
-        // Risk params for both assets — mirror the values used in
-        // SepoliaActiveLoan so the assets are immediately usable
+        // Risk params for both assets — mirror the values the
+        // positive-flow fixture uses so the assets are immediately usable
         // for offers without a second `updateRiskParams` step.
         // (collateralFactor, ltvBps, liquidationThresholdBps,
         //  stalenessBps, riskScore — see RiskFacet.updateRiskParams)

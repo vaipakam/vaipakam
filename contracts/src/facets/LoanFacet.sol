@@ -3,12 +3,18 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibIntegrator} from "../libraries/LibIntegrator.sol";
+import {LibInitiationFee} from "../libraries/LibInitiationFee.sol";
+import {LibPriceGuard} from "../libraries/LibPriceGuard.sol";
 import {LibPriceRead} from "../libraries/LibPriceRead.sol";
+import {LibTerms} from "../libraries/LibTerms.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
+import {RiskAccessFacet} from "./RiskAccessFacet.sol";
 import {LibInitRiskGate} from "../libraries/LibInitRiskGate.sol";
+import {LibNewLoanRisk} from "../libraries/LibNewLoanRisk.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
@@ -23,6 +29,7 @@ import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
+import {CollateralConcentrationFacet} from "./CollateralConcentrationFacet.sol";
 import {OfferPreviewFacet} from "./OfferPreviewFacet.sol";
 import {LibOfferPriceGuard} from "../libraries/LibOfferPriceGuard.sol";
 
@@ -129,6 +136,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // path — see `_snapshotFeeBps`).
         uint16 treasuryFeeBpsAtInit;
         uint16 loanInitiationFeeBpsAtInit;
+        // #3719 — the integrator the borrower named (address(0) = none), so the
+        // platform's alert can name the door the user came through. What its
+        // share became is stated by `OfferAcceptFeeFacet.IntegratorShareSettled`.
+        address integrator;
     }
 
     /// @notice Companion to {LoanInitiated} — full self-sufficient
@@ -150,6 +161,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     );
 
     // Facet-specific errors (shared errors inherited from IVaipakamErrors)
+    /// @dev #3682 / #3722 — the initiation-fee charge's settlement events
+    ///      named a different loan id than the loan being opened (an internal
+    ///      invariant; never expected).
+    error AcceptChargeLoanMismatch(uint256 settledFor, uint256 opened);
     error InvalidOffer();
     error MixedCollateralNotAllowed();
 
@@ -212,6 +227,17 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // transfer the lender relationship.  Skip liquidity, mixed-collateral,
         // and LTV/HF checks for these.
         bool isLenderSaleVehicle = s.saleOfferToLoanId[offerId] != 0;
+        // #3683 — whatever route opened it, a new loan never lends a token
+        // priced by an exchange rate. A sale vehicle carries an existing
+        // loan's principal, which this rule already admitted.
+        if (!isLenderSaleVehicle && offer.assetType == LibVaipakam.AssetType.ERC20) {
+            LibPriceGuard.requireNotRatePricedLending(offer.lendingAsset);
+        }
+        // #3734 — both parties of a new loan must have accepted the Terms in
+        // force, whichever route opens it. A lender-sale vehicle's creator is
+        // the exiting lender, who is leaving, so only its buyer is asked.
+        if (!isLenderSaleVehicle) LibTerms.requireCurrent(offer.creator);
+        LibTerms.requireCurrent(acceptor);
 
         // If this is a lender-sale vehicle, the underlying live loan must still
         // be Active.  Otherwise the principal transfer in acceptOffer would send
@@ -475,6 +501,26 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // the loan's real economics without a `getLoanDetails` read-back.
         d.treasuryFeeBpsAtInit = loan.treasuryFeeBpsAtInit;
         d.loanInitiationFeeBpsAtInit = loan.loanInitiationFeeBpsAtInit;
+        // #3682 / #3719 — the integrator named on this accept, handed over by
+        // the acceptance charge: recorded on the loan (a registered entry's
+        // public count rises once) and cleared.
+        {
+            LibVaipakam.Storage storage st = LibVaipakam.storageSlot();
+            // #3722 — the charge's settlement events (the integrator's and
+            // the referral's) named the next loan id; it must be this loan,
+            // whatever the route.
+            uint256 chargedFor = st.acceptChargeLoanId;
+            if (chargedFor != 0) {
+                if (chargedFor != loanId) revert AcceptChargeLoanMismatch(chargedFor, loanId);
+                delete st.acceptChargeLoanId;
+            }
+            address integrator = st.acceptIntegratorPending;
+            if (integrator != address(0)) {
+                delete st.acceptIntegratorPending;
+                LibIntegrator.recordLoan(loanId, integrator);
+                d.integrator = integrator;
+            }
+        }
 
         // Best-effort HF, read only for a loan with both legs liquid (the
         // health factor refuses any other, so 0 stays the illiquid answer
@@ -693,8 +739,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             if (s.acceptAckActive && LibVaipakam.cfgRiskAccessGateEnabled()) {
                 LibVaipakam.Loan storage soldLoan =
                     s.loans[s.saleOfferToLoanId[ctx.offerId]];
-                LibRiskAccess.assertActorMayTransact(
-                    s,
+                RiskAccessFacet(address(this)).requireActorMayTransact(
                     s.loans[ctx.loanId].lender,
                     LibRiskAccess.PairId({
                         lendAsset: soldLoan.principalAsset,
@@ -740,7 +785,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             // bump. Re-asserting here closes that window before the loan is
             // admitted. Standing consent only — the creator signs no #662 accept
             // ack, so there is nothing to substitute.
-            LibRiskAccess.assertActorMayTransact(s, offer.creator, pair);
+            RiskAccessFacet(address(this)).requireActorMayTransact(offer.creator, pair);
             LibVaipakam.Loan storage gateLoan = s.loans[ctx.loanId];
             address acceptingParty = offer.creator == gateLoan.lender
                 ? gateLoan.borrower
@@ -750,7 +795,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             // deal. Nothing signed at accept time substitutes for it — a
             // consent recorded in the accept transaction would otherwise skip
             // the cooldown that lets the owner notice and revoke it.
-            LibRiskAccess.assertActorMayTransact(s, acceptingParty, pair);
+            RiskAccessFacet(address(this)).requireActorMayTransact(acceptingParty, pair);
         }
         // #2956 — the one rule every admitting path and preview reads. The
         // illiquid consent is not a term of it: `initiateLoan` has already
@@ -760,7 +805,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             .storageSlot()
             .loans[ctx.loanId]
             .collateralAsset;
-        _checkInitialLtvAndHf(ctx.loanId, collateralAsset);
+        LibNewLoanRisk.requireAdmissible(ctx.loanId, collateralAsset);
     }
 
     /**
@@ -838,98 +883,6 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         );
     }
 
-    /**
-     * @dev Runs the initial LTV and HF gates via cross-facet staticcalls.
-     *      Kept as a dedicated frame to isolate ltv/maxLtv/hf locals.
-     *
-     *      Two regimes, switched by `depthTieredLtvEnabled` (Piece B —
-     *      docs/DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md §4.2):
-     *
-     *        • OFF (the default — and the state during the testnet bake):
-     *          today's gate, unchanged — `LTV ≤ assetRiskParams.loanInitMaxLtvBps`
-     *          and `HF ≥ 1.5e18`. Effectively ~53% LTV on an ~82%
-     *          liq-threshold.
-     *
-     *        • ON: cap the init-LTV at `min(assetRiskParams.loanInitMaxLtvBps,
-     *          tierMaxInitLtvBps[effectiveTier(collateral)])` — the
-     *          depth-graded ceiling (50% / 60% / 65% for Tier 1/2/3;
-     *          `0` for a Tier-0 / untierable collateral, which makes any
-     *          positive LTV revert). The `HF ≥ 1.5e18` floor is relaxed
-     *          to `HF ≥ 1e18` (not-born-already-liquidatable) because the
-     *          tier cap is the binding safety constraint and — given the
-     *          protocol invariant `loanInitMaxLtvBps ≤ liqThresholdBps` — it
-     *          already implies a positive init buffer (`HF_init =
-     *          liqThreshold / cap ≥ 1`). Per-asset `liqThresholdBps` (the
-     *          liquidation trigger) is untouched in either regime.
-     *
-     *      `effectiveTier` = `OracleFacet.getEffectiveLiquidityTier`
-     *      = `min(on-chain slippage tier, keeperTier)` — so a brand-new
-     *      asset stays at today's `HF ≥ 1.5` baseline (Tier 1) until the
-     *      off-chain confidence relay promotes it; a compromised keeper
-     *      can only lower a tier, never raise it above the on-chain
-     *      ceiling. The view never reverts (fail-closed to `0`).
-     */
-    function _checkInitialLtvAndHf(
-        uint256 loanId,
-        address collateralAsset
-    ) private view {
-        (bool ltvSuccess, bytes memory ltvResult) = address(this).staticcall(
-            abi.encodeWithSelector(RiskFacet.calculateLTV.selector, loanId)
-        );
-        if (!ltvSuccess) revert LTVCalculationFailed();
-        uint256 ltv = abi.decode(ltvResult, (uint256));
-        uint256 loanInitMaxLtvBps = LibVaipakam.assetInitLtvCeilingBps(collateralAsset);
-        bool tieredOn = LibVaipakam.cfgDepthTieredLtvEnabled();
-
-        if (tieredOn) {
-            // Depth-graded ceiling: min(per-asset maxLtv, the tier cap for
-            // the collateral's effective liquidity tier). effTier ∈ 0..3;
-            // tier 0 ⇒ cap 0 ⇒ any positive LTV reverts (no borrow).
-            uint8 effTier = abi.decode(
-                LibFacet.crossFacetStaticCall(
-                    abi.encodeWithSelector(
-                        OracleFacet.getEffectiveLiquidityTier.selector,
-                        collateralAsset
-                    ),
-                    LTVCalculationFailed.selector
-                ),
-                (uint8)
-            );
-            // Phase 5 of AutonomousLtvAndOracleFallback.md — the tier cap is
-            // the autonomous tier-LTV cache (peer-protocol-derived,
-            // refreshable permissionlessly via
-            // `OracleFacet.refreshTierLtvCache`) while that entry is fresh
-            // (≤ 14d) and peer reads are not paused (#633); otherwise the
-            // tier default `cfgTierMaxInitLtvBps`. Either way it is never
-            // above the tier's governance ceiling
-            // (`ConfigFacet.setTierLtvParams`, applied at read, #3547).
-            uint256 tierCap = uint256(
-                LibVaipakam.effectiveTierMaxInitLtvBps(effTier)
-            );
-            uint256 cap = loanInitMaxLtvBps < tierCap ? loanInitMaxLtvBps : tierCap;
-            if (ltv > cap) revert InitLtvAboveTier(ltv, cap);
-        } else if (ltv > loanInitMaxLtvBps) {
-            revert LTVExceeded();
-        }
-
-        bytes memory hfResult = LibFacet.crossFacetStaticCall(
-            abi.encodeWithSelector(
-                RiskFacet.calculateHealthFactor.selector,
-                loanId
-            ),
-            HealthFactorCalculationFailed.selector
-        );
-        uint256 hf = abi.decode(hfResult, (uint256));
-        // Switch ON ⇒ HF ≥ 1.0 (not born already-liquidatable; the tier
-        // cap is the binding buffer). Switch OFF ⇒ the runtime admission
-        // floor (#394 Lever A — `minHealthFactor()`, default 1.5e18, tunable
-        // in `[1.2e18, 2.0e18]`). Branch-aware by construction: only the
-        // non-tiered floor moves; the tiered regime keeps the 1e18 trigger.
-        uint256 hfFloor = tieredOn
-            ? LibVaipakam.HF_LIQUIDATION_THRESHOLD
-            : LibVaipakam.minHealthFactor();
-        if (hf < hfFloor) revert HealthFactorTooLow();
-    }
 
     /**
      * @dev Copies the full set of offer fields into a new loan. Extracted
@@ -967,10 +920,11 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         LibInterestLedger.open(LibVaipakam.storageSlot(), loan);
         // A lender-sale-vehicle accept (offer mapped to an underlying loan)
         // skips the LIF charge, so the receipt must NOT record one.
-        _snapshotFeeBps(
-            loan,
-            LibVaipakam.storageSlot().saleOfferToLoanId[offerId] != 0
-        );
+        bool isSaleVehicle = LibVaipakam.storageSlot().saleOfferToLoanId[offerId] != 0;
+        _snapshotFeeBps(loan, isSaleVehicle);
+        // #3722 — the borrower has now opened a loan, so it can no longer
+        // bind an inviter. A sale vehicle's "borrower" opens nothing.
+        if (!isSaleVehicle) LibVaipakam.storageSlot().hasBorrowed[loan.borrower] = true;
         _latchOfferKeepersToLoan(loan.id, offerId, offer.creator);
     }
 
@@ -997,9 +951,14 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // ONLY when the fee is actually charged, so `getLoanDetails` honestly
         // reports 0 on the paths that skip it rather than a rate never applied.
         if (!isSaleVehicle && loan.assetType == LibVaipakam.AssetType.ERC20) {
+            // #3649 — the rate for the loan's agreed term, in whole bps
+            // rounded down; the charged amount itself is exact.
             loan.loanInitiationFeeBpsAtInit = uint16(
-                LibVaipakam.cfgLoanInitiationFeeBps()
+                LibInitiationFee.rateBpsDown(loan.durationDays)
             );
+            // The term the fee pays for, counted from this start (#3649).
+            loan.lifTermOrigin = loan.startTime;
+            loan.lifPaidDays = uint32(loan.durationDays);
         }
     }
 
@@ -1195,16 +1154,14 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // #394 Lever A (Codex #647 P1 + round-2 P2) — snapshot the admission
         // HF floor THIS loan is actually gated at, so every post-admission HF
         // check keeps that floor and a later `setMinHealthFactor` retune is
-        // prospective only. BRANCH-AWARE: it must mirror `_checkInitialLtvAndHf`
+        // prospective only. BRANCH-AWARE: it must mirror `LibNewLoanRisk.requireAdmissible`
         // exactly — the depth-tiered regime admits at `HF_LIQUIDATION_THRESHOLD`
         // (1e18), only the non-tiered regime uses the tunable `minHealthFactor()`
         // knob. Snapshotting the non-tiered knob for a tiered loan would saddle
         // it with a stricter post-admission floor than it was born under. Fits
         // uint64 (ceiling 2e18).
         loan.minHealthFactorAtInit = uint64(
-            LibVaipakam.cfgDepthTieredLtvEnabled()
-                ? LibVaipakam.HF_LIQUIDATION_THRESHOLD
-                : LibVaipakam.minHealthFactor()
+            LibVaipakam.admissionHealthFactorFloor()
         );
         // Snapshot the effective per-tier LIQUIDATION threshold (PR2 of
         // internal-match work, 2026-05-14). Replaces the retired
@@ -1240,16 +1197,18 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             loan.liquidationLtvBpsAtInit = uint16(LibVaipakam.cfgTierLiquidationLtvBps(effTier));
             // #394 Lever A (Codex #647 round-3 P1) — snapshot the EFFECTIVE
             // init-LTV cap this loan is admitted under, identical to the
-            // `_checkInitialLtvAndHf` gate: depth-tiered ⇒ min(per-asset cap,
+            // `LibNewLoanRisk.requireAdmissible` gate: depth-tiered ⇒ min(per-asset cap,
             // tier cap); non-tiered ⇒ the per-asset cap. Post-admission
             // withdrawal / cure enforce this snapshot so the tier buffer can't
             // be shed later (the branch-aware HF snapshot alone doesn't bound LTV).
-            uint256 assetCap = LibVaipakam.assetInitLtvCeilingBps(loan.collateralAsset);
-            if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
-                uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(effTier));
-                if (tierCap < assetCap) assetCap = tierCap;
-            }
+            // #3685 — the same host the admission gate read, so the stamp and
+            // the gate cannot differ; it also records the collateral's
+            // concentration level at opening (a loan opened at Caution or
+            // above is not eligible for the shortfall reserve).
+            (uint256 assetCap,, uint8 level,) =
+                CollateralConcentrationFacet(address(this)).newLoanInitLtvCapBps(loan.collateralAsset);
             loan.initLtvCapBpsAtInit = uint16(assetCap);
+            if (level != 0) LibVaipakam.storageSlot().loanConcentrationAtInit[loan.id] = level;
             _snapshotLiqDiscount(loan);
         }
     }

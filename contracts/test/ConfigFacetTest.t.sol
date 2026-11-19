@@ -30,7 +30,7 @@ contract ConfigFacetTest is Test {
 
     // Mirror defaults declared in LibVaipakam (kept in sync with on-chain
     // constants so a drift produces an immediate test failure).
-    uint256 constant DEFAULT_TREASURY_FEE_BPS = 200;
+    uint256 constant DEFAULT_TREASURY_FEE_BPS = 1000; // #3649: 10% of interest
     uint256 constant DEFAULT_LOAN_INIT_FEE_BPS = 20;
     uint256 constant DEFAULT_LIQ_HANDLING_FEE_BPS = 200;
     uint256 constant DEFAULT_MAX_SLIPPAGE_BPS = 600;
@@ -330,7 +330,7 @@ contract ConfigFacetTest is Test {
     // ─── Bundle getter ───────────────────────────────────────────────────
 
     function testGetProtocolConfigBundleReturnsEffectiveValues() public {
-        ConfigFacet(address(diamond)).setFeesConfig(150, 20);
+        ConfigFacet(address(diamond)).setFeesConfig(250, 20);
 
         (
             uint256 tFee,
@@ -360,7 +360,7 @@ contract ConfigFacetTest is Test {
         ) = ConfigFacet(address(diamond)).getProtocolConfigBundle();
 
         // Overridden:
-        assertEq(tFee, 150);
+        assertEq(tFee, 250);
         assertEq(lFee, 20);
         // Untouched — resolve to defaults:
         assertEq(h, DEFAULT_LIQ_HANDLING_FEE_BPS);

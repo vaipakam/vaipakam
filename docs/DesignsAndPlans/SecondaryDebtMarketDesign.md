@@ -1,6 +1,7 @@
 # Secondary debt market — design
 
 **Status:** owner approved the shape, 2026-11-15. Card #3667. Design first, no code yet. Builds on the lender sale routes (#1209, #1780, #1841, #1922), the borrower hand-over and offset, the standalone position record (#3205), the transfer cooldown (#3413), the position lock (#3318, #3339), the claim route for payouts (#3629), the instant market's takeover (#3656) and the narrow mandates (#3353). Reaches a chain by fresh deploy.
+**Reviewed 2026-11-17:** the single cooldown of #3413 is now the per-token state number and the two transfer waits of `PositionSaleStateGuardDesign.md` (#3710), and position tokens take per-token approval only (#3721). Sections 1, 5, 6, 7, 9 and 11 were brought in line.
 **Related:** `InstantMarketDesign.md`, `LenderPayoutsThroughClaimDesign.md`, `VaultOutflowPolicyDesign.md`, `MarketLinkedRateLimitsDesign.md`.
 
 ## 1. What already exists
@@ -17,7 +18,9 @@ A position, lender side or borrower side, is a token in a standalone record. It 
 
 Guards that already hold for every transfer, inside or outside:
 
-- A token may not move in the block value left its position, nor for the cooldown after it. So a seller cannot empty a position and sell it in the same moment.
+- A token may not move in the block value left its position, nor for the wait after it: 15 minutes after the holder's own move, 60 seconds after any other value-out (`PositionSaleStateGuardDesign.md` 3.5). So a seller cannot empty a position and sell it in the same moment.
+- Each token carries a state number that rises whenever value leaves its position. A price is a price for one state number, and a fill can be refused when the number has moved.
+- A position token is approved one token at a time. An approval over all of a holder's tokens is refused, and a token's approval is cleared when it moves (#3721).
 - A route started by a former holder (a listing, an offset, a refinance request, a collateral listing, a swap-to-repay order) cannot complete once the token has moved. Anyone may cancel it.
 - No token moves into or out of a sanctions-flagged wallet.
 - A holder may lock a token; a locked holder may still sell with the proceeds landing in their own vault under the payout delay.
@@ -52,7 +55,7 @@ One check, in the one place assets are admitted, with a named error. The positio
 
 An Auto-lend slot gains one consent, **buys existing loans**, separate from the instant market's takeover consent (which stays face value only).
 
-- **What may be bought:** the lender side of an active loan with interest by time, not past due, not in a fallback, with no other sale route open, nothing held for the position, outside the transfer cooldown.
+- **What may be bought:** the lender side of an active loan with interest by time, not past due, not in a fallback, with no other sale route open, nothing held for the position, outside its transfer wait.
 - **The as-new test** of `InstantMarketDesign.md` section 7 applies to everything except the rate: the loan must be one the slot would open today in kind of loan, cap and floor, lifecycle settings, current loan-to-value, health factor, due date inside the slot's longest term and lend-until, and room in the slot's exposure. A weakening loan cannot be passed on. The rate is judged through the price, below: what the slot must earn is its minimum **at the price it pays**, not the loan's stated rate.
 - **Price:** one figure, the **price in basis points of the outstanding principal**, never above par. The highest price a slot pays is set by rule and not by hand:
   - a loan whose rate (fixed) or margin (floating) is at or above the slot's minimum: par;
@@ -77,7 +80,7 @@ Every surface that offers, lists or previews a position for sale states the same
 | Time | Days to the due date; renewal state | Days to the due date; grace period |
 | Safety | Loan-to-value, health factor, liquidity tier of both assets | The same, plus the price at which liquidation begins |
 | In the position | Claimable now, held for the position, seller claims ahead of the holder | Surplus held, collateral under lien |
-| Blocks | Cooldown end, lock state, open routes, past due, fallback | The same |
+| Blocks | Transfer hold end, state number, lock state, open routes, past due, fallback | The same |
 
 A "reference worth" may be shown for a fixed lender position once the market reference rate exists (#3337): the price at which the loan's remaining interest equals today's reference for that term. It is labelled as an illustration, never as a quote, and it sets no price.
 
@@ -85,11 +88,11 @@ A "reference worth" may be shown for a fixed lender position once the market ref
 
 The platform cannot stop or see a sale made elsewhere, and does not try. It makes such a sale safe to price.
 
-1. **One public read, `positionWorth(tokenId)`,** returning the figures of section 6 and every reason the token could not move or be claimed now. It is a view on its own facet, built from the reads the settlement paths already use, so a marketplace, an aggregator or an outside lending platform quotes the same numbers the platform acts on. Where a figure cannot be known (a missing price, an undeterminable age), the read says so; it never returns a guess.
-2. **Metadata** carries the same figures and a link to the check page. Metadata is a picture; the read is the authority, and the page says so.
+1. **One public read, `positionWorth(tokenId)`,** returning the figures of section 6 and every reason the token could not move or be claimed now. It is a view on its own facet, built from the reads the settlement paths already use, so a marketplace, an aggregator or an outside lending platform quotes the same numbers the platform acts on. Where a figure cannot be known (a missing price, an undeterminable age), the read says so; it never returns a guess. The token's state number and the time it may next move come from the one view of `PositionSaleStateGuardDesign.md` 3.1 (`positionState`), which this read repeats and does not recompute.
+2. **Metadata** carries the same figures and a link to the check page, with the two traits of `PositionSaleStateGuardDesign.md` section 4 ("Transfer hold until", "State number") and the refresh signal sent when a figure changes. Metadata is a picture; the read is the authority, and the page says so.
 3. **A "check before you buy" page** in the app for any token id, without connecting a wallet: the figures, the blocks, and plain warnings. For a borrower token: "This position can become worthless if the collateral's price falls or the loan is not repaid in time. Watching it is the holder's duty." For a lender token: "If the borrower does not repay, you are paid from the collateral, which may not cover what is owed."
 4. **What a plain transfer does and does not do,** stated on that page: it splits no interest (the new holder receives everything that later arrives, so the price should include interest already earned); it runs no solvency check on the loan; seller claims recorded by earlier platform sales are paid before the holder; the fee-discount standing is the lower of the two.
-5. **Standing permissions lapse on transfer.** Anything the former holder set that lets someone else act, or lets the loan change by itself, stops when the token moves: keeper mandates, renewal and refinance limits, auto-list settings, alert subscriptions. The test is a **holder epoch** kept per loan side, which only rises: it advances on every transfer of that side's token (through the record's transfer check) and on every platform step that hands the side to a new token (a lender sale's migration, a takeover, a borrower hand-over), since a new token's own transfer count starts again at zero and so cannot be the test alone. A permission notes the epoch when it is given and is honoured only while the epoch is unchanged. A side that goes away and comes back, by any route, has a higher epoch, so nothing revives. The new holder starts with nothing switched on. (Keeper mandates: #3353. This design makes it the rule for every such setting and adds the tests.)
+5. **Standing permissions lapse on transfer.** Anything the former holder set that lets someone else act, or lets the loan change by itself, stops when the token moves: keeper mandates, renewal and refinance limits, auto-list settings, alert subscriptions. The test is a **holder epoch** kept per loan side, which only rises: it advances on every transfer of that side's token (through the record's transfer check) and on every platform step that hands the side to a new token (a lender sale's migration, a takeover, a borrower hand-over), since a new token's own transfer count starts again at zero and so cannot be the test alone. A permission notes the epoch when it is given and is honoured only while the epoch is unchanged. A side that goes away and comes back, by any route, has a higher epoch, so nothing revives. The new holder starts with nothing switched on. (Keeper mandates: #3353. This design makes it the rule for every such setting and adds the tests.) The holder epoch and the state number of #3710 are two counters with two jobs: the epoch is kept per loan side and rises when the holder changes, and a permission is bound to it; the state number is kept per token and rises when value leaves, and a price is bound to it. Neither stands in for the other.
 6. **The backing follows the token.** The borrower's collateral, or the lender's parked proceeds, consolidate to the new holder's own vault, still under the loan's lien, as the spec already requires.
 7. **A token held by a contract that cannot act** (an outside marketplace's or lending platform's custody) loses nothing: payouts wait in the position as claims and collateral stays under its lien until a holder who can act claims. The page says that nobody watches a borrower position's health while it sits there.
 8. **A token wrapped by an outside service that issues its own shares.** The platform knows one holder per position: the address the position record names. It pays that holder the whole claim and never splits a claim by anyone's shares, because it cannot see them and does not recognise them. Dividing what arrives among share holders is the wrapping service's own work. In practice there are two shapes. A service built to act can call the claim itself and share out what it receives. A service that only holds the token cannot claim, so item 7 applies: the claim waits, whole, until the shares are redeemed and a holder who can act takes the token out and claims. The check page states both, and that the platform has no duty to, and no way to, pay a share holder directly. Nothing is built for this; dividing a claim inside the platform is the separate design `LenderPositionPartSaleDesign.md`, which divides it among the platform's own position tokens and never by outside shares.
@@ -97,6 +100,8 @@ The platform cannot stop or see a sale made elsewhere, and does not try. It make
 Pledging a position on an outside platform therefore needs nothing from this platform beyond the read in item 1.
 
 ## 8. Later stage: pledging a position inside the platform
+
+**Replaced on 2026-11-19 by `LenderCashOutDesign.md` (#3760).** The owner asked for borrowing against a loan to be designed now. That design does not pledge the position: it gives an advance that is repaid first from what the position receives, with no value set on the position, no health rule and no hand-over of the token. Part A's refusal stays as it is. The sketch below is kept as the record of what was considered.
 
 Not built now. It stacks one loan's risk on another, and it should follow a working sale market. Recorded here so that the flows are known when it is taken up, and so Part A's refusal is lifted deliberately.
 
@@ -112,7 +117,7 @@ Not built now. It stacks one loan's risk on another, and it should follow a work
 
 ## 9. What cannot be gamed
 
-- **Emptying before selling:** the cooldown, on every marketplace.
+- **Emptying before selling:** the transfer wait on every marketplace, and the state number for any order that names it.
 - **Selling a weakening loan to Auto-lend:** the as-new test.
 - **A keeper selling cheaply:** it cannot set or lower the price.
 - **Trading with yourself to move a price or a figure:** the price is between two parties' own stated limits, the platform publishes no last-sale price as a reference, and fees are paid on both sides.
@@ -139,7 +144,7 @@ Design for a fresh deploy. Check facet sizes with the deploy-sanity suite; `posi
 ## 11. Tests
 
 1. A position token is refused as collateral, lending asset, rental asset and deposit, with the named error; one sent directly backs nothing and can be withdrawn.
-2. Sale to a slot: the as-new test each way; the price rule at par and below, with the slot's return at the price never under its minimum; a price above par refused; an early repayment straight after a sale never leaves the buyer with less than was paid; the seller's floor, held ceiling and deadline; price measured on arrival; the seller claim paid first from the next interest; exposure taken; the borrower's terms unchanged; every refusal (past due, fallback, cooldown, something held, another route open, the borrower's own slot, full-term interest).
+2. Sale to a slot: the as-new test each way; the price rule at par and below, with the slot's return at the price never under its minimum; a price above par refused; an early repayment straight after a sale never leaves the buyer with less than was paid; the seller's floor, held ceiling and deadline; price measured on arrival; the seller claim paid first from the next interest; exposure taken; the borrower's terms unchanged; every refusal (past due, fallback, inside the transfer wait, something held, another route open, the borrower's own slot, full-term interest).
 3. The preview and the settlement use one computation: a quote and its fill agree to the unit.
 4. `positionWorth` equals what a claim, a repayment and a forced-sale preview would pay at that block, for both sides and every status; an unknown figure is reported as unknown.
 5. Every standing permission stops at a plain transfer, at a platform sale, takeover or hand-over that mints a new token, and stays stopped when the same holder buys the position back by any route.

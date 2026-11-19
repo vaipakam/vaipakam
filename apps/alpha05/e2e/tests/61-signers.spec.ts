@@ -17,7 +17,7 @@ import { anvilRpc } from '../lib/anvil';
 import { scenario } from '../lib/chain';
 import { accountFor, type Role } from '../lib/wallets';
 import { connectWallet, expect, test } from '../lib/wallet';
-import { enableProtection, pendingSignersOf, protect, signersOf } from '../lib/protection';
+import { enableProtection, pendingSignersOf, protect, recoveryInForce, signersOf } from '../lib/protection';
 import { VAULT_SIGNER } from '@vaipakam/lib/vaultProtectionAuth';
 
 type Hex = `0x${string}`;
@@ -72,6 +72,8 @@ test('a saved wallet is asked, accepts from its own key, becomes a signer, co-si
   const me = sc.address('lender');
   const other = accountFor('visitor').address as Hex;
   await enableProtection(sc, 'lender', 2 * DAY);
+  // Finalizing a signer needs the recovery address in force (#3246 part 2).
+  await recoveryInForce(sc, me);
 
   const { page, flags } = await launchWallet('freshLender');
   await page.goto('/protection');

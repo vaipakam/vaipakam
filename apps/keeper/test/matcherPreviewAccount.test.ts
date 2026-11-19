@@ -39,7 +39,7 @@ describe('previewIntentRequest', () => {
       owner: '0x00000000000000000000000000000000000000b1',
       lendingAsset: '0x00000000000000000000000000000000000000c1',
       collateralAsset: '0x00000000000000000000000000000000000000c2',
-      slot: 2,
+      slot: 3,
     } as const;
     const req = previewIntentRequest('0x00000000000000000000000000000000000000d1', solver, intent, 7n, 9n);
     expect(req.functionName).toBe('previewIntent');
@@ -49,7 +49,7 @@ describe('previewIntentRequest', () => {
       intent.owner,
       intent.lendingAsset,
       intent.collateralAsset,
-      2,
+      3,
       7n,
       9n,
     ]);

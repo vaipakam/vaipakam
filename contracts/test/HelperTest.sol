@@ -44,6 +44,7 @@ import {AutoLifecycleSettingsFacet} from "../src/facets/AutoLifecycleSettingsFac
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
+import {LenderIntentViewFacet} from "../src/facets/LenderIntentViewFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {MulticallFacet} from "../src/facets/MulticallFacet.sol";
@@ -70,6 +71,7 @@ import {LibTestProtectedCut} from "./helpers/LibTestProtectedCut.sol";
 // true strict superset of production (+ TestMutatorFacet test-only).
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {LegalFacet} from "../src/facets/LegalFacet.sol";
+import {LibTestTermsCut} from "./helpers/LibTestTermsCut.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {PayrollFacet} from "../src/facets/PayrollFacet.sol";
 import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
@@ -118,6 +120,24 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
+import {MarketLedgerFacet} from "../src/facets/MarketLedgerFacet.sol";
+import {InstantMarketFacet} from "../src/facets/InstantMarketFacet.sol";
+import {InstantFillFacet} from "../src/facets/InstantFillFacet.sol";
+import {InstantTakeoverFacet} from "../src/facets/InstantTakeoverFacet.sol";
+import {OfferMaterializeFacet} from "../src/facets/OfferMaterializeFacet.sol";
+import {CollectionOfferFacet} from "../src/facets/CollectionOfferFacet.sol";
+import {ReadyBalanceFacet} from "../src/facets/ReadyBalanceFacet.sol";
+import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
+import {LibTestSettlementLeg} from "./helpers/LibTestSettlementLeg.sol";
+import {LibTestClaimViewCut} from "./helpers/LibTestClaimViewCut.sol";
+import {RecoveryClawbackFacet} from "../src/facets/RecoveryClawbackFacet.sol";
+
+import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
+import {CollateralLienFacet} from "../src/facets/CollateralLienFacet.sol";
+import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.sol";
+import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
+import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
+import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -129,7 +149,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](249); // #3569 -setTreasuryAddress (was 250); #910 +setKeeperTierRaw +setTierLiqDiscountBpsRaw (was 248); #3272 p2 -setEthUsdFeedRaw -setWethContractRaw (was 250); #3205 -getLockedTokenCount -getOperatorApprovalEpoch -getOperatorApprovalGrantEpoch -forceSetLockWithoutCounter (was 254); #3204 -setVaultVersionRaw -setMandatoryVaultVersionRaw (was 256); #2828 -clearTransportBatchDaysRaw (was 257); protected vault +setTrackedHoldingRaw (was 256); #1209 r2 +pushSellerClaimRaw (was 255); #1209 -setLenderPaidThroughRaw -setLenderPaidThroughWithPrincipalRaw -setLenderMarkVoidedRaw -setLenderTenureStartRaw (was 259); #2961 +setPacketDisposedRaw (was 258); #2876 +setOfferPrepayListingExecutorRaw (was 257); #1980 -setBorrowerLifVpfiHeldRaw (was 258); #918 setDayDeliveryProvedByRaw -> setDayDeliveryLandedRaw (net 0); #2910 PR 2 -setRemitReservationFinalizedRaw -setReleasedRemitHistoryRaw -setRemitReservationReleasedRaw (was 261); #2910 -setRecoveryAttributionRaw (was 262); #2875 item 3 +setRecycleBucketAbsorbedRaw -setRecycleCustodyRelocatedRaw -setReleasedRemitStrandedRaw -setRemitReleasedCountRaw (was 264, net 262); #2875 -clearDayLapseClockRaw -setReceivedRemitRaw (was 266); #1944 +setDayDeliveryProvedByRaw -setMirrorCommitReservedRaw (net 0); #2740 -getPrincipalPlusAccruedInterest -getTreasuryAndPrecloseFee +getSaleLegs (was 267); #2736 +setTierLtvCacheRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
+        selectors = new bytes4[](251); // #3649 +setFeeFloorsRaw (was 250); #3538 +setFallbackGate (was 249); #3569 -setTreasuryAddress (was 250); #910 +setKeeperTierRaw +setTierLiqDiscountBpsRaw (was 248); #3272 p2 -setEthUsdFeedRaw -setWethContractRaw (was 250); #3205 -getLockedTokenCount -getOperatorApprovalEpoch -getOperatorApprovalGrantEpoch -forceSetLockWithoutCounter (was 254); #3204 -setVaultVersionRaw -setMandatoryVaultVersionRaw (was 256); #2828 -clearTransportBatchDaysRaw (was 257); protected vault +setTrackedHoldingRaw (was 256); #1209 r2 +pushSellerClaimRaw (was 255); #1209 -setLenderPaidThroughRaw -setLenderPaidThroughWithPrincipalRaw -setLenderMarkVoidedRaw -setLenderTenureStartRaw (was 259); #2961 +setPacketDisposedRaw (was 258); #2876 +setOfferPrepayListingExecutorRaw (was 257); #1980 -setBorrowerLifVpfiHeldRaw (was 258); #918 setDayDeliveryProvedByRaw -> setDayDeliveryLandedRaw (net 0); #2910 PR 2 -setRemitReservationFinalizedRaw -setReleasedRemitHistoryRaw -setRemitReservationReleasedRaw (was 261); #2910 -setRecoveryAttributionRaw (was 262); #2875 item 3 +setRecycleBucketAbsorbedRaw -setRecycleCustodyRelocatedRaw -setReleasedRemitStrandedRaw -setRemitReleasedCountRaw (was 264, net 262); #2875 -clearDayLapseClockRaw -setReceivedRemitRaw (was 266); #1944 +setDayDeliveryProvedByRaw -setMirrorCommitReservedRaw (net 0); #2740 -getPrincipalPlusAccruedInterest -getTreasuryAndPrecloseFee +getSaleLegs (was 267); #2736 +setTierLtvCacheRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -208,6 +228,8 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.dayCapThreshold18Raw.selector;
         selectors[n++] = TestMutatorFacet.setLoan.selector;
         selectors[n++] = TestMutatorFacet.setOffer.selector;
+        // #3538 — seed a loan's failed-sale record.
+        selectors[n++] = TestMutatorFacet.setFallbackGate.selector;
         selectors[n++] = TestMutatorFacet.setNextLoanId.selector;
         selectors[n++] = TestMutatorFacet.setNextOfferId.selector;
         selectors[n++] = TestMutatorFacet.setKYCEnforcementFlag.selector;
@@ -269,6 +291,7 @@ contract HelperTest {
         // #1918 — the pre-#957 `treasuryFeeBpsAtInit == 0` state, which no
         // originated fixture can reach.
         selectors[n++] = TestMutatorFacet.setTreasuryFeeBpsAtInitRaw.selector;
+        selectors[n++] = TestMutatorFacet.setFeeFloorsRaw.selector;
         // Layout-resilient mapping writers used by EarlyWithdrawal
         // tests to scaffold loan-sale state without slot math.
         selectors[n++] = TestMutatorFacet.setOfferIdToLoanIdRaw.selector;
@@ -399,9 +422,9 @@ contract HelperTest {
         // #1006 (S10) Class B — Active-loan inline lender-share freeze harness.
         selectors[n++] = TestMutatorFacet.getHeldForLenderRaw.selector;
         selectors[n++] = TestMutatorFacet.getLenderProceedsEncumberedRaw.selector;
-        selectors[n++] = TestMutatorFacet.callFreezeOrPayActiveLenderResident.selector;
-        selectors[n++] = TestMutatorFacet.callFreezeOrPayActiveLenderFromPayer.selector;
-        selectors[n++] = TestMutatorFacet.callFreezeOrPayActiveLenderFromVault.selector;
+        selectors[n++] = TestMutatorFacet.callHoldActiveLenderResident.selector;
+        selectors[n++] = TestMutatorFacet.callHoldActiveLenderFromPayer.selector;
+        selectors[n++] = TestMutatorFacet.callHoldActiveLenderFromVault.selector;
         // #1006 (S10) Class B — dedicated active-held reservation harness.
         selectors[n++] = TestMutatorFacet.getHeldForLenderEncumberedRaw.selector;
         selectors[n++] = TestMutatorFacet.callEncumberLenderProceeds.selector;
@@ -588,7 +611,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](6);
+        selectors = new bytes4[](5);
         selectors[0] = OfferCreateFacet.createOffer.selector;
         selectors[1] = OfferCreateFacet.getUserVault.selector;
         // Phase 8b.1 Permit2 addition.
@@ -596,12 +619,51 @@ contract HelperTest {
         // Cross-facet entry consumed by PrecloseOffsetFacet.offsetWithNewOffer
         // (Option 3 offset flow) — address(this)-only gating.
         selectors[3] = OfferCreateFacet.createOfferInternal.selector;
-        // #396 v0.5 — cross-facet materialize entries used by
-        // `SignedOfferFacet` to mint a normal on-chain offer from a
-        // signed off-chain offer (vault-backed + wallet-backed Permit2).
-        selectors[4] = OfferCreateFacet.createSignedOfferVault.selector;
-        selectors[5] = OfferCreateFacet.createSignedOfferWallet.selector;
+        selectors[4] = OfferCreateFacet.createCollectionParent.selector;
         return selectors;
+    }
+
+    /// @dev #3328 — mirrors `DeployDiamond._getOfferMaterializeSelectors`.
+    function getOfferMaterializeFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](5);
+        selectors[0] = OfferMaterializeFacet.createSignedOfferVault.selector;
+        selectors[1] = OfferMaterializeFacet.createSignedOfferWallet.selector;
+        selectors[2] = OfferMaterializeFacet.createCollectionSlice.selector;
+        selectors[3] = OfferMaterializeFacet.createSignedCollectionSlice.selector;
+        selectors[4] = OfferMaterializeFacet.createCommittedSliceVault.selector;
+    }
+
+    /// @dev #3344 — mirrors `DeployDiamond._getReadyBalanceSelectors`.
+    function getReadyBalanceFacetSelectors() public pure returns (bytes4[] memory s) {
+        s = new bytes4[](11);
+        s[0] = ReadyBalanceFacet.depositToReady.selector;
+        s[1] = ReadyBalanceFacet.requestReadyTopUp.selector;
+        s[2] = ReadyBalanceFacet.cancelReadyTopUp.selector;
+        s[3] = ReadyBalanceFacet.releaseReady.selector;
+        s[4] = ReadyBalanceFacet.setReadyIdlePeriod.selector;
+        s[5] = ReadyBalanceFacet.extendReadyUntil.selector;
+        s[6] = ReadyBalanceFacet.spendReady.selector;
+        s[7] = ReadyBalanceFacet.readySpendable.selector;
+        s[8] = ReadyBalanceFacet.getReadyBalance.selector;
+        s[9] = ReadyBalanceFacet.getReadySettings.selector;
+        s[10] = ReadyBalanceFacet.getReadyIdleBounds.selector;
+    }
+
+    /// @dev #3328 — mirrors `DeployDiamond._getCollectionOfferSelectors`.
+    function getCollectionOfferFacetSelectors() public pure returns (bytes4[] memory s) {
+        s = new bytes4[](12);
+        s[0] = CollectionOfferFacet.createCollectionOffer.selector;
+        s[1] = CollectionOfferFacet.reduceCollectionLoans.selector;
+        s[2] = CollectionOfferFacet.fillCollectionOffer.selector;
+        s[3] = CollectionOfferFacet.matchCollectionOffer.selector;
+        s[4] = CollectionOfferFacet.fillKey.selector;
+        s[5] = CollectionOfferFacet.wouldTake.selector;
+        s[6] = CollectionOfferFacet.getCollectionOffer.selector;
+        s[7] = CollectionOfferFacet.takeFailure.selector;
+        s[8] = CollectionOfferFacet.setCollectionOfferLimits.selector;
+        s[9] = CollectionOfferFacet.getCollectionOfferLimits.selector;
+        s[10] = CollectionOfferFacet.fillSignedCollectionOffer.selector;
+        s[11] = CollectionOfferFacet.signedFillKey.selector;
     }
 
     /// @dev T-086 Round-8 (#358) — the two parallel-sale selectors live
@@ -675,14 +737,12 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](5);
         selectors[0] = OfferPreviewFacet.previewAccept.selector;
         selectors[1] = OfferPreviewFacet.requireCadenceAdmitted.selector;
         selectors[2] = OfferPreviewFacet.previewCadenceAdmission.selector;
         selectors[3] = OfferPreviewFacet.requireOriginationCadenceAdmitted.selector;
-        selectors[4] = OfferPreviewFacet.previewOriginationRefusal.selector;
-        selectors[5] = OfferPreviewFacet.previewSignedOfferAccept.selector;
-        selectors[6] = OfferPreviewFacet.initRiskBounds.selector;
+        selectors[4] = OfferPreviewFacet.previewSignedOfferAccept.selector;
         return selectors;
     }
 
@@ -718,9 +778,10 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](3);
         selectors[0] = OfferMatchFacet.matchOffers.selector;
         selectors[1] = OfferMatchFacet.previewMatch.selector;
+        selectors[2] = OfferMatchFacet.matchCoreInternal.selector;
         return selectors;
     }
 
@@ -893,7 +954,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](17);
+        selectors = new bytes4[](21);
         selectors[0] = VaipakamNFTFacet.mintNFT.selector;
         selectors[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         selectors[2] = VaipakamNFTFacet.retirePosition.selector;
@@ -911,7 +972,12 @@ contract HelperTest {
         // #3413 — the transfer cooldown after a value-out.
         selectors[14] = VaipakamNFTFacet.setPositionTransferCooldownSec.selector;
         selectors[15] = VaipakamNFTFacet.positionTransferCooldownSec.selector;
-        selectors[16] = VaipakamNFTFacet.positionTransferCooldown.selector;
+        // #3710 — the position's state number and its fill check.
+        selectors[16] = VaipakamNFTFacet.positionState.selector;
+        selectors[17] = VaipakamNFTFacet.requirePositionState.selector;
+        selectors[18] = VaipakamNFTFacet.setPositionOwnMoveWaitSec.selector;
+        selectors[19] = VaipakamNFTFacet.positionOwnMoveWaitSec.selector;
+        selectors[20] = VaipakamNFTFacet.markOfferPositions.selector;
         return selectors;
     }
 
@@ -977,10 +1043,153 @@ contract HelperTest {
 
     /// @dev #3410 — the loan clock's disclosure, split off LoanFacet.
     ///      Mirrors `DeployDiamond._getLoanClockSelectors`.
+    function getMarketLedgerFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](8);
+        selectors[0] = MarketLedgerFacet.getMarketLedger.selector;
+        selectors[1] = MarketLedgerFacet.getPairLedger.selector;
+        selectors[2] = MarketLedgerFacet.getSlotLedger.selector;
+        selectors[3] = MarketLedgerFacet.rollMarketLedger.selector;
+        selectors[4] = MarketLedgerFacet.syncSlot.selector;
+        selectors[5] = MarketLedgerFacet.onSlotFilled.selector;
+        selectors[6] = MarketLedgerFacet.onSlotReleased.selector;
+        selectors[7] = MarketLedgerFacet.onSlotLoanPrincipal.selector;
+    }
+
+    /// @dev #3656 — mirrors `DeployDiamond._getInstantMarketSelectors`.
+    function getInstantMarketFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](8);
+        selectors[0] = InstantMarketFacet.setInstantMarketEnabled.selector;
+        selectors[1] = InstantMarketFacet.setInstantMaxFills.selector;
+        selectors[2] = InstantMarketFacet.getInstantMarketConfig.selector;
+        selectors[3] = InstantMarketFacet.setInstantSlot.selector;
+        selectors[4] = InstantMarketFacet.getInstantSlot.selector;
+        selectors[5] = InstantMarketFacet.borrowInstant.selector;
+        selectors[6] = InstantMarketFacet.getInstantGroup.selector;
+        selectors[7] = InstantMarketFacet.instantPairEligible.selector;
+    }
+
+    /// @dev #3656 — mirrors `DeployDiamond._getInstantFillSelectors`.
+    function getInstantFillFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](1);
+        selectors[0] = InstantFillFacet.fillInstant.selector;
+    }
+
+    /// @dev #3656 §7 — mirrors `DeployDiamond._getInstantTakeoverSelectors`.
+    function getInstantTakeoverFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](1);
+        selectors[0] = InstantTakeoverFacet.takeoverInstant.selector;
+    }
+
     function getLoanClockFacetSelectors() public pure returns (bytes4[] memory selectors) {
         selectors = new bytes4[](2);
         selectors[0] = LoanClockFacet.getLoanDeadlines.selector;
         selectors[1] = LoanClockFacet.getSequencerOutageWindow.selector;
+    }
+
+    /// @dev #3649 — the initiation fee's term schedule.
+    ///      Mirrors `DeployDiamond._getFeeLevelsSelectors`.
+    function getFeeLevelsFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](9);
+        selectors[0] = FeeLevelsFacet.setLoanInitiationFeeTerms.selector;
+        selectors[1] = FeeLevelsFacet.getLoanInitiationFeeTerms.selector;
+        selectors[2] = FeeLevelsFacet.quoteLoanInitiationFee.selector;
+        selectors[3] = FeeLevelsFacet.quoteExtensionFee.selector;
+        selectors[4] = FeeLevelsFacet.setTreasuryFeeFloors.selector;
+        selectors[5] = FeeLevelsFacet.getTreasuryFeeFloors.selector;
+        selectors[6] = FeeLevelsFacet.setFeeShareCeiling.selector;
+        selectors[7] = FeeLevelsFacet.getFeeShareCeiling.selector;
+        selectors[8] = FeeLevelsFacet.setLifMatcherFeeBps.selector;
+    }
+
+    function getIntegratorFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](13);
+        selectors[0] = IntegratorFacet.setIntegrator.selector;
+        selectors[1] = IntegratorFacet.removeIntegrator.selector;
+        selectors[2] = IntegratorFacet.suspendIntegrator.selector;
+        selectors[3] = IntegratorFacet.restoreIntegrator.selector;
+        selectors[4] = IntegratorFacet.setIntegratorDefaultRate.selector;
+        selectors[5] = IntegratorFacet.deliverIntegratorShare.selector;
+        selectors[6] = IntegratorFacet.getIntegrator.selector;
+        selectors[7] = IntegratorFacet.getIntegrators.selector;
+        selectors[8] = IntegratorFacet.integratorOf.selector;
+        selectors[9] = IntegratorFacet.getPlatformContracts.selector;
+        selectors[10] = IntegratorFacet.getIntegratorShareSettings.selector;
+        selectors[11] = IntegratorFacet.integratorRateFor.selector;
+        selectors[12] = IntegratorFacet.nameLenderIntentIntegrator.selector;
+    }
+
+    function getStandingOfferCheckFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](2);
+        selectors[0] = StandingOfferCheckFacet.checkAgainstRequest.selector;
+        selectors[1] = StandingOfferCheckFacet.checkForAmount.selector;
+    }
+
+    function getReferralFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](8);
+        selectors[0] = ReferralFacet.bindInviter.selector;
+        selectors[1] = ReferralFacet.setReferralRates.selector;
+        selectors[2] = ReferralFacet.setReferralPeriodDays.selector;
+        selectors[3] = ReferralFacet.payReferralShare.selector;
+        selectors[4] = ReferralFacet.getReferral.selector;
+        selectors[5] = ReferralFacet.getReferralSettings.selector;
+        selectors[6] = ReferralFacet.getReferralTotals.selector;
+        selectors[7] = ReferralFacet.quoteBorrowerFee.selector;
+    }
+
+    /// @dev #3669 — the refused settlement leg host. Mirrors
+    ///      `DeployDiamond._getSettlementLegSelectors`.
+    function getSettlementLegFacetSelectors() public pure returns (bytes4[] memory) {
+        return LibTestSettlementLeg.selectors();
+    }
+
+    /// @dev #3246 part 2 — the clawback host. Mirrors
+    ///      `DeployDiamond._getRecoveryClawbackSelectors`.
+    function getRecoveryClawbackFacetSelectors() public pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = RecoveryClawbackFacet.applyClawback.selector;
+        s[1] = RecoveryClawbackFacet.sweepRecovered.selector;
+        s[2] = RecoveryClawbackFacet.recoveryMovable.selector;
+    }
+
+    /// @dev #3685 — the new-loan cap host and collateral concentration.
+    ///      Mirrors `DeployDiamond._getCollateralConcentrationSelectors`.
+    function getCollateralConcentrationFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](7);
+        selectors[0] = CollateralConcentrationFacet.setConcentrationConfig.selector;
+        selectors[1] = CollateralConcentrationFacet.setAssetConcentrationConfig.selector;
+        selectors[2] = CollateralConcentrationFacet.getConcentrationConfig.selector;
+        selectors[3] = CollateralConcentrationFacet.getAssetConcentrationThresholds.selector;
+        selectors[4] = CollateralConcentrationFacet.getConcentration.selector;
+        selectors[5] = CollateralConcentrationFacet.newLoanInitLtvCapBps.selector;
+        selectors[6] = CollateralConcentrationFacet.loanConcentrationAtInit.selector;
+    }
+
+    /// @dev #3681 — the loan reserve and the standing instructions.
+    function getStandingInstructionFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](13);
+        selectors[0] = StandingInstructionFacet.fundLoanReserve.selector;
+        selectors[1] = StandingInstructionFacet.withdrawLoanReserve.selector;
+        selectors[2] = StandingInstructionFacet.setStandingInstructions.selector;
+        selectors[3] = StandingInstructionFacet.clearStandingInstructions.selector;
+        selectors[4] = StandingInstructionFacet.runCollateralTopUp.selector;
+        selectors[5] = StandingInstructionFacet.runInterestPayment.selector;
+        selectors[6] = StandingInstructionFacet.runDueRepayment.selector;
+        selectors[7] = StandingInstructionFacet.getLoanReserve.selector;
+        selectors[8] = StandingInstructionFacet.getStandingInstructionConfig.selector;
+        selectors[9] = StandingInstructionFacet.setStandingInstructionConfig.selector;
+        selectors[10] = StandingInstructionFacet.payRepaymentFromReserve.selector;
+        selectors[11] = StandingInstructionFacet.previewInterestPayment.selector;
+        selectors[12] = StandingInstructionFacet.payInterestFromReserve.selector;
+    }
+
+    /// @dev #3685 — the collateral-lien entries, split off
+    ///      EncumbranceMutateFacet. Mirrors `DeployDiamond._getCollateralLienSelectors`.
+    function getCollateralLienFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](4);
+        selectors[0] = CollateralLienFacet.releaseCollateralLien.selector;
+        selectors[1] = CollateralLienFacet.decrementCollateralLien.selector;
+        selectors[2] = CollateralLienFacet.incrementCollateralLien.selector;
+        selectors[3] = CollateralLienFacet.recreateCollateralLien.selector;
     }
 
     function getRepayFacetSelectors()
@@ -988,7 +1197,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3); // Adjust count
+        selectors = new bytes4[](3);
         selectors[0] = RepayFacet.repayLoan.selector;
         selectors[1] = RepayFacet.repayPartial.selector;
         selectors[2] = RepayFacet.calculateRepaymentAmount.selector;
@@ -1002,11 +1211,12 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](5);
         selectors[0] = RepayPeriodicFacet.autoDeductDaily.selector;
         selectors[1] = RepayPeriodicFacet.previewPeriodicSettle.selector;
         selectors[2] = RepayPeriodicFacet.nextPeriodCheckpoint.selector;
         selectors[3] = RepayPeriodicFacet.settlePeriodicInterest.selector;
+        selectors[4] = RepayPeriodicFacet.bookInterestPayment.selector;
     }
 
     /// T-090 — Borrower-initiated swap-to-repay facet selectors.
@@ -1084,15 +1294,16 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](4);
         // T-092 Phase 3 (#503) — extendLoanInPlace executor.
         selectors[0] = AutoLifecycleFacet.extendLoanInPlace.selector;
         // #2738 — when a loan may be extended (the keeper reads it).
         selectors[1] = AutoLifecycleFacet.getAutoExtendWindow.selector;
-        // #2814 — the extension reserve: fund, withdraw, and what is ready.
-        selectors[2] = AutoLifecycleFacet.fundExtendReserve.selector;
-        selectors[3] = AutoLifecycleFacet.withdrawExtendReserve.selector;
-        selectors[4] = AutoLifecycleFacet.getExtendFunding.selector;
+        // #2814 — what an extension has ready (funded and withdrawn on
+        // StandingInstructionFacet since #3681).
+        selectors[2] = AutoLifecycleFacet.getExtendFunding.selector;
+        // #3618 follow-up — the intent lend-until bound on an extension.
+        selectors[3] = AutoLifecycleFacet.getAutoExtendLendUntil.selector;
     }
 
     /// @notice T-092 Phase 1 (#499) — the auto-lifecycle consent surface,
@@ -1126,44 +1337,40 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](25);
-        selectors[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
-        selectors[1] = EncumbranceMutateFacet.decrementCollateralLien.selector;
-        selectors[2] = EncumbranceMutateFacet.incrementCollateralLien.selector;
-        // #569 §4.4 — rekey create-leg for obligation transfer.
-        selectors[3] = EncumbranceMutateFacet.recreateCollateralLien.selector;
+        selectors = new bytes4[](21);
+        // The collateral-lien entries moved to CollateralLienFacet (#3685).
         // T-407-C (#566) — offer-principal lock (second lien category).
-        selectors[4] = EncumbranceMutateFacet.createOfferPrincipalLien.selector;
-        selectors[5] = EncumbranceMutateFacet.decrementOfferPrincipalLien.selector;
-        selectors[6] = EncumbranceMutateFacet.releaseOfferPrincipalLien.selector;
-        selectors[7] = EncumbranceMutateFacet.incrementOfferPrincipalLien.selector;
+        selectors[0] = EncumbranceMutateFacet.createOfferPrincipalLien.selector;
+        selectors[1] = EncumbranceMutateFacet.decrementOfferPrincipalLien.selector;
+        selectors[2] = EncumbranceMutateFacet.releaseOfferPrincipalLien.selector;
+        selectors[3] = EncumbranceMutateFacet.incrementOfferPrincipalLien.selector;
         // #954 — swap-to-repay close-out freeze helpers hosted here (EIP-170).
-        selectors[8] = EncumbranceMutateFacet.freezeLenderProceeds.selector;
-        selectors[9] = EncumbranceMutateFacet.freezeOrPayBorrowerSurplus.selector;
+        selectors[4] = EncumbranceMutateFacet.freezeLenderProceeds.selector;
+        selectors[5] = EncumbranceMutateFacet.holdBorrowerSurplus.selector;
         // #998 S10 (#1006) — fail-closed frozen-claimant markers (EIP-170 host).
-        selectors[10] = EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector;
-        selectors[11] = EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector;
+        selectors[6] = EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector;
+        selectors[7] = EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector;
         // #998 S10 (#1006) — one-call lender-payoff park+freeze (PrecloseFacet EIP-170).
-        selectors[12] = EncumbranceMutateFacet.parkLenderPayoffAndFreeze.selector;
+        selectors[8] = EncumbranceMutateFacet.parkLenderPayoffAndFreeze.selector;
         // #998 S10 (#1006, r4) — registry-aware fail-closed gate host (ClaimFacet backstop).
-        selectors[13] = EncumbranceMutateFacet.assertNotFrozenParty.selector;
+        selectors[9] = EncumbranceMutateFacet.assertNotFrozenParty.selector;
         // #998 S10 (#1006) Class B — Active-loan inline lender-share pay-or-freeze hosts.
-        selectors[14] = EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector;
-        selectors[15] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromPayer.selector;
-        selectors[16] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector;
+        selectors[10] = EncumbranceMutateFacet.holdActiveLenderResident.selector;
+        selectors[11] = EncumbranceMutateFacet.holdActiveLenderFromPayer.selector;
+        selectors[12] = EncumbranceMutateFacet.holdActiveLenderFromVault.selector;
         // #1132 (S10 central enforcement) — terminal-transition register host.
-        selectors[17] = EncumbranceMutateFacet.terminalize.selector;
-        selectors[18] = EncumbranceMutateFacet.terminalizeFromAny.selector;
+        selectors[13] = EncumbranceMutateFacet.terminalize.selector;
+        selectors[14] = EncumbranceMutateFacet.terminalizeFromAny.selector;
         // #2342 — ledger-anchored VPFI fee-tier exclusion host + its views.
-        selectors[19] = EncumbranceMutateFacet.syncTierExclusion.selector;
-        selectors[20] = EncumbranceMutateFacet.getTierExclusion.selector;
-        selectors[21] = EncumbranceMutateFacet.getVpfiOwedToOthers.selector;
+        selectors[15] = EncumbranceMutateFacet.syncTierExclusion.selector;
+        selectors[16] = EncumbranceMutateFacet.getTierExclusion.selector;
+        selectors[17] = EncumbranceMutateFacet.getVpfiOwedToOthers.selector;
         // #2342 r1 — permissionless backfill / re-derive entry.
-        selectors[22] = EncumbranceMutateFacet.refreshTierExclusion.selector;
+        selectors[18] = EncumbranceMutateFacet.refreshTierExclusion.selector;
         // #2795 — pay a held borrower extra out on an obligation handover
         // (PrecloseFacet EIP-170 host).
-        selectors[23] = EncumbranceMutateFacet.payHeldBorrowerExtra.selector;
-        selectors[24] = EncumbranceMutateFacet.settleRentalPrecloseShares.selector;
+        selectors[19] = EncumbranceMutateFacet.payHeldBorrowerExtra.selector;
+        selectors[20] = EncumbranceMutateFacet.settleRentalPrecloseShares.selector;
     }
 
     /// @notice #396 v0.5 — gasless signed off-chain offer book selectors.
@@ -1174,7 +1381,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](12);
+        selectors = new bytes4[](13);
         selectors[0] = SignedOfferFacet.acceptSignedOffer.selector;
         selectors[1] = SignedOfferFacet.acceptSignedOfferWithPermit.selector;
         selectors[2] = SignedOfferFacet.cancelSignedOffer.selector;
@@ -1189,6 +1396,8 @@ contract HelperTest {
         selectors[10] = SignedOfferFacet.hashSignedOfferFill.selector;
         // #3327 part 2 — the digest a maker signs for a set of offers.
         selectors[11] = SignedOfferFacet.hashSignedOfferSet.selector;
+        // The match route's signed-offer half (self-call only).
+        selectors[12] = SignedOfferFacet.takeSignedMatchSlice.selector;
     }
 
     function getLenderIntentFacetSelectors()
@@ -1196,25 +1405,37 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](18);
+        selectors = new bytes4[](12);
         selectors[0] = LenderIntentFacet.setLenderIntent.selector;
         selectors[1] = LenderIntentFacet.cancelLenderIntent.selector;
         selectors[2] = LenderIntentFacet.setLenderIntentEnabled.selector;
         selectors[3] = LenderIntentFacet.isLenderIntentEnabled.selector;
-        selectors[4] = LenderIntentFacet.getLenderIntent.selector;
-        selectors[5] = LenderIntentFacet.getLenderIntentLivePrincipal.selector;
-        selectors[6] = LenderIntentFacet.releaseIntentExposure.selector;
-        selectors[7] = LenderIntentFacet.fundLenderIntent.selector;
-        selectors[8] = LenderIntentFacet.withdrawLenderIntentCapital.selector;
-        selectors[9] = LenderIntentFacet.getLenderIntentCapital.selector;
-        selectors[10] = LenderIntentFacet.rollIntentLoan.selector;
-        selectors[11] = LenderIntentFacet.getLenderIntentsByOwner.selector;
-        selectors[12] = LenderIntentFacet.setLenderIntentPriority.selector; // #2550
-        selectors[13] = LenderIntentFacet.getLenderIntentPriority.selector; // #2550
-        selectors[14] = LenderIntentFacet.setMinIntentFillNumeraire.selector; // #2760
-        selectors[15] = LenderIntentFacet.getMinIntentFillNumeraire.selector; // #2760
-        selectors[16] = LenderIntentFacet.getActiveLenderIntents.selector; // #625 WI-2a, moved off MetricsFacet (#3618)
-        selectors[17] = LenderIntentFacet.getRollableIntentLoans.selector; // #625 WI-2c, moved off MetricsFacet (#3618)
+        selectors[4] = LenderIntentFacet.releaseIntentExposure.selector;
+        selectors[5] = LenderIntentFacet.fundLenderIntent.selector;
+        selectors[6] = LenderIntentFacet.withdrawLenderIntentCapital.selector;
+        selectors[7] = LenderIntentFacet.rollIntentLoan.selector;
+        selectors[8] = LenderIntentFacet.setLenderIntentPriority.selector; // #2550
+        selectors[9] = LenderIntentFacet.setMinIntentFillNumeraire.selector; // #2760
+        selectors[10] = LenderIntentFacet.getMinIntentFillNumeraire.selector; // #2760
+        selectors[11] = LenderIntentFacet.recommitHeldToIntent.selector; // #3629
+        // The reads live on LenderIntentViewFacet ({getLenderIntentViewFacetSelectors}).
+    }
+
+    /// @notice The standing-intent reads, split off LenderIntentFacet
+    ///         (EIP-170); mirrors `DeployDiamond._getLenderIntentViewSelectors`.
+    function getLenderIntentViewFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](7);
+        selectors[0] = LenderIntentViewFacet.getLenderIntent.selector;
+        selectors[1] = LenderIntentViewFacet.getLenderIntentLivePrincipal.selector;
+        selectors[2] = LenderIntentViewFacet.getLenderIntentCapital.selector;
+        selectors[3] = LenderIntentViewFacet.getLenderIntentsByOwner.selector;
+        selectors[4] = LenderIntentViewFacet.getLenderIntentPriority.selector; // #2550
+        selectors[5] = LenderIntentViewFacet.getActiveLenderIntents.selector; // #625 WI-2a
+        selectors[6] = LenderIntentViewFacet.getRollableIntentLoans.selector; // #625 WI-2c
     }
 
     function getRiskAccessFacetSelectors()
@@ -1222,7 +1443,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](26);
+        selectors = new bytes4[](27);
         selectors[0] = RiskAccessFacet.setVaultRiskTier.selector;
         selectors[1] = RiskAccessFacet.setIlliquidPairConsent.selector;
         selectors[2] = RiskAccessFacet.commitRiskTermsBump.selector; // #730 r5
@@ -1249,6 +1470,7 @@ contract HelperTest {
         selectors[23] = RiskAccessFacet.isMidTierAckPending.selector; // #735 item 3
         selectors[24] = RiskAccessFacet.setVaultRiskTierChecked.selector; // #1522
         selectors[25] = RiskAccessFacet.getRiskTierMutationNonce.selector; // #1522
+        selectors[26] = RiskAccessFacet.requireActorMayTransact.selector; // the gate loan creation self-calls
     }
 
     /// @dev #1104 — preview cluster + cross-facet gate asserts split into
@@ -1258,7 +1480,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](11);
+        selectors = new bytes4[](12);
         selectors[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         selectors[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         selectors[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -1275,6 +1497,9 @@ contract HelperTest {
         selectors[9] = RiskPreviewFacet.getSaleListingBounds.selector;
         // #3577 — the risk gate a fill of a not-yet-stored signed order faces.
         selectors[10] = RiskPreviewFacet.previewSignedOfferRiskBlocks.selector;
+        // #3326 — the initiation risk bounds the match core reads by self-call
+        // (moved here from OfferPreviewFacet in #3328).
+        selectors[11] = RiskPreviewFacet.initRiskBounds.selector;
     }
 
     /// @dev #1212 (E-10 Claim-All) — the single generic batching entry point.
@@ -1526,20 +1751,23 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](11);
+        // The claim reads live on ClaimViewFacet ({getClaimViewFacetSelectors}).
+        selectors = new bytes4[](7);
         selectors[0] = ClaimFacet.claimAsLender.selector;
         selectors[1] = ClaimFacet.claimAsBorrower.selector;
-        selectors[2] = ClaimFacet.getClaimableAmount.selector;
-        selectors[3] = ClaimFacet.getClaimable.selector;
-        selectors[4] = ClaimFacet.claimAsLenderWithRetry.selector;
-        selectors[5] = ClaimFacet.getFallbackSnapshot.selector;
+        selectors[2] = ClaimFacet.claimAsLenderWithRetry.selector;
         // #399 backstop v0 Role B — liquidator-of-last-resort.
-        selectors[6] = ClaimFacet.setLenderBackstopOptIn.selector;
-        selectors[7] = ClaimFacet.claimAsLenderViaBackstop.selector;
-        selectors[8] = ClaimFacet.getBorrowerSurplusClaim.selector;
-        selectors[9] = ClaimFacet.getOwedAtDefault.selector; // #2374
-        selectors[10] = ClaimFacet.getOwedAtInternalMatch.selector; // #2427
+        selectors[3] = ClaimFacet.setLenderBackstopOptIn.selector;
+        selectors[4] = ClaimFacet.claimAsLenderViaBackstop.selector;
+        selectors[5] = ClaimFacet.claimHeldForLender.selector; // #3629
+        selectors[6] = ClaimFacet.claimHeldForBorrower.selector; // #3629
         return selectors;
+    }
+
+    /// @notice The claim reads, split off ClaimFacet; mirrors
+    ///         `DeployDiamond._getClaimViewSelectors`.
+    function getClaimViewFacetSelectors() public pure returns (bytes4[] memory) {
+        return LibTestClaimViewCut.selectors();
     }
 
     function getAddCollateralFacetSelectors()
@@ -1974,7 +2202,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](11);
         selectors[0] = ProtocolBroadcastFacet.protocolBroadcastTierUpdate.selector;
         selectors[1] = ProtocolBroadcastFacet.topUpBroadcastBudget.selector;
         selectors[2] = ProtocolBroadcastFacet.withdrawBudget.selector;
@@ -1985,6 +2213,9 @@ contract HelperTest {
         // #1277: getTierPushSpacingSec / setTierPushSpacingSec removed with
         // the spacing window (the budget pays only lowers, never a raise).
         selectors[7] = ProtocolBroadcastFacet.flushTierPushes.selector;
+        selectors[8] = ProtocolBroadcastFacet.broadcastTierTableVersionTo.selector;
+        selectors[9] = ProtocolBroadcastFacet.quoteBroadcastTierTableVersionTo.selector;
+        selectors[10] = ProtocolBroadcastFacet.getTierTableVersion.selector;
         return selectors;
     }
 
@@ -1995,7 +2226,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](87);
+        selectors = new bytes4[](86);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -2015,8 +2246,9 @@ contract HelperTest {
         selectors[13] = ConfigFacet.setFallbackSplit.selector;
         selectors[14] = ConfigFacet.getFallbackSplit.selector;
         selectors[15] = ConfigFacet.getProtocolConstants.selector;
-        // Range Orders Phase 1 — governance-tunable matcher BPS.
-        selectors[16] = ConfigFacet.setLifMatcherFeeBps.selector;
+        // #3722 — the matcher's rate setter moved to FeeLevelsFacet; the
+        // last entry fills its slot.
+        selectors[16] = ConfigFacet.getMinTermsAgeSec.selector;
         // Phase 1 follow-up — auto-pause window duration setter.
         selectors[17] = ConfigFacet.setAutoPauseDurationSeconds.selector;
         // Findings 00025 — governance-tunable max loan duration.
@@ -2145,7 +2377,6 @@ contract HelperTest {
         selectors[84] = ConfigFacet.getMaxOpenOffersPerWallet.selector;
         // #3443 — the minimum age of an offer's terms at fill.
         selectors[85] = ConfigFacet.setMinTermsAgeSec.selector;
-        selectors[86] = ConfigFacet.getMinTermsAgeSec.selector;
         // #1222 (M3 B1) — cross-chain recycled ledger transparency reads.
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` MOVED to RewardAggregatorFacet
@@ -2794,23 +3025,28 @@ contract HelperTest {
     /// #3358 — the maker's price-move guard. Mirrors
     /// `DeployDiamond._getOfferPriceGuardSelectors`.
     function getOfferPriceGuardFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](8);
         selectors[0] = OfferPriceGuardFacet.armOfferPriceGuard.selector;
         selectors[1] = OfferPriceGuardFacet.setOfferPriceGuard.selector;
         selectors[2] = OfferPriceGuardFacet.getOfferPriceGuard.selector;
         selectors[3] = OfferPriceGuardFacet.requireOfferPriceGuardsClear.selector;
+        selectors[4] = OfferPriceGuardFacet.previewOriginationRefusal.selector;
+        selectors[5] = OfferPriceGuardFacet.setIntentCalmCheck.selector;
+        selectors[6] = OfferPriceGuardFacet.intentCalmStatus.selector;
+        selectors[7] = OfferPriceGuardFacet.requireIntentPairCalm.selector;
     }
 
     /// #3359 - the forced-sale floor rule. Mirrors
     /// `DeployDiamond._getSaleFloorSelectors`.
     function getSaleFloorFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](6);
+        selectors = new bytes4[](7);
         selectors[0] = SaleFloorFacet.saleFloorBps.selector;
         selectors[1] = SaleFloorFacet.checkpointHourlyPrices.selector;
         selectors[2] = SaleFloorFacet.getHourlyPriceCheckpoint.selector;
         selectors[3] = SaleFloorFacet.setSaleFloorConfig.selector;
         selectors[4] = SaleFloorFacet.getSaleFloorConfig.selector;
         selectors[5] = SaleFloorFacet.swapFloorBps.selector; // #3414
+        selectors[6] = SaleFloorFacet.getHourlyPriceCheckpointVersion.selector; // #3437
     }
 
     /// #2748 - the rate-model host (model, band, offer-rate clamp). Mirrors
@@ -3181,7 +3417,7 @@ contract HelperTest {
     }
 
     /// @dev Mirrors `_getLegalSelectors` at
-    ///      `contracts/script/DeployDiamond.s.sol` L1466 (5-entry list).
+    ///      `contracts/script/DeployDiamond.s.sol` (12-entry list, #3734).
     ///      ToS acceptance + admin-side current-ToS pointer
     ///      management.
     function getLegalFacetSelectors()
@@ -3189,12 +3425,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](5);
-        selectors[0] = LegalFacet.acceptTerms.selector;
-        selectors[1] = LegalFacet.setCurrentTos.selector;
-        selectors[2] = LegalFacet.hasAcceptedCurrentTerms.selector;
-        selectors[3] = LegalFacet.getCurrentTos.selector;
-        selectors[4] = LegalFacet.getUserTosAcceptance.selector;
+        selectors = LibTestTermsCut.legalSelectors();
         return selectors;
     }
 

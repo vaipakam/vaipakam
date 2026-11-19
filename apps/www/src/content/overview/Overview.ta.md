@@ -74,7 +74,7 @@ accept ஆகிறது.
   திரும்ப கிடைக்க வேண்டும்" என்று குறிக்கும்
 - Loan clock தொடங்குகிறது
 
-Loaned amount-லிருந்து சிறிய **Loan Initiation Fee (`{liveValue:loanInitiationFeeBps}`%)** எடுக்கப்பட்டு protocol
+Loaned amount-லிருந்து சிறிய **Loan Initiation Fee** (loan காலத்தைப் பொறுத்தது; கீழே fees பார்க்கவும்) எடுக்கப்பட்டு protocol
 treasury-க்கு செல்கிறது. அதனால் borrower 1,000 அல்ல, `{liveValue:exampleBorrowerReceives}` USDC பெறுகிறார். (**VPFI**
 வைத்திருந்தால் இந்த fee குறையும் — borrower discount அமைப்பை இயக்கியிருக்க
 வேண்டும், கடன் கொடுக்கப்படும் asset liquid-ஆக இருக்க வேண்டும் — அதனால்
@@ -199,9 +199,12 @@ path-ஐ விளக்குகிறது. Consent box tick செய்ய�
   **interest**-ல் (principal-ல் அல்ல). 1,000 USDC-க்கு 30-day 8% APR loan எடுத்தால்,
   lender சுமார் 6.58 USDC interest பெறுகிறார்; அதில் default rate-ல் சுமார் 0.132
   USDC Yield Fee.
-- **Loan Initiation Fee — `{liveValue:loanInitiationFeeBps}`%** lending amount-ல்,
-  origination நேரத்தில் borrower செலுத்துவார். 1,000 USDC loan-க்கு default rate-ல்
-  இது 2 USDC.
+- **Loan Initiation Fee** — loan காலத்தைப் பொறுத்த lending amount-ன் ஒரு பங்கு,
+  origination நேரத்தில் borrower செலுத்துவார்: `{liveValue:lifBaseTermDays}` நாட்கள் வரையிலான
+  காலத்துக்கு `{liveValue:loanInitiationFeeBps}`%, பின்னர் `{liveValue:lifYearDays}` நாட்களில் `{liveValue:lifYearlyBps}`%
+  வரை சீராக உயர்கிறது, அதற்கு மேல் காலத்தின் ஒவ்வொரு `{liveValue:lifYearDays}`
+  நாட்களுக்கும் `{liveValue:lifYearlyBps}`%, விகிதாசாரமாக. மேலே உள்ள 30-நாள் 1,000 USDC
+  loan-க்கு இது `{liveValue:exampleInitiationFee}` USDC.
 
 இரண்டு fees-மும் vault-ல் VPFI hold செய்வதன் மூலம் **`{liveValue:tier4DiscountBps}`%
 வரை discount** பெறலாம் (கீழே பார்க்கவும்). Default அல்லது liquidation நேரத்தில்
@@ -220,8 +223,8 @@ Withdrawal fees இல்லை, idle fees இல்லை, streaming fees இ�
 > chain-ல் எந்த token-ஐ அனுப்புவதற்கும் pay செய்யும் அதே fee தான்.
 > அந்த amount chain மற்றும் அந்த நேரத்தின் network congestion-ஐ
 > பொறுத்தது, உங்கள் loan size-ஐ அல்ல. மேலே குறிப்பிடப்பட்ட protocol
-> fees (Yield Fee `{liveValue:treasuryFeeBps}`%, Loan Initiation Fee
-> `{liveValue:loanInitiationFeeBps}`%) network gas-ஐ விட்டு முற்றிலும்
+> fees (Yield Fee `{liveValue:treasuryFeeBps}`%, Loan Initiation Fee)
+> network gas-ஐ விட்டு முற்றிலும்
 > தனியானவை மற்றும் protocol தானே வசூலிக்கும் ஒரே charges.
 
 ---
@@ -308,7 +311,7 @@ daily reward denominator. அது busy chains மற்றும் quiet chai
 2. உங்கள் collateral மற்றும் நீங்கள் செலுத்தக்கூடிய APR-க்கு match ஆகும் offer-ஐ
    **Offer Book**-ல் browse செய்யுங்கள்.
 3. **Accept** click செய்து, இரண்டு transactions sign செய்யுங்கள்; loan amount
-   உங்கள் wallet-ல் கிடைக்கும் (`{liveValue:loanInitiationFeeBps}`% Loan Initiation Fee கழித்த பின்).
+   உங்கள் wallet-ல் கிடைக்கும் (Loan Initiation Fee கழித்த பின்).
 4. Due date plus grace period-க்கு முன் repay செய்யுங்கள். உங்கள் collateral wallet-க்கு
    unlock ஆகும்.
 

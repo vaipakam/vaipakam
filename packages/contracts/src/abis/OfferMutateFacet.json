@@ -208,6 +208,12 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      },
+      {
+        "name": "integrator",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -1041,6 +1047,17 @@
     "type": "error",
     "name": "CountriesNotCompatible",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CrossFacetCallFailed",
+    "inputs": [
+      {
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
   },
   {
     "type": "error",
@@ -2314,6 +2331,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "PositionTokenNotAccepted",
+    "inputs": []
   },
   {
     "type": "error",

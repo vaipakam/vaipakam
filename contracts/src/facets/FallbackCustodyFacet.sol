@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibFallbackCustody} from "../libraries/LibFallbackCustody.sol";
@@ -247,14 +248,14 @@ contract FallbackCustodyFacet is IVaipakamErrors {
         // #1566 S2b - the custody goes back to the borrower's vault in this
         // transaction, under the lien, and the row records it (step 1).
         // #2440 - the loan's collateral is what the vault received.
-        loan.collateralAmount = _custodyIntoVault(
+        LibLoanCollateral.set(loan, _custodyIntoVault(
             s,
             loanId,
             loan.borrower,
             loan.collateralAsset,
             loan.collateralAmount,
             LibFallbackCustody.Move.Entered
-        );
+        ));
 
         (
             uint256 lenderCol,
@@ -627,8 +628,7 @@ contract FallbackCustodyFacet is IVaipakamErrors {
         uint256 shortfall
     ) private {
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        loan.collateralAmount -=
-            shortfall < loan.collateralAmount ? shortfall : loan.collateralAmount;
+        LibLoanCollateral.reduce(loan, shortfall < loan.collateralAmount ? shortfall : loan.collateralAmount);
         LibVaipakam.FallbackSnapshot storage snap = s.fallbackSnapshot[loanId];
         uint256 take = shortfall < snap.borrowerCollateral ? shortfall : snap.borrowerCollateral;
         snap.borrowerCollateral -= take;

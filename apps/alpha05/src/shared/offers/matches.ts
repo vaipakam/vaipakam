@@ -10,7 +10,20 @@
 import type { PublicClient } from 'viem';
 import { roleTerms, type StoredOffer } from './acceptTerms';
 import { gateBlock, notTakeable, offerFit, rankFor, type AcceptRole, type GateBlock, type NotTakeable, type OfferFit } from './model';
-import { readAcceptGate, readCreatorGate, readLifMatcherBps, readLinkedLoanId, readOffer, readOfferState, readPairLtvBps, readPairOfferIds, readPreview, type AcceptPreview, type OfferState } from './reads';
+import {
+  readAcceptGate,
+  readCreatorGate,
+  readMatcherTerms,
+  readLinkedLoanId,
+  readOffer,
+  readOfferState,
+  readPairLtvBps,
+  readPairOfferIds,
+  readPreview,
+  type AcceptPreview,
+  type MatcherTerms,
+  type OfferState,
+} from './reads';
 import { refusalFromError } from '../eligibility/refusal';
 import { readAssetClass } from './assets';
 import type { PositionFlowReader } from './positionFlow';
@@ -51,9 +64,9 @@ export interface Matches {
   total: bigint;
   /** How many of them this read looked at. */
   scanned: number;
-  /** The share of the fee paid back to the submitter (bps), read with a
+  /** The terms of the fee share paid back to the submitter, read with a
    *  wallet; null without one, when no receive figure is shown. */
-  matcherBps: bigint | null;
+  matcher: MatcherTerms | null;
 }
 
 function message(e: unknown): string {
@@ -72,9 +85,9 @@ export async function readMatches(
   role: AcceptRole,
   flows?: PositionFlowReader,
 ): Promise<Matches> {
-  const [{ ids, total }, matcherBps, pairLtv] = await Promise.all([
+  const [{ ids, total }, matcher, pairLtv] = await Promise.all([
     readPairOfferIds(client, diamond, lending, collateral, MATCH_PAGE),
-    account ? readLifMatcherBps(client, diamond) : Promise.resolve(null),
+    account ? readMatcherTerms(client, diamond) : Promise.resolve(null),
     // The pair's classes decide whether a ratio applies at all: read once,
     // and a class that cannot be read leaves the ratio unstated, with why.
     Promise.all([readAssetClass(client, diamond, lending), readAssetClass(client, diamond, collateral)]).then(
@@ -137,7 +150,7 @@ export async function readMatches(
     skipped,
     total,
     scanned: ids.length,
-    matcherBps,
+    matcher,
   };
 }
 

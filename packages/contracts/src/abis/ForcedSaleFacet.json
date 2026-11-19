@@ -366,7 +366,7 @@
   },
   {
     "type": "event",
-    "name": "LenderPaymentHeld",
+    "name": "LoanInterestPaid",
     "inputs": [
       {
         "name": "loanId",
@@ -375,19 +375,13 @@
         "internalType": "uint256"
       },
       {
-        "name": "custody",
+        "name": "asset",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "asset",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
+        "name": "gross",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -2585,6 +2579,11 @@
   {
     "type": "error",
     "name": "PositionNFTNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PositionTokenNotAccepted",
     "inputs": []
   },
   {

@@ -59,10 +59,12 @@ const LIB = path.resolve(HERE, '../../../contracts/src/libraries/LibVaipakam.sol
  *  - `bps`      — the constant is a bare basis-points integer.
  *  - `tokens18` — the constant is `<N> * 1e18` wei and the published
  *                 figure is the whole-token count `N`.
+ *  - `days`     — the constant is a bare integer count of days, published
+ *                 as a count.
  */
 interface Anchor {
   constant: string;
-  scale: 'bps' | 'tokens18';
+  scale: 'bps' | 'tokens18' | 'days';
   /** Only where the published NAME and the constant's name disagree. */
   note?: string;
 }
@@ -70,6 +72,10 @@ interface Anchor {
 const ANCHORS: Record<KnobName, Anchor> = {
   treasuryFeeBps: { constant: 'TREASURY_FEE_BPS', scale: 'bps' },
   loanInitiationFeeBps: { constant: 'LOAN_INITIATION_FEE_BPS', scale: 'bps' },
+  // #3649 — the initiation fee's term rule.
+  lifBaseTermDays: { constant: 'LIF_BASE_TERM_DAYS_DEFAULT', scale: 'days' },
+  lifYearlyBps: { constant: 'LIF_YEARLY_BPS_DEFAULT', scale: 'bps' },
+  lifYearDays: { constant: 'LIF_YEAR_DAYS_DEFAULT', scale: 'days' },
   tier1Min: { constant: 'VPFI_TIER1_MIN', scale: 'tokens18' },
   tier2Min: { constant: 'VPFI_TIER2_MIN', scale: 'tokens18' },
   tier3Min: { constant: 'VPFI_TIER3_MIN', scale: 'tokens18' },
@@ -152,7 +158,7 @@ function readConstant(name: string, scale: Anchor['scale']): number | string {
   if (!m) return `no \`constant ${name} = …;\` declaration found in ${path.basename(LIB)}`;
 
   const expr = m[1].trim().replace(/_/g, '');
-  if (scale === 'bps') {
+  if (scale === 'bps' || scale === 'days') {
     if (!/^\d+$/.test(expr)) return `expected a bare integer, found \`${m[1].trim()}\``;
     return Number(expr);
   }

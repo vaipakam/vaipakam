@@ -191,13 +191,14 @@ contract SaleExitVerdictFacet {
                 0
             );
             if (_full(r)) return _trim(r);
-        } else if (LibProtectedAccount.protectsNfts(holder)) {
-            // With the holder's tokens under the PositionNFT core's holder
-            // lock (#3205), a position leaves the account only once the
-            // holder has unlocked, after the lock's delay. A sale moves it to
-            // the buyer at once, and its shortfall pays the buyer from the
-            // seller's principal, so it would route value past that delay. The
-            // holder may unlock (after the delay) to sell.
+        } else if (LibProtectedAccount.positionExit(holder) == LibProtectedAccount.PositionExit.Held) {
+            // Tokens under the PositionNFT holder lock without protected mode
+            // (#3205): no payout delay would cover the sale's proceeds, so the
+            // position leaves only once the holder has unlocked, after the
+            // lock's delay. A protected holder under the lock may sell (#3339):
+            // the proceeds land in its vault under the payout delay, and the
+            // sale refuses a rate shortfall from its principal
+            // (`LockedSaleShortfall`, checked at the sale with its offer).
             _add(
                 r,
                 abi.encodeWithSelector(LibProtectedAccount.PositionNftsLocked.selector, holder),

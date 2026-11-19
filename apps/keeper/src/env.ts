@@ -196,6 +196,15 @@ interface BaseEnv {
    *  of a borrower's collateral when a period's interest is overdue. */
   PERIODIC_SETTLE_ENABLED?: string;
 
+  // Held-payment re-commit step of the matcher's roll pass (#3629).
+  // `secret_text` like the flags above.
+  /** 'true' lets the roll pass also run `recommitHeldToIntent` (in addition to
+   *  KEEPER_ENABLED): for an OPEN intent loan whose lender owner delegated
+   *  auto-roll, payments held for the lender position go back behind the
+   *  intent so they can be lent again. Moves the owner's own held funds into
+   *  their own intent; pays the keeper nothing. Ships unset. */
+  HELD_RECOMMIT_ENABLED?: string;
+
   // Reward close-out pass (#2984). `secret_text` like the flags above.
   /** 'true' arms the reward close-out pass (in addition to KEEPER_ENABLED):
    *  day-closure walks, era finalization, the pending-surplus drain, the
@@ -611,6 +620,7 @@ export const PLAIN_VAR_KEYS = [
   'REWARD_COMMIT_LOOKBACK_DAYS',
   'GRACE_DEFAULT_ENABLED',
   'PERIODIC_SETTLE_ENABLED',
+  'HELD_RECOMMIT_ENABLED',
   'REWARD_CLOSE_OUT_ENABLED',
   'REWARD_CLOSE_OUT_WINDOW_DAYS',
   'PROTOCOL_UPKEEP_ENABLED',
@@ -823,6 +833,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_COMMIT_LOOKBACK_DAYS: raw.REWARD_COMMIT_LOOKBACK_DAYS,
     GRACE_DEFAULT_ENABLED: raw.GRACE_DEFAULT_ENABLED,
     PERIODIC_SETTLE_ENABLED: raw.PERIODIC_SETTLE_ENABLED,
+    HELD_RECOMMIT_ENABLED: raw.HELD_RECOMMIT_ENABLED,
     REWARD_CLOSE_OUT_ENABLED: raw.REWARD_CLOSE_OUT_ENABLED,
     REWARD_CLOSE_OUT_WINDOW_DAYS: raw.REWARD_CLOSE_OUT_WINDOW_DAYS,
     PROTOCOL_UPKEEP_ENABLED: raw.PROTOCOL_UPKEEP_ENABLED,

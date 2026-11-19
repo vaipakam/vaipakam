@@ -2,6 +2,8 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibMarketLedger} from "./LibMarketLedger.sol";
+import {LibIntegrator} from "./LibIntegrator.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 /// @title LibMetricsHooks
@@ -44,6 +46,39 @@ library LibMetricsHooks {
     /// @dev #3205 — `tokenId` is already the position token of loan `boundLoanId`.
     error PositionTokenBoundToAnotherLoan(uint256 tokenId, uint256 boundLoanId);
 
+    /// @notice #3755 — a settlement paid `gross` of interest on loan `loanId`.
+    ///         Emitted at the one step every interest payment passes
+    ///         ({onInterestPaid}), so every route states it the same way: a
+    ///         repayment, a partial repayment, a preclose, a refinance payoff,
+    ///         a swap-to-repay, a prepay-listing sale, a forced sale and a
+    ///         discounted liquidation.
+    /// @param  loanId The loan that paid it.
+    /// @param  asset  The asset it was paid in (the loan's principal asset).
+    /// @param  gross  The interest the settlement charged, late fee included
+    ///                where the route charges one, before the treasury's
+    ///                yield fee. The same figure `lifetimeInterestPaid` grows
+    ///                by. A forced sale states what it recovered, not what was
+    ///                owed. It states what the loan PAID, not who received it:
+    ///                on a sold loan the seller-claim events state the split.
+    /// @dev    Not emitted for a fallback recovery (it settles principal,
+    ///         interest and the fallback bonus as one figure, so no interest
+    ///         amount can be stated for it) nor for an NFT rental.
+    /// @custom:event-category state-change/loan-mutation
+    event LoanInterestPaid(uint256 indexed loanId, address indexed asset, uint256 gross);
+
+    /// @notice #3755 — `gross` of the interest a {LoanInterestPaid} on loan
+    ///         `loanId` stated did not arrive at the lender side and is still
+    ///         owed: a payout parked for the holder arrived short. A later
+    ///         payment that settles it states it again in its own
+    ///         {LoanInterestPaid}, so the interest a loan has paid is the sum
+    ///         of its {LoanInterestPaid} amounts less the sum of these.
+    /// @param  loanId The loan.
+    /// @param  asset  The asset (the loan's principal asset).
+    /// @param  gross  The gross interest taken back. The counter it mirrors
+    ///                saturates at zero; this states the full amount.
+    /// @custom:event-category state-change/loan-mutation
+    event LoanInterestUndelivered(uint256 indexed loanId, address indexed asset, uint256 gross);
+
     // ───────────────────────── Loan hooks ─────────────────────────
 
     /// @notice #1832 — records `gross` of interest paid on `loan`: the
@@ -59,10 +94,11 @@ library LibMetricsHooks {
     ///         the claim-time retry) is NOT recorded: it settles principal,
     ///         interest and the fallback bonus as one figure, so no interest
     ///         amount can be stated for it. NFT rentals are not loans of an
-    ///         ERC-20 and never record.
+    ///         ERC-20 and never record. Emits {LoanInterestPaid} (#3755).
     function onInterestPaid(LibVaipakam.Loan storage loan, uint256 gross) internal {
         if (gross == 0 || loan.assetType != LibVaipakam.AssetType.ERC20) return;
         LibVaipakam.storageSlot().lifetimeInterestPaid[loan.principalAsset] += gross;
+        emit LoanInterestPaid(loan.id, loan.principalAsset, gross);
     }
 
     /// @notice #1832 — takes back `gross` that {onInterestPaid} recorded for a
@@ -71,12 +107,14 @@ library LibMetricsHooks {
     ///         is `LibInterestLedger.holderParked`, the ledger's measurement of
     ///         a parked share's arrival, so the counter states interest the
     ///         loan has settled, never interest a later payment will settle and
-    ///         record again. Saturates at zero.
+    ///         record again. Saturates at zero. Emits {LoanInterestUndelivered}
+    ///         (#3755).
     function onInterestUndelivered(LibVaipakam.Loan storage loan, uint256 gross) internal {
         if (gross == 0 || loan.assetType != LibVaipakam.AssetType.ERC20) return;
         mapping(address => uint256) storage paid = LibVaipakam.storageSlot().lifetimeInterestPaid;
         uint256 cur = paid[loan.principalAsset];
         paid[loan.principalAsset] = cur > gross ? cur - gross : 0;
+        emit LoanInterestUndelivered(loan.id, loan.principalAsset, gross);
     }
 
     /// @notice Registers a freshly-created loan in every analytics index.
@@ -116,6 +154,8 @@ library LibMetricsHooks {
         s.assetPairActiveLoanIds[loan.principalAsset][loan.collateralAsset].push(id);
         s.assetPairActiveLoanIdsPos[loan.principalAsset][loan.collateralAsset][id] =
             s.assetPairActiveLoanIds[loan.principalAsset][loan.collateralAsset].length;
+        // Instant market §8 — the loan now counts toward Lent.
+        LibMarketLedger.syncLoan(s, loan);
 
         // Unique-user tracking — both sides counted exactly once across
         // all their lifetime activity (offers + loans).
@@ -290,8 +330,20 @@ library LibMetricsHooks {
             from == LibVaipakam.LoanStatus.Settled;
         bool isTerminal = to == LibVaipakam.LoanStatus.Defaulted ||
             to == LibVaipakam.LoanStatus.Settled;
-        if (!wasTerminal && isTerminal) {
-            s.terminalBadOrSettledCount += 1;
+        if (!wasTerminal && isTerminal) s.terminalBadOrSettledCount += 1;
+        // Instant market §8 — a loan leaving the active set stops counting
+        // toward Lent (an Active <-> FallbackPending edge changes nothing).
+        LibMarketLedger.syncLoan(s, loan);
+        // #3720 — an integrator's public record counts a loan it brought that
+        // defaulted or was liquidated within 7 days of opening. Only the two
+        // edges that END a loan badly count: into Defaulted (a time-based
+        // default or a liquidation) and into InternalMatched (a match
+        // liquidation). Both are reachable only from the active set, so each
+        // loan counts at most once. Settled is NOT one of them: a repaid loan
+        // settles too, and Defaulted / InternalMatched -> Settled is the same
+        // bad end being claimed, already counted.
+        if (to == LibVaipakam.LoanStatus.Defaulted || to == LibVaipakam.LoanStatus.InternalMatched) {
+            LibIntegrator.onLoanBadEnd(loan);
         }
     }
 

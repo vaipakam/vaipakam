@@ -21,7 +21,7 @@ import { allowanceSteps } from '../tx/approval';
 import { allowanceMoved, approvalFlow } from '../tx/approvalFlow';
 import { cleanUpLeg } from '../tx/cleanUp';
 import type { LegOutcome } from '../tx/outcome';
-import { askThrough } from '../tx/simulate';
+import { askAfter } from '../tx/simulate';
 import { readValidUntil } from '../tx/deadline';
 import { useStoredValue, useTxNote } from '../tx/txStore';
 import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
@@ -136,7 +136,7 @@ export function RequestToRent({ draft, chain, own, meta, terms, onEdit, onClose 
       //    The deadline (#3412) is read from the chain's clock now, so the
       //    dry run and the write carry the same one.
       const validUntil = await readValidUntil(own);
-      const dry = await askThrough(own, (c) => c.simulateContract({ address: diamond, abi: CREATE_ABI, functionName: 'createOffer', args: [r.params, validUntil], account }));
+      const dry = await askAfter(own, since, (c, blockNumber) => c.simulateContract({ address: diamond, abi: CREATE_ABI, functionName: 'createOffer', args: [r.params, validUntil], account, blockNumber }));
       if (dry.kind === 'reverted') return stop(format('rentRequest.dryRunRefused', { reason: requestRefusal(dry.error, copy) }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
 

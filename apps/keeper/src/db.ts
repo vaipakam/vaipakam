@@ -244,19 +244,29 @@ export interface KeeperStepStatusRow {
 /**
  * Publish whether each step of a pass is armed, one row per (chain, pass,
  * step), replaced each time, in one batch. Shared database (migration 0098),
- * unfenced: a row states the flags this keeper read and the Diamond it serves,
- * so a reader can tell a row written for another deployment, and a fresh
- * Diamond resets the chain's rows, which the next publish restores.
+ * chain-scoped: a fresh Diamond resets the chain's rows, which the next
+ * publish restores. Each row is guarded in its statement (epochFence.ts), so
+ * a keeper still running against a retired Diamond cannot write that
+ * Diamond's armed state back after the indexer's reset.
  */
 export async function publishKeeperStepStatus(db: D1Database, rows: readonly KeeperStepStatusRow[]): Promise<void> {
   if (rows.length === 0) return;
-  const stmt = db.prepare(
-    `INSERT INTO keeper_step_status (chain_id, diamond, pass, step, armed, observed_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-     ON CONFLICT(chain_id, pass, step) DO UPDATE SET
-       diamond = excluded.diamond, armed = excluded.armed, observed_at = excluded.observed_at`,
+  const guarded = rows.map((r) => ({ r, guard: epochWriteGuard(r.chain_id) }));
+  const results = await db.batch(
+    guarded.map(({ r, guard }) =>
+      db
+        .prepare(
+          `INSERT INTO keeper_step_status (chain_id, diamond, pass, step, armed, observed_at)
+           SELECT ?, ?, ?, ?, ?, ? WHERE ${guard.where}
+           ON CONFLICT(chain_id, pass, step) DO UPDATE SET
+             diamond = excluded.diamond, armed = excluded.armed, observed_at = excluded.observed_at`,
+        )
+        .bind(r.chain_id, r.diamond.toLowerCase(), r.pass, r.step, r.armed, r.observed_at, ...guard.binds),
+    ),
   );
-  await db.batch(rows.map((r) => stmt.bind(r.chain_id, r.diamond.toLowerCase(), r.pass, r.step, r.armed, r.observed_at)));
+  results.forEach((result, i) =>
+    assertGuardedWriteLanded(result, `keeper_step_status for chain ${guarded[i]!.r.chain_id} ${guarded[i]!.r.pass}/${guarded[i]!.r.step}`),
+  );
 }
 
 // ─── Depth-tiered LTV — liquidity-confidence relay state ──────────────

@@ -133,12 +133,18 @@ const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<string, ActorRead
   ['SellerInterestPaid', arg('seller')],
   ['SellerInterestWithdrawn', arg('seller')],
   ['SellerInterestClaimClosed', arg('seller')],
-  // #2814 — an extension reserve is its depositor's own money, and they may
+  // #2814 / #3681 — a loan reserve (the payment reserve an extension draws
+  // first, or the collateral reserve) is its depositor's own money, and they may
   // no longer be a party to the loan (the borrower position moved on, or the
   // loan ended). Every step of it is filed under them, so the Claims page can
   // find the loans they hold a reserve on (`/activity?actor=…&kind=…`).
-  ['ExtendReserveFunded', arg('holder')],
-  ['ExtendReserveWithdrawn', arg('holder')],
+  ['LoanReserveFunded', arg('holder')],
+  ['LoanReserveWithdrawn', arg('holder')],
+  // #3681 — each run of a standing instruction draws the holder's reserve:
+  // filed under that holder, not under whoever ran it (the caller is a party).
+  ['InterestPaidFromReserve', arg('holder')],
+  ['DueRepaymentRun', arg('holder')],
+  ['CollateralTopUpRun', arg('holder')],
   ['ExtendChargeDrawn', arg('holder')],
   ['RepayPartialPeriodAdvanced', arg('advancedBy')],
   ['VPFIDepositedToVault', arg('user')],
@@ -205,8 +211,10 @@ const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<string, ActorRead
 
 /** The wallet one decoded event is filed under, or null for none. */
 export function activityActor(eventName: string, args: Record<string, unknown>): string | null {
+  // A Map lookup on a decoded event name: only the readers listed above can
+  // come back, and anything else names no actor.
   const read = ACTIVITY_ACTOR.get(eventName);
-  return read ? read(args) : null;
+  return typeof read === 'function' ? read(args) : null;
 }
 
 /** Every event kind filed under a wallet as its actor. */

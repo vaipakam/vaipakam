@@ -203,7 +203,8 @@ function borrowerCtx(over = {}) {
     headroom: HEADROOM,
     topUp: TOP_UP,
     bound: BOUND,
-    lifBps: 20,
+    lifTerms: { baseBps: 20n, baseTermDays: 30n, yearlyBps: 50n, yearDays: 365n },
+    termDays: 30n,
     treasuryFeeBps: 200n,
     clamped: true,
     graceEndDates: [new Date(Number(GRACE_END) * 1000).toLocaleDateString('en', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })],
@@ -313,7 +314,7 @@ describe('reviewTerms — the real loan-22 receipts', () => {
       'payoff permit maximum (wallet share at the last fillable moment)',
       'Permit2 approval note',
       'wallet top-up (payoff interest + LIF)',
-      'loan initiation fee (live LIF)',
+      'loan initiation fee (live term rule, at the new term)',
       'treasury cut (treasuryFeeBps)',
       'request lifetime',
       'wallet-steps note',
@@ -348,7 +349,12 @@ describe('reviewTerms — the real loan-22 receipts', () => {
 
   it('the borrower review is refused on a wrong payoff, fee or lifetime branch', () => {
     expect(compareBorrowerReceipt(BORROWER_ROWS, borrowerCtx({ payoffNow: 5_100_000_000_000_000n })).mismatches.length).toBeGreaterThan(0);
-    expect(compareBorrowerReceipt(BORROWER_ROWS, borrowerCtx({ lifBps: 30 })).mismatches).toHaveLength(1);
+    expect(
+      compareBorrowerReceipt(BORROWER_ROWS, borrowerCtx({ lifTerms: { baseBps: 30n, baseTermDays: 30n, yearlyBps: 50n, yearDays: 365n } })).mismatches,
+    ).toHaveLength(1);
+    // #3649: the same settings at a longer new term charge more than the
+    // base rate, so a review still printing 0.2% is refused.
+    expect(compareBorrowerReceipt(BORROWER_ROWS, borrowerCtx({ termDays: 60n })).mismatches.join()).toMatch(/loan initiation fee/);
     // Not clamped ⇒ the review should have said "30 days after posting".
     expect(compareBorrowerReceipt(BORROWER_ROWS, borrowerCtx({ clamped: false })).mismatches).toHaveLength(1);
     // No headroom ⇒ the growth disclosure must be absent, and a review

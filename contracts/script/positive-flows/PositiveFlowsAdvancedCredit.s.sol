@@ -604,6 +604,8 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsStaged {
         uint256 collateralFloor
     ) internal view returns (LibVaipakam.CreateOfferParams memory) {
         return LibVaipakam.CreateOfferParams({
+            integrator: address(0),
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: address(usdc),
             amount: amtMin,
@@ -648,6 +650,8 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsStaged {
         uint256 collateralAmount
     ) internal view returns (LibVaipakam.CreateOfferParams memory) {
         return LibVaipakam.CreateOfferParams({
+            integrator: address(0),
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Borrower,
             lendingAsset: address(usdc),
             amount: amount,
@@ -764,6 +768,8 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsStaged {
         internal view returns (LibVaipakam.CreateOfferParams memory)
     {
         return LibVaipakam.CreateOfferParams({
+            integrator: address(0),
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Borrower,
             lendingAsset: address(usdc),
             amount: LOAN_AMOUNT,

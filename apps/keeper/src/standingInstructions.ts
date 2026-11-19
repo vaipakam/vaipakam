@@ -142,6 +142,8 @@ export const SKIP_REASONS: ReadonlyMap<number, string> = new Map([
   [6, 'the platform or the asset is paused'],
   [7, "the borrower's account is locked"],
   [8, "the collateral has not yet moved to the new holder's vault"],
+  [9, 'the payment was attempted and a delivery refused it, so nothing moved'],
+  [10, "the reserve's owner is sanctions-flagged, so the top-up may not add collateral"],
 ]);
 
 /** `LibVaipakam.LoanStatus.Active`. */

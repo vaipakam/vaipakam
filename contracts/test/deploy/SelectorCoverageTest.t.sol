@@ -78,7 +78,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
     function test_DeployDiamond_RoutesEveryFacetSelector() public {
         _populateRoutedSet();
 
-        string[118] memory facets = cutFacetNames();
+        string[136] memory facets = cutFacetNames();
         uint256 missing;
         for (uint256 i; i < facets.length; ++i) {
             string memory name = facets[i];
@@ -108,7 +108,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
     ///         4-byte selector — such a collision makes `diamondCut`
     ///         revert and the Diamond undeployable.
     function test_NoSelectorCollisionAcrossFacets() public {
-        string[118] memory facets = cutFacetNames();
+        string[136] memory facets = cutFacetNames();
         uint256 collisions;
         for (uint256 i; i < facets.length; ++i) {
             collisions += _recordAndCountCollisions(facets[i]);
@@ -204,6 +204,8 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
         _addAll(_getDefaultedSelectors());
         _addAll(_getRiskSelectors());
         _addAll(_getClaimSelectors());
+        _addAll(_getClaimViewSelectors());
+        _addAll(_getLenderIntentViewSelectors());
         _addAll(_getAddCollateralSelectors());
         _addAll(_getTreasurySelectors());
         _addAll(_getEarlyWithdrawalSelectors());
@@ -317,6 +319,25 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
         _addAll(_getPrecloseOffsetSelectors());
         // #3410 — the loan clock's disclosure, split off LoanFacet.
         _addAll(_getLoanClockSelectors());
+        _addAll(_getMarketLedgerSelectors());
+        _addAll(_getInstantMarketSelectors());
+        _addAll(_getInstantFillSelectors());
+        _addAll(_getInstantTakeoverSelectors());
+        _addAll(_getOfferMaterializeSelectors());
+        _addAll(_getCollectionOfferSelectors());
+        _addAll(_getReadyBalanceSelectors());
+        _addAll(_getFeeLevelsSelectors());
+        // #3669 — the refused settlement leg host.
+        _addAll(_getSettlementLegSelectors());
+        // #3246 part 2 — the clawback host.
+        _addAll(_getRecoveryClawbackSelectors());
+        // #3685 — the new-loan cap host and collateral concentration.
+        _addAll(_getCollateralConcentrationSelectors());
+        _addAll(_getCollateralLienSelectors());
+        _addAll(_getStandingInstructionSelectors());
+        _addAll(_getIntegratorSelectors());
+        _addAll(_getStandingOfferCheckSelectors());
+        _addAll(_getReferralSelectors());
         // T-086 step 5 — `PrepayListingFacet` (executor↔diamond trust
         // boundary for Seaport prepay collateral sales). Selector
         // helper lives on `DeployDiamond.s.sol` like every other facet.

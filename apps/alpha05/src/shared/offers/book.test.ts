@@ -1,7 +1,7 @@
 import { getAddress } from 'viem';
 import { describe, expect, it } from 'vitest';
 import { IndexerUnavailable, type IndexerClient } from '../reads/world/indexerClient';
-import { bookRowFrom, inBook, lapsed, readBookPage, type BookRow } from './book';
+import { bookRowFrom, inBook, lapsed, makerTermsOf, readBookPage, type BookRow } from './book';
 import { BORROWER, LENDER, TLIQ, WETH } from './testOffer';
 
 const ZERO = '0x0000000000000000000000000000000000000000';
@@ -113,5 +113,16 @@ describe('the offer book', () => {
     expect(lapsed({ expiresAt: 0n }, 2_000_000_000)).toBe(false);
     expect(lapsed({ expiresAt: 100n }, 100)).toBe(true);
     expect(lapsed({ expiresAt: 101n }, 100.9)).toBe(false);
+  });
+});
+
+describe('makerTermsOf', () => {
+  it("reads the index's standing and never guesses one it did not give", () => {
+    expect(makerTermsOf({ makerTerms: { state: 'current', acceptedVersion: 1 } })).toBe('current');
+    expect(makerTermsOf({ makerTerms: { state: 'not-current', reason: 'no-acceptance' } })).toBe('not-current');
+    expect(makerTermsOf({ makerTerms: { state: 'exempt' } })).toBe('exempt');
+    expect(makerTermsOf({ makerTerms: { state: 'no-terms-in-force' } })).toBe('none');
+    expect(makerTermsOf({ makerTerms: { state: 'unknown' } })).toBe('unknown');
+    expect(makerTermsOf({})).toBe('unknown');
   });
 });

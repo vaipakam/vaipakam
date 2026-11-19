@@ -26,9 +26,9 @@
  *
  *    Codex review round 1 corrected an overstatement here: I wrote that
  *    a hash rotation at an UNCHANGED version re-prompts. It cannot be
- *    reached — `setCurrentTos` reverts unless `newVersion >
- *    currentTosVersion` (`LegalFacet.sol:140`), so governance cannot
- *    rotate a hash in place. The contract's hash comparison is defence
+ *    reached — `publishTos` / `announceTos` refuse any version number
+ *    not above every number used before (`LegalFacet._requireNewNumber`),
+ *    so governance cannot rotate a hash in place. The contract's hash comparison is defence
  *    on the bump path, not a same-version mechanism.
  * 2. Staleness is TanStack Query's, not a hand-rolled sequence counter.
  *    The retired hook carried `reqSeq` (#828 r2) so a read resolving
@@ -249,7 +249,7 @@ export function useTosAcceptance(): TosAcceptanceState {
     retry: false,
     queryFn: async ({ signal }) => {
       // Codex review round 1 P2: both calls are PINNED to one block.
-      // Unpinned, `setCurrentTos` landing between them returns
+      // Unpinned, a `publishTos` landing between them returns
       // `hasAcceptedCurrentTerms: true` for the old version alongside
       // the NEW version and hash — a combination that opens the gate on
       // terms the wallet never accepted, and displays the new text
@@ -314,8 +314,8 @@ export function useTosAcceptance(): TosAcceptanceState {
       //
       // Sound because on-chain acceptance is write-only —
       // `LegalFacet.acceptTerms` records and nothing clears it, and
-      // `setCurrentTos` refuses any version that does not strictly
-      // increase. So at a matching version, `false` from a node can
+      // `publishTos` / `announceTos` refuse any version that does not
+      // strictly increase. So at a matching version, `false` from a node can
       // only mean that node is behind.
       // Version AND hash (#2004 round 4 P1) — matching the number
       // alone would let a pin from a reorged-out branch correct a

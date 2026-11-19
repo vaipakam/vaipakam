@@ -257,6 +257,25 @@ export const LABELLED_KNOB_GETTERS = [
     notPublished: { feesAccrued: 'a running total of fees billed, not a setting' },
     setterEvents: ['NotificationFeeSet'],
   },
+  // #3649 — the loan initiation fee's term rule, effective values (the
+  // defaults when governance has set none): the base rate applies up to
+  // `baseTermDays`, rises in a straight line to `yearlyBps` at `yearDays`,
+  // and a longer term pays `yearlyBps` a year, pro rata. Published so a
+  // reader can state the fee for any term, not only the base rate.
+  {
+    kind: 'tuple',
+    getter: 'getLoanInitiationFeeTerms',
+    host: 'feeLevelsFacet',
+    fields: {
+      baseTermDays: 'lifBaseTermDays',
+      yearlyBps: 'lifYearlyBps',
+      yearDays: 'lifYearDays',
+    },
+    notPublished: {
+      baseBps: 'the base rate, already published as the config bundle\'s loanInitiationFeeBps',
+    },
+    setterEvents: ['LoanInitiationFeeTermsSet'],
+  },
   // The loan-default grace schedule. An empty list means none is set and
   // the compile-time default schedule applies.
   {

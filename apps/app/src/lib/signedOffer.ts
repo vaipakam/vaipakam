@@ -5,7 +5,7 @@
  * Mirrors the indexer's `apps/indexer/src/signedOfferEip712.ts` (which in
  * turn mirrors `contracts/src/libraries/LibSignedOffer.sol`):
  *
- *  - `SIGNED_OFFER_TYPES.SignedOffer` lists the 35 fields in the SAME
+ *  - `SIGNED_OFFER_TYPES.SignedOffer` lists the 36 fields in the SAME
  *    order as the Solidity struct / `SIGNED_OFFER_TYPEHASH` type string.
  *    Field order is load-bearing — any drift silently changes every hash
  *    and breaks both the maker's signature and the taker's replay.
@@ -20,112 +20,42 @@
  * hooks) so vitest can pin the wire mapping, the remaining-size math and
  * the ladder-merge shape deterministically.
  */
-import { hashStruct, type Address, type Hex } from 'viem';
+import { hashStruct, type Hex } from 'viem';
 import type { IndexedOffer, IndexedSignedOffer } from '../data/indexer';
 import type { CreateOfferPayload } from './offerSchema';
+import { lifRateBpsUp, type LifTerms } from './initiationFee';
 import {
   SIGNED_OFFER_FIELDS,
   SIGNED_OFFER_FIELD_NAMES as SIGNED_OFFER_WIRE_FIELD_NAMES,
+  NO_COLLECTION,
   placementProblem,
   type SignedOfferPlacement,
+  type SignedOrderWire,
 } from '@vaipakam/lib/signedOfferWire';
+import { signedOfferMessage, type SignedOfferMessage } from '@vaipakam/lib/signedOfferSet';
 
-/** The 35-field SignedOffer typed-data description — struct order EXACTLY
+/** The 46-field SignedOffer typed-data description — struct order EXACTLY
  *  as `LibSignedOffer.SignedOffer` declares it (enums ⇒ uint8, GTT ⇒
  *  uint64). The list is `@vaipakam/lib/signedOfferWire`'s, the same one the
  *  indexer's ingest gate derives its typehash from (#3327: one statement,
  *  where the app used to carry its own copy). */
 export const SIGNED_OFFER_TYPES = { SignedOffer: SIGNED_OFFER_FIELDS } as const;
 
-/** The 35 field names in canonical struct order — the POST body /
+/** The 46 field names in canonical struct order — the POST body /
  *  `order_json` key order the indexer stores and replays. */
 export const SIGNED_OFFER_FIELD_NAMES: readonly string[] = SIGNED_OFFER_WIRE_FIELD_NAMES;
 
 /** The wire shape the indexer's POST/GET routes speak: every uint as a
- *  decimal string, addresses lowercase 0x-40-hex, bools as booleans.
- *  Takers replay this verbatim into `acceptSignedOffer`. */
-export interface SignedOrderWire {
-  offerType: string;
-  lendingAsset: string;
-  amount: string;
-  amountMax: string;
-  interestRateBps: string;
-  interestRateBpsMax: string;
-  collateralAsset: string;
-  collateralAmount: string;
-  collateralAmountMax: string;
-  durationDays: string;
-  assetType: string;
-  collateralAssetType: string;
-  tokenId: string;
-  quantity: string;
-  collateralTokenId: string;
-  collateralQuantity: string;
-  prepayAsset: string;
-  allowsPartialRepay: boolean;
-  allowsPrepayListing: boolean;
-  allowsParallelSale: boolean;
-  expiresAt: string;
-  fillMode: string;
-  periodicInterestCadence: string;
-  refinanceTargetLoanId: string;
-  useFullTermInterest: boolean;
-  /** #1949 — the maker's Full tariff opt-in, carried on the signed artifact. */
-  creatorFull: boolean;
-  creatorMaxCStar: string;
-  creatorAllowFullDowngrade: boolean;
-  /** #3327 — the highest protocol fees (bps) the maker accepts at fill. */
-  maxTreasuryFeeBps: string;
-  maxLoanInitiationFeeBps: string;
-  /** #3327 — the one account allowed to take the order (zero = anyone). */
-  allowedTaker: string;
-  /** #3327 — the co-signer whose fresh signature each fill needs (zero = none). */
-  coSigner: string;
-  signer: string;
-  nonce: string;
-  deadline: string;
-}
+ *  decimal string, addresses lowercase 0x-40-hex, bytes32 lowercase hex,
+ *  bools as booleans. Takers replay this verbatim into `acceptSignedOffer`.
+ *  The type is `@vaipakam/lib/signedOfferWire`'s, derived from the one
+ *  field list. */
+export type { SignedOrderWire };
 
 /** Wire → the bigint-typed message viem's typed-data encoder (and the
  *  `acceptSignedOffer` / `cancelSignedOffer` ABI tuple) expects. */
-export function signedOfferTypedMessage(order: SignedOrderWire) {
-  return {
-    offerType: Number(order.offerType),
-    lendingAsset: order.lendingAsset as Address,
-    amount: BigInt(order.amount),
-    amountMax: BigInt(order.amountMax),
-    interestRateBps: BigInt(order.interestRateBps),
-    interestRateBpsMax: BigInt(order.interestRateBpsMax),
-    collateralAsset: order.collateralAsset as Address,
-    collateralAmount: BigInt(order.collateralAmount),
-    collateralAmountMax: BigInt(order.collateralAmountMax),
-    durationDays: BigInt(order.durationDays),
-    assetType: Number(order.assetType),
-    collateralAssetType: Number(order.collateralAssetType),
-    tokenId: BigInt(order.tokenId),
-    quantity: BigInt(order.quantity),
-    collateralTokenId: BigInt(order.collateralTokenId),
-    collateralQuantity: BigInt(order.collateralQuantity),
-    prepayAsset: order.prepayAsset as Address,
-    allowsPartialRepay: order.allowsPartialRepay,
-    allowsPrepayListing: order.allowsPrepayListing,
-    allowsParallelSale: order.allowsParallelSale,
-    expiresAt: BigInt(order.expiresAt),
-    fillMode: Number(order.fillMode),
-    periodicInterestCadence: Number(order.periodicInterestCadence),
-    refinanceTargetLoanId: BigInt(order.refinanceTargetLoanId),
-    useFullTermInterest: order.useFullTermInterest,
-    creatorFull: order.creatorFull,
-    creatorMaxCStar: BigInt(order.creatorMaxCStar),
-    creatorAllowFullDowngrade: order.creatorAllowFullDowngrade,
-    maxTreasuryFeeBps: Number(order.maxTreasuryFeeBps),
-    maxLoanInitiationFeeBps: Number(order.maxLoanInitiationFeeBps),
-    allowedTaker: order.allowedTaker as Address,
-    coSigner: order.coSigner as Address,
-    signer: order.signer as Address,
-    nonce: BigInt(order.nonce),
-    deadline: BigInt(order.deadline),
-  };
+export function signedOfferTypedMessage(order: SignedOrderWire): SignedOfferMessage {
+  return signedOfferMessage(order);
 }
 
 /** The order hash — the EIP-712 STRUCT hash (`hashStruct`), matching
@@ -298,6 +228,9 @@ export function wireFromCreatePayload(
     periodicInterestCadence: String(payload.periodicInterestCadence),
     refinanceTargetLoanId: payload.refinanceTargetLoanId.toString(),
     useFullTermInterest: payload.useFullTermInterest,
+    lifecycleFlex: '0',
+    // #3682 — this app names no integrator.
+    integrator: ZERO_ADDRESS,
     creatorFull: makerFull?.full ?? false,
     creatorMaxCStar: (makerFull?.maxCStar ?? 0n).toString(),
     creatorAllowFullDowngrade: makerFull?.allowDowngrade ?? false,
@@ -310,6 +243,9 @@ export function wireFromCreatePayload(
     signer: signer.toLowerCase(),
     nonce: nonce.toString(),
     deadline: deadline.toString(),
+    // The app signs ordinary orders only; collection offers are posted
+    // on-chain (#3328).
+    ...NO_COLLECTION,
   };
 }
 
@@ -317,7 +253,7 @@ export function wireFromCreatePayload(
  * Collapse a LENDER payload to the single-value shape a signed post must
  * carry to be consumable (#1145 round-2 Codex P2).
  *
- * `OfferMatchFacet._vetSignedOfferForMatch` requires a CONSTANT
+ * `SignedOfferFacet._vetSignedOfferForMatch` requires a CONSTANT
  * collateral:principal ratio across the signed range before it will
  * materialize any slice:
  *
@@ -369,7 +305,9 @@ export function collapseForSignedPost(
  *   - `coSigner`: the order needs a fresh co-signature per fill, which this
  *     app cannot request yet (the fill would be refused without it);
  *   - `feeAboveCap`: a live protocol fee is above the maker's cap (only
- *     judged when `fees` is given);
+ *     judged when `fees` is given). The initiation fee is term-scaled
+ *     (#3649): its cap is compared, as the contract does, with the rate at
+ *     the order's term rounded up;
  *   - `cancelled`: the nonce is below the signer's cancel floor (only
  *     judged when `cancelFloor` is given). */
 export type SignedTakerRefusal = 'taker' | 'coSigner' | 'feeAboveCap' | 'cancelled';
@@ -378,7 +316,7 @@ export function signedOrderTakerRefusal(
   order: SignedOrderWire,
   taker: string | undefined,
   live?: {
-    fees?: { treasuryFeeBps: number; loanInitiationFeeBps: number };
+    fees?: { treasuryFeeBps: number; lifTerms: LifTerms };
     cancelFloor?: bigint;
   },
 ): SignedTakerRefusal | null {
@@ -390,7 +328,8 @@ export function signedOrderTakerRefusal(
   if (
     live?.fees !== undefined &&
     (live.fees.treasuryFeeBps > Number(order.maxTreasuryFeeBps) ||
-      live.fees.loanInitiationFeeBps > Number(order.maxLoanInitiationFeeBps))
+      lifRateBpsUp(live.fees.lifTerms, Number(order.durationDays)) >
+        Number(order.maxLoanInitiationFeeBps))
   ) {
     return 'feeAboveCap';
   }

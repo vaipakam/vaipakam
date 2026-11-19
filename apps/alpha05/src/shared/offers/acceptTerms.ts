@@ -61,6 +61,7 @@ export const ACCEPT_TERMS_TYPES = {
     { name: 'acceptorFull', type: 'bool' },
     { name: 'acceptorMaxCStar', type: 'uint256' },
     { name: 'acceptorAllowFullDowngrade', type: 'bool' },
+    { name: 'integrator', type: 'address' },
   ],
 } as const;
 
@@ -99,6 +100,10 @@ export interface StoredOffer {
   refinanceTargetLoanId: bigint;
   parallelSaleOrderHash: Hex;
   periodicInterestCadence: number;
+  /** A lender offer's "either" marks (#3621): bit 1 = partial repay either
+   *  way, bit 2 = the prepay listing either way. Not in the acceptance
+   *  signature: a direct accept takes the stored options as they are. */
+  lifecycleFlex: number;
   expiresAt: bigint;
   accepted: boolean;
   /** Whether the creator opted into the Full fee tariff (OFF-22). Not in
@@ -141,6 +146,8 @@ export type AcceptTermsMessage = {
   acceptorFull: boolean;
   acceptorMaxCStar: bigint;
   acceptorAllowFullDowngrade: boolean;
+  /** The integrator named for a fee share (#3682); this app names none. */
+  integrator: Hex;
 };
 
 /** A direct offer's key: the offer id, ABI-encoded and hashed. */
@@ -218,6 +225,7 @@ export function buildAcceptTerms(o: StoredOffer, ctx: AcceptContext): AcceptTerm
     acceptorFull: false,
     acceptorMaxCStar: 0n,
     acceptorAllowFullDowngrade: false,
+    integrator: ZERO_ADDRESS,
   };
 }
 

@@ -22,6 +22,7 @@
 import { decodeFunctionData, encodeAbiParameters, keccak256, toFunctionSelector } from 'viem';
 
 import { is, optional } from './expectedPayload.mjs';
+import { lifFeeOf } from './initiationFeeRule.mjs';
 
 export const ZERO_HASH = `0x${'0'.repeat(64)}`;
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
@@ -162,12 +163,15 @@ export function refinancePayoffAt(l, asOf) {
  *     remaining-term fields) at `asOf + horizonSec` — the latest moment the
  *     drive could plausibly accept, so a whole-day accrual step between the
  *     preflight and the accept is reserved for too.
- * The LIF uses the LIVE rate (`lifBps`, read at the pinned block).
+ * The LIF is the fee the NEW loan is charged: the live term-rule settings
+ * (`lifTerms`, read at the pinned block) at the new loan's term
+ * (`termDays`), never the base rate alone (#3649) — a new term past the
+ * base term is charged more.
  */
-export function borrowerReserve({ loan, viewDue, asOf, horizonSec, lifBps }) {
+export function borrowerReserve({ loan, viewDue, asOf, horizonSec, lifTerms, termDays }) {
   const mirror = refinancePayoffAt(loan, asOf + horizonSec);
   const payoff = BigInt(viewDue) > mirror ? BigInt(viewDue) : mirror;
-  const lif = (loan.principal * BigInt(lifBps)) / 10_000n;
+  const lif = lifFeeOf(loan.principal, lifTerms, termDays);
   const interestShare = payoff - loan.principal;
   return { payoff, interestShare, lif, reserve: interestShare + lif };
 }
@@ -475,6 +479,8 @@ export function expectedCreateOfferCall({ loan, loanId, rateBps, days, anchor })
         allowsParallelSale: false,
         refinanceTargetLoanId: loanId,
         useFullTermInterest: loan.useFullTermInterest,
+        lifecycleFlex: 0, // #3621
+        integrator: '0x0000000000000000000000000000000000000000', // #3682: no integrator named
       },
       validUntil: afterAnchor('transaction deadline', anchor, TX_DEADLINE_SEC),
     },
@@ -570,6 +576,7 @@ export function expectedAcceptTerms({
     acceptorFull: false,
     acceptorMaxCStar: 0n,
     acceptorAllowFullDowngrade: false,
+    integrator: '0x0000000000000000000000000000000000000000', // #3682
   };
 }
 

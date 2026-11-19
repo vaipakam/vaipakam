@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {PriceGuardState} from "../src/oracle/PriceGuardState.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
@@ -64,7 +65,7 @@ contract SequencerOutageLoanClockTest is SetupTest {
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
     function _wireFeed() internal {
-        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.SequencerFeed, address(seqFeed));
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.SequencerFeed, address(seqFeed));
     }
 
     function _params(LibVaipakam.PeriodicInterestCadence cadence, uint256 durationDays, uint256 collateral)
@@ -73,6 +74,8 @@ contract SequencerOutageLoanClockTest is SetupTest {
         returns (LibVaipakam.CreateOfferParams memory)
     {
         return LibVaipakam.CreateOfferParams({
+            integrator: address(0),
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: mockERC20,
             amount: PRINCIPAL,

@@ -2,19 +2,19 @@ import { describe, expect, it } from 'vitest';
 import { BaseError, ContractFunctionRevertedError, toFunctionSelector, type Abi, type AbiFunction } from 'viem';
 import { DIAMOND_ABI_VIEM, PositionNFTABI } from '@vaipakam/contracts/abis';
 import {
-  LEGACY_DIAMOND_NFT_ABI,
   POSITION_ERC721_ABI,
+  POSITION_NFT_INDEXED_EVENTS,
   POSITION_ROUTE,
   POSITION_ROUTE_ABI,
   positionNftSurface,
   positionNftSurfaceForDiamond,
+  PositionNftMissingError,
   PositionRetiredError,
   positionHolderCalls,
   positionHolderFrom,
   readPositionOwner,
   positionRetiredCall,
   positionRouteCall,
-  routeBlocksTransfer,
 } from './positionNft.mjs';
 import { readPositionHolder, readPositionRoute } from './positionNftReads';
 
@@ -24,44 +24,37 @@ const fns = (abi: Abi) => abi.filter((e): e is AbiFunction => e.type === 'functi
 const selectors = (abi: Abi) => new Set(fns(abi).map((f) => toFunctionSelector(f)));
 
 describe('positionNftSurface', () => {
-  it('reads standalone mode from a record that lists positionNFT', () => {
-    const s = positionNftSurface({ diamond: DIAMOND, positionNFT: NFT });
-    expect(s).toEqual({ mode: 'standalone', nft: NFT, diamond: DIAMOND });
-    expect(routeBlocksTransfer(s)).toBe(false);
+  it('reads the PositionNFT and the Diamond from the record', () => {
+    expect(positionNftSurface({ diamond: DIAMOND, positionNFT: NFT })).toEqual({ nft: NFT, diamond: DIAMOND });
   });
 
-  it('falls back to the Diamond (legacy) when the record has no positionNFT', () => {
-    const s = positionNftSurface({ diamond: DIAMOND });
-    expect(s).toEqual({ mode: 'legacy', nft: DIAMOND, diamond: DIAMOND });
-    expect(routeBlocksTransfer(s)).toBe(true);
+  it('refuses a record with no positionNFT, naming the chain and Diamond, never falling back', () => {
+    expect(() => positionNftSurface({ diamond: DIAMOND, chainId: 84532 })).toThrow(PositionNftMissingError);
+    expect(() => positionNftSurface({ diamond: DIAMOND, chainId: 84532 })).toThrow(/chain 84532.*0x0+d1/);
+    expect(() => positionNftSurface({ diamond: DIAMOND, positionNFT: '' })).toThrow(PositionNftMissingError);
   });
 
   it('finds a record by its Diamond, case-insensitively, and says when none does', () => {
     const all = { 1: { diamond: DIAMOND.toUpperCase().replace('0X', '0x'), positionNFT: NFT } };
-    expect(positionNftSurfaceForDiamond(DIAMOND, all)?.mode).toBe('standalone');
+    expect(positionNftSurfaceForDiamond(DIAMOND, all)?.nft).toBe(NFT);
     expect(positionNftSurfaceForDiamond(NFT, all)).toBeNull();
+    expect(() => positionNftSurfaceForDiamond(DIAMOND, { 1: { diamond: DIAMOND } })).toThrow(PositionNftMissingError);
   });
 });
 
 describe('call builders', () => {
-  const standalone = positionNftSurface({ diamond: DIAMOND, positionNFT: NFT });
-  const legacy = positionNftSurface({ diamond: DIAMOND });
+  const surface = positionNftSurface({ diamond: DIAMOND, positionNFT: NFT });
 
-  it('aims ownerOf at the token contract', () => {
-    expect(positionHolderCalls(standalone, 7n).owner.address).toBe(NFT);
-    expect(positionHolderCalls(legacy, 7n).owner.address).toBe(DIAMOND);
-    expect(positionHolderCalls(legacy, 7n).retired).toBeNull();
+  it('aims ownerOf at the PositionNFT and the retirement read at the Diamond', () => {
+    const calls = positionHolderCalls(surface, 7n);
+    expect(calls.owner.address).toBe(NFT);
+    expect(calls.retired.address).toBe(DIAMOND);
+    expect(calls.retired.functionName).toBe('isPositionRetired');
   });
 
-  it('reads the route from the Diamond under each mode’s name', () => {
-    expect(positionRouteCall(standalone, 7).functionName).toBe('positionRoute');
-    expect(positionRouteCall(legacy, 7).functionName).toBe('positionLock');
-    expect(positionRouteCall(legacy, 7).address).toBe(DIAMOND);
-  });
-
-  it('has a retirement read only in standalone mode', () => {
-    expect(positionRetiredCall(standalone, 1)?.functionName).toBe('isPositionRetired');
-    expect(positionRetiredCall(legacy, 1)).toBeNull();
+  it('reads the route from the Diamond', () => {
+    expect(positionRouteCall(surface, 7)).toMatchObject({ address: DIAMOND, functionName: 'positionRoute', args: [7n] });
+    expect(positionRetiredCall(surface, 1)).toMatchObject({ address: DIAMOND, functionName: 'isPositionRetired' });
   });
 });
 
@@ -76,22 +69,18 @@ describe('fragments against the generated ABIs', () => {
     for (const f of fns(POSITION_ROUTE_ABI)) expect(have.has(toFunctionSelector(f)), f.name).toBe(true);
   });
 
-  it('the frozen legacy functions are no longer on the generated Diamond ABI', () => {
-    const have = selectors(DIAMOND_ABI_VIEM as Abi);
-    for (const f of fns(LEGACY_DIAMOND_NFT_ABI)) expect(have.has(toFunctionSelector(f)), f.name).toBe(false);
+  it('indexes exactly the PositionNFT ERC-721 events', () => {
+    expect(POSITION_NFT_INDEXED_EVENTS.map((e) => (e as { name: string }).name)).toEqual([
+      'Transfer',
+      'Approval',
+      'ApprovalForAll',
+    ]);
   });
 
-  it('pins the legacy selectors the old Diamond routed', () => {
-    const got = Object.fromEntries(fns(LEGACY_DIAMOND_NFT_ABI).map((f) => [`${f.name}/${f.inputs.length}`, toFunctionSelector(f)]));
-    expect(got['ownerOf/1']).toBe('0x6352211e');
-    expect(got['positionLock/1']).toBe(toFunctionSelector('function positionLock(uint256)'));
-    expect(got['queuePositionTransfer/2']).toBe(toFunctionSelector('function queuePositionTransfer(uint256,address)'));
-    expect(got['getPendingTransferIds/1']).toBe(toFunctionSelector('function getPendingTransferIds(address)'));
-  });
-
-  it('keeps the route ordinals the two enums share', () => {
+  it('keeps the route ordinals of LibPositionNFT.RouteReason', () => {
     expect(POSITION_ROUTE.EarlyWithdrawalSale).toBe(2);
     expect(POSITION_ROUTE.SwapToRepayIntent).toBe(4);
+    expect(Object.values(POSITION_ROUTE)).not.toContain(5);
   });
 });
 
@@ -129,12 +118,14 @@ describe('reads', () => {
     expect(seen).toEqual([['ownerOf', 77n], ['isPositionRetired', 77n]]);
     expect(await readPositionOwner(client({ ownerOf: NFT, isPositionRetired: false }), s, 9n)).toBe(NFT);
     expect(positionHolderFrom(NFT, true)).toBe('gone');
-    expect(positionHolderFrom(NFT, undefined)).toBe(NFT);
+    expect(positionHolderFrom(NFT, false)).toBe(NFT);
   });
 
-  it('a legacy ownerOf revert reads as gone; a transport failure throws', async () => {
-    const s = positionNftSurface({ diamond: DIAMOND });
-    expect(await readPositionHolder(client({ ownerOf: revert() }), s, 1n)).toBe('gone');
-    await expect(readPositionHolder(client({ ownerOf: new Error('fetch failed') }), s, 1n)).rejects.toThrow('fetch failed');
+  it('an ownerOf revert reads as gone; a transport failure throws', async () => {
+    const s = positionNftSurface({ diamond: DIAMOND, positionNFT: NFT });
+    expect(await readPositionHolder(client({ ownerOf: revert(), isPositionRetired: false }), s, 1n)).toBe('gone');
+    await expect(
+      readPositionHolder(client({ ownerOf: new Error('fetch failed'), isPositionRetired: false }), s, 1n),
+    ).rejects.toThrow('fetch failed');
   });
 });

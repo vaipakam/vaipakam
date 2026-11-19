@@ -69,6 +69,7 @@ import {
   readPayoffQuote,
 } from '../contracts/refinancePayoffPermit';
 import { useProtocolFees } from '../data/fees';
+import { formatLifRate } from '../lib/initiationFee';
 import {
   REQUEST_WINDOW_DAYS,
   checkRefinanceRequest,
@@ -178,6 +179,10 @@ export function RefinanceFlow({
   // `keepPreviousData` the figures on screen can belong to an older block
   // than `chainNow`, and the send must check — and post — the request
   // THOSE figures describe.
+  // The request's term: the initiation fee is sized at it (#3649).
+  const durationDays = /^\d+$/.test(durationInput)
+    ? parseInt(durationInput, 10)
+    : null;
   const quoteQuery = useQuery({
     queryKey: [
       'refinancePayoffQuote',
@@ -186,9 +191,17 @@ export function RefinanceFlow({
       String(chainNow),
       String(graceSec),
       String(live.readAtTimestamp),
-      fees.loanInitiationFeeBps,
+      fees.lifTerms,
+      durationDays,
     ],
-    enabled: Boolean(publicClient && walletChain) && graceReady,
+    // #3649 — the wallet's share depends on the initiation fee at the
+    // request's term, so no figure is quoted before the live fee rule is
+    // read and a term is entered.
+    enabled:
+      Boolean(publicClient && walletChain) &&
+      graceReady &&
+      fees.lifTerms !== null &&
+      durationDays !== null,
     placeholderData: keepPreviousData,
     queryFn: async () => {
       const requestExpiry = chainNow + REQUEST_WINDOW_DAYS * 86_400n;
@@ -204,7 +217,8 @@ export function RefinanceFlow({
         // The request asks for the old loan's principal
         // (toRefinanceOfferPayload).
         requestAmount: live.principal,
-        loanInitiationFeeBps: fees.loanInitiationFeeBps,
+        lifTerms: fees.lifTerms!,
+        termDays: durationDays!,
       });
       return { ...q, requestExpiry };
     },
@@ -235,14 +249,16 @@ export function RefinanceFlow({
   const expiryGraceClamped = graceReady && graceEndTs + 1n < reviewedExpiry;
 
   const rateBps = isPositiveDecimal(rateInput) ? percentToBps(rateInput) : null;
-  const durationDays = /^\d+$/.test(durationInput)
-    ? parseInt(durationInput, 10)
-    : null;
   const durationValid =
     durationDays !== null &&
     durationDays >= 1 &&
     durationDays <= fees.maxOfferDurationDays;
   const rateValid = rateBps !== null && rateBps > 0 && rateBps <= MAX_INTEREST_BPS;
+
+  // #3649 — the initiation fee's rate at the REQUEST's term (the new
+  // loan's), from the live rule; '…' until it is read.
+  const lifPct =
+    fees.lifTerms && durationDays !== null ? formatLifRate(fees.lifTerms, durationDays) : '…';
 
   const sym = principalMeta.symbol;
   const dec = principalMeta.decimals;
@@ -265,7 +281,7 @@ export function RefinanceFlow({
     payoffBound,
     walletTopUp,
     payoffHeadroom,
-    fees.loanInitiationFeeBps,
+    lifPct,
     fees.treasuryFeeBps,
     graceReady,
     expiryGraceClamped,
@@ -371,12 +387,12 @@ export function RefinanceFlow({
       // receipt's figures were quoted at, so the bound below is compared
       // at the same deadline, and the request posts with that expiry. A
       // review too old in chain time is refused there (re-review).
-      if (!quote) throw new Error(copy.match.termsChanged);
+      if (!quote || !fees.lifTerms) throw new Error(copy.match.termsChanged);
       const plan = await checkRefinanceRequest(
         { publicClient, diamond: walletChain.diamondAddress, holder: address },
         row,
         { rateBps, durationDays },
-        fees,
+        { ...fees, lifTerms: fees.lifTerms },
         { requestExpiry: quote.requestExpiry },
       );
       if (plan.kind === 'refused') {
@@ -811,7 +827,7 @@ export function RefinanceFlow({
                     : ''
                 }${copy.refinance.walletNote(topUpStr)}`,
                 youCanLose: `${copy.refinance.noGuarantee} ${copy.refinance.shortIsSafe}`,
-                fees: `${copy.fees.borrowerLIF(formatBpsAsPercent(fees.loanInitiationFeeBps))} ${copy.refinance.feesTreasuryNote(formatBpsAsPercent(fees.treasuryFeeBps))}`,
+                fees: `${copy.fees.borrowerLIF(lifPct)} ${copy.refinance.feesTreasuryNote(formatBpsAsPercent(fees.treasuryFeeBps))}`,
                 whenThisEnds: `${statements.whenEnds} ${copy.refinance.guardrailNote}`,
               }}
             >

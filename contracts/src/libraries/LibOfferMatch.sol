@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {OfferPriceGuardFacet} from "../facets/OfferPriceGuardFacet.sol";
+import {LibOfferPriceGuard} from "./LibOfferPriceGuard.sol";
 import {LibOfferAdmission} from "./LibOfferAdmission.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibTiming} from "./LibTiming.sol";
@@ -11,7 +13,7 @@ import {LibAutoRefinanceCheck} from "./LibAutoRefinanceCheck.sol";
 import {LibAuth} from "./LibAuth.sol";
 import {LibPausable} from "./LibPausable.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
-import {OfferPreviewFacet} from "../facets/OfferPreviewFacet.sol";
+import {RiskPreviewFacet} from "../facets/RiskPreviewFacet.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {LibIntentTerms} from "./LibIntentTerms.sol";
 
@@ -106,7 +108,15 @@ library LibOfferMatch {
         // reverts `LibTiming.OfferTermsTooFresh(offerId, readyAt)`. Transient:
         // the pair becomes matchable on its own a few seconds later. Appended
         // last to keep every prior ordinal ABI-stable.
-        TermsTooFresh
+        TermsTooFresh,
+        // #3328 — the lender offer is a collection offer, which fills only
+        // through `CollectionOfferFacet`. `matchOffers` reverts
+        // `CollectionParentNotFillable(lenderOfferId)`. Appended last.
+        CollectionParent,
+        // #3734 — a party of the loan has not accepted the Terms in force
+        // (`LibTerms.TermsNotAccepted`); `LegalFacet.termsBlocker` names it.
+        // Reported by the match and intent previews. Appended.
+        TermsNotAccepted
     }
 
     /// @notice Structured return from `previewMatch`. Bots check
@@ -183,7 +193,16 @@ library LibOfferMatch {
         // after the intent's lend-until time (`LenderIntentPastLendUntil`).
         // Checked right after `DurationTooLong`, where `matchIntent` checks it.
         // APPENDED.
-        PastLendUntil
+        PastLendUntil,
+        // The intent slot's calm-price check refuses the fill
+        // (`OfferPriceGuardFacet.requireIntentPairCalm`): a checkpoint for one
+        // of the last two hours is missing, the pair moved past the calm
+        // bound, or a price cannot be read. Checked right after
+        // `PastLendUntil` and the lifecycle rule, where `matchIntent` checks
+        // it. APPENDED.
+        PairNoCheckpoint,
+        PairNotCalm,
+        PairUnpriced
     }
 
     /// @notice Structured outcome of `RiskPreviewFacet.previewIntent`. `ok` is
@@ -237,17 +256,20 @@ library LibOfferMatch {
         return true;
     }
 
-    /// @notice The 1% match-fee BPS slice of any totalFee. Pure.
+    /// @notice The matcher's share (default 1%) of `totalFee`.
     /// @dev    The LIF is charged in the lending asset at `_acceptOffer`
     ///         and split there; this is the single source of truth for
-    ///         the 99/1 split so its semantics never drift between call
+    ///         the matcher's rate so its semantics never drift between call
     ///         sites. (The VPFI path that deferred the split to settlement
-    ///         was removed in #1980.)
+    ///         was removed in #1980.) #3649 stage 3 — the caller passes the
+    ///         part of the fee ABOVE the treasury floor
+    ///         (`LibFeeFloor.aboveFloor`): the matcher is paid from the
+    ///         reserve's part, never from the treasury's floor.
     function matcherShareOf(uint256 totalFee) internal view returns (uint256) {
         // Reads governance-tunable BPS from storage so the kickback
         // can be dialed without a contract upgrade. Falls back to
         // LIF_MATCHER_FEE_BPS (100 = 1%) when unset; capped at 50%
-        // by the setter (`ConfigFacet.setLifMatcherFeeBps`).
+        // by the setter (`FeeLevelsFacet.setLifMatcherFeeBps`).
         return (totalFee * LibVaipakam.cfgLifMatcherFeeBps()) / LibVaipakam.BASIS_POINTS;
     }
 
@@ -300,7 +322,7 @@ library LibOfferMatch {
     ///         compute the concrete (amount, rateBps, reqCollateral)
     ///         the resulting loan would carry. Pure of side effects;
     ///         no state writes. The synthetic init-gate check mirrors
-    ///         `LoanFacet._checkInitialLtvAndHf` — `HF >= 1.5e18` while
+    ///         `LibNewLoanRisk.requireAdmissible` — `HF >= 1.5e18` while
     ///         `depthTieredLtvEnabled` is off (`MatchError.HFTooLow` on
     ///         fail), the per-tier LTV cap when it's on (`MatchError.LtvAboveTier`)
     ///         — so a bot can filter pairs the binding gate would revert
@@ -312,7 +334,7 @@ library LibOfferMatch {
     ///         when `B.amountMax == 0` (GTC default), derive the ceiling
     ///         from `maxLendingForLtvCap(collateralAmountMax, init-LTV cap)`
     ///         using the SAME effective init-LTV cap that
-    ///         `LoanFacet._checkInitialLtvAndHf` consults at admission.
+    ///         `LibNewLoanRisk.requireAdmissible` consults at admission.
     ///
     ///         The Phase 1 borrower single-fill rule (offer becomes
     ///         `accepted = true` after one match, destroying the unused
@@ -371,6 +393,10 @@ library LibOfferMatch {
         // mirror it here so a bot doesn't see an `Ok` for a pair that can't match.
         if (s.offsetOfferToLoanId[lenderOfferId] != 0) {
             r.errorCode = MatchError.OffsetVehicleTagged;
+            return r;
+        }
+        if (s.collectionOffer[lenderOfferId].set.kind != LibVaipakam.CollateralSetKind.None) {
+            r.errorCode = MatchError.CollectionParent;
             return r;
         }
         // Delegate to the struct-based core so the identical match-admission
@@ -450,22 +476,8 @@ library LibOfferMatch {
                 r.errorCode = MatchError.RefinanceTagged;
                 return r;
             }
-            // #595 round-2 — for NFT carry-over collateral, the asset-continuity
-            // check below only compares the collection address + asset type, but
-            // `LoanFacet` copies the BORROWER offer's carried token into the new
-            // loan. Require the lender offer to demand the SAME token identity
-            // (tokenId + quantity), else a lender wanting token A could be
-            // matched to a refinance carrying token B from the same collection,
-            // delivering different collateral than the lender's offer specified.
-            if (B.collateralAssetType != LibVaipakam.AssetType.ERC20) {
-                if (
-                    L.collateralTokenId != B.collateralTokenId ||
-                    L.collateralQuantity != B.collateralQuantity
-                ) {
-                    r.errorCode = MatchError.AssetMismatch;
-                    return r;
-                }
-            }
+            // #595 round-2 — the carried NFT's identity is held by the
+            // token-identity rule below, which binds every match.
             borrowerCarryOver = true;
         }
 
@@ -511,6 +523,22 @@ library LibOfferMatch {
             || L.collateralAssetType != B.collateralAssetType
         ) {
             r.errorCode = MatchError.AssetTypeMismatch;
+            return r;
+        }
+        // The loan carries the BORROWER offer's token ids (the match accepts
+        // it), so an NFT leg must name the same token and quantity on both
+        // offers. Without this a lender offer for token A filled against a
+        // borrower offer for token B of the same collection: different
+        // collateral than the lender offered (or, for a rental, a different
+        // token than the lender listed).
+        if (
+            (L.assetType != LibVaipakam.AssetType.ERC20
+                && (L.tokenId != B.tokenId || L.quantity != B.quantity))
+                || (L.collateralAssetType != LibVaipakam.AssetType.ERC20
+                    && (L.collateralTokenId != B.collateralTokenId
+                        || L.collateralQuantity != B.collateralQuantity))
+        ) {
+            r.errorCode = MatchError.AssetMismatch;
             return r;
         }
         // #3615 — the loan runs the BORROWER offer's term (a match accepts
@@ -750,17 +778,17 @@ library LibOfferMatch {
         }
 
         // Synthetic init-gate check at the matched (amount, reqCollateral)
-        // — must mirror `LoanFacet._checkInitialLtvAndHf` so a bot's
+        // — must mirror `LibNewLoanRisk.requireAdmissible` so a bot's
         // preview never admits a pair the binding gate would revert, nor
         // refuses one it would admit. #2956 — it runs under the SAME rule as
         // the binding gate ({LibInitRiskGate.applies}) on the same live
         // liquidity reads: a pair with an illiquid leg (a rental among them,
         // #2949) carries no init-LTV check, so a consented illiquid pair is
         // matchable whichever regime is on. The floor comes from
-        // {OfferPreviewFacet.initRiskBounds}: under depth-tiered LTV the
+        // {RiskPreviewFacet.initRiskBounds}: under depth-tiered LTV the
         // effective init-LTV cap = min(per-asset ceiling,
         // tierMaxInitLtvBps[effectiveTier(collateral)]) read from the
-        // autonomous tier-LTV cache, as `LoanFacet._checkInitialLtvAndHf`
+        // autonomous tier-LTV cache, as `LibNewLoanRisk.requireAdmissible`
         // does (a Tier-0 collateral ⇒ cap 0 ⇒ floor `type(uint256).max` ⇒
         // no positive amount works); otherwise (the default) HF >= the
         // admission floor via `LibRiskMath.minCollateralForLending`. A floor
@@ -786,7 +814,7 @@ library LibOfferMatch {
     }
 
     /// @dev #3326 — the initiation risk gate's bounds for this pair, from
-    ///      its one host ({OfferPreviewFacet.initRiskBounds}): the collateral
+    ///      its one host ({RiskPreviewFacet.initRiskBounds}): the collateral
     ///      floor for `amount`, whether the depth-tiered regime set it, and
     ///      the largest amount `collateral` supports. Only an ERC-20 loan
     ///      carries the gate (an NFT rental does not, #2949).
@@ -796,7 +824,7 @@ library LibOfferMatch {
         returns (uint256 floor, bool tiered, uint256 amountCap)
     {
         if (L.assetType != LibVaipakam.AssetType.ERC20) return (0, false, type(uint256).max);
-        return OfferPreviewFacet(address(this)).initRiskBounds(L.lendingAsset, L.collateralAsset, amount, collateral);
+        return RiskPreviewFacet(address(this)).initRiskBounds(L.lendingAsset, L.collateralAsset, amount, collateral);
     }
 
     /// @dev #2727 — whether the two offers agree on every term the loan
@@ -827,13 +855,22 @@ library LibOfferMatch {
         return !L.useFullTermInterest && !B.useFullTermInterest && bTerm < L.durationDays;
     }
 
+    /// @dev #3621 — partial repayment and the prepay listing agree when the
+    ///      two offers name the same value OR the lender offer marks the
+    ///      option "either" ({LibVaipakam.Offer.lifecycleFlex}); the loan then
+    ///      takes the borrower offer's value, as it does for every lifecycle
+    ///      term. The interest mode, the cadence and an NFT loan's rental-fee
+    ///      asset stay exact.
     function _lifecycleTermsAgree(
         LibVaipakam.Offer memory L,
         LibVaipakam.Offer storage B
     ) private view returns (bool) {
+        uint8 flex = L.lifecycleFlex;
         return L.useFullTermInterest == B.useFullTermInterest
-            && L.allowsPartialRepay == B.allowsPartialRepay
-            && L.allowsPrepayListing == B.allowsPrepayListing
+            && (L.allowsPartialRepay == B.allowsPartialRepay
+                || flex & LibVaipakam.LIFECYCLE_FLEX_PARTIAL_REPAY != 0)
+            && (L.allowsPrepayListing == B.allowsPrepayListing
+                || flex & LibVaipakam.LIFECYCLE_FLEX_PREPAY_LISTING != 0)
             && L.periodicInterestCadence == B.periodicInterestCadence
             && (B.assetType == LibVaipakam.AssetType.ERC20 || L.prepayAsset == B.prepayAsset);
     }
@@ -860,6 +897,7 @@ library LibOfferMatch {
         address lender,
         address lendingAsset,
         address collateralAsset,
+        uint8 slot,
         uint256 counterpartyOfferId,
         uint256 fillAmount
     ) internal view returns (IntentPreviewResult memory res) {
@@ -884,7 +922,7 @@ library LibOfferMatch {
         ) return _intentFail(res, IntentError.AggregatorPaused);
 
         LibVaipakam.LenderIntent memory intent =
-            s.lenderIntent[lender][lendingAsset][collateralAsset];
+            s.lenderIntent[lender][lendingAsset][collateralAsset][slot];
         if (!intent.active) return _intentFail(res, IntentError.Inactive);
         if (!LibTiming.termsAged(intent.termsSetAt)) {
             return _intentFail(res, IntentError.TermsTooFresh);
@@ -900,7 +938,7 @@ library LibOfferMatch {
         }
 
         uint256 live =
-            s.lenderIntentLivePrincipal[lender][lendingAsset][collateralAsset];
+            s.lenderIntentLivePrincipal[lender][lendingAsset][collateralAsset][slot];
         if (live + fillAmount > intent.maxExposure) {
             return _intentFail(res, IntentError.ExposureExceeded);
         }
@@ -924,6 +962,13 @@ library LibOfferMatch {
                 return _intentFail(res, IntentError.PartialRepayNotAllowed);
             }
         }
+        {
+            LibOfferPriceGuard.Status calm = OfferPriceGuardFacet(address(this))
+                .intentCalmStatus(lender, lendingAsset, collateralAsset, slot);
+            if (calm == LibOfferPriceGuard.Status.NoCheckpoint) return _intentFail(res, IntentError.PairNoCheckpoint);
+            if (calm == LibOfferPriceGuard.Status.NotCalm) return _intentFail(res, IntentError.PairNotCalm);
+            if (calm == LibOfferPriceGuard.Status.Unpriced) return _intentFail(res, IntentError.PairUnpriced);
+        }
 
         uint256 reqColl = LibRiskMath.minCollateralForLtvCap(
             fillAmount, lendingAsset, collateralAsset, intent.maxInitLtvBps
@@ -936,7 +981,7 @@ library LibOfferMatch {
         // reverts `IntentCapitalInsufficient` when the fill exceeds funded
         // capital — the hard funding guard (distinct from `maxExposure`).
         uint256 capital =
-            s.lenderIntentCapital[lender][lendingAsset][collateralAsset];
+            s.lenderIntentCapital[lender][lendingAsset][collateralAsset][slot];
         res.availableCapital = capital;
         if (fillAmount > capital) {
             return _intentFail(res, IntentError.CapitalInsufficient);

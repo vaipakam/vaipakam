@@ -10,6 +10,7 @@ import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {LibMetricsHooks} from "../src/libraries/LibMetricsHooks.sol";
 
 /// @title LifetimeLendingTotalsTest
 /// @notice #1832 (owner decision 2026-10-28) — the per-asset lifetime
@@ -33,6 +34,8 @@ contract LifetimeLendingTotalsTest is SetupTest {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -82,6 +85,17 @@ contract LifetimeLendingTotalsTest is SetupTest {
         revert("no LoanRepaid");
     }
 
+    /// @dev #3755 — the sum of the `LoanInterestPaid` amounts for `loanId` in
+    ///      `logs`, each checked to name the principal asset.
+    function _statedInterest(Vm.Log[] memory logs, uint256 loanId) internal view returns (uint256 sum) {
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics[0] != LibMetricsHooks.LoanInterestPaid.selector) continue;
+            assertEq(uint256(logs[i].topics[1]), loanId, "the loan that paid it");
+            assertEq(address(uint160(uint256(logs[i].topics[2]))), mockERC20, "the principal asset");
+            sum += abi.decode(logs[i].data, (uint256));
+        }
+    }
+
     function test_open_recordsPrincipalOnce_andTheAsset() public {
         _openLoan();
         (uint256 principalLent, uint256 interestPaid) = _totals();
@@ -103,11 +117,13 @@ contract LifetimeLendingTotalsTest is SetupTest {
         vm.recordLogs();
         vm.prank(borrower);
         RepayFacet(address(diamond)).repayLoan(loanId);
-        uint256 reported = _repaidInterest(vm.getRecordedLogs());
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint256 reported = _repaidInterest(logs);
 
         (uint256 principalLent, uint256 interestPaid) = _totals();
         assertGt(reported, 0, "fixture: the repay charged interest");
         assertEq(interestPaid, reported, "the counter is what the repay charged");
+        assertEq(_statedInterest(logs, loanId), reported, "#3755: the per-loan event states it");
         assertEq(principalLent, PRINCIPAL, "repaying never lowers principal lent");
     }
 
@@ -118,10 +134,14 @@ contract LifetimeLendingTotalsTest is SetupTest {
         uint256 loanId = _openLoan();
         vm.warp(vm.getBlockTimestamp() + 10 days);
         uint256 accrued = (PRINCIPAL * RATE_BPS * 10 days) / (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+        vm.recordLogs();
         vm.prank(borrower);
         RepayFacet(address(diamond)).repayPartial(loanId, PRINCIPAL / 2);
         (uint256 principalLent, uint256 afterPartial) = _totals();
         assertEq(afterPartial, accrued, "the partial repay's interest");
+        // #3755 — a partial repayment states no interest figure in its own
+        // event; the per-loan event does.
+        assertEq(_statedInterest(vm.getRecordedLogs(), loanId), accrued, "#3755: the partial's interest is stated");
         assertEq(principalLent, PRINCIPAL, "a partial repay never lowers principal lent");
 
         vm.warp(vm.getBlockTimestamp() + 5 days);
@@ -151,6 +171,7 @@ contract LifetimeLendingTotalsTest is SetupTest {
         (, uint256 interestPaid) = _totals();
         assertGt(interestPaid, 0, "a preclose charges interest");
         assertEq(interestPaid, reported, "the counter is what the preclose charged");
+        assertEq(_statedInterest(logs, loanId), reported, "#3755: the per-loan event states it");
     }
 
     /// @notice The stats view values the counters: one loan repaid, so volume

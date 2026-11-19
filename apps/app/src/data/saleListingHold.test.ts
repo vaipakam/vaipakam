@@ -273,8 +273,8 @@ describe('computeHoldGate', () => {
  * failures are what push the surface into its errored state.
  */
 describe('probeSaleHoldLive', () => {
-  // A Diamond the bundle records without a positionNFT: legacy mode, so the
-  // route is read as `positionLock` (#3205).
+  // A Diamond the bundle records; its route is read as `positionRoute`
+  // (#3205).
   const DIAMOND = DEPLOYMENTS[84532]!.diamond as `0x${string}`;
 
   function fakeClient(opts: {
@@ -286,7 +286,7 @@ describe('probeSaleHoldLive', () => {
       calls,
       client: {
         readContract: async () => {
-          calls.push('positionLock');
+          calls.push('positionRoute');
           return BigInt(opts.lock);
         },
         simulateContract: async () => {
@@ -327,7 +327,7 @@ describe('probeSaleHoldLive', () => {
     await expect(
       probeSaleHoldLive(client as never, DIAMOND, 42, '7', undefined),
     ).resolves.toBe('none');
-    expect(calls).toEqual(['positionLock']);
+    expect(calls).toEqual(['positionRoute']);
   });
 
   it('a sale-locked position still simulates, and a live listing reads as live', async () => {
@@ -338,7 +338,7 @@ describe('probeSaleHoldLive', () => {
     await expect(
       probeSaleHoldLive(client as never, DIAMOND, 42, '7', undefined),
     ).resolves.toBe('live');
-    expect(calls).toEqual(['positionLock', 'simulate']);
+    expect(calls).toEqual(['positionRoute', 'simulate']);
   });
 
   it('a sale-locked position whose teardown succeeds is clearable', async () => {
@@ -357,7 +357,7 @@ describe('probeSaleHoldLive', () => {
       probeSaleHoldLive(client as never, DIAMOND, 42, '7', undefined),
     ).resolves.toBe('accepted');
     // The lock reading is reused — the ambiguous arm costs nothing extra.
-    expect(calls).toEqual(['positionLock', 'simulate']);
+    expect(calls).toEqual(['positionRoute', 'simulate']);
   });
 
   it('with no token id the lock cannot rule anything out, so it simulates', async () => {

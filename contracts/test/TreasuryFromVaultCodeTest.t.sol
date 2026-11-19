@@ -9,6 +9,7 @@ import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
+import {ITreasuryFeeHost} from "../src/interfaces/ITreasuryFeeHost.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
@@ -17,6 +18,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
+import {LibTestGuard} from "./helpers/LibTestGuard.sol";
 
 /// @title  TreasuryFromVaultCodeTest
 /// @notice #3569 (owner decision 2026-11-12, "Vault code only") — the
@@ -75,8 +77,10 @@ contract TreasuryFromVaultCodeTest is SetupTest {
     }
 
     function _vaultFee(uint256 amount) internal returns (uint256 accrued) {
+        LibTestGuard.hold(address(diamond)); // stands in for the guarded fee payer (#3432)
         vm.prank(address(diamond));
-        accrued = TreasuryFeeFacet(address(diamond)).collectFeeFromVault(borrower, mockERC20, amount);
+        accrued = TreasuryFeeFacet(address(diamond)).collectFeeFromVault(borrower, mockERC20, amount, ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Other, 0, 0));
+        LibTestGuard.release(address(diamond));
     }
 
     // ─── The Diamond reads the vault code ────────────────────────────────
@@ -163,7 +167,7 @@ contract TreasuryFromVaultCodeTest is SetupTest {
         uint256 held0 = _held();
 
         vm.prank(address(diamond));
-        TreasuryFeeFacet(address(diamond)).collectFeeFromPayer(borrower, mockERC20, 5 ether);
+        TreasuryFeeFacet(address(diamond)).collectFeeFromPayer(borrower, mockERC20, 5 ether, ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Other, 0, 0));
 
         assertEq(IERC20(mockERC20).balanceOf(newTreasury), 5 ether);
         assertEq(_held(), held0);
@@ -176,7 +180,7 @@ contract TreasuryFromVaultCodeTest is SetupTest {
         assertEq(AdminFacet(address(diamond)).getTreasury(), address(0));
         vm.prank(address(diamond));
         vm.expectRevert(LibTreasury.TreasuryUnset.selector);
-        TreasuryFeeFacet(address(diamond)).collectFeeFromDiamond(mockERC20, 1 ether);
+        TreasuryFeeFacet(address(diamond)).collectFeeFromDiamond(mockERC20, 1 ether, ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Other, 0, 0));
     }
 
     /// @notice There is no setter left to move the treasury.

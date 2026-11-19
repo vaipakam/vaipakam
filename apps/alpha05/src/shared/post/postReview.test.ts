@@ -55,7 +55,7 @@ function review(over: Partial<PostReview> = {}): PostReview {
     periodGraceSeconds: null,
     tariff: null,
     guardPriced: null,
-    lifBps: 20n,
+    lif: { baseBps: 20n, baseTermDays: 30n, yearlyBps: 50n, yearDays: 365n },
     protocolShareBps: null,
     vault: ZERO,
     holding: { kind: 'erc20', funds: { balance: 10_000n, allowance: 0n }, approvalSteps: 1 },
@@ -124,7 +124,7 @@ describe('changedBetween', () => {
   it('names what moved, and nothing when nothing did', () => {
     expect(changedBetween(review(), review({ readAt: 2 }), copy)).toBeNull();
     expect(changedBetween(review(), review({ verdict: { kind: 'ok' } }), copy)).toBe('request.changedVerdict');
-    expect(changedBetween(review(), review({ lifBps: 10n }), copy)).toBe('request.changedConfig');
+    expect(changedBetween(review(), review({ lif: { baseBps: 20n, baseTermDays: 30n, yearlyBps: 60n, yearDays: 365n } }), copy)).toBe('request.changedConfig');
     expect(changedBetween(review(), review({ holding: { kind: 'erc20', funds: { balance: 10_000n, allowance: 0n }, approvalSteps: 2 } }), copy)).toBe('accept.changedFunds');
   });
 });

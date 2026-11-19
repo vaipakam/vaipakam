@@ -8,6 +8,7 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable, LibPausable} from "../libraries/LibPausable.sol";
 import {LibOfferMatchExecute} from "../libraries/LibOfferMatchExecute.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
+import {OfferPriceGuardFacet} from "./OfferPriceGuardFacet.sol";
 import {OfferPreviewFacet} from "./OfferPreviewFacet.sol";
 
 /**
@@ -116,11 +117,19 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // its cadence and asks both makers' price-move guards, after every
         // check above. Asked of the preview entry that runs those same checks.
         if (result.errorCode == LibOfferMatch.MatchError.Ok) {
-            OfferPreviewFacet.OriginationRefusal r = OfferPreviewFacet(address(this))
-                .previewOriginationRefusal(borrowerOfferId, result.matchAmount, lenderOfferId);
-            if (r == OfferPreviewFacet.OriginationRefusal.CadenceNotAdmitted) {
+            LibVaipakam.Storage storage st = LibVaipakam.storageSlot();
+            OfferPriceGuardFacet.OriginationRefusal r = OfferPriceGuardFacet(address(this)).previewOriginationRefusal(
+                borrowerOfferId,
+                result.matchAmount,
+                lenderOfferId,
+                st.offers[lenderOfferId].creator,
+                st.offers[borrowerOfferId].creator
+            );
+            if (r == OfferPriceGuardFacet.OriginationRefusal.TermsNotAccepted) {
+                result.errorCode = LibOfferMatch.MatchError.TermsNotAccepted;
+            } else if (r == OfferPriceGuardFacet.OriginationRefusal.CadenceNotAdmitted) {
                 result.errorCode = LibOfferMatch.MatchError.CadenceNotAdmitted;
-            } else if (r == OfferPreviewFacet.OriginationRefusal.PriceGuardRefused) {
+            } else if (r == OfferPriceGuardFacet.OriginationRefusal.PriceGuardRefused) {
                 result.errorCode = LibOfferMatch.MatchError.PriceGuardRefused;
             }
         }
@@ -177,4 +186,28 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // as its last check.
         LibServiceCapacity.chargeSolver();
     }
+
+    /// @notice The match core run for another facet of this Diamond, with the
+    ///         matcher named by that facet's entry. #3328: the collection offer's
+    ///         `matchCollectionOffer` pairs a one-token lender slice through the
+    ///         same core every other match uses; hosting the core here keeps one
+    ///         runtime copy instead of a fourth inlined one in a facet near
+    ///         EIP-170. The calling entry holds the Diamond's reentrancy guard and
+    ///         applies its own gates (sanctions, the match switch, the solver
+    ///         charge); this entry adds none, so it is callable only by the
+    ///         Diamond itself.
+    /// @param lenderOfferId   The lender offer (the collection slice).
+    /// @param borrowerOfferId The borrower offer it is paired with.
+    /// @param matcher         The match-share recipient: the outer entry's caller.
+    /// @return loanId         The newly initiated loan.
+    function matchCoreInternal(uint256 lenderOfferId, uint256 borrowerOfferId, address matcher)
+        external
+        returns (uint256 loanId)
+    {
+        if (msg.sender != address(this)) revert MatchCoreOnlyDiamondInternal(msg.sender);
+        loanId = LibOfferMatchExecute.executeMatchFor(lenderOfferId, borrowerOfferId, 0, matcher);
+    }
+
+    /// @notice {matchCoreInternal} was called by anyone but the Diamond itself.
+    error MatchCoreOnlyDiamondInternal(address caller);
 }

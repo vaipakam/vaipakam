@@ -5,6 +5,8 @@ pragma solidity ^0.8.29;
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibTreasury} from "../libraries/LibTreasury.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
@@ -18,6 +20,7 @@ import {LibBackstopOracleGate} from "../libraries/LibBackstopOracleGate.sol";
 import {BackstopVaultImplementation} from "../BackstopVaultImplementation.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
+import {MarketLedgerFacet} from "./MarketLedgerFacet.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -279,7 +282,7 @@ contract BackstopFacet is
         address vault = s.backstopVault;
         if (vault == address(0)) revert BackstopNotProvisioned();
         _requireDiamondTreasury();
-        if (!s.lenderIntent[vault][lend][coll].active) {
+        if (!s.lenderIntent[vault][lend][coll][LibVaipakam.PROTOCOL_INTENT_SLOT].active) {
             revert BackstopIntentInactive();
         }
         // The backstop lends treasury-held capital, and lending the protocol's
@@ -303,11 +306,18 @@ contract BackstopFacet is
         // what the backstop vault received (the treasury gave up `amount`).
         amount = LibDelivery.pushMeasured(lend, proxy, amount);
         LibVaipakam.recordVaultDeposit(vault, lend, amount);
-        LibEncumbrance.lienIntentCapital(vault, lend, coll, amount);
+        LibEncumbrance.lienIntentCapital(vault, lend, coll, LibVaipakam.PROTOCOL_INTENT_SLOT, amount);
         // #625 WI-2a — the backstop seeds intent capital DIRECTLY (not via
         // `fundLenderIntent`), so sync the discovery registry here too — else the
         // backstop's funded intent would never appear in the keeper feed.
-        LibVaipakam.syncIntentRegistry(vault, lend, coll);
+        LibVaipakam.syncIntentRegistry(vault, lend, coll, LibVaipakam.PROTOCOL_INTENT_SLOT);
+        // #3714 — the slot's reserved capital moved, so its Available share does.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                MarketLedgerFacet.syncSlot.selector, vault, lend, coll, LibVaipakam.PROTOCOL_INTENT_SLOT
+            ),
+            IVaipakamErrors.CrossFacetCallFailed.selector
+        );
         emit BackstopSeeded(lend, coll, amount);
     }
 
@@ -379,7 +389,7 @@ contract BackstopFacet is
         LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage o = s.offers[offerId];
-        if (o.creator != msg.sender) revert NotOfferCreator();
+        LibAuth.requireOfferCreator(o);
         if (o.offerType != LibVaipakam.OfferType.Borrower) {
             revert OfferNotBorrowerType();
         }
@@ -408,7 +418,7 @@ contract BackstopFacet is
         // exposure state, not on stable opt-in-time facts.)
         address bv = s.backstopVault;
         if (bv == address(0)) revert BackstopNotProvisioned();
-        if (!s.lenderIntent[bv][o.lendingAsset][o.collateralAsset].active) {
+        if (!s.lenderIntent[bv][o.lendingAsset][o.collateralAsset][LibVaipakam.PROTOCOL_INTENT_SLOT].active) {
             revert BackstopIntentInactive();
         }
         // Future deadline past the mandatory floor, strictly before expiry
@@ -745,11 +755,13 @@ contract BackstopFacet is
     ///      the backstop vault to the Diamond, re-crediting `treasuryBalances` —
     ///      so over-seeded / paused / retired-pair cash is recoverable by
     ///      governance, not stuck until an upgrade. Requires Diamond-as-treasury.
+    ///      `nonReentrant`: the withdrawal is a vault move, which runs only
+    ///      inside a guarded action (#3432).
     function withdrawBackstopAbsorbToTreasury(
         address principal,
         address collateral,
         uint256 amount
-    ) external onlyRole(LibAccessControl.VAULT_ADMIN_ROLE) {
+    ) external nonReentrant onlyRole(LibAccessControl.VAULT_ADMIN_ROLE) {
         if (amount == 0) revert ZeroAmount();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vault = s.backstopVault;
@@ -778,10 +790,12 @@ contract BackstopFacet is
     ///      treasury the vault code names (#3569), never an address the caller
     ///      picks: a VAULT_ADMIN key can move warehoused collateral only to
     ///      that treasury, which moves only with new vault code.
+    ///      `nonReentrant`: the sweep is a vault move, which runs only inside a
+    ///      guarded action (#3432).
     function sweepBackstopAbsorbCollateral(
         address collateral,
         uint256 amount
-    ) external onlyRole(LibAccessControl.VAULT_ADMIN_ROLE) {
+    ) external nonReentrant onlyRole(LibAccessControl.VAULT_ADMIN_ROLE) {
         if (amount == 0) revert ZeroAmount();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vault = s.backstopVault;

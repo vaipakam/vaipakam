@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {MarketLedgerFacet} from "./MarketLedgerFacet.sol";
+import {OfferPriceGuardFacet} from "./OfferPriceGuardFacet.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibPriceGuard} from "../libraries/LibPriceGuard.sol";
+import {LibTerms} from "../libraries/LibTerms.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 import {LibPriorityRouting} from "../libraries/LibPriorityRouting.sol";
@@ -19,14 +23,14 @@ import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
+import {LibHeldForLender} from "../libraries/LibHeldForLender.sol";
 import {LibIntentTerms} from "../libraries/LibIntentTerms.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
+import {SettlementLegFacet} from "./SettlementLegFacet.sol";
 import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import {LibMetricsTypes} from "../libraries/LibMetricsTypes.sol";
-import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 /**
  * @title LenderIntentFacet
@@ -54,21 +58,26 @@ import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet
  *         claim) can never be double-spent through the exit door. The
  *         lender-of-record stays the depositing user (`loan.lender` = the
  *         intent owner). ERC-20-on-ERC-20 only. One intent per (owner,
- *         lendingAsset, collateralAsset).
+ *         lendingAsset, collateralAsset, slot): up to
+ *         `MAX_INTENT_SLOTS` independent intents per pair (#3626).
+ *
+ *         The reads (an intent, its live principal and capital, its priority
+ *         snapshot, and the three paginated feeds) live on
+ *         {LenderIntentViewFacet}, split off along the read / write seam
+ *         (EIP-170). This facet keeps every mutator and the kill-switch and
+ *         fill-floor configuration with their getters.
  */
 contract LenderIntentFacet is
     DiamondReentrancyGuard,
     DiamondPausable,
     DiamondAccessControl
 {
-    using EnumerableSet for EnumerableSet.Bytes32Set;
-    using EnumerableSet for EnumerableSet.UintSet; // #625 WI-2c intent-loan registry
-
     /// @notice A lender registered / updated a standing intent for an asset-pair.
     event LenderIntentSet(
         address indexed owner,
         address indexed lendingAsset,
         address indexed collateralAsset,
+        uint8 slot,
         uint256 maxExposure,
         uint256 minRateBps,
         uint16 maxInitLtvBps,
@@ -83,7 +92,8 @@ contract LenderIntentFacet is
     event LenderIntentCancelled(
         address indexed owner,
         address indexed lendingAsset,
-        address indexed collateralAsset
+        address indexed collateralAsset,
+        uint8 slot
     );
 
     /// @notice The LenderIntentVault fill-path master kill-switch toggled.
@@ -95,6 +105,7 @@ contract LenderIntentFacet is
         address indexed owner,
         address indexed lendingAsset,
         address indexed collateralAsset,
+        uint8 slot,
         uint256 amount,
         uint256 newCapital
     );
@@ -106,8 +117,29 @@ contract LenderIntentFacet is
         address indexed owner,
         address indexed lendingAsset,
         address indexed collateralAsset,
+        uint8 slot,
         uint256 amount,
         uint256 remainingCapital
+    );
+
+    /// @notice #3629 — held payments of an OPEN intent loan were re-committed
+    ///         behind the owner's standing intent ({recommitHeldToIntent}).
+    /// @param owner           The intent owner (and lender-position holder).
+    /// @param roller          Who ran the step (the owner or its keeper).
+    /// @param loanId          The open loan; it keeps running.
+    /// @param collateralAsset The intent's collateral asset (the lending asset is the loan's principal asset).
+    /// @param slot            The intent's slot on the pair.
+    /// @param amount          What was re-committed.
+    /// @param newCapital      The intent's committed capital afterwards.
+    /// @custom:event-category state-change/loan-mutation
+    event HeldRecommittedToIntent(
+        address indexed owner,
+        address indexed roller,
+        uint256 indexed loanId,
+        address collateralAsset,
+        uint8 slot,
+        uint256 amount,
+        uint256 newCapital
     );
 
     /// @notice A repaid intent loan was AUTO-ROLLED (#393 v1-d.2): its proceeds
@@ -121,6 +153,7 @@ contract LenderIntentFacet is
         uint256 indexed loanId,
         address lendingAsset,
         address collateralAsset,
+        uint8 slot,
         uint256 rolledAmount,
         uint256 newCapital
     );
@@ -139,8 +172,10 @@ contract LenderIntentFacet is
     /// @notice `maxExposure`, `minRateBps`, `maxInitLtvBps`, `minFillAmount` or
     ///         `lendUntil` was outside its valid range (see `setLenderIntent`).
     error LenderIntentInvalidBounds();
-    /// @notice No active intent exists for the (owner, asset-pair) to cancel.
+    /// @notice No active intent exists for the (owner, asset-pair, slot) to cancel.
     error LenderIntentNotActive();
+    /// @notice #3626 — `slot` is at or above `LibVaipakam.MAX_INTENT_SLOTS`.
+    error LenderIntentSlotOutOfRange(uint8 slot);
     /// @notice A diamond-internal-only entry was called externally.
     error OnlyDiamondInternal();
     /// @notice `rollIntentLoan` refuses a loan whose lending asset is VPFI
@@ -181,16 +216,20 @@ contract LenderIntentFacet is
     ///         write; a write of zero restores the default.
     event MinIntentFillNumeraireSet(uint256 minimum);
 
-    /// @notice Register or overwrite the caller's standing lending intent for an
-    ///         ERC-20 asset-pair.
+    /// @notice Register or overwrite one of the caller's standing lending intents
+    ///         for an ERC-20 asset-pair (#3626: one per slot, up to
+    ///         `MAX_INTENT_SLOTS`, each fully independent).
     /// @dev    Tier-1 sanctions-gated (the intent is a new lending commitment).
-    ///         Re-calling with the same pair overwrites the bounds in place
+    ///         Re-calling with the same pair and slot overwrites the bounds in place
     ///         (live `matchIntent` reads always see the latest terms, so there
     ///         is no stale-terms window to invalidate — no nonce needed). The
     ///         bounds are a HARD band a solver's concrete terms must satisfy;
     ///         the protocol HF/LTV init gate still applies on top at fill.
     /// @param lendingAsset       The ERC-20 the lender supplies.
     /// @param collateralAsset    The ERC-20 collateral the lender will accept.
+    /// @param slot               #3626 — which of the caller's intents on the pair
+    ///                           (0 … MAX_INTENT_SLOTS − 1). Each slot has its own
+    ///                           capital, cap and terms; nothing is shared.
     /// @param maxExposure        Hard cap on aggregate LIVE principal from this
     ///                           intent (> 0).
     /// @param minRateBps         APR floor in basis points; a fill below reverts.
@@ -236,6 +275,7 @@ contract LenderIntentFacet is
     function setLenderIntent(
         address lendingAsset,
         address collateralAsset,
+        uint8 slot,
         uint256 maxExposure,
         uint256 minRateBps,
         uint16 maxInitLtvBps,
@@ -250,6 +290,7 @@ contract LenderIntentFacet is
         LibTiming.requireDeadline(validUntil);
         LibVaipakam._assertNotSanctioned(msg.sender);
         LibProtectedAccount.requireCanOpen(msg.sender);
+        LibTerms.requireCurrent(msg.sender); // #3734
 
         // Mandatory risk/terms consent — same gate as every offer-create path
         // (`RiskAndTermsConsentRequired`), captured once for the standing intent.
@@ -264,6 +305,7 @@ contract LenderIntentFacet is
         if (lendingAsset == collateralAsset) {
             revert LenderIntentSelfCollateralized();
         }
+        if (slot >= LibVaipakam.MAX_INTENT_SLOTS) revert LenderIntentSlotOutOfRange(slot);
         // #393 v1-c — `requiresKeeperAuth` is now honoured: a true intent is
         // fillable only by the lender or a solver they've authorized for
         // `KEEPER_ACTION_SIGNED_FILL` (gate enforced in `matchIntent`). No longer
@@ -290,7 +332,7 @@ contract LenderIntentFacet is
         _assertIntentAdmissible(lendingAsset, collateralAsset, minFillAmount);
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        s.lenderIntent[msg.sender][lendingAsset][collateralAsset] = LibVaipakam
+        s.lenderIntent[msg.sender][lendingAsset][collateralAsset][slot] = LibVaipakam
             .LenderIntent({
             active: true,
             maxExposure: maxExposure,
@@ -309,16 +351,21 @@ contract LenderIntentFacet is
         // capital, so it does NOT enter the keeper feed until funded — gating set
         // membership on funded capital blocks arbitrary zero-capital registrations
         // from bloating the global feed (Codex WI-2a r1).
-        LibVaipakam.syncIntentRegistry(msg.sender, lendingAsset, collateralAsset);
+        LibVaipakam.syncIntentRegistry(msg.sender, lendingAsset, collateralAsset, slot);
+        _syncSlot(msg.sender, lendingAsset, collateralAsset, slot);
         // #2550 — every (re)write of the intent resets its priority-routing opt-in,
         // so a replacement intent never inherits the old one and never spends the
         // owner's paid credits without a fresh opt-in ({setLenderIntentPriority}).
-        LibPriorityRouting.writeFlag(s, msg.sender, lendingAsset, collateralAsset, false);
+        LibPriorityRouting.writeFlag(s, msg.sender, lendingAsset, collateralAsset, slot, false);
+        // Instant market (#3656) — the slot's instant-market consents were given
+        // for its previous terms; new terms need them given again.
+        delete s.instantSlot[msg.sender][lendingAsset][collateralAsset][slot];
 
         emit LenderIntentSet(
             msg.sender,
             lendingAsset,
             collateralAsset,
+            slot,
             maxExposure,
             minRateBps,
             maxInitLtvBps,
@@ -336,20 +383,26 @@ contract LenderIntentFacet is
     ///         their live-principal is released at their own terminal close.
     /// @dev    Tier-2-style close-out: NOT sanctions-gated on the canceller, so a
     ///         flagged lender can always WIND DOWN their standing exposure.
-    function cancelLenderIntent(address lendingAsset, address collateralAsset)
+    function cancelLenderIntent(address lendingAsset, address collateralAsset, uint8 slot)
         external
         nonReentrant
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.LenderIntent storage intent =
-            s.lenderIntent[msg.sender][lendingAsset][collateralAsset];
+            s.lenderIntent[msg.sender][lendingAsset][collateralAsset][slot];
         if (!intent.active) revert LenderIntentNotActive();
         intent.active = false;
         // #625 WI-2a — now inactive ⇒ drop it from the discovery registry.
-        LibVaipakam.syncIntentRegistry(msg.sender, lendingAsset, collateralAsset);
+        LibVaipakam.syncIntentRegistry(msg.sender, lendingAsset, collateralAsset, slot);
+        _syncSlot(msg.sender, lendingAsset, collateralAsset, slot);
         // #2550 — a cancelled intent carries no priority opt-in.
-        LibPriorityRouting.writeFlag(s, msg.sender, lendingAsset, collateralAsset, false);
-        emit LenderIntentCancelled(msg.sender, lendingAsset, collateralAsset);
+        LibPriorityRouting.writeFlag(s, msg.sender, lendingAsset, collateralAsset, slot, false);
+        // A new intent in the slot starts with the calm-price check on.
+        if (s.intentCalmCheckOff[msg.sender][lendingAsset][collateralAsset][slot]) {
+            delete s.intentCalmCheckOff[msg.sender][lendingAsset][collateralAsset][slot];
+            emit OfferPriceGuardFacet.IntentCalmCheckSet(msg.sender, lendingAsset, collateralAsset, slot, true);
+        }
+        emit LenderIntentCancelled(msg.sender, lendingAsset, collateralAsset, slot);
     }
 
     /// @notice #2550 — opt the caller's LIVE intent for the pair into (or out of)
@@ -368,7 +421,7 @@ contract LenderIntentFacet is
     ///         (Codex #2563 r3). A protocol-run owner — an
     ///         aggregator adapter or the backstop vault — is refused by name: those
     ///         are not perk buyers, and the flag could never be used.
-    function setLenderIntentPriority(address lendingAsset, address collateralAsset, bool enabled)
+    function setLenderIntentPriority(address lendingAsset, address collateralAsset, uint8 slot, bool enabled)
         external
         nonReentrant
     {
@@ -379,35 +432,9 @@ contract LenderIntentFacet is
             if (s.isAggregatorAdapter[msg.sender] || msg.sender == s.backstopVault) {
                 revert IVaipakamErrors.LenderIntentPriorityProtocolOwner(msg.sender);
             }
-            if (!s.lenderIntent[msg.sender][lendingAsset][collateralAsset].active) revert LenderIntentNotActive();
+            if (!s.lenderIntent[msg.sender][lendingAsset][collateralAsset][slot].active) revert LenderIntentNotActive();
         }
-        LibPriorityRouting.writeFlag(s, msg.sender, lendingAsset, collateralAsset, enabled);
-    }
-
-    /// @notice #2550 — the priority-routing state of `owner`'s intent for the pair,
-    ///         and what a fill by `solver` (initiated by `initiator`) would do with
-    ///         it right now: whether the solver's capacity covers the fill, and
-    ///         whether a capacity refusal would instead be lifted by one of the
-    ///         owner's credits. A BLOCK-STATE SNAPSHOT: capacity accrues, other fills
-    ///         spend it, and the owner may spend a credit or change the opt-in before
-    ///         a fill is mined; the mined `IntentPriorityFill` event is the
-    ///         authoritative record that a credit was spent.
-    /// @return enabled         The intent is opted in.
-    /// @return credits         The owner's unspent priority credits.
-    /// @return capacityCovers  The solver's capacity covers the fill (or the limiter is dark).
-    /// @return creditUnlocks   The fill would be refused for capacity but goes through on a credit.
-    function getLenderIntentPriority(
-        address owner,
-        address lendingAsset,
-        address collateralAsset,
-        address solver,
-        address initiator
-    ) external view returns (bool enabled, uint256 credits, bool capacityCovers, bool creditUnlocks) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        enabled = s.lenderIntentPriority[owner][lendingAsset][collateralAsset];
-        credits = s.perkCredits[owner][LibPriorityRouting.PERK_ID];
-        capacityCovers = LibServiceCapacity.fillCovered(s, solver, initiator);
-        creditUnlocks = !capacityCovers && LibPriorityRouting.covers(s, owner, lendingAsset, collateralAsset);
+        LibPriorityRouting.writeFlag(s, msg.sender, lendingAsset, collateralAsset, slot, enabled);
     }
 
     /// @notice #393 v1-d — fund (or top up) the caller's standing intent with
@@ -427,25 +454,31 @@ contract LenderIntentFacet is
     /// @param lendingAsset    The ERC-20 the intent supplies (must match an
     ///                        active intent).
     /// @param collateralAsset The intent's collateral asset (intent key).
+    /// @param slot            The intent's slot (intent key, #3626).
     /// @param amount          Working capital to pull wallet → vault (> 0).
     function fundLenderIntent(
         address lendingAsset,
         address collateralAsset,
+        uint8 slot,
         uint256 amount
     ) external nonReentrant whenNotPaused {
         LibVaipakam._assertNotSanctioned(msg.sender);
         LibProtectedAccount.requireCanOpen(msg.sender);
+        LibTerms.requireCurrent(msg.sender); // #3734
         if (amount == 0) revert LenderIntentInvalidBounds();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (!s.lenderIntent[msg.sender][lendingAsset][collateralAsset].active) {
+        if (!s.lenderIntent[msg.sender][lendingAsset][collateralAsset][slot].active) {
             revert LenderIntentNotActive();
         }
         // #393 v1-d.1 (Codex P2) — respect the per-asset pause on this on-ramp:
         // a paused asset must take no NEW custody commitment (mirrors
         // `createOffer`, which pauses-checks both legs). The exit
-        // (`withdrawLenderIntentCapital`) stays open during a pause so a lender
-        // can always wind down — same "block new, allow exit" posture as the
-        // sanctions Tier-1/Tier-2 split.
+        // (`withdrawLenderIntentCapital`) takes no asset-pause check, so it
+        // stays open while an ASSET is paused and a lender can always wind
+        // down — same "block new, allow exit" posture as the sanctions
+        // Tier-1/Tier-2 split. The whole-protocol pause (`whenNotPaused`, the
+        // emergency stop) does close the withdrawal, like every vault outflow;
+        // cancelling the intent moves no money and stays open under both.
         LibFacet.requireAssetNotPaused(lendingAsset);
         LibFacet.requireAssetNotPaused(collateralAsset);
         // Pull wallet → vault via the protocol chokepoint (records the tracked
@@ -463,16 +496,18 @@ contract LenderIntentFacet is
         // Lien the just-deposited capital under the intent (mirrors an offer's
         // principal lock). It is now encumbered — not free balance.
         LibEncumbrance.lienIntentCapital(
-            msg.sender, lendingAsset, collateralAsset, amount
+            msg.sender, lendingAsset, collateralAsset, slot, amount
         );
         // #625 WI-2a — funded ⇒ the intent is now fillable; (re)list it in the feed.
-        LibVaipakam.syncIntentRegistry(msg.sender, lendingAsset, collateralAsset);
+        LibVaipakam.syncIntentRegistry(msg.sender, lendingAsset, collateralAsset, slot);
+        _syncSlot(msg.sender, lendingAsset, collateralAsset, slot); // #3714 Available
         emit LenderIntentFunded(
             msg.sender,
             lendingAsset,
             collateralAsset,
+            slot,
             amount,
-            s.lenderIntentCapital[msg.sender][lendingAsset][collateralAsset]
+            s.lenderIntentCapital[msg.sender][lendingAsset][collateralAsset][slot]
         );
     }
 
@@ -496,26 +531,36 @@ contract LenderIntentFacet is
     ///                        manager (`LibProtectedAccount.requireManager`).
     /// @param lendingAsset    The intent's lending asset (intent key).
     /// @param collateralAsset The intent's collateral asset (intent key).
+    /// @param slot            The intent's slot (intent key, #3626).
     /// @param amount          Un-lent capital to return wallet-ward (> 0,
     ///                        <= the liened capital).
     function withdrawLenderIntentCapital(
         address account,
         address lendingAsset,
         address collateralAsset,
+        uint8 slot,
         uint256 amount
     ) external nonReentrant whenNotPaused {
         // The account's manager: its own wallet, or its controller once a
         // replacement retired it, so a recovered account's capital is never
         // stranded behind the lost key. Paid to the manager (a protected
         // account's payout queues behind the delay).
-        LibProtectedAccount.requireManager(account);
-        LibVaipakam._assertNotSanctioned(msg.sender);
+        // #3246 part 2 — a RECOVERED account's intent can never fill again and
+        // its owner key may be lost, so anyone may return its un-lent capital
+        // to the account's vault (ruling 2026-11-18): it is paid to the owner
+        // class, which the locked account's payout gate keeps in the vault,
+        // free, for the recovered account's sweep to the recovery address.
+        bool recovered = LibProtectedAccount.isRecovered(account);
+        if (!recovered) {
+            LibProtectedAccount.requireManager(account);
+            LibVaipakam._assertNotSanctioned(msg.sender);
+        }
         if (amount == 0) revert LenderIntentInvalidBounds();
         // Release from the lien (reverts `IntentCapitalInsufficient` if it
         // exceeds the un-lent capital) BEFORE the withdraw, so the chokepoint
         // guard sees the amount as free balance.
         LibEncumbrance.unlienIntentCapital(
-            account, lendingAsset, collateralAsset, amount
+            account, lendingAsset, collateralAsset, slot, amount
         );
         // A VPFI-denominated intent withdraws like any other asset: the
         // withdraw below refreshes the lender's VPFI tier record itself
@@ -523,19 +568,21 @@ contract LenderIntentFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // The capital back to the account's own wallet, or to its controller
         // once a replacement retired it (#3205 part 2: the owner classes).
-        if (msg.sender == account) {
+        if (recovered || msg.sender == account) {
             LibVaultOutflow.toOwner(account, LibVaultOutflow.ERC20, lendingAsset, 0, amount, OutflowReason.WITHDRAW);
         } else {
             LibVaultOutflow.toAllowlisted(account, LibVaultOutflow.ERC20, lendingAsset, 0, amount, msg.sender, OutflowReason.WITHDRAW);
         }
         // #625 WI-2a — capital may now be 0 ⇒ de-list the intent if depleted.
-        LibVaipakam.syncIntentRegistry(account, lendingAsset, collateralAsset);
+        LibVaipakam.syncIntentRegistry(account, lendingAsset, collateralAsset, slot);
+        _syncSlot(account, lendingAsset, collateralAsset, slot); // #3714 Available
         emit LenderIntentCapitalWithdrawn(
             account,
             lendingAsset,
             collateralAsset,
+            slot,
             amount,
-            s.lenderIntentCapital[account][lendingAsset][collateralAsset]
+            s.lenderIntentCapital[account][lendingAsset][collateralAsset][slot]
         );
     }
 
@@ -561,6 +608,7 @@ contract LenderIntentFacet is
         address collateralAsset,
         uint256 minFillAmount
     ) private view {
+        LibPriceGuard.requireNotRatePricedLending(lendingAsset); // #3683
         NumeraireValueFacet values = NumeraireValueFacet(address(this));
         values.getNumeraireValue(collateralAsset, 1, false);
         uint256 value = values.getNumeraireValue(lendingAsset, minFillAmount, false);
@@ -627,9 +675,11 @@ contract LenderIntentFacet is
         return LibVaipakam.cfgLenderIntentEnabled();
     }
 
-    /// @notice #393 v1-b — release the live-principal a `matchIntent` loan
-    ///         consumed, when its principal returns to the lender's vault at
-    ///         lender-claim time. Self-gated (diamond-internal cross-facet call
+    /// @notice #393 v1-b — release the slot's exposure for a loan it holds:
+    ///         at lender-claim time, a lender-position sale, a consolidation or
+    ///         a takeover out. Whatever of the loan's principal is still
+    ///         outstanding leaves the slot's live principal (#3714: a loan that
+    ///         has already left the active set has none left). Self-gated (diamond-internal cross-facet call
     ///         from ClaimFacet). Keyed off the per-loan ORIGINATING intent —
     ///         NOT the current `loan.lender` (a lender-position sale mutates it),
     ///         so a sold position still releases the original owner's counter,
@@ -637,20 +687,16 @@ contract LenderIntentFacet is
     ///         `delete` makes a second call a no-op.
     /// @dev    Lives here (not in the inlined `onLoanStatusChanged` hook) because
     ///         that hook inlines into every loan-transition facet and RiskFacet
-    ///         is at the EIP-170 ceiling — the heavy triple-mapping decrement
-    ///         must sit behind a single cross-facet boundary.
+    ///         is at the EIP-170 ceiling. The live-principal and ledger move is
+    ///         `MarketLedgerFacet.onSlotReleased`'s.
     function releaseIntentExposure(uint256 loanId) external {
         if (msg.sender != address(this)) revert OnlyDiamondInternal();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.IntentOrigin memory io = s.intentOrigin[loanId];
-        if (io.owner == address(0)) return; // not an intent-originated loan
-        // Release the ORIGINAL fill amount (`io.amount`), NOT `loan.principal`
-        // (a partial repayment reduces the latter, which would leave the
-        // partial-repaid slice permanently counted against the cap).
-        uint256 live =
-            s.lenderIntentLivePrincipal[io.owner][io.lendingAsset][io.collateralAsset];
-        s.lenderIntentLivePrincipal[io.owner][io.lendingAsset][io.collateralAsset] =
-            io.amount <= live ? live - io.amount : 0;
+        if (s.intentOrigin[loanId].owner == address(0)) return; // not an intent-originated loan
+        // #3714 — whatever of the loan's principal is still outstanding leaves
+        // the slot's live principal and the lent-from-slots figure, on the
+        // ledger's host, before the origin that names the slot is deleted.
+        _releaseFromSlot(loanId);
         delete s.intentOrigin[loanId];
         // #625 WI-2c — de-register from the roll-discovery set (the proceeds were
         // claimed/withdrawn through the normal path, not auto-rolled).
@@ -714,11 +760,6 @@ contract LenderIntentFacet is
         if (LibPositionNFT.ownerOf(loan.lenderTokenId) != io.owner) {
             revert LenderIntentPositionTransferred();
         }
-        // #623 Codex round-1 P1 — a loan carrying preclose / transfer-obligation
-        // HELD proceeds (`heldForLender`) has a SECOND lender payout the normal
-        // claim makes but this roll doesn't. Rather than strand it (the NFT is
-        // about to burn), reject the loan to the normal claim path.
-        if (s.heldForLender[loanId] != 0) revert LenderIntentLoanNotRollable();
         // #1209 — a position sold and bought back carries seller claims on this
         // claim row; the normal claim splits it with them first. The roll
         // would compound their interest into the owner's intent, so refuse.
@@ -750,7 +791,7 @@ contract LenderIntentFacet is
         // that contradicts cancel's promise that open loans settle via the normal
         // path. Reject to the normal claim instead.
         LibVaipakam.LenderIntent storage intent =
-            s.lenderIntent[io.owner][io.lendingAsset][io.collateralAsset];
+            s.lenderIntent[io.owner][io.lendingAsset][io.collateralAsset][io.slot];
         if (!intent.active) revert LenderIntentLoanNotRollable();
         // #3618 — honour the intent's lend-until time: once no further loan
         // could be agreed inside it, the roll is refused and the proceeds take
@@ -771,6 +812,16 @@ contract LenderIntentFacet is
         // operator bound to the adapter (rule 2; rule 4 when unbound).
         else if (s.isAggregatorAdapter[msg.sender]) LibServiceCapacity.chargeKeeper();
 
+        // #3669 — a lender leg the token refused at settlement waits, liened,
+        // in the payer's vault, and the claim pays nothing until it reaches the
+        // lender side's vault. Move it first, as the claim does; while the token
+        // still refuses, this reverts and the loan stays rollable later. No-op
+        // when nothing is parked.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(SettlementLegFacet.releaseParkedLeg.selector, loanId),
+            IVaipakamErrors.InvalidLoanStatus.selector
+        );
+
         // The lender claim (principal + interest) must be present, unconsumed,
         // and the intent's plain ERC-20 lending asset.
         LibVaipakam.ClaimInfo storage claim = s.lenderClaims[loanId];
@@ -782,14 +833,18 @@ contract LenderIntentFacet is
         ) {
             revert LenderIntentNothingToRoll();
         }
-        // Compound: principal + interest, as the repayment recorded it. That is
-        // what the lender claim still holds, never the original fill: a
-        // partial repayment (#3619, an opted-in pro-rata loan) was paid to the
-        // position holder directly and shrank `loan.principal`, so the final
-        // repayment's claim carries only the remainder. The repay deposit was
-        // measured and refused unless it arrived in full, and the free-balance
-        // check below confirms the vault still holds it.
-        uint256 rolledAmount = claim.amount;
+        // Compound: principal + interest, as the repayment recorded it, PLUS
+        // everything held for the position while the loan was open (#3629: a
+        // partial repayment, #3619, or a preclose top-up is held in the owner's
+        // vault for the position, never paid to a wallet). The claim alone is
+        // never the original fill: a partial repayment shrank `loan.principal`,
+        // so the final repayment's claim carries only the remainder, and the
+        // rest is the held part. `LibHeldForLender.take` settles the held
+        // records (reservation, parked interest, fail-closed marker) the same
+        // way the mid-loan claim does; the free-balance check below confirms
+        // the vault still holds both parts.
+        (uint256 heldAmount, ) = LibHeldForLender.take(s, loanId, loan);
+        uint256 rolledAmount = claim.amount + heldAmount;
 
         // #623 Codex round-2 P2 — assert the proceeds are STILL FREE in the
         // owner's vault before consuming the claim. They normally sit free (the
@@ -819,20 +874,15 @@ contract LenderIntentFacet is
         // lien just encumbers them + bumps the capital pool — re-lendable by the
         // next `matchIntent` with no wallet round-trip.
         LibEncumbrance.lienIntentCapital(
-            io.owner, io.lendingAsset, io.collateralAsset, rolledAmount
+            io.owner, io.lendingAsset, io.collateralAsset, io.slot, rolledAmount
         );
         // #625 WI-2a — re-lien re-funds the owner's intent ⇒ (re)list it (if active).
-        LibVaipakam.syncIntentRegistry(io.owner, io.lendingAsset, io.collateralAsset);
+        LibVaipakam.syncIntentRegistry(io.owner, io.lendingAsset, io.collateralAsset, io.slot);
 
-        // Release the loan's live-principal exposure (the ORIGINAL fill amount)
-        // and clear the per-loan origin marker — the same decrement
-        // `releaseIntentExposure` performs, inlined since `io` is in hand.
-        uint256 live = s.lenderIntentLivePrincipal[io.owner][io.lendingAsset][
-            io.collateralAsset
-        ];
-        s.lenderIntentLivePrincipal[io.owner][io.lendingAsset][
-            io.collateralAsset
-        ] = io.amount <= live ? live - io.amount : 0;
+        // The loan leaves its slot (the same release `releaseIntentExposure`
+        // performs; a repaid loan has no outstanding principal left) and the
+        // slot's figures take in the re-liened capital; then clear the origin.
+        _releaseFromSlot(loanId);
         delete s.intentOrigin[loanId];
         // #625 WI-2c — de-register from the roll-discovery set (now rolled).
         LibVaipakam.removeIntentLoan(loanId);
@@ -861,8 +911,9 @@ contract LenderIntentFacet is
             loanId,
             io.lendingAsset,
             io.collateralAsset,
+            io.slot,
             rolledAmount,
-            s.lenderIntentCapital[io.owner][io.lendingAsset][io.collateralAsset]
+            s.lenderIntentCapital[io.owner][io.lendingAsset][io.collateralAsset][io.slot]
         );
 
         // Settle coordination — identical rule to the lender claim: settle once
@@ -875,231 +926,91 @@ contract LenderIntentFacet is
         }
     }
 
-    /// @notice Read a standing intent. `active == false` ⇒ none / cancelled.
-    function getLenderIntent(
-        address owner,
-        address lendingAsset,
-        address collateralAsset
-    ) external view returns (LibVaipakam.LenderIntent memory) {
-        return LibVaipakam.storageSlot().lenderIntent[owner][lendingAsset][
-            collateralAsset
-        ];
-    }
-
-    /// @notice Aggregate LIVE principal currently out from `owner`'s intent on
-    ///         the `(lendingAsset, collateralAsset)` pair — the figure
-    ///         `matchIntent` checks against `maxExposure` (#393 v1-b). Keyed by
-    ///         the full intent; decremented at each originated loan's terminal
-    ///         close.
-    function getLenderIntentLivePrincipal(
-        address owner,
-        address lendingAsset,
-        address collateralAsset
-    ) external view returns (uint256) {
-        return LibVaipakam.storageSlot().lenderIntentLivePrincipal[owner][
-            lendingAsset
-        ][collateralAsset];
-    }
-
-    /// @notice #393 v1-d — the un-lent, liened working capital `owner` has
-    ///         funded for the intent on `(lendingAsset, collateralAsset)`: the
-    ///         pool `matchIntent` draws fill slices from, and the amount
-    ///         `withdrawLenderIntentCapital` can return to the wallet. Excludes
-    ///         capital already lent out (tracked by `lenderIntentLivePrincipal`)
-    ///         and repaid proceeds (which return as a Position-NFT claim).
-    function getLenderIntentCapital(
-        address owner,
-        address lendingAsset,
-        address collateralAsset
-    ) external view returns (uint256) {
-        return LibVaipakam.storageSlot().lenderIntentCapital[owner][
-            lendingAsset
-        ][collateralAsset];
-    }
-
-    /// @notice #625 WI-2a — paginated ACTIVE lender intents (on this facet since #3618, moved
-    ///         off MetricsFacet, which had reached the EIP-170 ceiling): the discovery source the
-    ///         keeper's intent-fill pass pages each tick instead of indexing
-    ///         `LenderIntentSet`/`Cancelled` events. Pages the `activeIntentKeys`
-    ///         enumerable set (cancelled intents drop out), resolving each to a lean
-    ///         {LibMetricsTypes.LenderIntentSummary} — the bounds + `requiresKeeperAuth`
-    ///         (so the keeper skips an intent it isn't delegated to fill) + the two sizing
-    ///         figures: `livePrincipal` (exposure already out) and `availableCapital` (the
-    ///         un-lent, liened pool a fill draws from; a fill exceeding it reverts
-    ///         `IntentCapitalInsufficient`).
-    /// @dev    The set is swap-pop unstable across cancellations, so page over a single
-    ///         block's snapshot. O(limit) reads.
-    /// @return intents Page of active-intent summaries, leaving out any whose
-    ///                 lend-until time can no longer take a one-day loan (#3618),
-    ///                 so a page may hold fewer than `limit` rows mid-list.
-    /// @return total   Count of active intents at this block (the registry,
-    ///                 including any left out above); page by this, not by rows.
-    function getActiveLenderIntents(uint256 offset, uint256 limit)
-        external
-        view
-        returns (
-            LibMetricsTypes.LenderIntentSummary[] memory intents,
-            uint256 total
-        )
-    {
+    /// @notice #3629 — re-commit what is held for an OPEN intent loan's lender
+    ///         position (a partial repayment, a rental day, a periodic sale's
+    ///         proceeds) behind the originating owner's standing intent, so it
+    ///         can be lent again while the loan runs, the open-loan counterpart
+    ///         of {rollIntentLoan}.
+    /// @dev    Callable by the originating intent owner, or a keeper the owner
+    ///         authorized for `KEEPER_ACTION_AUTO_ROLL`. Guards mirror the roll:
+    ///         the loan is Active, the stored lender AND the position holder are
+    ///         still the owner, the intent is active with its window open, no
+    ///         seller claims ride the loan, VPFI is not the lending asset, and
+    ///         neither asset is paused. The held funds already sit in the
+    ///         owner's vault; {LibHeldForLender.take} settles their records and
+    ///         the lien re-commits them. The loan's live-principal exposure is
+    ///         unchanged: it is released when the loan ends.
+    /// @param  loanId The open intent loan whose held payments to re-commit.
+    function recommitHeldToIntent(uint256 loanId) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        total = s.activeIntentKeys.length();
-        if (offset >= total) {
-            return (new LibMetricsTypes.LenderIntentSummary[](0), total);
+        LibVaipakam.IntentOrigin memory io = s.intentOrigin[loanId];
+        if (io.owner == address(0)) revert LenderIntentLoanNotRollable();
+        LibVaipakam._assertNotSanctioned(io.owner);
+        LibVaipakam._assertNotSanctioned(msg.sender);
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        if (loan.status != LibVaipakam.LoanStatus.Active) revert LenderIntentLoanNotRollable();
+        if (loan.lender != io.owner || LibPositionNFT.ownerOf(loan.lenderTokenId) != io.owner) {
+            revert LenderIntentPositionTransferred();
         }
-        uint256 endExcl = offset + limit;
-        if (endExcl > total) endExcl = total;
-        uint256 size = endExcl - offset;
-        // #3618 — skip an intent whose lend-until time leaves no room for a
-        // new loan: every fill would refuse `LenderIntentPastLendUntil`, so
-        // listing it only sends keepers to price fills that cannot land. Its
-        // capital stays withdrawable and its live loans settle as before.
-        // Over-allocate to the page, then truncate to the listed count
-        // (`total` still counts the whole registry, so pagination is unchanged).
-        LibMetricsTypes.LenderIntentSummary[] memory buf =
-            new LibMetricsTypes.LenderIntentSummary[](size);
-        uint256 n = 0;
-        for (uint256 i = 0; i < size; i++) {
-            LibVaipakam.IntentKey memory key =
-                s.intentKeyTuple[s.activeIntentKeys.at(offset + i)];
-            LibVaipakam.LenderIntent storage intent =
-                s.lenderIntent[key.owner][key.lendingAsset][key.collateralAsset];
-            if (!LibIntentTerms.windowOpen(intent)) continue;
-            buf[n++] = LibMetricsTypes.toLenderIntentSummary(
-                key,
-                intent,
-                s.lenderIntentLivePrincipal[key.owner][key.lendingAsset][
-                    key.collateralAsset
-                ],
-                s.lenderIntentCapital[key.owner][key.lendingAsset][
-                    key.collateralAsset
-                ]
-            );
-        }
-        intents = new LibMetricsTypes.LenderIntentSummary[](n);
-        for (uint256 i = 0; i < n; i++) {
-            intents[i] = buf[i];
-        }
+        if (s.sellerInterestClaims[loanId].length != 0) revert LenderIntentLoanNotRollable();
+        if (io.lendingAsset == s.vpfiToken) revert LenderIntentVpfiRollUnsupported();
+        LibVaipakam.LenderIntent storage intent =
+            s.lenderIntent[io.owner][io.lendingAsset][io.collateralAsset][io.slot];
+        if (!intent.active) revert LenderIntentLoanNotRollable();
+        if (!LibIntentTerms.windowOpen(intent)) revert LenderIntentEnded();
+        LibFacet.requireAssetNotPaused(io.lendingAsset);
+        LibFacet.requireAssetNotPaused(io.collateralAsset);
+        if (LibAuth.requireKeeperForPrincipal(
+            LibVaipakam.KEEPER_ACTION_AUTO_ROLL, io.owner
+        )) LibServiceCapacity.chargeKeeper();
+        else if (s.isAggregatorAdapter[msg.sender]) LibServiceCapacity.chargeKeeper();
+
+        (uint256 amount, address asset) = LibHeldForLender.take(s, loanId, loan);
+        if (amount == 0 || asset != io.lendingAsset) revert LenderIntentNothingToRoll();
+        // The held funds must still be free in the owner's vault once their
+        // reservation is released, else the lien would back nothing.
+        if (
+            LibEncumbrance.freeBalance(
+                io.owner, asset, 0, LibVaipakam.trackedHolding(io.owner, asset, 0)
+            ) < amount
+        ) revert LenderIntentLoanNotRollable();
+        LibEncumbrance.lienIntentCapital(io.owner, asset, io.collateralAsset, io.slot, amount);
+        LibVaipakam.syncIntentRegistry(io.owner, asset, io.collateralAsset, io.slot);
+        _syncSlot(io.owner, asset, io.collateralAsset, io.slot); // #3714 Available
+        emit HeldRecommittedToIntent(
+            io.owner,
+            msg.sender,
+            loanId,
+            io.collateralAsset,
+            io.slot,
+            amount,
+            s.lenderIntentCapital[io.owner][asset][io.collateralAsset][io.slot]
+        );
     }
 
-    /// @notice #625 WI-2c — paginated view (on this facet since #3618) of fully-repaid intent-originated
-    ///         loans a keeper can AUTO-ROLL (`LenderIntentFacet.rollIntentLoan`).
-    ///         Pages the `activeIntentLoans` registry (every live intent loan)
-    ///         and returns only those at `LoanStatus.Repaid` whose intent can
-    ///         still take a roll (active, and inside its lend-until time,
-    ///         #3618) — the roll candidates — keyed off each loan's `intentOrigin` (so a sold
-    ///         lender position is still surfaced; `rollIntentLoan` then rejects
-    ///         it, and the keeper keys AUTO_ROLL auth off `owner`).
-    /// @param  offset / limit  Window over the registry. `total` is the FULL
-    ///         registry size (Active + Repaid); the keeper pages until
-    ///         `offset >= total`, accumulating the Repaid rows each page yields.
-    /// @return loans  The Repaid intent loans within `[offset, offset+limit)`.
-    /// @return total  The registry size, for pagination.
-    function getRollableIntentLoans(uint256 offset, uint256 limit)
-        external
-        view
-        returns (
-            LibMetricsTypes.RollableIntentLoan[] memory loans,
-            uint256 total
-        )
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        total = s.activeIntentLoans.length();
-        if (offset >= total) {
-            return (new LibMetricsTypes.RollableIntentLoan[](0), total);
-        }
-        uint256 endExcl = offset + limit;
-        if (endExcl > total) endExcl = total;
-        uint256 window = endExcl - offset;
-        // Filter to Repaid (the roll candidates); over-allocate to the window,
-        // then truncate to the matched count.
-        LibMetricsTypes.RollableIntentLoan[] memory buf =
-            new LibMetricsTypes.RollableIntentLoan[](window);
-        uint256 n = 0;
-        for (uint256 i = 0; i < window; i++) {
-            uint256 loanId = s.activeIntentLoans.at(offset + i);
-            if (s.loans[loanId].status != LibVaipakam.LoanStatus.Repaid) continue;
-            LibVaipakam.IntentOrigin memory io = s.intentOrigin[loanId];
-            // #3618 — skip a loan whose intent can no longer take the roll
-            // (cancelled, or its lend-until time leaves no room for another
-            // loan): `rollIntentLoan` would refuse it, and it settles through
-            // the normal claim.
-            LibVaipakam.LenderIntent storage intent =
-                s.lenderIntent[io.owner][io.lendingAsset][io.collateralAsset];
-            if (!intent.active || !LibIntentTerms.windowOpen(intent)) continue;
-            buf[n] = LibMetricsTypes.toRollableIntentLoan(loanId, io);
-            n++;
-        }
-        loans = new LibMetricsTypes.RollableIntentLoan[](n);
-        for (uint256 i = 0; i < n; i++) {
-            loans[i] = buf[i];
-        }
+    /// @dev Instant market §8 / #3714 — reconcile the slot's Declared and
+    ///      Available shares on their one host, `MarketLedgerFacet`. Called by
+    ///      every writer here of a field they read: {setLenderIntent} and
+    ///      {cancelLenderIntent} (the terms), {fundLenderIntent},
+    ///      {withdrawLenderIntentCapital} and {recommitHeldToIntent} (the
+    ///      reserved capital). The live principal's writers reach the host
+    ///      through {_releaseFromSlot} and `LibIntentFill.recordSlotLoan`.
+    function _syncSlot(address owner, address lendingAsset, address collateralAsset, uint8 slot) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                MarketLedgerFacet.syncSlot.selector, owner, lendingAsset, collateralAsset, slot
+            ),
+            IVaipakamErrors.CrossFacetCallFailed.selector
+        );
     }
 
-    /// @notice #755 — paginated view of ALL standing intents a single lender
-    ///         owns across pairs, so the dapp can list and manage them in one
-    ///         place. Unlike the owner-agnostic, funded-active-only
-    ///         `getActiveLenderIntents` global keeper feed, this
-    ///         pages the per-owner registry and ALSO returns PAUSED intents
-    ///         (cancelled but still carrying reserved capital) — the `active`
-    ///         flag on each `OwnerLenderIntentSummary` row distinguishes active
-    ///         from paused, and `availableCapital` / `livePrincipal` show what's
-    ///         reserved and what's out on loan. An intent leaves the registry
-    ///         only once fully torn down (inactive AND zero reserved capital).
-    /// @dev    Returns a per-owner wrapper type ({OwnerLenderIntentSummary}),
-    ///         NOT the shared {LenderIntentSummary} the global feed returns, so
-    ///         adding the `active` flag here can't perturb that feed's ABI.
-    /// @dev    Migration note (Codex #756 P2): `ownerIntentKeys` is populated
-    ///         FORWARD-only, at the same `syncIntentRegistry` sites as the
-    ///         global `activeIntentKeys` feed — both registries share that
-    ///         property. On a from-scratch deployment (every deployment to date)
-    ///         that is complete: every intent is registered through a synced
-    ///         path. Only an in-place diamond upgrade performed OVER pre-existing
-    ///         intent state would start this set empty; the one-time migration is
-    ///         a re-sync of the known keys (identical to what the global feed
-    ///         would need), not a per-view backfill — so the two registries stay
-    ///         consistent and the platform's pre-live status means there is no
-    ///         such live state to migrate today.
-    /// @param  owner   The lender whose standing intents to list.
-    /// @param  offset  Start index into the owner's intent set.
-    /// @param  limit   Maximum rows to return from `offset`.
-    /// @return intents The owner's intents within `[offset, offset+limit)`.
-    /// @return total   The owner's total intent count, for pagination.
-    function getLenderIntentsByOwner(
-        address owner,
-        uint256 offset,
-        uint256 limit
-    )
-        external
-        view
-        returns (
-            LibMetricsTypes.OwnerLenderIntentSummary[] memory intents,
-            uint256 total
-        )
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        EnumerableSet.Bytes32Set storage keys = s.ownerIntentKeys[owner];
-        total = keys.length();
-        if (offset >= total) {
-            return (new LibMetricsTypes.OwnerLenderIntentSummary[](0), total);
-        }
-        uint256 endExcl = offset + limit;
-        if (endExcl > total) endExcl = total;
-        uint256 size = endExcl - offset;
-        intents = new LibMetricsTypes.OwnerLenderIntentSummary[](size);
-        for (uint256 i = 0; i < size; i++) {
-            LibVaipakam.IntentKey memory key =
-                s.intentKeyTuple[keys.at(offset + i)];
-            intents[i] = LibMetricsTypes.toOwnerLenderIntentSummary(
-                key,
-                s.lenderIntent[key.owner][key.lendingAsset][key.collateralAsset],
-                s.lenderIntentLivePrincipal[key.owner][key.lendingAsset][
-                    key.collateralAsset
-                ],
-                s.lenderIntentCapital[key.owner][key.lendingAsset][
-                    key.collateralAsset
-                ]
-            );
-        }
+    /// @dev The loan leaves the slot its origin names, on the ledger's host
+    ///      (`MarketLedgerFacet.onSlotReleased`). The caller deletes the origin
+    ///      afterwards.
+    function _releaseFromSlot(uint256 loanId) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(MarketLedgerFacet.onSlotReleased.selector, loanId),
+            IVaipakamErrors.CrossFacetCallFailed.selector
+        );
     }
 }

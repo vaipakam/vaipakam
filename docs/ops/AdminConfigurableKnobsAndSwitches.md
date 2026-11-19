@@ -41,9 +41,10 @@ returns the _effective_ value (default OR stored, whichever applies).
 
 ### Treasury fee on lender interest
 
-Default 2% of accrued lender
-interest goes to treasury (the rev-8 fee freeze, #1352; it was 1%
-before). Range: 0% – `MAX_FEE_BPS`, and **`MAX_FEE_BPS` is 50%, not
+Default 10% of accrued lender
+interest goes to treasury (the #3649 fee levels, owner decision
+2026-11-17; it was 2% under the
+rev-8 fee freeze, #1352, and 1% before that). Range: 0% – `MAX_FEE_BPS`, and **`MAX_FEE_BPS` is 50%, not
 the 10% this document previously claimed**. Read the guard for what
 it is: a sanity cap that stops a fat-fingered denomination, not a
 promise that governance can never take the majority of a lender's
@@ -58,9 +59,36 @@ initiation**, and a loan opened before the freeze keeps the legacy 1%
 
 ### Loan-initiation fee
 
-Default 0.2% of principal (also the rev-8 freeze, #1352; it was
-0.1%), charged once when the offer is accepted. Range: 0% –
+Charged once when the offer is accepted, at a rate set by the loan's
+agreed term (#3649). This knob is the **base rate**: default 0.2% of
+principal (also the rev-8 freeze, #1352; it was 0.1%). Range: 0% –
 `MAX_FEE_BPS` (50%), the same cap as the treasury fee.
+
+The base rate applies to a term up to the **base term**; from there
+the rate rises in a straight line to the **yearly rate** at the
+**one-year point**, and a longer term pays the yearly rate pro rata
+(yearly rate × term ÷ one-year point). There is no step at either
+boundary, and the amount is rounded down. The other three settings
+are one knob, `FeeLevelsFacet.setLoanInitiationFeeTerms(baseTermDays,
+yearlyBps, yearDays)` (`ADMIN_ROLE`, so the Timelock after handover);
+a stored 0 means the default, and `getLoanInitiationFeeTerms` reads
+all four in force:
+
+- base term — default 30 days, bounded 1 – 90;
+- yearly rate — default 1%, never below the base rate, and capped
+  so the fee at the longest term the platform admits
+  (`MAX_OFFER_DURATION_DAYS_CEIL`, 4,385 days) stays within
+  `MAX_FEE_BPS`;
+- one-year point — default 365 days, bounded 180 – 730.
+
+A loan stamps its rate at origination, so a write re-prices no open
+loan. The one later charge is an **extension**: it pays the fee at
+the new total term less the fee already paid for, on the principal
+outstanding, under the settings in force at the extension (after the
+borrower's hold-tier discount; `quoteExtensionFee` reads it). A
+signed order's initiation-fee cap is compared with the rate at its
+term rounded up, so raising any of the four can make a standing
+signed order unfillable until the fee comes back down.
 
 **It is charged in the LENDING ASSET, not in VPFI.** #1352 moved the
 fee into the lending asset, and #1980 removed the old peg-custody

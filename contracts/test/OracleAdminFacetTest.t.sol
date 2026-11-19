@@ -12,6 +12,7 @@ import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibPriceGuard} from "../src/libraries/LibPriceGuard.sol";
 import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {PriceGuardState} from "../src/oracle/PriceGuardState.sol";
 import {RegistryKeys} from "../src/governance/RegistryKeys.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 import {MockProtocolRegistry} from "./mocks/MockProtocolRegistry.sol";
@@ -168,7 +169,7 @@ contract OracleAdminFacetTest is SetupTest {
         registry.setPointer(RegistryKeys.PRICE_GUARD, address(sameUnit));
         assertEq(a.getPriceGuard(), address(sameUnit), "the swap lands at once");
 
-        PriceGuard.Identity memory eur = LibTestPriceGuard.identity(address(0xE0), LibTestPriceGuard.ETH);
+        PriceGuardState.Identity memory eur = LibTestPriceGuard.identity(address(0xE0), LibTestPriceGuard.ETH);
         eur.numeraireSymbol = bytes32("eur");
         PriceGuard otherUnit = LibTestPriceGuard.deployGuard(address(this), eur);
         registry.setPointer(RegistryKeys.PRICE_GUARD, address(otherUnit));
@@ -191,7 +192,7 @@ contract OracleAdminFacetTest is SetupTest {
         assertTrue(guard.owner() != address(diamond));
         vm.prank(address(diamond));
         vm.expectRevert();
-        guard.proposeChange(PriceGuard.Kind.Weth, bytes32(0), bytes32(uint256(uint160(address(0xBEEF)))));
+        guard.proposeChange(PriceGuardState.Kind.Weth, bytes32(0), bytes32(uint256(uint160(address(0xBEEF)))));
     }
 
     /// @dev A Diamond with the oracle and its admin facet cut and access

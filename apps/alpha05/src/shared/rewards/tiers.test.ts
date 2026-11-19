@@ -7,7 +7,7 @@ const account = '0x00000000000000000000000000000000000000a1' as const;
 
 const tiers = (bps: readonly bigint[]) =>
   [parseEther('100'), parseEther('1000'), parseEther('5000'), parseEther('20000')].map((threshold, i) => ({ threshold, bps: bps[i]! }));
-const table = { tiers: tiers([1000n, 1500n, 2000n, 2400n]), lifBps: 20n, yieldFeeBps: 200n };
+const table = { tiers: tiers([1000n, 1500n, 2000n, 2400n]), lif: { baseBps: 20n, baseTermDays: 30n, yearlyBps: 50n, yearDays: 365n }, yieldFeeBps: 200n };
 
 describe('the tier table', () => {
   it('computes each fee with its discount exactly, from the live figures', () => {

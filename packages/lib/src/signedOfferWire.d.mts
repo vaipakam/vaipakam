@@ -1,6 +1,7 @@
 /** Types for `signedOfferWire.mjs`. The field list is spelled out as literal
  *  types so viem can type the EIP-712 message from it; the runtime list is the
- *  `.mjs`, and the indexer's typehash test pins it to the contract. */
+ *  `.mjs`, and the indexer's typehash test pins it to the type string it
+ *  reads from `LibSignedOffer.sol`. */
 
 export type SignedOfferFields = readonly [
   { readonly name: 'offerType'; readonly type: 'uint8' },
@@ -28,6 +29,8 @@ export type SignedOfferFields = readonly [
   { readonly name: 'periodicInterestCadence'; readonly type: 'uint8' },
   { readonly name: 'refinanceTargetLoanId'; readonly type: 'uint256' },
   { readonly name: 'useFullTermInterest'; readonly type: 'bool' },
+  { readonly name: 'lifecycleFlex'; readonly type: 'uint8' },
+  { readonly name: 'integrator'; readonly type: 'address' },
   { readonly name: 'creatorFull'; readonly type: 'bool' },
   { readonly name: 'creatorMaxCStar'; readonly type: 'uint256' },
   { readonly name: 'creatorAllowFullDowngrade'; readonly type: 'bool' },
@@ -38,6 +41,15 @@ export type SignedOfferFields = readonly [
   { readonly name: 'signer'; readonly type: 'address' },
   { readonly name: 'nonce'; readonly type: 'uint256' },
   { readonly name: 'deadline'; readonly type: 'uint256' },
+  { readonly name: 'setKind'; readonly type: 'uint8' },
+  { readonly name: 'setLow'; readonly type: 'uint256' },
+  { readonly name: 'setHigh'; readonly type: 'uint256' },
+  { readonly name: 'setRoot'; readonly type: 'bytes32' },
+  { readonly name: 'setListCount'; readonly type: 'uint32' },
+  { readonly name: 'setListHash'; readonly type: 'bytes32' },
+  { readonly name: 'exclusionsHash'; readonly type: 'bytes32' },
+  { readonly name: 'loans'; readonly type: 'uint16' },
+  { readonly name: 'startTime'; readonly type: 'uint64' },
 ];
 
 export const SIGNED_OFFER_FIELDS: SignedOfferFields;
@@ -48,6 +60,20 @@ export const SIGNED_OFFER_FIELD_NAMES: readonly string[];
 export type SignedOrderWire = {
   [F in SignedOfferFields[number] as F['name']]: F['type'] extends 'bool' ? boolean : string;
 };
+
+/** #3328 — the collection fields of an ordinary order, at their zero wire
+ *  values. */
+export const NO_COLLECTION: Readonly<{
+  setKind: '0';
+  setLow: '0';
+  setHigh: '0';
+  setRoot: `0x${string}`;
+  setListCount: '0';
+  setListHash: `0x${string}`;
+  exclusionsHash: `0x${string}`;
+  loans: '0';
+  startTime: '0';
+}>;
 
 export interface SignedOfferColumns {
   signer: string;

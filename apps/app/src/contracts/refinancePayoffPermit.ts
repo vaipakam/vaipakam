@@ -38,6 +38,7 @@
  * every chain runs the fresh deploy (#3074).
  */
 import { toFunctionSelector, zeroAddress, type PublicClient, type WalletClient } from 'viem';
+import type { LifTerms } from '../lib/initiationFee';
 import { DIAMOND_ABI_VIEM } from './diamond';
 import { ensureAllowance, restoreAllowance } from './erc20';
 import { settleFailedSend } from './ownReceipt';
@@ -193,18 +194,20 @@ export async function readPayoffQuote(a: {
   graceSeconds: bigint;
   /** The route, when the caller has already read it. */
   route?: PayoffRoute;
-  /** The request's amount and the live initiation-fee rate. Required on
-   *  the approval route, where they size the wallet's spare balance; the
-   *  permit route reads the contract's own figure. */
+  /** The request's amount, the live initiation-fee term rule and the
+   *  request's term (#3649). Required on the approval route, where they
+   *  size the wallet's spare balance; the permit route reads the
+   *  contract's own figure. */
   requestAmount?: bigint;
-  loanInitiationFeeBps?: number;
+  lifTerms?: LifTerms;
+  termDays?: number;
 }): Promise<PayoffQuote> {
   const route = a.route ?? (await readPayoffRoute(a.publicClient, a.diamond));
   const graceEnd = loanEndTimeOf(a.live, a.chainNow) + a.graceSeconds;
   const lastFillable = lastFillableMoment(a.expiresAt, graceEnd);
   if (route === 'approval') {
-    if (a.requestAmount === undefined || a.loanInitiationFeeBps === undefined) {
-      throw new Error('readPayoffQuote: the approval route needs the request amount and fee rate');
+    if (a.requestAmount === undefined || a.lifTerms === undefined || a.termDays === undefined) {
+      throw new Error('readPayoffQuote: the approval route needs the request amount, fee rule and term');
     }
     const payoff = refinancePayoffOf(a.live, a.chainNow);
     const bound = refinanceApprovalOf(a.live, {
@@ -216,7 +219,7 @@ export async function readPayoffQuote(a: {
       payoff,
       topUp: refinanceWalletPullOf(
         a.live,
-        { requestAmount: a.requestAmount, loanInitiationFeeBps: a.loanInitiationFeeBps },
+        { requestAmount: a.requestAmount, lifTerms: a.lifTerms, termDays: a.termDays },
         a.chainNow,
       ),
       growth: bound > payoff ? bound - payoff : 0n,

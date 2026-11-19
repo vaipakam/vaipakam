@@ -127,6 +127,9 @@ While `sequencerHealthy()` is false: `getAssetPrice` reverts `SequencerDown` / `
 | Remote messenger set for every remote | `CcipMessenger.remoteMessengerOf(remoteChainId)` | equals the remote chain's `ccipMessenger` |
 | Reward channel registered | `CcipMessenger.handlerOf(VPFI_REWARD_CHANNEL)` | equals local `rewardMessenger` |
 | Reward channel peer set for every remote | `CcipMessenger.channelPeerOf(VPFI_REWARD_CHANNEL, remoteChainId)` | equals the remote chain's `rewardMessenger` |
+| VPFI pool lane present for every remote | the chain's VPFI TokenPool `getSupportedChains()` | includes every remote chain's CCIP selector |
+| Lane rate limits on, at the launch values | pool `getCurrentOutboundRateLimiterState(remoteSelector)` and `getCurrentInboundRateLimiterState(remoteSelector)` | `isEnabled == true`, capacity 50,000 VPFI, rate about 5.8 VPFI/s (or the recorded per-chain override) |
+| Rate limits owned by the governor | pool `getRateLimitAdmin()` | equals the chain's `VpfiPoolRateGovernor` |
 
 ### Canonical chain (Base) only
 | Check | Call | Expected |
@@ -135,6 +138,7 @@ While `sequencerHealthy()` is false: `getAssetPrice` reverts `SequencerDown` / `
 | Expected source chain ids match inventory | `getExpectedSourceChainIds()` | sorted equal to inventory list |
 | Every non-canonical inventory chain is in the list | comparison | true |
 | No unexpected source chain id in the list | comparison | true |
+| Mirror holdings sized to near-term claims | each mirror's reward VPFI held vs its outstanding claims | held is no more than a few days of claims (see CcipCutoverRunbook §8) |
 
 ### Reporter chains only
 | Check | Call | Expected |

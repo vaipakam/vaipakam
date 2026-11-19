@@ -366,7 +366,7 @@ jobs:
           # already matched), and for the
           # restore converter, which the indexer's table-classification guard
           # imports (#1481).
-          WORKSPACES_RE='^(apps/|packages/|contracts/script/storage-layout-guard\.mjs$|contracts/script/check-measured-delivery\.mjs$|contracts/script/check-loan-terms-writer\.mjs$|contracts/script/check-permissionless-steps\.mjs$|.*\.(jsonc|json)$|.*wrangler[^/]*\.toml$|ops/offchain-data-warm/src/|ops/offchain-data-warm/scripts/restore-from-archive\.mjs$|docs/Terms/|docs/ops/OffChainRestore\.md$|docs/ops/AdminConfigurableKnobsAndSwitches\.md$|contracts/script/sync-admin-knobs-doc\.sh$|contracts/src/libraries/LibVaipakam\.sol$|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
+          WORKSPACES_RE='^(apps/|packages/|contracts/script/storage-layout-guard\.mjs$|contracts/script/check-measured-delivery\.mjs$|contracts/script/check-loan-terms-writer\.mjs$|contracts/script/check-loan-collateral-writer\.mjs$|contracts/script/check-loan-start-term-writer\.mjs$|contracts/script/check-raw-payouts\.mjs$|contracts/script/check-permissionless-steps\.mjs$|.*\.(jsonc|json)$|.*wrangler[^/]*\.toml$|ops/offchain-data-warm/src/|ops/offchain-data-warm/scripts/restore-from-archive\.mjs$|docs/Terms/|docs/ops/OffChainRestore\.md$|docs/ops/AdminConfigurableKnobsAndSwitches\.md$|contracts/script/sync-admin-knobs-doc\.sh$|contracts/src/libraries/LibVaipakam\.sol$|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
           if echo "$CHANGED" | grep -Eq "$WORKSPACES_RE"; then
             echo "workspaces=true" >> "$GITHUB_OUTPUT"
           else
@@ -582,7 +582,13 @@ jobs:
     # timed-out job is a lost run. The heaviest single deploy test peaks at
     # 5.5 GB on its own, so smaller chunks would mostly cost more time.
     # #2718 tracks cutting the repeated codegen itself.
-    timeout-minutes: 90
+    #
+    # 90 -> 120 (batch PR #3743, 2026-11-19): a cold run on that PR took
+    # 32 min for step 1 (401 files) and 46 min for step 2's three chunks
+    # (13, 28 and 5 min), and was cancelled at 90 min with only step 4's
+    # ABI parity left to run. A cancelled run saves no forge cache, so the
+    # rerun is cold again and times out the same way.
+    timeout-minutes: 120
     # #290 — every forge invocation in this job runs under the
     # narrow-scope `cifast` profile defined in `contracts/foundry.toml`.
     # It cut peak RSS from ~17.7 GB to ~3.2 GB when it was written. Growth

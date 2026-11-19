@@ -15,6 +15,16 @@ pragma solidity ^0.8.29;
  *         does not add an entry point or a field.
  */
 library VaultOutflowTypes {
+    /// @notice #3437 step 5 — how many earlier price guards, and earlier
+    ///         listing conduits, one vault code may accept beside the
+    ///         current one. A loan still on an older guard or conduit has to
+    ///         be moved off it (the announced retirement of #3437 step 4)
+    ///         before a vault version that no longer lists it ships.
+    /// @dev    Declared in the library, not at file level: the static
+    ///         analyser CI runs cannot resolve a file-level constant used as
+    ///         an array length inside a library struct, and stops.
+    uint256 internal constant MAX_PRIOR_ENDPOINTS = 2;
+
     /// @notice What kind of asset moves.
     enum AssetKind {
         ERC20,
@@ -70,6 +80,26 @@ library VaultOutflowTypes {
      *           stored party's vault to the CURRENT holder's vault, still under
      *           the side's lien (#594): holder-bound like PositionHolder, but
      *           not free money, so the move books it as custody.
+     *         - Recovery (#3246 part 2): a protected account's recovery
+     *           address in force, read by the vault from its own record, or
+     *           that address's own vault when it is itself a protected
+     *           account. Only a clawback and a recovered account's sweep use
+     *           it; it passes no payout queue.
+     *         - IntegratorShare: a registered integrator's share of a new
+     *           loan's initiation fee (#3682), from the lender's vault into the
+     *           vault of the integrator's payout account, which the Diamond
+     *           derives from the integrator registry. The vault checks a
+     *           genuine vault.
+     *         - ReferralShare: an inviter's share of a new loan's initiation
+     *           fee (#3722), from the lender's vault to the inviter's WALLET
+     *           (an inviter needs no vault). `to` names the new user; the
+     *           Diamond derives the inviter from that user's own binding and
+     *           refuses one whose period has ended. A protected inviter is
+     *           paid into its vault, as for every wallet payout.
+     *         What a loan or an open offer owes a party always lands in the
+     *         position holder's VAULT as free balance (PositionHolder); only
+     *         the owner's own withdrawal reaches a wallet (owner decision
+     *         2026-11-19, #3710).
      */
     enum OutflowClass {
         Owner,
@@ -87,7 +117,19 @@ library VaultOutflowTypes {
         DiamondTransient,
         ClaimCustody,
         PrincipalToBorrower,
-        Consolidation
+        Consolidation,
+        Recovery,
+        IntegratorShare,
+        ReferralShare
+    }
+
+    /// @notice #3246 part 2 — one asset a clawback or a recovered account's
+    ///         sweep moves: its free balance, whatever it is when the move
+    ///         runs (one for an ERC-721 the account holds free).
+    struct ClawbackAsset {
+        AssetKind kind;
+        address asset;
+        uint256 tokenId;
     }
 
     /// @notice Who a just-in-time allowance may name as spender.
@@ -161,12 +203,21 @@ library VaultOutflowTypes {
      * @param seaport       The Seaport the vault answers ERC-1271 for.
      * @param orderProtocol The 1inch order protocol the vault answers ERC-1271
      *                      for and may approve as order taker.
-     * @param conduit       The one listing conduit the vault or its escrow
-     *                      may approve.
-     * @param conduitKey    The Seaport conduit key a listing must name.
-     * @param priceGuard    The standalone price guard (#3447), read from #3268.
+     * @param conduit       The listing conduit new listings use; the vault or
+     *                      its escrow may approve it.
+     * @param conduitKey    Its Seaport conduit key.
+     * @param priceGuard    The price guard new loans use (#3447), read from
+     *                      #3268.
      * @param protection    #3379 B2 — the `VaultProtection` code every vault
      *                      delegatecalls for its protected-mode writes.
+     * @param priorPriceGuards  #3437 step 5 — earlier price guards still used
+     *                      by open loans, accepted beside `priceGuard`. Filled
+     *                      from the first slot; a zero slot is unused.
+     * @param priorConduits #3437 step 5 — earlier listing conduits still used
+     *                      by open loans' listings, accepted beside `conduit`,
+     *                      each with its key at the same index in
+     *                      `priorConduitKeys`. Filled from the first slot.
+     * @param priorConduitKeys The keys of `priorConduits`.
      */
     struct VaultEndpoints {
         address treasury;
@@ -177,6 +228,9 @@ library VaultOutflowTypes {
         bytes32 conduitKey;
         address priceGuard;
         address protection;
+        address[MAX_PRIOR_ENDPOINTS] priorPriceGuards;
+        address[MAX_PRIOR_ENDPOINTS] priorConduits;
+        bytes32[MAX_PRIOR_ENDPOINTS] priorConduitKeys;
     }
 
     /**
@@ -235,5 +289,10 @@ library OutflowReason {
     uint8 internal constant LISTING_ESCROW = 20; // an ERC-1155 listing's lot into its escrow
     uint8 internal constant SANCTIONED_LOCK = 21; // a sanctioned party's share into its lock
     uint8 internal constant RENTAL = 22; // a rental settlement leg
+    uint8 internal constant CLAWBACK = 23; // #3246 part 2: a clawback to the recovery address
+    uint8 internal constant RECOVERY_SWEEP = 24; // #3246 part 2: a recovered account's later free balance swept there
+    uint8 internal constant STANDING_INSTRUCTION = 25; // #3681: a standing instruction's draw on a loan reserve
+    uint8 internal constant INTEGRATOR_SHARE = 26; // an integrator's share of the initiation fee
+    uint8 internal constant REFERRAL_SHARE = 27; // an inviter's share of the initiation fee
 
 }

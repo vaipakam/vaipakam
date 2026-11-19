@@ -43,6 +43,7 @@ import type { KeeperContext } from '../src/keeper';
 import type { Env } from '../src/env';
 import type { AddressedAlert } from '@vaipakam/lib/telegramAlerts/message';
 import { parseAddressedAlert } from '@vaipakam/lib/telegramAlerts/message';
+import { armHeldFence } from './helpers/epochFence';
 
 const CHAIN = 84532;
 const DIAMOND: Address = '0x00000000000000000000000000000000000000c1';
@@ -234,7 +235,7 @@ class FakeDiamond {
         l.lastTopUpAt = this.now;
         const before = l.hf;
         l.hf = l.target;
-        this.lastLogs = [logOf('CollateralTopUpRun', { loanId: id, holder: l.owner, amount, hfBefore: before, hfAfter: l.hf, reserveLeft: l.collateralReserve, caller: KEEPER })];
+        this.lastLogs = [logOf('CollateralTopUpRun', { loanId: id, holder: l.owner, amount, newCollateralAmount: amount, hfBefore: before, hfAfter: l.hf, reserveLeft: l.collateralReserve, caller: KEEPER })];
       };
     }
     if (fn === 'runInterestPayment') {
@@ -393,7 +394,7 @@ describe('lowReserveNotices', () => {
 
 describe('receipt outcomes and holds', () => {
   it('reads a run, or the contract\'s skip, from the Diamond\'s own events for this loan and instruction', () => {
-    const ran = logOf('CollateralTopUpRun', { loanId: 1n, holder: OWNER, amount: 7n, hfBefore: 1n, hfAfter: 2n, reserveLeft: 0n, caller: KEEPER });
+    const ran = logOf('CollateralTopUpRun', { loanId: 1n, holder: OWNER, amount: 7n, newCollateralAmount: 7n, hfBefore: 1n, hfAfter: 2n, reserveLeft: 0n, caller: KEEPER });
     expect(landedOutcome(DIAMOND, 'topUp', 1n, [ran])).toEqual({ ran: { step: 'topUp', loanId: 1n, amount: 7n } });
     expect(landedOutcome(DIAMOND, 'topUp', 2n, [ran]), 'another loan').toEqual({ ran: { step: 'topUp', loanId: 2n, amount: null } });
     const skip = logOf('StandingInstructionSkipped', { loanId: 1n, instruction: 3, reason: 3, missing: 250n, caller: KEEPER });
@@ -417,17 +418,20 @@ describe('publishArmedSteps', () => {
       batches,
       prepare(sql: string) {
         expect(sql).toMatch(/INSERT INTO keeper_step_status/);
-        return { bind: (...v: unknown[]) => v };
+        return { bind: (...v: unknown[]) => v.slice(0, 6) };
       },
       async batch(stmts: unknown[][]) {
         if (fail) throw new Error('D1 down');
         batches.push(stmts);
-        return [];
+        return stmts.map(() => ({ meta: { changes: 1 } }));
       },
     } as unknown as D1Database & { batches: unknown[][][] };
   }
   const chains = [{ id: 84532, diamond: '0x63816B149266C9dBFB7683dfd02D851915238049' }];
-  beforeEach(() => resetPublishedSteps());
+  beforeEach(() => {
+    resetPublishedSteps();
+    armHeldFence(chains);
+  });
 
   it('publishes every step of every chain, armed or not, then only when due or changed', async () => {
     const db = fakeDb();

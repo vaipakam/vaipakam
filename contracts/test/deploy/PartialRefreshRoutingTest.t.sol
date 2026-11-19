@@ -705,49 +705,38 @@ contract PartialRefreshRoutingTest is Test {
         }
     }
 
-    /// @notice #2440 — `RedeployFacets` reinstalls facets that charge fees
-    ///         into the treasury (DefaultedFacet, PrecloseFacet, RefinanceFacet,
-    ///         EarlyWithdrawalFacet, RepayPeriodicFacet), and each of them now
-    ///         moves every fee through a self-call into `TreasuryFeeFacet`. A
-    ///         Diamond from before #2440 routes no such host, so the script must
-    ///         ADD it; without it every fee would revert `FunctionDoesNotExist`.
-    /// @dev    Run twice, so both the Add and the Replace branch of the routing
-    ///         partition execute, and the whole two-selector surface must land
-    ///         on one host each time.
-    function test_RedeployFacets_RoutesTheTreasuryFeeHost_OnPre2440Diamond() public {
-        bytes4[] memory sels = _unrouteTreasuryFeeHost();
-
-        RedeployFacets first = new RedeployFacets();
-        first.runWith(diamond, DEPLOYER_KEY);
-        _assertSingleHost(sels, "TreasuryFeeFacet");
-        address hostAfterAdd = IDiamondLoupe(diamond).facetAddress(sels[0]);
-
-        RedeployFacets second = new RedeployFacets();
-        second.runWith(diamond, DEPLOYER_KEY);
-        _assertSingleHost(sels, "TreasuryFeeFacet");
-        assertTrue(
-            IDiamondLoupe(diamond).facetAddress(sels[0]) != hostAfterAdd,
-            "the second pass replaced it with its own deploy"
-        );
+    /// @notice #2440 / #3649 stage 3 — a Diamond with no treasury fee host
+    ///         (pre-#2440) also predates the floor split, whose fee legs take
+    ///         a fee kind and a floor base. Both curated refreshes carry the
+    ///         host but not every facet that charges a fee, so each refuses
+    ///         such a Diamond by name rather than splitting the fee legs
+    ///         across two shapes; the crossing is a fresh deploy or the
+    ///         all-facets refresh.
+    function test_CuratedScripts_RefuseAPreFloorDiamond() public {
+        _unrouteTreasuryFeeHost();
+        RedeployFacets redeploy = new RedeployFacets();
+        vm.expectRevert(abi.encodeWithSelector(RedeployFacets.PredatesTreasuryFeeFloor.selector, diamond));
+        redeploy.runWith(diamond, DEPLOYER_KEY);
+        ReplaceStaleFacets replace = new ReplaceStaleFacets();
+        vm.expectRevert(abi.encodeWithSelector(ReplaceStaleFacets.PredatesTreasuryFeeFloor.selector, diamond));
+        replace.runWith(diamond, DEPLOYER_KEY);
     }
 
-    /// @notice #2440 — `ReplaceStaleFacets` reinstalls `OfferAcceptFeeFacet`,
-    ///         whose borrower-LIF charge moves the treasury's cut through the
-    ///         same host, so it must ADD the host on a pre-#2440 Diamond too.
-    function test_ReplaceStaleFacets_RoutesTheTreasuryFeeHost_OnPre2440Diamond() public {
-        bytes4[] memory sels = _unrouteTreasuryFeeHost();
-
-        ReplaceStaleFacets first = new ReplaceStaleFacets();
-        first.runWith(diamond, DEPLOYER_KEY);
+    /// @notice On a current Diamond both curated refreshes replace the whole
+    ///         treasury fee host surface with their own deploy, on one host.
+    function test_CuratedScripts_ReplaceTheTreasuryFeeHostWhole() public {
+        bytes4[] memory sels = FacetSelectors.treasuryFee();
+        address before = IDiamondLoupe(diamond).facetAddress(sels[0]);
+        RedeployFacets redeploy = new RedeployFacets();
+        redeploy.runWith(diamond, DEPLOYER_KEY);
         _assertSingleHost(sels, "TreasuryFeeFacet");
-        address hostAfterAdd = IDiamondLoupe(diamond).facetAddress(sels[0]);
-
-        ReplaceStaleFacets second = new ReplaceStaleFacets();
-        second.runWith(diamond, DEPLOYER_KEY);
+        address afterRedeploy = IDiamondLoupe(diamond).facetAddress(sels[0]);
+        assertTrue(afterRedeploy != before, "RedeployFacets replaced the host");
+        ReplaceStaleFacets replace = new ReplaceStaleFacets();
+        replace.runWith(diamond, DEPLOYER_KEY);
         _assertSingleHost(sels, "TreasuryFeeFacet");
         assertTrue(
-            IDiamondLoupe(diamond).facetAddress(sels[0]) != hostAfterAdd,
-            "the second pass replaced it with its own deploy"
+            IDiamondLoupe(diamond).facetAddress(sels[0]) != afterRedeploy, "ReplaceStaleFacets replaced the host"
         );
     }
 

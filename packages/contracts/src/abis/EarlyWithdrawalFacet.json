@@ -287,17 +287,6 @@
   },
   {
     "type": "error",
-    "name": "AccountRetired",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "AlreadyLaunched",
     "inputs": []
   },
@@ -1817,6 +1806,22 @@
   },
   {
     "type": "error",
+    "name": "KeeperSaleRateAbove",
+    "inputs": [
+      {
+        "name": "saleRateBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "loanRateBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "KeeperWhitelistFull",
     "inputs": []
   },
@@ -2043,6 +2048,43 @@
       },
       {
         "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LockedSaleRateAbove",
+    "inputs": [
+      {
+        "name": "seller",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "saleRateBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "loanRateBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LockedSaleShortfall",
+    "inputs": [
+      {
+        "name": "seller",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "shortfall",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -2384,14 +2426,8 @@
   },
   {
     "type": "error",
-    "name": "ProtectedVaultLocked",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
+    "name": "PositionTokenNotAccepted",
+    "inputs": []
   },
   {
     "type": "error",

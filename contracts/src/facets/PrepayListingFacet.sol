@@ -8,6 +8,8 @@ import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
+import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
@@ -163,6 +165,7 @@ contract PrepayListingFacet is
         external
         override
         whenNotPaused
+        guardedCallback
     {
         // ── Privileged-caller gate ─────────────────────────────────────
         // The diamond accepts finalization callbacks ONLY from the
@@ -272,6 +275,7 @@ contract PrepayListingFacet is
         external
         override
         whenNotPaused
+        guardedCallback
     {
         (address owner, address asset, uint256 tokenId, uint256 ref) = _listingGrantSubject(loanId, offerId);
         if (owner == address(0)) return;
@@ -284,6 +288,7 @@ contract PrepayListingFacet is
     function executorCloseListingGrant(uint256 loanId, uint96 offerId)
         external
         override
+        guardedCallback
         returns (uint256 consumed)
     {
         (address owner,,,) = _listingGrantSubject(loanId, offerId);
@@ -643,19 +648,28 @@ contract PrepayListingFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 lenderAmount = plan.lenderDue + lenderExtra;
         LibCloseoutFreeze.freezeLenderProceeds(s, loanId, loan, lenderAmount);
-        uint256 treasuryAmount = LibFacet.transferToTreasury(loan.principalAsset, treasuryNet);
+        // #3669 — a refused share waits, liened, in the borrower's vault; its
+        // floor split (#3649 stage 3) is fixed then and applied at release.
+        uint256 treasuryAmount = LibFacet.treasuryShareOrPark(
+            2,
+            loan.borrower,
+            loan.principalAsset,
+            treasuryNet,
+            LibFeeFloor.interest(plan.interest + plan.lateFee, LibVaipakam.effectiveTreasuryFeeBps(loan))
+        );
 
         // `lenderExtra + treasuryNet == plan.treasuryShare`, so this is
         // `proceeds - floor`, which the check above keeps non-negative.
-        (bool borrowerHeld, uint256 borrowerAmount) = LibCloseoutFreeze.payOrHoldBorrowerExtra(
-            s, loanId, loan, borrower, proceeds - lenderAmount - treasuryNet
+        // #3629 — held for the borrower position's claim, never paid to a wallet.
+        uint256 borrowerAmount = LibCloseoutFreeze.holdBorrowerExtra(
+            s, loanId, loan, borrower, loan.principalAsset, proceeds - lenderAmount - treasuryNet
         );
 
         emit CollateralSaleProceedsSplit(
             loanId, offerId, loan.principalAsset, proceeds,
             lender, lenderAmount, lenderExtra,
             treasuryAmount,
-            borrower, borrowerAmount, borrowerHeld
+            borrower, borrowerAmount
         );
     }
 
@@ -739,14 +753,10 @@ contract PrepayListingFacet is
     /// @param  treasuryAmount  What the treasury received.
     /// @param  borrower        The borrower-position holder the remainder
     ///                         is owed to.
-    /// @param  borrowerAmount  The remainder above the floor: what the
-    ///                         holder's wallet was sent, or what the stored
-    ///                         borrower's vault received when it was held.
-    /// @param  borrowerHeld    True when the remainder was held for the
-    ///                         holder's `claimAsBorrower` (the holder is
-    ///                         flagged, or their wallet refused it); false
-    ///                         when it was paid to the wallet or there was
-    ///                         none.
+    /// @param  borrowerAmount  The remainder above the floor, as the stored
+    ///                         borrower's vault received it, held for the
+    ///                         holder's `claimAsBorrower` (#3629: never paid
+    ///                         to a wallet). 0 when there was none.
     /// @custom:event-category state-change/loan-mutation
     event CollateralSaleProceedsSplit(
         uint256 indexed loanId,
@@ -758,8 +768,7 @@ contract PrepayListingFacet is
         uint256 lenderDiscount,
         uint256 treasuryAmount,
         address borrower,
-        uint256 borrowerAmount,
-        bool borrowerHeld
+        uint256 borrowerAmount
     );
 
     /// @notice #2876 — a collateral sale's proceeds do not cover what a

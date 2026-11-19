@@ -14,9 +14,12 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibTreasury} from "../libraries/LibTreasury.sol";
 import {LibSellerPayAuth} from "../libraries/LibSellerPayAuth.sol";
 import {LibAcceptContext} from "../libraries/LibAcceptContext.sol";
+import {LibReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
+import {LibFillLock} from "../libraries/LibFillLock.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {VaultOutflowTypes} from "../vault/VaultOutflowTypes.sol";
+import {LibReferral} from "../libraries/LibReferral.sol";
 
 /// @dev The protected-mode payout gate's host (`VaultPayoutFacet`).
 interface IVaultOutflowPayoutGate {
@@ -28,6 +31,15 @@ interface IVaultOutflowPayoutGate {
         uint256 amount,
         address recipient
     ) external returns (bool held);
+}
+
+/// @dev #3246 part 2 — the recovery address in force, read from the paying
+///      vault's own record (`VaipakamVaultImplementation.protectionRecovery`).
+interface IVaultRecoveryRead {
+    function protectionRecovery()
+        external
+        view
+        returns (address inForce, address pending, uint64 pendingAt, bool recovered, uint64 recoveredAt);
 }
 
 /**
@@ -122,8 +134,21 @@ contract VaultOutflowFacet is IVaipakamErrors {
     ///      `VaultFactoryFacet.WithdrawWouldUnderflowLien`).
     error WithdrawWouldUnderflowLien(address user, address asset, uint256 tokenId, uint256 amount, uint256 free);
 
+    /// @dev #3432 — a vault movement ran with neither the Diamond's
+    ///      reentrancy guard nor a fill lock held.
+    error VaultMoveOutsideGuard();
+
+    /// @dev A self-call, and only inside a guarded action (#3432). A vault
+    ///      move hands control to someone else (an NFT receiver's hook, a
+    ///      grant's spender), and the vault carries no guard of its own, so
+    ///      the Diamond must already refuse a re-entry when the move runs:
+    ///      its reentrancy guard is held, or a 1inch fill holds the fill lock
+    ///      (under which the Diamond's fallback admits only self-calls and
+    ///      the order protocol). Checked here, at the one host every vault
+    ///      move passes, rather than trusted of every caller.
     modifier onlyDiamondInternal() {
         if (msg.sender != address(this)) revert OnlyDiamondInternal();
+        if (!LibReentrancyGuard.entered() && LibFillLock.heldBy() == bytes32(0)) revert VaultMoveOutsideGuard();
         _;
     }
 
@@ -227,6 +252,19 @@ contract VaultOutflowFacet is IVaipakamErrors {
         // Nothing to move is a no-op, as a zero withdrawal always was.
         if (o.amount == 0) return 0;
         address proxy = LibFacet.getOrCreateVault(user);
+        // #3413 / #3710 — THE seam for payouts: every outflow that names a
+        // loan takes value out of its positions, so its tokens cool down and
+        // its state number goes up. A consolidation keeps the value under the
+        // lien and is no payout.
+        if (_namesLoan(o.class_)) {
+            LibPositionNFT.markLoanValueOut(o.ref);
+            // A payout to the position the caller itself holds is the
+            // holder's own move for itself: that token takes the long wait.
+            if (
+                o.class_ == VaultOutflowTypes.OutflowClass.PositionHolder
+                    || o.class_ == VaultOutflowTypes.OutflowClass.Counterparty
+            ) LibPositionNFT.markHolderMove(o.positionToken);
+        }
         address payeeOwner = _resolveRecipient(user, o);
         // A listing's lot moving into the vault's own escrow stays under its
         // lien (the escrow counts as part of the vault), so it is not "free"
@@ -237,8 +275,11 @@ contract VaultOutflowFacet is IVaipakamErrors {
         // controller) is queued, or kept in a locked account's vault. Nothing
         // moves and the tracked balance is unchanged until a release pays it
         // through this same function.
+        // #3246 part 2 — a clawback or a recovered account's sweep is not a
+        // payout to the owner: it pays the recovery address the vault's own
+        // record names, at once, past the queue a lock cancels (4.2).
         if (
-            LibProtectedAccount.isProtected(user)
+            o.class_ != VaultOutflowTypes.OutflowClass.Recovery && LibProtectedAccount.isProtected(user)
                 && IVaultOutflowPayoutGate(address(this)).applyPayoutGate(
                     user, _assetType(o.kind), o.asset, o.tokenId, o.amount, o.to
                 )
@@ -251,7 +292,12 @@ contract VaultOutflowFacet is IVaipakamErrors {
         // different account; an account's own owner payout is never
         // redirected (`_protectedRecipientVault` skips recipient == user).
         address creditTo;
-        if (_paysWallet(o.class_) || o.class_ == VaultOutflowTypes.OutflowClass.Owner) {
+        // #3246 part 2 — a recovery address that is itself a protected
+        // account is paid into its own vault the same way.
+        if (
+            _paysWallet(o.class_) || o.class_ == VaultOutflowTypes.OutflowClass.Owner
+                || o.class_ == VaultOutflowTypes.OutflowClass.Recovery
+        ) {
             creditTo = _protectedRecipientVault(user, o.to);
             if (creditTo != address(0)) {
                 payeeOwner = o.to;
@@ -305,7 +351,9 @@ contract VaultOutflowFacet is IVaipakamErrors {
             // loan's principal; a stored party's custody, a consolidation, a
             // matched leg, the backstop's warehouse and a seller's share stay
             // under the settlement's own reservation.
-            if (_credits(o.class_)) LibDepositoryLedger.credit(payeeOwner, o.asset, o.tokenId, delivered);
+            if (_credits(o.class_)) {
+                LibDepositoryLedger.credit(payeeOwner, o.asset, o.tokenId, delivered);
+            }
         }
 
         // A retention debit only when VPFI actually left the vault: a
@@ -409,10 +457,6 @@ contract VaultOutflowFacet is IVaipakamErrors {
             // A consolidation moves custody under the lien: the move books it.
             // A holder payout is free money for the holder: booked here.
             payeeOwner = holder;
-            // #3413 — value left the position: its tokens cool down, so a sale
-            // cannot fill against a position emptied just before it. A
-            // consolidation keeps the value under the lien and is no payout.
-            if (c != VaultOutflowTypes.OutflowClass.Consolidation) LibPositionNFT.markLoanValueOut(o.ref);
         } else if (c == VaultOutflowTypes.OutflowClass.ClaimCustody) {
             // The STORED party of the receiving side of THAT loan, from loan
             // state: `o.positionToken` names the side. Its vault must exist
@@ -452,6 +496,12 @@ contract VaultOutflowFacet is IVaipakamErrors {
             o.to = LibFacet.getOrCreateVault(backstop);
         } else if (c == VaultOutflowTypes.OutflowClass.DiamondTransient) {
             o.to = address(this);
+        } else if (c == VaultOutflowTypes.OutflowClass.Recovery) {
+            // #3246 part 2 — the recovery address in force on the paying
+            // vault's own record; the caller names none.
+            (address r,,,,) = IVaultRecoveryRead(s.userVaipakamVaults[user]).protectionRecovery();
+            if (r == address(0)) revert OutflowRecipientInvalid(c, address(0));
+            o.to = r;
         } else if (c == VaultOutflowTypes.OutflowClass.SwapAdapter) {
             if (!_isSwapAdapter(s, o.to)) revert OutflowRecipientInvalid(c, o.to);
         } else if (c == VaultOutflowTypes.OutflowClass.ListingEscrow) {
@@ -472,6 +522,21 @@ contract VaultOutflowFacet is IVaipakamErrors {
             payeeOwner = o.to;
             o.to = s.userVaipakamVaults[o.to];
             if (o.to == address(0)) revert OutflowRecipientInvalid(c, address(0));
+        } else if (c == VaultOutflowTypes.OutflowClass.IntegratorShare) {
+            // #3682 — `o.to` names the integrator; the payee is its payout
+            // account, read from the registry, and only an active entry is
+            // paid. Free money for that account, which it withdraws through
+            // the ordinary payout.
+            LibVaipakam.IntegratorEntry storage e = s.integrators[o.to];
+            if (e.status != LibVaipakam.IntegratorStatus.Active) revert OutflowRecipientInvalid(c, o.to);
+            payeeOwner = e.payout;
+            o.to = LibFacet.getOrCreateVault(payeeOwner);
+        } else if (c == VaultOutflowTypes.OutflowClass.ReferralShare) {
+            // #3722 — `o.to` names the new user; the payee is the inviter its
+            // own binding names, only inside its period. Paid to the inviter's
+            // wallet (a protected inviter's vault, below).
+            o.to = LibReferral.activeInviter(o.to);
+            if (o.to == address(0) || o.to == address(this)) revert OutflowRecipientInvalid(c, o.to);
         } else {
             // Incentive, LiquidationBuyer: the caller names the actor; never
             // this Diamond or a vault-less zero.
@@ -533,11 +598,25 @@ contract VaultOutflowFacet is IVaipakamErrors {
     /// @dev The classes whose arrival is the payee's own free money.
     function _credits(VaultOutflowTypes.OutflowClass c) private pure returns (bool) {
         return c == VaultOutflowTypes.OutflowClass.PositionHolder || c == VaultOutflowTypes.OutflowClass.Counterparty
-            || c == VaultOutflowTypes.OutflowClass.PrincipalToBorrower;
+            || c == VaultOutflowTypes.OutflowClass.PrincipalToBorrower
+            || c == VaultOutflowTypes.OutflowClass.IntegratorShare;
     }
 
     function _paysWallet(VaultOutflowTypes.OutflowClass c) private pure returns (bool) {
         return c == VaultOutflowTypes.OutflowClass.OwnerAllowlisted || c == VaultOutflowTypes.OutflowClass.Incentive
+            || c == VaultOutflowTypes.OutflowClass.LiquidationBuyer
+            || c == VaultOutflowTypes.OutflowClass.ReferralShare;
+    }
+
+    /// @dev #3710 — the classes whose `ref` is a loan the movement takes value
+    ///      out of. Consolidation names a loan but keeps the value under its
+    ///      lien. A class whose `ref` may be a loan or an offer (treasury,
+    ///      backstop, the Diamond, an incentive) is not here: when it carries
+    ///      a loan's collateral away, the collateral writer marks the loan.
+    function _namesLoan(VaultOutflowTypes.OutflowClass c) private pure returns (bool) {
+        return c == VaultOutflowTypes.OutflowClass.PositionHolder || c == VaultOutflowTypes.OutflowClass.Counterparty
+            || c == VaultOutflowTypes.OutflowClass.MatchedCounterparty
+            || c == VaultOutflowTypes.OutflowClass.ClaimCustody || c == VaultOutflowTypes.OutflowClass.SellerClaim
             || c == VaultOutflowTypes.OutflowClass.LiquidationBuyer;
     }
 

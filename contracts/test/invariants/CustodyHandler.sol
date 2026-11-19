@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {LibTestFallbackGate} from "../helpers/LibTestFallbackGate.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
@@ -19,6 +20,7 @@ import {AddCollateralFacet} from "../../src/facets/AddCollateralFacet.sol";
 import {RiskFacet} from "../../src/facets/RiskFacet.sol";
 import {DefaultedFacet} from "../../src/facets/DefaultedFacet.sol";
 import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../../src/facets/ClaimViewFacet.sol";
 import {RiskMatchLiquidationFacet} from "../../src/facets/RiskMatchLiquidationFacet.sol";
 import {SwapToRepayIntentFacet} from "../../src/facets/SwapToRepayIntentFacet.sol";
 import {OracleFacet} from "../../src/facets/OracleFacet.sol";
@@ -318,6 +320,9 @@ contract CustodyHandler is Test {
         uint256 pastGrace = uint256(l.startTime) + l.durationDays * 1 days + PAST_EVERY_GRACE;
         if (pastGrace > block.timestamp) vm.warp(pastGrace);
         LibSwap.AdapterCall[] memory route = _adapterCalls(swapFails);
+        // #3538: a failing route here means to reach the fallback, so record the
+        // earlier failed sale the gate needs.
+        if (swapFails) LibTestFallbackGate.open(diamond, loanId);
         uint256 sellQuote = defaultQuote(diamond, loanId);
         try DefaultedFacet(diamond).triggerDefault(loanId, sellQuote, route) {
             if (_statusOf(loanId) == LibVaipakam.LoanStatus.FallbackPending) {
@@ -446,7 +451,7 @@ contract CustodyHandler is Test {
             if (st == LibVaipakam.LoanStatus.InternalMatched) {
                 ++fullRescues;
             } else if (st == LibVaipakam.LoanStatus.FallbackPending) {
-                (,,,,, bool activeAfter,) = ClaimFacet(diamond).getFallbackSnapshot(a);
+                (,,,,, bool activeAfter,) = ClaimViewFacet(diamond).getFallbackSnapshot(a);
                 if (activeAfter && _snapshotTotal(a) < aCustodyRow) {
                     ++fallbackPartialLegs;
                     ++partialLegsByAsset[collateralOf[a]];
@@ -600,6 +605,9 @@ contract CustodyHandler is Test {
     function _liquidate(uint256 loanId, bool swapFails) internal returns (bool enteredFallback) {
         _setRisk(loanId, HF_LIQUIDATABLE, LTV_LIQUIDATABLE);
         LibSwap.AdapterCall[] memory route = _adapterCalls(swapFails);
+        // #3538: a failing route here means to reach the fallback, so record the
+        // earlier failed sale the gate needs.
+        if (swapFails) LibTestFallbackGate.open(diamond, loanId);
         uint256 sellQuote = liquidationQuote(diamond, loanId);
         try RiskFacet(diamond).triggerLiquidation(loanId, sellQuote, route) {
             LibVaipakam.LoanStatus st = _statusOf(loanId);
@@ -617,7 +625,7 @@ contract CustodyHandler is Test {
 
     function _claimLender(uint256 loanId, uint8 mode) internal {
         LibVaipakam.Loan memory l = _loan(loanId);
-        (,,,,, bool activeBefore,) = ClaimFacet(diamond).getFallbackSnapshot(loanId);
+        (,,,,, bool activeBefore,) = ClaimViewFacet(diamond).getFallbackSnapshot(loanId);
         bool fallbackBefore = l.status == LibVaipakam.LoanStatus.FallbackPending && activeBefore;
         LibSwap.AdapterCall[] memory retry = _adapterCalls(mode == 1);
         bool ok;
@@ -647,7 +655,7 @@ contract CustodyHandler is Test {
         LibVaipakam.LoanStatus stAfter = _statusOf(loanId);
         if (stAfter == LibVaipakam.LoanStatus.InternalMatched) return;
         // Observed resolution only: the claim left FallbackPending and cleared the snapshot.
-        (,,,,, bool activeAfter,) = ClaimFacet(diamond).getFallbackSnapshot(loanId);
+        (,,,,, bool activeAfter,) = ClaimViewFacet(diamond).getFallbackSnapshot(loanId);
         if (activeAfter || stAfter == LibVaipakam.LoanStatus.FallbackPending) return;
         if (retryRan && retryOk) {
             ++retrySucceeded;
@@ -693,7 +701,7 @@ contract CustodyHandler is Test {
             uint256 id = _fallbackLoanIds[(seed % n + k) % n];
             if (wethOnly && collateralOf[id] != weth) continue;
             if (_statusOf(id) != LibVaipakam.LoanStatus.FallbackPending) continue;
-            (,,,,, bool active, bool retried) = ClaimFacet(diamond).getFallbackSnapshot(id);
+            (,,,,, bool active, bool retried) = ClaimViewFacet(diamond).getFallbackSnapshot(id);
             if (!active || (unretried && retried)) continue;
             if (cleanBorrower && _flagged(_loan(id).borrower)) continue;
             return id;
@@ -914,6 +922,8 @@ contract CustodyHandler is Test {
         uint256 durationDays
     ) internal returns (bool created, uint256 offerId) {
         LibVaipakam.CreateOfferParams memory p = LibVaipakam.CreateOfferParams({
+            integrator: address(0),
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: lending,
             amount: principal,
@@ -997,7 +1007,7 @@ contract CustodyHandler is Test {
     }
 
     function _snapshotTotal(uint256 loanId) internal view returns (uint256) {
-        (uint256 l, uint256 t, uint256 b,,,,) = ClaimFacet(diamond).getFallbackSnapshot(loanId);
+        (uint256 l, uint256 t, uint256 b,,,,) = ClaimViewFacet(diamond).getFallbackSnapshot(loanId);
         return l + t + b;
     }
 

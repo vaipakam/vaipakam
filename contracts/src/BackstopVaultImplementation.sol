@@ -28,6 +28,7 @@ interface IBackstopDiamond {
     function setLenderIntent(
         address lendingAsset,
         address collateralAsset,
+        uint8 slot,
         uint256 maxExposure,
         uint256 minRateBps,
         uint16 maxInitLtvBps,
@@ -44,6 +45,7 @@ interface IBackstopDiamond {
         address account,
         address lendingAsset,
         address collateralAsset,
+        uint8 slot,
         uint256 amount
     ) external;
 
@@ -51,6 +53,7 @@ interface IBackstopDiamond {
         address lender,
         address lendingAsset,
         address collateralAsset,
+        uint8 slot,
         uint256 counterpartyOfferId,
         uint256 fillAmount
     ) external returns (uint256 loanId);
@@ -151,6 +154,7 @@ contract BackstopVaultImplementation is
         IBackstopDiamond(diamond).setLenderIntent(
             lend,
             coll,
+            LibVaipakam.PROTOCOL_INTENT_SLOT, // #3626 — a protocol-run intent uses slot 0 only
             maxExposure,
             minRateBps,
             maxInitLtvBps,
@@ -181,6 +185,7 @@ contract BackstopVaultImplementation is
             address(this),
             lend,
             coll,
+            LibVaipakam.PROTOCOL_INTENT_SLOT,
             offerId,
             fillAmount
         );
@@ -257,7 +262,7 @@ contract BackstopVaultImplementation is
         // a replacement controller). This vault is the intent owner and is
         // never a protected account, so it names itself and is paid directly.
         IBackstopDiamond(diamond).withdrawLenderIntentCapital(
-            address(this), lend, coll, amount
+            address(this), lend, coll, LibVaipakam.PROTOCOL_INTENT_SLOT, amount
         );
         uint256 received = IERC20(lend).balanceOf(address(this)) - before;
         if (received > 0) returned = LibDelivery.pushMeasured(lend, diamond, received);

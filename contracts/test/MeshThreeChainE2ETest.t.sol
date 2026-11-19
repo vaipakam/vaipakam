@@ -36,6 +36,7 @@ import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardRemitDestinationFacet} from "../src/facets/RewardRemitDestinationFacet.sol";
+import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 
@@ -147,7 +148,7 @@ contract MeshThreeChainE2ETest is Test {
         private
         returns (IDiamondCut.FacetCut[] memory cuts)
     {
-        cuts = new IDiamondCut.FacetCut[](28);
+        cuts = new IDiamondCut.FacetCut[](29);
         cuts[0] = _cut(
             ArtifactDeploy.deploy(type(AccessControlFacet).name),
             helper.getAccessControlFacetSelectors()
@@ -278,6 +279,12 @@ contract MeshThreeChainE2ETest is Test {
         cuts[27] = _cut(
             ArtifactDeploy.deploy(type(RewardRemitDestinationFacet).name),
             helper.getRewardRemitDestinationFacetSelectors()
+        );
+        // #3379 B2 — the claim reads the payee's protected mode through this
+        // facet's host (`isProtectionOn`), self-called by every delivery.
+        cuts[28] = _cut(
+            ArtifactDeploy.deploy(type(ProtectedAccountFacet).name),
+            helper.getProtectedAccountFacetSelectors()
         );
     }
 

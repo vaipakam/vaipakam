@@ -68,8 +68,8 @@ export async function readAddReview(own: OwnStateClient, diamond: Hex, loanId: b
     const loan = (await c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [loanId] })) as LoanDetails;
     const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) => answerOrNull(c.readContract({ address: diamond, abi, functionName, args }) as Promise<T>);
     const [borrowerHolder, borrowerLock, assetPaused, liquidity, healthFactor, ltvBps, paused] = await Promise.all([
-      // #3205: through the position-NFT door (the standalone PositionNFT or
-      // the legacy Diamond); a retired token has no holder.
+      // #3205: through the position-NFT door (the PositionNFT); a retired
+      // token has no holder.
       readLiveHolderOrNull(c, diamond, loan.borrowerTokenId),
       answerOrNull(c.readContract(positionRouteCallFor(diamond, loan.borrowerTokenId))).then((v) => (v === null ? null : Number(v))),
       read<boolean>(ADMIN, 'isAssetPaused', [loan.collateralAsset]),

@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestCollateralCut} from "./helpers/LibTestCollateralCut.sol";
+import {LibTestTermsCut} from "./helpers/LibTestTermsCut.sol";
 import {LibTestProtectedCut} from "./helpers/LibTestProtectedCut.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
+import {LibTestSettlementLeg} from "./helpers/LibTestSettlementLeg.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {Test} from "forge-std/Test.sol";
@@ -269,7 +272,10 @@ contract OfferFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
+        cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
+        cuts = LibTestTermsCut.withTermsHost(cuts); // #3734
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
+        LibTestSettlementLeg.install(address(diamond)); // #3669
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
         AccessControlFacet(address(diamond)).initializeAccessControl();
@@ -550,6 +556,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -608,6 +616,8 @@ contract OfferFacetTest is Test {
         vm.expectRevert(IVaipakamErrors.SelfCollateralizedOffer.selector);
         OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -639,10 +649,68 @@ contract OfferFacetTest is Test {
         );
     }
 
+    /// @notice A platform position token is neither collateral nor the lent
+    ///         asset (chained-attack B9): a pledged position would sit in a
+    ///         vault, which cannot claim it.
+    function testCreateOfferRefusesPositionTokenAsCollateralOrLent() public {
+        address positionCore = VaipakamNFTFacet(address(diamond)).positionNFT();
+        assertTrue(positionCore != address(0));
+        LibVaipakam.CreateOfferParams memory p = LibVaipakam.CreateOfferParams({
+            lifecycleFlex: 0,
+            integrator: address(0),
+            offerType: LibVaipakam.OfferType.Lender,
+            lendingAsset: mockERC20,
+            amount: 1000,
+            interestRateBps: 500,
+            collateralAsset: positionCore,
+            collateralAmount: 1,
+            durationDays: 30,
+            assetType: LibVaipakam.AssetType.ERC20,
+            tokenId: 0,
+            quantity: 0,
+            creatorRiskAndTermsConsent: true,
+            prepayAsset: mockERC20,
+            collateralAssetType: LibVaipakam.AssetType.ERC721,
+            collateralTokenId: 1,
+            collateralQuantity: 0,
+            allowsPartialRepay: false,
+            allowsPrepayListing: false,
+            allowsParallelSale: false,
+            amountMax: 1000,
+            interestRateBpsMax: 500,
+            collateralAmountMax: 1,
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+            expiresAt: 0,
+            fillMode: LibVaipakam.FillMode.Aon,
+            refinanceTargetLoanId: 0,
+            useFullTermInterest: false
+        });
+        vm.prank(user1);
+        vm.expectRevert(IVaipakamErrors.PositionTokenNotAccepted.selector);
+        OfferCreateFacet(address(diamond)).createOffer(p, type(uint64).max);
+
+        p.offerType = LibVaipakam.OfferType.Lender;
+        p.lendingAsset = positionCore;
+        p.assetType = LibVaipakam.AssetType.ERC721;
+        p.tokenId = 1;
+        p.collateralAsset = address(0);
+        p.collateralAssetType = LibVaipakam.AssetType.ERC20;
+        p.collateralTokenId = 0;
+        p.collateralAmount = 0;
+        p.collateralAmountMax = 0;
+        p.interestRateBps = 0;
+        p.interestRateBpsMax = 0;
+        vm.prank(user1);
+        vm.expectRevert(IVaipakamErrors.PositionTokenNotAccepted.selector);
+        OfferCreateFacet(address(diamond)).createOffer(p, type(uint64).max);
+    }
+
     function testCreateNFTRentalLenderOffer() public {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNft721,
                 amount: 10,
@@ -710,6 +778,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000 ether,
@@ -779,6 +849,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -820,6 +892,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNft721,
                 amount: 10,
@@ -879,6 +953,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -929,6 +1005,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -1011,6 +1089,8 @@ contract OfferFacetTest is Test {
         // Create Offer with amount=0
         OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 0,
@@ -1066,6 +1146,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 2010 ether,
@@ -1127,6 +1209,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -1173,6 +1257,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -1214,6 +1300,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNft721,
                 amount: 10,
@@ -1250,6 +1338,8 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -1297,6 +1387,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -1349,6 +1441,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -1424,6 +1518,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -1478,6 +1574,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNft721,
                 amount: 10,
@@ -1525,6 +1623,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNft721,
                 amount: 10,
@@ -1574,6 +1674,8 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -1626,6 +1728,8 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -1682,6 +1786,8 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -1737,6 +1843,8 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -1786,6 +1894,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -1828,6 +1938,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNft721,
                 amount: 10,
@@ -1884,6 +1996,8 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         uint256 offerId2 = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: address(nft2),
                 amount: 10,
@@ -1942,6 +2056,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(nft1155),
                 amount: 10,
@@ -2005,6 +2121,8 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: address(nft2),
                 amount: 10,
@@ -2062,6 +2180,8 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: address(nft1155),
                 amount: 10,
@@ -2107,6 +2227,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -2152,6 +2274,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -2220,6 +2344,8 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: address(nft1155b),
                 amount: 10,
@@ -2258,6 +2384,8 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -2306,6 +2434,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNft721,
                 amount: 10,
@@ -2360,6 +2490,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNft721,
                 amount: 10,
@@ -2414,6 +2546,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(nft1155x),
                 amount: 10,
@@ -2464,6 +2598,8 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockNft721,
                 amount: 10,
@@ -2522,6 +2658,8 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: address(nft1155y),
                 amount: 10,
@@ -2573,6 +2711,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -2636,6 +2776,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNft721,
                 amount: 10,
@@ -2724,6 +2866,8 @@ contract OfferFacetTest is Test {
         vm.expectRevert(abi.encodeWithSelector(LibUserVault.GetUserVaultFailed.selector, "Get User Vault failed"));
         OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -2767,6 +2911,8 @@ contract OfferFacetTest is Test {
         vm.expectRevert(IVaipakamErrors.NFTMintFailed.selector);
         OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -2812,6 +2958,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -2867,6 +3015,8 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockNft721,
                 amount: 10,
@@ -2930,6 +3080,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(illiquidERC20),
                 amount: 1000,
@@ -2999,6 +3151,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 500,
@@ -3052,6 +3206,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 500,
@@ -3123,6 +3279,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(nft1155),
                 amount: 10,
@@ -3179,6 +3337,8 @@ contract OfferFacetTest is Test {
         nft1155.setApprovalForAll(lenderVault, true);
 
         LibVaipakam.CreateOfferParams memory p = LibVaipakam.CreateOfferParams({
+            integrator: address(0),
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: address(nft1155),
             amount: 10,
@@ -3235,6 +3395,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -3296,6 +3458,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -3360,6 +3524,8 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: address(nft1155),
                 amount: 10,
@@ -3422,6 +3588,8 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -3473,6 +3641,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -3551,6 +3721,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -3629,6 +3801,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -3693,6 +3867,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -3762,6 +3938,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -3851,6 +4029,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -3911,6 +4091,8 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -3966,6 +4148,8 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -4014,6 +4198,8 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -4059,6 +4245,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -4118,6 +4306,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -4177,6 +4367,8 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockNft721,
                 amount: 100,
@@ -4234,6 +4426,8 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockNft721,
                 amount: 100,
@@ -4289,6 +4483,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(nft1155),
                 amount: 100,
@@ -4344,6 +4540,8 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: address(nft1155),
                 amount: 10,
@@ -4395,6 +4593,8 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(nft1155),
                 amount: 10,
@@ -4452,6 +4652,8 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: 1000,
@@ -4502,6 +4704,8 @@ contract OfferFacetTest is Test {
         returns (LibVaipakam.CreateOfferParams memory)
     {
         return LibVaipakam.CreateOfferParams({
+            integrator: address(0),
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: asset,
             amount: 10,

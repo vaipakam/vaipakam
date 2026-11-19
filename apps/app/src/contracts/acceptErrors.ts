@@ -83,6 +83,11 @@ export const ACCEPT_ERROR_NAMES = [
   'SignedOfferFeeAboveCap',
   'SignedOfferTakerNotAllowed',
   'SignedOfferCoSignatureInvalid',
+  // #3328 — a collection offer: it fills only through the collection-offer
+  // route, one loan per token, never by a direct accept.
+  'CollectionParent',
+  // #3734 — the taker or the offer's maker is not current on the Terms.
+  'TermsNotAccepted',
 ] as const;
 
 export type AcceptErrorName = (typeof ACCEPT_ERROR_NAMES)[number];
@@ -150,6 +155,8 @@ const ACCEPT_ERROR_COPY_KEY: Record<AcceptErrorName, AcceptBlockedKey | null> = 
   SignedOfferFeeAboveCap: null,
   SignedOfferTakerNotAllowed: null,
   SignedOfferCoSignatureInvalid: null,
+  CollectionParent: 'collectionParent',
+  TermsNotAccepted: 'termsNotAccepted',
 };
 
 /**

@@ -133,6 +133,7 @@ export const STATED_ARGS: Readonly<Record<string, string>> = {
   ClaimRetryExecuted: 'succeeded',
   CosignRequirementSet: 'on',
   IlliquidPairConsentSet: 'consent',
+  IntentCalmCheckSet: 'on',
   KeeperAccessUpdated: 'enabled',
   LenderBackstopOptInSet: 'optedIn',
   LenderIntentPrioritySet: 'enabled',

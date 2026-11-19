@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTerms} from "../libraries/LibTerms.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibRiskMath} from "../libraries/LibRiskMath.sol";
 import {LibOfferAdmission} from "../libraries/LibOfferAdmission.sol";
 import {LibOfferPriceGuard} from "../libraries/LibOfferPriceGuard.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {CollateralConcentrationFacet} from "./CollateralConcentrationFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
 
@@ -49,7 +51,15 @@ contract OfferBookFacet is IVaipakamErrors {
      */
     function openOfferOnBook(uint256 offerId, LibOfferAdmission.Route route) external {
         if (msg.sender != address(this)) revert UnauthorizedCrossFacetCall();
-        LibVaipakam.Offer storage offer = LibVaipakam.storageSlot().offers[offerId];
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Offer storage offer = s.offers[offerId];
+        // #3734 — an offer that would give its poster a new position (lend,
+        // borrow, rent, buy a loan, an offset) is a standing commitment, so
+        // its creator must have accepted the Terms in force. A loan-sale
+        // listing only ends the lister's position (its buyer is asked at the
+        // fill), so it is not asked.
+        if (!s.saleVehicleCreate) LibTerms.requireCurrent(offer.creator);
+        LibOfferAdmission.enforceLifecycleFlex(offer, route);
         LibOfferAdmission.enforceBounds(offer, route);
         LibMetricsHooks.onOfferCreated(offer);
         emit OfferCreateFacet.OfferCreated(offerId, offer.creator, offer.offerType);
@@ -140,7 +150,10 @@ contract OfferBookFacet is IVaipakamErrors {
         // `amountMax > 0`, so the conditional is a no-op for them.
         if (offer.amountMax == 0 && offer.offerType == LibVaipakam.OfferType.Borrower) {
             uint8 effTier = OracleFacet(address(this)).getEffectiveLiquidityTier(offer.collateralAsset);
-            uint256 maxLtv = LibVaipakam.assetInitLtvCeilingBps(offer.collateralAsset);
+            // #3685 — the new-loan cap from its one host (asset ceiling,
+            // tier cap in the tiered regime, concentration step), then the
+            // tier cap as this payload has always applied it.
+            (uint256 maxLtv,,,) = CollateralConcentrationFacet(address(this)).newLoanInitLtvCapBps(offer.collateralAsset);
             uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(effTier));
             uint256 cap = maxLtv < tierCap ? maxLtv : tierCap;
             uint256 borrowerCollMax = offer.collateralAmountMax == 0
@@ -172,6 +185,8 @@ contract OfferBookFacet is IVaipakamErrors {
         // T-092 Phase 2b — the refinance target, so indexers can tell a
         // refinance-tagged borrower offer from a standard one.
         f.refinanceTargetLoanId = offer.refinanceTargetLoanId;
+        f.lifecycleFlex = offer.lifecycleFlex;
+        f.integrator = offer.integrator;
 
         emit OfferCreateFacet.OfferCreatedDetails(offerId, offer.creator, offer.lendingAsset, f);
     }

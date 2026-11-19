@@ -185,6 +185,11 @@
         "internalType": "address[]"
       },
       {
+        "name": "kinds",
+        "type": "uint8[]",
+        "internalType": "enum VaipakamFeedRegistry.EntryKind[]"
+      },
+      {
         "name": "entries",
         "type": "tuple[]",
         "internalType": "struct VaipakamFeedRegistry.Entry[]",
@@ -216,6 +221,11 @@
           },
           {
             "name": "updatedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "sinceEpoch",
             "type": "uint64",
             "internalType": "uint64"
           },
@@ -286,6 +296,11 @@
             "internalType": "uint64"
           },
           {
+            "name": "sinceEpoch",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
             "name": "directorySha256",
             "type": "bytes32",
             "internalType": "bytes32"
@@ -315,6 +330,19 @@
   },
   {
     "type": "function",
+    "name": "epoch",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "execute",
     "inputs": [
       {
@@ -336,6 +364,11 @@
             "name": "quote",
             "type": "address",
             "internalType": "address"
+          },
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum VaipakamFeedRegistry.EntryKind"
           },
           {
             "name": "expectedFeed",
@@ -399,6 +432,88 @@
   },
   {
     "type": "function",
+    "name": "getFeedAt",
+    "inputs": [
+      {
+        "name": "base",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "at",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "feed",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getRateFeed",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "underlying",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getRateFeedAt",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "underlying",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "at",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "feed",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "guardian",
     "inputs": [],
     "outputs": [
@@ -406,6 +521,91 @@
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "historyAt",
+    "inputs": [
+      {
+        "name": "base",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "enum VaipakamFeedRegistry.EntryKind"
+      },
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct VaipakamFeedRegistry.Past",
+        "components": [
+          {
+            "name": "sinceEpoch",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "untilEpoch",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "feed",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "baseSymbol",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "historyLength",
+    "inputs": [
+      {
+        "name": "base",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "enum VaipakamFeedRegistry.EntryKind"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -455,6 +655,35 @@
         "name": "quote",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "symbol",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pairBaseAt",
+    "inputs": [
+      {
+        "name": "base",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "at",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [
@@ -566,6 +795,11 @@
             "internalType": "address"
           },
           {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum VaipakamFeedRegistry.EntryKind"
+          },
+          {
             "name": "expectedFeed",
             "type": "address",
             "internalType": "address"
@@ -632,6 +866,77 @@
         "name": "symbol",
         "type": "string",
         "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "rateEntry",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "underlying",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct VaipakamFeedRegistry.Entry",
+        "components": [
+          {
+            "name": "feed",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "feedDecimals",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "category",
+            "type": "uint8",
+            "internalType": "enum VaipakamFeedRegistry.Category"
+          },
+          {
+            "name": "heartbeat",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "directoryDate",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "updatedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "sinceEpoch",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "directorySha256",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "pair",
+            "type": "string",
+            "internalType": "string"
+          }
+        ]
       }
     ],
     "stateMutability": "view"
@@ -827,6 +1132,11 @@
             "internalType": "address"
           },
           {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum VaipakamFeedRegistry.EntryKind"
+          },
+          {
             "name": "expectedFeed",
             "type": "address",
             "internalType": "address"
@@ -876,6 +1186,25 @@
   },
   {
     "type": "event",
+    "name": "EpochAdvanced",
+    "inputs": [
+      {
+        "name": "epoch",
+        "type": "uint64",
+        "indexed": true,
+        "internalType": "uint64"
+      },
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "FeedSet",
     "inputs": [
       {
@@ -889,6 +1218,12 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      },
+      {
+        "name": "kind",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum VaipakamFeedRegistry.EntryKind"
       },
       {
         "name": "previousFeed",
@@ -1375,6 +1710,17 @@
   },
   {
     "type": "error",
+    "name": "RateNeedsOwner",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RenounceDisabled",
     "inputs": []
   },
@@ -1407,6 +1753,22 @@
         "name": "max",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnknownEpoch",
+    "inputs": [
+      {
+        "name": "requested",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "current",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ]
   },

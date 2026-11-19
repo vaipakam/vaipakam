@@ -491,7 +491,7 @@ This halts every `whenNotPaused` facet entry. What remains callable while paused
 - `AccessControlFacet.grantRole / revokeRole / renounceRole`
 - `DiamondCutFacet.diamondCut`
 - `OracleAdminFacet.*` (so a bad feed can be swapped without unpause)
-- `VaultBeacon.guardianRevokeVersion(id, successorId)` — the Pauser Safe moves every vault off a bad version, onto one already registered; works **only** while paused (#3204)
+- `VaultBeacon.guardianRevokeVersion(id, successorId)` — the Pauser Safe moves every vault off a bad version, onto one registered at least seven days earlier (`versionUsableAt`, #3436); works **only** while paused (#3204)
 - Every `whenNotPaused`-less getter
 
 See `PauseGatingTest` for the canonical list.
@@ -2132,7 +2132,8 @@ still use.
    the vault value paths a system-wide pause does not stop. For those, use the
    targeted levers in §3.5-§3.7, and for a vault-code bug the beacon's
    `guardianRevokeVersion` (works only while the Diamond is paused, takes
-   effect at once, and moves vaults only onto a version already registered).
+   effect at once, and moves vaults only onto a version registered at least
+   seven days earlier, #3436).
    Record, per chain, what closed the path and when it was checked.
 3. **Build and review the fix outside the public repository.** Reproduce the
    bug in a fork test, fix the root cause, run the targeted tests and the full
@@ -2173,7 +2174,9 @@ still use.
        Until then, do not rely on it.
    - During a long manual pause, vault owners can still leave on their own
      once the escape period has passed (`VaultPayoutFacet.escapeWithdraw`:
-     3 days today, 7 days once #3441 lands). Say so in the pause notice.
+     7 days by default, never less than the vault code delay, #3441). Say so
+     in the pause notice. Register a vault code fix on the pause's first
+     day, so its 7-day window ends no later than the escape opens.
 5. **Who decides.** The owner decides whether to pause, what ships and when
    to disclose. The Pauser Safe signers execute the pause and may cancel a
    queued operation; the Governance Safe proposes the cut. Record each

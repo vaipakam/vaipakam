@@ -49,7 +49,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *          - VPFI_RECIPIENT_1..4       : addresses to fund (each optional).
  *          - VPFI_AMOUNT_EACH          : whole VPFI per recipient
  *                                        (default 25000 → top tier).
- *          - BASE_SEPOLIA_WETH / …     : WETH override (else canonical).
+ *          - <PREFIX>_WETH_ADDRESS     : WETH override (else canonical).
  *
  *        Idempotent: setVPFIToken no-ops on an unchanged write; the
  *        discount setters are straight assigns; transfers just top up.
@@ -143,15 +143,15 @@ contract DeployTestnetVPFI is Script {
     }
 
     function _wethFor(uint256 cid) private view returns (address) {
-        if (cid == 84532) return vm.envOr("BASE_SEPOLIA_WETH", BASE_WETH_DEFAULT);
-        if (cid == 11155111) return vm.envOr("SEPOLIA_WETH", SEPOLIA_WETH_DEFAULT);
+        if (cid == 84532) return vm.envOr("BASE_SEPOLIA_WETH_ADDRESS", BASE_WETH_DEFAULT);
+        if (cid == 11155111) return vm.envOr("SEPOLIA_WETH_ADDRESS", SEPOLIA_WETH_DEFAULT);
         // BNB Testnet: WBNB is NOT WETH — the discount math prices the
         // ETH-reference asset via the ETH/USD feed, so defaulting to
         // WBNB would misprice it. REQUIRE the same explicit bridged/
         // mock WETH address DeployTestnetMocks uses.
-        if (cid == 97) return vm.envAddress("BNB_TESTNET_WETH");
-        if (cid == 421614) return vm.envOr("ARB_SEPOLIA_WETH", ARB_SEPOLIA_WETH_DEFAULT);
-        if (cid == 11155420) return vm.envOr("OP_SEPOLIA_WETH", OP_SEPOLIA_WETH_DEFAULT);
+        if (cid == 97) return vm.envAddress("BNB_TESTNET_WETH_ADDRESS");
+        if (cid == 421614) return vm.envOr("ARB_SEPOLIA_WETH_ADDRESS", ARB_SEPOLIA_WETH_DEFAULT);
+        if (cid == 11155420) return vm.envOr("OP_SEPOLIA_WETH_ADDRESS", OP_SEPOLIA_WETH_DEFAULT);
         // Anvil: prefer the explicit env, else reuse the mock WETH
         // DeployTestnetMocks persisted to the artifact's `.weth` — the
         // common local sequence runs that script first.

@@ -14,6 +14,7 @@ import {ForcedSalePreviewFacet} from "../../src/facets/ForcedSalePreviewFacet.so
 import {RefinanceFacet} from "../../src/facets/RefinanceFacet.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../../src/facets/ClaimViewFacet.sol";
 
 /**
  * @title  LoanLedgerHandler
@@ -987,8 +988,8 @@ contract LoanLedgerHandler is Test {
     function _checkRentalSettled(uint256 loanId) internal {
         LoanBook storage b = books[loanId];
         if (!b.rentOwedSet) return;
-        (,, bool borrowerClaimed) = ClaimFacet(diamond).getClaimableAmount(loanId, false);
-        (,, bool lenderClaimed) = ClaimFacet(diamond).getClaimableAmount(loanId, true);
+        (,, bool borrowerClaimed) = ClaimViewFacet(diamond).getClaimableAmount(loanId, false);
+        (,, bool lenderClaimed) = ClaimViewFacet(diamond).getClaimableAmount(loanId, true);
         int256 owed = int256(b.rentOwed);
         if (borrowerClaimed && !b.renterSettledChecked) {
             b.renterSettledChecked = true;

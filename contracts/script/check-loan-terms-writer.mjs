@@ -59,7 +59,7 @@ export const ALLOWED = [
   },
 ];
 
-function walk(node, visit, ancestors = []) {
+export function walk(node, visit, ancestors = []) {
   if (!node || typeof node !== 'object') return;
   if (Array.isArray(node)) {
     for (const n of node) walk(n, visit, ancestors);
@@ -73,7 +73,7 @@ function walk(node, visit, ancestors = []) {
   }
 }
 
-function enclosingName(ancestors) {
+export function enclosingName(ancestors) {
   let contract = '<file>';
   let fn = '<top-level>';
   for (const a of ancestors) {
@@ -86,7 +86,7 @@ function enclosingName(ancestors) {
   return `${contract}.${fn}`;
 }
 
-function lineOf(src, bytes) {
+export function lineOf(src, bytes) {
   const start = Number(String(src).split(':')[0]);
   if (!bytes || !Number.isFinite(start)) return 0;
   let line = 1;
@@ -96,15 +96,20 @@ function lineOf(src, bytes) {
 
 const typeOf = (n) => n?.typeDescriptions?.typeString ?? '';
 
-/** What `target` writes when assigned or deleted, or undefined when it is not a loan term. */
-export function termTarget(target) {
+/**
+ * What `target` writes when assigned or deleted, or undefined when it is not
+ * one of `fields` of a stored loan. `wholeRecord` also counts an assignment or
+ * delete of a whole stored loan (which writes every field). Shared with
+ * check-loan-collateral-writer.mjs (#3710), which passes its own field.
+ */
+export function termTarget(target, fields = FIELDS, wholeRecord = true) {
   if (!target) return undefined;
-  if (target.nodeType === 'MemberAccess' && FIELDS.has(target.memberName) && LOAN_STORAGE.test(typeOf(target.expression))) {
+  if (target.nodeType === 'MemberAccess' && fields.has(target.memberName) && LOAN_STORAGE.test(typeOf(target.expression))) {
     return `Loan.${target.memberName}`;
   }
-  if (LOAN_STORAGE.test(typeOf(target)) && target.nodeType !== 'Identifier') return 'Loan (whole record)';
+  if (wholeRecord && LOAN_STORAGE.test(typeOf(target)) && target.nodeType !== 'Identifier') return 'Loan (whole record)';
   if (target.nodeType === 'TupleExpression') {
-    const parts = (target.components ?? []).map(termTarget).filter(Boolean);
+    const parts = (target.components ?? []).map((c) => termTarget(c, fields, wholeRecord)).filter(Boolean);
     return parts.length ? parts.join(' + ') : undefined;
   }
   return undefined;
@@ -116,7 +121,10 @@ export function termTarget(target) {
  *
  * @returns {Map<string, {writes: number, refs: {label: string, line: number}[]}>}
  */
-export function termWriteSites(units, { home = HOME, sourceText = () => undefined } = {}) {
+export function termWriteSites(
+  units,
+  { home = HOME, sourceText = () => undefined, fields = FIELDS, wholeRecord = true } = {},
+) {
   const sites = new Map();
   for (const unit of units) {
     const path = unit.absolutePath;
@@ -124,9 +132,9 @@ export function termWriteSites(units, { home = HOME, sourceText = () => undefine
     const text = sourceText(path);
     walk(unit, (node, ancestors) => {
       let label;
-      if (node.nodeType === 'Assignment') label = termTarget(node.leftHandSide);
+      if (node.nodeType === 'Assignment') label = termTarget(node.leftHandSide, fields, wholeRecord);
       else if (node.nodeType === 'UnaryOperation' && ['++', '--', 'delete'].includes(node.operator)) {
-        label = termTarget(node.subExpression);
+        label = termTarget(node.subExpression, fields, wholeRecord);
       }
       if (!label) return;
       const key = `${path}:${enclosingName(ancestors)}`;

@@ -62,6 +62,11 @@
             "name": "riskAndTermsConsent",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "rateFarFromAverageAcknowledged",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       },
@@ -229,6 +234,35 @@
   },
   {
     "type": "function",
+    "name": "instantPairEligible",
+    "inputs": [
+      {
+        "name": "lendingAsset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "collateralAsset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "enabled",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "eligible",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "setInstantMarketEnabled",
     "inputs": [
       {
@@ -348,37 +382,10 @@
         "internalType": "uint256"
       },
       {
-        "name": "fills",
-        "type": "tuple[]",
+        "name": "loansOpened",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "struct InstantMarketFacet.InstantFill[]",
-        "components": [
-          {
-            "name": "sourceIndex",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "loanId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "amount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "rateBps",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collateral",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
+        "internalType": "uint256"
       },
       {
         "name": "skipped",
@@ -397,6 +404,49 @@
             "internalType": "bytes"
           }
         ]
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "InstantLoanOpened",
+    "inputs": [
+      {
+        "name": "groupId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "sourceIndex",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "rateBps",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "collateral",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -489,17 +539,6 @@
         "name": "neededRole",
         "type": "bytes32",
         "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "AccountRetired",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
       }
     ]
   },
@@ -663,17 +702,6 @@
         "name": "guardNumeraire",
         "type": "bytes32",
         "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ProtectedVaultLocked",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
       }
     ]
   },

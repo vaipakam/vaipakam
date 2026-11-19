@@ -84,7 +84,7 @@ In dem Moment, in dem die Annahme erfolgt:
   Rückzahlung geschuldet"
 - Die Kreditlaufzeit-Uhr beginnt zu ticken
 
-Eine kleine **Kreditinitiierungsgebühr (`{liveValue:loanInitiationFeeBps}` %)** wird vom verliehenen
+Eine kleine **Kreditinitiierungsgebühr** (nach Laufzeit des Kredits; siehe die Gebühren unten) wird vom verliehenen
 Betrag abgezogen und an die Protokoll-Treasury weitergeleitet. Der
 Kreditnehmer erhält also `{liveValue:exampleBorrowerReceives}` USDC, nicht 1.000. (Wer **VPFI** hält, zahlt eine
 geringere Gebühr — sofern die Rabatt-Einstellung aktiviert ist und das
@@ -230,9 +230,13 @@ Zwei Gebühren, beide klein:
   einem 30-Tage-Kredit zu 8 % APR über 1.000 USDC verdient der
   Kreditgeber ~6,58 USDC Zinsen, davon sind ~0,132 USDC die
   Renditegebühr beim Standard-Satz.
-- **Kreditinitiierungsgebühr — `{liveValue:loanInitiationFeeBps}` %**
-  des Verleihbetrags, vom Kreditnehmer bei der Erstellung gezahlt.
-  Bei einem 1.000-USDC-Kredit sind das 2 USDC beim Standard-Satz.
+- **Kreditinitiierungsgebühr** — ein Anteil des Verleihbetrags, der
+  von der Laufzeit des Kredits abhängt, vom Kreditnehmer bei der
+  Erstellung gezahlt: `{liveValue:loanInitiationFeeBps}` % für eine Laufzeit bis
+  `{liveValue:lifBaseTermDays}` Tage, gleichmäßig steigend auf `{liveValue:lifYearlyBps}` % bei
+  `{liveValue:lifYearDays}` Tagen, darüber hinaus `{liveValue:lifYearlyBps}` % je
+  `{liveValue:lifYearDays}` Tage Laufzeit, anteilig. Beim 30-Tage-Kredit über
+  1.000 USDC oben sind das `{liveValue:exampleInitiationFee}` USDC.
 
 Beide Gebühren können um **bis zu `{liveValue:tier4DiscountBps}` %
 rabattiert** werden, indem Sie VPFI im Vault halten (siehe unten).
@@ -255,8 +259,8 @@ zwei Zahlen oben.
 > jedes anderen Tokens auf derselben Chain zahlen würden. Der Betrag
 > hängt von der Chain und der Netzwerk-Auslastung im Moment ab,
 > nicht von der Größe Ihres Kredits. Die obigen Protokollgebühren
-> (Renditegebühr `{liveValue:treasuryFeeBps}` %,
-> Kreditinitiierungsgebühr `{liveValue:loanInitiationFeeBps}` %)
+> (Renditegebühr `{liveValue:treasuryFeeBps}` %
+> und Kreditinitiierungsgebühr)
 > sind vollständig getrennt vom Netzwerk-Gas und die einzigen, die
 > das Protokoll selbst erhebt.
 
@@ -358,7 +362,7 @@ Wenn Sie **leihen** wollen:
    Ihrer Sicherheit und dem APR passt, den Sie zahlen können.
 3. Klicken Sie auf **Annehmen**, unterschreiben Sie zwei
    Transaktionen, und Sie erhalten den Kreditbetrag in Ihrem Wallet
-   (abzüglich der `{liveValue:loanInitiationFeeBps}`%-Kreditinitiierungsgebühr).
+   (abzüglich der Kreditinitiierungsgebühr).
 4. Zahlen Sie vor dem Fälligkeitsdatum plus Karenzzeit zurück. Ihre
    Sicherheit wird zurück in Ihr Wallet entsperrt.
 

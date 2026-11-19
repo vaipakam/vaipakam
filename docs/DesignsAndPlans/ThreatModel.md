@@ -117,7 +117,7 @@ A "residual" below is a stated limit, not a bug report.
 | Protected mode guards commitments, not only withdrawals: off-band rates, below-par lender sales, NFT listings below the owner's minimum, and two price sources agreeing before a forced sale | #3227 |
 | Above a liquid-value threshold, adding value needs protected mode or a signed, versioned decline | #3233 |
 | A census of value paths a pause does not stop, with a test for each | #3235 |
-| A recovery address and clawback for protected mode | #3246 |
+| A recovery address and clawback for protected mode: the one exit from a locked account, paying only an address the owner fixed in advance | #3246 ([design](RecoveryAddressClawbackDesign.md)) |
 | A per-loan settlement conservation invariant | #3241 |
 | Offer-book spam bounds | #3242 |
 | Alert and page for queued governance changes | #3237 |

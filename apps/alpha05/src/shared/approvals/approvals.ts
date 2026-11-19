@@ -12,7 +12,7 @@
  * counted and stated, never shown as "no approval".
  */
 import { erc20Abi, getAddress, type Abi, type PublicClient } from 'viem';
-import { LenderIntentFacetABI, LoanFacetABI, MetricsFacetABI, OfferCancelFacetABI, VaultDepositoryFacetABI } from '@vaipakam/contracts/abis';
+import { LenderIntentViewFacetABI, LoanFacetABI, MetricsFacetABI, OfferCancelFacetABI, VaultDepositoryFacetABI } from '@vaipakam/contracts/abis';
 import type { SupportedChain } from '../../chain/chains';
 import { NFT_ABI, readStandard, type Standard } from '../nft/nft';
 import { suggestedAssets, suggestedCollateral } from '../offers/assets';
@@ -26,7 +26,7 @@ type Hex = `0x${string}`;
 type StandingOfferRow = IntentRow & { intent: { collateralAsset?: Hex } };
 
 const DEPOSITORY = VaultDepositoryFacetABI as Abi;
-const INTENT = LenderIntentFacetABI as Abi;
+const INTENT = LenderIntentViewFacetABI as Abi;
 const LOAN = LoanFacetABI as Abi;
 const METRICS = MetricsFacetABI as Abi;
 const OFFER = OfferCancelFacetABI as Abi;

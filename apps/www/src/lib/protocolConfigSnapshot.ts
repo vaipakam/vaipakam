@@ -70,6 +70,17 @@ export interface MarketingProtocolConfig {
   tierThresholdsTokens: [number, number, number, number];
   /** Per-tier discount, BPS, T1..T4. Bundle index 8. */
   tierDiscountBps: [number, number, number, number];
+  /**
+   * #3649 — the initiation fee's term rule beyond the base rate, from the
+   * snapshot's LABELLED `values` (`lifBaseTermDays`, `lifYearlyBps`,
+   * `lifYearDays`), which the indexer publishes only when the code that
+   * answered is the facet its deployment records. `null` when the snapshot
+   * does not carry all three (a Diamond that predates the rule, a binding
+   * the indexer could not show, a malformed value): the site then renders
+   * the bundled defaults and badges them as such, never the base rate's
+   * `published` status.
+   */
+  lifTerms: { baseTermDays: number; yearlyBps: number; yearDays: number } | null;
 }
 
 /**
@@ -140,12 +151,34 @@ function asTokenQuad(value: unknown): [number, number, number, number] | null {
   return tokens as [number, number, number, number];
 }
 
+/**
+ * The three term-rule settings from the snapshot's labelled `values`, or
+ * `null` unless all three are present and exact. All three or none: the fee
+ * for a term needs every one of them, so one live setting beside two
+ * defaults would be a figure no deployment charges.
+ */
+export function decodeLifTerms(values: unknown): MarketingProtocolConfig['lifTerms'] {
+  if (typeof values !== 'object' || values === null) return null;
+  const v = values as Record<string, unknown>;
+  const baseTermDays = toSafeNumber(asBigInt(v.lifBaseTermDays));
+  const yearlyBps = toSafeNumber(asBigInt(v.lifYearlyBps));
+  const yearDays = toSafeNumber(asBigInt(v.lifYearDays));
+  if (baseTermDays === null || yearlyBps === null || yearDays === null) return null;
+  // The rule is only defined with the base term before the one-year point;
+  // the contract refuses any other setting, so another shape is malformed.
+  if (baseTermDays < 1 || yearDays <= baseTermDays) return null;
+  return { baseTermDays, yearlyBps, yearDays };
+}
+
 /** Map a display bundle onto the knobs the docs quote, or `null` if any
  *  field fails to decode. All-or-nothing on purpose: a half-decoded
  *  config would show live figures beside build-time ones with no way
- *  for a reader to tell which is which. */
+ *  for a reader to tell which is which. `values` is the snapshot's
+ *  labelled view, read for the initiation fee's term rule only (#3649);
+ *  without it those three render as bundled defaults. */
 export function decodeMarketingConfig(
   bundle: unknown,
+  values?: unknown,
 ): MarketingProtocolConfig | null {
   if (!Array.isArray(bundle) || bundle.length < 9) return null;
   const treasuryFeeBps = toSafeNumber(asBigInt(bundle[0]));
@@ -176,6 +209,7 @@ export function decodeMarketingConfig(
     loanInitiationFeeBps,
     tierThresholdsTokens,
     tierDiscountBps,
+    lifTerms: decodeLifTerms(values),
   };
 }
 
@@ -243,7 +277,10 @@ export async function fetchProtocolConfigSnapshot(opts: {
     if (typeof answered !== 'number' || answered !== chainId) {
       return null;
     }
-    const config = decodeMarketingConfig((body as { bundle?: unknown }).bundle);
+    const config = decodeMarketingConfig(
+      (body as { bundle?: unknown }).bundle,
+      (body as { values?: unknown }).values,
+    );
     if (config === null) return null;
     return { config, updatedAt: (body as { updatedAt: number }).updatedAt };
   } catch {

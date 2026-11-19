@@ -2520,6 +2520,11 @@
   },
   {
     "type": "error",
+    "name": "PositionTokenNotAccepted",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RateShortfallTooHigh",
     "inputs": []
   },
@@ -5087,6 +5092,11 @@
   {
     "type": "error",
     "name": "VaultDepositFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultMoveOutsideGuard",
     "inputs": []
   },
   {

@@ -7,6 +7,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {AutoLifecycleSettingsFacet} from "../src/facets/AutoLifecycleSettingsFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
@@ -38,6 +39,8 @@ import {MockPermit2} from "./mocks/MockPermit2.sol";
 import {LibPermit2, ISignatureTransfer} from "../src/libraries/LibPermit2.sol";
 import {LibRefinancePayoff} from "../src/libraries/LibRefinancePayoff.sol";
 import {LibTestTiming} from "./helpers/LibTestTiming.sol";
+import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
+import {LibIntegrator} from "../src/libraries/LibIntegrator.sol";
 
 /// @dev Drives {LibRefinanceNetting} directly. Each case runs inside ONE call,
 ///      because the record is transient: it is meant to live for one
@@ -133,9 +136,16 @@ contract RefinanceFacetTest is SetupTest {
     /// @dev The fee constants the fixture loan is born under (#1352 freeze):
     ///      2% treasury cut on interest, 0.2% initiation fee, of which the
     ///      matcher (on a direct accept, the accepting lender) takes 1%.
-    uint256 internal constant TREASURY_FEE_BPS = 200;
+    uint256 internal constant TREASURY_FEE_BPS = 1000; // #3649
     uint256 internal constant LIF_BPS = 20;
     uint256 internal constant MATCHER_BPS = 100;
+
+    /// @dev #3649 stage 3 — the matcher's share is sized on the part of the
+    ///      initiation fee above the treasury floor (0.1% of P, rounded up).
+    function _aboveFloor(uint256 lif) internal pure returns (uint256) {
+        uint256 floor = (P * 10 + 9_999) / 10_000;
+        return lif > floor ? lif - floor : 0;
+    }
 
     address internal newLender;
     uint256 internal newLenderPk;
@@ -196,6 +206,8 @@ contract RefinanceFacetTest is SetupTest {
         uint256 target
     ) internal view returns (LibVaipakam.CreateOfferParams memory) {
         return LibVaipakam.CreateOfferParams({
+            integrator: address(0),
+            lifecycleFlex: 0,
             offerType: offerType,
             lendingAsset: mockERC20,
             amount: P,
@@ -285,7 +297,7 @@ contract RefinanceFacetTest is SetupTest {
         vm.warp(block.timestamp + 15 days);
         (uint256 interest, uint256 treasuryFee, uint256 lenderDue) = _expectedSettlement(15 days);
         uint256 lif = (P * LIF_BPS) / 10_000;
-        uint256 matcherCut = (lif * MATCHER_BPS) / 10_000;
+        uint256 matcherCut = (_aboveFloor(lif) * MATCHER_BPS) / 10_000;
         uint256 net = P - lif;
 
         uint256 oldLenderVaultBefore = _bal(_vault(lender));
@@ -343,7 +355,7 @@ contract RefinanceFacetTest is SetupTest {
         assertEq(uint8(newLoan.status), uint8(LibVaipakam.LoanStatus.Active), "new loan Active");
         assertEq(newLoan.principal, P, "new loan owes the whole principal");
         assertEq(newLoan.lender, newLender, "new loan funded by the accepting lender");
-        (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(oldLoanId, true);
+        (, uint256 claim, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(oldLoanId, true);
         assertEq(claim, lenderDue, "old lender's claim is the due");
     }
 
@@ -351,6 +363,51 @@ contract RefinanceFacetTest is SetupTest {
     ///         for exactly the old interest plus the initiation fee completes
     ///         the refinance, and one wei less refuses the whole accept by
     ///         name, leaving both loans and every balance untouched.
+    event IntegratorShareSettled(
+        uint256 indexed loanId,
+        address indexed integrator,
+        address indexed asset,
+        uint256 offerId,
+        uint256 amount,
+        bool delivered,
+        LibIntegrator.Refusal refusal
+    );
+
+    /// @notice #3682 — a refinance request naming an integrator pays it when
+    ///         the request is accepted, and the settlement event names the
+    ///         REPLACEMENT loan the accept opens (not the old one).
+    function test_3682_integratorSettlementNamesTheReplacementLoan() public {
+        address integ = makeAddr("integrator");
+        IntegratorFacet(address(diamond)).setIntegrator(integ, makeAddr("integPayout"), 0, "Acme", new address[](0));
+        vm.warp(vm.getBlockTimestamp() + 1 days); // past the cancel cooldown
+        vm.prank(borrower);
+        OfferCancelFacet(address(diamond)).cancelOffer(taggedOfferId);
+        LibVaipakam.CreateOfferParams memory p =
+            _params(LibVaipakam.OfferType.Borrower, NEW_RATE_BPS, COLLATERAL, oldLoanId);
+        p.integrator = integ;
+        vm.prank(borrower);
+        taggedOfferId = OfferCreateFacet(address(diamond)).createOffer(p, type(uint64).max);
+        RefinancePayoffPermitHelper.attach(address(diamond), borrower, mockERC20, taggedOfferId);
+        vm.warp(vm.getBlockTimestamp() + 15 days);
+
+        (uint256 created,) = MetricsFacet(address(diamond)).getGlobalCounts();
+        vm.recordLogs();
+        uint256 newLoanId = _accept();
+        assertEq(newLoanId, created + 1, "the accept opened the next loan");
+        assertTrue(newLoanId != oldLoanId);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint256 seen;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter != address(diamond) || logs[i].topics[0] != IntegratorShareSettled.selector) continue;
+            ++seen;
+            assertEq(uint256(logs[i].topics[1]), newLoanId, "the settlement names the replacement loan");
+            (, , bool delivered,) = abi.decode(logs[i].data, (uint256, uint256, bool, LibIntegrator.Refusal));
+            assertTrue(delivered);
+        }
+        assertEq(seen, 1, "one settlement");
+    }
+
     function test_PermitCoversOnlyTheDifference() public {
         vm.warp(block.timestamp + 15 days);
         (uint256 interest, , ) = _expectedSettlement(15 days);
@@ -433,7 +490,7 @@ contract RefinanceFacetTest is SetupTest {
         _accept();
         (uint256 a, uint256 b, ) = _payoffLegs(vm.getRecordedLogs());
 
-        (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(oldLoanId, true);
+        (, uint256 claim, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(oldLoanId, true);
         (, , uint256 inTermDue) = _expectedSettlement(30 days);
         assertGt(claim, inTermDue, "the grace late fee is part of the due");
         assertEq(_bal(_vault(lender)) - oldLenderVaultBefore, claim, "old lender's vault receives the whole due");
@@ -488,7 +545,7 @@ contract RefinanceFacetTest is SetupTest {
             fresh,
             "only the fresh pledge stays locked"
         );
-        (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(oldLoanId, true);
+        (, uint256 claim, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(oldLoanId, true);
         assertEq(_bal(_vault(lender)) - oldLenderVaultBefore, claim, "old lender paid the due");
     }
 
@@ -513,7 +570,7 @@ contract RefinanceFacetTest is SetupTest {
             uint8(LibVaipakam.LoanStatus.Repaid),
             "refinance completed for a flagged old lender"
         );
-        (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(oldLoanId, true);
+        (, uint256 claim, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(oldLoanId, true);
         assertEq(_bal(oldLenderVault) - oldLenderVaultBefore, claim, "proceeds parked in the old lender's vault");
         assertEq(
             TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(oldLoanId, true),
@@ -570,7 +627,7 @@ contract RefinanceFacetTest is SetupTest {
 
         assertEq(_bal(_vault(lender)) - oldLenderVaultBefore, lenderDue, "old lender paid the due");
         assertEq(borrowerWalletBefore - _bal(borrower), interest + lif, "borrower pays only the difference");
-        assertEq(_bal(address(this)) - matcherBefore, (lif * MATCHER_BPS) / 10_000, "matcher share");
+        assertEq(_bal(address(this)) - matcherBefore, (_aboveFloor(lif) * MATCHER_BPS) / 10_000, "matcher share");
         assertEq(
             uint8(LoanFacet(address(diamond)).getLoanDetails(oldLoanId).status),
             uint8(LibVaipakam.LoanStatus.Repaid),

@@ -26,7 +26,7 @@ import { BadgeCheck, ShieldAlert, ShieldCheck, ShieldQuestion, ShieldX } from 'l
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
-import { POSITION_NFT_ABI, readPositionHolder, readPositionRoute, routeBlocksTransfer } from '../contracts/positionNft';
+import { POSITION_NFT_ABI, readPositionHolder, readPositionRoute } from '../contracts/positionNft';
 import { LOAN_STATUS_ACTIVE, readLoanLive } from '../contracts/loanLive';
 import { isAssetIlliquidLive } from '../contracts/preflights';
 import { readNftAbsence, type NftAbsence } from '../data/nftAbsence';
@@ -34,18 +34,10 @@ import { AssetType } from '../lib/types';
 import { shortAddress } from '../lib/format';
 import { EmptyState } from '../components/EmptyState';
 
-/** LibERC721.LockReason display labels (None omitted). A function so
- *  the copy proxy is read at render time, not frozen at import
- *  (Codex #1309 r3). */
-const LOCK_LABELS = (): Record<number, string> => ({
-  1: copy.nftVerifier.lockPrecloseOffset,
-  2: copy.nftVerifier.lockSale,
-  3: copy.nftVerifier.lockPrepayListing,
-  4: copy.nftVerifier.lockSwapToRepayIntent,
-});
-
-/** #3205 — the same routes on a standalone-mode chain, where a route does
- *  not block a transfer and a transfer stops the route completing. */
+/** `LibPositionNFT.RouteReason` display labels (None omitted): a route does
+ *  not block a transfer, and a transfer stops the route completing (#3205).
+ *  A function so the copy proxy is read at render time, not frozen at
+ *  import (Codex #1309 r3). */
 const ROUTE_LABELS = (): Record<number, string> => ({
   1: copy.nftVerifier.routePrecloseOffset,
   2: copy.nftVerifier.routeSale,
@@ -61,9 +53,10 @@ interface VerifierResult {
   loanId?: string;
   offerId?: string;
   isLender?: boolean;
-  /** null = the lock read FAILED — unknown is not "unlocked". */
+  /** The open route's ordinal; null = the read FAILED — unknown is not
+   *  "no route". */
   lock?: number | null;
-  /** #3205 standalone mode: the holder's PositionNFT lock; null = unread. */
+  /** #3205: the holder's PositionNFT lock; null = unread. */
   holderLocked?: boolean | null;
   /** Holder's sanctions state: true = flagged (NFT frozen: transfers
    *  screened, claims blocked), null = the check FAILED — unknown is
@@ -96,7 +89,7 @@ export function NftVerifier() {
 
   const validId = tokenIdParam !== undefined && /^[1-9]\d*$/.test(tokenIdParam);
   const explorerHost = new URL(readChain.blockExplorer).host;
-  // #3205: tokens live at the PositionNFT on a standalone-mode chain.
+  // #3205: tokens live at the PositionNFT.
   const tokenContract = readChain.positionNft.nft;
   const explorerTokenUrl = `${readChain.blockExplorer}/nft/${tokenContract}/${tokenIdParam}`;
   // Offered on both verdicts: it is the reader's own cross-check, and a
@@ -120,9 +113,9 @@ export function NftVerifier() {
       // One block for the existence read and, on a revert, the read that
       // says why — see `readNftAbsence`.
       const blockNumber = await readClient!.getBlockNumber();
-      // #3205: a retired standalone token keeps its owner but no longer
-      // represents a position; `readPositionHolder` reads it as gone, as a
-      // legacy `ownerOf` revert is. A transport error throws.
+      // #3205: a retired token keeps its owner but no longer represents a
+      // position; `readPositionHolder` reads it as gone, as an `ownerOf`
+      // revert is. A transport error throws.
       const holder = await readPositionHolder(readClient!, readChain.positionNft, id, blockNumber);
       if (holder === 'gone') {
         return {
@@ -131,7 +124,7 @@ export function NftVerifier() {
         };
       }
       const owner = holder;
-      // Summary + lock are best-effort embellishments; owner alone
+      // Summary + route are best-effort embellishments; owner alone
       // already proves live existence.
       const [summary, lock] = await Promise.all([
         readClient!
@@ -146,23 +139,20 @@ export function NftVerifier() {
           offerId: bigint;
           isLender: boolean;
         } | null>,
-        // A failed lock read is UNKNOWN, never "not locked" — the
-        // lock is exactly what a prospective transferee checks.
+        // A failed route read is UNKNOWN, never "no route" — the route
+        // is exactly what a prospective transferee checks.
         readPositionRoute(readClient!, readChain.positionNft, id).catch(() => null),
       ]);
-      // #3205 — standalone mode: the holder's own lock at the PositionNFT
-      // stops every transfer out of their wallet. null = unread.
-      const holderLocked =
-        readChain.positionNft.mode === 'standalone'
-          ? ((await readClient!
-              .readContract({
-                address: readChain.positionNft.nft,
-                abi: POSITION_NFT_ABI,
-                functionName: 'isLocked',
-                args: [owner],
-              })
-              .catch(() => null)) as boolean | null)
-          : false;
+      // #3205 — the holder's own lock at the PositionNFT stops every
+      // transfer out of their wallet. null = unread.
+      const holderLocked = (await readClient!
+        .readContract({
+          address: readChain.positionNft.nft,
+          abi: POSITION_NFT_ABI,
+          functionName: 'isLocked',
+          args: [owner],
+        })
+        .catch(() => null)) as boolean | null;
       // Compliance freeze — a flagged holder can't move the NFT
       // (transferFrom/safeTransferFrom screen from AND to) and its
       // claims stay frozen while flagged. An OTC buyer relying on
@@ -341,33 +331,17 @@ export function NftVerifier() {
                 <dd>{copy.nftVerifier.offerValue(result.data.offerId)}</dd>
               </div>
             ) : null}
-            {!routeBlocksTransfer(readChain.positionNft) ? (
-              result.data.lock === null ? (
-                <div className="receipt-row receipt-risk">
-                  <dt>{copy.nftVerifier.routeLabel}</dt>
-                  <dd>{copy.nftVerifier.routeUnknown}</dd>
-                </div>
-              ) : result.data.lock ? (
-                <div className="receipt-row receipt-risk">
-                  <dt>{copy.nftVerifier.routeLabel}</dt>
-                  <dd>{ROUTE_LABELS()[result.data.lock] ?? copy.nftVerifier.routeUnrecognized}</dd>
-                </div>
-              ) : null
-            ) : result.data.lock === null ? (
+            {result.data.lock === null ? (
               <div className="receipt-row receipt-risk">
-                <dt>{copy.nftVerifier.lockLabel}</dt>
-                <dd>{copy.nftVerifier.lockUnknown}</dd>
+                <dt>{copy.nftVerifier.routeLabel}</dt>
+                <dd>{copy.nftVerifier.routeUnknown}</dd>
               </div>
             ) : result.data.lock ? (
-              // LockReason is append-only on-chain — a value this
-              // build doesn't know is still LOCKED, never rendered
-              // as transferable.
+              // RouteReason is append-only on-chain: a value this build
+              // does not know is still an open route.
               <div className="receipt-row receipt-risk">
-                <dt>{copy.nftVerifier.lockLabel}</dt>
-                <dd>
-                  {LOCK_LABELS()[result.data.lock] ??
-                    copy.nftVerifier.lockUnrecognized}
-                </dd>
+                <dt>{copy.nftVerifier.routeLabel}</dt>
+                <dd>{ROUTE_LABELS()[result.data.lock] ?? copy.nftVerifier.routeUnrecognized}</dd>
               </div>
             ) : null}
             {result.data.holderLocked === true || result.data.holderLocked === null ? (

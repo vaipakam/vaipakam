@@ -11,9 +11,13 @@ import {LibSaleListing} from "../libraries/LibSaleListing.sol";
 import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
+import {CollateralConcentrationFacet} from "./CollateralConcentrationFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
+import {OfferPriceGuardFacet} from "./OfferPriceGuardFacet.sol";
 import {OfferPreviewFacet} from "./OfferPreviewFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
+import {LibRiskMath} from "../libraries/LibRiskMath.sol";
+import {LibInitRiskGate} from "../libraries/LibInitRiskGate.sol";
 
 /**
  * @title RiskPreviewFacet
@@ -305,7 +309,8 @@ contract RiskPreviewFacet {
     ///         `eth_call`'s originator need not be. For a solver that sends its own
     ///         transaction, the solver.
     /// @param  lender  Intent owner (slice creator).
-    /// @param  lendingAsset / collateralAsset  Intent key.
+    /// @param  lendingAsset / collateralAsset / slot  Intent key (#3626: the slot
+    ///         the fill would draw from).
     /// @param  counterpartyOfferId  The stored borrower offer to fill against.
     /// @param  fillAmount  Principal the solver intends to lend this fill.
     function previewIntent(
@@ -314,6 +319,7 @@ contract RiskPreviewFacet {
         address lender,
         address lendingAsset,
         address collateralAsset,
+        uint8 slot,
         uint256 counterpartyOfferId,
         uint256 fillAmount
     ) external view returns (LibOfferMatch.IntentPreviewResult memory res) {
@@ -322,6 +328,7 @@ contract RiskPreviewFacet {
             lender,
             lendingAsset,
             collateralAsset,
+            slot,
             counterpartyOfferId,
             fillAmount
         );
@@ -457,12 +464,14 @@ contract RiskPreviewFacet {
         // guard a view could read. Same entry the accept and match previews
         // use, so the three cannot disagree about a refusal.
         {
-            OfferPreviewFacet.OriginationRefusal refusal = OfferPreviewFacet(address(this))
-                .previewOriginationRefusal(counterpartyOfferId, res.matchAmount, 0);
-            if (refusal != OfferPreviewFacet.OriginationRefusal.None) {
-                res.matchError = refusal == OfferPreviewFacet.OriginationRefusal.CadenceNotAdmitted
+            OfferPriceGuardFacet.OriginationRefusal refusal = OfferPriceGuardFacet(address(this))
+                .previewOriginationRefusal(counterpartyOfferId, res.matchAmount, 0, lender, s.offers[counterpartyOfferId].creator);
+            if (refusal != OfferPriceGuardFacet.OriginationRefusal.None) {
+                res.matchError = refusal == OfferPriceGuardFacet.OriginationRefusal.CadenceNotAdmitted
                     ? LibOfferMatch.MatchError.CadenceNotAdmitted
-                    : LibOfferMatch.MatchError.PriceGuardRefused;
+                    : refusal == OfferPriceGuardFacet.OriginationRefusal.TermsNotAccepted
+                        ? LibOfferMatch.MatchError.TermsNotAccepted
+                        : LibOfferMatch.MatchError.PriceGuardRefused;
                 res.ok = false;
                 return res;
             }
@@ -478,7 +487,7 @@ contract RiskPreviewFacet {
         // clear case applies (`spendsPriorityCredit`), so the one pre-check tells a
         // solver whether the fill charges its capacity or spends the owner's credit.
         if (res.ok && !LibServiceCapacity.fillCovered(s, solver, initiator)) {
-            if (LibPriorityRouting.covers(s, lender, lendingAsset, collateralAsset)) {
+            if (LibPriorityRouting.covers(s, lender, lendingAsset, collateralAsset, slot)) {
                 res.spendsPriorityCredit = true;
             } else {
                 res.intentError = LibOfferMatch.IntentError.CapacityExhausted;
@@ -849,9 +858,7 @@ contract RiskPreviewFacet {
         // 1.5e18 by default) would classify EVERY such loan as weaker and
         // block it from both sale paths, which is a false positive rather
         // than a tightening.
-        uint256 currentHf = LibVaipakam.cfgDepthTieredLtvEnabled()
-            ? LibVaipakam.HF_LIQUIDATION_THRESHOLD
-            : LibVaipakam.minHealthFactor();
+        uint256 currentHf = LibVaipakam.admissionHealthFactorFloor();
         if (floor < currentHf) return (2, floor, currentHf);
 
         uint8 effTier = _effectiveTierOrZero(loan.collateralAsset);
@@ -922,7 +929,7 @@ contract RiskPreviewFacet {
         // the health factor stays above the floor. The tiered regime makes
         // that stark — floor 1e18, Tier-3 init cap 73%, liquidation
         // threshold 90% — so a position near 90% LTV would otherwise be
-        // assignable even though `LoanFacet._checkInitialLtvAndHf` would
+        // assignable even though `LibNewLoanRisk.requireAdmissible` would
         // reject the same collateralisation as a fresh admission, which is
         // the standard a sale is meant to meet.
         //
@@ -988,5 +995,48 @@ contract RiskPreviewFacet {
             )
         );
         return ok && ret.length >= 32 ? abi.decode(ret, (uint8)) : 0;
+    }
+
+    /**
+     * @notice #3326 — the initiation risk gate's bounds for an ERC-20 loan of
+     *         `lendingAsset` against `collateralAsset`, read live: the
+     *         collateral the gate requires for `amount`, whether the
+     *         depth-tiered regime set that floor, and the largest principal
+     *         `collateral` supports under it (the inverse, rounded so any
+     *         amount at or below it passes). When the gate does not apply to
+     *         the pair (an illiquid leg), the floor is 0 and the cap is
+     *         unbounded.
+     * @dev The ONE host of the match core's risk bounds. Hosted here since
+     *      #3328 (it was on OfferPreviewFacet, which reached EIP-170): it is a
+     *      risk read, beside the other origination risk previews. The match core
+     *      ({LibOfferMatch}) is compiled into four facets; it asks here by
+     *      self-call so the rule, and its bytecode, live once. Under
+     *      depth-tiered LTV the cap is min(per-asset init-LTV ceiling, the
+     *      collateral tier's cap), as `LibNewLoanRisk.requireAdmissible`
+     *      applies it; a Tier-0 collateral caps at 0, so the floor is
+     *      `type(uint256).max` and the cap 0. Otherwise the floor is the
+     *      HF admission floor. Reverts when a liquid leg has no usable price
+     *      (#2419), as the binding gate does.
+     */
+    function initRiskBounds(address lendingAsset, address collateralAsset, uint256 amount, uint256 collateral)
+        external
+        view
+        returns (uint256 floor, bool tiered, uint256 amountCap)
+    {
+        if (!LibInitRiskGate.applies(
+            OracleFacet(address(this)).checkLiquidity(lendingAsset),
+            OracleFacet(address(this)).checkLiquidity(collateralAsset)
+        )) return (0, false, type(uint256).max);
+        tiered = LibVaipakam.cfgDepthTieredLtvEnabled();
+        if (tiered) {
+            // #3685 — the one host of the new-loan cap (tier, asset ceiling
+            // and the concentration step), as loan creation reads it.
+            (uint256 capBps,,,) = CollateralConcentrationFacet(address(this)).newLoanInitLtvCapBps(collateralAsset);
+            floor = LibRiskMath.minCollateralForLtvCap(amount, lendingAsset, collateralAsset, capBps);
+            amountCap = LibRiskMath.maxLendingForLtvCap(collateral, lendingAsset, collateralAsset, capBps);
+        } else {
+            floor = LibRiskMath.minCollateralForLending(amount, lendingAsset, collateralAsset);
+            amountCap = LibRiskMath.maxLendingForCollateral(collateral, lendingAsset, collateralAsset);
+        }
     }
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ChainConfig } from '../src/env';
 import { armedMatcherSteps, publishMatcherSteps, resetMatcherSteps } from '../src/matcher';
 import { txFeeUnpricedReason } from '../src/txFee';
+import { armHeldFence } from './helpers/epochFence';
 
 /** A chain whose fee the keeper can value, and an id it knows nothing about. */
 const PRICED = 84532;
@@ -25,11 +26,11 @@ describe('the re-lend status the app reads (#3763)', () => {
     const db = {
       prepare(sql: string) {
         expect(sql).toMatch(/INSERT INTO keeper_step_status/);
-        return { bind: (...v: unknown[]) => v };
+        return { bind: (...v: unknown[]) => v.slice(0, 6) };
       },
       async batch(stmts: unknown[][]) {
         batches.push(stmts);
-        return [];
+        return stmts.map(() => ({ meta: { changes: 1 } }));
       },
     } as unknown as D1Database;
     const chains = [
@@ -37,6 +38,7 @@ describe('the re-lend status the app reads (#3763)', () => {
       { id: UNPRICED, diamond: '0x0EBd0536a698707958e1c327Ba1EB2b4f329A119' },
       { id: 1, diamond: '' },
     ] as unknown as ChainConfig[];
+    armHeldFence(chains.filter((c) => c.diamond !== ''));
     await publishMatcherSteps(db, chains, true, 1_000);
     expect(batches).toEqual([
       [[PRICED, '0x2c300b26bc15359e7948da61a1960303772b0335', 'matcher', 'roll', 1, 1_000]],

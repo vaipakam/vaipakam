@@ -17,8 +17,8 @@ test('an abi object with a literal functionName is read', () => {
 });
 
 test("useDiamondWrite's write is read unless it targets another contract", () => {
-  const src = `const { write } = useDiamondWrite();\nawait write('releasePositionTransfer', [id]);\nawait write('lock', [], { target: core });`;
-  assert.deepEqual(namesUsed(src).map((u) => u.name), ['releasePositionTransfer']);
+  const src = `const { write } = useDiamondWrite();\nawait write('repayLoan', [id]);\nawait write('lock', [], { target: core });`;
+  assert.deepEqual(namesUsed(src).map((u) => u.name), ['repayLoan']);
 });
 
 test("a driver helper bound to the Diamond ABI is followed to its calls", () => {

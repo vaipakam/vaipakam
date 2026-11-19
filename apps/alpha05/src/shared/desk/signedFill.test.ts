@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { NO_COLLECTION } from '@vaipakam/lib/signedOfferWire';
 import { encodeAbiParameters, encodeEventTopics, type Log, type PublicClient } from 'viem';
 import { directOfferKey, buildAcceptTerms } from '../offers/acceptTerms';
 import { SIGNED_OFFER } from './mySignedOrders';
@@ -42,6 +43,8 @@ function order(patch: Partial<SignedOrderWire> = {}): SignedOrderWire {
     periodicInterestCadence: '1',
     refinanceTargetLoanId: '0',
     useFullTermInterest: false,
+    lifecycleFlex: '0',
+    integrator: '0x0000000000000000000000000000000000000000',
     creatorFull: false,
     creatorMaxCStar: '0',
     creatorAllowFullDowngrade: false,
@@ -52,6 +55,7 @@ function order(patch: Partial<SignedOrderWire> = {}): SignedOrderWire {
     signer: MAKER,
     nonce: '7',
     deadline: '2000',
+    ...NO_COLLECTION,
     ...patch,
   };
 }

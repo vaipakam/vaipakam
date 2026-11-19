@@ -2,11 +2,13 @@
 pragma solidity ^0.8.29;
 
 import {LibTestOutflow} from "./helpers/LibTestOutflow.sol";
+import {LibTestFallbackGate} from "./helpers/LibTestFallbackGate.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
@@ -23,12 +25,14 @@ import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
+import {ITreasuryFeeHost} from "../src/interfaces/ITreasuryFeeHost.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibDelivery} from "../src/libraries/LibDelivery.sol";
+import {LibMetricsHooks} from "../src/libraries/LibMetricsHooks.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
@@ -42,11 +46,19 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {defaultQuote, liquidationQuote} from "./helpers/ForcedSaleQuote.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
+import {LibTestGuard} from "./helpers/LibTestGuard.sol";
 
 /// @dev Exposes {LibDelivery.pullExact}, which only libraries reach.
 contract LibDeliveryHarness {
     function pullExact(address token, address from, address to, uint256 amount) external {
         LibDelivery.pullExact(token, from, to, amount);
+    }
+
+    /// @dev #3379 B2 — LibDelivery asks the host (the Diamond's
+    ///      `ProtectedAccountFacet.isProtectionOn`) whether the payee is
+    ///      protected; the harness stands for a Diamond where no one is.
+    function isProtectionOn(address) external pure returns (bool) {
+        return false;
     }
 }
 
@@ -219,7 +231,7 @@ contract MeasuredDeliveryTest is SetupTest {
     }
 
     function _snapshot() internal view returns (uint256 lc, uint256 tc, uint256 bc) {
-        (lc, tc, bc, , , , ) = ClaimFacet(address(diamond)).getFallbackSnapshot(LOAN);
+        (lc, tc, bc, , , , ) = ClaimViewFacet(address(diamond)).getFallbackSnapshot(LOAN);
     }
 
     function _lien() internal view returns (uint256 amount) {
@@ -233,6 +245,7 @@ contract MeasuredDeliveryTest is SetupTest {
     function _enterFallback() internal returns (uint256 row) {
         _pastGrace();
         _failEverySwap();
+        LibTestFallbackGate.open(address(diamond), LOAN);
         uint256 sellQuote = defaultQuote(address(diamond), LOAN);
         fallbackSell = sellQuote;
         vm.prank(makeAddr("defaultKeeper"));
@@ -258,6 +271,8 @@ contract MeasuredDeliveryTest is SetupTest {
         _scaffold(true);
         _pastGrace();
         _chargesFee(col, bVault);
+
+        LibTestFallbackGate.open(address(diamond), LOAN);
 
         uint256 sellQuote = defaultQuote(address(diamond), LOAN);
         vm.prank(makeAddr("defaultKeeper"));
@@ -287,6 +302,8 @@ contract MeasuredDeliveryTest is SetupTest {
             abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, LOAN),
             abi.encode(uint256(0.9e18))
         );
+
+        LibTestFallbackGate.open(address(diamond), LOAN);
 
         uint256 sellQuote = liquidationQuote(address(diamond), LOAN);
         vm.prank(makeAddr("liquidator"));
@@ -340,8 +357,10 @@ contract MeasuredDeliveryTest is SetupTest {
             "fixture: only the vault's own transfers (the two pulls) are charged"
         );
 
+        LibTestGuard.hold(address(diamond)); // a fixture standing in for the guarded caller (#3432)
         vm.prank(address(diamond));
         (bool ok, ) = FallbackCustodyFacet(address(diamond)).retryFallbackSwap(LOAN, defaultAdapterCalls());
+        LibTestGuard.release(address(diamond));
 
         assertTrue(ok, "the retry sold");
         assertEq(_row(), 0, "the row is spent");
@@ -366,8 +385,10 @@ contract MeasuredDeliveryTest is SetupTest {
         assertGt(bc0, row - restored, "fixture: the borrower slice covers the round trip's loss");
 
         _failEverySwap();
+        LibTestGuard.hold(address(diamond)); // a fixture standing in for the guarded caller (#3432)
         vm.prank(address(diamond));
         (bool ok, ) = FallbackCustodyFacet(address(diamond)).retryFallbackSwap(LOAN, defaultAdapterCalls());
+        LibTestGuard.release(address(diamond));
         _swapsFill();
 
         assertFalse(ok, "the retry failed");
@@ -398,12 +419,14 @@ contract MeasuredDeliveryTest is SetupTest {
         address lVault = _vault(lender);
         uint256 lVault0 = _bal(col, lVault);
 
+        LibTestFallbackGate.open(address(diamond), LOAN);
+
         uint256 sellQuote = defaultQuote(address(diamond), LOAN);
         vm.prank(makeAddr("defaultKeeper"));
         DefaultedFacet(address(diamond)).triggerDefault(LOAN, sellQuote, defaultAdapterCalls());
 
         assertEq(uint8(_status()), uint8(LibVaipakam.LoanStatus.Defaulted), "the default completed");
-        (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(LOAN, true);
+        (, uint256 claim, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(LOAN, true);
         assertEq(claim, _less(COLLATERAL), "the claim is what arrived");
         assertEq(_bal(col, lVault) - lVault0, claim, "the lender's vault holds the claim");
         assertEq(_tracked(lender, col), claim, "and tracks it");
@@ -489,7 +512,7 @@ contract MeasuredDeliveryTest is SetupTest {
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).precloseDirect(loanId);
 
-        (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 claim, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertGt(claim, 0, "fixture: the lender has rent to claim");
         assertEq(_tracked(lender, mockERC20) - tracked0, claim, "the share is on the lender's books");
 
@@ -536,6 +559,8 @@ contract MeasuredDeliveryTest is SetupTest {
         address lVault = _vault(lender);
         uint256 lVault0 = _bal(mockERC20, lVault);
 
+        LibTestFallbackGate.open(address(diamond), loanId);
+
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
@@ -545,10 +570,10 @@ contract MeasuredDeliveryTest is SetupTest {
             "the default completed"
         );
         assertEq(_bal(mockERC20, address(diamond)), diamond0, "the Diamond's other holdings paid nothing");
-        uint256 treasuryFee = (l.prepayAmount * 200) / 10_000;
+        uint256 treasuryFee = (l.prepayAmount * 1000) / 10_000;
         uint256 shortfall = l.prepayAmount - _less(l.prepayAmount);
         assertLt(shortfall, treasuryFee, "fixture: the treasury fee covers the shortfall");
-        (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 claim, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertEq(claim, _less(l.prepayAmount - treasuryFee), "the lender's whole share, less the push's own fee");
         assertEq(_bal(mockERC20, lVault) - lVault0, claim, "the lender's vault holds the claim");
         assertEq(
@@ -577,28 +602,24 @@ contract MeasuredDeliveryTest is SetupTest {
         RepayPeriodicFacet(address(diamond)).autoDeductDaily(loanId);
     }
 
-    /// @notice #2440 (Codex r3) — the clean branch pays the lender-position
-    ///         holder's WALLET, and a reading at a wallet is trusted only to
-    ///         refuse: its owner can lower it mid-transfer (a receiving hook
-    ///         forwarding the tokens on) and would be paid again if the short
-    ///         figure were booked. So a short arrival is refused there, in the
-    ///         forced auto-liquidation too. Kills: reporting what arrived and
-    ///         leaving the rest owed to the same wallet.
-    function test_ResidentLenderPayout_WalletShortRefused() public {
+    /// @notice #3629 — every open-loan lender share is held in the stored
+    ///         lender's vault (custody), clean holder or flagged, so there is no
+    ///         wallet payout left to refuse. A charged token holds less than was
+    ///         sent, and the step reports exactly what arrived; the caller
+    ///         decides what a short return means (the partial liquidation
+    ///         refuses it, the periodic sale leaves the rest owed).
+    ///         Kills: holding the requested figure instead of what arrived.
+    function test_ResidentLenderPayout_CleanShortReportsWhatArrived() public {
         _scaffold(true);
         uint256 amount = 100 ether;
         ERC20Mock(mockERC20).mint(address(diamond), amount);
         _chargesFee(mockERC20, address(diamond));
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.TokenDeliveryShort.selector, mockERC20, amount, _less(amount)
-            )
-        );
         vm.prank(address(diamond));
-        EncumbranceMutateFacet(address(diamond)).freezeOrPayActiveLenderResident(
+        uint256 delivered = EncumbranceMutateFacet(address(diamond)).holdActiveLenderResident(
             LOAN, mockERC20, amount, amount, amount
         );
+        assertEq(delivered, _less(amount), "reports what arrived");
     }
 
     /// @notice The control for the cell above: a payout that arrives in full
@@ -611,7 +632,7 @@ contract MeasuredDeliveryTest is SetupTest {
         vm.warp(block.timestamp + 1 days);
 
         vm.prank(address(diamond));
-        uint256 delivered = EncumbranceMutateFacet(address(diamond)).freezeOrPayActiveLenderResident(
+        uint256 delivered = EncumbranceMutateFacet(address(diamond)).holdActiveLenderResident(
             LOAN, mockERC20, amount, amount, amount
         );
 
@@ -636,14 +657,41 @@ contract MeasuredDeliveryTest is SetupTest {
         ERC20Mock(mockERC20).mint(address(diamond), amount);
         _chargesFee(mockERC20, address(diamond));
 
+        vm.recordLogs();
         vm.prank(address(diamond));
-        uint256 delivered = EncumbranceMutateFacet(address(diamond)).freezeOrPayActiveLenderResident(
+        uint256 delivered = EncumbranceMutateFacet(address(diamond)).holdActiveLenderResident(
             LOAN, mockERC20, amount, amount, amount
         );
 
         assertEq(delivered, _less(amount), "the vault received less than was sent");
         (, uint256 interestPaid) = MetricsFacet(address(diamond)).getLifetimeLendingTotals(mockERC20);
         assertEq(interestPaid, delivered, "only the interest that arrived is counted");
+        // #3755 — the per-loan events state the same figure: the whole slice
+        // paid, then the part that did not arrive taken back.
+        (uint256 paid, uint256 takenBack) = _interestEvents(vm.getRecordedLogs(), LOAN);
+        assertEq(paid, amount, "LoanInterestPaid states the whole slice");
+        assertEq(takenBack, amount - delivered, "LoanInterestUndelivered states the shortfall");
+        assertEq(paid - takenBack, interestPaid, "the events net to the counter");
+    }
+
+    /// @dev #3755 — the sums of `LoanInterestPaid` and
+    ///      `LoanInterestUndelivered` for `loanId` in `logs`, each checked to
+    ///      name the principal asset.
+    function _interestEvents(Vm.Log[] memory logs, uint256 loanId)
+        internal
+        view
+        returns (uint256 paid, uint256 takenBack)
+    {
+        for (uint256 i; i < logs.length; ++i) {
+            bytes32 t = logs[i].topics[0];
+            bool isPaid = t == LibMetricsHooks.LoanInterestPaid.selector;
+            if (!isPaid && t != LibMetricsHooks.LoanInterestUndelivered.selector) continue;
+            if (uint256(logs[i].topics[1]) != loanId) continue;
+            assertEq(address(uint160(uint256(logs[i].topics[2]))), mockERC20, "the principal asset");
+            uint256 gross = abi.decode(logs[i].data, (uint256));
+            if (isPaid) paid += gross;
+            else takenBack += gross;
+        }
     }
 
     /// @notice The control: the same frozen park arriving in full counts the
@@ -656,14 +704,18 @@ contract MeasuredDeliveryTest is SetupTest {
         uint256 amount = 100 ether;
         ERC20Mock(mockERC20).mint(address(diamond), amount);
 
+        vm.recordLogs();
         vm.prank(address(diamond));
-        uint256 delivered = EncumbranceMutateFacet(address(diamond)).freezeOrPayActiveLenderResident(
+        uint256 delivered = EncumbranceMutateFacet(address(diamond)).holdActiveLenderResident(
             LOAN, mockERC20, amount, amount, amount
         );
 
         assertEq(delivered, amount, "the whole payout arrived");
         (, uint256 interestPaid) = MetricsFacet(address(diamond)).getLifetimeLendingTotals(mockERC20);
         assertEq(interestPaid, amount, "the whole slice is counted");
+        (uint256 paid, uint256 takenBack) = _interestEvents(vm.getRecordedLogs(), LOAN);
+        assertEq(paid, amount, "#3755: LoanInterestPaid states the whole slice");
+        assertEq(takenBack, 0, "#3755: nothing taken back");
     }
 
     // -- Voluntary flows refuse a short arrival at every hop ----------------
@@ -683,7 +735,7 @@ contract MeasuredDeliveryTest is SetupTest {
         uint256 snap = vm.snapshotState();
         vm.prank(borrower);
         RepayFacet(address(diamond)).repayLoan(loanId);
-        (, uint256 share, ) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 share, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertGt(share, 0, "fixture: the lender has a rental share");
         vm.revertToState(snap);
 
@@ -726,7 +778,7 @@ contract MeasuredDeliveryTest is SetupTest {
             )
         );
         vm.prank(address(diamond));
-        EncumbranceMutateFacet(address(diamond)).freezeOrPayBorrowerSurplus(LOAN, borrower, surplus);
+        EncumbranceMutateFacet(address(diamond)).holdBorrowerSurplus(LOAN, borrower, surplus);
     }
 
     // -- The treasury fee host ----------------------------------------------
@@ -734,11 +786,11 @@ contract MeasuredDeliveryTest is SetupTest {
     /// @notice Both legs of the fee host are reachable only by the Diamond.
     function test_TreasuryFeeHost_RefusesOutsideCallers() public {
         vm.expectRevert(IVaipakamErrors.UnauthorizedCrossFacetCall.selector);
-        TreasuryFeeFacet(address(diamond)).collectFeeFromPayer(borrower, mockERC20, 1 ether);
+        TreasuryFeeFacet(address(diamond)).collectFeeFromPayer(borrower, mockERC20, 1 ether, ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Other, 0, 0));
         vm.expectRevert(IVaipakamErrors.UnauthorizedCrossFacetCall.selector);
-        TreasuryFeeFacet(address(diamond)).collectFeeFromVault(borrower, mockERC20, 1 ether);
+        TreasuryFeeFacet(address(diamond)).collectFeeFromVault(borrower, mockERC20, 1 ether, ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Other, 0, 0));
         vm.expectRevert(IVaipakamErrors.UnauthorizedCrossFacetCall.selector);
-        TreasuryFeeFacet(address(diamond)).collectFeeFromDiamond(mockERC20, 1 ether);
+        TreasuryFeeFacet(address(diamond)).collectFeeFromDiamond(mockERC20, 1 ether, ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Other, 0, 0));
     }
 
     /// @notice #2440 (Codex r3) — a treasury share the Diamond holds (a
@@ -754,7 +806,7 @@ contract MeasuredDeliveryTest is SetupTest {
         _chargesFee(mockERC20, address(diamond));
 
         vm.prank(address(diamond));
-        uint256 accrued = TreasuryFeeFacet(address(diamond)).collectFeeFromDiamond(mockERC20, 4 ether);
+        uint256 accrued = TreasuryFeeFacet(address(diamond)).collectFeeFromDiamond(mockERC20, 4 ether, ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Other, 0, 0));
 
         assertEq(accrued, _less(4 ether), "the host returns what arrived");
         assertEq(_bal(mockERC20, treasury), accrued, "the treasury holds what it was credited with");
@@ -774,7 +826,7 @@ contract MeasuredDeliveryTest is SetupTest {
 
         vm.recordLogs();
         vm.prank(address(diamond));
-        uint256 accrued = TreasuryFeeFacet(address(diamond)).collectFeeFromDiamond(mockERC20, 4 ether);
+        uint256 accrued = TreasuryFeeFacet(address(diamond)).collectFeeFromDiamond(mockERC20, 4 ether, ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Other, 0, 0));
 
         assertEq(accrued, 4 ether, "the whole share accrues");
         assertEq(
@@ -823,7 +875,7 @@ contract MeasuredDeliveryTest is SetupTest {
             )
         );
         vm.prank(address(diamond));
-        TreasuryFeeFacet(address(diamond)).collectFeeFromDiamond(mockERC20, 4 ether);
+        TreasuryFeeFacet(address(diamond)).collectFeeFromDiamond(mockERC20, 4 ether, ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Other, 0, 0));
     }
 
     /// @notice The same out of a user's vault: the vault's other positions
@@ -862,7 +914,7 @@ contract MeasuredDeliveryTest is SetupTest {
     function test_TreasuryFeeHost_WalletFee() public {
         uint256 accrued0 = TreasuryFacet(address(diamond)).getTreasuryBalance(mockERC20);
         vm.prank(address(diamond));
-        TreasuryFeeFacet(address(diamond)).collectFeeFromPayer(borrower, mockERC20, 3 ether);
+        TreasuryFeeFacet(address(diamond)).collectFeeFromPayer(borrower, mockERC20, 3 ether, ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Other, 0, 0));
         assertEq(
             TreasuryFacet(address(diamond)).getTreasuryBalance(mockERC20) - accrued0, 3 ether, "accrued in full"
         );
@@ -874,7 +926,7 @@ contract MeasuredDeliveryTest is SetupTest {
             )
         );
         vm.prank(address(diamond));
-        TreasuryFeeFacet(address(diamond)).collectFeeFromPayer(borrower, mockERC20, 3 ether);
+        TreasuryFeeFacet(address(diamond)).collectFeeFromPayer(borrower, mockERC20, 3 ether, ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Other, 0, 0));
     }
 
     /// @notice A vault fee never refuses: the treasury accrues, and the host
@@ -885,8 +937,10 @@ contract MeasuredDeliveryTest is SetupTest {
         _chargesFee(mockERC20, address(0));
         uint256 accrued0 = TreasuryFacet(address(diamond)).getTreasuryBalance(mockERC20);
 
+        LibTestGuard.hold(address(diamond)); // a fixture standing in for the guarded caller (#3432)
         vm.prank(address(diamond));
-        uint256 accrued = TreasuryFeeFacet(address(diamond)).collectFeeFromVault(borrower, mockERC20, 4 ether);
+        uint256 accrued = TreasuryFeeFacet(address(diamond)).collectFeeFromVault(borrower, mockERC20, 4 ether, ITreasuryFeeHost.FeeBasis(ITreasuryFeeHost.FeeKind.Other, 0, 0));
+        LibTestGuard.release(address(diamond));
 
         assertEq(accrued, _less(4 ether), "the host returns what arrived");
         assertEq(
@@ -946,6 +1000,8 @@ contract MeasuredDeliveryTest is SetupTest {
 
     function _lenderErc20Offer() internal view returns (LibVaipakam.CreateOfferParams memory) {
         return LibVaipakam.CreateOfferParams({
+            integrator: address(0),
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: mockERC20,
             amount: PRINCIPAL,
@@ -983,6 +1039,8 @@ contract MeasuredDeliveryTest is SetupTest {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNft721,
                 amount: DAILY_FEE,

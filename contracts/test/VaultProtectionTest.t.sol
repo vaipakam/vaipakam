@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {VaultProtection} from "../src/vault/VaultProtection.sol";
+import {VaultProtectionBase} from "../src/vault/VaultProtectionBase.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
@@ -80,7 +81,7 @@ contract VaultProtectionTest is SetupTest {
         return abi.encodePacked(r, s, v);
     }
 
-    function _signed(address key, uint64 expiry, bytes memory sig) internal pure returns (VaultProtection.Auth memory a) {
+    function _signed(address key, uint64 expiry, bytes memory sig) internal pure returns (VaultProtectionBase.Auth memory a) {
         a.key = key;
         a.expiry = expiry;
         a.sig = sig;
@@ -93,17 +94,17 @@ contract VaultProtectionTest is SetupTest {
     // ─── Who may write ──────────────────────────────────────────────────
 
     function test_theCodeRefusesADirectCall() public {
-        vm.expectRevert(VaultProtection.NotDelegateCall.selector);
+        vm.expectRevert(VaultProtectionBase.NotDelegateCall.selector);
         code.lock(P.direct(acct));
     }
 
     function test_onlyTheOwnerKeyAddsADestination() public {
         vm.prank(relayer);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.NotOwner.selector, relayer));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.NotOwner.selector, relayer));
         vault.protect(abi.encodeCall(VaultProtection.addAllowlisted, (dest, P.direct(relayer))));
         // Naming the acct without being it, and without a signature, fails.
         vm.prank(relayer);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadSignature.selector, acct));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.BadSignature.selector, acct));
         vault.protect(abi.encodeCall(VaultProtection.addAllowlisted, (dest, P.direct(acct))));
     }
 
@@ -115,14 +116,14 @@ contract VaultProtectionTest is SetupTest {
         assertEq(vault.protectionNonce(acct, code.PURPOSE_ALLOWLIST_ADD()), 1, "the nonce is spent");
         // The same signature again is refused (its nonce is used).
         vm.prank(relayer);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadSignature.selector, acct));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.BadSignature.selector, acct));
         vault.protect(abi.encodeCall(VaultProtection.addAllowlisted, (makeAddr("d2"), _signed(acct, expiry, sig))));
 
         // An expired one is refused.
         bytes memory late = _addSig(makeAddr("d3"), 1, expiry);
         vm.warp(expiry + 1);
         vm.prank(relayer);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.SignatureExpired.selector, expiry));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.SignatureExpired.selector, expiry));
         vault.protect(abi.encodeCall(VaultProtection.addAllowlisted, (makeAddr("d3"), _signed(acct, expiry, late))));
 
         // The acct burns nonce 1: a signature given with it is void.
@@ -132,7 +133,7 @@ contract VaultProtectionTest is SetupTest {
         vm.prank(acct);
         vault.protect(abi.encodeCall(VaultProtection.burnNonce, (addPurpose)));
         vm.prank(relayer);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadSignature.selector, acct));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.BadSignature.selector, acct));
         vault.protect(abi.encodeCall(VaultProtection.addAllowlisted, (makeAddr("d4"), _signed(acct, e2, burned))));
     }
 
@@ -141,7 +142,7 @@ contract VaultProtectionTest is SetupTest {
         bytes memory sig = _addSig(dest, 0, expiry);
         vm.chainId(block.chainid + 1);
         vm.prank(relayer);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadSignature.selector, acct));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.BadSignature.selector, acct));
         vault.protect(abi.encodeCall(VaultProtection.addAllowlisted, (dest, _signed(acct, expiry, sig))));
     }
 
@@ -175,7 +176,7 @@ contract VaultProtectionTest is SetupTest {
         vault.protect(abi.encodeCall(VaultProtection.finalizeAllowlisted, (dest)));
         P.call(address(diamond), acct, signerA, abi.encodeCall(VaultProtection.cancelAllowlisted, (dest, P.direct(signerA))));
         vm.warp(block.timestamp + DELAY);
-        vm.expectRevert(VaultProtection.NotRequested.selector);
+        vm.expectRevert(VaultProtectionBase.NotRequested.selector);
         vault.protect(abi.encodeCall(VaultProtection.finalizeAllowlisted, (dest)));
 
         // Asked again and left past its window: it expired.
@@ -212,7 +213,7 @@ contract VaultProtectionTest is SetupTest {
         assertFalse(vault.allowEntry(dest).verified);
         // Someone else cannot verify for it.
         vm.prank(relayer);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadSignature.selector, dest));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.BadSignature.selector, dest));
         vault.protect(abi.encodeCall(VaultProtection.verifyDestination, (acct, address(diamond), P.direct(dest))));
         P.verify(address(diamond), acct, dest);
         assertTrue(vault.allowEntry(dest).verified, "the destination's own call verifies it");
@@ -229,7 +230,7 @@ contract VaultProtectionTest is SetupTest {
         P.call(address(diamond), acct, acct, abi.encodeCall(VaultProtection.cancelAllowlisted, (dest, P.direct(acct))));
         assertFalse(vault.allowEntry(dest).verified, "a cancel clears the mark");
         vm.prank(dest);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadDestination.selector, dest));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.BadDestination.selector, dest));
         vault.protect(abi.encodeCall(VaultProtection.verifyDestination, (acct, address(diamond), P.direct(dest))));
         // A new request starts unverified.
         P.call(address(diamond), acct, acct, abi.encodeCall(VaultProtection.addAllowlisted, (dest, P.direct(acct))));
@@ -238,7 +239,7 @@ contract VaultProtectionTest is SetupTest {
         vm.prank(acct);
         vault.protect(abi.encodeCall(VaultProtection.lock, (P.direct(acct))));
         vm.prank(dest);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadDestination.selector, dest));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.BadDestination.selector, dest));
         vault.protect(abi.encodeCall(VaultProtection.verifyDestination, (acct, address(diamond), P.direct(dest))));
     }
 
@@ -260,7 +261,7 @@ contract VaultProtectionTest is SetupTest {
         uint64 second = vault.allowEntry(d).request;
         assertGt(second, first, "a new request number");
         vm.prank(relayer);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadSignature.selector, d));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.BadSignature.selector, d));
         vault.protect(abi.encodeCall(VaultProtection.verifyDestination, (acct, address(diamond), _signed(d, expiry, oldSig))));
         bytes memory newSig = _sig(
             destKey, keccak256(abi.encode(code.VERIFY_TYPEHASH(), acct, address(diamond), second, uint256(0), expiry))
@@ -282,7 +283,7 @@ contract VaultProtectionTest is SetupTest {
         assertTrue(locked, "locked by the relayed signature");
         // A used lock signature is refused.
         vm.prank(relayer);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadSignature.selector, signerA));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.BadSignature.selector, signerA));
         vault.protect(abi.encodeCall(VaultProtection.lock, (_signed(signerA, expiry, sig))));
 
         VaultOutflowTypes.Outflow memory o;
@@ -312,7 +313,7 @@ contract VaultProtectionTest is SetupTest {
 
     function test_onlyTheDiamondLocksForThePlatform() public {
         vm.prank(relayer);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.NotOwnerOrSigner.selector, relayer));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.NotOwnerOrSigner.selector, relayer));
         vault.protect(abi.encodeCall(VaultProtection.lockByPlatform, (relayer)));
     }
 
@@ -351,7 +352,7 @@ contract VaultProtectionTest is SetupTest {
         P.addSigner(address(diamond), acct, acct, signerA, DELAY);
         P.lock(address(diamond), acct, signerA);
         vm.prank(acct);
-        vm.expectRevert(VaultProtection.OwnerBlockedBySignerLock.selector);
+        vm.expectRevert(VaultProtectionBase.OwnerBlockedBySignerLock.selector);
         vault.protect(abi.encodeCall(VaultProtection.replacement, (uint8(1), makeAddr("thief2"), P.direct(acct))));
     }
 
@@ -366,7 +367,7 @@ contract VaultProtectionTest is SetupTest {
         bytes memory cancelSig =
             _sig(OWNER_KEY, keccak256(abi.encode(code.SETTING_CANCEL_TYPEHASH(), unlock, uint256(0), expiry)));
         vm.prank(relayer);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadSignature.selector, acct));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.BadSignature.selector, acct));
         vault.protect(abi.encodeCall(VaultProtection.requestUnlock, (_signed(acct, expiry, cancelSig))));
         // The same message signed under the settings typehash (the old shape)
         // is not a cancel either.
@@ -374,7 +375,7 @@ contract VaultProtectionTest is SetupTest {
             OWNER_KEY, keccak256(abi.encode(code.SETTINGS_TYPEHASH(), unlock, uint256(0), uint256(0), expiry))
         );
         vm.prank(relayer);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadSignature.selector, acct));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.BadSignature.selector, acct));
         vault.protect(abi.encodeCall(VaultProtection.cancelSetting, (unlock, _signed(acct, expiry, requestSig))));
     }
 
@@ -385,7 +386,7 @@ contract VaultProtectionTest is SetupTest {
         bytes memory cancelSig =
             _sig(OWNER_KEY, keccak256(abi.encode(code.ALLOWLIST_CANCEL_TYPEHASH(), dest, uint256(0), expiry)));
         vm.prank(relayer);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadSignature.selector, acct));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.BadSignature.selector, acct));
         vault.protect(abi.encodeCall(VaultProtection.removeAllowlisted, (dest, _signed(acct, expiry, cancelSig))));
     }
 
@@ -404,7 +405,7 @@ contract VaultProtectionTest is SetupTest {
         );
         P.propose(address(diamond), acct, acct, nominee); // round 2, same nominee
         vm.prank(relayer);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadSignature.selector, signerA));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.BadSignature.selector, signerA));
         vault.protect(abi.encodeCall(VaultProtection.replacement, (cancel, nominee, _signed(signerA, expiry, held))));
         // Signed for the proposal in force, it cancels.
         bytes memory current = _sig(
@@ -431,7 +432,7 @@ contract VaultProtectionTest is SetupTest {
         P.call(address(diamond), acct, s3, abi.encodeCall(VaultProtection.replacement, (code.REPLACE_CANCEL(), nominee, P.direct(s3))));
         P.propose(address(diamond), acct, s2, nominee); // round 2, same nominee
         vm.prank(relayer);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadSignature.selector, signerA));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.BadSignature.selector, signerA));
         vault.protect(abi.encodeCall(VaultProtection.replacement, (approve, nominee, _signed(signerA, expiry, held))));
     }
 
@@ -440,7 +441,7 @@ contract VaultProtectionTest is SetupTest {
         P.propose(address(diamond), acct, acct, nominee);
         uint8 cancel = code.REPLACE_CANCEL();
         vm.prank(acct);
-        vm.expectRevert(VaultProtection.NoProposal.selector);
+        vm.expectRevert(VaultProtectionBase.NoProposal.selector);
         vault.protect(abi.encodeCall(VaultProtection.replacement, (cancel, relayer, P.direct(acct))));
     }
 
@@ -448,10 +449,10 @@ contract VaultProtectionTest is SetupTest {
     function test_aVerificationNamingAnotherAccountOrDiamondIsRefused() public {
         P.call(address(diamond), acct, acct, abi.encodeCall(VaultProtection.addAllowlisted, (dest, P.direct(acct))));
         vm.prank(dest);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadDestination.selector, dest));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.BadDestination.selector, dest));
         vault.protect(abi.encodeCall(VaultProtection.verifyDestination, (relayer, address(diamond), P.direct(dest))));
         vm.prank(dest);
-        vm.expectRevert(abi.encodeWithSelector(VaultProtection.BadDestination.selector, dest));
+        vm.expectRevert(abi.encodeWithSelector(VaultProtectionBase.BadDestination.selector, dest));
         vault.protect(abi.encodeCall(VaultProtection.verifyDestination, (acct, relayer, P.direct(dest))));
         assertFalse(vault.allowEntry(dest).verified);
     }
@@ -504,7 +505,7 @@ contract VaultProtectionTest is SetupTest {
         P.finalizeReplacement(address(diamond), acct);
         vm.warp(block.timestamp + DELAY + 1); // past the cool-down
         vm.prank(nominee);
-        vm.expectRevert(VaultProtection.RetiredAccount.selector);
+        vm.expectRevert(VaultProtectionBase.RetiredAccount.selector);
         vault.protect(abi.encodeCall(VaultProtection.requestDisable, (P.direct(nominee))));
     }
 

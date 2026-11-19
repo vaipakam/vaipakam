@@ -186,9 +186,21 @@ export const NOTIF_DELIBERATELY_NOT_HANDLED: Readonly<Record<string, string>> = 
   LoanSettled: 'PR2 — folded into the claim-available row precision pass',
   LoanSaleCompleted: 'PR2 — secondary-market sale completed → new/old lender',
   LoanSold: 'PR2 — secondary-market sale → both sides',
+  InstantTakenOver: 'PR2 — an instant-market loan taken over at face value → outgoing and incoming lender, the same rows as LoanSaleCompleted (#3656)',
   LoanObligationTransferred: 'PR2 — obligation transfer → both sides',
   LoanExtended: 'PR2 — loan extended → both sides',
   PeriodicInterestAutoLiquidated: 'PR2 — periodic-interest auto-liquidation → borrower',
+  // ── #3681 standing instructions and loan reserves ──────────────────
+  StandingInstructionsSet: "#3681 — the owner's own settings change; the app shows them, no inbox row",
+  StandingInstructionsCleared: "#3681 — the owner's own settings change; the app shows them, no inbox row",
+  CollateralTopUpRun: "PR2 — a top-up from the collateral reserve → borrower; the keeper's #3681 owner alerts carry it meanwhile",
+  InterestPaidFromReserve: "PR2 — interest paid from the payment reserve → borrower; the keeper's #3681 owner alerts carry it meanwhile",
+  DueRepaymentRun: '#3681 — companion of LoanRepaid in the same transaction, which carries the loan_repaid row',
+  RepaymentLegsFromReserve: "#3681 — companion of the reserve repayment's LoanRepaid, which carries the row",
+  InterestPaymentBooked: 'companion of InterestPaidFromReserve or the periodic sale, which carry the user-facing meaning',
+  LoanInterestPaid: '#3755 — companion statement of the interest inside a repayment, settlement or sale whose own event carries the row; the lending totals read it',
+  LoanInterestUndelivered: '#3755 — companion statement of interest a payment left undelivered; the payment event carries the row and the lending totals read it',
+  IntentCalmCheckSet: "a lender intent slot's own setting, changed by its owner; no inbox row",
   // ── General safety nets — the SPECIFIC event carries the notification ─
   // #1782 — emitted by `LibLifecycle.transition` for EVERY status edge, so it
   // fires alongside whichever specific terminal event applies. Mapping it would
@@ -209,10 +221,30 @@ export const NOTIF_DELIBERATELY_NOT_HANDLED: Readonly<Record<string, string>> = 
     'custody provenance for vault-held fallback collateral — the liquidation, default, claim, cure or match it rides in carries the notification',
   SwapToRepayIntentLotPulled:
     'custody provenance for an intent fill — the same transaction\'s SwapToRepayIntentFilled carries the notification',
+  // #3669 — a leg the token refused, held in the payer's vault under a lien
+  // for the lender side. The settlement it rides in (repay, default, sale,
+  // claim) carries the notification; both loan parties see the parked and
+  // released rows on their Activity page through the loan.
+  SettlementLegParked:
+    'companion to the settlement it rides in — that event notifies; the parked leg is shown on both parties\' Activity page',
+  SettlementLegReleased:
+    'companion to the claim or release that moved the parked leg — shown on both parties\' Activity page',
   LoanInitiatedDetails: 'companion to LoanInitiated (mapped) — no separate row',
+  // #3649 — the added initiation fee an extension charges the borrower-position
+  // holder; it fires inside the extension itself.
+  ExtensionFeeCharged:
+    'companion to the same transaction\'s LoanExtended, which carries the extension\'s row (PR2 entry above); the fee is shown on the payer\'s Activity page',
   // ── Internal / companion / transient — no user-facing notification ─
   OfferCreated: 'own action — the creator initiated it; no inbound notification',
   OfferCreatedDetails: 'companion to OfferCreated — no row',
+  CollectionOfferCreated: 'own action — the lender posted its own collection offer (#3328)',
+  CollectionOfferReduced: 'own action — the lender lowered its own collection offer\'s loan count (#3328)',
+  CollectionOfferFilled:
+    'companion to the same transaction\'s LoanInitiated (mapped, both sides), which tells the lender and the borrower the loan opened (#3328)',
+  SignedCollectionOfferFilled:
+    'companion to the same transaction\'s LoanInitiated (mapped, both sides), which tells the signer and the borrower the loan opened (#3328)',
+  HeldRecommittedToIntent:
+    'own action — the intent owner (or its keeper) re-committed held capital to its own intent; the loan keeps running, nothing changes for the borrower',
   OfferModified: 'own action — the creator repriced their own offer',
   OfferCanceled: 'own action — the creator cancelled their own offer',
   OfferCanceledDetails: 'companion to OfferCanceled — no row',

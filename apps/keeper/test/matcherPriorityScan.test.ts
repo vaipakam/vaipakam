@@ -230,10 +230,10 @@ describe('priorityState', () => {
     const f = fakeCtx({ intents: [], preview: {}, unlocks: { [owner(5)]: true } });
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      const intent = { owner: owner(5), lendingAsset: LEND, collateralAsset: COLL, slot: 3 } as const;
+      const intent = { owner: owner(5), lendingAsset: LEND, collateralAsset: COLL, slot: 0 } as const;
       expect(await priorityState(f.ctx, intent, SOLVER)).toBe('credit');
       const req = (f.ctx as { client: { readContract: { mock: { calls: { args: unknown[] }[][] } } } }).client.readContract.mock.calls[0][0];
-      expect(req.args).toEqual([owner(5), LEND, COLL, 3, SOLVER, SOLVER]);
+      expect(req.args).toEqual([owner(5), LEND, COLL, 0, SOLVER, SOLVER]);
       const broken = fakeCtx({ intents: [], preview: {}, getter: false });
       expect(await priorityState(broken.ctx, intent, SOLVER)).toBe('blocked');
     } finally {

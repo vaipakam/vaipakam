@@ -60,6 +60,8 @@ contract ScenarioFallbackClaimRaceTest is Test {
         uint256 rateBps
     ) internal returns (uint256 offerId) {
         LibVaipakam.CreateOfferParams memory p = LibVaipakam.CreateOfferParams({
+            integrator: address(0),
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: usdc,
             amount: amount,

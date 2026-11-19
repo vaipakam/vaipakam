@@ -159,7 +159,7 @@ library FacetSelectors {
     ///         VaipakamNFTMetadataFacet (#2957); `RedeployFacets` refuses a
     ///         Diamond from before that split.
     function vaipakamNFT() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](17);
+        s = new bytes4[](21);
         s[0] = VaipakamNFTFacet.mintNFT.selector;
         s[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         s[2] = VaipakamNFTFacet.retirePosition.selector;
@@ -178,7 +178,12 @@ library FacetSelectors {
         // #3413 — the transfer cooldown after a value-out.
         s[14] = VaipakamNFTFacet.setPositionTransferCooldownSec.selector;
         s[15] = VaipakamNFTFacet.positionTransferCooldownSec.selector;
-        s[16] = VaipakamNFTFacet.positionTransferCooldown.selector;
+        // #3710 — the position's state number and its fill check.
+        s[16] = VaipakamNFTFacet.positionState.selector;
+        s[17] = VaipakamNFTFacet.requirePositionState.selector;
+        s[18] = VaipakamNFTFacet.setPositionOwnMoveWaitSec.selector;
+        s[19] = VaipakamNFTFacet.positionOwnMoveWaitSec.selector;
+        s[20] = VaipakamNFTFacet.markOfferPositions.selector;
     }
 
     /// @notice Full external selector surface of {RiskPreviewFacet} (11) —
@@ -208,7 +213,7 @@ library FacetSelectors {
     ///         Replace the routed), so it is correct against a pre-#1503 diamond
     ///         and a current one alike.
     function riskPreview() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](11);
+        s = new bytes4[](12);
         s[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         s[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         s[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -228,6 +233,9 @@ library FacetSelectors {
         s[9] = RiskPreviewFacet.getSaleListingBounds.selector;
         // #3577 — the risk gate a fill of a not-yet-stored signed order faces.
         s[10] = RiskPreviewFacet.previewSignedOfferRiskBlocks.selector;
+        // #3326 — the initiation risk bounds the match core reads by self-call
+        // (moved here from OfferPreviewFacet in #3328).
+        s[11] = RiskPreviewFacet.initRiskBounds.selector;
     }
 
     /// @notice Full external selector surface of {RepayPeriodicFacet} (4).
@@ -245,14 +253,16 @@ library FacetSelectors {
     ///         Its selectors are UNCHANGED by that work; only its bytecode
     ///         moved. It is a plain Replace of the whole surface.
     function repayPeriodic() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](5);
         s[0] = RepayPeriodicFacet.autoDeductDaily.selector;
         s[1] = RepayPeriodicFacet.nextPeriodCheckpoint.selector;
         s[2] = RepayPeriodicFacet.previewPeriodicSettle.selector;
         s[3] = RepayPeriodicFacet.settlePeriodicInterest.selector;
+        // #3681 — the one interest booking.
+        s[4] = RepayPeriodicFacet.bookInterestPayment.selector;
     }
 
-    /// @notice Full external selector surface of {EncumbranceMutateFacet} (24).
+    /// @notice Full external selector surface of {EncumbranceMutateFacet} (21).
     ///
     /// @dev    The other half of {repayPeriodic}: this facet hosts the
     ///         pay-or-freeze entries every open-loan interest payout goes
@@ -260,48 +270,44 @@ library FacetSelectors {
     ///         half-upgrade hazard.
     ///
     ///         Its SURFACE changed twice: #1503 item 28 retired the 3-argument
-    ///         `freezeOrPayActiveLenderResident` (the curated refresh still
+    ///         `holdActiveLenderResident` (the curated refresh still
     ///         Removes it wherever routed), and #1209 gave the resident and
     ///         payer entries the payout's gross and net interest. The curated
     ///         scripts refuse a Diamond from before #1209
     ///         (`PredatesInterestLedger`), so on every Diamond they cut the
     ///         #1209 selectors are already routed.
     function encumbranceMutate() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](25);
+        s = new bytes4[](21);
         s[0] = EncumbranceMutateFacet.assertNotFrozenParty.selector;
         s[1] = EncumbranceMutateFacet.createOfferPrincipalLien.selector;
-        s[2] = EncumbranceMutateFacet.decrementCollateralLien.selector;
-        s[3] = EncumbranceMutateFacet.decrementOfferPrincipalLien.selector;
-        s[4] = EncumbranceMutateFacet.freezeLenderProceeds.selector;
-        s[5] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromPayer.selector;
-        s[6] = EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector;
-        s[7] = EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector;
-        s[8] = EncumbranceMutateFacet.freezeOrPayBorrowerSurplus.selector;
-        s[9] = EncumbranceMutateFacet.getTierExclusion.selector;
-        s[10] = EncumbranceMutateFacet.getVpfiOwedToOthers.selector;
-        s[11] = EncumbranceMutateFacet.incrementCollateralLien.selector;
-        s[12] = EncumbranceMutateFacet.incrementOfferPrincipalLien.selector;
-        s[13] = EncumbranceMutateFacet.parkLenderPayoffAndFreeze.selector;
-        s[14] = EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector;
-        s[15] = EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector;
-        s[16] = EncumbranceMutateFacet.recreateCollateralLien.selector;
-        s[17] = EncumbranceMutateFacet.refreshTierExclusion.selector;
-        s[18] = EncumbranceMutateFacet.releaseCollateralLien.selector;
-        s[19] = EncumbranceMutateFacet.releaseOfferPrincipalLien.selector;
-        s[20] = EncumbranceMutateFacet.syncTierExclusion.selector;
-        s[21] = EncumbranceMutateFacet.terminalize.selector;
-        s[22] = EncumbranceMutateFacet.terminalizeFromAny.selector;
-        s[23] = EncumbranceMutateFacet.payHeldBorrowerExtra.selector;
-        s[24] = EncumbranceMutateFacet.settleRentalPrecloseShares.selector;
+        s[2] = EncumbranceMutateFacet.decrementOfferPrincipalLien.selector;
+        s[3] = EncumbranceMutateFacet.freezeLenderProceeds.selector;
+        s[4] = EncumbranceMutateFacet.holdActiveLenderFromPayer.selector;
+        s[5] = EncumbranceMutateFacet.holdActiveLenderFromVault.selector;
+        s[6] = EncumbranceMutateFacet.holdActiveLenderResident.selector;
+        s[7] = EncumbranceMutateFacet.holdBorrowerSurplus.selector;
+        s[8] = EncumbranceMutateFacet.getTierExclusion.selector;
+        s[9] = EncumbranceMutateFacet.getVpfiOwedToOthers.selector;
+        s[10] = EncumbranceMutateFacet.incrementOfferPrincipalLien.selector;
+        s[11] = EncumbranceMutateFacet.parkLenderPayoffAndFreeze.selector;
+        s[12] = EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector;
+        s[13] = EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector;
+        s[14] = EncumbranceMutateFacet.refreshTierExclusion.selector;
+        s[15] = EncumbranceMutateFacet.releaseOfferPrincipalLien.selector;
+        s[16] = EncumbranceMutateFacet.syncTierExclusion.selector;
+        s[17] = EncumbranceMutateFacet.terminalize.selector;
+        s[18] = EncumbranceMutateFacet.terminalizeFromAny.selector;
+        s[19] = EncumbranceMutateFacet.payHeldBorrowerExtra.selector;
+        s[20] = EncumbranceMutateFacet.settleRentalPrecloseShares.selector;
     }
 
     /// @notice #1503 item 28 — the RETIRED 3-argument
-    ///         `freezeOrPayActiveLenderResident` selector, for the Remove leg of
+    ///         `holdActiveLenderResident` selector, for the Remove leg of
     ///         a curated refresh against a pre-item-28 Diamond.
     /// @dev    Computed from the signature rather than referenced through the
     ///         type, because the 3-argument overload no longer exists in source.
     function retiredResidentPayoutSelector() internal pure returns (bytes4) {
-        return bytes4(keccak256("freezeOrPayActiveLenderResident(uint256,address,uint256)"));
+        return bytes4(keccak256("holdActiveLenderResident(uint256,address,uint256)"));
     }
 
     /// @notice #1980 — the RETIRED `ClaimFacet.getBorrowerLifRebate(uint256)`
@@ -416,14 +422,12 @@ library FacetSelectors {
     ///         the preview/accept divergence #1503 exists to remove,
     ///         reintroduced by a partial refresh.
     function offerPreview() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](5);
         s[0] = OfferPreviewFacet.previewAccept.selector;
         s[1] = OfferPreviewFacet.requireCadenceAdmitted.selector;
         s[2] = OfferPreviewFacet.previewCadenceAdmission.selector;
         s[3] = OfferPreviewFacet.requireOriginationCadenceAdmitted.selector;
-        s[4] = OfferPreviewFacet.previewOriginationRefusal.selector;
-        s[5] = OfferPreviewFacet.previewSignedOfferAccept.selector;
-        s[6] = OfferPreviewFacet.initRiskBounds.selector;
+        s[4] = OfferPreviewFacet.previewSignedOfferAccept.selector;
     }
 
     /// @notice Full external selector surface of {FallbackCustodyFacet} (4).
@@ -494,10 +498,11 @@ library FacetSelectors {
     ///         (`getTreasuryFeeFacetSelectors`) return it, and
     ///         `RedeploySelectorParityTest` pins it to the compiled ABI.
     function treasuryFee() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = TreasuryFeeFacet.collectFeeFromPayer.selector;
         s[1] = TreasuryFeeFacet.collectFeeFromVault.selector;
         s[2] = TreasuryFeeFacet.collectFeeFromDiamond.selector;
+        s[3] = TreasuryFeeFacet.getReservePartHeldByTreasury.selector;
     }
 
     /// @notice Full external selector surface of {NotificationFeeFacet} (3).
@@ -610,7 +615,7 @@ library FacetSelectors {
         s[2] = NumeraireValueFacet.getLiquidNumeraireValue.selector;
     }
 
-    /// @notice Full external selector surface of {ForcedSaleFacet} (3).
+    /// @notice Full external selector surface of {ForcedSaleFacet} (2).
     ///
     /// @dev    #2795 / #2796. The one forced-sale rule: size the sale to the
     ///         debt, sell it, and split the proceeds lender first.
@@ -629,8 +634,9 @@ library FacetSelectors {
     function forcedSale() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](3);
         s[0] = ForcedSaleFacet.sellToNeed.selector;
-        s[1] = ForcedSaleFacet.payBorrowerWallet.selector;
-        s[2] = bytes4(keccak256("QUOTE_MARGIN_BPS()"));
+        s[1] = bytes4(keccak256("QUOTE_MARGIN_BPS()"));
+        // #3538 — the sale's own frame while the fallback is not open.
+        s[2] = ForcedSaleFacet.sellOrRefuse.selector;
     }
 
     /// @notice Full external selector surface of {ForcedSalePreviewFacet} (2).
@@ -640,10 +646,12 @@ library FacetSelectors {
     ///         `LibForcedSalePlan`. Refreshed with ForcedSaleFacet (one rule
     ///         read by both): `RedeployFacets` cuts it from this list.
     function forcedSalePreview() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         s[0] = ForcedSalePreviewFacet.previewForcedSale.selector;
         // #2697 — the discounted liquidation's figures, read by its
         // flash-loan receiver inside the liquidating transaction.
         s[1] = ForcedSalePreviewFacet.previewDiscountedLiquidation.selector;
+        // #3538 — where a loan stands on the way to the in-kind fallback.
+        s[2] = ForcedSalePreviewFacet.getFallbackGate.selector;
     }
 }

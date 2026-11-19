@@ -142,6 +142,16 @@
             "name": "useFullTermInterest",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "lifecycleFlex",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "integrator",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       }
@@ -293,6 +303,16 @@
             "name": "useFullTermInterest",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "lifecycleFlex",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "integrator",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       },
@@ -454,6 +474,16 @@
             "name": "useFullTermInterest",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "lifecycleFlex",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "integrator",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       }
@@ -605,6 +635,16 @@
             "name": "useFullTermInterest",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "lifecycleFlex",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "integrator",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       },
@@ -828,22 +868,21 @@
             "name": "refinanceTargetLoanId",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "lifecycleFlex",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "integrator",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       }
     ],
     "anonymous": false
-  },
-  {
-    "type": "error",
-    "name": "AccountRetired",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",
@@ -3083,6 +3122,11 @@
   },
   {
     "type": "error",
+    "name": "PositionTokenNotAccepted",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "PriceGuardNumeraireMismatch",
     "inputs": [
       {
@@ -3106,17 +3150,6 @@
     "type": "error",
     "name": "PriceReadOutOfGas",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ProtectedVaultLocked",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",

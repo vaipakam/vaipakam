@@ -706,6 +706,12 @@
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
+      },
+      {
+        "name": "previousActions",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
       }
     ],
     "anonymous": false
@@ -750,6 +756,12 @@
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      },
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -806,6 +818,12 @@
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      },
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -2900,6 +2918,11 @@
   {
     "type": "error",
     "name": "PositionNFTNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PositionTokenNotAccepted",
     "inputs": []
   },
   {

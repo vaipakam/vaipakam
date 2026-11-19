@@ -11,7 +11,7 @@ import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
-import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {PriceGuardState} from "../src/oracle/PriceGuardState.sol";
 
 /**
  * @title RiskAccessFacetTest
@@ -287,7 +287,7 @@ contract RiskAccessFacetTest is SetupTest {
         // tier 0. WETH is the price guard's entry (#3272 part 2); the test
         // contract owns the suite's guard.
         address weth = makeAddr("wethCanonical");
-        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.Weth, weth);
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.Weth, weth);
         _mockTier(weth, 0); // tier 0, yet still blue-chip by the WETH clause
 
         uint8 required = RiskAccessFacet(address(diamond)).pairRequiredRiskLevel(
@@ -642,6 +642,56 @@ contract RiskAccessFacetTest is SetupTest {
         );
     }
 
+    /// @dev #3717 — a mainnet never runs the wait below one hour; a testnet
+    ///      may run any value up to the ceiling, zero included.
+    function test_cooldown_mainnetFloor() public {
+        vm.chainId(8453);
+        vm.expectRevert(
+            abi.encodeWithSelector(RiskAccessFacet.RiskCooldownTooShort.selector, uint64(0), uint64(1 hours))
+        );
+        RiskAccessFacet(address(diamond)).setRiskAccessUnlockCooldown(0);
+        vm.expectRevert(
+            abi.encodeWithSelector(RiskAccessFacet.RiskCooldownTooShort.selector, uint64(59 minutes), uint64(1 hours))
+        );
+        RiskAccessFacet(address(diamond)).setRiskAccessUnlockCooldown(uint64(59 minutes));
+        RiskAccessFacet(address(diamond)).setRiskAccessUnlockCooldown(uint64(48 hours));
+        assertEq(RiskAccessFacet(address(diamond)).getRiskAccessUnlockCooldown(), 48 hours);
+        vm.chainId(84532);
+        RiskAccessFacet(address(diamond)).setRiskAccessUnlockCooldown(0);
+        assertEq(RiskAccessFacet(address(diamond)).getRiskAccessUnlockCooldown(), 0);
+    }
+
+    /// @dev #3717 / #3719 — the alert reads its subject from the events: a
+    ///      raise names the level before it and when the new one takes effect;
+    ///      a lowering takes effect at once; a pair grant names both assets
+    ///      and when it may first be used.
+    function test_events_nameTheirSubject() public {
+        RiskAccessFacet(address(diamond)).setRiskAccessUnlockCooldown(uint64(48 hours));
+        vm.expectEmit(true, false, false, true, address(diamond));
+        emit RiskAccessFacet.VaultRiskTierSet(lender, ILLIQUID, BLUECHIP, uint64(block.timestamp + 48 hours));
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
+
+        vm.expectEmit(true, false, false, true, address(diamond));
+        emit RiskAccessFacet.VaultRiskTierSet(lender, BLUECHIP, BLUECHIP, uint64(block.timestamp));
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(BLUECHIP);
+
+        address lendA = makeAddr("lend-asset");
+        address collA = makeAddr("coll-asset");
+        LibRiskAccess.PairId memory p = _erc20Pair(lendA, collA);
+        bytes32 pk = LibRiskAccess.pairKey(p);
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit RiskAccessFacet.IlliquidPairConsentSet(lender, pk, true, lendA, collA, uint64(block.timestamp + 48 hours));
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setIlliquidPairConsent(p, true);
+
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit RiskAccessFacet.IlliquidPairConsentSet(lender, pk, false, lendA, collA, 0);
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setIlliquidPairConsent(p, false);
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // F2 — re-submitting a LOCKED tier RE-ARMS the cooldown
     // ════════════════════════════════════════════════════════════════════════
@@ -934,6 +984,8 @@ contract RiskAccessFacetTest is SetupTest {
         vm.prank(lender);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: lendAsset,
                 amount: 1000 ether,
@@ -1003,6 +1055,8 @@ contract RiskAccessFacetTest is SetupTest {
         );
         OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: 1000 ether,

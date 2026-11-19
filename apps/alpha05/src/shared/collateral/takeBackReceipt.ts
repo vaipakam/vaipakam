@@ -1,7 +1,7 @@
 /**
  * LN-32 — the receipt taking back collateral is confirmed against
  * (RB-CONFIDENCE): the amount taken back, the collateral before and after,
- * where it goes, the protocol's most that can be taken back now, the loan's
+ * where it goes (the holder's own vault), the protocol's most that can be taken back now, the loan's
  * health factor and loan-to-value now, and every consequence: the loan moves
  * closer to liquidation, the protocol checks its limits again when the
  * withdrawal confirms (so a price move before then can refuse it, with
@@ -40,10 +40,8 @@ export function takeBackReceipt(r: TakeBackReview, _meta: TokenMetaMap | null, c
   return { title: format('takeBack.title', { id: r.loanId.toString() }), rows, consequences, prompts: 1, readAt: r.readAt };
 }
 
-/** Where the collateral goes: the wallet at once, or where protected
- *  account mode routes it (the account's payout queue for its delay, with a
- *  secondary signer's approval while the account requires one); null when
- *  the mode could not be read. */
+/** Where the collateral goes: the holder's own vault, as free balance
+ *  (#3710); the wallet is reached by the vault's own Withdraw. */
 export function destination(r: Pick<TakeBackReview, 'route' | 'protection'>, copy: Pick<CopyAccess, 'text' | 'format'>): string | null {
-  return r.route === 'wallet' ? copy.text('takeBack.to') : routedDestination(r.route, r.protection, copy);
+  return routedDestination(r.route, r.protection, copy);
 }

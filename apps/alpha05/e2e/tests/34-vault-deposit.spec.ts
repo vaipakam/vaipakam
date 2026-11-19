@@ -19,7 +19,7 @@ import { WETH } from '@vaipakam/anvil-harness/lending';
 import { TOKEN_ABI } from '@vaipakam/anvil-harness/scenarioChain';
 import type { Page } from '@playwright/test';
 import { scenario } from '../lib/chain';
-import { connectWallet, expect, test } from '../lib/wallet';
+import { closeOutOnly, connectWallet, expect, test } from '../lib/wallet';
 import { enableProtection } from '../lib/protection';
 
 type Hex = `0x${string}`;
@@ -174,11 +174,12 @@ test('a quantity of a multi-token is deposited; the collection approval is grant
 test('with Terms in force the deposit asks for them first; a paused protocol closes it and says what stays open', async ({ launchWallet }) => {
   test.setTimeout(180_000);
   const sc = scenario({ lender: 'freshLender' });
-  await sc.diamondWrite('admin', 'setCurrentTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
+  await sc.diamondWrite('admin', 'publishTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
 
   const { page, flags } = await launchWallet('freshLender');
   await page.goto('/vault');
   await connectWallet(page);
+  await closeOutOnly(page);
   await page.getByTestId('vault-deposit-open').click();
   const dialog = page.getByRole('dialog', { name: 'Terms of Service' });
   await expect(dialog).toContainText('Depositing into your vault needs the Terms of Service', { timeout: 30_000 });
@@ -218,12 +219,12 @@ test('protected mode is stated in the receipt, and Terms published during the re
   await expect(receipt).not.toContainText('To your wallet, at once');
   await fitsWidth(page);
 
-  await sc.diamondWrite('admin', 'setCurrentTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
+  await sc.diamondWrite('admin', 'publishTos', [1, keccak256(toHex('alpha05 e2e Terms v1'))]);
   const sent = flags.sentTransactions;
   await flow.getByRole('button', { name: 'Confirm in wallet' }).click();
-  await expect(page.getByTestId('vault-deposit-terms-due')).toContainText('A Terms version you have not accepted is now in force', { timeout: 60_000 });
+  // Either the review's own re-check or the app-wide hold stops it first;
+  // both send nothing, and the hold asks for the acceptance itself.
+  await expect(page.getByRole('dialog', { name: 'Terms of Service' })).toContainText('Using this app with your wallet needs the Terms of Service', { timeout: 60_000 });
   expect(flags.sentTransactions).toBe(sent);
-  await page.getByTestId('vault-deposit-terms-accept').click();
-  await expect(page.getByRole('dialog', { name: 'Terms of Service' })).toContainText('Depositing into your vault needs the Terms of Service', { timeout: 30_000 });
   await fitsWidth(page);
 });

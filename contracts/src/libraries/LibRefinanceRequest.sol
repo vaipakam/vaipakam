@@ -130,8 +130,10 @@ library LibRefinanceRequest {
     ///         rule every position-bound flow follows). False for a request
     ///         that is not the recorded one.
     function unmoved(LibVaipakam.Storage storage s, uint256 loanId, uint256 offerId) internal view returns (bool) {
+        uint256 tokenId = s.loans[loanId].borrowerTokenId;
         return s.refinanceRequestOfLoan[loanId] == offerId
-            && LibPositionNFT.transferCountOf(s.loans[loanId].borrowerTokenId) == s.refinanceRequestTransferCount[loanId];
+            && tokenId == s.refinanceRequestTokenId[loanId]
+            && LibPositionNFT.transferCountOf(tokenId) == s.refinanceRequestTransferCount[loanId];
     }
 
     /// @dev Revert `PositionMovedSinceRouteOpened` unless {unmoved}.
@@ -274,9 +276,14 @@ library LibRefinanceRequest {
         assertReplaceable(loanId);
         s.refinanceRequestOfLoan[loanId] = offerId;
         // #3205 — the request is the current holder's (the caller recorded it
-        // as them): snapshot the position's transfer count, so a later move
-        // ends it.
-        s.refinanceRequestTransferCount[loanId] = LibPositionNFT.transferCountOf(s.loans[loanId].borrowerTokenId);
+        // as them): snapshot the position's token and its transfer count, so
+        // a later move ends it. The count belongs to the token, so the token
+        // is part of the snapshot (#3339): an obligation handover mints a new
+        // borrower token whose count starts at 0 again, and without the token
+        // id a dead request would match it and stand again.
+        uint256 tokenId = s.loans[loanId].borrowerTokenId;
+        s.refinanceRequestTokenId[loanId] = tokenId;
+        s.refinanceRequestTransferCount[loanId] = LibPositionNFT.transferCountOf(tokenId);
     }
 
     /// @notice Revert unless `offerId`, if refinance-tagged, may be TAKEN now

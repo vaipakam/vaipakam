@@ -15,9 +15,15 @@ import { STATE_DIR } from './artifacts';
  * Every spec that drives them reverts the chain after each test, so each test
  * finds them as global setup left them: funded with ETH and nothing else. The
  * other roles collect vaults and balances as the suite runs.
+ *
+ * `recovery` (#3246 part 2) only ever signs a recovery proof for another
+ * account, the step protected mode needs before it can be switched on. It
+ * holds no account and is never a signer, destination or counterparty, so it
+ * cannot collide with any role a spec puts in those places (the vault refuses
+ * a recovery address that is the account itself, a signer or a destination).
  */
-export type Role = 'lender' | 'borrower' | 'visitor' | 'freshLender' | 'freshBorrower';
-export const ROLES: Role[] = ['lender', 'borrower', 'visitor', 'freshLender', 'freshBorrower'];
+export type Role = 'lender' | 'borrower' | 'visitor' | 'freshLender' | 'freshBorrower' | 'recovery';
+export const ROLES: Role[] = ['lender', 'borrower', 'visitor', 'freshLender', 'freshBorrower', 'recovery'];
 
 const STATE_FILE = path.join(STATE_DIR, 'wallets.json');
 

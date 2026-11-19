@@ -33,7 +33,7 @@ import {
   MAX_SIGNED_OFFER_BODY_BYTES,
 } from '../src/signedOfferRoutes';
 import { createSqliteD1 } from './helpers/sqliteD1';
-import { signedOfferRowProblem } from '@vaipakam/lib/signedOfferWire';
+import { NO_COLLECTION, signedOfferRowProblem } from '@vaipakam/lib/signedOfferWire';
 import { SIGNED_OFFER_SET_TYPES, placementsOf } from '@vaipakam/lib/signedOfferSet';
 import {
   SIGNED_OFFER_TYPES,
@@ -86,6 +86,8 @@ function makeOrder(overrides: Partial<SignedOrderWire> = {}): SignedOrderWire {
     periodicInterestCadence: '0',
     refinanceTargetLoanId: '0',
     useFullTermInterest: false,
+    lifecycleFlex: '0',
+    integrator: '0x0000000000000000000000000000000000000000',
     creatorFull: false,
     creatorMaxCStar: '0',
     creatorAllowFullDowngrade: false,
@@ -96,6 +98,7 @@ function makeOrder(overrides: Partial<SignedOrderWire> = {}): SignedOrderWire {
     signer: SIGNER.address.toLowerCase(),
     nonce: '7',
     deadline: String(DEADLINE_7D),
+    ...NO_COLLECTION,
     ...overrides,
   };
 }
@@ -335,7 +338,7 @@ describe('POST /signed-offers — expiresAt create-horizon cap (Codex #1145 r3)'
 });
 
 describe('POST /signed-offers — ranged constant-ratio vet (Codex #1145 r3)', () => {
-  // Mirrors OfferMatchFacet._vetSignedOfferForMatch's
+  // Mirrors SignedOfferFacet._vetSignedOfferForMatch's
   // `collateralAmount * ceiling == effCollMax * amount` cross-multiplication
   // for ranged rows (amountMax > amount), which are matcher-only depth.
 

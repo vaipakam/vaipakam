@@ -3,12 +3,12 @@
  * the protocol's public entry points on the fixture chain. The borrower
  * chooses an amount, checked as it is typed against the protocol's own limit
  * (`calculateMaxWithdrawable`, which moves with prices and as interest
- * accrues); the review states the collateral before and after, that it goes
- * to the wallet, the limit, the loan's health factor and loan-to-value now,
+ * accrues); the review states the collateral before and after, that it
+ * stays in the borrower's vault as free balance (#3710), the limit, the loan's health factor and loan-to-value now,
  * and every consequence; no approval is asked. The finish card reports the
  * MEASURED outcome from the transaction's own logs: the collateral it left,
- * the protocol's health factor and loan-to-value after, and what arrived in
- * the wallet. The lender is not offered the action. Runs on the desktop and
+ * the protocol's health factor and loan-to-value after, and what was
+ * credited to the vault. The lender is not offered the action. Runs on the desktop and
  * the phone project; each run opens its own loans, and every test is rolled
  * back after it, so the collateral it returns never reaches a later spec's
  * wallet.
@@ -62,7 +62,7 @@ test('the borrower takes back collateral: the amount checked against the protoco
   await expect(receipt).toContainText('200 tLIQ');
   await expect(receipt).toContainText('1,500 tLIQ');
   await expect(receipt).toContainText('1,300 tLIQ');
-  await expect(receipt).toContainText('Your wallet, from your vault');
+  await expect(receipt).toContainText('Your vault, as your own funds, free to withdraw');
   await expect(receipt).toContainText('Most you can take back now');
   await expect(receipt).toContainText('Health factor now');
   await expect(receipt).toContainText('so it moves closer to liquidation');
@@ -83,15 +83,15 @@ test('the borrower takes back collateral: the amount checked against the protoco
   await expect(finish).toHaveAttribute('data-verdict', 'done', { timeout: 90_000 });
   await expect(finish).toContainText('Collateral now 1,300 tLIQ');
   await expect(finish).toContainText(/Health factor after \d/);
-  await expect(finish).toContainText('200 tLIQ arrived in your wallet');
+  await expect(finish).toContainText('200 tLIQ credited to your vault, free to withdraw');
   expect(flags.sentTransactions).toBe(sent + 1);
 
-  // The chain agrees: still running, with the collateral lowered and the
-  // wallet holding what left the vault.
+  // The chain agrees: still running, with the collateral lowered; the
+  // amount stays in the vault as free balance, so the wallet is unchanged.
   const after = await sc.read<{ status: number; collateralAmount: bigint }>('getLoanDetails', [loanId]);
   expect(Number(after.status)).toBe(0);
   expect(after.collateralAmount).toBe(parseEther('1300'));
-  expect(await sc.pub.readContract({ address: collateralAsset, abi: erc20Abi, functionName: 'balanceOf', args: [borrower] })).toBe(before + parseEther('200'));
+  expect(await sc.pub.readContract({ address: collateralAsset, abi: erc20Abi, functionName: 'balanceOf', args: [borrower] })).toBe(before);
 
   await finish.getByRole('button', { name: 'Close' }).click();
   await expect(page.getByTestId('take-back-open')).toBeVisible({ timeout: 60_000 });

@@ -44,6 +44,30 @@ export interface BookRow extends OfferLineFields {
   /** #3205: the offer is bound to a loan position that moved since it
    *  opened, so it can never complete. Null when the index cannot tell. */
   moved: boolean | null;
+  /** #3734 — the maker's standing on this network's Terms as the index
+   *  reads it: `exempt` for a listing that sells the maker's own loan or
+   *  collateral (never marked), `unknown` when the index does not say. The
+   *  offer's page reads the protocol's own verdict before anything is
+   *  offered; this only marks the list. */
+  makerTerms: MakerTerms;
+}
+
+export type MakerTerms = 'current' | 'not-current' | 'exempt' | 'none' | 'unknown';
+
+export function makerTermsOf(o: Json): MakerTerms {
+  const t = o.makerTerms as { state?: unknown } | null | undefined;
+  switch (t?.state) {
+    case 'current':
+      return 'current';
+    case 'not-current':
+      return 'not-current';
+    case 'exempt':
+      return 'exempt';
+    case 'no-terms-in-force':
+      return 'none';
+    default:
+      return 'unknown';
+  }
 }
 
 export interface BookPage {
@@ -116,6 +140,7 @@ export function bookRowFrom(o: Json): BookRow {
     expiresAt: big(o.expiresAt),
     kind: kindOf(o, offerType),
     moved: movedOf(o),
+    makerTerms: makerTermsOf(o),
   };
 }
 

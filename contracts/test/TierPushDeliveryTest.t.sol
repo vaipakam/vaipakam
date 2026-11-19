@@ -450,6 +450,82 @@ contract TierPushDeliveryTest is SetupTest {
         assertGt(guarded, 0, "the gas guard refuses the tight limits");
     }
 
+    // ─── Table version (#912) ───────────────────────────────────────────
+
+    /// @dev Governance changes the discount table: Base's version goes up.
+    function _bumpTable() internal {
+        ConfigFacet(address(diamond)).setVpfiTierDiscountBps(99, 0, 0, 0);
+    }
+
+    /// @dev Anyone may send Base's version to one mirror; the caller's value
+    ///      pays exactly that lane, the rest comes back, and the budget is
+    ///      not touched.
+    function test_TableVersion_SentToOneMirror_CallerPaysAndIsRefunded() public {
+        _bumpTable();
+        assertEq(pb.getTierTableVersion(), 1, "the change raised the version");
+        assertEq(pb.quoteBroadcastTierTableVersionTo(MIRROR_A), FEE, "one lane's fee");
+        uint256 budgetBefore = pb.getProtocolBroadcastBudget();
+        uint256 pendingBefore = router.pendingCount();
+
+        vm.deal(stranger, 3 * FEE);
+        vm.expectEmit(false, true, false, true, address(rewardMsgr));
+        emit VaipakamRewardMessenger.VersionBumpSent(bytes32(0), MIRROR_A, 1);
+        vm.prank(stranger);
+        pb.broadcastTierTableVersionTo{value: 3 * FEE}(MIRROR_A);
+
+        assertEq(router.pendingCount(), pendingBefore + 1, "one message, one lane");
+        (uint64 destSel,,,,) = router.pending(pendingBefore);
+        assertEq(destSel, SEL_A, "to the lane asked for");
+        assertEq(stranger.balance, 2 * FEE, "the unspent value came back");
+        assertEq(pb.getProtocolBroadcastBudget(), budgetBefore, "the budget paid nothing");
+    }
+
+    /// @dev Version 0 is every mirror's start: before any table change there
+    ///      is nothing to send, and the quote says so too.
+    function test_TableVersion_Unset_Refused() public {
+        vm.expectRevert(ProtocolBroadcastFacet.TierTableVersionUnset.selector);
+        pb.quoteBroadcastTierTableVersionTo(MIRROR_A);
+        vm.deal(stranger, FEE);
+        vm.prank(stranger);
+        vm.expectRevert(ProtocolBroadcastFacet.TierTableVersionUnset.selector);
+        pb.broadcastTierTableVersionTo{value: FEE}(MIRROR_A);
+    }
+
+    /// @dev A chain off the broadcast list cannot be sprayed: the messenger
+    ///      refuses it, and nothing is sent.
+    function test_TableVersion_OffListChain_Refused() public {
+        _bumpTable();
+        uint256 pendingBefore = router.pendingCount();
+        vm.deal(stranger, FEE);
+        vm.prank(stranger);
+        vm.expectRevert(
+            abi.encodeWithSelector(VaipakamRewardMessenger.NotBroadcastDestination.selector, uint256(999))
+        );
+        pb.broadcastTierTableVersionTo{value: FEE}(999);
+        assertEq(router.pendingCount(), pendingBefore);
+    }
+
+    /// @dev Too little value for the lane: the send refuses, nothing goes out.
+    function test_TableVersion_FeeShort_Refused() public {
+        _bumpTable();
+        vm.deal(stranger, FEE);
+        vm.prank(stranger);
+        vm.expectRevert(
+            abi.encodeWithSelector(VaipakamRewardMessenger.InsufficientFee.selector, FEE - 1, FEE)
+        );
+        pb.broadcastTierTableVersionTo{value: FEE - 1}(MIRROR_A);
+    }
+
+    /// @dev Only the canonical chain owns the table.
+    function test_TableVersion_OnMirror_Refused() public {
+        _bumpTable();
+        VPFITokenFacet(address(diamond)).setCanonicalVPFIChain(false);
+        vm.expectRevert(ProtocolBroadcastFacet.TierPushNotConfigured.selector);
+        pb.broadcastTierTableVersionTo(MIRROR_A);
+        vm.expectRevert(ProtocolBroadcastFacet.TierPushNotConfigured.selector);
+        pb.quoteBroadcastTierTableVersionTo(MIRROR_A);
+    }
+
     // ─── Surface ────────────────────────────────────────────────────────
 
     function test_DeliverOnMirror_Refused() public {

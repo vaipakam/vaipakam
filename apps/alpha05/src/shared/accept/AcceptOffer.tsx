@@ -18,7 +18,7 @@ import { acceptFigures, lenderFigures } from '../offers/model';
 import { readVault } from '../offers/reads';
 import { exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { readTerms, termsUrl, type TermsState } from '../terms/terms';
-import { askThrough } from '../tx/simulate';
+import { askAfter } from '../tx/simulate';
 import { cleanUpLeg } from '../tx/cleanUp';
 import { useStoredValue, useTxNote } from '../tx/txStore';
 import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
@@ -215,13 +215,14 @@ export function AcceptOffer({ flowKey, source, chain, own, meta, terms, onClose 
           : signedFillCall(r.source.order, message, signature);
 
       // 3. The dry run with the real signature: the protocol's own verdict.
-      const dry = await askThrough(own, (c) =>
+      const dry = await askAfter(own, since, (c, blockNumber) =>
         c.simulateContract({
           address: diamond,
           abi: call.abi,
           functionName: call.functionName,
           args: call.args,
           account,
+          blockNumber,
         }),
       );
       if (dry.kind === 'reverted') {
@@ -282,7 +283,7 @@ export function AcceptOffer({ flowKey, source, chain, own, meta, terms, onClose 
   /** A borrower's acceptance: the loan, the net principal credited to the
    *  vault, the fee share paid back, and the collateral locked in the vault. */
   const measureBorrower = async (r: AcceptReview, offerId: bigint | null, logs: readonly Log[], at: AnchoredReader): Promise<LegOutcome[]> => {
-    const f = acceptFigures(r.preview, r.offer.durationDays, r.matcherBps);
+    const f = acceptFigures(r.preview, r.offer.durationDays, r.matcher);
     const legs: LegOutcome[] = [];
     const opened = offerId === null ? null : openedLoan(logs, diamond, offerId, account);
     legs.push(loanLeg(r, opened, 'accept.legLoan'));
@@ -366,7 +367,7 @@ export function AcceptOffer({ flowKey, source, chain, own, meta, terms, onClose 
    *  fee share other than the preview's (the borrower's discount or Full
    *  tariff is settled as the loan opens) is named, never assumed. */
   const measureLender = (r: AcceptReview, offerId: bigint | null, logs: readonly Log[]): LegOutcome[] => {
-    const f = lenderFigures(r.preview, r.offer.durationDays, r.matcherBps, 0n);
+    const f = lenderFigures(r.preview, r.offer.durationDays, r.matcher, 0n);
     const lending = r.offer.lendingAsset;
     const legs: LegOutcome[] = [loanLeg(r, offerId === null ? null : openedLoan(logs, diamond, offerId, r.offer.creator), 'lendAccept.legLoan')];
     const lent = moved(logs, lending, account, null);

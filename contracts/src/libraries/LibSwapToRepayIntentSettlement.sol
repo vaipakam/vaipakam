@@ -6,6 +6,8 @@ import {LibVaultOutflow} from "./LibVaultOutflow.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibMetricsHooks} from "./LibMetricsHooks.sol";
 import {LibFacet} from "./LibFacet.sol";
+import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
+import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {LibCloseoutFreeze} from "./LibCloseoutFreeze.sol";
 import {LibSettlement} from "./LibSettlement.sol";
@@ -366,7 +368,8 @@ library LibSwapToRepayIntentSettlement {
         }
 
         // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
-        LibFacet.transferToTreasury(loan.principalAsset, plan.treasuryShare);
+        LibFacet.transferToTreasury(
+            loan.principalAsset, plan.treasuryShare, LibFeeFloor.interest(plan.interest + plan.lateFee, LibVaipakam.effectiveTreasuryFeeBps(loan)));
 
         // #658 PR-B — the intent fill is the LENDER-side close-out of this loan
         // (the borrower side was consolidated at COMMIT; its auction lot left
@@ -398,13 +401,13 @@ library LibSwapToRepayIntentSettlement {
         // terminals on `LibCloseoutFreeze` stops them drifting.
         LibCloseoutFreeze.freezeLenderProceeds(s, loanId, loan, plan.lenderDue);
 
-        // #954 (§1.4) — a clean holder is paid directly; a SANCTIONED holder's
-        // principal surplus is frozen into loan.borrower's vault + recorded as a
-        // `borrowerSurplusClaims` row (previously an UNSCREENED direct transfer).
+        // #3629 — the principal surplus is held for the borrower position: in
+        // loan.borrower's vault, on the `borrowerSurplusClaims` row, for the
+        // borrower claim. No holder's wallet is paid (#954 had paid a clean one).
         uint256 surplusPrincipal = actualDelivered - requiredPrincipal;
         address currentBorrowerHolder =
             LibPositionNFT.ownerOf(loan.borrowerTokenId);
-        LibCloseoutFreeze.freezeOrPayBorrowerSurplus(
+        LibCloseoutFreeze.holdBorrowerSurplus(
             s, loanId, loan, currentBorrowerHolder, surplusPrincipal
         );
 
@@ -421,7 +424,7 @@ library LibSwapToRepayIntentSettlement {
         // recorded centrally at the `Repaid` transition below (via
         // `EncumbranceMutateFacet.terminalize`), covering the residual collateral whether or
         // not a sanctioned principal surplus was present. The
-        // `freezeOrPayBorrowerSurplus` self-register (above) and this central
+        // `holdBorrowerSurplus` self-register (above) and this central
         // register are idempotent + first-write-wins.
 
         LibFacet.crossFacetCall(

@@ -185,7 +185,7 @@ library LibOfferBounds {
 
     /// @dev True when the collateral admits NO new borrow at loan-init, so an
     ///      offer against it can never become a loan and must be rejected
-    ///      fail-fast at create/mutate. Mirrors `LoanFacet._checkInitialLtvAndHf`,
+    ///      fail-fast at create/mutate. Mirrors `LibNewLoanRisk.requireAdmissible`,
     ///      whose effective cap is `min(per-asset ceiling, tier cap)` in the
     ///      depth-tiered regime: an effective tier-0 collateral
     ///      (`effectiveTierMaxInitLtvBps == 0`) admits no borrow there.

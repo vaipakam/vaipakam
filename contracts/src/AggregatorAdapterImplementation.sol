@@ -25,6 +25,7 @@ interface IVaipakamIntentSurface {
     function setLenderIntent(
         address lendingAsset,
         address collateralAsset,
+        uint8 slot,
         uint256 maxExposure,
         uint256 minRateBps,
         uint16 maxInitLtvBps,
@@ -37,12 +38,13 @@ interface IVaipakamIntentSurface {
         uint64 validUntil
     ) external;
 
-    function cancelLenderIntent(address lendingAsset, address collateralAsset)
+    function cancelLenderIntent(address lendingAsset, address collateralAsset, uint8 slot)
         external;
 
     function fundLenderIntent(
         address lendingAsset,
         address collateralAsset,
+        uint8 slot,
         uint256 amount
     ) external;
 
@@ -50,19 +52,22 @@ interface IVaipakamIntentSurface {
         address account,
         address lendingAsset,
         address collateralAsset,
+        uint8 slot,
         uint256 amount
     ) external;
 
     function getLenderIntentCapital(
         address owner,
         address lendingAsset,
-        address collateralAsset
+        address collateralAsset,
+        uint8 slot
     ) external view returns (uint256);
 
     function getLenderIntentLivePrincipal(
         address owner,
         address lendingAsset,
-        address collateralAsset
+        address collateralAsset,
+        uint8 slot
     ) external view returns (uint256);
 
     function isSanctionedAddress(address who) external view returns (bool);
@@ -78,6 +83,7 @@ interface IVaipakamIntentSurface {
         address lender,
         address lendingAsset,
         address collateralAsset,
+        uint8 slot,
         uint256 counterpartyOfferId,
         uint256 fillAmount
     ) external returns (uint256 loanId);
@@ -87,7 +93,8 @@ interface IVaipakamIntentSurface {
     function getLenderIntent(
         address owner,
         address lendingAsset,
-        address collateralAsset
+        address collateralAsset,
+        uint8 slot
     ) external view returns (LibVaipakam.LenderIntent memory);
 
     function getLoanDetails(uint256 loanId)
@@ -128,6 +135,12 @@ interface IVaipakamIntentSurface {
     function keepersPaused() external view returns (bool);
 
     function paused() external view returns (bool);
+
+    /// @dev #3734 — the Terms standing; for this adapter, its principal's.
+    function isTermsCurrent(address wallet) external view returns (bool);
+
+    /// @dev #3734 — reverts TermsNotAccepted naming this adapter's principal.
+    function requireCurrentTerms(address wallet) external view;
 
     function getAggregatorAdapterVersion(address adapter)
         external
@@ -310,8 +323,8 @@ contract AggregatorAdapterImplementation is
     ) external initializer {
         // #626 round-4 P2 — only the Diamond (the factory deploy path) may
         // initialize an adapter. The factory deploys the proxy from the Diamond's
-        // context, so the constructor's delegatecall to `initialize` preserves
-        // `msg.sender == diamondAddress`. A rogue proxy over the shared impl
+        // context and calls `initialize` in the same transaction (after
+        // registering the adapter, #3734), so `msg.sender == diamondAddress`. A rogue proxy over the shared impl
         // (msg.sender = attacker ≠ the real Diamond) is rejected.
         if (msg.sender != diamondAddress) revert NotDiamond();
         if (
@@ -343,6 +356,7 @@ contract AggregatorAdapterImplementation is
         IVaipakamIntentSurface(diamondAddress).setLenderIntent(
             lendingAsset,
             collateralAsset_,
+            LibVaipakam.PROTOCOL_INTENT_SLOT, // #3626 — a protocol-run intent uses slot 0 only
             intentMaxExposure,
             intentMinRateBps,
             intentMaxInitLtvBps,
@@ -373,11 +387,12 @@ contract AggregatorAdapterImplementation is
     function totalAssets() public view override returns (uint256) {
         IVaipakamIntentSurface d = IVaipakamIntentSurface(diamond);
         address lend = asset();
-        uint256 idle = d.getLenderIntentCapital(address(this), lend, collateralAsset);
+        uint256 idle = d.getLenderIntentCapital(address(this), lend, collateralAsset, LibVaipakam.PROTOCOL_INTENT_SLOT);
         uint256 live = d.getLenderIntentLivePrincipal(
             address(this),
             lend,
-            collateralAsset
+            collateralAsset,
+            LibVaipakam.PROTOCOL_INTENT_SLOT
         );
         uint256 riskAdjustedLive =
             (live * (BASIS_POINTS - haircutBps)) / BASIS_POINTS;
@@ -390,7 +405,8 @@ contract AggregatorAdapterImplementation is
             IVaipakamIntentSurface(diamond).getLenderIntentCapital(
                 address(this),
                 asset(),
-                collateralAsset
+                collateralAsset,
+                LibVaipakam.PROTOCOL_INTENT_SLOT
             );
     }
 
@@ -447,6 +463,23 @@ contract AggregatorAdapterImplementation is
 
     /// @dev Gate to the single authorized principal, then pull + mint via OZ,
     ///      then deploy the pulled assets into the standing intent.
+    /// @inheritdoc ERC4626Upgradeable
+    /// @dev #3734 — a deposit is new lending: while the principal is not
+    ///      current on the Terms it is refused with the Diamond's
+    ///      `TermsNotAccepted(principal, version)`, ahead of the limit check
+    ///      (whose `maxDeposit` is 0 then, as the standard requires).
+    function deposit(uint256 assets, address receiver) public override returns (uint256) {
+        _requireTermsForNewLending();
+        return super.deposit(assets, receiver);
+    }
+
+    /// @inheritdoc ERC4626Upgradeable
+    /// @dev #3734 — as {deposit}.
+    function mint(uint256 shares, address receiver) public override returns (uint256) {
+        _requireTermsForNewLending();
+        return super.mint(shares, receiver);
+    }
+
     function _deposit(
         address caller,
         address receiver,
@@ -476,6 +509,7 @@ contract AggregatorAdapterImplementation is
         IVaipakamIntentSurface(diamond).fundLenderIntent(
             lend,
             collateralAsset,
+            LibVaipakam.PROTOCOL_INTENT_SLOT,
             assets
         );
     }
@@ -513,6 +547,7 @@ contract AggregatorAdapterImplementation is
             address(this),
             asset(),
             collateralAsset,
+            LibVaipakam.PROTOCOL_INTENT_SLOT,
             assets
         );
         super._withdraw(caller, receiver, owner, assets, shares);
@@ -613,6 +648,7 @@ contract AggregatorAdapterImplementation is
             address(this),
             lend,
             collateralAsset,
+            LibVaipakam.PROTOCOL_INTENT_SLOT,
             counterpartyOfferId,
             fillAmount
         );
@@ -622,6 +658,7 @@ contract AggregatorAdapterImplementation is
             IVaipakamIntentSurface(diamond).fundLenderIntent(
                 lend,
                 collateralAsset,
+                LibVaipakam.PROTOCOL_INTENT_SLOT,
                 kickback
             );
         }
@@ -652,7 +689,8 @@ contract AggregatorAdapterImplementation is
         if (msg.sender != authorizedPrincipal) revert NotAuthorizedPrincipal();
         IVaipakamIntentSurface(diamond).cancelLenderIntent(
             asset(),
-            collateralAsset
+            collateralAsset,
+            LibVaipakam.PROTOCOL_INTENT_SLOT
         );
         emit IntentWoundDown(authorizedPrincipal);
     }
@@ -707,13 +745,17 @@ contract AggregatorAdapterImplementation is
             bool gatesOpen = !IVaipakamIntentSurface(diamond)
                 .isSanctionedAddress(authorizedPrincipal) &&
                 !IVaipakamIntentSurface(diamond).isSanctionedAddress(msg.sender) &&
-                !_belowMandatoryFloor();
+                !_belowMandatoryFloor() &&
+                // #3734 — the re-fund is new lending, so it needs the
+                // principal current on the Terms; the claim itself never does.
+                IVaipakamIntentSurface(diamond).isTermsCurrent(address(this));
             if (gatesOpen) {
                 IERC20(lend).forceApprove(diamond, recovered);
                 try
                     IVaipakamIntentSurface(diamond).fundLenderIntent(
                         lend,
                         collateralAsset,
+                        LibVaipakam.PROTOCOL_INTENT_SLOT,
                         recovered
                     )
                 {} catch {
@@ -846,13 +888,25 @@ contract AggregatorAdapterImplementation is
         // #626 round-4 P2 — a sanctioned principal can't deposit (`_deposit`
         // reverts), so advertise 0.
         if (d.isSanctionedAddress(authorizedPrincipal)) return false;
-        if (!d.getLenderIntent(address(this), asset(), collateralAsset).active) {
+        // #3734 — funding is new lending: the principal must be current.
+        if (!d.isTermsCurrent(address(this))) return false;
+        if (!d.getLenderIntent(address(this), asset(), collateralAsset, LibVaipakam.PROTOCOL_INTENT_SLOT).active) {
             return false;
         }
         if (d.isAssetPaused(asset()) || d.isAssetPaused(collateralAsset)) {
             return false;
         }
         return true;
+    }
+
+    /// @dev #3734 — refuse new lending, naming the principal, while the
+    ///      principal is not current on the Terms. A pause or a version below
+    ///      the mandatory floor keeps its own refusal, so it is left to the
+    ///      usual path.
+    function _requireTermsForNewLending() private view {
+        IVaipakamIntentSurface d = IVaipakamIntentSurface(diamond);
+        if (_belowMandatoryFloor() || d.paused()) return;
+        d.requireCurrentTerms(address(this));
     }
 
     /// @dev True when a mandatory upgrade floor is set and this adapter is below

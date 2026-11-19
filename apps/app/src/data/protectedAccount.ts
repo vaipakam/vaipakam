@@ -23,6 +23,7 @@ import {
   type VaultProtectionPending,
   type VaultProtectionState,
   type VaultReplacementTally,
+  type VaultProtectionRecovery,
 } from '@vaipakam/lib/protectedAccountView';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
@@ -32,7 +33,7 @@ import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
 import { VaipakamVaultImplementationABI } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { isMissingSelectorError } from '../contracts/preflights';
-import { LEGACY_DIAMOND_NFT_ABI, POSITION_NFT_ABI, type PositionNftMode } from '../contracts/positionNft';
+import { POSITION_NFT_ABI } from '../contracts/positionNft';
 
 /** Row states as the contract numbers them. */
 export const ROW_STATE = { Queued: 1, Released: 2, Cancelled: 3 } as const;
@@ -49,10 +50,6 @@ export type AssetKind = (typeof ASSET_KIND)[keyof typeof ASSET_KIND];
 export interface ProtectedAccountRecord {
   enabled: boolean;
   locked: boolean;
-  /** Legacy-mode chains only (#3205): the account delays its position NFT
-   *  transfers through the Diamond's queue. Always false in standalone
-   *  mode, where the PositionNFT holder lock protects the NFTs instead. */
-  protectNfts: boolean;
   requireCosign: boolean;
   retired: boolean;
   delaySeconds: number;
@@ -60,8 +57,6 @@ export interface ProtectedAccountRecord {
   pendingDelayAt: bigint;
   pendingDisableAt: bigint;
   pendingUnlockAt: bigint;
-  /** Legacy-mode only, like `protectNfts`; 0 in standalone mode. */
-  pendingNftOffAt: bigint;
   pendingCosignOffAt: bigint;
   cooldownUntil: bigint;
   lockedAt: bigint;
@@ -90,19 +85,8 @@ export interface PendingPayoutRow {
   needsCosign: boolean | null;
 }
 
-export interface PendingTransferRow {
-  id: bigint;
-  code: string | null;
-  state: number;
-  /** A signer co-signed it (needed before release while co-signing is on). */
-  cosigned: boolean;
-  releaseAt: bigint;
-  to: `0x${string}`;
-  tokenId: bigint;
-}
-
-/** The PositionNFT holder lock on an account's own tokens (#3205,
- *  standalone mode): `unlockAt` is a pending unlock and `lowerAt` a pending
+/** The PositionNFT holder lock on an account's own tokens (#3205):
+ *  `unlockAt` is a pending unlock and `lowerAt` a pending
  *  lowering of `delay` to `lowerDelay` (0 = none pending). */
 export interface HolderLockState {
   locked: boolean;
@@ -139,6 +123,13 @@ export interface ReplacementState {
   threshold: number;
 }
 
+export interface RecoveryState {
+  inForce: `0x${string}` | null;
+  pending: `0x${string}` | null;
+  pendingAt: bigint;
+  recovered: boolean;
+}
+
 export interface ProtectedAccountSnapshot {
   supported: boolean;
   /** #3379 B2 — the account's vault, where its protected record lives and
@@ -153,17 +144,16 @@ export interface ProtectedAccountSnapshot {
   pendingAllowlist: PendingAddition[] | null;
   pendingSigners: PendingAddition[] | null;
   payouts: PendingPayoutRow[] | null;
-  /** The legacy Diamond's queued position NFT transfers. Always `[]` in
-   *  standalone mode, where no such queue exists (#3205). */
-  transfers: PendingTransferRow[] | null;
-  /** Where the chain's position NFTs live (#3205). */
-  nftMode: PositionNftMode;
-  /** Standalone mode: the account's PositionNFT holder lock; null when
-   *  unread or in legacy mode. */
+  /** The account's PositionNFT holder lock (#3205); null when unread. */
   holderLock: HolderLockState | null;
   replacement: ReplacementState | null;
   escapeOpen: boolean | null;
   delayBounds: { min: number; max: number } | null;
+  /** #3246 part 2 — the recovery address (where a clawback pays): the one in
+   *  force (null = none), a pending one and when it comes into force (0 =
+   *  none), and whether the account was clawed back. Null when unread or the
+   *  account has no vault yet. */
+  recovery: RecoveryState | null;
   /** Block time of the pinned read. */
   chainNowSec: bigint;
   fetchedAtMs: number;
@@ -247,8 +237,8 @@ export function ownFundingVerdict(
   return snap.record.retired ? { kind: 'retired', controller: snap.record.controller } : { kind: 'open' };
 }
 
-/** The contract's cap on an account's open rows (payouts plus position
- *  transfers); a full queue refuses a new withdrawal. */
+/** The contract's cap on an account's open payout rows; a full queue
+ *  refuses a new withdrawal. */
 export const MAX_OPEN_ROWS = 16;
 
 /**
@@ -267,7 +257,7 @@ export type OwnWithdrawalVerdict =
   | { kind: 'queueFull' };
 
 export function ownWithdrawalVerdict(
-  snap: Pick<ProtectedAccountSnapshot, 'supported' | 'recordFailed' | 'record' | 'payouts' | 'transfers'> | undefined,
+  snap: Pick<ProtectedAccountSnapshot, 'supported' | 'recordFailed' | 'record' | 'payouts'> | undefined,
   readFailed: boolean,
   asController = false,
 ): OwnWithdrawalVerdict {
@@ -278,8 +268,8 @@ export function ownWithdrawalVerdict(
   if (!r.enabled) return { kind: 'open', queued: false };
   if (r.retired && !asController) return { kind: 'retired', controller: r.controller };
   if (r.locked) return { kind: 'locked' };
-  if (snap.payouts === null || snap.transfers === null) return { kind: 'unread' };
-  if (snap.payouts.length + snap.transfers.length >= MAX_OPEN_ROWS) return { kind: 'queueFull' };
+  if (snap.payouts === null) return { kind: 'unread' };
+  if (snap.payouts.length >= MAX_OPEN_ROWS) return { kind: 'queueFull' };
   return { kind: 'open', queued: true };
 }
 
@@ -370,7 +360,7 @@ export type OwnPayoutRoute =
   // owner withdraws it separately.
   | { kind: 'creditedToVault'; manager: string | null };
 
-type RouteSnap = Pick<ProtectedAccountSnapshot, 'supported' | 'recordFailed' | 'record' | 'payouts' | 'transfers'>;
+type RouteSnap = Pick<ProtectedAccountSnapshot, 'supported' | 'recordFailed' | 'record' | 'payouts'>;
 
 /** One account as the route rule reads it: its address and its snapshot. */
 export interface RouteAccount {
@@ -399,8 +389,8 @@ function gateRoute(account: RouteAccount, recipient: string | undefined, rowsAhe
   if (!r.enabled) return { kind: 'wallet' };
   const to = managerOther(r, recipient);
   if (r.locked) return { kind: 'vault', manager: to };
-  if (snap.payouts === null || snap.transfers === null) return { kind: 'unread' };
-  if (snap.payouts.length + snap.transfers.length + rowsAhead >= MAX_OPEN_ROWS) return { kind: 'vault', manager: to };
+  if (snap.payouts === null) return { kind: 'unread' };
+  if (snap.payouts.length + rowsAhead >= MAX_OPEN_ROWS) return { kind: 'vault', manager: to };
   return { kind: 'queued', delaySeconds: r.delaySeconds, cosign: r.requireCosign, to };
 }
 
@@ -550,22 +540,12 @@ function useProtectedAccountQueryOptions() {
     queryFn: async (): Promise<ProtectedAccountSnapshot> => {
       const diamond = walletChain!.diamondAddress;
       const surface = walletChain!.positionNft;
-      const legacy = surface.mode === 'legacy';
       const block = await publicClient!.getBlock();
       const fetchedAtMs = Date.now();
       const read = <T,>(functionName: string, args: readonly unknown[] = []) =>
         publicClient!.readContract({
           address: diamond,
           abi: DIAMOND_ABI_VIEM,
-          functionName,
-          args: args as unknown[],
-          blockNumber: block.number,
-        }) as Promise<T>;
-      // TODO(#3321 positionNft-legacy-removal): the legacy queue reads.
-      const readLegacy = <T,>(functionName: string, args: readonly unknown[]) =>
-        publicClient!.readContract({
-          address: diamond,
-          abi: LEGACY_DIAMOND_NFT_ABI,
           functionName,
           args: args as unknown[],
           blockNumber: block.number,
@@ -588,12 +568,11 @@ function useProtectedAccountQueryOptions() {
         pendingAllowlist: null,
         pendingSigners: null,
         payouts: null,
-        transfers: null,
-        nftMode: surface.mode,
         holderLock: null,
         replacement: null,
         escapeOpen: null,
         delayBounds: null,
+        recovery: null,
         chainNowSec: block.timestamp,
         fetchedAtMs,
       };
@@ -638,27 +617,22 @@ function useProtectedAccountQueryOptions() {
           return { ...base, vault, recordFailed: true };
         }
       }
-      // NFT protection's Diamond queue was retired (#3318): it reads off.
       const record: ProtectedAccountRecord = protectedAccountFromVault(target!, protection, state, owner, pendingSettings);
       const signerAddrs: `0x${string}`[] | null = state ? [...state[5]] : vault === null ? [] : null;
       const allowlist: `0x${string}`[] | null = state ? [...state[6]] : vault === null ? [] : null;
 
       const none = <T,>(v: T) => Promise.resolve(v);
-      const [payoutIds, transferIds, holderLockRaw, repl, escapeOpen, bounds, pending, tally] = await Promise.all([
+      const [payoutIds, holderLockRaw, repl, escapeOpen, bounds, pending, tally, recoveryRaw] = await Promise.all([
         soft(read<bigint[]>('getPendingPayoutIds', [target])),
-        // Standalone mode has no NFT queue: an empty list, not an unread one.
-        legacy ? soft(readLegacy<bigint[]>('getPendingTransferIds', [target])) : Promise.resolve([] as bigint[]),
-        legacy
-          ? Promise.resolve(null)
-          : soft(
-              publicClient!.readContract({
-                address: surface.nft,
-                abi: POSITION_NFT_ABI,
-                functionName: 'lockOf',
-                args: [target!],
-                blockNumber: block.number,
-              }) as Promise<readonly [boolean, bigint, bigint, bigint, bigint]>,
-            ),
+        soft(
+          publicClient!.readContract({
+            address: surface.nft,
+            abi: POSITION_NFT_ABI,
+            functionName: 'lockOf',
+            args: [target!],
+            blockNumber: block.number,
+          }) as Promise<readonly [boolean, bigint, bigint, bigint, bigint]>,
+        ),
         vault === null
           ? none([ZERO, ZERO, 0n, 0] as unknown as readonly [`0x${string}`, `0x${string}`, bigint, number])
           : soft(readVault<readonly [`0x${string}`, `0x${string}`, bigint, number]>(vault, 'replacementProposal')),
@@ -668,6 +642,7 @@ function useProtectedAccountQueryOptions() {
           ? none([[], []] as unknown as readonly [readonly `0x${string}`[], readonly `0x${string}`[]])
           : soft(readVault<readonly [readonly `0x${string}`[], readonly `0x${string}`[]]>(vault, 'pendingAdditions')),
         vault === null ? none([0n, 0n] as VaultReplacementTally) : soft(readVaultViews<VaultReplacementTally>(vault, 'replacementTally')),
+        vault === null ? none(null) : soft(readVault<VaultProtectionRecovery>(vault, 'protectionRecovery')),
       ]);
 
       // A list is known only if EVERY entry under it read: a partial queue
@@ -738,29 +713,6 @@ function useProtectedAccountQueryOptions() {
           )
         : null;
 
-      const transfers = transferIds
-        ? await all(
-            transferIds.map(async (id) => {
-              const r = await soft(
-                readLegacy<{ from: string; state: number; cosigned: boolean; releaseAt: bigint; to: `0x${string}`; tokenId: bigint }>(
-                  'getPendingPositionTransfer',
-                  [id],
-                ),
-              );
-              if (!r) return null;
-              return {
-                id,
-                code: await code(id),
-                state: Number(r.state),
-                cosigned: Boolean(r.cosigned),
-                releaseAt: BigInt(r.releaseAt),
-                to: r.to,
-                tokenId: r.tokenId,
-              };
-            }),
-          )
-        : null;
-
       return {
         ...base,
         vault,
@@ -774,7 +726,6 @@ function useProtectedAccountQueryOptions() {
         pendingAllowlist: pendAllow,
         pendingSigners: pendSign,
         payouts: payouts?.sort((a, b) => (a.releaseAt < b.releaseAt ? -1 : 1)) ?? null,
-        transfers,
         holderLock: holderLockRaw
           ? {
               locked: holderLockRaw[0],
@@ -796,6 +747,14 @@ function useProtectedAccountQueryOptions() {
           : null,
         escapeOpen,
         delayBounds: bounds ? { min: Number(bounds[0]), max: Number(bounds[1]) } : null,
+        recovery: recoveryRaw
+          ? {
+              inForce: recoveryRaw[0].toLowerCase() === ZERO ? null : recoveryRaw[0],
+              pending: recoveryRaw[1].toLowerCase() === ZERO ? null : recoveryRaw[1],
+              pendingAt: BigInt(recoveryRaw[2]),
+              recovered: recoveryRaw[3],
+            }
+          : null,
       };
     },
   });

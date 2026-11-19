@@ -127,7 +127,35 @@ abstract contract DiamondFacetNames {
     ///      and PrecloseFacet for EIP-170).
     ///      117 → 118 with `LoanClockFacet` (#3410 — the loan clock's
     ///      disclosure, split off LoanFacet).
-    function cutFacetNames() internal pure returns (string[118] memory) {
+    ///      118 → 119 with `MarketLedgerFacet` (instant market §8 — the
+    ///      common ledger).
+    ///      119 → 121 with `InstantMarketFacet` and `InstantFillFacet` (#3656
+    ///      — the instant borrow and its one-fill executor).
+    ///      121 → 122 with `InstantTakeoverFacet` (#3656 §7 — the takeover
+    ///      at face value).
+    ///      122 → 123 with `OfferMaterializeFacet` (#3328 — the signed-offer
+    ///      and intent-slice materialize entries, split off `OfferCreateFacet`).
+    ///      123 → 124 with `CollectionOfferFacet` (#3328 — NFT collection offers).
+    ///      124 → 125 with `ReadyBalanceFacet` (#3344 — a protected account's
+    ///      Ready balance).
+    ///      125 → 126 with `FeeLevelsFacet` (#3649 — the initiation fee's
+    ///      term schedule).
+    ///      126 → 127 with `SettlementLegFacet` (#3669 — a settlement leg the
+    ///      token refuses parks in the payer's vault under a lien).
+    ///      127 → 128 with `RecoveryClawbackFacet` (#3246 part 2 — the
+    ///      clawback to a protected account's recovery address).
+    ///      128 → 129 with `CollateralConcentrationFacet` (#3685 — the
+    ///      new-loan init-LTV cap host and collateral concentration).
+    ///      129 → 130 with `CollateralLienFacet` (#3685 — the collateral-lien
+    ///      entries, split off EncumbranceMutateFacet).
+    ///      130 → 131 with `StandingInstructionFacet` (#3681).
+    ///      131 → 132 with `ClaimViewFacet` (the claim reads, split off
+    ///      ClaimFacet along its read / write seam for EIP-170).
+    ///      132 → 133 with `LenderIntentViewFacet` (the standing-intent
+    ///      reads, split off LenderIntentFacet the same way).
+    ///      133 → 136 with `IntegratorFacet` (#3682), `StandingOfferCheckFacet`
+    ///      (#3720) and `ReferralFacet` (#3722).
+    function cutFacetNames() internal pure returns (string[136] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -292,6 +320,40 @@ abstract contract DiamondFacetNames {
             "PrecloseOffsetFacet",
             // The loan clock's disclosure (#3410, split off LoanFacet).
             "LoanClockFacet",
+            // The instant market's common ledger (§8).
+            "MarketLedgerFacet",
+            // The instant market (#3656): borrower entry, and one fill.
+            "InstantMarketFacet",
+            "InstantFillFacet",
+            "InstantTakeoverFacet",
+            // Signed-offer and intent-slice materialization (#3328).
+            "OfferMaterializeFacet",
+            // NFT collection offers (#3328).
+            "CollectionOfferFacet",
+            // A protected account's Ready balance (#3344).
+            "ReadyBalanceFacet",
+            // The initiation fee's term schedule (#3649).
+            "FeeLevelsFacet",
+            // A refused settlement leg's park and release (#3669).
+            "SettlementLegFacet",
+            // The clawback to a recovery address (#3246 part 2).
+            "RecoveryClawbackFacet",
+            // The new-loan cap host and collateral concentration (#3685).
+            "CollateralConcentrationFacet",
+            // The collateral-lien entries (#3685, split off EncumbranceMutateFacet).
+            "CollateralLienFacet",
+            // Standing instructions and the loan reserve (#3681).
+            "StandingInstructionFacet",
+            // The claim reads, split off ClaimFacet (EIP-170).
+            "ClaimViewFacet",
+            // The standing-intent reads, split off LenderIntentFacet (EIP-170).
+            "LenderIntentViewFacet",
+            // The integrator registry and the share's delivery (#3682).
+            "IntegratorFacet",
+            // The check of one standing offer a borrow preview points to (#3720).
+            "StandingOfferCheckFacet",
+            // The referral share: binding, settings, quote, payment (#3722).
+            "ReferralFacet",
             "SwapToRepayFacet",
             "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",

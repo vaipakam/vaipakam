@@ -14,10 +14,14 @@ import { createBudget, meterEnv, spendExternal } from '../src/subrequestBudget';
 import { handleOfferById } from '../src/offerRoutes';
 import type { Env } from '../src/env';
 import { createSqliteD1 } from './helpers/sqliteD1';
+import { getDeployment } from '@vaipakam/contracts/deployments';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
 /** The settled block a pass pins its heal reads to. */
 const AT = 12_345n;
+/** The Base Sepolia Diamond: its deployment record names the PositionNFT the
+ *  holder reads go to (#3321: an unknown Diamond is refused). */
+const DIAMOND = getDeployment(84532)!.diamond as never;
 
 const migrations = (upTo?: string) =>
   readdirSync(MIGRATIONS_DIR)
@@ -318,12 +322,13 @@ describe('a range backfill keeps the offer’s recorded holder (#2382 r3)', () =
     ({
       async readContract({ functionName }: { functionName: string }) {
         if (functionName === 'getOfferDetails') return detail;
+        if (functionName === 'isPositionRetired') return false;
         return owner();
       },
     }) as never;
   const run = async (h: ReturnType<typeof createSqliteD1>, owner: () => string) => {
     const budget = createBudget('test', { external: 1_000, d1Queries: 1_000 });
-    await refreshStubOffers(client(owner), '0x0' as never, 84532,
+    await refreshStubOffers(client(owner), DIAMOND, 84532,
       meterEnv({ DB: h.d1 } as unknown as Env, budget) as unknown as Env, budget, AT);
     return h.db.prepare('SELECT creator_current_owner AS o, collateral_amount_max AS m FROM offers').get() as {
       o: string;
@@ -425,10 +430,11 @@ describe('heal reads are pinned to the settled scan block (#2382 r5)', () => {
               amountMax: 1n, amountFilled: 0n, collateralAmountMax: 1n, collateralAmountFilled: 0n,
             };
           }
+          if (functionName === 'isPositionRetired') return false;
           return '0x00000000000000000000000000000000000000e0';
         },
       }) as never,
-      '0x0' as never,
+      DIAMOND,
       84532,
       meterEnv({ DB: h.d1 } as unknown as Env, budget) as unknown as Env,
       budget,
@@ -437,6 +443,7 @@ describe('heal reads are pinned to the settled scan block (#2382 r5)', () => {
     expect(blocks).toEqual([
       ['getOfferDetails', AT],
       ['ownerOf', AT],
+      ['isPositionRetired', AT],
     ]);
     // …and a completed read clears the marker.
     const r = h.db.prepare('SELECT collateral_range_stale AS s FROM offers').get() as { s: number };

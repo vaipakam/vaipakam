@@ -404,7 +404,7 @@ export function OfferForm({ side, flowKey, chain, own, pair, meta, onReview, onC
           ? text('request.errDaysEmpty')
           : text('request.errDays');
 
-  const figures = inputs.data && amount?.ok && rate.ok && durationDays !== null ? postFigures(amount.value, rate.value, durationDays, inputs.data.lifBps) : null;
+  const figures = inputs.data && amount?.ok && rate.ok && durationDays !== null ? postFigures(amount.value, rate.value, durationDays, inputs.data.lif) : null;
   /** The largest amount, for the live summary of a range. */
   const largest = ranged && !lender && amountMax?.ok ? amountMax.value : null;
   const collateralOk = nft ? tokenId !== null : multi ? tokenId !== null && quantity !== null : collateral?.ok === true;
