@@ -436,6 +436,41 @@ contract PeriodicInterestSettleTest is SetupTest {
         assertEq(shortfall, expected);
     }
 
+    /// @dev #3779 review — a long pause that ends just before the boundary
+    ///      moves the opening by its whole length: found exactly, not by a
+    ///      fixed number of steps (stepping crossed this pause one day at a
+    ///      time and stopped two days short).
+    function testPreview_LongPauseBeforeTheBoundaryMovesTheOpeningExactly() public {
+        vm.warp(startTs + 29 days);
+        _pauseFor(10 days);
+        vm.warp(startTs + 40 days);
+        _friendPays(100 ether); // closes the first period (ends at 40 days)
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs + 30 days), "first period closed");
+        (uint256 expected, uint256 paid, uint256 shortfall) = _preview();
+        assertEq(expected, _interest(1000 ether, 70 days) - _interest(1000 ether, 40 days), "30 days, from 40 to 70");
+        assertEq(paid, 0, "nothing paid toward the second period yet");
+        assertEq(shortfall, expected);
+    }
+
+    /// @dev #3779 review — several pauses before the opening all move it.
+    function testPreview_SeveralEarlierPausesMoveTheOpening() public {
+        for (uint256 i; i < 12; ++i) {
+            // Absolute times: viaIR may read block.timestamp once per call.
+            vm.warp(startTs + (2 * i + 1) * 1 days);
+            AdminFacet(address(diamond)).pause();
+            vm.warp(startTs + (2 * i + 2) * 1 days);
+            AdminFacet(address(diamond)).unpause();
+        }
+        vm.warp(startTs + 42 days);
+        _friendPays(100 ether); // the first period ends at 42 days
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs + 30 days), "first period closed");
+        (uint256 expected, uint256 paid,) = _preview();
+        assertEq(expected, _interest(1000 ether, 72 days) - _interest(1000 ether, 42 days), "30 days, from 42 to 72");
+        assertEq(paid, 0, "nothing paid toward the second period yet");
+    }
+
     /// @dev #3779 — one payment covering two whole periods closes both.
     function testPayInterest_OnePaymentClosesTwoPeriods() public {
         vm.warp(startTs + 60 days);

@@ -143,19 +143,15 @@ library LibPeriodicInterest {
     ///         the loan began, including one inside the current period; the
     ///         opening boundary must not move with a pause that came after
     ///         it, or the period's opening days read as an earlier period's.
-    ///         The paused time before the opening depends on where the
-    ///         opening lands, so it is found by stepping from the stamped
-    ///         checkpoint until it stops moving (a few steps at most: each
-    ///         step only adds pauses it newly reaches).
+    ///         The opening is the time whose unpaused time since the loan
+    ///         began equals the stamped checkpoint's nominal offset, found
+    ///         exactly by inverting the pause-adjusted clock
+    ///         ({LibPausable.timeAtActiveSeconds}); it is never before the
+    ///         stamped checkpoint itself.
     function periodStartAt(LibVaipakam.Loan storage loan) internal view returns (uint256 at) {
         uint256 last = uint256(loan.lastPeriodicInterestSettledAt);
-        uint256 start = uint256(loan.startTime);
-        at = last;
-        for (uint256 i = 0; i < 8; ++i) {
-            uint256 next = last + LibPausable.pausedSecondsBetween(start, at);
-            if (next == at) break;
-            at = next;
-        }
+        at = LibPausable.timeAtActiveSeconds(last - LibPausable.pausedSecondsAt(uint256(loan.startTime)));
+        if (at < last) at = last;
     }
 
     /// @dev Period boundary timestamp — `lastPeriodicInterestSettledAt +
