@@ -24,9 +24,58 @@
  * same address produce the same message.
  */
 
+import { bytesToHex, keccak256 } from 'viem';
+
 /** Replay window — a signed alert request older (or further in the
  *  future) than this is rejected. Mirrors the erasure endpoints. */
 export const LINK_SIGNATURE_MAX_AGE_SECONDS = 10 * 60;
+
+/**
+ * The longer window a KEYED request (see {@link REQUEST_KEYED_NOTE}) gets
+ * when its signature verified through the wallet's contract, not a key.
+ * A multi-signature wallet gathers its approvals over hours, so ten
+ * minutes is too short.
+ */
+export const KEYED_CONTRACT_SIGNATURE_MAX_AGE_SECONDS = 24 * 60 * 60;
+
+/**
+ * REQUEST KEYS (#3770). A signed request whose ANSWER goes back to whoever
+ * sent it — the link code, the status read pass — carries a commitment to a
+ * secret only the asking device holds. The device makes 32 random bytes,
+ * signs their keccak-256 hash inside the message (`Request key: 0x…`), and
+ * sends the secret beside the signature; the agent refuses a request whose
+ * secret does not hash to the signed value, so the answer goes only to the
+ * device that asked. The rule applies to every wallet type.
+ */
+export const REQUEST_KEYED_NOTE = 'request key';
+
+const WORD = /^0x[0-9a-fA-F]{64}$/;
+
+/** True for a 0x-prefixed 32-byte hex string: the shape of a request key's
+ *  secret and of its hash. */
+export function isRequestKeyWord(v: unknown): v is `0x${string}` {
+  return typeof v === 'string' && WORD.test(v);
+}
+
+/** A fresh request key: 32 bytes from the platform's cryptographic random
+ *  source. The asking device keeps it until the request is answered and
+ *  sends it beside the signature; it is never signed itself. */
+export function newRequestKey(): `0x${string}` {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return bytesToHex(bytes);
+}
+
+/** The keccak-256 hash of a request key, the value the message carries. */
+export function requestKeyHash(requestKey: string): `0x${string}` {
+  if (!isRequestKeyWord(requestKey)) throw new Error('request key must be 32 bytes of hex');
+  return keccak256(requestKey.toLowerCase() as `0x${string}`);
+}
+
+function requestKeyLine(keyHash: string): string {
+  if (!isRequestKeyWord(keyHash)) throw new Error('request key hash must be 32 bytes of hex');
+  return `Request key: ${keyHash.toLowerCase()}`;
+}
 
 /**
  * Link: authorises Telegram delivery for the wallet to whichever chat
@@ -36,6 +85,7 @@ export function buildTelegramLinkMessage(
   wallet: string,
   chainId: number,
   issuedAt: number,
+  keyHash: string,
 ): string {
   return [
     'Vaipakam — Link Telegram alerts',
@@ -47,6 +97,7 @@ export function buildTelegramLinkMessage(
     `Wallet: ${wallet.toLowerCase()}`,
     `Chain id: ${chainId}`,
     `Issued at (unix): ${issuedAt}`,
+    requestKeyLine(keyHash),
   ].join('\n');
 }
 
@@ -228,6 +279,7 @@ export function buildTelegramStatusMessage(
   wallet: string,
   chainId: number,
   issuedAt: number,
+  keyHash: string,
 ): string {
   return [
     'Vaipakam — Show my Telegram alert status',
@@ -240,5 +292,6 @@ export function buildTelegramStatusMessage(
     `Wallet: ${wallet.toLowerCase()}`,
     `Chain id: ${chainId}`,
     `Issued at (unix): ${issuedAt}`,
+    requestKeyLine(keyHash),
   ].join('\n');
 }

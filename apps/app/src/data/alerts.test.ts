@@ -11,12 +11,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildAlertPhraseMessage,
   buildAlertSettingsMessage,
+  buildTelegramLinkMessage,
   buildTelegramStatusMessage,
+  requestKeyHash,
 } from '@vaipakam/lib/alertsMessage';
 import {
   DEFAULT_PREFS,
   FLOOR_BANDS,
   addsAlertOptIn,
+  issueTelegramLink,
   parseLinkStatus,
   readPassKey,
   readTelegramStatus,
@@ -507,7 +510,12 @@ describe('the Telegram link status (#3573)', () => {
     const wallet = recordingSigner();
     expect(await readTelegramStatus(WALLET, 84532, wallet.signMessage)).toEqual({ kind: 'status', status: STATUS });
     expect(calls[0]!.url).toBe('https://agent.test/telegram/status');
-    expect(wallet.signed).toEqual([buildTelegramStatusMessage(WALLET, 84532, calls[0]!.body.issuedAt as number)]);
+    // #3770 — the request carries a fresh key, and the signed message its hash.
+    const requestKey = calls[0]!.body.requestKey as string;
+    expect(requestKey).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(wallet.signed).toEqual([
+      buildTelegramStatusMessage(WALLET, 84532, calls[0]!.body.issuedAt as number, requestKeyHash(requestKey)),
+    ]);
     expect(JSON.parse(sessionStorage.getItem(readPassKey(WALLET))!)).toMatchObject({ pass: PASS, chainId: null });
     // A wallet-wide pass reads another network too.
     const again = await refreshTelegramStatus(WALLET, 97);
@@ -543,5 +551,36 @@ describe('the Telegram link status (#3573)', () => {
     ).toEqual({ kind: 'unlink', effectiveAt: null });
     expect(parseLinkStatus({ ...STATUS, pending: { kind: 'other', effectiveAt: 1 } }, 84532)).toBeNull();
     expect(parseLinkStatus({ ...STATUS, linked: 'yes' }, 84532)).toBeNull();
+  });
+});
+
+describe('the Telegram link request (#3770)', () => {
+  const WALLET = '0x1DAefA360ED370285f003Fa2d92DB75628088282' as const;
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it('signs over a fresh request key and sends the key beside the signature', async () => {
+    vi.stubEnv('VITE_AGENT_ORIGIN', 'https://agent.test');
+    const bodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: unknown, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return new Response(JSON.stringify({ code: 'ABC123', bot_url: null }), { status: 200 });
+      }),
+    );
+    const wallet = recordingSigner();
+    await issueTelegramLink(WALLET, 84532, wallet.signMessage);
+    await issueTelegramLink(WALLET, 84532, wallet.signMessage);
+    const [first, second] = bodies;
+    expect(first!.requestKey).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(first!.requestKey).not.toBe(second!.requestKey);
+    expect(wallet.signed[0]).toBe(
+      buildTelegramLinkMessage(WALLET, 84532, first!.issuedAt as number, requestKeyHash(first!.requestKey as string)),
+    );
+    // The key itself is never in what the wallet signs.
+    expect(wallet.signed[0]).not.toContain((first!.requestKey as string).slice(2));
   });
 });

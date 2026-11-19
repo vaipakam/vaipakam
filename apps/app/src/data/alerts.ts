@@ -46,6 +46,8 @@ import {
   buildTelegramStatusMessage,
   buildTelegramTestMessage,
   buildTelegramUnlinkMessage,
+  newRequestKey,
+  requestKeyHash,
 } from '@vaipakam/lib/alertsMessage';
 import type { AlertSettingsChange } from '@vaipakam/lib/alertsMessage';
 import { copy } from '../content/copy';
@@ -510,14 +512,19 @@ export async function issueTelegramLink(
   signMessage: (message: string) => Promise<string>,
 ): Promise<TelegramLink> {
   const issuedAt = Math.floor(Date.now() / 1000);
+  // #3770 — the link code goes back to whoever sends this request, so the
+  // message commits to a key only this call holds, and the key goes beside
+  // the signature. It lives in this call alone: never stored or logged.
+  const requestKey = newRequestKey();
   const signature = await signMessage(
-    buildTelegramLinkMessage(wallet, chainId, issuedAt),
+    buildTelegramLinkMessage(wallet, chainId, issuedAt, requestKeyHash(requestKey)),
   );
   const res = await post('/link/telegram', {
     wallet,
     chain_id: chainId,
     issuedAt,
     signature,
+    requestKey,
   });
   if (!res.ok) throw new Error(`starting the Telegram link failed (${res.status})`);
   const code = res.data?.code;
@@ -715,10 +722,15 @@ export async function readTelegramStatus(
   signMessage: (message: string) => Promise<string>,
 ): Promise<TelegramStatusResult> {
   const issuedAt = Math.floor(Date.now() / 1000);
-  const signature = await signMessage(buildTelegramStatusMessage(wallet, chainId, issuedAt));
+  // #3770 — the same request key as the link: the read pass goes back to the
+  // sender, so only this call can redeem the signature.
+  const requestKey = newRequestKey();
+  const signature = await signMessage(
+    buildTelegramStatusMessage(wallet, chainId, issuedAt, requestKeyHash(requestKey)),
+  );
   let res: PostResult;
   try {
-    res = await post('/telegram/status', { wallet, chain_id: chainId, issuedAt, signature });
+    res = await post('/telegram/status', { wallet, chain_id: chainId, issuedAt, signature, requestKey });
   } catch {
     return { kind: 'unreachable' };
   }

@@ -15,6 +15,7 @@ import {
   buildTelegramLinkMessage,
   parseSignedLinkRequest,
 } from '../src/linkAuth';
+import { KEYED_CONTRACT_SIGNATURE_MAX_AGE_SECONDS, requestKeyHash } from '@vaipakam/lib/alertsMessage';
 import { SignedRequestLedgerUnavailableError, claimSignedRequest } from '../src/signedRequestUse';
 
 const MIGRATION = readFileSync(
@@ -109,15 +110,18 @@ describe('authoriseAlertRequest', () => {
   const DENY: ChainSigChecker = async () => false;
   const httpReq = new Request('https://agent.test/link/telegram', { method: 'POST' });
 
-  async function linkRequest(signer = ACCOUNT) {
+  const KEY = `0x${'ab'.repeat(32)}`;
+
+  async function linkRequest(signer = ACCOUNT, issuedAt = NOW) {
     const signature = await signer.signMessage({
-      message: buildTelegramLinkMessage(ACCOUNT.address, CHAIN_ID, NOW),
+      message: buildTelegramLinkMessage(ACCOUNT.address, CHAIN_ID, issuedAt, requestKeyHash(KEY)),
     });
     const parsed = parseSignedLinkRequest({
       wallet: ACCOUNT.address,
       chain_id: CHAIN_ID,
-      issuedAt: NOW,
+      issuedAt,
       signature,
+      requestKey: KEY,
     });
     if (!parsed.ok) throw new Error('parse failed');
     return parsed.req;
@@ -150,5 +154,21 @@ describe('authoriseAlertRequest', () => {
     const { d1 } = sqliteD1(false);
     const v = await authoriseAlertRequest(httpReq, { DB: d1 } as Env, await linkRequest(), 'link', NOW, DENY);
     expect(v).toMatchObject({ ok: false, status: 503 });
+  });
+
+  it("holds a contract wallet's keyed request for the day it may be accepted (#3770)", async () => {
+    const { d1, rows } = sqliteD1();
+    const env = {
+      DB: d1,
+      RPC_BASE_SEPOLIA: 'http://rpc.test',
+      SIG_VERIFY_RATELIMIT: { limit: async () => ({ success: true }) },
+    } as unknown as Env;
+    const CONFIRM: ChainSigChecker = async () => true;
+    const issuedAt = NOW - 3600;
+    const req = await linkRequest(OTHER, issuedAt);
+    expect(await authoriseAlertRequest(httpReq, env, req, 'link', NOW, CONFIRM)).toMatchObject({ ok: true });
+    expect(rows()[0]!.expires_at).toBe(issuedAt + KEYED_CONTRACT_SIGNATURE_MAX_AGE_SECONDS + 60);
+    const again = await authoriseAlertRequest(httpReq, env, req, 'link', NOW + 7200, CONFIRM);
+    expect(again).toMatchObject({ ok: false, status: 409 });
   });
 });

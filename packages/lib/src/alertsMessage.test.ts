@@ -15,14 +15,21 @@ import {
   buildTelegramStatusMessage,
   buildTelegramTestMessage,
   buildTelegramUnlinkMessage,
+  isRequestKeyWord,
+  newRequestKey,
+  requestKeyHash,
 } from './alertsMessage';
 
 const WALLET = '0x1DAefA360ED370285f003Fa2d92DB75628088282';
 const LOWER = '0x1daefa360ed370285f003fa2d92db75628088282';
+/** A request key (the word 0x00…01) and its keccak-256 hash, the hash in upper case to pin the
+ *  lower-casing. */
+const KEY = `0x${'0'.repeat(63)}1`;
+const KEY_HASH = '0xB10E2D527612073B26EECDFD717E6A320CF44B4AFAC2B0732D9FCBE2B7FA0CF6';
 
 describe('buildTelegramLinkMessage', () => {
   it('produces the frozen byte sequence, verbatim', () => {
-    expect(buildTelegramLinkMessage(WALLET, 84532, 1747000000)).toBe(
+    expect(buildTelegramLinkMessage(WALLET, 84532, 1747000000, KEY_HASH)).toBe(
       'Vaipakam — Link Telegram alerts\n' +
         '\n' +
         'I authorise Telegram alert delivery for the wallet below to the\n' +
@@ -31,7 +38,8 @@ describe('buildTelegramLinkMessage', () => {
         '\n' +
         `Wallet: ${LOWER}\n` +
         'Chain id: 84532\n' +
-        'Issued at (unix): 1747000000',
+        'Issued at (unix): 1747000000\n' +
+        `Request key: ${KEY_HASH.toLowerCase()}`,
     );
   });
 });
@@ -162,7 +170,7 @@ describe('buildAlertPhraseMessage (#3346)', () => {
 
 describe('buildTelegramStatusMessage (#3573)', () => {
   it('produces the frozen byte sequence, verbatim', () => {
-    expect(buildTelegramStatusMessage(WALLET, 84532, 1747000000)).toBe(
+    expect(buildTelegramStatusMessage(WALLET, 84532, 1747000000, KEY_HASH)).toBe(
       [
         'Vaipakam — Show my Telegram alert status',
         '',
@@ -174,19 +182,48 @@ describe('buildTelegramStatusMessage (#3573)', () => {
         `Wallet: ${LOWER}`,
         'Chain id: 84532',
         'Issued at (unix): 1747000000',
+        `Request key: ${KEY_HASH.toLowerCase()}`,
       ].join('\n'),
+    );
+  });
+});
+
+describe('request keys (#3770)', () => {
+  it('hashes the key with keccak-256', () => {
+    expect(requestKeyHash(KEY)).toBe(KEY_HASH.toLowerCase());
+  });
+
+  it('makes a fresh 32-byte key each time', () => {
+    const a = newRequestKey();
+    const b = newRequestKey();
+    expect(isRequestKeyWord(a)).toBe(true);
+    expect(a).not.toBe(b);
+  });
+
+  it('refuses a malformed key or hash', () => {
+    expect(() => requestKeyHash('0x1234')).toThrow();
+    expect(() => buildTelegramLinkMessage(WALLET, 1, 1, '0x1234')).toThrow();
+    expect(() => buildTelegramStatusMessage(WALLET, 1, 1, '')).toThrow();
+  });
+
+  it('binds the message to the key: another key gives another message', () => {
+    const other = requestKeyHash(newRequestKey());
+    expect(buildTelegramLinkMessage(WALLET, 1, 1, KEY_HASH)).not.toBe(
+      buildTelegramLinkMessage(WALLET, 1, 1, other),
     );
   });
 });
 
 describe('the alert messages as a family', () => {
   const builders = [
-    buildTelegramLinkMessage,
+    (wallet: string, chainId: number, issuedAt: number) =>
+      buildTelegramLinkMessage(wallet, chainId, issuedAt, KEY_HASH),
     buildTelegramUnlinkMessage,
     (wallet: string, chainId: number, issuedAt: number) =>
       buildAlertSettingsMessage(wallet, chainId, {}, issuedAt),
     buildTelegramTestMessage,
-    buildTelegramStatusMessage,
+    (wallet: string, chainId: number, issuedAt: number) =>
+      buildTelegramStatusMessage(wallet, chainId, issuedAt, KEY_HASH),
     (wallet: string, chainId: number, issuedAt: number) =>
       buildAlertPhraseMessage(wallet, chainId, 'blue heron', issuedAt),
     (wallet: string, chainId: number, issuedAt: number) =>

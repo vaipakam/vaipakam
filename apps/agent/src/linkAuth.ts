@@ -48,7 +48,10 @@
 import type { Env } from './env';
 import type { SlotOutcome } from './rateLimit';
 import {
+  KEYED_CONTRACT_SIGNATURE_MAX_AGE_SECONDS,
   LINK_SIGNATURE_MAX_AGE_SECONDS,
+  isRequestKeyWord,
+  requestKeyHash,
   buildAlertPhraseMessage,
   buildAlertSettingsMessage,
   buildTelegramLinkMessage,
@@ -98,9 +101,22 @@ export type AlertAuthorisation =
   /** #3346 — set the alert phrase (null removes it). */
   | { action: 'set-phrase'; phrase: string | null };
 
+/**
+ * The actions whose ANSWER goes back to whoever sends the request (#3770):
+ * the link code and the status read. Their message carries the hash of a
+ * request key the asking device holds, and the request must carry the key
+ * itself, so the answer goes only to the device that asked.
+ */
+const KEYED_ACTIONS: ReadonlySet<AlertAuthorisation> = new Set<AlertAuthAction>(['link', 'status']);
+
+/** True when `auth` needs a request key. */
+export function isKeyedAlertAction(auth: AlertAuthorisation): boolean {
+  return typeof auth === 'string' && KEYED_ACTIONS.has(auth);
+}
+
 const MESSAGE_BUILDERS: Record<
   AlertAuthAction,
-  (wallet: string, chainId: number, issuedAt: number) => string
+  (wallet: string, chainId: number, issuedAt: number, keyHash: string) => string
 > = {
   link: buildTelegramLinkMessage,
   unlink: buildTelegramUnlinkMessage,
@@ -108,14 +124,22 @@ const MESSAGE_BUILDERS: Record<
   status: buildTelegramStatusMessage,
 };
 
-/** The exact message the wallet must have signed for `auth`. */
+/**
+ * The exact message the wallet must have signed for `auth`. For a keyed
+ * action it is built from the hash of the key the request carries, so a
+ * request with any other key names a message the wallet never signed.
+ * Throws for a keyed action without a key; `verifySignedLinkRequest`
+ * refuses that case first.
+ */
 export function alertRequestMessage(
   req: SignedLinkRequest,
   auth: AlertAuthorisation,
 ): string {
-  return typeof auth === 'string'
-    ? MESSAGE_BUILDERS[auth](req.wallet, req.chain_id, req.issuedAt)
-    : auth.action === 'set-phrase'
+  if (typeof auth === 'string') {
+    const keyHash = isKeyedAlertAction(auth) ? requestKeyHash(req.requestKey ?? '') : '';
+    return MESSAGE_BUILDERS[auth](req.wallet, req.chain_id, req.issuedAt, keyHash);
+  }
+  return auth.action === 'set-phrase'
       ? buildAlertPhraseMessage(req.wallet, req.chain_id, auth.phrase, req.issuedAt)
       : buildAlertSettingsMessage(req.wallet, req.chain_id, auth.settings, req.issuedAt);
 }
@@ -125,6 +149,10 @@ export interface SignedLinkRequest {
   chain_id: number;
   issuedAt: number;
   signature: string;
+  /** #3770 — the request key's secret, for the keyed actions (link,
+   *  status). Never logged and never stored: the ledger keeps a digest of
+   *  the signed message, which carries only the key's hash. */
+  requestKey?: string;
 }
 
 export type LinkParseResult =
@@ -156,6 +184,10 @@ export function parseSignedLinkRequest(body: unknown): LinkParseResult {
   if (!isValidSignatureShape(b.signature)) {
     return { ok: false, reason: 'signature must be 0x-prefixed hex' };
   }
+  // #3770 — optional here; the actions that need it refuse its absence.
+  if (b.requestKey !== undefined && !isRequestKeyWord(b.requestKey)) {
+    return { ok: false, reason: 'requestKey must be 32 bytes of 0x-prefixed hex' };
+  }
   return {
     ok: true,
     req: {
@@ -163,6 +195,7 @@ export function parseSignedLinkRequest(body: unknown): LinkParseResult {
       chain_id: b.chain_id,
       issuedAt: Math.floor(b.issuedAt),
       signature: b.signature,
+      ...(b.requestKey === undefined ? {} : { requestKey: b.requestKey }),
     },
   };
 }
@@ -177,8 +210,23 @@ export type LinkVerifyResult =
        *  not clear other chains' rows, whose contracts may have
        *  different controllers. */
       via: 'ecdsa' | 'chain';
+      /** The last unix second the request could have been accepted: the
+       *  one-time-use claim must outlive it. */
+      acceptableUntil: number;
     }
   | { ok: false; status: number; reason: string };
+
+/**
+ * How old a request may be (#3770). Ten minutes, except a KEYED request
+ * whose signature verified through the wallet's contract, which gets a day:
+ * a multi-signature wallet gathers its approvals over hours. An ordinary
+ * key's signature keeps ten minutes, since it signs at once.
+ */
+export function alertRequestMaxAge(auth: AlertAuthorisation, via: 'ecdsa' | 'chain'): number {
+  return via === 'chain' && isKeyedAlertAction(auth)
+    ? KEYED_CONTRACT_SIGNATURE_MAX_AGE_SECONDS
+    : LINK_SIGNATURE_MAX_AGE_SECONDS;
+}
 
 /**
  * Verify a parsed signed link request: the timestamp is inside the
@@ -198,9 +246,17 @@ export async function verifySignedLinkRequest(
   // `chainVerifyGate(env, request)`.
   chainPathAllowed?: () => Promise<SlotOutcome>,
 ): Promise<LinkVerifyResult> {
-  if (Math.abs(nowSeconds - req.issuedAt) > LINK_SIGNATURE_MAX_AGE_SECONDS) {
-    return { ok: false, status: 400, reason: 'request timestamp is stale' };
+  const keyed = isKeyedAlertAction(auth);
+  if (keyed && !isRequestKeyWord(req.requestKey)) {
+    return { ok: false, status: 400, reason: 'requestKey is required for this request' };
   }
+  // The future skew is ten minutes for every request; the past limit before
+  // verification is the longest this action could get, and is narrowed below
+  // once the verification path is known.
+  const stale = { ok: false as const, status: 400, reason: 'request timestamp is stale' };
+  const age = nowSeconds - req.issuedAt;
+  if (-age > LINK_SIGNATURE_MAX_AGE_SECONDS) return stale;
+  if (age > alertRequestMaxAge(auth, keyed ? 'chain' : 'ecdsa')) return stale;
   const message = alertRequestMessage(req, auth);
   const verdict = await verifyWalletSignature(
     env,
@@ -211,7 +267,11 @@ export async function verifySignedLinkRequest(
     checker,
     chainPathAllowed,
   );
-  if (verdict.ok) return { ok: true, via: verdict.via };
+  if (verdict.ok) {
+    const maxAge = alertRequestMaxAge(auth, verdict.via);
+    if (age > maxAge) return stale;
+    return { ok: true, via: verdict.via, acceptableUntil: req.issuedAt + maxAge };
+  }
   if (verdict.reason === 'limited') {
     return { ok: false, ...limitedRefusal(verdict.slot) };
   }
@@ -261,7 +321,7 @@ export async function authoriseAlertRequest(
     claimed = await claimSignedRequest(
       env.DB,
       alertRequestMessage(req, auth),
-      req.issuedAt + LINK_SIGNATURE_MAX_AGE_SECONDS,
+      verified.acceptableUntil,
     );
   } catch (err) {
     if (err instanceof SignedRequestLedgerUnavailableError) {

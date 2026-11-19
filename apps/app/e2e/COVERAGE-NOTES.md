@@ -2040,6 +2040,15 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 
 **Gap.** Live-only: the round trip needs the deployed agent and a linked Telegram chat.
 
+<a id="cov-3770-request-key"></a>
+### #3770 request key on the Telegram link and status requests
+
+**Journey.** `issueTelegramLink` and `readTelegramStatus` each make a request key with `newRequestKey` (32 bytes from the platform's random source), sign the link or status message carrying `requestKeyHash(key)` on its `Request key:` line, and post the key as `requestKey` beside the signature. The key lives only in that call. The agent refuses a link or status request without a key (400), and one whose key does not hash to the signed value fails verification. A request verified through the wallet's contract is accepted for a day, an ordinary key signature for ten minutes, and the one-use claim lasts as long as the request could be accepted.
+
+**Tier.** Unit: `src/data/alerts.test.ts` (fresh key per link request, signed hash, status request carries its key); `apps/agent/test/linkAuth.test.ts` (missing, malformed and wrong key, the two windows, the future limit); `signedRequestUse.test.ts` (the claim lasts the day); `packages/lib/src/alertsMessage.test.ts` (the pinned messages, the hash).
+
+**Gap.** Live-only: the round trip needs the deployed agent; the day-long window needs a multi-signature dev wallet.
+
 <a id="cov-3434-delegation-warning"></a>
 ### #3434 EIP-7702 delegation warning
 
