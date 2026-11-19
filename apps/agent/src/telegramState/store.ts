@@ -49,6 +49,21 @@ export interface LinkedRow {
   chatId: string;
 }
 
+/** Where a wallet's Telegram alert goes on one chain, and the phrase it
+ *  starts with (#3346; null when the owner set none). */
+export interface ChatRoute {
+  chat: string;
+  phrase: string | null;
+}
+
+/** One chain a phrase save touched: the phrase it replaced and the chat
+ *  linked there now, which is told of the change (#3346). */
+export interface PhraseChange {
+  chainId: number;
+  oldPhrase: string | null;
+  chatId: string | null;
+}
+
 /** A pending removal or move of a chat (#3246). */
 export interface PendingChange {
   id: number;
@@ -96,6 +111,8 @@ export interface UnansweredLock {
   wallet: string;
   upToId: number;
   chatId: string;
+  /** The owner's alert phrase on that chain (#3346), or null. */
+  phrase: string | null;
 }
 
 /** One deployment of the protocol: a chain and the Diamond on it. LOCK
@@ -178,6 +195,16 @@ const SCHEMA: readonly string[] = [
      diamond  TEXT NOT NULL,
      seen_at  INTEGER NOT NULL,
      PRIMARY KEY (chain_id, diamond)
+   );`,
+  // #3346 — the owner's anti-phishing phrase, per wallet and chain. Kept here,
+  // never in the shared database, which other Workers and the nightly backup
+  // read.
+  `CREATE TABLE IF NOT EXISTS alert_phrases (
+     wallet   TEXT NOT NULL,
+     chain_id INTEGER NOT NULL,
+     phrase   TEXT NOT NULL,
+     set_at   INTEGER NOT NULL,
+     PRIMARY KEY (wallet, chain_id)
    );`,
 ];
 
@@ -275,6 +302,74 @@ export class TelegramStateStore {
         .toArray()[0];
       return row ? String(row.chat_id) : null;
     });
+  }
+
+  /** The owner's alert phrase for each pair (#3346), or null. */
+  phrasesOf(pairs: readonly { wallet: string; chainId: number }[]): (string | null)[] {
+    return pairs.map((p) => {
+      const row = this.sql
+        .exec<{ phrase: string }>(`SELECT phrase FROM alert_phrases WHERE wallet = ? AND chain_id = ?`, lower(p.wallet), p.chainId)
+        .toArray()[0];
+      return row ? String(row.phrase) : null;
+    });
+  }
+
+  /** The phrase a message about `wallet` (any chain) starts with: its
+   *  phrases joined, usually one, or null when none is set (#3346). */
+  phraseForWallet(wallet: string): string | null {
+    const rows = this.sql
+      .exec<{ phrase: string }>(`SELECT DISTINCT phrase FROM alert_phrases WHERE wallet = ? ORDER BY phrase`, lower(wallet))
+      .toArray();
+    return rows.length === 0 ? null : rows.map((r) => String(r.phrase)).join(' · ');
+  }
+
+  /** The phrase a reply to `chatId` starts with: the phrases of the wallets
+   *  linked to it now, joined, or null (#3346). */
+  phraseForChat(chatId: string): string | null {
+    const rows = this.sql
+      .exec<{ phrase: string }>(
+        `SELECT DISTINCT p.phrase AS phrase FROM links l
+           JOIN alert_phrases p ON p.wallet = l.wallet AND p.chain_id = l.chain_id
+          WHERE l.chat_id = ? ORDER BY p.phrase`,
+        chatId,
+      )
+      .toArray();
+    return rows.length === 0 ? null : rows.map((r) => String(r.phrase)).join(' · ');
+  }
+
+  /** For each pair, the linked chat and the phrase its messages start with,
+   *  or null when no chat is linked (#3346). One read for both, so a pass
+   *  spends no more requests than it did for the chat alone. */
+  routesOf(pairs: readonly { wallet: string; chainId: number }[]): (ChatRoute | null)[] {
+    const chats = this.chatsOf(pairs);
+    const phrases = this.phrasesOf(pairs);
+    return chats.map((chat, i) => (chat === null ? null : { chat, phrase: phrases[i] ?? null }));
+  }
+
+  /** Set (or, with null, clear) the wallet's phrase on each of `chainIds`, in
+   *  one transaction, and return what it replaced on each chain with the chat
+   *  linked there now (#3346). */
+  setPhrase(wallet: string, chainIds: readonly number[], phrase: string | null, now: number): PhraseChange[] {
+    const w = lower(wallet);
+    return this.tx(() =>
+      chainIds.map((chainId) => {
+        const [oldPhrase] = this.phrasesOf([{ wallet: w, chainId }]);
+        if (phrase === null) {
+          this.sql.exec(`DELETE FROM alert_phrases WHERE wallet = ? AND chain_id = ?`, w, chainId);
+        } else {
+          this.sql.exec(
+            `INSERT INTO alert_phrases (wallet, chain_id, phrase, set_at) VALUES (?, ?, ?, ?)
+             ON CONFLICT (wallet, chain_id) DO UPDATE SET phrase = excluded.phrase, set_at = excluded.set_at`,
+            w,
+            chainId,
+            phrase,
+            now,
+          );
+        }
+        const [chatId] = this.chatsOf([{ wallet: w, chainId }]);
+        return { chainId, oldPhrase: oldPhrase ?? null, chatId: chatId ?? null };
+      }),
+    );
   }
 
   /** The wallets with a chat linked on `chainId`. */
@@ -599,7 +694,7 @@ export class TelegramStateStore {
    *  finished, and how. Returns the chat the wallet is linked to now (where
    *  the answer goes; null once unlinked), or undefined when no open request
    *  matched (already handled, or never made: nothing is answered). */
-  markLockHandled(dep: ChainDeployment, wallet: string, upToId: number, outcome: string, at: number): { chatId: string | null } | undefined {
+  markLockHandled(dep: ChainDeployment, wallet: string, upToId: number, outcome: string, at: number): { chatId: string | null; phrase: string | null } | undefined {
     const w = lower(wallet);
     const chainId = dep.chainId;
     return this.tx(() => {
@@ -614,8 +709,8 @@ export class TelegramStateStore {
         upToId,
       ).rowsWritten;
       if (changed === 0) return undefined;
-      const [chatId] = this.chatsOf([{ wallet: w, chainId }]);
-      return { chatId: chatId ?? null };
+      const [route] = this.routesOf([{ wallet: w, chainId }]);
+      return { chatId: route?.chat ?? null, phrase: route?.phrase ?? null };
     });
   }
 
@@ -644,8 +739,8 @@ export class TelegramStateStore {
           r.wallet,
           Number(r.up_to),
         );
-        const [chatId] = this.chatsOf([{ wallet: r.wallet, chainId }]);
-        if (chatId) out.push({ chainId, wallet: r.wallet, upToId: Number(r.up_to), chatId });
+        const [route] = this.routesOf([{ wallet: r.wallet, chainId }]);
+        if (route) out.push({ chainId, wallet: r.wallet, upToId: Number(r.up_to), chatId: route.chat, phrase: route.phrase });
       }
       return out;
     });

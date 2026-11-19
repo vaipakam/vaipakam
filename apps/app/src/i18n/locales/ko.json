@@ -401,7 +401,21 @@
       "paidAgreed": "저장됨: {{chain}}에서 대출 한쪽당 최대 {{fee}} VPFI 지불에 동의했습니다.",
       "paidWithdrawn": "철회됨: {{chain}}에서 유료 Push 알림 수수료가 청구되지 않습니다.",
       "signatureCheckUnavailable": "설정이 저장되지 않았습니다. alert service가 지금 서명을 확인하지 못했습니다. 잠시 후 다시 시도하세요.",
-      "requestAlreadyUsed": "설정이 저장되지 않았습니다. 해당 서명은 이미 사용되었습니다. 다시 저장하여 새 요청에 서명하세요."
+      "requestAlreadyUsed": "설정이 저장되지 않았습니다. 해당 서명은 이미 사용되었습니다. 다시 저장하여 새 요청에 서명하세요.",
+      "phraseTitle": "알림 문구",
+      "phraseBody": "나만 아는 문구를 정하세요. 이 지갑으로 가는 Vaipakam의 모든 Telegram 알림이 이 문구로 시작합니다. 문구가 없는 메시지는 저희가 보낸 것이 아닙니다. Push 알림은 나만 볼 수 있는 것이 아니므로 문구를 담지 않습니다.",
+      "phraseLabel": "내 문구",
+      "phraseHint": "3~32자의 글자, 숫자, 공백 또는 간단한 문장 부호. 이 페이지는 다시 보여 주지 않으며 이 브라우저도 저장하지 않습니다.",
+      "phraseSave": "문구 설정",
+      "phraseRemove": "문구 삭제",
+      "phraseSignNote": "먼저 지갑에서 짧은 무료 메시지에 서명합니다. 문구를 바꾸거나 삭제하면 연결된 채팅에 이전 문구로 시작하는 안내가 전송되어 저희가 보낸 것임을 알 수 있습니다.",
+      "phraseSaving": "문구를 저장하는 중…",
+      "phraseSaved": "저장했습니다. 이 서비스가 지원하는 모든 네트워크에서 이 지갑의 Telegram 알림이 이제 내 문구로 시작합니다.",
+      "phraseSavedChainOnly": "{{network}}에 저장했습니다. 스마트 계정 지갑은 네트워크별로 문구를 설정하므로 다른 네트워크에서도 각각의 서명으로 설정하세요.",
+      "phraseRemoved": "삭제했습니다. 이 지갑의 Telegram 알림은 더 이상 문구로 시작하지 않습니다.",
+      "phraseRemovedChainOnly": "{{network}}에서 삭제했습니다. 스마트 계정 지갑은 네트워크별로 문구를 설정하므로 다른 네트워크에서도 각각의 서명으로 삭제하세요.",
+      "phraseInvalid": "이 문구는 사용할 수 없습니다. 글자나 숫자를 하나 이상 포함한 3~32자의 글자, 숫자, 공백 또는 간단한 문장 부호를 사용하세요.",
+      "phraseError": "지금은 문구를 저장하지 못했습니다. 잠시 후 다시 시도하세요."
     },
     "notifications": {
       "bellLabel": "알림",

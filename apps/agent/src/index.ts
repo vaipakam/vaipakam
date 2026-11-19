@@ -66,6 +66,7 @@
  *   POST /diag/erasure/status               — frontend → erasure status check
  *   POST /diag/legal-hold                   — protocol admin → place/lift hold
  *   PUT  /thresholds                        — frontend → upsert HF bands
+ *   PUT  /alerts/phrase                     — frontend → set the anti-phishing phrase (#3346)
  *   POST /link/telegram                     — frontend → issue handshake code
  *                                             (EIP-191 wallet signature
  *                                             required — see linkAuth.ts)
@@ -178,6 +179,8 @@ import type { AlertSettingsChange } from '@vaipakam/lib/alertsMessage';
 import { isTickDue } from '@vaipakam/lib/cronCadence';
 import { AGENT_TICK_CADENCE_MINUTES } from './tickCadence';
 import { readJsonBody } from '@vaipakam/lib/requestBody';
+import { applyAlertPhrase, parsePhraseField } from './alertPhraseRoute';
+import { withAlertPhrase } from '@vaipakam/lib/alertPhrase';
 import { chainProtectionReader, d1LocaleReader } from './alertChannelChange';
 import {
   applyDueChannelChanges,
@@ -508,6 +511,10 @@ export default {
     if (url.pathname === '/thresholds' && req.method === 'PUT') {
       return handlePutThresholds(req, resolved);
     }
+    // #3346 — the owner's anti-phishing phrase for Telegram alerts.
+    if (url.pathname === '/alerts/phrase' && req.method === 'PUT') {
+      return handlePutAlertPhrase(req, resolved);
+    }
     if (url.pathname === '/link/telegram' && req.method === 'POST') {
       return handleIssueTelegramLink(req, resolved);
     }
@@ -665,7 +672,7 @@ type CallerBudget =
  * gate with its own CORS handling; it uses the same `rateLimit.ts` rule.
  */
 export function callerBudgetFor(method: string, path: string): CallerBudget | null {
-  if (method === 'PUT' && path === '/thresholds') return 'ALERT_WRITE_RATELIMIT';
+  if (method === 'PUT' && (path === '/thresholds' || path === '/alerts/phrase')) return 'ALERT_WRITE_RATELIMIT';
   if (method === 'POST' && (path === '/link/telegram' || path === '/unlink/telegram' || path === '/telegram/test')) {
     return 'ALERT_WRITE_RATELIMIT';
   }
@@ -990,6 +997,48 @@ async function handleUnlinkTelegram(
  *  real flow. */
 const TEST_ALERT_COOLDOWN_SECONDS = 60;
 
+/**
+ * #3346 — set or remove the owner's alert phrase (`alertPhraseRoute.ts`).
+ * Body: the signed request fields plus `phrase` (a string, or null to
+ * remove). The phrase is never echoed back, logged or stored outside the
+ * agent's private Telegram state.
+ */
+async function handlePutAlertPhrase(req: Request, env: Env): Promise<Response> {
+  const corsOrigin = resolveAllowedOrigin(req, env);
+  const read = await readJsonBody(req, MAX_SIGNED_REQUEST_BODY_BYTES);
+  if (!read.ok) return json({ error: read.error }, read.status, corsOrigin);
+  const body = read.value as Record<string, unknown> | null;
+  const signed = parseSignedLinkRequest(body);
+  if (!signed.ok) return json({ error: 'invalid-payload', reason: signed.reason }, 400, corsOrigin);
+  const field = parsePhraseField(body && typeof body === 'object' ? body.phrase : undefined);
+  if (!field.ok) return json({ error: 'invalid-phrase' }, 400, corsOrigin);
+  const configured = getChainConfigs(env).map((c) => c.id);
+  if (!configured.includes(signed.req.chain_id)) {
+    return json({ error: 'chain-not-configured' }, 400, corsOrigin);
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const verified = await authoriseAlertRequest(req, env, signed.req, { action: 'set-phrase', phrase: field.phrase }, now);
+  if (!verified.ok) return refusal(verified, corsOrigin);
+  // Scope follows the signer's authority, as unlinking does (#2013).
+  const chainIds = verified.via === 'chain' ? [signed.req.chain_id] : configured;
+  const token = env.TG_BOT_TOKEN;
+  const { told } = await applyAlertPhrase(
+    {
+      setPhrase: (wallet, ids, phrase, at) => stateStub(env).setPhrase(wallet, ids, phrase, at),
+      send: token ? (chat, text) => sendMessage(token, chat, text) : null,
+    },
+    signed.req.wallet,
+    chainIds,
+    field.phrase,
+    now,
+  );
+  return json(
+    { ok: true, scope: verified.via === 'chain' ? 'chain' : 'wallet', told },
+    200,
+    corsOrigin,
+  );
+}
+
 async function handleTestTelegram(req: Request, env: Env): Promise<Response> {
   const corsOrigin = resolveAllowedOrigin(req, env);
   if (!env.TG_BOT_TOKEN) {
@@ -1049,7 +1098,7 @@ async function handleTestTelegram(req: Request, env: Env): Promise<Response> {
   const outcome = await sendMessage(
     env.TG_BOT_TOKEN,
     linked.chatId,
-    testAlert(linked.locale),
+    withAlertPhrase(testAlert(linked.locale), linked.phrase),
   );
   if (outcome !== 'accepted') {
     return json({ error: 'send-failed' }, 502, corsOrigin);
@@ -1120,7 +1169,10 @@ async function handleTelegramWebhook(
             ...(recorded.length > 0 ? [lockRecorded(locale, recorded)] : []),
             ...(notRunning.length > 0 ? [lockNotRunning(locale, notRunning)] : []),
           ];
-    await sendMessage(env.TG_BOT_TOKEN, lock.chatId, parts.join('\n\n'));
+    // #3346 — the reply leads with the phrases of the wallets this chat is
+    // linked to, as every other message to the owner does.
+    const phrase = await stateStub(env).phraseForChat(lock.chatId).catch(() => null);
+    await sendMessage(env.TG_BOT_TOKEN, lock.chatId, withAlertPhrase(parts.join('\n\n'), phrase));
     return new Response('ok', { status: 200 });
   }
 
@@ -1165,10 +1217,14 @@ async function handleTelegramWebhook(
   const relink = await requestRelink(channelDeps(env), match.wallet, match.chainId, chatId, match.locale);
   if (relink !== 'linked') return new Response('ok', { status: 200 });
   const walletShort = `${match.wallet.slice(0, 8)}…${match.wallet.slice(-6)}`;
+  // #3346 — the chat is linked now, so it carries the owner's phrase.
+  const [phrase] = await stateStub(env)
+    .phrasesOf([{ wallet: match.wallet, chainId: match.chainId }])
+    .catch(() => [null]);
   await sendMessage(
     env.TG_BOT_TOKEN,
     chatId,
-    handshakeLinked(match.locale, walletShort, match.chainId),
+    withAlertPhrase(handshakeLinked(match.locale, walletShort, match.chainId), phrase ?? null),
   );
   return new Response('ok', { status: 200 });
 }

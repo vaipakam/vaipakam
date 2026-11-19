@@ -20,6 +20,8 @@
  *    (#2251), and the subscribe link opens the channel the agent posts
  *    as. An unavailable rail, or one the card could not ask about, is
  *    stated instead of offering an opt-in that would do nothing.
+ *  - The anti-phishing phrase (#3346, `AlertPhraseField`) is set by a
+ *    signed request and never shown back or kept in this browser.
  *  - The on-chain consent to be charged for paid Push (#2723) sits below
  *    the rail, in `PaidPushConsent`, read from the chain and offered only
  *    where the agent says Push is billed; withdrawing it always works.
@@ -33,6 +35,7 @@ import { chainDisplayName } from '../chain/chains';
 import { useActiveChain } from '../chain/useActiveChain';
 import { copy } from '../content/copy';
 import { useTermsBlockNonExitWrites } from '../contracts/diamond';
+import { AlertPhraseField } from './AlertPhraseField';
 import { PaidPushConsent } from './PaidPushConsent';
 import {
   addsAlertOptIn,
@@ -425,6 +428,16 @@ export function AlertsCard() {
               </div>
             </div>
           )}
+
+          {/* #3346 — the anti-phishing phrase. Shown whatever this browser
+              knows of the link: the phrase is kept per wallet on the alert
+              service and applies to a chat linked later too. */}
+          <AlertPhraseField
+            address={address}
+            chainId={chainId}
+            signMessage={(message) => signMessageAsync({ message })}
+            disabled={busy}
+          />
 
           <label className="cluster" style={{ alignItems: 'flex-start' }}>
             <input

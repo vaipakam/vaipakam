@@ -10,7 +10,8 @@
  */
 import { lockRequestIsStale } from '@vaipakam/lib/protectedLock';
 import type { LocaleReader } from './alertChannelChange';
-import type { ChainDeployment, LockLink, PendingChange, UnansweredLock, LockRequest } from './telegramState/store';
+import { withAlertPhrase } from '@vaipakam/lib/alertPhrase';
+import type { ChainDeployment, ChatRoute, LockLink, PendingChange, UnansweredLock, LockRequest } from './telegramState/store';
 import { lockUnanswered } from './i18n';
 import { newLinkCode, type TelegramOutcome } from './telegram';
 import { shortWallet } from './alertChannelChange';
@@ -27,7 +28,8 @@ export const LINK_CODE_TTL_SEC = 600;
 export interface LinkStatePort {
   issueLinkCode(code: string, wallet: string, chainId: number, expiresAt: number): Promise<boolean>;
   consumeLinkCode(code: string, now: number): Promise<{ wallet: string; chainId: number } | null>;
-  chatsOf(pairs: { wallet: string; chainId: number }[]): Promise<(string | null)[]>;
+  /** The chat and alert phrase (#3346) of each pair, or null. */
+  routesOf(pairs: { wallet: string; chainId: number }[]): Promise<(ChatRoute | null)[]>;
   recordLockRequests(
     chatId: string,
     updateId: number,
@@ -41,9 +43,16 @@ export interface LinkStatePort {
 export interface KeeperStatePort {
   keeperPoll(dep: ChainDeployment, now: number, limit: number): Promise<LockRequest[]>;
   pendingLockWallets(dep: ChainDeployment, since: number): Promise<string[]>;
-  markLockHandled(dep: ChainDeployment, wallet: string, upToId: number, outcome: string, at: number): Promise<{ chatId: string | null } | undefined>;
+  markLockHandled(
+    dep: ChainDeployment,
+    wallet: string,
+    upToId: number,
+    outcome: string,
+    at: number,
+  ): Promise<{ chatId: string | null; phrase: string | null } | undefined>;
   takeUnansweredLocks(sentBefore: number, now: number, limit: number): Promise<UnansweredLock[]>;
-  chatsOf(pairs: { wallet: string; chainId: number }[]): Promise<(string | null)[]>;
+  /** The chat and alert phrase (#3346) of each pair, or null. */
+  routesOf(pairs: { wallet: string; chainId: number }[]): Promise<(ChatRoute | null)[]>;
 }
 
 /** A recorded LOCK no keeper has answered within this long gets one warning
@@ -94,17 +103,18 @@ export async function consumeTelegramLinkCode(
   return { ...match, locale: locale ?? 'en' };
 }
 
-/** The chat linked to (`wallet`, `chainId`) and its locale, or null. */
+/** The chat linked to (`wallet`, `chainId`), its locale and the owner's
+ *  alert phrase (#3346), or null. */
 export async function getTelegramChatId(
   state: LinkStatePort,
   locales: LocaleReader,
   wallet: string,
   chainId: number,
-): Promise<{ chatId: string; locale: string } | null> {
-  const [chatId] = await state.chatsOf([{ wallet: wallet.toLowerCase(), chainId }]);
-  if (!chatId) return null;
+): Promise<{ chatId: string; locale: string; phrase: string | null } | null> {
+  const [route] = await state.routesOf([{ wallet: wallet.toLowerCase(), chainId }]);
+  if (!route) return null;
   const [locale] = await locales([{ wallet, chainId }]);
-  return { chatId, locale: locale ?? 'en' };
+  return { chatId: route.chat, locale: locale ?? 'en', phrase: route.phrase };
 }
 
 /**
@@ -160,7 +170,7 @@ export async function warnUnansweredLocks(
   let sent = 0;
   for (let i = 0; i < due.length; i++) {
     const u = due[i]!;
-    const outcome = await send(u.chatId, lockUnanswered(loc[i] ?? 'en', shortWallet(u.wallet), u.chainId));
+    const outcome = await send(u.chatId, withAlertPhrase(lockUnanswered(loc[i] ?? 'en', shortWallet(u.wallet), u.chainId), u.phrase));
     if (outcome === 'accepted') sent++;
   }
   return sent;

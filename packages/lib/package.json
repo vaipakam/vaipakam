@@ -241,6 +241,10 @@
     "./telegramAlerts/message": {
       "types": "./src/telegramAlerts/message.ts",
       "default": "./src/telegramAlerts/message.ts"
+    },
+    "./alertPhrase": {
+      "types": "./src/alertPhrase.ts",
+      "default": "./src/alertPhrase.ts"
     }
   },
   "scripts": {

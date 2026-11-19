@@ -841,6 +841,36 @@ const copySource = {
       'Your settings were not saved: the alert service could not check your signature just now. Please try again in a little while.',
     requestAlreadyUsed:
       'Your settings were not saved: that signature was already used. Save again to sign a new request.',
+    /* #3346 — the owner's anti-phishing phrase. The app never shows or
+       keeps it: it is sent once with its signature and lives only in the
+       alert service's private Telegram state. */
+    phraseTitle: 'Alert phrase',
+    phraseBody:
+      'Choose a phrase only you know. Every Telegram alert from Vaipakam to this wallet then starts with it, so a message without it did not come from us. Push notifications never carry it, because they are not private to you.',
+    phraseLabel: 'Your phrase',
+    phraseHint:
+      '3 to 32 letters, numbers, spaces or simple punctuation. This page does not show it again and this browser does not keep it.',
+    phraseSave: 'Set phrase',
+    phraseRemove: 'Remove phrase',
+    phraseSignNote:
+      'Your wallet signs a short, free message first. When you change or remove the phrase, your linked chat gets a notice that starts with the previous phrase, so you know it came from us.',
+    phraseSaving: 'Saving your phrase…',
+    phraseSaved:
+      'Saved. Your Telegram alerts for this wallet now start with your phrase, on every network this service covers.',
+    phraseSavedChainOnly: tmpl(
+      'Saved for {{network}}. A smart-account wallet sets its phrase per network, so set it from each other network with its own signature.',
+      ['network'],
+    ),
+    phraseRemoved:
+      'Removed. Your Telegram alerts for this wallet no longer start with a phrase.',
+    phraseRemovedChainOnly: tmpl(
+      'Removed for {{network}}. A smart-account wallet sets its phrase per network, so remove it from each other network with its own signature.',
+      ['network'],
+    ),
+    phraseInvalid:
+      'That phrase can’t be used. Use 3 to 32 letters, numbers, spaces or simple punctuation, with at least one letter or number.',
+    phraseError:
+      'Couldn’t save your phrase just now. Please try again in a moment.',
     pushTitle: 'Prefer app push instead?',
     pushBody:
       'The same alerts are published to Vaipakam’s Push Protocol channel — subscribe there with your wallet and any Push-compatible app delivers them.',

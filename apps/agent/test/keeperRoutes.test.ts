@@ -26,7 +26,7 @@ function harness(over: Partial<KeeperRouteDeps> = {}, outcome: TelegramOutcome =
     pendingLockWallets: async (...a) => store.pendingLockWallets(...a),
     markLockHandled: async (...a) => store.markLockHandled(...a),
     takeUnansweredLocks: async (...a) => store.takeUnansweredLocks(...a),
-    chatsOf: async (...a) => store.chatsOf(...a),
+    routesOf: async (...a) => store.routesOf(...a),
   };
   const sent: { chat: string; text: string }[] = [];
   const deps: KeeperRouteDeps = {
@@ -192,6 +192,16 @@ describe('alerts route', () => {
     expect(sent.map((m) => m.chat)).toEqual(['42', '77']);
     expect(sent[0]!.text).toContain('https://app.example');
     expect(sent.some((m) => m.text.includes('evil'))).toBe(false);
+  });
+
+  it("leads each alert with its recipient's phrase, and only theirs (#3346)", async () => {
+    const { sent, call, link, store } = harness();
+    link(W, '42');
+    link(B, '77');
+    store.setPhrase(W, [CHAIN], 'blue heron', 1);
+    await call('/keeper/alerts', { ...base, alerts: [alert(W), alert(B)] });
+    expect(sent[0]!.text).toMatch(/^Your Vaipakam phrase: blue heron\n\n/);
+    expect(sent[1]!.text).not.toContain('blue heron');
   });
 
   it('maps a send that was not accepted to the keeper outcome', async () => {

@@ -2022,6 +2022,15 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 
 **Gap.** Live-only: real Telegram and Push delivery needs the deployed agent and its rails.
 
+<a id="cov-3346-alert-phrase"></a>
+### #3346 alert phrase
+
+**Journey.** `AlertPhraseField` (inside the Alerts card, for a connected wallet whatever this browser knows of the link) checks the draft with the shared `normaliseAlertPhrase` rule, signs `buildAlertPhraseMessage` and PUTs `/alerts/phrase`. Remove sends the same request with no phrase. The input is cleared once the request is sent; nothing is stored in the browser and no route reads the phrase back. The agent keeps it in its Telegram state per wallet and chain (a plain wallet signature: every configured chain; a smart account's approval: the signed chain), starts every Telegram message to that wallet's linked chat with it, and tells each linked chat once: a first phrase under the new one, a change or removal under the old one. Push never carries it.
+
+**Tier.** Unit: `src/data/alerts.test.ts` (normalised phrase signed and PUT, remove as null, a rejected phrase never signed, agent refusal and failure); `packages/lib/src/alertPhrase.test.ts`, `alertsMessage.test.ts` (pinned message); `apps/agent/test/alertPhraseRoute.test.ts`, `telegramStateStore.test.ts`, `keeperRoutes.test.ts` (each recipient's own phrase).
+
+**Gap.** Live-only: delivery needs the deployed agent and a linked Telegram chat.
+
 <a id="cov-3434-delegation-warning"></a>
 ### #3434 EIP-7702 delegation warning
 

@@ -9,6 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  buildAlertPhraseMessage,
   buildAlertSettingsMessage,
   buildTelegramLinkMessage,
   buildTelegramTestMessage,
@@ -135,13 +136,40 @@ describe('buildTelegramTestMessage', () => {
   });
 });
 
-describe('the four messages as a family', () => {
+describe('buildAlertPhraseMessage (#3346)', () => {
+  it('is pinned verbatim and names the phrase it sets', () => {
+    expect(buildAlertPhraseMessage(WALLET, 84532, 'blue heron', 1747000000)).toBe(
+      [
+        'Vaipakam — Set my alert phrase',
+        '',
+        'I request that every Telegram alert for the wallet below start with',
+        'the phrase below, or that the phrase be removed. Signing this message',
+        'proves ownership of the wallet. It is not a transaction and costs no',
+        'gas.',
+        '',
+        'Phrase: "blue heron"',
+        '',
+        `Wallet: ${LOWER}`,
+        'Chain id: 84532',
+        'Issued at (unix): 1747000000',
+      ].join('\n'),
+    );
+    expect(buildAlertPhraseMessage(WALLET, 84532, null, 1)).toContain('Phrase: remove');
+    expect(buildAlertPhraseMessage(WALLET, 84532, 'a', 1)).not.toBe(buildAlertPhraseMessage(WALLET, 84532, 'b', 1));
+  });
+});
+
+describe('the alert messages as a family', () => {
   const builders = [
     buildTelegramLinkMessage,
     buildTelegramUnlinkMessage,
     (wallet: string, chainId: number, issuedAt: number) =>
       buildAlertSettingsMessage(wallet, chainId, {}, issuedAt),
     buildTelegramTestMessage,
+    (wallet: string, chainId: number, issuedAt: number) =>
+      buildAlertPhraseMessage(wallet, chainId, 'blue heron', issuedAt),
+    (wallet: string, chainId: number, issuedAt: number) =>
+      buildAlertPhraseMessage(wallet, chainId, null, issuedAt),
   ];
 
   it('are mutually distinct — no signature can cross actions', () => {

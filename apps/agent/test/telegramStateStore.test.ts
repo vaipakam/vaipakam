@@ -20,7 +20,7 @@ describe('telegram state store (#1722)', () => {
     new TelegramStateStore(h.sql, h.tx);
     new TelegramStateStore(h.sql, h.tx);
     const v = h.db.prepare('SELECT version FROM schema_version').all();
-    expect(v).toEqual([{ version: 1 }]);
+    expect(v).toEqual([{ version: 2 }]);
   });
 
   it('a handshake code is good once and not after it expires', () => {
@@ -131,7 +131,7 @@ describe('telegram state store (#1722)', () => {
     expect(store.pendingLockWallets(dep1, 100)).toEqual([w]);
     // A stale or undated request records nothing.
     expect(store.recordLockRequests('7', 556, null, 50, DIAMONDS).every((l) => !l.recorded)).toBe(true);
-    expect(store.markLockHandled(dep1, W, polled[0]!.id, 'locked', 210)).toEqual({ chatId: '7' });
+    expect(store.markLockHandled(dep1, W, polled[0]!.id, 'locked', 210)).toEqual({ chatId: '7', phrase: null });
     expect(store.markLockHandled(dep1, W, polled[0]!.id, 'locked', 211)).toBeUndefined();
     expect(store.keeperPoll(dep1, 220, 20)).toEqual([]);
   });
@@ -168,11 +168,31 @@ describe('telegram state store (#1722)', () => {
     store.recordLockRequests('7', 1, 100, 50, DIAMONDS);
     expect(store.takeUnansweredLocks(99, 200, 10)).toEqual([]);
     const warned = store.takeUnansweredLocks(100, 200, 10);
-    expect(warned).toEqual([{ chainId: 1, wallet: w, upToId: warned[0]!.upToId, chatId: '7' }]);
+    expect(warned).toEqual([{ chainId: 1, wallet: w, upToId: warned[0]!.upToId, chatId: '7', phrase: null }]);
     expect(store.takeUnansweredLocks(100, 201, 10)).toEqual([]);
     store.markLockHandled(dep1, W, warned[0]!.upToId, 'locked', 300);
     store.pruneClosed(300 + LOCK_RETENTION_SECONDS + 1);
     expect(store.keeperPoll(dep1, 400, 20)).toEqual([]);
     expect(CLOSED_RETENTION_SECONDS).toBeGreaterThan(LOCK_RETENTION_SECONDS);
+  });
+
+  it('keeps the alert phrase per wallet and chain, and reports what it replaced (#3346)', () => {
+    const { store } = fresh();
+    store.commit(W, 1, [], [{ op: 'link', chainId: 1, chatId: '7' }], 1);
+    expect(store.setPhrase(W, [1, 2], 'blue heron', 10)).toEqual([
+      { chainId: 1, oldPhrase: null, chatId: '7' },
+      { chainId: 2, oldPhrase: null, chatId: null },
+    ]);
+    expect(store.routesOf([{ wallet: W, chainId: 1 }, { wallet: W, chainId: 2 }])).toEqual([{ chat: '7', phrase: 'blue heron' }, null]);
+    expect(store.phrasesOf([{ wallet: W, chainId: 2 }])).toEqual(['blue heron']);
+    expect(store.phraseForWallet(W)).toBe('blue heron');
+    expect(store.phraseForChat('7')).toBe('blue heron');
+    expect(store.setPhrase(W, [1], 'red kite', 11)).toEqual([{ chainId: 1, oldPhrase: 'blue heron', chatId: '7' }]);
+    expect(store.phraseForWallet(W)).toBe('blue heron · red kite');
+    expect(store.setPhrase(W, [1, 2], null, 12)).toEqual([
+      { chainId: 1, oldPhrase: 'red kite', chatId: '7' },
+      { chainId: 2, oldPhrase: 'blue heron', chatId: null },
+    ]);
+    expect(store.phraseForWallet(W)).toBeNull();
   });
 });

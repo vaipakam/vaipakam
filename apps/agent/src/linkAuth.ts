@@ -49,6 +49,7 @@ import type { Env } from './env';
 import type { SlotOutcome } from './rateLimit';
 import {
   LINK_SIGNATURE_MAX_AGE_SECONDS,
+  buildAlertPhraseMessage,
   buildAlertSettingsMessage,
   buildTelegramLinkMessage,
   type AlertSettingsChange,
@@ -75,6 +76,7 @@ import {
  * this module's existing surface (and its tests) are unchanged. */
 export {
   LINK_SIGNATURE_MAX_AGE_SECONDS,
+  buildAlertPhraseMessage,
   buildAlertSettingsMessage,
   buildTelegramLinkMessage,
   buildTelegramTestMessage,
@@ -91,7 +93,9 @@ export type AlertAuthAction = 'link' | 'unlink' | 'test-alert';
  *  or a settings save, whose message also names the values it saves. */
 export type AlertAuthorisation =
   | AlertAuthAction
-  | { action: 'save-settings'; settings: AlertSettingsChange };
+  | { action: 'save-settings'; settings: AlertSettingsChange }
+  /** #3346 — set the alert phrase (null removes it). */
+  | { action: 'set-phrase'; phrase: string | null };
 
 const MESSAGE_BUILDERS: Record<
   AlertAuthAction,
@@ -109,7 +113,9 @@ export function alertRequestMessage(
 ): string {
   return typeof auth === 'string'
     ? MESSAGE_BUILDERS[auth](req.wallet, req.chain_id, req.issuedAt)
-    : buildAlertSettingsMessage(req.wallet, req.chain_id, auth.settings, req.issuedAt);
+    : auth.action === 'set-phrase'
+      ? buildAlertPhraseMessage(req.wallet, req.chain_id, auth.phrase, req.issuedAt)
+      : buildAlertSettingsMessage(req.wallet, req.chain_id, auth.settings, req.issuedAt);
 }
 
 export interface SignedLinkRequest {

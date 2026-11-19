@@ -38,7 +38,9 @@
  * liquidation instead of total silence. Raw bands are editable only
  * under the advanced-mode reveal.
  */
+import { normaliseAlertPhrase } from '@vaipakam/lib/alertPhrase';
 import {
+  buildAlertPhraseMessage,
   buildAlertSettingsMessage,
   buildTelegramLinkMessage,
   buildTelegramTestMessage,
@@ -48,7 +50,7 @@ import type { AlertSettingsChange } from '@vaipakam/lib/alertsMessage';
 import { copy } from '../content/copy';
 import { agentOrigin as configuredAgentOrigin } from '../lib/endpoints';
 
-/* The four signed messages (link, unlink, save settings, test alert) come from `@vaipakam/lib/alertsMessage`
+/* The signed messages (link, unlink, save settings, test alert, alert phrase) come from `@vaipakam/lib/alertsMessage`
  * (#2014) — ONE builder per action, imported by both this client and
  * the agent Worker, because the Worker reconstructs the exact bytes
  * to recover the signer and a drifted character rejects every
@@ -339,6 +341,9 @@ interface PostResult {
   data: Record<string, unknown> | null;
 }
 
+/** The agent routes that take PUT; every other write is a POST. */
+const PUT_PATHS = new Set(['/thresholds', '/alerts/phrase']);
+
 async function post(path: string, body: unknown): Promise<PostResult> {
   const origin = agentOrigin();
   if (!origin) throw new Error('alerts backend not configured');
@@ -346,7 +351,7 @@ async function post(path: string, body: unknown): Promise<PostResult> {
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
     const res = await fetch(`${origin}${path}`, {
-      method: path === '/thresholds' ? 'PUT' : 'POST',
+      method: PUT_PATHS.has(path) ? 'PUT' : 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
       signal: ctrl.signal,
@@ -555,6 +560,50 @@ export async function sendTestTelegramAlert(
     return res.data?.error === 'not-linked' ? 'not-linked' : 'error';
   }
   return 'error';
+}
+
+/** Result of setting or removing the alert phrase (#3346). `scope` says
+ *  where it applied: `wallet` on every chain the agent serves (a plain
+ *  wallet signature), `chain` on the signed chain only (a smart account's
+ *  approval). `told` counts the linked chats that received the notice. */
+export type AlertPhraseResult =
+  | { kind: 'saved'; scope: 'wallet' | 'chain'; told: number }
+  | { kind: 'invalid' }
+  | { kind: 'error' };
+
+/** Set the anti-phishing phrase every Telegram alert to this wallet starts
+ *  with, or remove it (`phrase` null). Signs a free ownership proof naming
+ *  the phrase, then PUTs it to the agent, which keeps it in its private
+ *  Telegram state. The app never stores the phrase: it is sent once, with
+ *  its signature, and not kept in this browser. */
+export async function setAlertPhrase(
+  wallet: `0x${string}`,
+  chainId: number,
+  raw: string | null,
+  signMessage: (message: string) => Promise<string>,
+): Promise<AlertPhraseResult> {
+  const phrase = raw === null ? null : normaliseAlertPhrase(raw);
+  if (raw !== null && phrase === null) return { kind: 'invalid' };
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const signature = await signMessage(
+    buildAlertPhraseMessage(wallet, chainId, phrase, issuedAt),
+  );
+  const res = await post('/alerts/phrase', {
+    wallet,
+    chain_id: chainId,
+    issuedAt,
+    signature,
+    phrase,
+  });
+  if (res.ok) {
+    const scope = res.data?.scope === 'chain' ? 'chain' : 'wallet';
+    const told = typeof res.data?.told === 'number' ? res.data.told : 0;
+    return { kind: 'saved', scope, told };
+  }
+  if (res.status === 400 && res.data?.error === 'invalid-phrase') {
+    return { kind: 'invalid' };
+  }
+  return { kind: 'error' };
 }
 
 /** Clear the stored wallet ↔ Telegram link server-side. Signs the

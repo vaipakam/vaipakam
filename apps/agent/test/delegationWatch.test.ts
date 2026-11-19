@@ -33,7 +33,7 @@ function setup() {
     db: h.d1 as D1Database,
     readCodes: async (ws) => new Map(ws.map((w) => [w.toLowerCase(), codes[w.toLowerCase()]])),
     readCostsAProbe: () => false,
-    chatsOf: async (pairs) => pairs.map((p) => `chat-${p.wallet}`),
+    routesOf: async (pairs) => pairs.map((p) => ({ chat: `chat-${p.wallet}`, phrase: null })),
     sendTelegram: async (chat, text) => {
       sent.push({ to: chat, text });
       return 'accepted';

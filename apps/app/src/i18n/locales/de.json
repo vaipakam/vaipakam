@@ -401,7 +401,21 @@
       "paidAgreed": "Gespeichert: Du hast zugestimmt, bis zu {{fee}} VPFI pro Kreditseite auf {{chain}} zu zahlen.",
       "paidWithdrawn": "Zurückgezogen: Gebühren für kostenpflichtige Push-Benachrichtigungen können dir auf {{chain}} nicht berechnet werden.",
       "signatureCheckUnavailable": "Deine Einstellungen wurden nicht gespeichert: Der Benachrichtigungsdienst konnte deine Signatur gerade nicht prüfen. Bitte versuche es in Kürze erneut.",
-      "requestAlreadyUsed": "Deine Einstellungen wurden nicht gespeichert: Diese Signatur wurde bereits verwendet. Speichere erneut, um eine neue Anfrage zu signieren."
+      "requestAlreadyUsed": "Deine Einstellungen wurden nicht gespeichert: Diese Signatur wurde bereits verwendet. Speichere erneut, um eine neue Anfrage zu signieren.",
+      "phraseTitle": "Benachrichtigungs-Phrase",
+      "phraseBody": "Wählen Sie eine Phrase, die nur Sie kennen. Jede Telegram-Benachrichtigung von Vaipakam an diese Wallet beginnt dann damit; eine Nachricht ohne sie stammt nicht von uns. Push-Benachrichtigungen enthalten sie nie, da sie nicht nur für Sie sichtbar sind.",
+      "phraseLabel": "Ihre Phrase",
+      "phraseHint": "3 bis 32 Buchstaben, Zahlen, Leerzeichen oder einfache Satzzeichen. Diese Seite zeigt sie nicht wieder an und dieser Browser speichert sie nicht.",
+      "phraseSave": "Phrase festlegen",
+      "phraseRemove": "Phrase entfernen",
+      "phraseSignNote": "Ihre Wallet signiert zuerst eine kurze, kostenlose Nachricht. Wenn Sie die Phrase ändern oder entfernen, erhält Ihr verknüpfter Chat eine Mitteilung, die mit der bisherigen Phrase beginnt, damit Sie wissen, dass sie von uns kommt.",
+      "phraseSaving": "Ihre Phrase wird gespeichert…",
+      "phraseSaved": "Gespeichert. Ihre Telegram-Benachrichtigungen für diese Wallet beginnen jetzt mit Ihrer Phrase, in jedem Netzwerk, das dieser Dienst abdeckt.",
+      "phraseSavedChainOnly": "Für {{network}} gespeichert. Eine Smart-Account-Wallet legt ihre Phrase pro Netzwerk fest; legen Sie sie in jedem anderen Netzwerk mit dessen eigener Signatur fest.",
+      "phraseRemoved": "Entfernt. Ihre Telegram-Benachrichtigungen für diese Wallet beginnen nicht mehr mit einer Phrase.",
+      "phraseRemovedChainOnly": "Für {{network}} entfernt. Eine Smart-Account-Wallet legt ihre Phrase pro Netzwerk fest; entfernen Sie sie in jedem anderen Netzwerk mit dessen eigener Signatur.",
+      "phraseInvalid": "Diese Phrase kann nicht verwendet werden. Verwenden Sie 3 bis 32 Buchstaben, Zahlen, Leerzeichen oder einfache Satzzeichen, mit mindestens einem Buchstaben oder einer Zahl.",
+      "phraseError": "Ihre Phrase konnte gerade nicht gespeichert werden. Bitte versuchen Sie es gleich erneut."
     },
     "notifications": {
       "bellLabel": "Benachrichtigungen",

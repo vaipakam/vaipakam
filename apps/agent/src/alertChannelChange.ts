@@ -153,6 +153,10 @@ export interface TelegramStatePort {
   cancelPendingForChat(chatId: string, now: number): Promise<{ wallet: string; chainId: number; kind: 'unlink' | 'replace' }[]>;
   applyChange(id: number, now: number): Promise<{ change: StorePendingChange; applied: boolean } | null>;
   pruneClosed(now: number): Promise<void>;
+  /** #3346 — the phrase a message about a wallet, or a reply to a chat,
+   *  starts with. Optional so a store without phrases reads as none. */
+  phraseForWallet?(wallet: string): Promise<string | null>;
+  phraseForChat?(chatId: string): Promise<string | null>;
 }
 
 /** The locale of each (wallet, chain), in input order ('en' when none). */

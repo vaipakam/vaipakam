@@ -46,6 +46,8 @@ import { describeFailure } from '@vaipakam/lib/errorDescription';
 import { batchCalls, encodeBatchCalls } from '@vaipakam/lib/multicall';
 import { isRpcIdentityVerified, verifyRpcChainIdentity } from '@vaipakam/lib/rpcIdentity';
 import { stateStub } from './telegramState/object';
+import type { ChatRoute } from './telegramState/store';
+import { withAlertPhrase } from '@vaipakam/lib/alertPhrase';
 import {
   PauseLogTooLongError,
   describePauseCredit,
@@ -181,7 +183,7 @@ export const BATCH_READS = 2;
 
 /** The chats linked to one batch's wallets, keyed by lower-cased wallet, or
  *  `unreadable` when the state object did not answer. */
-type BatchChats = ReadonlyMap<string, string | null> | 'unreadable';
+type BatchChats = ReadonlyMap<string, ChatRoute | null> | 'unreadable';
 
 /**
  * How many candidates one batched chain read covers, and how many such reads
@@ -2245,7 +2247,7 @@ async function readBatchChats(
   const wallets = [...new Set(batch.flatMap((c) => [c.row.borrower, c.row.lender]).map((w) => w.toLowerCase()))];
   budget.remaining -= 1; // the state object call is a subrequest too
   try {
-    const found = await stateStub(env).chatsOf(wallets.map((wallet) => ({ wallet, chainId })));
+    const found = await stateStub(env).routesOf(wallets.map((wallet) => ({ wallet, chainId })));
     return new Map(wallets.map((w, i) => [w, found[i] ?? null]));
   } catch (err) {
     console.error('[agent] pre-notify chat lookup failed:', err instanceof Error ? err.name : 'error');
@@ -2359,7 +2361,7 @@ async function pushIfSubscribed(
   const tgChat = tgUnreadable ? null : (chats.get(wallet.toLowerCase()) ?? null);
   const tgRoute =
     tgChat && env.TG_BOT_TOKEN
-      ? { chat: tgChat, token: env.TG_BOT_TOKEN }
+      ? { chat: tgChat.chat, phrase: tgChat.phrase, token: env.TG_BOT_TOKEN }
       : null;
   let attempted = false;
   let delivered = false;
@@ -2426,7 +2428,8 @@ async function pushIfSubscribed(
       // token or a stale chat needs a credential fixed, a transport failure
       // needs an incident checked. The release note promised these were
       // counted separately and the code was folding both into one bucket.
-      const tg = await sendMessage(tgRoute.token, tgRoute.chat, `${title}\n${body}\n${deepLink}`);
+      // #3346 — the owner's phrase leads every Telegram alert.
+      const tg = await sendMessage(tgRoute.token, tgRoute.chat, withAlertPhrase(`${title}\n${body}\n${deepLink}`, tgRoute.phrase));
       if (tg === 'accepted') delivered = true;
       else if (tg === 'refused') refusedRails += 1;
       // `transient` joins the unconfirmed bucket deliberately (#2213 r26

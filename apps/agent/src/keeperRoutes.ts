@@ -36,6 +36,7 @@ import {
   type LockOutcomeKind,
 } from '@vaipakam/lib/telegramAlerts/message';
 import { readJsonBody } from '@vaipakam/lib/requestBody';
+import { withAlertPhrase } from '@vaipakam/lib/alertPhrase';
 import type { LocaleReader } from './alertChannelChange';
 import type { TelegramOutcome } from './telegram';
 import type { KeeperStatePort } from './telegramLinks';
@@ -157,7 +158,7 @@ async function lockHandled(dep: ChainDeployment, body: Record<string, unknown>, 
         ? { kind: 'lock', outcome: 'refused', reason: reason as string }
         : { kind: 'lock', outcome: outcome as LockOutcomeKind },
   };
-  const telegram = await deliver(m, marked.chatId, d);
+  const telegram = await deliver(m, marked.chatId, marked.phrase, d);
   return reply({ recorded: true, telegram }, 200);
 }
 
@@ -169,7 +170,7 @@ async function alerts(chainId: number, body: Record<string, unknown>, d: KeeperR
     return m && m.chainId === chainId ? m : null;
   });
   const recipients = parsed.flatMap((m) => (m ? [{ wallet: m.to ?? m.wallet, chainId }] : []));
-  const chats = recipients.length > 0 ? await d.state.chatsOf(recipients) : [];
+  const routes = recipients.length > 0 ? await d.state.routesOf(recipients) : [];
   let next = 0;
   const results: KeeperChannelResult[] = [];
   for (const m of parsed) {
@@ -177,20 +178,21 @@ async function alerts(chainId: number, body: Record<string, unknown>, d: KeeperR
       results.push('refused');
       continue;
     }
-    const chatId = chats[next++] ?? null;
-    results.push(chatId === null ? 'off' : await deliver(m, chatId, d));
+    const route = routes[next++] ?? null;
+    results.push(route === null ? 'off' : await deliver(m, route.chat, route.phrase, d));
   }
   return reply({ results }, 200);
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
-/** Render `m` in its recipient's language and send it to `chatId`. */
-async function deliver(m: AddressedAlert, chatId: string, d: KeeperRouteDeps): Promise<KeeperChannelResult> {
+/** Render `m` in its recipient's language and send it to `chatId`, led by
+ *  the owner's alert phrase when one is set (#3346). */
+async function deliver(m: AddressedAlert, chatId: string, phrase: string | null, d: KeeperRouteDeps): Promise<KeeperChannelResult> {
   if (!d.send) return 'off';
   const [locale] = await d.locales([{ wallet: m.to ?? m.wallet, chainId: m.chainId }]);
   const { text } = renderTelegramAlert(m, { locale, chainName: d.chainName(m.chainId), appOrigin: d.appOrigin });
-  return channelResult(await d.send(chatId, text));
+  return channelResult(await d.send(chatId, withAlertPhrase(text, phrase)));
 }
 
 /** The agent's send outcome in the keeper's terms. `unknown` (nothing

@@ -401,7 +401,21 @@
       "paidAgreed": "Enregistré : vous avez accepté de payer jusqu’à {{fee}} VPFI par côté de prêt sur {{chain}}.",
       "paidWithdrawn": "Retiré : les frais d’alertes Push payantes ne peuvent plus vous être facturés sur {{chain}}.",
       "signatureCheckUnavailable": "Vos réglages n’ont pas été enregistrés : le service d’alertes n’a pas pu vérifier votre signature pour le moment. Veuillez réessayer dans un instant.",
-      "requestAlreadyUsed": "Vos réglages n’ont pas été enregistrés : cette signature a déjà été utilisée. Enregistrez à nouveau pour signer une nouvelle demande."
+      "requestAlreadyUsed": "Vos réglages n’ont pas été enregistrés : cette signature a déjà été utilisée. Enregistrez à nouveau pour signer une nouvelle demande.",
+      "phraseTitle": "Phrase d’alerte",
+      "phraseBody": "Choisissez une phrase que vous seul connaissez. Chaque alerte Telegram de Vaipakam pour ce portefeuille commencera alors par elle ; un message sans elle ne vient pas de nous. Les notifications Push ne la contiennent jamais, car elles ne vous sont pas privées.",
+      "phraseLabel": "Votre phrase",
+      "phraseHint": "De 3 à 32 lettres, chiffres, espaces ou signes de ponctuation simples. Cette page ne l’affiche plus et ce navigateur ne la conserve pas.",
+      "phraseSave": "Définir la phrase",
+      "phraseRemove": "Supprimer la phrase",
+      "phraseSignNote": "Votre portefeuille signe d’abord un court message gratuit. Si vous modifiez ou supprimez la phrase, votre chat lié reçoit un avis qui commence par la phrase précédente, pour que vous sachiez qu’il vient de nous.",
+      "phraseSaving": "Enregistrement de votre phrase…",
+      "phraseSaved": "Enregistrée. Vos alertes Telegram pour ce portefeuille commencent désormais par votre phrase, sur chaque réseau couvert par ce service.",
+      "phraseSavedChainOnly": "Enregistrée pour {{network}}. Un portefeuille smart account définit sa phrase par réseau ; définissez-la depuis chaque autre réseau avec sa propre signature.",
+      "phraseRemoved": "Supprimée. Vos alertes Telegram pour ce portefeuille ne commencent plus par une phrase.",
+      "phraseRemovedChainOnly": "Supprimée pour {{network}}. Un portefeuille smart account définit sa phrase par réseau ; supprimez-la depuis chaque autre réseau avec sa propre signature.",
+      "phraseInvalid": "Cette phrase ne peut pas être utilisée. Utilisez de 3 à 32 lettres, chiffres, espaces ou signes de ponctuation simples, avec au moins une lettre ou un chiffre.",
+      "phraseError": "Impossible d’enregistrer votre phrase pour le moment. Veuillez réessayer dans un instant."
     },
     "notifications": {
       "bellLabel": "Notifications",

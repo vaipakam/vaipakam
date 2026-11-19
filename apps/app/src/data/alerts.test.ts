@@ -8,12 +8,13 @@
  * in a subscription), and permitting a held wallet to switch one on.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildAlertSettingsMessage } from '@vaipakam/lib/alertsMessage';
+import { buildAlertPhraseMessage, buildAlertSettingsMessage } from '@vaipakam/lib/alertsMessage';
 import {
   DEFAULT_PREFS,
   FLOOR_BANDS,
   addsAlertOptIn,
   saveAlertPrefs,
+  setAlertPhrase,
   unlinkTelegram,
   type AlertPrefs,
 } from './alerts';
@@ -376,5 +377,74 @@ describe('unlinkTelegram scope (#2013 r4)', () => {
     expect((await unlinkTelegram(WALLET, 84532, sign)).protectionUnknown).toBe(true);
     stubUnlink({ error: 'other' }, 503);
     await expect(unlinkTelegram(WALLET, 84532, sign)).rejects.toThrow('503');
+  });
+});
+
+describe('setAlertPhrase (#3346)', () => {
+  const WALLET = '0x1DAefA360ED370285f003Fa2d92DB75628088282' as const;
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  function stubPhrase(status: number, body: unknown) {
+    vi.stubEnv('VITE_AGENT_ORIGIN', 'https://agent.test');
+    const calls: Array<{ url: string; method: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: unknown, init?: RequestInit) => {
+        calls.push({
+          url: String(url),
+          method: String(init?.method),
+          body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+        });
+        return new Response(JSON.stringify(body), { status });
+      }),
+    );
+    return calls;
+  }
+
+  it('signs the normalised phrase and PUTs it to the agent', async () => {
+    const calls = stubPhrase(200, { ok: true, scope: 'wallet', told: 1 });
+    const wallet = recordingSigner();
+    const out = await setAlertPhrase(WALLET, 84532, '  blue   heron  ', wallet.signMessage);
+    expect(out).toEqual({ kind: 'saved', scope: 'wallet', told: 1 });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe('https://agent.test/alerts/phrase');
+    expect(calls[0]!.method).toBe('PUT');
+    expect(calls[0]!.body.phrase).toBe('blue heron');
+    const issuedAt = calls[0]!.body.issuedAt as number;
+    expect(wallet.signed).toEqual([buildAlertPhraseMessage(WALLET, 84532, 'blue heron', issuedAt)]);
+  });
+
+  it('removes the phrase with a signed null, and reports a per-network scope', async () => {
+    const calls = stubPhrase(200, { ok: true, scope: 'chain', told: 0 });
+    const wallet = recordingSigner();
+    expect(await setAlertPhrase(WALLET, 84532, null, wallet.signMessage)).toEqual({
+      kind: 'saved',
+      scope: 'chain',
+      told: 0,
+    });
+    expect(calls[0]!.body.phrase).toBeNull();
+    expect(wallet.signed[0]).toContain('Phrase: remove');
+  });
+
+  it('refuses a phrase the rule rejects before asking the wallet to sign', async () => {
+    const calls = stubPhrase(200, { ok: true });
+    const wallet = recordingSigner();
+    expect(await setAlertPhrase(WALLET, 84532, 'ab', wallet.signMessage)).toEqual({ kind: 'invalid' });
+    expect(wallet.signed).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it('reads the agent refusal and any other failure', async () => {
+    stubPhrase(400, { error: 'invalid-phrase' });
+    expect(await setAlertPhrase(WALLET, 84532, 'blue heron', recordingSigner().signMessage)).toEqual({
+      kind: 'invalid',
+    });
+    stubPhrase(503, { error: 'other' });
+    expect(await setAlertPhrase(WALLET, 84532, 'blue heron', recordingSigner().signMessage)).toEqual({
+      kind: 'error',
+    });
   });
 });

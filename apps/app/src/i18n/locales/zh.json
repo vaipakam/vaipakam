@@ -401,7 +401,21 @@
       "paidAgreed": "已保存：你已同意在 {{chain}} 上每个贷款方最多支付 {{fee}} VPFI。",
       "paidWithdrawn": "已撤回：在 {{chain}} 上不会再向你收取付费 Push 提醒费用。",
       "signatureCheckUnavailable": "您的设置未保存：提醒服务暂时无法验证您的签名。请稍后再试。",
-      "requestAlreadyUsed": "您的设置未保存：该签名已被使用。请再次保存以签署新的请求。"
+      "requestAlreadyUsed": "您的设置未保存：该签名已被使用。请再次保存以签署新的请求。",
+      "phraseTitle": "提醒短语",
+      "phraseBody": "选择一个只有你知道的短语。此后 Vaipakam 发给此钱包的每条 Telegram 提醒都会以它开头；没有它的消息不是我们发的。Push 通知从不包含它，因为 Push 并非只有你能看到。",
+      "phraseLabel": "你的短语",
+      "phraseHint": "3 到 32 个字母、数字、空格或简单标点。此页面不会再次显示它，此浏览器也不会保存它。",
+      "phraseSave": "设置短语",
+      "phraseRemove": "移除短语",
+      "phraseSignNote": "你的钱包会先签署一条简短的免费消息。更改或移除短语时，你已关联的聊天会收到一条以旧短语开头的通知，让你确认它来自我们。",
+      "phraseSaving": "正在保存你的短语…",
+      "phraseSaved": "已保存。在本服务覆盖的每个网络上，此钱包的 Telegram 提醒现在都以你的短语开头。",
+      "phraseSavedChainOnly": "已为 {{network}} 保存。智能账户钱包按网络设置短语，请在其他每个网络上用各自的签名设置。",
+      "phraseRemoved": "已移除。此钱包的 Telegram 提醒不再以短语开头。",
+      "phraseRemovedChainOnly": "已为 {{network}} 移除。智能账户钱包按网络设置短语，请在其他每个网络上用各自的签名移除。",
+      "phraseInvalid": "无法使用该短语。请使用 3 到 32 个字母、数字、空格或简单标点，且至少包含一个字母或数字。",
+      "phraseError": "暂时无法保存你的短语，请稍后再试。"
     },
     "notifications": {
       "bellLabel": "通知",

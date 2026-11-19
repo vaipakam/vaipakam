@@ -401,7 +401,21 @@
       "paidAgreed": "Guardado: has aceptado pagar hasta {{fee}} VPFI por lado del préstamo en {{chain}}.",
       "paidWithdrawn": "Retirada: ya no se te pueden cobrar tarifas de alertas Push de pago en {{chain}}.",
       "signatureCheckUnavailable": "No se guardó tu configuración: el servicio de alertas no pudo comprobar tu firma en este momento. Inténtalo de nuevo en un momento.",
-      "requestAlreadyUsed": "No se guardó tu configuración: esa firma ya se usó. Guarda de nuevo para firmar una nueva solicitud."
+      "requestAlreadyUsed": "No se guardó tu configuración: esa firma ya se usó. Guarda de nuevo para firmar una nueva solicitud.",
+      "phraseTitle": "Frase de alerta",
+      "phraseBody": "Elige una frase que solo tú conozcas. Cada alerta de Telegram de Vaipakam para esta billetera empezará con ella; un mensaje sin ella no viene de nosotros. Las notificaciones Push nunca la incluyen, porque no son privadas para ti.",
+      "phraseLabel": "Tu frase",
+      "phraseHint": "De 3 a 32 letras, números, espacios o signos de puntuación sencillos. Esta página no la vuelve a mostrar y este navegador no la guarda.",
+      "phraseSave": "Establecer frase",
+      "phraseRemove": "Quitar frase",
+      "phraseSignNote": "Tu billetera firma primero un mensaje corto y gratuito. Si cambias o quitas la frase, tu chat vinculado recibe un aviso que empieza con la frase anterior, para que sepas que viene de nosotros.",
+      "phraseSaving": "Guardando tu frase…",
+      "phraseSaved": "Guardada. Tus alertas de Telegram para esta billetera ahora empiezan con tu frase, en cada red que cubre este servicio.",
+      "phraseSavedChainOnly": "Guardada para {{network}}. Una billetera de cuenta inteligente establece su frase por red; establécela desde cada otra red con su propia firma.",
+      "phraseRemoved": "Quitada. Tus alertas de Telegram para esta billetera ya no empiezan con una frase.",
+      "phraseRemovedChainOnly": "Quitada para {{network}}. Una billetera de cuenta inteligente establece su frase por red; quítala desde cada otra red con su propia firma.",
+      "phraseInvalid": "Esa frase no se puede usar. Usa de 3 a 32 letras, números, espacios o signos de puntuación sencillos, con al menos una letra o un número.",
+      "phraseError": "No se pudo guardar tu frase ahora mismo. Inténtalo de nuevo en un momento."
     },
     "notifications": {
       "bellLabel": "Notificaciones",

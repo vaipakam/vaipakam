@@ -22,11 +22,13 @@ import {
   TelegramStateStore,
   type ChainDeployment,
   type ChannelOp,
+  type ChatRoute,
   type CommitResult,
   type LinkedRow,
   type LockLink,
   type LockRequest,
   type PendingChange,
+  type PhraseChange,
   type SqlLike,
   type UnansweredLock,
 } from './store';
@@ -67,6 +69,21 @@ export class TelegramState extends DurableObject {
   }
   chatsOf(pairs: { wallet: string; chainId: number }[]): (string | null)[] {
     return this.store.chatsOf(pairs);
+  }
+  phrasesOf(pairs: { wallet: string; chainId: number }[]): (string | null)[] {
+    return this.store.phrasesOf(pairs);
+  }
+  routesOf(pairs: { wallet: string; chainId: number }[]): (ChatRoute | null)[] {
+    return this.store.routesOf(pairs);
+  }
+  phraseForWallet(wallet: string): string | null {
+    return this.store.phraseForWallet(wallet);
+  }
+  phraseForChat(chatId: string): string | null {
+    return this.store.phraseForChat(chatId);
+  }
+  setPhrase(wallet: string, chainIds: number[], phrase: string | null, now: number): PhraseChange[] {
+    return this.store.setPhrase(wallet, chainIds, phrase, now);
   }
   linkedWallets(chainId: number): string[] {
     return this.store.linkedWallets(chainId);
@@ -117,7 +134,7 @@ export class TelegramState extends DurableObject {
   pendingLockWallets(dep: ChainDeployment, since: number): string[] {
     return this.store.pendingLockWallets(dep, since);
   }
-  markLockHandled(dep: ChainDeployment, wallet: string, upToId: number, outcome: string, at: number): { chatId: string | null } | undefined {
+  markLockHandled(dep: ChainDeployment, wallet: string, upToId: number, outcome: string, at: number): { chatId: string | null; phrase: string | null } | undefined {
     return this.store.markLockHandled(dep, wallet, upToId, outcome, at);
   }
   takeUnansweredLocks(sentBefore: number, now: number, limit: number): UnansweredLock[] {

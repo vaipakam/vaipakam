@@ -49,7 +49,7 @@ function setup() {
   const sent: { rail: string; to: string; text: string }[] = [];
   const deps = (over: Partial<OwnerAlertDeps> = {}): OwnerAlertDeps => ({
     db: h.d1 as D1Database,
-    chatsOf: async (pairs) => pairs.map((p) => (p.wallet === OWNER.toLowerCase() ? 'chat-1' : null)),
+    routesOf: async (pairs) => pairs.map((p) => (p.wallet === OWNER.toLowerCase() ? { chat: 'chat-1', phrase: null } : null)),
     sendTelegram: async (chat, text) => {
       sent.push({ rail: 'tg', to: chat, text });
       return 'accepted';
@@ -110,20 +110,20 @@ describe('runOwnerAlertsChain', () => {
     const t = setup();
     t.event('Approval', approval, 1);
     await runOwnerAlertsChain(t.deps(), CHAIN, { remaining: 12 }, NOW);
-    const chats = async (pairs: { wallet: string }[]) => pairs.map((p) => `chat-${p.wallet}`);
+    const chats = async (pairs: { wallet: string }[]) => pairs.map((p) => ({ chat: `chat-${p.wallet}`, phrase: null }));
     // OWNER: not chosen, not protected → nothing. OTHER: not chosen, protected → sent.
     t.owner(OWNER, false, null);
     t.event('ProtectionApplied', { account: OTHER, enabled: true, locked: false, retired: false, delaySeconds: '86400' }, 2);
     t.event('VaultOutflow', outflow(OWNER), 3);
     t.event('VaultOutflow', outflow(OTHER), 3);
-    await runOwnerAlertsChain(t.deps({ chatsOf: chats, sendPush: null }), CHAIN, { remaining: 12 }, NOW);
+    await runOwnerAlertsChain(t.deps({ routesOf: chats, sendPush: null }), CHAIN, { remaining: 12 }, NOW);
     expect(t.sent.map((s) => s.to)).toEqual([`chat-${OTHER.toLowerCase()}`]);
     expect(t.sent[0]!.text).toContain(`1.5 of the token ${USDC.toLowerCase()} left your vault on Base Sepolia to ${TO.toLowerCase()}. Reason: your own withdrawal.`);
     // A retired protection is off again; an explicit 0 is off whatever the mode.
     t.sent.length = 0;
     t.event('ProtectionApplied', { account: OTHER, enabled: true, locked: false, retired: true, delaySeconds: '0' }, 4);
     t.event('VaultOutflow', outflow(OTHER), 5);
-    await runOwnerAlertsChain(t.deps({ chatsOf: chats, sendPush: null }), CHAIN, { remaining: 12 }, NOW);
+    await runOwnerAlertsChain(t.deps({ routesOf: chats, sendPush: null }), CHAIN, { remaining: 12 }, NOW);
     expect(t.sent).toEqual([]);
   });
 

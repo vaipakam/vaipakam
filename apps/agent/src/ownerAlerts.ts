@@ -54,6 +54,8 @@ import { getChainConfigs } from './env';
 import { pushRailConfigOf } from './pushRail';
 import { sendMessage } from './telegram';
 import { stateStub } from './telegramState/object';
+import type { ChatRoute } from './telegramState/store';
+import { withAlertPhrase } from '@vaipakam/lib/alertPhrase';
 
 /** Outbound requests this pass may make in one tick, across every chain: D1
  *  statements, the Telegram state object, RPC reads and sends. Small on
@@ -260,8 +262,9 @@ interface SendTally {
 /** The I/O this pass needs, so the core can be tested without a Worker. */
 export interface OwnerAlertDeps {
   db: D1Database;
-  /** The chat linked to each pair, or null; throws when unreadable. */
-  chatsOf: (pairs: { wallet: string; chainId: number }[]) => Promise<(string | null)[]>;
+  /** The chat linked to each pair and the owner's alert phrase (#3346), or
+   *  null when no chat is linked; throws when unreadable. */
+  routesOf: (pairs: { wallet: string; chainId: number }[]) => Promise<(ChatRoute | null)[]>;
   /** Null when this deployment has no Telegram bot. */
   sendTelegram: ((chat: string, text: string) => Promise<'accepted' | string>) | null;
   /** Null when this deployment cannot send Push. */
@@ -330,7 +333,7 @@ export async function runOwnerAlertsChain(
   const planned = rows.map((r) => ({ row: r, alert: alertOf(r) }));
   const owners = [...new Set(planned.flatMap((p) => (p.alert ? [p.alert.owner] : [])))];
   let settings = new Map<string, OwnerSettings>();
-  let chats: (string | null)[] = owners.map(() => null);
+  let chats: (ChatRoute | null)[] = owners.map(() => null);
   let decimals = new Map<string, number>();
   if (owners.length > 0) {
     budget.remaining -= 1;
@@ -338,7 +341,7 @@ export async function runOwnerAlertsChain(
     if (deps.sendTelegram) {
       budget.remaining -= 1;
       try {
-        chats = await deps.chatsOf(owners.map((wallet) => ({ wallet, chainId: chain.id })));
+        chats = await deps.routesOf(owners.map((wallet) => ({ wallet, chainId: chain.id })));
       } catch (err) {
         // A failed read is not "no chat": nothing is sent on Telegram this
         // tick for these owners, and the log says so.
@@ -376,7 +379,8 @@ export async function runOwnerAlertsChain(
         const { title, body } = renderAlert(alert, chain.name, decimals);
         if (chat && deps.sendTelegram) {
           budget.remaining -= 1;
-          const outcome = await deps.sendTelegram(chat, `${title}\n${body}\n${deps.link}`).catch(() => 'failed');
+          const text = withAlertPhrase(`${title}\n${body}\n${deps.link}`, chat.phrase);
+          const outcome = await deps.sendTelegram(chat.chat, text).catch(() => 'failed');
           if (outcome === 'accepted') tally.sent += 1;
           else tally.failed += 1;
         }
@@ -488,7 +492,7 @@ export async function runOwnerAlerts(env: Env): Promise<void> {
     const client = createPublicClient({ transport: http(chain.rpc, { retryCount: 0, timeout: 5_000 }) });
     const deps: OwnerAlertDeps = {
       db: env.DB,
-      chatsOf: (pairs) => stateStub(env).chatsOf(pairs),
+      routesOf: (pairs) => stateStub(env).routesOf(pairs),
       sendTelegram: token ? (chat, text) => sendMessage(token, chat, text) : null,
       sendPush: pushSigner
         ? (subscriber, title, body, deepLinkUrl) =>

@@ -31,8 +31,8 @@ describe('getTelegramChatId', () => {
   it('returns the chat and locale of a linked wallet, whatever its spelling', async () => {
     const { store } = harness();
     store.commit(w, CHAIN, [], [{ op: 'link', chainId: CHAIN, chatId: '9876' }], 0);
-    const state = { chatsOf: async (p: { wallet: string; chainId: number }[]) => store.chatsOf(p) } as unknown as LinkStatePort;
-    expect(await getTelegramChatId(state, locales('ta'), W, CHAIN)).toEqual({ chatId: '9876', locale: 'ta' });
+    const state = { routesOf: async (p: { wallet: string; chainId: number }[]) => store.routesOf(p) } as unknown as LinkStatePort;
+    expect(await getTelegramChatId(state, locales('ta'), W, CHAIN)).toEqual({ chatId: '9876', locale: 'ta', phrase: null });
     expect(await getTelegramChatId(state, locales('ta'), W, 97)).toBeNull();
   });
 });

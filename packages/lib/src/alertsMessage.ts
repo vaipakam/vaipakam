@@ -185,3 +185,33 @@ export function buildTelegramTestMessage(
     `Issued at (unix): ${issuedAt}`,
   ].join('\n');
 }
+
+/**
+ * Set or remove the alert phrase (#3346). The message names the phrase it
+ * sets, so the signature authorises that phrase and no other, and its own
+ * headline, so it can never be replayed as another alert action. `phrase`
+ * is the normalised phrase (`normaliseAlertPhrase`), or null to remove it.
+ * The phrase is shown in the owner's own wallet only; the agent keeps no
+ * copy of the message, only its digest for the one-use check.
+ */
+export function buildAlertPhraseMessage(
+  wallet: string,
+  chainId: number,
+  phrase: string | null,
+  issuedAt: number,
+): string {
+  return [
+    'Vaipakam — Set my alert phrase',
+    '',
+    'I request that every Telegram alert for the wallet below start with',
+    'the phrase below, or that the phrase be removed. Signing this message',
+    'proves ownership of the wallet. It is not a transaction and costs no',
+    'gas.',
+    '',
+    `Phrase: ${phrase === null ? 'remove' : `"${phrase}"`}`,
+    '',
+    `Wallet: ${wallet.toLowerCase()}`,
+    `Chain id: ${chainId}`,
+    `Issued at (unix): ${issuedAt}`,
+  ].join('\n');
+}

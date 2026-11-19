@@ -481,18 +481,18 @@ async function atMinute(minute: number, extra: Record<string, unknown> = {}) {
   }
 }
 
-/** The Telegram state object as pre-notify reads it: one `chatsOf` per
- *  subscriber, answered from `subscriberFor`'s `tg_chat_id`. Set
+/** The Telegram state object as pre-notify reads it: one `routesOf` per
+ *  batch, answered from `subscriberFor`'s `tg_chat_id` (no phrase). Set
  *  `tgStateThrows` to make the read fail. */
 let tgStateThrows = false;
 function tgStateFake() {
   const stub = {
-    async chatsOf(pairs: { wallet: string; chainId: number }[]) {
+    async routesOf(pairs: { wallet: string; chainId: number }[]) {
       if (tgStateThrows) throw new Error('state object unavailable');
       return pairs.map((p) => {
         const row = subscriberFor(p.wallet);
         const chat = row?.tg_chat_id;
-        return typeof chat === 'string' ? chat : null;
+        return typeof chat === 'string' ? { chat, phrase: null } : null;
       });
     },
   };

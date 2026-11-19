@@ -35,6 +35,8 @@ import { getChainConfigs } from './env';
 import { pushRailConfigOf } from './pushRail';
 import { sendMessage } from './telegram';
 import { stateStub } from './telegramState/object';
+import type { ChatRoute } from './telegramState/store';
+import { withAlertPhrase } from '@vaipakam/lib/alertPhrase';
 
 /** Outbound requests this pass may make in one tick, across every chain. */
 export const MAX_SUBREQUESTS_PER_TICK = 10;
@@ -84,7 +86,8 @@ export interface DelegationDeps {
    *  absent from the map could not be read. */
   readCodes: (wallets: Address[]) => Promise<Map<string, `0x${string}` | undefined> | null>;
   readCostsAProbe: () => boolean;
-  chatsOf: (pairs: { wallet: string; chainId: number }[]) => Promise<(string | null)[]>;
+  /** The chat and alert phrase (#3346) of each pair, or null. */
+  routesOf: (pairs: { wallet: string; chainId: number }[]) => Promise<(ChatRoute | null)[]>;
   sendTelegram: ((chat: string, text: string) => Promise<string>) | null;
   sendPush: ((wallet: string, title: string, body: string, link: string) => Promise<'accepted' | 'failed' | 'not-requested'>) | null;
   link: string;
@@ -134,11 +137,11 @@ export async function runDelegationWatchChain(
 
   let told = 0;
   if (notices.length > 0) {
-    let chats: (string | null)[] = notices.map(() => null);
+    let chats: (ChatRoute | null)[] = notices.map(() => null);
     if (deps.sendTelegram) {
       budget.remaining -= 1;
       try {
-        chats = await deps.chatsOf(notices.map(({ w }) => ({ wallet: w.wallet, chainId: chain.id })));
+        chats = await deps.routesOf(notices.map(({ w }) => ({ wallet: w.wallet, chainId: chain.id })));
       } catch (err) {
         console.error(`[delegationWatch] chain=${chain.name}: the chat lookup failed (${describeFailure(err)}); no Telegram this tick`);
       }
@@ -156,7 +159,8 @@ export async function runDelegationWatchChain(
       let accepted = false;
       if (chat && deps.sendTelegram) {
         budget.remaining -= 1;
-        accepted = (await deps.sendTelegram(chat, `${n.title}\n${n.body}\n${deps.link}`).catch(() => 'failed')) === 'accepted' || accepted;
+        const text = withAlertPhrase(`${n.title}\n${n.body}\n${deps.link}`, chat.phrase);
+        accepted = (await deps.sendTelegram(chat.chat, text).catch(() => 'failed')) === 'accepted' || accepted;
       }
       if (w.push && deps.sendPush) {
         const out = await deps.sendPush(w.wallet, n.title, n.body, deps.link).catch(() => 'failed' as const);
@@ -212,7 +216,7 @@ export async function runDelegationWatch(env: Env): Promise<void> {
         });
         return out.size === 0 ? null : out;
       },
-      chatsOf: (pairs) => stateStub(env).chatsOf(pairs),
+      routesOf: (pairs) => stateStub(env).routesOf(pairs),
       sendTelegram: token ? (chat, text) => sendMessage(token, chat, text) : null,
       sendPush: pushSigner
         ? (subscriber, title, body, deepLinkUrl) =>
