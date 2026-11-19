@@ -112,6 +112,12 @@ export interface IndexedOffer {
   collateralAmountFilled?: string | null;
   durationDays: number;
   positionTokenId: string;
+  /** #3744 — who holds the offer's position token: that wallet takes the
+   *  creator's side of the loan, gets the escrow back and may edit or cancel
+   *  the offer. `null` / absent = unknown (an older worker, or a row the
+   *  indexer has not seeded), never "the creator". The zero address = the
+   *  token is retired. Read through `data/offerHolder.ts`. */
+  holder?: string | null;
   prepayAsset: string;
   useFullTermInterest: boolean;
   creatorRiskAndTermsConsent: boolean;
@@ -299,6 +305,34 @@ export function fetchOffersByCurrentHolder(
   return getJson<HolderOffersPage>(
     `/offers/by-current-holder/${holder.toLowerCase()}?${params}`,
   );
+}
+
+/** #3744 — one line of offer escrow the indexer's event log shows as held
+ *  for an offer position token (`/offers/held-refunds/:addr`). A candidate
+ *  only: `indexedRemaining` is a log figure, and the app reads the amount
+ *  (`getOfferRefundHeld`) and the token's holder live before it offers the
+ *  collect. */
+export interface IndexedHeldRefundLine {
+  positionToken: string;
+  asset: string;
+  tokenId: string;
+  indexedRemaining: string;
+  offerIds: number[];
+  /** 0 ERC-20, 1 ERC-721, 2 ERC-1155; null = the offer row is not indexed. */
+  assetKind: number | null;
+}
+
+export interface HeldRefundsPage {
+  chainId: number;
+  address: string;
+  lines: IndexedHeldRefundLine[];
+  /** The log scan hit its cap: the list may be incomplete. */
+  truncated: boolean;
+}
+
+export function fetchOfferHeldRefunds(chainId: number, holder: string): Promise<HeldRefundsPage | null> {
+  const params = new URLSearchParams({ chainId: String(chainId) });
+  return getJson<HeldRefundsPage>(`/offers/held-refunds/${holder.toLowerCase()}?${params}`);
 }
 
 export type IndexedLoanStatus =

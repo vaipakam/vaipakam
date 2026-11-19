@@ -65,6 +65,7 @@ import {
   isAssetIlliquidLive,
 } from '../contracts/preflights';
 import type { IndexedOffer } from '../data/indexer';
+import { isOwnOffer } from '../data/offerHolder';
 import {
   OFFER_DURATION_BUCKETS_DAYS,
   initialOfferTerms,
@@ -473,7 +474,9 @@ export function OfferFlow({ side, initialMarket, createOnly = false }: {
       clear(copy.match.wrongKind);
       return;
     }
-    if (address && row.creator.toLowerCase() === address.toLowerCase()) {
+    // #3744 — created by this wallet, or its position token held by it:
+    // either way the loan's two sides would belong to one wallet.
+    if (isOwnOffer(row, address)) {
       clear(copy.match.ownOffer);
       return;
     }
@@ -1427,8 +1430,7 @@ export function OfferFlow({ side, initialMarket, createOnly = false }: {
   const isOwnSelectedOffer =
     mode === 'accept' &&
     selected !== null &&
-    Boolean(address) &&
-    selected.creator.toLowerCase() === address!.toLowerCase();
+    isOwnOffer(selected, address);
 
   // #1036 — GoPlus screening of BOTH legs, in BOTH modes. The accept
   // side is the primary defense (a malicious offer is created straight
@@ -1985,7 +1987,7 @@ export function OfferFlow({ side, initialMarket, createOnly = false }: {
     }
     // Re-check ownership at SUBMIT time: the wallet may have connected
     // (or changed) after the offer was selected while disconnected.
-    if (selected.creator.toLowerCase() === address.toLowerCase()) {
+    if (isOwnOffer(selected, address)) {
       throw new Error(copy.match.ownOffer);
     }
     // Re-screen the CONNECTED wallet live — the checklist's sanctions

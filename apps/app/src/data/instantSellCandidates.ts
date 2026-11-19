@@ -30,6 +30,7 @@ import {
   type LoanLive,
 } from '../contracts/loanLive';
 import type { IndexedLoan, IndexedOffer } from './indexer';
+import { isOwnOffer } from './offerHolder';
 import type { InstantSellCandidates } from './lenderExitRows';
 
 export interface InstantSellInput {
@@ -106,7 +107,7 @@ export function instantSellCandidatesOf(
       // Expired offers are refused at accept.
       if (o.expiresAt && BigInt(o.expiresAt) <= chainNow) return false;
       // Buying out your own position is a no-op with fees.
-      if (o.creator.toLowerCase() === me) return false;
+      if (isOwnOffer(o, me)) return false;
       // RateShortfallTooHigh guard.
       const econ = sellerEconomics(live, BigInt(o.interestRateBps));
       return econ.cost <= live.principal;

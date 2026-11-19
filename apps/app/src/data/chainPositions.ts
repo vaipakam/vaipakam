@@ -23,6 +23,7 @@ import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import type { IndexedOffer } from './indexer';
 import type { PositionLoan } from './hooks';
 import { readLoanRowLive, mapLoanStructToRow, isRevert, withChainDeadlines } from './liveLoanRow';
+import { readPositionHolderOn } from '../contracts/positionNft';
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 const PAGE = 200n;
@@ -338,6 +339,9 @@ export async function readOwnOfferRowsLive(
   address: `0x${string}`,
 ): Promise<OwnOfferRead | null> {
   const ids = new Set<number>();
+  // #3744 — the offers leg 2 found are the ones whose token the wallet
+  // holds, so their holder is known without another read.
+  const heldIds = new Set<number>();
   let heldLegOk = true;
   // Leg 1 — the creator's lifetime offer index. Any failure here
   // (transport OR a deploy without the view) disables the chain
@@ -373,7 +377,10 @@ export async function readOwnOfferRowsLive(
         functionName: 'getUserPositionOffersPaginated',
         args: [address, offset, PAGE],
       })) as readonly [readonly bigint[], readonly bigint[], bigint];
-      for (const id of offerIds) ids.add(Number(id));
+      for (const id of offerIds) {
+        ids.add(Number(id));
+        heldIds.add(Number(id));
+      }
       if (offset + PAGE >= totalBalance) break;
       if (offset >= BigInt(WALK_CAP)) return null; // truncated ≠ complete
     }
@@ -386,7 +393,10 @@ export async function readOwnOfferRowsLive(
         functionName: 'getUserPositionOffers',
         args: [address],
       })) as readonly [readonly bigint[], readonly bigint[]];
-      for (const id of legacyIds) ids.add(Number(id));
+      for (const id of legacyIds) {
+        ids.add(Number(id));
+        heldIds.add(Number(id));
+      }
     } catch (e2) {
       if (!isRevert(e2)) return null;
       // Both holder views absent — an older deploy. Created-offer
@@ -402,7 +412,7 @@ export async function readOwnOfferRowsLive(
     const rows = await readOfferRowsBatchLive(publicClient, diamond, chainId, [
       ...ids,
     ]);
-    return { rows, heldLegOk };
+    return { rows: await withOfferHolders(publicClient, diamond, address, rows, heldIds), heldLegOk };
   } catch (e) {
     if (isBatchTooLarge(e)) {
       // Unreachable with chunking unless the deployed cap shrank —
@@ -417,8 +427,45 @@ export async function readOwnOfferRowsLive(
     const rows = await Promise.all(
       [...ids].map((id) => readOfferRowLive(publicClient, diamond, chainId, id)),
     );
-    return { rows: rows.filter((r): r is IndexedOffer => r !== null), heldLegOk };
+    return {
+      rows: await withOfferHolders(
+        publicClient,
+        diamond,
+        address,
+        rows.filter((r): r is IndexedOffer => r !== null),
+        heldIds,
+      ),
+      heldLegOk,
+    };
   } catch {
     return null; // a row read failed — never a confident partial list
   }
+}
+
+/** #3744 — stamp each own-offer row with who holds its position token. A row
+ *  the holder views found is the wallet's; any other OPEN row (one the wallet
+ *  created and whose token has since moved) is read live. A read that fails
+ *  leaves the holder unknown (`null`), never "the creator"; a token the chain
+ *  reports retired reads as the zero address. Only open rows are read: a
+ *  closed offer has no steps left to gate. */
+async function withOfferHolders(
+  publicClient: PublicClient,
+  diamond: `0x${string}`,
+  address: `0x${string}`,
+  rows: IndexedOffer[],
+  heldIds: ReadonlySet<number>,
+): Promise<IndexedOffer[]> {
+  const me = address.toLowerCase();
+  return Promise.all(
+    rows.map(async (row): Promise<IndexedOffer> => {
+      if (heldIds.has(row.offerId)) return { ...row, holder: me };
+      if (row.positionTokenId === '0' || row.status !== 'active') return row;
+      try {
+        const h = await readPositionHolderOn(publicClient, diamond, row.positionTokenId);
+        return { ...row, holder: h === 'gone' ? ZERO_ADDR : h.toLowerCase() };
+      } catch {
+        return { ...row, holder: null };
+      }
+    }),
+  );
 }

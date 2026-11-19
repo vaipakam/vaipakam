@@ -2004,3 +2004,11 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 
 **Gap.** No Anvil spec announces a change yet. It needs the admin to publish v1 and announce v2 on the fork; the spec should assert the notice, accept v2 from it, and see the notice go quiet.
 
+## Offer position holder (#3744)
+<a id="cov-offer-position-holder-3744"></a>
+
+**Journey.** An open offer belongs to whoever holds its position token. The desk's open orders and the Positions offer rows gate edit, cancel, keeper and Full-tariff steps on that holder, read from the indexer's Transfer record or a live `holderOf`; when neither knows, the row is read-only and says the holder is unknown. Only the creator still holding the token may raise the escrow; anyone else sees why Save is off. Taking an offer the wallet created or holds is refused before signing. Positions shows a card of offer amounts held for the wallet's offer tokens: the indexer lists candidates from `OfferEscrowReturned` / `OfferRefundCollected`, and each line is confirmed live (`getOfferRefundHeld` and `holderOf`) before Collect is offered; a failed live read is shown as unconfirmed with no step. Cancel, the offset cancel, the direct sale and the extra-collateral release now say the money lands in the vault as free balance.
+
+**Tier.** Unit: `src/data/offerHolder.test.ts` (holder rules, live confirmation of held lines); indexer `test/offerHolderField.test.ts` and `test/offerHeldRefunds.test.ts` (holder field, held-line arithmetic).
+
+**Gap.** No Anvil spec moves an offer token yet. It needs a fill or cleanup that cannot pay the holder, then Collect from the new holder.

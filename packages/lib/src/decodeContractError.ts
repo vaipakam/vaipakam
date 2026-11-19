@@ -67,13 +67,23 @@ export const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
     'This offer was posted or changed a few seconds ago, and an offer can be filled only once its terms have stood for a few seconds. Try again shortly. Nothing was sent.',
   '0x18af14b3':
     'This standing offer was set or changed a few seconds ago, and it can be filled only once its terms have stood for a few seconds. Try again shortly. Nothing was sent.',
+  // #3744 — the right to cancel follows the offer's position token.
   '0xa04ac4d0':
-    "Cancel is reserved to the creator while the offer is still live. After expiry anyone can clean it up — the refund goes to the creator regardless of who calls.",
+    "Only whoever holds this offer's position token can cancel it while it is live. After expiry anyone can clean it up, and the escrow still goes back to the token holder's vault, whoever calls.",
   '0xc681ed8e':
     "5-minute cancel cooldown is in effect for unfilled offers. The countdown on the row shows when the offer becomes cancellable.",
   // #194 — self-trade
+  // #3744 — the parties are the holders of the offers' position tokens, so
+  // two offers from different wallets can still meet the same owner.
   '0x64f4618d':
-    "Self-trade not allowed — the lender and borrower addresses are the same. Match against a counterparty's offer instead.",
+    "Both sides of this loan would belong to the same wallet: it holds the position on each side, whoever posted the offers. Match against another wallet's offer instead.",
+  // #3744 — escrow held for an offer's position token, and who may raise it.
+  '0x7893d05c':
+    "Nothing is held for this offer position in that asset, so there is nothing to collect. It may have been collected already.",
+  '0xf3ea9ad4':
+    "Only the protocol itself returns an offer's escrow. Cancel the offer, or collect what is held for its position, instead.",
+  '0x144b50fd':
+    "Only the wallet that posted this offer, while it still holds the offer's position token, can raise its amount. You can lower it, change its terms or cancel it.",
   // #125 — AON / IOC fill-mode
   '0x23d29961':
     'This offer is All-or-Nothing — the matcher would only land a partial fill, which violates the offer terms. Match the full size or skip the pair.',
@@ -613,6 +623,10 @@ export const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   '0xc681ed8e': 'CancelCooldownActive()',
   // #194 — self-trade prevention
   '0x64f4618d': 'SelfTradeForbidden(address)',
+  // #3744 — offer escrow follows the offer's position token
+  '0x7893d05c': 'NothingHeldForOfferToken(uint256,address,uint256)',
+  '0xf3ea9ad4': 'OfferRefundOnlyDiamond()',
+  '0x144b50fd': 'OfferEscrowRaiseByCreatorOnly()',
   // #125 — AON / IOC fill-mode surface
   '0x23d29961': 'AonRequiresFullFill(uint256,uint256,uint256)',
   '0x7b0e3b56': 'AonRequiresSingleValueAmount()',

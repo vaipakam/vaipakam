@@ -471,10 +471,11 @@ export function useLoan(loanId: number | undefined) {
 }
 
 /** Open offers the wallet is involved in: UNION of offers it CREATED
- *  (cancelOffer authorizes only the creator until expiry —
- *  OfferCancelFacet #195) and offers whose position NFT it currently
- *  HOLDS (visibility for secondary-market recipients). The UI keys
- *  the cancel action on `offer.creator === wallet`.
+ *  and offers whose position NFT it currently HOLDS. Since #3744 the
+ *  holder is the one who may cancel or change an offer (and the escrow
+ *  goes back to it), so each row carries `holder` and the UI keys every
+ *  step on it (`data/offerHolder.ts`); a created offer whose token moved
+ *  stays listed, read-only.
  *
  *  CHAIN-AUTHORITATIVE for created AND held offers (a fresh
  *  createOffer shows within a block — the indexer's cron ingest lags

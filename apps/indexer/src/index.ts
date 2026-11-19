@@ -138,6 +138,7 @@ import {
   handleOffersByCurrentHolder,
   handleOffersPreflight,
 } from './offerRoutes';
+import { handleOfferHeldRefunds } from './offerHeldRefundsRoute';
 import { handleLoopClosure, handleRewardsClaimed } from './rewardRoutes';
 import { BACKING_SNAPSHOT_COST, captureBackingSnapshot, handleRecyclingSeries } from './recycleRoutes';
 import {
@@ -634,6 +635,10 @@ export default {
         if (byHolder) {
           return handleOffersByCurrentHolder(req, resolved, byHolder[1]);
         }
+        const heldRefunds = url.pathname.match(
+          /^\/offers\/held-refunds\/(0x[0-9a-fA-F]{40})$/,
+        );
+        if (heldRefunds) return handleOfferHeldRefunds(req, resolved, heldRefunds[1]);
         const nearest = url.pathname.match(/^\/offers\/(\d+)\/nearest$/);
         if (nearest) return handleOfferNearest(req, resolved, nearest[1]);
         const byId = url.pathname.match(/^\/offers\/(\d+)$/);

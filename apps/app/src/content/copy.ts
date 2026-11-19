@@ -1328,7 +1328,7 @@ const copySource = {
     wrongKind:
       'That offer involves an NFT — open it from the NFT Rental page instead.',
     ownOffer:
-      'That’s your own offer — you can cancel it from My positions, but you can’t accept it yourself.',
+      'You posted this offer or hold its position, so you can’t accept it yourself: both sides of the loan would be yours. Whoever holds its position can cancel it from My positions.',
     offerGone:
       'That offer is no longer open. Browse current matches below or post your own.',
     // #3205 — an offer tied to a loan position that moved since it was posted.
@@ -2104,9 +2104,9 @@ const copySource = {
     cancelCooldown:
       'Cancelling opens a few minutes after posting.',
     cancelled:
-      'Offset offer cancelled. Your position is unlocked and your lending money is back in your wallet.',
+      'Offset offer cancelled. Your position is unlocked and your lending money is back in your vault as free balance; Withdraw takes it to your wallet.',
     cancelledApprovalKept:
-      'Offset offer cancelled — your lending money is back in your wallet. The spending approval you granted for the payoff is left in place, because other activity of yours may rely on the same approval; you can review or remove it from your wallet’s approvals view.',
+      'Offset offer cancelled — your lending money is back in your vault as free balance. The spending approval you granted for the payoff is left in place, because other activity of yours may rely on the same approval; you can review or remove it from your wallet’s approvals view.',
     blockedOtherPaths:
       'While this offset is open, repaying or closing another way would strand the linked offer — cancel it first.',
     alreadyLive:
@@ -4189,7 +4189,7 @@ const copySource = {
 
   earlyExit: {
     receiptYouReceive: tmpl(
-      '~{{toSeller}}, paid straight to your wallet in the same transaction — selling to offer #{{offerId}} at {{rate}} yearly.',
+      '~{{toSeller}}, credited to your vault as free balance in the same transaction — selling to offer #{{offerId}} at {{rate}} yearly.',
       ['toSeller', 'offerId', 'rate'],
     ),
     receiptLockNothing: 'Nothing.',
@@ -4587,7 +4587,7 @@ const copySource = {
       withdrawCollateral: {
         title: 'Take back extra collateral',
         blurb: tmpl(
-          'If your {{symbol}} collateral is worth more than this loan needs, you can take the extra back to your wallet. The loan stays open, but it becomes riskier: with less collateral, a price drop brings liquidation closer.',
+          'If your {{symbol}} collateral is worth more than this loan needs, you can release the extra into your vault as free balance and withdraw it from there. The loan stays open, but it becomes riskier: with less collateral, a price drop brings liquidation closer.',
           ['symbol'],
         ),
         available: tmpl('You can take back up to {{amount}} right now.', ['amount']),
@@ -4675,19 +4675,34 @@ const copySource = {
       yourLendingOffer: 'Your lending offer',
       yourBorrowRequest: 'Your borrow request',
       yourNftListing: 'Your NFT listing',
-      held: 'Held — managed by its creator',
+      // #3744 — the offer's token holder may cancel it, not its creator.
+      heldByOther: 'Its position is held by another wallet now, which can change or cancel it',
+      holderUnknown: 'Couldn’t confirm who holds this offer’s position, so cancelling is off here for now',
       cancel: 'Cancel offer',
       keep: 'Keep the offer',
       confirmCancel: 'Confirm — cancel & unlock my assets',
       cancelling: 'Cancelling…',
       receiptNothing: 'Nothing.',
       receiptUnlocked: tmpl(
-        '{{locked}} back — unlocked from this offer immediately.',
+        '{{locked}} back in your vault as free balance, right away.',
         ['locked'],
       ),
       receiptLose: 'Nothing — cancelling an open offer has no penalty.',
       receiptFees: 'None (network gas only).',
       receiptEnds: 'Immediately — the offer leaves the book and can’t be accepted anymore. Post a new offer any time.',
+    },
+    // #3744 — offer escrow held for the wallet's offer position tokens.
+    heldRefunds: {
+      title: 'Offer amounts held for you',
+      lede: 'An offer’s amount follows its position. When a fill or cleanup could not pay you at the time, the amount was kept aside for your offer position. Collect moves it into your vault as free balance; Withdraw takes it to your wallet from there.',
+      lineSub: tmpl('For offer position #{{token}}', ['token']),
+      nftAmount: tmpl('{{qty}} of {{addr}} #{{id}}', ['addr', 'id', 'qty']),
+      unconfirmed: 'Amount not confirmed — the network read failed, so no step is offered. Try again shortly.',
+      kindUnknown: 'We can’t tell this asset’s type yet, so Collect isn’t offered here. Try again once the offer is indexed.',
+      collect: 'Collect to vault',
+      collecting: 'Collecting…',
+      unavailable: 'We couldn’t check for offer amounts held for you right now.',
+      truncated: 'There may be more held amounts than shown here.',
     },
     title: 'My positions',
     lede: 'Your loans and rentals, with the one action each needs right now.',
@@ -5888,7 +5903,10 @@ const copySource = {
       ),
       filledTooltip: tmpl('{{pct}} taken', ['pct']),
       unavailable: 'We couldn’t load your open offers right now.',
-      heldNotCreated: 'Held — managed by its creator',
+      // #3744 — the token's holder manages the offer; shown on a row the
+      // wallet created whose token has moved, or whose holder is unknown.
+      heldByOther: 'Its position is held by another wallet now, which can change or cancel it',
+      holderUnknown: 'Couldn’t confirm who holds this offer’s position, so changes are off here for now',
       cancel: 'Cancel',
       cancelling: 'Cancelling…',
       cancelCooldown: tmpl(
@@ -5921,6 +5939,9 @@ const copySource = {
         `Making this offer bigger sets aside {{amount}} {{symbol}} more from your wallet — approve the token first.`,
         ['amount', 'symbol'],
       ),
+      // #3744 — OfferEscrowRaiseByCreatorOnly, said before Save.
+      amendRaiseCreatorOnly:
+        'Only the wallet that posted this offer, while it still holds the offer’s position, can make it bigger. You can make it smaller or change its terms.',
       amendAllowanceLost:
         'The token approval for this grow is no longer sufficient — nothing was changed. Please approve again.',
       approveFirst: 'Approve first',
@@ -6258,6 +6279,10 @@ const copySource = {
         'Your wallet is compliance-flagged, so new positions are blocked. Existing loans can still be repaid or closed.',
       flaggedCreator:
         'The wallet that created this offer is compliance-flagged, so it can’t be taken. Nothing was sent.',
+      // #3744 — the offer's position token moved to a flagged wallet, which
+      // would take the creator's side of the loan.
+      flaggedOfferHolder:
+        'The wallet that now holds this offer’s position is compliance-flagged, so it can’t be taken. Nothing was sent.',
       assetPaused:
         'One of this offer’s assets is paused by the protocol right now, so the transaction would be rejected. Nothing was sent.',
       // Shown only on deploys with country-pair trading rules enabled
@@ -6921,6 +6946,9 @@ const copySource = {
       OfferCreatedDetails: 'Offer created',
       OfferCanceledDetails: 'Offer cancelled',
       OfferPriceGuardSet: 'Offer price guard updated',
+      OfferEscrowReturned: 'Offer amount returned to the position holder',
+      OfferRefundCollected: 'Held offer amount collected to vault',
+      OfferFullTariffConsentBy: 'Offer fee-tariff consent updated',
       UserVaultCreated: 'Vault created',
       TermsAccepted: 'Terms of use accepted',
       VaultRiskTierSet: 'Risk level changed',

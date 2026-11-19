@@ -53,6 +53,7 @@ import {
   type RecentLoansPage,
   type UnplacedCount,
 } from './indexer';
+import { isOwnOffer } from './offerHolder';
 import {
   signedOrderIsSingleValue,
   signedOrderTakerRefusal,
@@ -708,7 +709,7 @@ export function buildLadder(
       }
       lvl.size += offerRemaining(o);
       lvl.offers.push(o);
-      if (me && o.creator.toLowerCase() === me) lvl.own = true;
+      if (me && isOwnOffer(o, me)) lvl.own = true;
     }
     const levels = [...byRate.values()].sort((a, b) =>
       offerType === 0 ? a.rateBps - b.rateBps : b.rateBps - a.rateBps,

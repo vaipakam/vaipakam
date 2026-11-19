@@ -6,9 +6,13 @@
  *
  * Rows come from `useMyOffersFull` (union of offers the wallet
  * CREATED and offers whose position NFT it currently HOLDS — chain-
- * authoritative with the indexer as the redundancy leg). Both cancel
- * AND amend are gated on `offer.creator === wallet`: the contracts
- * authorize only the creator; held-not-created rows render read-only.
+ * authoritative with the indexer as the redundancy leg). Cancel,
+ * amend and the Full-tariff consent follow the offer's position token
+ * (#3744): the wallet that holds it may act, so a received offer is
+ * managed by its new holder and the creator's row turns read-only once
+ * the token has moved. Raising the escrow stays with the creator while it
+ * still holds the token (`OfferEscrowRaiseByCreatorOnly`). A row whose
+ * holder is unknown offers nothing.
  *
  * Amend pre-fills from a LIVE `getOffer` read, never the indexer row
  * — `modifyOffer` treats "supplied == existing" as "leave this
@@ -78,6 +82,7 @@ import {
 } from '../../lib/format';
 import { AmountPrecisionHint } from '../AmountPrecisionHint';
 import type { IndexedOffer } from '../../data/indexer';
+import { canRaiseOfferEscrow, isOfferHolder } from '../../data/offerHolder';
 
 const text = copy.desk.orders;
 
@@ -338,6 +343,9 @@ function AmendForm({
     allowance.data < growInfo.delta;
   // Allowance unknown on a grow → hold Save (fail closed) until read.
   const allowanceKnown = growInfo === null || allowance.data !== undefined;
+  // #3744 — only the creator, while it still holds the offer's token, may
+  // raise the escrow; any other holder may lower it or change its terms.
+  const raiseRefused = growInfo !== null && !canRaiseOfferEscrow(offer, address);
 
   /** Mirror of the OrderTicket submit preflights, scoped to the amend
    *  (Codex #1134 round-6 P2): `modifyOffer`'s `_assertMutableBy` gate
@@ -596,7 +604,12 @@ function AmendForm({
           {text.amendInvalid}
         </p>
       ) : null}
-      {growInfo && growInfo.decimals !== undefined ? (
+      {raiseRefused ? (
+        <p style={{ color: 'var(--danger)', fontSize: '0.85rem', marginTop: 8 }}>
+          {text.amendRaiseCreatorOnly}
+        </p>
+      ) : null}
+      {growInfo && growInfo.decimals !== undefined && !raiseRefused ? (
         <p className="muted" style={{ fontSize: '0.85rem', marginTop: 8 }}>
           {text.amendGrowNote(
             formatTokenAmountExact(growInfo.delta, growInfo.decimals),
@@ -626,7 +639,7 @@ function AmendForm({
             // Mirrors Save's validity gates (Codex #1134 round-7 P2) —
             // approval gas must never be spent while the form is in a
             // shape Save itself refuses.
-            disabled={busy !== null || !onSupportedChain || invalid || nonPositive}
+            disabled={busy !== null || !onSupportedChain || invalid || nonPositive || raiseRefused}
             onClick={() => void approve()}
           >
             {busy === 'approve' ? text.approving : text.approveFirst}
@@ -643,7 +656,8 @@ function AmendForm({
             invalid ||
             nonPositive ||
             !allowanceKnown ||
-            needsApproval
+            needsApproval ||
+            raiseRefused
           }
           title={!changed ? text.amendNoChange : undefined}
           onClick={() => void save()}
@@ -1081,8 +1095,9 @@ function OrderRow({ offer }: { offer: IndexedOffer }) {
   const [error, setError] = useState<string | null>(null);
   const feeEntitlement = useFeeEntitlementConfig();
 
-  const isCreator =
-    Boolean(address) && offer.creator.toLowerCase() === address!.toLowerCase();
+  // #3744 — every step on the offer belongs to its token's holder.
+  const holdsToken = isOfferHolder(offer, address);
+  const isHolder = holdsToken === true;
   // Codex #1412 r1 — while the feature is dark, an offer that was
   // armed BEFORE the switch went off still needs its clear path (a
   // strict armed offer is unfillable while dark). Read the live flag
@@ -1092,7 +1107,7 @@ function OrderRow({ offer }: { offer: IndexedOffer }) {
     queryKey: ['offerFullTariffArmed', readChain.chainId, offer.offerId],
     enabled:
       Boolean(publicClient) &&
-      isCreator &&
+      isHolder &&
       feeEntitlement.ready &&
       !feeEntitlement.enabled &&
       offer.assetType === AssetType.ERC20,
@@ -1111,7 +1126,7 @@ function OrderRow({ offer }: { offer: IndexedOffer }) {
   // only (rentals bear no tariff). Live-enabled feature ⇒ full form;
   // dark ⇒ only when the offer is actually armed (clear path).
   const canArmTariff =
-    isCreator &&
+    isHolder &&
     offer.assetType === AssetType.ERC20 &&
     (feeEntitlement.enabled || armedWhileDark.data === true);
   const isLending = offer.offerType === 0;
@@ -1136,7 +1151,7 @@ function OrderRow({ offer }: { offer: IndexedOffer }) {
   const cooldownDeadline = createdAt + Number(CANCEL_COOLDOWN_SECONDS);
   const rowExpiresAt =
     offer.expiresAt !== undefined && offer.expiresAt !== 0 ? offer.expiresAt : null;
-  const cooldownBase = isCreator && filled === 0n && createdAt > 0;
+  const cooldownBase = isHolder && filled === 0n && createdAt > 0;
   const blockedGiven = (nowSec: number | null): boolean =>
     cooldownBase &&
     (nowSec === null || // chain time unknown yet — hold (fail closed)
@@ -1283,7 +1298,7 @@ function OrderRow({ offer }: { offer: IndexedOffer }) {
             </>
           ) : null}
         </span>
-        {isCreator ? (
+        {isHolder ? (
           <span className="cluster" style={{ gap: 8 }}>
             <button
               type="button"
@@ -1316,10 +1331,12 @@ function OrderRow({ offer }: { offer: IndexedOffer }) {
             </button>
           </span>
         ) : (
-          <span className="badge badge-neutral">{text.heldNotCreated}</span>
+          <span className="badge badge-neutral">
+            {holdsToken === null ? text.holderUnknown : text.heldByOther}
+          </span>
         )}
       </div>
-      {amending && isCreator ? (
+      {amending && isHolder ? (
         <AmendForm offer={offer} onDone={() => setAmending(false)} />
       ) : null}
       {armingTariff && canArmTariff ? (

@@ -315,6 +315,12 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   OfferCanceledDetails: { label: 'Offer cancelled', category: 'offer', priority: 10 },
   // #3358 — the maker set, changed or cleared their offer's price-move guard.
   OfferPriceGuardSet: { label: 'Offer price guard updated', category: 'offer', priority: 20 },
+  // #3744 — an offer's escrow follows its position token. The return rides
+  // with the cancel, edit or fill that caused it, so it sits below them; the
+  // holder's own collect of a held amount is the action of its transaction.
+  OfferEscrowReturned: { label: 'Offer amount returned to the position holder', category: 'offer', priority: 40 },
+  OfferRefundCollected: { label: 'Held offer amount collected to vault', category: 'offer', priority: 60 },
+  OfferFullTariffConsentBy: { label: 'Offer fee-tariff consent updated', category: 'offer', priority: 15 },
   // Created lazily inside a wallet's first offer, accept or deposit, before
   // that action's own event: low, so the action represents the row (#2708 r1).
   UserVaultCreated: { label: 'Vault created', category: 'other', priority: 8 },

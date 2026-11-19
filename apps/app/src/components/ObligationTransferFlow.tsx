@@ -46,6 +46,7 @@ import { assertWalletNotSanctionedLive } from '../data/sanctions';
 import { isRevert } from '../data/liveLoanRow';
 import { useActiveOffers } from '../data/hooks';
 import type { IndexedLoan, IndexedOffer } from '../data/indexer';
+import { isOwnOffer } from '../data/offerHolder';
 import {
   formatBpsAsPercent,
   formatDurationDays,
@@ -89,7 +90,7 @@ function offerEligible(
   if (BigInt(o.collateralAmount) < live.collateralAmount) return false;
   if (chainNow + BigInt(o.durationDays) * 86_400n > loanEndTimeOf(live, chainNow))
     return false;
-  if (o.creator.toLowerCase() === myAddress.toLowerCase()) return false;
+  if (isOwnOffer(o, myAddress)) return false;
   if (o.expiresAt && BigInt(o.expiresAt) !== 0n && BigInt(o.expiresAt) <= chainNow)
     return false;
   return true;

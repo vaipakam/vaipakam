@@ -81,6 +81,7 @@ import {
   assertErc20BalanceLive,
 } from '../contracts/preflights';
 import type { IndexedOffer } from '../data/indexer';
+import { isOwnOffer } from '../data/offerHolder';
 import {
   OFFER_DURATION_BUCKETS_DAYS,
   initialOfferForm,
@@ -775,7 +776,7 @@ function RentNftFlow() {
       clear(copy.match.wrongSide);
       return;
     }
-    if (address && row.creator.toLowerCase() === address.toLowerCase()) {
+    if (isOwnOffer(row, address)) {
       clear(copy.match.ownOffer);
       return;
     }
@@ -1022,7 +1023,7 @@ function RentNftFlow() {
       }
       // Re-check at submit time: the wallet may have changed since the
       // listing was selected (deep link → connect the owner wallet).
-      if (selected.creator.toLowerCase() === address.toLowerCase()) {
+      if (isOwnOffer(selected, address)) {
         throw new Error(copy.match.ownOffer);
       }
       // Re-screen the CONNECTED wallet live — the checklist's

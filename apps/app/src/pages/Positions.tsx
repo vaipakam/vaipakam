@@ -26,7 +26,9 @@ import { captureTxError } from '../lib/errors';
 import { WindowedRowList } from '../lib/visibleWindow';
 import { assertRowActionStillValid } from '../contracts/preflights';
 import type { IndexedOffer } from '../data/indexer';
+import { isOfferHolder } from '../data/offerHolder';
 import { BatchCloseOutCard } from '../components/BatchCloseOutCard';
+import { OfferRefundsCard } from '../components/OfferRefundsCard';
 import { BatchSaleListingCard } from '../components/BatchSaleListingCard';
 import { loanSaleListingEnabled } from '../components/LoanSaleFlow';
 import { useMode } from '../app/ModeContext';
@@ -44,11 +46,13 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
   const meta = useTokenMeta(isRental ? undefined : offer.lendingAsset);
   const { onSupportedChain, address, readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
-  // cancelOffer authorizes only the CREATOR until the offer expires —
-  // a wallet merely holding a transferred offer NFT gets no cancel
-  // button (it would revert NotCreatorOrNotExpired).
-  const isCreator =
-    Boolean(address) && offer.creator.toLowerCase() === address!.toLowerCase();
+  // #3744 — cancelOffer follows the offer's position token: its holder may
+  // cancel while the offer is live, and the escrow goes back to that
+  // holder's vault. The creator of an offer whose token has moved gets no
+  // button (it would revert NotCreatorOrNotExpired), and neither does a row
+  // whose holder is unknown.
+  const holdsToken = isOfferHolder(offer, address);
+  const isHolder = holdsToken === true;
   const { write } = useDiamondWrite();
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
@@ -111,8 +115,12 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
             ) : null}
           </span>
         </span>
-        {!isCreator ? (
-          <span className="badge badge-neutral">{copy.positions.offerRow.held}</span>
+        {!isHolder ? (
+          <span className="badge badge-neutral">
+            {holdsToken === null
+              ? copy.positions.offerRow.holderUnknown
+              : copy.positions.offerRow.heldByOther}
+          </span>
         ) : (
           <button
             type="button"
@@ -124,7 +132,7 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
           </button>
         )}
       </div>
-      {isCreator && confirming ? (
+      {isHolder && confirming ? (
         // Cancelling is a write like any other — it gets the same
         // six-row receipt before the wallet prompt (unlocks the
         // committed side and burns the offer's position NFT).
@@ -269,6 +277,10 @@ export function Positions() {
           />
         ),
       )}
+
+      {/* #3744 — offer amounts held for an offer position this wallet
+          holds, confirmed live before Collect is offered. */}
+      {isConnected ? <OfferRefundsCard /> : null}
 
       {!isConnected ? (
         <EmptyState

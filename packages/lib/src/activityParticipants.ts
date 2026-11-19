@@ -136,6 +136,9 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['OfferCanceledDetails', ['creator']],
   // #3358 — the maker's price-move guard set, changed or cleared on their offer.
   ['OfferPriceGuardSet', ['creator']],
+  // #3744 — the wallet whose Full-tariff consent the offer carries (the
+  // zero address when it was withdrawn, which names no party).
+  ['OfferFullTariffConsentBy', ['by']],
   ['OfferSaleProceedsCredited', ['borrower']],
   ['CollateralSaleProceedsSplit', ['lender', 'borrower']],
   ['PostParallelSaleListing', ['borrower']],

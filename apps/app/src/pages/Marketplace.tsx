@@ -12,6 +12,7 @@ import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
 import { isAddressLike, useTokenMeta } from '../contracts/erc20';
 import { useActiveOffers } from '../data/hooks';
 import { fetchRecentLoans, type IndexedLoan, type IndexedOffer } from '../data/indexer';
+import { isOwnOffer } from '../data/offerHolder';
 import { offerAcceptPath } from '../data/offerLinks';
 import { OFFER_DURATION_BUCKETS_DAYS, OFFER_DURATION_DEFAULT_DAYS } from '../lib/offerSchema';
 import { exactUnitsOrNull, formatBpsAsPercent, formatDate, formatDurationDays, formatTokenAmountExact, shortAddress } from '../lib/format';
@@ -34,7 +35,7 @@ function TokenAmount({ asset, amount }: { asset: string; amount: string | bigint
 
 function OfferCard({ offer }: { offer: IndexedOffer }) {
   const { address } = useActiveChain();
-  const own = address?.toLowerCase() === offer.creator.toLowerCase();
+  const own = isOwnOffer(offer, address);
   const partial = BigInt(offer.amountFilled || '0') !== 0n;
   // #3205 — a refinance request whose borrower position moved since it was
   // posted can never be taken: said on the card, with no review button.

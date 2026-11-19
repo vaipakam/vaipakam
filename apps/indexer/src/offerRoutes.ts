@@ -96,6 +96,9 @@ interface OfferRow {
   collateral_amount_filled?: string | null;
   duration_days: number;
   position_token_id: string;
+  // #749 / #3744 — the holder of the offer's position token as the Transfer
+  // log last left it (seeded to the creator). Empty = never written.
+  creator_current_owner?: string | null;
   prepay_asset: string;
   use_full_term_interest: number;
   creator_fallback_consent: number;
@@ -133,6 +136,16 @@ interface OfferRow {
   first_seen_block: number;
   first_seen_at: number;
   updated_at: number;
+}
+
+/** #3744 — the offer token's recorded holder, lower-cased, or null when the
+ *  indexer holds no record of it. An offer minted without a position token
+ *  (`position_token_id` 0) is its creator's by definition. */
+export function offerHolderOf(row: Pick<OfferRow, 'creator' | 'position_token_id' | 'creator_current_owner'>): string | null {
+  if (String(row.position_token_id) === '0') return row.creator.toLowerCase();
+  const h = row.creator_current_owner;
+  if (typeof h !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(h)) return null;
+  return h.toLowerCase();
 }
 
 /** Map rows with their #3205 `positionFlow` verdicts (one batched read). */
@@ -173,6 +186,12 @@ function toJson(row: OfferRow, positionFlow: PositionFlowJson | null): Record<st
     collateralAmountFilled: row.collateral_amount_filled ?? null,
     durationDays: row.duration_days,
     positionTokenId: row.position_token_id,
+    // #3744 — who holds the offer's position token. That holder takes the
+    // creator's side of the loan, gets the escrow back and is the one who may
+    // edit or cancel the offer. null = the indexer has no record (an older
+    // database or a row not seeded yet), never "the creator". The zero
+    // address = the token is retired or burned: nobody holds it.
+    holder: offerHolderOf(row),
     prepayAsset: row.prepay_asset,
     useFullTermInterest: row.use_full_term_interest === 1,
     creatorRiskAndTermsConsent: row.creator_fallback_consent === 1,

@@ -64,6 +64,11 @@ const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<string, ActorRead
   // in activity_events with NULL refs and falls out of the
   // dashboard's offer-timeline + wallet-history queries.
   ['OfferModified', arg('creator')],
+  // #3744 — an offer's escrow goes back to the holder of its position token,
+  // and only that holder may collect what a step someone else triggered kept
+  // for the token. Filed under the holder, who is the wallet the money is for.
+  ['OfferEscrowReturned', arg('holder')],
+  ['OfferRefundCollected', arg('holder')],
   ['LoanInitiated', arg('borrower')],
   ['LoanRepaid', arg('repayer')],
   // T-092 Phase 3 (#503) Codex round-4 P2 — `caller` is the
