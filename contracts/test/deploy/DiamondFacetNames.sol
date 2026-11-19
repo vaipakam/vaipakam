@@ -155,7 +155,9 @@ abstract contract DiamondFacetNames {
     ///      reads, split off LenderIntentFacet the same way).
     ///      133 → 136 with `IntegratorFacet` (#3682), `StandingOfferCheckFacet`
     ///      (#3720) and `ReferralFacet` (#3722).
-    function cutFacetNames() internal pure returns (string[136] memory) {
+    ///      136 → 139 with `LenderCashOutFacet`, `LenderAdvanceFacet` and
+    ///      `LenderSideFacet` (#3760).
+    function cutFacetNames() internal pure returns (string[139] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -354,6 +356,9 @@ abstract contract DiamondFacetNames {
             "StandingOfferCheckFacet",
             // The referral share: binding, settings, quote, payment (#3722).
             "ReferralFacet",
+            "LenderCashOutFacet",
+            "LenderAdvanceFacet",
+            "LenderSideFacet",
             "SwapToRepayFacet",
             "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",

@@ -1094,6 +1094,27 @@
     "StandingInstructionFacet.previewInterestPayment(uint256)": {
       "class": "user",
       "why": "a keeper's eth_call preview of the pay-my-interest instruction: it always reverts with the skip reason it would record, so it changes nothing and no keeper is owed"
+    },
+    "LenderAdvanceFacet.setAdvanceSlot(address,address,uint8,bool,uint16)": {
+      "class": "user",
+      "why": "a slot owner sets or clears its own slot's consent to advance on loans; no step waits on it"
+    },
+    "LenderAdvanceFacet.takeAdvance(uint256,address,uint8,uint256,uint256,uint256,uint64)": {
+      "class": "user",
+      "why": "the lender position's holder borrows against its own position (refused for anyone else by the rule the entry runs); no step waits on it"
+    },
+    "LenderCashOutFacet.previewSellNow(uint256,address,struct:LenderCashOutFacet.CashSource[],uint256)": {
+      "class": "user",
+      "why": "a preview read by eth_call: it runs the fills and unwinds each, so nothing it does remains"
+    },
+    "LenderCashOutFacet.sellNow(uint256,struct:LenderCashOutFacet.CashSource[],uint256,uint256,uint64)": {
+      "class": "user",
+      "why": "the seller's own sale of its position, run through each route's own checks (the holder, or a keeper under the holder's sale mandate); no step waits on it"
+    },
+    "LenderSideFacet.payAdvance(uint256)": {
+      "class": "gap",
+      "issue": "#3760",
+      "why": "moves what was set aside for an advance into its slot owner's vault; the amounts are the same whoever calls and whenever, and the holder's own claim runs it too. The keeper pass is to be built, disarmed, by the keeper thread"
     }
   }
 }

@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibLenderSide} from "./LibLenderSide.sol";
 import {LibVaultOutflow} from "./LibVaultOutflow.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibSanctionedLock} from "./LibSanctionedLock.sol";
@@ -83,16 +84,18 @@ library LibCloseoutFreeze {
         // position holder (the intended claimant) is flagged, so the confirmed
         // freeze can't lift during an oracle outage.
         LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
-        s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
+        // #3760 — the holder's part is what the row keeps once an open
+        // advance has taken its own, and only that is reserved here.
+        uint256 kept = LibLenderSide.setFinal(s, loanId, LibVaipakam.ClaimInfo({
             asset: loan.principalAsset,
             amount: lenderDue,
             assetType: LibVaipakam.AssetType.ERC20,
             tokenId: 0,
             quantity: 0,
             claimed: false
-        });
+        }));
         LibEncumbrance.encumberLenderProceeds(
-            loanId, loan.lender, loan.principalAsset, lenderDue
+            loanId, loan.lender, loan.principalAsset, kept
         );
     }
 
@@ -461,10 +464,14 @@ library LibCloseoutFreeze {
         uint256 amount
     ) private {
         if (amount == 0) return;
-        s.heldForLender[loanId] += amount;
+        // #3760 — the one order of payment: an open advance on the position
+        // takes its part first (set aside under its own lien); the held store
+        // and its reservation carry the holder's part.
+        uint256 kept = LibLenderSide.addHeld(s, loanId, asset, amount);
+        if (kept == 0) return;
         LibSanctionedLock.recordFrozenClaimant(s, loanId, true, LibPositionNFT.ownerOf(loan.lenderTokenId));
-        LibEncumbrance.encumberActiveHeld(loanId, loan.lender, asset, amount);
-        emit LenderPaymentHeld(loanId, loan.lender, asset, amount);
+        LibEncumbrance.encumberActiveHeld(loanId, loan.lender, asset, kept);
+        emit LenderPaymentHeld(loanId, loan.lender, asset, kept);
     }
 
     /// @notice #3629 — hold an open-loan lender share whose funds sit in the

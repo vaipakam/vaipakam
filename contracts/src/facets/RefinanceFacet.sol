@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLenderSide} from "../libraries/LibLenderSide.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
@@ -454,14 +455,14 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
         );
 
         // Record lender's claimable. heldForLender handled by ClaimFacet.
-        s.lenderClaims[oldLoanId] = LibVaipakam.ClaimInfo({
+        uint256 lenderKept = LibLenderSide.setFinal(s, oldLoanId, LibVaipakam.ClaimInfo({
             asset: oldLoan.principalAsset,
             amount: lenderDue,
             assetType: LibVaipakam.AssetType.ERC20,
             tokenId: 0,
             quantity: 0,
             claimed: false
-        });
+        }));
         // #592 — refinance is a terminal close of the OLD loan: the old
         // lender's proceeds land in their (possibly transferred-away) vault and
         // are owed to the current old-position holder via the claim above.
@@ -470,7 +471,7 @@ contract RefinanceFacet is DiamondPausable, IVaipakamErrors {
         // is fixed for the now-terminal old loan. No-op for non-VPFI principal.
         if (oldLoan.principalAsset == s.vpfiToken) {
             LibEncumbrance.encumberLenderProceeds(
-                oldLoanId, oldLoan.lender, oldLoan.principalAsset, lenderDue
+                oldLoanId, oldLoan.lender, oldLoan.principalAsset, lenderKept
             );
         }
         // #998 S10 (#1006 / #1132) F2 — refinance terminally closes the OLD loan

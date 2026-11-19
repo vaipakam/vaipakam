@@ -6,6 +6,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ISettlementLegHost} from "../interfaces/ISettlementLegHost.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibLenderSide} from "./LibLenderSide.sol";
 import {LibRevert} from "./LibRevert.sol";
 import {LibDelivery} from "./LibDelivery.sol";
 import {LibProtectedAccount} from "./LibProtectedAccount.sol";
@@ -250,7 +251,9 @@ library LibFacet {
         // claim inside a voluntary sale, so it is refused unless the vault
         // received all of `amount`, and the claim names `amount`.
         LibDelivery.pushExact(asset, vault, amount);
-        LibVaipakam.storageSlot().heldForLender[loanId] += amount;
+        // #3760 — through the one lender-side writer. A sale never runs while
+        // an advance is open (the lock), so the store takes all of it.
+        LibLenderSide.addHeld(LibVaipakam.storageSlot(), loanId, asset, amount);
         // #597 Codex #672 P2 — tick the protocol-tracked vault balance, like the
         // sibling `depositFromPayerForLender` (via `vaultDepositERC20From`) does.
         // Without this the held-for-lender claim (`ClaimFacet` withdraws the FULL
@@ -374,7 +377,7 @@ library LibFacet {
             ),
             IVaipakamErrors.VaultDepositFailed.selector
         );
-        LibVaipakam.storageSlot().heldForLender[loanId] += amount;
+        LibLenderSide.addHeld(LibVaipakam.storageSlot(), loanId, asset, amount);
     }
 
     /// @dev #3669 — a forced or terminal settlement's treasury share, through

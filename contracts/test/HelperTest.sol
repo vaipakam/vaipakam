@@ -138,6 +138,9 @@ import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.s
 import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
 import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
 import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
+import {LenderCashOutFacet} from "../src/facets/LenderCashOutFacet.sol";
+import {LenderAdvanceFacet} from "../src/facets/LenderAdvanceFacet.sol";
+import {LenderSideFacet} from "../src/facets/LenderSideFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -1044,7 +1047,7 @@ contract HelperTest {
     /// @dev #3410 — the loan clock's disclosure, split off LoanFacet.
     ///      Mirrors `DeployDiamond._getLoanClockSelectors`.
     function getMarketLedgerFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](9);
         selectors[0] = MarketLedgerFacet.getMarketLedger.selector;
         selectors[1] = MarketLedgerFacet.getPairLedger.selector;
         selectors[2] = MarketLedgerFacet.getSlotLedger.selector;
@@ -1053,6 +1056,7 @@ contract HelperTest {
         selectors[5] = MarketLedgerFacet.onSlotFilled.selector;
         selectors[6] = MarketLedgerFacet.onSlotReleased.selector;
         selectors[7] = MarketLedgerFacet.onSlotLoanPrincipal.selector;
+        selectors[8] = MarketLedgerFacet.onSlotAdvance.selector;
     }
 
     /// @dev #3656 — mirrors `DeployDiamond._getInstantMarketSelectors`.
@@ -1075,8 +1079,9 @@ contract HelperTest {
 
     /// @dev #3656 §7 — mirrors `DeployDiamond._getInstantTakeoverSelectors`.
     function getInstantTakeoverFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](1);
+        selectors = new bytes4[](2);
         selectors[0] = InstantTakeoverFacet.takeoverInstant.selector;
+        selectors[1] = InstantTakeoverFacet.takeoverInstantFor.selector;
     }
 
     function getLoanClockFacetSelectors() public pure returns (bytes4[] memory selectors) {
@@ -1133,6 +1138,46 @@ contract HelperTest {
         selectors[5] = ReferralFacet.getReferralSettings.selector;
         selectors[6] = ReferralFacet.getReferralTotals.selector;
         selectors[7] = ReferralFacet.quoteBorrowerFee.selector;
+    }
+
+    /// @dev #3760 — mirrors `DeployDiamond._getLenderCashOutSelectors`.
+    function getLenderCashOutFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](6);
+        selectors[0] = bytes4(keccak256("MAX_SELL_NOW_SOURCES()"));
+        selectors[1] = LenderCashOutFacet.cashOptions.selector;
+        selectors[2] = LenderCashOutFacet.sellNow.selector;
+        selectors[3] = LenderCashOutFacet.previewSellNow.selector;
+        selectors[4] = LenderCashOutFacet.sellNowFill.selector;
+        selectors[5] = LenderCashOutFacet.simulateSellNowFill.selector;
+    }
+
+    /// @dev #3760 — mirrors `DeployDiamond._getLenderAdvanceSelectors`.
+    function getLenderAdvanceFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](12);
+        selectors[0] = bytes4(keccak256("ADVANCE_MAX_SHARE_BPS()"));
+        selectors[1] = bytes4(keccak256("ADVANCE_DEFAULT_SHARE_BPS()"));
+        selectors[2] = LenderAdvanceFacet.setAdvancesEnabled.selector;
+        selectors[3] = LenderAdvanceFacet.advancesEnabled.selector;
+        selectors[4] = LenderAdvanceFacet.setAdvanceSlot.selector;
+        selectors[5] = LenderAdvanceFacet.getAdvanceSlot.selector;
+        selectors[6] = LenderAdvanceFacet.advanceRefusals.selector;
+        selectors[7] = LenderAdvanceFacet.previewAdvance.selector;
+        selectors[8] = LenderAdvanceFacet.takeAdvance.selector;
+        selectors[9] = LenderAdvanceFacet.requireAdvanceHealth.selector;
+        selectors[10] = LenderAdvanceFacet.requireAdvanceParty.selector;
+        selectors[11] = LenderAdvanceFacet.requireAdvanceSlotLive.selector;
+    }
+
+    /// @dev #3760 — mirrors `DeployDiamond._getLenderSideSelectors`.
+    function getLenderSideFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](7);
+        selectors[0] = LenderSideFacet.bookArrival.selector;
+        selectors[1] = LenderSideFacet.bookFinal.selector;
+        selectors[2] = LenderSideFacet.settleAtTake.selector;
+        selectors[3] = LenderSideFacet.absorbArrival.selector;
+        selectors[4] = LenderSideFacet.payAdvance.selector;
+        selectors[5] = LenderSideFacet.repayAdvance.selector;
+        selectors[6] = LenderSideFacet.getAdvance.selector;
     }
 
     /// @dev #3669 — the refused settlement leg host. Mirrors
@@ -1595,11 +1640,12 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](5);
         selectors[0] = ConsolidationFacet.consolidateCollateralToHolder.selector;
         selectors[1] = ConsolidationFacet.consolidatePrincipalToHolder.selector;
         selectors[2] = ConsolidationFacet.eagerConsolidateToHolder.selector;
         selectors[3] = ConsolidationFacet.eagerConsolidateBothSides.selector;
+        selectors[4] = ConsolidationFacet.consolidateStrictInternal.selector;
     }
 
     function getDefaultedFacetSelectors()
@@ -1906,9 +1952,10 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](1);
+        selectors = new bytes4[](2);
         // #1922 / #3412 — the one bound direct-sale entry.
         selectors[0] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer.selector;
+        selectors[1] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOfferFor.selector; // #3760
         return selectors;
     }
 

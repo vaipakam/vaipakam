@@ -28,6 +28,34 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "takeoverInstantFor",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "incoming",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "slot",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "InstantTakenOver",
     "inputs": [
@@ -617,5 +645,10 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "UnauthorizedCrossFacetCall",
+    "inputs": []
   }
 ]

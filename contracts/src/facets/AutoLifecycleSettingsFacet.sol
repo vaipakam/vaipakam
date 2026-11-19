@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibAdvance} from "../libraries/LibAdvance.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibStandingInstructions} from "../libraries/LibStandingInstructions.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
@@ -335,6 +336,9 @@ contract AutoLifecycleSettingsFacet is DiamondReentrancyGuard, DiamondPausable {
         LibAuth.requirePositionManager(loan.lenderTokenId);
 
         _validateExtendCaps(enabled, minRateBps, maxRateBps, maxNewExpiry);
+        // #3760 — an advance needs a firm due date: no extension consent while
+        // the position carries one (LenderCashOutDesign §6.5).
+        if (enabled) LibAdvance.requireUnlocked(s, loanId);
 
         s.autoExtendLenderCaps[loanId] = LibVaipakam.AutoExtendCaps({
             enabled: enabled,

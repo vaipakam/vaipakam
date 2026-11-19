@@ -826,6 +826,7 @@ contract VaipakamVaultImplementation is
         if (
             c == VaultOutflowTypes.OutflowClass.PositionHolder || c == VaultOutflowTypes.OutflowClass.Counterparty
                 || c == VaultOutflowTypes.OutflowClass.Consolidation
+                || c == VaultOutflowTypes.OutflowClass.AdvanceToHolder
         ) {
             return _isHolderVault(o.to, o.positionToken);
         }
@@ -847,6 +848,7 @@ contract VaipakamVaultImplementation is
             c == VaultOutflowTypes.OutflowClass.ClaimCustody || c == VaultOutflowTypes.OutflowClass.PrincipalToBorrower
                 || c == VaultOutflowTypes.OutflowClass.MatchedCounterparty
                 || c == VaultOutflowTypes.OutflowClass.IntegratorShare
+                || c == VaultOutflowTypes.OutflowClass.AdvanceRepayment
         ) {
             return _isGenuineVault(o.to);
         }

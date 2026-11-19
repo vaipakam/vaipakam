@@ -272,6 +272,9 @@ export interface DeploymentFacets {
   integratorFacet?: HexAddress;
   standingOfferCheckFacet?: HexAddress;
   referralFacet?: HexAddress;
+  lenderCashOutFacet?: HexAddress;
+  lenderAdvanceFacet?: HexAddress;
+  lenderSideFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */

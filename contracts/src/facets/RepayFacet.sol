@@ -7,9 +7,10 @@ import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLenderSide} from "../libraries/LibLenderSide.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
-import {LibConsolidation} from "../libraries/LibConsolidation.sol";
+import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
@@ -226,8 +227,9 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
         // to `loan.borrower`. Consolidate each side whose NFT may have moved so
         // proceeds/collateral route to the current holders. Skip-not-block; a
         // FallbackPending loan is excluded on both sides (cured below).
-        LibConsolidation.consolidateToHolder(loanId, false, LibConsolidation.Ctx.Tier2CloseOut);
-        LibConsolidation.consolidateToHolder(loanId, true, LibConsolidation.Ctx.Tier2CloseOut);
+        // Both sides in one self-call to ConsolidationFacet (same order, same
+        // Tier2CloseOut rule), which inlines the orchestrator once (#658).
+        _consolidateBothSides(loanId);
         // FallbackPending is accepted: a full repay cures the failed
         // liquidation and clears the snapshot. The fallback custody is
         // already in the borrower vault under the lien (#1566 slice 2), so
@@ -379,14 +381,14 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // recorded centrally at the `Repaid` transition (terminalizeFromAny).
 
             // Record lender's claimable (principal + interest). heldForLender handled by ClaimFacet.
-            s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
+            uint256 lenderKept = LibLenderSide.setFinal(s, loanId, LibVaipakam.ClaimInfo({
                 asset: loan.principalAsset,
                 amount: plan.lenderDue,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
                 claimed: false
-            });
+            }));
             // #592 — the lender proceeds were just deposited into the
             // (possibly transferred-away) stored lender's vault and are owed to
             // the CURRENT lender-position holder via the claim above. VPFI is
@@ -396,7 +398,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // in `ClaimFacet._claimAsLenderImpl`). No-op for non-VPFI principal.
             if (!parked && loan.principalAsset == s.vpfiToken) {
                 LibEncumbrance.encumberLenderProceeds(
-                    loanId, loan.lender, loan.principalAsset, plan.lenderDue
+                    loanId, loan.lender, loan.principalAsset, lenderKept
                 );
             }
 
@@ -513,14 +515,14 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // recorded centrally at the `Repaid` transition (terminalizeFromAny).
 
             // Record lender's claimable rental fees. heldForLender handled by ClaimFacet.
-            s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
+            LibLenderSide.setFinal(s, loanId, LibVaipakam.ClaimInfo({
                 asset: loan.prepayAsset,
                 amount: lenderShare,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
                 claimed: false
-            });
+            }));
 
             // Borrower's refund (unused prepay + buffer) stays in their vault.
             // Order the subtraction as (prepay + buffer) − totalDue so it can't
@@ -686,8 +688,9 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
         // transferred lender NFT mis-routes unless the lender side also
         // consolidates. Run before `requireBorrower` (stored-anchor auth) so it
         // sees the consolidated holder. Skip-not-block.
-        LibConsolidation.consolidateToHolder(loanId, false, LibConsolidation.Ctx.Tier2CloseOut);
-        LibConsolidation.consolidateToHolder(loanId, true, LibConsolidation.Ctx.Tier2CloseOut);
+        // Both sides in one self-call to ConsolidationFacet (same order, same
+        // Tier2CloseOut rule), which inlines the orchestrator once (#658).
+        _consolidateBothSides(loanId);
         LibAuth.requireBorrower(loan);
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert InvalidLoanStatus();
@@ -1115,5 +1118,22 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             bytes4(0)
         );
         (lenderExtra, newTreasury, ) = abi.decode(ret, (uint256, uint256, uint256));
+    }
+
+    /// @dev Consolidate both sides to their current holders, by one self-call
+    ///      to ConsolidationFacet (#658), only when a position token has
+    ///      moved: with both holders still the stored parties the close-out
+    ///      consolidation changes nothing (it returns AlreadyConsolidated, or
+    ///      Skipped for a flagged holder), so the call is skipped.
+    function _consolidateBothSides(uint256 loanId) private {
+        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
+        if (
+            LibPositionNFT.holderOrZero(loan.lenderTokenId) != loan.lender
+                || LibPositionNFT.holderOrZero(loan.borrowerTokenId) != loan.borrower
+        ) {
+            LibFacet.crossFacetCall(
+                abi.encodeCall(ConsolidationFacet.eagerConsolidateBothSides, (loanId)), bytes4(0)
+            );
+        }
     }
 }

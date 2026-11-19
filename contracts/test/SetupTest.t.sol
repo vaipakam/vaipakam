@@ -65,6 +65,9 @@ import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.s
 import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
 import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
 import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
+import {LenderCashOutFacet} from "../src/facets/LenderCashOutFacet.sol";
+import {LenderAdvanceFacet} from "../src/facets/LenderAdvanceFacet.sol";
+import {LenderSideFacet} from "../src/facets/LenderSideFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {TestOfferFloor} from "./helpers/TestOfferFloor.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -692,7 +695,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](137);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](140);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1308,6 +1311,22 @@ contract SetupTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(ReferralFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getReferralFacetSelectors()
+        });
+        // #3760 — lender cash-out: the door, the advance, the order of payment.
+        cuts[137] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(LenderCashOutFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getLenderCashOutFacetSelectors()
+        });
+        cuts[138] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(LenderAdvanceFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getLenderAdvanceFacetSelectors()
+        });
+        cuts[139] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(LenderSideFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getLenderSideFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).

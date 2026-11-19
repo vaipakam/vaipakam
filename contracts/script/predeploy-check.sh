@@ -243,6 +243,24 @@ else
   FAIL=1
 fi
 
+# ── 1d5. Lender-side store writer guard ───────────────────────────────
+# What a loan's lender side receives rests in two stores (heldForLender,
+# lenderClaims), written only inside LibLenderSide, which books an open
+# advance's part of every arrival and settles it before every take (#3760).
+# Same AST artifacts as 1d.
+echo
+echo "[predeploy 1d5/4] lender-side store writer guard (#3760)"
+if [ "$BUILD_OK" -ne 1 ] || [ ! -d "$SCRIPT_DIR/../out-measured-delivery" ]; then
+  echo "  ✗ skipped — no AST artifacts to read (step 1 or 1c failed)" >&2
+  FAIL=1
+elif node "$SCRIPT_DIR/check-lender-side-writer.mjs"; then
+  : # the script prints its own lines
+else
+  echo "  ✗ lender-side store writer guard failed — add to and take from" >&2
+  echo "    heldForLender / lenderClaims only through LibLenderSide (see above)" >&2
+  FAIL=1
+fi
+
 # ── 1d3. Raw payout guard ─────────────────────────────────────────────
 # The Diamond pays users only through the outflow policy or LibDelivery, the
 # two places protected mode's delay is applied (#3710 §3.8, #3568). Any other

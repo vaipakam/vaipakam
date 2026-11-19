@@ -4,9 +4,11 @@ pragma solidity ^0.8.29;
 
 import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLenderSide} from "../libraries/LibLenderSide.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
+import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
@@ -294,12 +296,15 @@ contract EarlyWithdrawalFacet is
         // D1/D2). `Tier1Strict` reverts on a sanctioned current holder — matching
         // this entry's Tier-1 gate. A position carrying unreserved held-for-lender
         // VPFI can't be consolidated (#597) and therefore can't be sold yet.
+        // Run on ConsolidationFacet (the orchestrator is inlined once there,
+        // the #658 pattern), so this facet keeps its EIP-170 room.
         if (
-            LibConsolidation.consolidateToHolder(
-                loanId,
-                /* isLenderSide */ true,
-                LibConsolidation.Ctx.Tier1Strict
-            ) == LibConsolidation.Result.Skipped
+            abi.decode(
+                LibFacet.crossFacetCallReturn(
+                    abi.encodeCall(ConsolidationFacet.consolidateStrictInternal, (loanId, true)), bytes4(0)
+                ),
+                (uint8)
+            ) == uint8(LibConsolidation.Result.Skipped)
         ) {
             revert SalePositionNotConsolidatable();
         }
@@ -967,14 +972,14 @@ contract EarlyWithdrawalFacet is
             );
         }
         // Set claimed=true so neither party needs to (or can) claim.
-        s.lenderClaims[tempLoanId] = LibVaipakam.ClaimInfo({
+        LibLenderSide.setFinal(s, tempLoanId, LibVaipakam.ClaimInfo({
             asset: tempLoan.principalAsset,
             amount: 0,
             assetType: LibVaipakam.AssetType.ERC20,
             tokenId: 0,
             quantity: 0,
             claimed: true
-        });
+        }));
         s.borrowerClaims[tempLoanId] = LibVaipakam.ClaimInfo({
             asset: tempLoan.collateralAsset,
             amount: 0,

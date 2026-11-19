@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibRevert} from "../libraries/LibRevert.sol";
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLenderSide} from "../libraries/LibLenderSide.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
@@ -495,7 +496,9 @@ contract PrecloseOffsetFacet is
             ),
             bytes4(0)
         );
-        s.heldForLender[loanId] += lenderTotal;
+        // #3760 — through the one lender-side writer: an open advance on the
+        // position takes its part first; the rest is held and reserved.
+        lenderTotal = LibLenderSide.addHeld(s, loanId, payAssetOffset, lenderTotal);
         // #597 — reserve the held VPFI against the old lender's unstake path for
         // the (now brief) window between this write and `claimAsLender`. VPFI is
         // the one principal asset with a user-facing tracked-balance exit; no-op

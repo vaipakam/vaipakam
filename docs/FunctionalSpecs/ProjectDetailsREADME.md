@@ -3343,6 +3343,88 @@ If the lender does not find a suitable exit path, the lender may simply keep the
 - No transfer of lender rights occurs.
 - No sale discount or sale shortfall applies beyond the platform’s normal repayment/default rules.
 
+### Getting cash from a loan you made: one door, and an advance the loan repays
+
+A lender who wants money before a loan ends is offered one action, "Get cash from
+this loan", rather than a list of route names. It answers with at most three
+choices, after stating first that leaving the loan alone gives nothing up.
+
+- **Sell now.** The position is sold this minute to the best of the buyers the
+  interface found (an Auto-lend slot taking over at face value, or a standing buy
+  offer; an Auto-lend slot buying at a price joins when that sale exists). Each
+  buyer is tried in the seller's order through that route's own rules, a buyer
+  that refuses is skipped and reported with its reason, and the whole step fails
+  only when the seller would receive less than the least they stated. At most
+  eight buyers per step. Until a lender side can be divided, a position is sold
+  whole. A preview runs the same fills and reports exactly what the step would
+  move.
+- **Sell at my price.** The existing listing.
+- **Borrow against it.** An advance (below).
+
+One read answers, for a given lender position token and the wallet that would
+act, whether each choice is open now, with every reason it is not, as the routes
+themselves would raise it; which route already stands on the position, if any;
+the largest part that may be sold; and the largest advance the rules allow. A
+position has at most one open route at a time: a listing, a borrower's offset
+and an advance exclude one another.
+
+**The advance.** An Auto-lend slot whose owner has consented to advance on loans
+pays the holder part of the loan's outstanding principal, at the slot's own
+lowest rate, fixed, by time on what is still owed. From then on everything the
+loan pays its lender side goes first to the advance's interest, then to the
+advance, and only then to the holder. The holder may also repay it from their
+own vault, any amount at any time. There is no date for the holder to meet, no
+health rule on the holder and no liquidation of the holder; the token never
+leaves them. The advance is owed by the position, never by the person, and the
+position token is never collateral.
+
+- **Who gives one:** a slot whose owner turned on the consent, with their own
+  largest share of a loan's outstanding principal (70% unless they set another,
+  never above 85%). The consent ages like the slot's other terms before it is
+  used. The slot's lend-until time, smallest fill, exposure and capital apply.
+- **Which loans:** active, before the due date, both assets ERC-20 and top
+  tier, interest owed by time, passing the new-loan health test at that moment;
+  the caller holds the lender token; nothing is held unclaimed for the
+  position, the token is outside its transfer wait, and no other route is open;
+  no seller claim of an earlier sale is open; renewal and extension are off; the
+  loan's grace end is inside the slot's lend-until time; the slot owner is
+  neither the loan's borrower nor its holder; neither party is flagged, locked
+  or without the current Terms; and the platform's switch for advances is on.
+  Each refusal is named.
+- **How much and at what cost:** at least the slot's smallest fill, and the
+  advance plus its interest to the end of the loan's grace period may not exceed
+  the slot's share of the outstanding principal, so repayment of the principal
+  alone covers it. The ordinary initiation fee of a loan of that amount for the
+  time to the due date is taken from the advance, and the treasury takes its
+  ordinary cut of the advance's interest. The holder states the slot, the
+  amount, the highest rate accepted, the least they must receive and a
+  deadline. One advance per position.
+- **Interest stops when money arrives**, not when someone moves it: the
+  advance's part of every arrival is booked as paid in the same step and set
+  aside for the slot owner, where neither the holder nor a roll can take it.
+  Moving what is set aside to the slot owner's vault is a step anyone may take
+  at any time, and its timing changes no amount.
+- **Booking never refuses.** It runs inside the borrower's own steps
+  (repayment, default, liquidation) and never makes one of them fail: a flagged
+  slot owner has their part held for them, and an arrival smaller than what is
+  owed is booked for what it is.
+- **While it is open** the position cannot be transferred, sold, listed, taken
+  over or renewed or extended, its money is not rolled or re-committed, and it
+  is not a source for a takeover or a backstop purchase. The borrower sees no
+  change.
+- **How it ends:** when the loan's payments or the holder's repayments cover it,
+  the lock lifts. If the loan ends and its lender side receives less than is
+  owed, the advance takes all of it and closes with the shortfall stated; the
+  holder owes nothing more. If the loan ends in a fallback with collateral in
+  kind, nothing is split before the one retry of the failed sale; if that retry
+  does not sell, the collateral is split at once at the fallback's own rate,
+  and where the fallback had no price the advance takes all of it.
+- **Payments to the slot owner** are their own kind of vault movement, outside
+  the holder's protection delay. A flagged holder does not stop them; a flagged
+  slot owner's payments are held for them.
+- An advance is outside the shortfall reserve, earns no usage reward and counts
+  for no fee discount.
+
 ### Implementation Checklist for Preclose and Early-Withdrawal Flows
 
 For clarity and implementation consistency, every preclose or early-withdrawal option must define all of the following before coding:

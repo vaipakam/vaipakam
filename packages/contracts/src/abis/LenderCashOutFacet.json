@@ -1,0 +1,665 @@
+[
+  {
+    "type": "function",
+    "name": "MAX_SELL_NOW_SOURCES",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "cashOptions",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "o",
+        "type": "tuple",
+        "internalType": "struct LenderCashOutFacet.CashOptions",
+        "components": [
+          {
+            "name": "loanId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "holder",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "sellNow",
+            "type": "tuple",
+            "internalType": "struct LenderCashOutFacet.ChoiceVerdict",
+            "components": [
+              {
+                "name": "open",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "refusals",
+                "type": "tuple[]",
+                "internalType": "struct SaleExitVerdictFacet.SaleRefusal[]",
+                "components": [
+                  {
+                    "name": "reason",
+                    "type": "bytes",
+                    "internalType": "bytes"
+                  },
+                  {
+                    "name": "reopensAt",
+                    "type": "uint64",
+                    "internalType": "uint64"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "sellAtMyPrice",
+            "type": "tuple",
+            "internalType": "struct LenderCashOutFacet.ChoiceVerdict",
+            "components": [
+              {
+                "name": "open",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "refusals",
+                "type": "tuple[]",
+                "internalType": "struct SaleExitVerdictFacet.SaleRefusal[]",
+                "components": [
+                  {
+                    "name": "reason",
+                    "type": "bytes",
+                    "internalType": "bytes"
+                  },
+                  {
+                    "name": "reopensAt",
+                    "type": "uint64",
+                    "internalType": "uint64"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "borrowAgainstIt",
+            "type": "tuple",
+            "internalType": "struct LenderCashOutFacet.ChoiceVerdict",
+            "components": [
+              {
+                "name": "open",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "refusals",
+                "type": "tuple[]",
+                "internalType": "struct SaleExitVerdictFacet.SaleRefusal[]",
+                "components": [
+                  {
+                    "name": "reason",
+                    "type": "bytes",
+                    "internalType": "bytes"
+                  },
+                  {
+                    "name": "reopensAt",
+                    "type": "uint64",
+                    "internalType": "uint64"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "openRoute",
+            "type": "uint8",
+            "internalType": "enum LenderCashOutFacet.OpenRoute"
+          },
+          {
+            "name": "sourceKinds",
+            "type": "uint8[]",
+            "internalType": "enum LenderCashOutFacet.SourceKind[]"
+          },
+          {
+            "name": "maxSellPrincipal",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "advanceCeiling",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "previewSellNow",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "sources",
+        "type": "tuple[]",
+        "internalType": "struct LenderCashOutFacet.CashSource[]",
+        "components": [
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum LenderCashOutFacet.SourceKind"
+          },
+          {
+            "name": "slotOwner",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "slot",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "offerId",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "maxHeld",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "outcomes",
+        "type": "tuple[]",
+        "internalType": "struct LenderCashOutFacet.SourceOutcome[]",
+        "components": [
+          {
+            "name": "filled",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "received",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "reason",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "sellNow",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "sources",
+        "type": "tuple[]",
+        "internalType": "struct LenderCashOutFacet.CashSource[]",
+        "components": [
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum LenderCashOutFacet.SourceKind"
+          },
+          {
+            "name": "slotOwner",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "slot",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "offerId",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "least",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxHeld",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "validUntil",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "received",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "outcomes",
+        "type": "tuple[]",
+        "internalType": "struct LenderCashOutFacet.SourceOutcome[]",
+        "components": [
+          {
+            "name": "filled",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "received",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "reason",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "sellNowFill",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "seller",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "src",
+        "type": "tuple",
+        "internalType": "struct LenderCashOutFacet.CashSource",
+        "components": [
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum LenderCashOutFacet.SourceKind"
+          },
+          {
+            "name": "slotOwner",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "slot",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "offerId",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "least",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxHeld",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "got",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "simulateSellNowFill",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "seller",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "src",
+        "type": "tuple",
+        "internalType": "struct LenderCashOutFacet.CashSource",
+        "components": [
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum LenderCashOutFacet.SourceKind"
+          },
+          {
+            "name": "slotOwner",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "slot",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "offerId",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "least",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxHeld",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "SellNowFilled",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "seller",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "kind",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum LenderCashOutFacet.SourceKind"
+      },
+      {
+        "name": "index",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "received",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "least",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SellNowSourceSkipped",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "index",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "kind",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum LenderCashOutFacet.SourceKind"
+      },
+      {
+        "name": "reason",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "DeadlinePassed",
+    "inputs": [
+      {
+        "name": "validUntil",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DeadlineRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ERC721NonexistentToken",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "EnforcedPause",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotLenderPosition",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PartSaleNotAvailable",
+    "inputs": [
+      {
+        "name": "asked",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "principal",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PositionNFTNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReentrancyGuardReentrantCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SellNowBelowLeast",
+    "inputs": [
+      {
+        "name": "received",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "least",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SellNowSimulated",
+    "inputs": [
+      {
+        "name": "received",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SellNowSourceCount",
+    "inputs": [
+      {
+        "name": "count",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SourceKindNotAvailable",
+    "inputs": [
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "enum LenderCashOutFacet.SourceKind"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SourceNeedsHolder",
+    "inputs": [
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "enum LenderCashOutFacet.SourceKind"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnauthorizedCrossFacetCall",
+    "inputs": []
+  }
+]

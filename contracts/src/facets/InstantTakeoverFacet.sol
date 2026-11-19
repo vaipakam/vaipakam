@@ -21,6 +21,7 @@ import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibNewLoanRisk} from "../libraries/LibNewLoanRisk.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {SaleExitVerdictFacet} from "./SaleExitVerdictFacet.sol";
 import {LenderIntentFacet} from "./LenderIntentFacet.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
@@ -110,6 +111,28 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
         whenNotPaused
     {
         LibTiming.requireDeadline(validUntil);
+        _takeover(msg.sender, loanId, incoming, slot);
+    }
+
+    /**
+     * @notice #3760 — the takeover run by the Diamond for `caller`, as one
+     *         source of `LenderCashOutFacet.sellNow` (and its preview).
+     * @dev    `address(this)`-gated: only the cash-out door reaches it, after
+     *         taking the Diamond's reentrancy guard. `caller` is the door's
+     *         caller and is authorised exactly as on {takeoverInstant} (the
+     *         holder, or a keeper holding the holder's mandate). The body is
+     *         the one takeover, with every check.
+     */
+    function takeoverInstantFor(address caller, uint256 loanId, address incoming, uint8 slot)
+        external
+        whenNotPaused
+    {
+        if (msg.sender != address(this)) revert IVaipakamErrors.UnauthorizedCrossFacetCall();
+        _takeover(caller, loanId, incoming, slot);
+    }
+
+    /// @dev The takeover body. `caller` is who started it.
+    function _takeover(address caller, uint256 loanId, address incoming, uint8 slot) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (!s.instantCfg.enabled) revert InstantMarketFacet.InstantMarketDisabled();
         LibVaipakam.Loan storage loan = s.loans[loanId];
@@ -122,7 +145,7 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
             // early-withdrawal mandate for this loan (InstantMarketDesign §7).
             // The proceeds always reach the holder's vault, so the direct-sale
             // exit rule is read for the holder; the keeper is screened itself.
-            address actor = msg.sender;
+            address actor = caller;
             if (
                 actor != holder &&
                 LibAuth.keeperMayActFor(actor, LibVaipakam.KEEPER_ACTION_INIT_EARLY_WITHDRAW, loanId, holder)

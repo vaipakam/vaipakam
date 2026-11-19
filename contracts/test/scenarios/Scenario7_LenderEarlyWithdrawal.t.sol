@@ -38,6 +38,7 @@ import {AddCollateralFacet} from "../../src/facets/AddCollateralFacet.sol";
 import {DiamondCutFacet} from "../../src/facets/DiamondCutFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {FallbackCustodyFacet} from "../../src/facets/FallbackCustodyFacet.sol";
+import {ConsolidationFacet} from "../../src/facets/ConsolidationFacet.sol";
 import {SwapAttemptFacet} from "../../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../../src/facets/NumeraireValueFacet.sol";
@@ -156,7 +157,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](33);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](34);
         // #1503 item 12 — the reward-migration hook is ATOMIC with the sale
         // settlement now, so `transferLenderRewardEntry` must resolve here;
         // unrouted it would bubble as the deploy-drift failure and revert
@@ -298,6 +299,13 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
             facetAddress: ArtifactDeploy.deploy(type(VPFIDiscountAccumulatorFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
+        });
+        // #3760 — the sale listing consolidates the lender side through a
+        // self-call to ConsolidationFacet, so this Diamond routes it.
+        cuts[33] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(ConsolidationFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getConsolidationFacetSelectors()
         });
         cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
         cuts = LibTestTermsCut.withTermsHost(cuts); // #3734

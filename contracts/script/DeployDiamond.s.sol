@@ -80,6 +80,9 @@ import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.s
 import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
 import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
 import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
+import {LenderCashOutFacet} from "../src/facets/LenderCashOutFacet.sol";
+import {LenderAdvanceFacet} from "../src/facets/LenderAdvanceFacet.sol";
+import {LenderSideFacet} from "../src/facets/LenderSideFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {VaultProtection} from "../src/vault/VaultProtection.sol";
@@ -630,6 +633,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
             StandingOfferCheckFacet(ArtifactDeploy.deploy(type(StandingOfferCheckFacet).name));
         // #3722 — the referral binding, settings, quote and payment.
         ReferralFacet referralFacet = ReferralFacet(ArtifactDeploy.deploy(type(ReferralFacet).name));
+        // #3760 — the lender cash-out door, the advance, and the one order
+        // of payment for a lender side carrying an advance.
+        LenderCashOutFacet lenderCashOutFacet = LenderCashOutFacet(ArtifactDeploy.deploy(type(LenderCashOutFacet).name));
+        LenderAdvanceFacet lenderAdvanceFacet = LenderAdvanceFacet(ArtifactDeploy.deploy(type(LenderAdvanceFacet).name));
+        LenderSideFacet lenderSideFacet = LenderSideFacet(ArtifactDeploy.deploy(type(LenderSideFacet).name));
         // #1841 - the one sale-exit verdict: the lender exit chooser's view and
         // the guard both sale entries self-call.
         SaleExitVerdictFacet saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
@@ -676,7 +684,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](136);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](139);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -820,6 +828,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[133] = _buildCut(address(integratorFacet), _getIntegratorSelectors());
         cuts[134] = _buildCut(address(standingOfferCheckFacet), _getStandingOfferCheckSelectors());
         cuts[135] = _buildCut(address(referralFacet), _getReferralSelectors());
+        // #3760 — lender cash-out.
+        cuts[136] = _buildCut(address(lenderCashOutFacet), _getLenderCashOutSelectors());
+        cuts[137] = _buildCut(address(lenderAdvanceFacet), _getLenderAdvanceSelectors());
+        cuts[138] = _buildCut(address(lenderSideFacet), _getLenderSideSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1602,6 +1614,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("integratorFacet", address(integratorFacet));
         Deployments.writeFacet("standingOfferCheckFacet", address(standingOfferCheckFacet));
         Deployments.writeFacet("referralFacet", address(referralFacet));
+        Deployments.writeFacet("lenderCashOutFacet", address(lenderCashOutFacet));
+        Deployments.writeFacet("lenderAdvanceFacet", address(lenderAdvanceFacet));
+        Deployments.writeFacet("lenderSideFacet", address(lenderSideFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
         Deployments.writeFacet("refinancePayoffFacet", address(refinancePayoffFacet));
@@ -2454,6 +2469,51 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[7] = ReferralFacet.quoteBorrowerFee.selector;
     }
 
+    /// @dev Selectors for `LenderCashOutFacet` (#3760) — the one read of a
+    ///      lender's cash choices, "Sell now", its preview, and the
+    ///      Diamond-internal fill entries.
+    function _getLenderCashOutSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](6);
+        s[0] = bytes4(keccak256("MAX_SELL_NOW_SOURCES()"));
+        s[1] = LenderCashOutFacet.cashOptions.selector;
+        s[2] = LenderCashOutFacet.sellNow.selector;
+        s[3] = LenderCashOutFacet.previewSellNow.selector;
+        s[4] = LenderCashOutFacet.sellNowFill.selector;
+        s[5] = LenderCashOutFacet.simulateSellNowFill.selector;
+    }
+
+    /// @dev Selectors for `LenderAdvanceFacet` (#3760) — the advance's
+    ///      consent, switch, admission rule, preview and opening step.
+    function _getLenderAdvanceSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](12);
+        s[0] = bytes4(keccak256("ADVANCE_MAX_SHARE_BPS()"));
+        s[1] = bytes4(keccak256("ADVANCE_DEFAULT_SHARE_BPS()"));
+        s[2] = LenderAdvanceFacet.setAdvancesEnabled.selector;
+        s[3] = LenderAdvanceFacet.advancesEnabled.selector;
+        s[4] = LenderAdvanceFacet.setAdvanceSlot.selector;
+        s[5] = LenderAdvanceFacet.getAdvanceSlot.selector;
+        s[6] = LenderAdvanceFacet.advanceRefusals.selector;
+        s[7] = LenderAdvanceFacet.previewAdvance.selector;
+        s[8] = LenderAdvanceFacet.takeAdvance.selector;
+        s[9] = LenderAdvanceFacet.requireAdvanceHealth.selector;
+        s[10] = LenderAdvanceFacet.requireAdvanceParty.selector;
+        s[11] = LenderAdvanceFacet.requireAdvanceSlotLive.selector;
+    }
+
+    /// @dev Selectors for `LenderSideFacet` (#3760) — the order of payment's
+    ///      Diamond-internal booking entries, the advance's payment to its
+    ///      slot owner, the holder's repayment and the read.
+    function _getLenderSideSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](7);
+        s[0] = LenderSideFacet.bookArrival.selector;
+        s[1] = LenderSideFacet.bookFinal.selector;
+        s[2] = LenderSideFacet.settleAtTake.selector;
+        s[3] = LenderSideFacet.absorbArrival.selector;
+        s[4] = LenderSideFacet.payAdvance.selector;
+        s[5] = LenderSideFacet.repayAdvance.selector;
+        s[6] = LenderSideFacet.getAdvance.selector;
+    }
+
     /// @dev Selectors for `RecoveryClawbackFacet` (#3246 part 2) — the
     ///      clawback to a protected account's recovery address and the
     ///      recovered account's sweep.
@@ -2678,7 +2738,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      ledger (§8, #3714): its views, the roll, and the Diamond-internal
     ///      slot hosts.
     function _getMarketLedgerSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](8);
+        s = new bytes4[](9);
         s[0] = MarketLedgerFacet.getMarketLedger.selector;
         s[1] = MarketLedgerFacet.getPairLedger.selector;
         s[2] = MarketLedgerFacet.getSlotLedger.selector;
@@ -2687,6 +2747,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[5] = MarketLedgerFacet.onSlotFilled.selector;
         s[6] = MarketLedgerFacet.onSlotReleased.selector;
         s[7] = MarketLedgerFacet.onSlotLoanPrincipal.selector;
+        s[8] = MarketLedgerFacet.onSlotAdvance.selector; // #3760
     }
 
     /// @dev Selectors for `InstantMarketFacet` — the instant market (#3656):
@@ -2712,8 +2773,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev Selectors for `InstantTakeoverFacet` — a lender's takeover at
     ///      face value into another lender's slot.
     function _getInstantTakeoverSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
+        s = new bytes4[](2);
         s[0] = InstantTakeoverFacet.takeoverInstant.selector;
+        // #3760 — the cash-out door's Diamond-internal takeover fill.
+        s[1] = InstantTakeoverFacet.takeoverInstantFor.selector;
     }
 
     function _getLenderIntentFacetSelectors() internal pure returns (bytes4[] memory s) {
@@ -2896,11 +2959,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// #594 — standalone holder-only consolidation entry points.
     function _getConsolidationFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](5);
         s[0] = ConsolidationFacet.consolidateCollateralToHolder.selector;
         s[1] = ConsolidationFacet.consolidatePrincipalToHolder.selector;
         s[2] = ConsolidationFacet.eagerConsolidateToHolder.selector;
         s[3] = ConsolidationFacet.eagerConsolidateBothSides.selector;
+        s[4] = ConsolidationFacet.consolidateStrictInternal.selector; // #3760
     }
 
     function _getDefaultedSelectors() internal pure returns (bytes4[] memory s) {
@@ -3214,8 +3278,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      its EIP-170 headroom back. #1922 (#1503 item 6) bound the sale to
     ///      the seller's reviewed quote; #3412 made that the only entry.
     function _getEarlyWithdrawalDirectSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
+        s = new bytes4[](2);
         s[0] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer.selector;
+        // #3760 — the cash-out door's Diamond-internal direct-sale fill.
+        s[1] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOfferFor.selector;
     }
 
     function _getPartialWithdrawalSelectors() internal pure returns (bytes4[] memory s) {

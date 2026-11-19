@@ -461,6 +461,31 @@ library LibEncumbrance {
         revert LoanReserveKindUnknown(kind);
     }
 
+    // ─── #3760 — an advance's set-aside, in the lender side's vault ───────
+
+    /// @notice Reserve `amount` of `asset` in `owner`'s vault for loan
+    ///         `loanId`'s advance (LenderCashOutDesign §6.4): money that
+    ///         arrived for the lender position and was booked to the advance,
+    ///         waiting to move to the slot owner. Not the holder's: no claim,
+    ///         roll or re-commit reaches it, and the vault's free balance
+    ///         excludes it. The per-loan figure lives on the advance record;
+    ///         this ticks only the shared aggregate. No fee-tier exclusion:
+    ///         the advance is a principal-asset debt of the position, not a
+    ///         party's VPFI.
+    function lienAdvanceSetAside(address owner, address asset, uint256 amount) internal {
+        if (amount == 0) return;
+        LibVaipakam.storageSlot().encumbered[owner][asset][0] += amount;
+    }
+
+    /// @notice Release `amount` of an advance's set-aside reservation from
+    ///         `owner`'s aggregate, for its payout to the slot owner or its
+    ///         move with the position (consolidation re-liens it under the new
+    ///         owner).
+    function unlienAdvanceSetAside(address owner, address asset, uint256 amount) internal {
+        if (amount == 0) return;
+        _decrementAggregate(owner, asset, 0, amount);
+    }
+
     // ─── #998 S10 (#1006) Class B — ACTIVE-loan held reservation ─────────────
     //
     // A DEDICATED per-loan reservation for a mid-loan Class B lender-share park

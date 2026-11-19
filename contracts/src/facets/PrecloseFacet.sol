@@ -6,6 +6,7 @@ import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibOfferPriceGuard} from "../libraries/LibOfferPriceGuard.sol";
 import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLenderSide} from "../libraries/LibLenderSide.sol";
 import {LibPriceRead} from "../libraries/LibPriceRead.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
@@ -341,20 +342,20 @@ contract PrecloseFacet is
             );
 
             // Record lender's claimable (principal + interest)
-            s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
+            uint256 lenderKept = LibLenderSide.setFinal(s, loanId, LibVaipakam.ClaimInfo({
                 asset: loan.principalAsset,
                 amount: plan.lenderDue,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
                 claimed: false
-            });
+            }));
             // #592 — reserve VPFI lender proceeds against the unstake path
             // until the current holder claims (released in ClaimFacet). No-op
             // for non-VPFI principal.
             if (loan.principalAsset == s.vpfiToken) {
                 LibEncumbrance.encumberLenderProceeds(
-                    loanId, loan.lender, loan.principalAsset, plan.lenderDue
+                    loanId, loan.lender, loan.principalAsset, lenderKept
                 );
             }
 
@@ -500,14 +501,14 @@ contract PrecloseFacet is
             );
 
             // Record lender's claimable (rental fees in prepayAsset)
-            s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
+            LibLenderSide.setFinal(s, loanId, LibVaipakam.ClaimInfo({
                 asset: loan.prepayAsset,
                 amount: lenderShare,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
                 claimed: false
-            });
+            }));
 
             // Refund unused prepay + buffer to borrower (stays in borrower's vault).
             // Pass-2 A1/D5 (#1189) — order as (prepay + buffer) − totalDue so the
@@ -894,7 +895,9 @@ contract PrecloseFacet is
                 ),
                 bytes4(0)
             );
-            s.heldForLender[loanId] += lenderShare;
+            // #3760 — through the one lender-side writer: an open advance on
+            // the position takes its part first; the rest is held and reserved.
+            lenderShare = LibLenderSide.addHeld(s, loanId, payAsset, lenderShare);
             // #597 — reserve the held-for-lender VPFI against the unstake path
             // (the lender could otherwise `withdrawVPFIFromVault` to drain it
             // before the holder claims). `transferObligationViaOffer` KEEPS

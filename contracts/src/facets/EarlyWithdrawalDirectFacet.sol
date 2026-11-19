@@ -318,16 +318,47 @@ contract EarlyWithdrawalDirectFacet is
     ) external nonReentrant whenNotPaused {
         LibTiming.requireDeadline(validUntil);
         _sellLoanViaBuyOfferImpl(
+            msg.sender,
             loanId,
             buyOfferId,
             SaleBounds({minSellerNet: reviewedMinSellerNet, maxHeld: reviewedMaxHeld})
         );
     }
 
-    /// @dev The direct sale's settlement body. Private, so `msg.sender` (the
-    ///      exiting lender) is preserved from the external caller. `b` carries
-    ///      the seller's reviewed bounds, checked below.
+    /**
+     * @notice #3760 — the direct sale run by the Diamond for `seller`, as one
+     *         source of `LenderCashOutFacet.sellNow` (and its preview).
+     * @dev    `address(this)`-gated: only the cash-out door reaches it, and
+     *         that door has already taken the Diamond's reentrancy guard and
+     *         checked that `seller` is the caller who holds the position. The
+     *         body is the one direct-sale settlement, with every check of
+     *         {sellLoanViaBuyOffer} (the sale-exit verdict reads `seller`), so
+     *         a sale through the door is the same sale as a direct one.
+     * @param  seller The position holder selling (the door's caller).
+     * @param  loanId The loan whose lender position is sold.
+     * @param  buyOfferId The standing buy offer the sale fills.
+     * @param  minSellerNet The least the seller must net from this fill.
+     * @param  maxHeld The most held balance that may move with the position.
+     */
+    function sellLoanViaBuyOfferFor(
+        address seller,
+        uint256 loanId,
+        uint256 buyOfferId,
+        uint256 minSellerNet,
+        uint256 maxHeld
+    ) external whenNotPaused {
+        if (msg.sender != address(this)) revert UnauthorizedCrossFacetCall();
+        _sellLoanViaBuyOfferImpl(
+            seller, loanId, buyOfferId, SaleBounds({minSellerNet: minSellerNet, maxHeld: maxHeld})
+        );
+    }
+
+    /// @dev The direct sale's settlement body. `seller` is the exiting lender:
+    ///      `msg.sender` on the public entry, the door's caller on
+    ///      {sellLoanViaBuyOfferFor}. `b` carries the seller's reviewed
+    ///      bounds, checked below.
     function _sellLoanViaBuyOfferImpl(
+        address seller,
         uint256 loanId,
         uint256 buyOfferId,
         SaleBounds memory b
@@ -348,7 +379,7 @@ contract EarlyWithdrawalDirectFacet is
         // admission did). It reverts with the first refusal, the same error
         // the verdict reports, before any vault work.
         SaleExitVerdictFacet(address(this)).requireSaleExitOpen(
-            loanId, msg.sender, SaleExitVerdictFacet.SaleRoute.Direct
+            loanId, seller, SaleExitVerdictFacet.SaleRoute.Direct
         );
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
@@ -670,7 +701,7 @@ contract EarlyWithdrawalDirectFacet is
         if (shortfall > loan.principal) revert RateShortfallTooHigh();
         // #3339 — a seller whose positions are under the holder lock sells
         // only at the loan's own terms: no shortfall out of their principal.
-        LibProtectedAccount.requireLockedSaleFloor(msg.sender, shortfall);
+        LibProtectedAccount.requireLockedSaleFloor(seller, shortfall);
 
         // #1922 (#1503 item 6) — the seller's reviewed-economics bound, checked
         // HERE against the SAME figures the settlement below uses (one
@@ -745,7 +776,7 @@ contract EarlyWithdrawalDirectFacet is
         // `minSellerNet` the seller reviewed is checked against what actually
         // arrived, never a figure a token shrank on the way.
         {
-            uint256 credited = LibFacet.creditOwnVault(loan.principalAsset, msg.sender, toLiam);
+            uint256 credited = LibFacet.creditOwnVault(loan.principalAsset, seller, toLiam);
             if (credited < b.minSellerNet) revert SaleNetBelowReviewed(credited, b.minSellerNet);
         }
         LibFacet.depositForNewLender(
@@ -869,7 +900,7 @@ contract EarlyWithdrawalDirectFacet is
         // for Noah, update loan.lender and loan.lenderTokenId in one place.
         // (#998 S10 Class B — `migrateLenderPosition` carries the dedicated
         // active-held reservation to the buyer internally.)
-        LibLoan.migrateLenderPosition(loanId, buyOffer.creator, msg.sender);
+        LibLoan.migrateLenderPosition(loanId, buyOffer.creator, seller);
 
         // #597 — re-reserve the held-for-lender VPFI on the NEW lender, where it
         // now physically lives (pre-existing `priorHeld` migrated above + this tx's
@@ -922,7 +953,7 @@ contract EarlyWithdrawalDirectFacet is
         // #2527 — name the consumed offer, the way the accept path does.
         emit OfferAccepted(
             buyOffer.id,
-            msg.sender,
+            seller,
             loanId,
             loan.principal,
             loan.principal,
@@ -930,7 +961,7 @@ contract EarlyWithdrawalDirectFacet is
         );
         emit LoanSold(
             loanId,
-            msg.sender,
+            seller,
             buyOffer.creator,
             shortfall,
             loan.lenderTokenId,

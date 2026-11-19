@@ -299,6 +299,49 @@ library LibVaultOutflow {
         );
     }
 
+    /// @notice #3760 — loan `loanId`'s advance, from `user`'s (the slot
+    ///         owner's) vault into the vault of the holder of the loan's
+    ///         lender token. The policy reads the payee from the token and
+    ///         spends the advance host's authorization.
+    function toAdvanceHolder(address user, address asset, uint256 amount, uint256 loanId, uint256 lenderTokenId)
+        internal
+        returns (uint256)
+    {
+        return _go(
+            user,
+            ERC20,
+            asset,
+            0,
+            amount,
+            address(0),
+            VaultOutflowTypes.OutflowClass.AdvanceToHolder,
+            loanId,
+            lenderTokenId,
+            OutflowReason.ADVANCE
+        );
+    }
+
+    /// @notice #3760 — money booked to loan `loanId`'s advance, from `user`'s
+    ///         vault into the vault of the advance's slot owner, read by the
+    ///         policy from the advance record.
+    function toAdvanceLender(address user, address asset, uint256 amount, uint256 loanId)
+        internal
+        returns (uint256)
+    {
+        return _go(
+            user,
+            ERC20,
+            asset,
+            0,
+            amount,
+            address(0),
+            VaultOutflowTypes.OutflowClass.AdvanceRepayment,
+            loanId,
+            0,
+            OutflowReason.ADVANCE_REPAYMENT
+        );
+    }
+
     /// @notice To the liquidator that paid loan `loanId`'s debt in this same
     ///         transaction: the caller passes `msg.sender` of its entry.
     function toLiquidationBuyer(

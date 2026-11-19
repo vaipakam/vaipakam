@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLenderSide} from "../libraries/LibLenderSide.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
 import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
@@ -392,19 +393,19 @@ contract RiskDiscountedLiquidationFacet is
         // recorded centrally at the `Defaulted` transition (terminalize).
 
         // Record lender claim metadata for NFT-state tracking.
-        s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
+        uint256 lenderKept = LibLenderSide.setFinal(s, loanId, LibVaipakam.ClaimInfo({
             asset: loan.principalAsset,
             amount: lenderProceeds,
             assetType: LibVaipakam.AssetType.ERC20,
             tokenId: 0,
             quantity: 0,
             claimed: false
-        });
+        }));
         // #592 — reserve VPFI lender proceeds against the unstake path until
         // the current holder claims; ClaimFacet releases. No-op for non-VPFI.
         if (loan.principalAsset == s.vpfiToken) {
             LibEncumbrance.encumberLenderProceeds(
-                loanId, loan.lender, loan.principalAsset, lenderProceeds
+                loanId, loan.lender, loan.principalAsset, lenderKept
             );
         }
 
