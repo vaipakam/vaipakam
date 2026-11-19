@@ -62,6 +62,11 @@ test('with lenders covering part, the review shows what this block gives, borrow
   const sc = scenario();
   const tliq = (sc.fixture.artifact.testnetMocks as Record<string, Hex>).liquidToken;
   await sc.diamondWrite('admin', 'setInstantMarketEnabled', [true]);
+  // The instant market serves only pairs whose two assets are blue-chip: WETH
+  // and the chain's configured quote assets, or a top-tier asset. The fixture
+  // configures no quote list, so tLIQ is named the chain's quote asset beside
+  // WETH, the shape every testnet's oracle configuration sets (#2747).
+  await sc.diamondWrite('admin', 'setPaaAssets', [[WETH, tliq]]);
   const offerId = await postLenderOffer(sc, {
     lender: 'lender',
     principalWeth: '0.2',
