@@ -2,7 +2,7 @@
 
 Status: **design for owner review**. The owner's decisions of 2026-11-05/06
 are recorded on #3205 and repeated where they apply. Choices they did not
-settle are marked **Default**. Six questions in §8: Q1, Q5 and Q6 were decided by the owner. Q2 to Q4 are built on their recommended defaults (the coordinator, 2026-11-07). The build notes for part 1 sit at the end of §8. This builds on [#3204's central vault code
+settle are marked **Default**. Six questions in §8: Q1, Q5 and Q6 were decided by the owner. Q2 to Q4 are built on their recommended defaults (the coordinator, 2026-11-07). The build notes for part 1 sit at the end of §8. §3.7 was refreshed on 2026-11-19 for Stage B3, which is not built yet, and its one user-facing question (sign, then send) is with the owner. This builds on [#3204's central vault code
 design](VaultCentralImplementationDesign.md) and ships after it.
 
 ## 1. The problem, measured
@@ -229,101 +229,320 @@ changing vault code.
 The Diamond keeps its own configuration for layer 1. A mismatch between the
 two fails closed: the vault refuses.
 
-### 3.7 The lien record and the allowlist, held by the vault
+### 3.7 What the owner authorizes, and what the vault checks (refreshed 2026-11-19 for Stage B3)
 
-- **Liens.** When a position opens, the vault records `(ref, asset, tokenId,
-  amount)`. A counterparty, adapter, seller-claim or Diamond-transient
-  outflow is allowed only against an open lien for its `ref`, and reduces
-  it. So does an incentive payment, which also debits that lien's
-  incentive budget.
-- **The payee is the current holder.** Each lien records the other side's
-  position (the position-NFT contract and token id). A counterparty payment
-  goes to the vault of whoever holds that NFT at the moment of payment,
-  read from the position-NFT contract, which no facet can write (§3.9).
-  The paying vault checks the destination itself: it must be a genuine
-  vault, and its own owner record must equal that holder. Both facts are
-  held outside the Diamond, so a compromised Diamond cannot substitute its
-  own genuine vault, and nothing has to be handed over when a position
-  changes hands.
-- **A holder with no vault yet.** Vaults are deployed at an address
-  derived from the owner wallet (CREATE2, with the owner fixed by that
-  derivation), so anyone may deploy a holder's vault and nobody can choose
-  its owner. A route paying such a holder deploys the vault first in the
-  same transaction, then pays it under the same check.
-- **The holder of this vault's own side.** When a borrower position moves
-  from A to B, the collateral stays in A's vault under its lien, and the
-  lien now answers to B, never to A. Every action on that lien is
-  authorized by the current holder of the borrower NFT, read from the NFT
-  contract: a partial withdrawal of surplus, a swap-to-repay, a collateral
-  listing. The vault checks the holder's own signature (EIP-712, or
-  ERC-1271 from the holder's vault), not A's. At release, what is left of
-  the lien goes to B's vault under the same binding check as a
-  counterparty payment (a **position-holder** class); it becomes A's free
-  balance only if A still holds the NFT. So an ordinary transfer gives B
-  everything the position carries, without A's help, and A can no longer
-  reach it.
-- **Seller claims.** A sale through the protocol's route may split value
-  earned before the sale (#1209's seller interest) as a seller claim. The
-  vault records it only from the seller's signed sale terms (§8 Q1): the
-  seller's vault and the amount. The seller-claim class pays only such a
-  recorded seller, up to that claim. On a plain transfer there is no seller
-  claim; the value travels with the NFT.
-- **The rule behind both.** Every protocol class that names a recipient
-  pays only one the vault can establish itself: from the position-NFT
-  contract (payee), from a signature (seller claim), from the registry (treasury, adapter, conduit,
-  backstop) or from its own creation (listing escrow). Only the incentive
-  class and the Diamond transient leg have a recipient the vault cannot
-  check, and both are bounded by their per-lien budgets (§7). The vault keeps a running sum of its open liens per
-  asset and token id, which is what the owner class's free-balance check
-  reads.
-- **One rule for every protocol class.** Every outflow that is not the
-  owner's own draws from an open lien for its `ref`, and from that lien's
-  budget for its class where the class has one: fees (treasury), incentives
-  and backstop. The budgets are set when the lien is recorded, from the
-  owner-authorized terms (§8 Q1). So no protocol class can reach funds no
-  position committed, and the owner class can reach only what no lien
-  holds.
-- **Fee authorizations.** Some fees are paid from free balance, not from a
-  lien: a lender who opts to pay the yield fee in VPFI pays it from VPFI
-  held freely. For those the owner's signature (§8 Q1) covers a fee
-  authorization: the asset, the `ref` and a cap. The vault records it and
-  debits it per payment, so the treasury class can draw from free balance
-  only within it.
-- **The owner record, and replacing it.** The vault records its owner wallet
-  and, under protected mode, its secondary keys, both from owner-signed
-  changes. A protected account's primary replacement (a majority of
-  secondaries, after the delay) is checked by the vault itself: it records
-  the proposal with its time, accepts the finalization only with a majority
-  of the recorded secondaries' signatures and after the delay, and then
-  sets the new owner wallet, which is both the payout destination and the
-  signer of later authorizations. The old wallet stops passing either
-  check at once.
-- **Release.** A close-out releases what is left of a lien to the current
-  holder of this vault's side of the position: the owner's free balance
-  when the owner still holds it, otherwise the holder's vault (above). On repay, preclose and refinance the vault releases only
-  against a receipt the payee vault recorded for the same transaction
-  (§8 Q5, decided). On the listed exceptions a release is trusted to the
-  Diamond (layer 1 only), bounded rather than closed. A released lien's assets can leave only by the owner class: to
-  the owner's own wallet, or an allowlisted address after its delay, and
-  under the #3206 outflow delay for amounts above its threshold, which
-  gives the pause time to act. §7 states the residual.
-- **The allowlist** moves from Diamond storage into the vault, with its own
-  delay counter.
+The first version of this section (2026-11-08) assumed the owner signs at the moment a position opens. Since then most
+positions open with no owner present: a slot fill, the lender side of an instant borrow, a renewal, a continuation with
+another lender, a takeover, a keeper run. The payout rule (2026-11-19,
+[PayoutDestinationRuleDesign.md](PayoutDestinationRuleDesign.md)) also changed where money goes: what a loan or an open
+offer owes a party lands in that party's vault. That makes the end state of §8 Q5 reachable, where every release is
+checked by the vaults. This section restates the vault's own records and its own checks for the platform as it now is.
+The decisions of §2 and of §8 Q1, Q5 and Q6 stand. Stages A, B1 and B2 are built (the build notes after §8); this is
+the design for Stage B3, which is not built yet.
 
-Both are written through the Diamond, the only caller a vault accepts. So
-on its own, "the vault recorded it" would let a compromised Diamond record
-a fake lien or allowlist entry. **What makes the record independent is the
-owner's own signature, checked by the vault** (§8 Q1, decided).
+**What the vault promises after B3.** Nothing leaves a vault unless its owner committed it. What was committed leaves
+only to a party the vault can establish itself, within an amount the vault can bound itself. The vault does not compute
+interest and does not decide when a loan is in default. Those stay the Diamond's (layer 1), and §3.7.8 states what that
+leaves.
+
+**Every vault check is an outer bound.** The Diamond's own rule is always the tighter one. A vault bound that refused a
+step the Diamond's rules allow would be a defect, because it could hold up a repayment or a liquidation, so the tests
+hold every bound at or outside the Diamond's at every step of a loan's life.
+
+#### 3.7.1 One authorization rule, and one rule for wallets
+
+The rule is the one protected mode already uses (Stage B2, `VaultProtectionBase._authorize`): an authorization is a
+direct call from the owner's wallet to the vault, or the owner's EIP-712 signature (ERC-1271 for a contract wallet) over
+the commitment, in the vault's own domain, spending a nonce. B3 adds no second rule. Three routes meet it, and the app
+picks by where the money is and what the wallet can do:
+
+| The action is funded from | Route | Prompts on a plain wallet |
+| --- | --- | --- |
+| The wallet | The Permit2 witness carries the commitment, and **the owner's own vault is the Permit2 spender**. The vault makes the pull itself, so a successful pull proves the owner signed that commitment. The tokens go from the wallet to the vault and never rest in the Diamond. | Sign, then send |
+| The vault's free balance | The owner signs the commitment, and the signature travels with the action to the vault. | Sign, then send |
+| Either, from a wallet that sends several calls as one | The owner's batch calls the vault's own `authorize` entry with the commitment first. The vault holds it for that transaction only and spends it when the Diamond records the commitment. | One |
+
+Every funded action then reads the same way to a user: sign what you commit, then send. The typed-data prompt shows the
+asset, the amount, the pair and the terms, and that is exactly what the vault enforces.
+
+**A wallet never approves the Diamond.** Today most wallet-funded entries pull on a standing allowance the wallet gave
+the Diamond (`LibDelivery.pullExact` behind the vault factory's deposit routes), with Permit2 as an option on a few. A
+standing allowance is a commitment to nothing in particular: a faulty Diamond could draw on it for anything. After B3 a
+wallet approves two things only: Permit2, for its tokens, which moves nothing without a signature that names the
+spender and the purpose, and its own vault, for one NFT it is about to lock. Every pull from a wallet is made by the
+payer's own vault under a permit signed for that purpose. This holds for a payment that opens no commitment too (a
+repayment from a wallet, a top-up, a deposit, a liquidator's or a buyer's payment). The platform can then state, as a
+fact a reader can check on chain, that no change to the Diamond can move tokens out of a wallet or out of a vault
+beyond what its owner signed.
+
+#### 3.7.2 The records the vault keeps
+
+1. **The balance record.** For each asset: the owner's free balance, and what is held under liens. Free balance rises
+   only by a step the vault takes itself: its own pull from the owner's wallet, a receipt for a payment owed to its
+   owner, the release of one of its own liens, or the owner adopting tokens that were sent to the vault directly. It
+   falls by a withdrawal or a new commitment. A withdrawal is bounded by the lower of the free figure and the token
+   balance less everything held, which is today's rule (`withdrawableNow`) with the figures moved into the vault.
+   Tokens that arrive unannounced are in neither figure until the owner adopts them.
+2. **Commitments**, each made only under §3.7.1:
+   - a posted offer or request: asset, amount, side, the pair and its terms;
+   - an accept of someone's offer: the loan terms the acceptor commits to;
+   - **the lending mandate**, one per lending asset: the amount set aside to lend
+     ([LendingBalanceDesign.md](LendingBalanceDesign.md)), and per slot the bounds the vault can check itself: the
+     collateral asset, the highest loan-to-value at opening, the exposure cap and the slot's end date. Fills draw on it
+     with no owner present. The slot's consents sit in it: renewal, takeover, and lending for one transaction (#3748),
+     which may draw only the part not lent and is judged by the vault's own balance before and after the call;
+   - a loan's two reserves and its standing instructions (#3681): how much is reserved, and which draws may spend it
+     (a top-up into this loan's own collateral lien, an interest payment or a repayment to the lender side's holder);
+   - the due-date plan on a loan ([DueDatePlanDesign.md](DueDatePlanDesign.md)): that the loan may continue with
+     another lender. The borrower's highest rate is a loan term, which the vault does not check (§3.7.8);
+   - a refinance request: that this loan's collateral lien may be carried to the loan opened from the request, once
+     the old loan is paid;
+   - an order for an asset the vault holds under a lien (a collateral listing, a sale beside an open offer, a limit
+     order that swaps collateral to repay): the asset, the lowest price, and that the price is paid to this vault.
+     Whether a loan's collateral may be listed at all is one of the loan's signed terms, and that term is what a
+     listing at the floor inside the grace period draws on with no owner present;
+   - a fee authorization (a fee paid from free balance, not from a lien), an allowlist change, a pin. These exist
+     already.
+
+   Lowering or cancelling a commitment is the owner's own call and takes effect at once for what is not yet drawn.
+3. **Liens**, one per position side this vault backs: the `ref`, the asset, token id and amount, this side's position
+   token, the other side's position token and the class budgets. A collateral lien also records four figures from the
+   terms its owner signed: the principal still owed, the loan-to-value limit it opened under, **the most the loan can
+   ever owe** (the principal plus the most interest and fees those terms allow, called the ceiling below), and **the
+   earliest time the collateral may be taken for a missed due date**. A lien opens in exactly two ways: under the
+   owner's own authorization in that transaction (a post, an accept), or as a draw on a mandate, a plan or a request.
+   It never opens on the Diamond's word alone.
+4. **Receipts.** A vault is paid by another vault through a call that names the `ref`. The receiving vault checks that
+   the caller is a genuine vault (§3.4), measures what arrived, and records "received X of this asset for `ref` from
+   this vault". A receipt is the only proof of payment another vault accepts.
+
+**One record, not two.** These records live in the vault and nowhere else, as protected mode's record does since B2.
+`LibEncumbrance` stays the one writer, and becomes the one caller of the vault's lien entries. The Diamond keeps the
+loan and offer records (which already carry their amounts) and the per-asset pledged total that the concentration rule
+reads (#3685), written at the same seam. Its own figures for a vault's balances (the tracked ledger, the depository
+holding, the lien amounts) retire or become reads of the vault. A lien change that comes with a token movement rides in
+that call. One that moves no tokens costs one more call, and the build PR measures it.
+
+#### 3.7.3 A loan opens as an exchange between two vaults
+
+A loan exists for a vault only as an exchange it took part in. Neither side takes the Diamond's word for the other.
+
+- **The paying side.** The vault that funds the principal pays within its offer lien or its mandate. It names its own
+  side's position token and checks on the position-NFT contract that the token is held by the one entitled to that
+  side: its owner, or whoever holds the offer's token the lien was opened under (#3744). It pays only when a genuine
+  vault holds an owner-authorized collateral lien for the same `ref`, on the terms its own commitment states, and it
+  pays the vault of whoever holds the borrower side's token. For a mandate fill it also reads the price guard: the
+  collateral's value must cover the principal at the slot's own loan-to-value limit.
+- **The locking side.** A collateral lien binds only once the principal's receipt exists for the same `ref`, at the
+  vault of whoever holds the borrower side's token. It records as its other side the position token the paying vault
+  named. A collateral lien with no receipt binds nothing, and its owner can release it.
+
+So a faulty Diamond cannot name itself or anyone else the lender of a loan without the principal really being paid, and
+cannot lock a borrower's collateral without the borrower really being paid.
+
+#### 3.7.4 What each outflow is checked against
+
+This table restates layer 2 of §3.3 for Stage B3. Where the two differ, this one is the design.
+
+| Outflow | The vault's own check |
+| --- | --- |
+| The owner's withdrawal | The balance record (§3.7.2). Own wallet, or an allowlisted address after its delay (B2). On a protected account the withdrawal is a row the vault queues itself (§3.7.9). |
+| Principal to a borrower | §3.7.3. |
+| A lien released into free balance | A collateral lien, in full: only when receipts at the other side's holder vault cover the principal the lien records. In part: only as far as what stays still covers the principal owed at the lien's own loan-to-value limit, by the vault's own price read. An asset with no price returns only in full. An offer lien, a mandate or a reserve: the owner's own call, for what is not drawn. |
+| A payment to the other side's holder (repayment, interest, the proceeds of a forced sale, collateral on a default) | Against the lien for that `ref`, to the vault of whoever holds the other side's position token now (§3.7.5), and no more than the lien. What leaves a collateral lien to the lender side without its owner's own authorization never passes the ceiling: sale proceeds are counted as measured, and priced collateral handed over in kind is valued by the vault's own price read. Collateral with no price is handed over only whole, and only at or after the lien's own date. |
+| What is left of a lien, to this side's holder | To the vault of whoever holds this side's position token now, under the release rule above. An open offer's escrow goes the same way to the holder of the offer's token (#3744). |
+| A swap or a forced sale | Only through `swapOut` (B1): the vault makes the swap, takes no more than the lien from itself, and measures what arrived at this vault or at the other side's holder vault. B3 adds the vault's own outer floor: the price guard's value of what was sold, less the widest slippage the settings allow, fixed in the vault code. The Diamond's tighter floor (#3359) stays layer 1. |
+| An internal-match leg | Judged as a forced sale whose proceeds are what this loan's own lender side receives: the same outer floor, measured against the receipt at that holder's vault in the same transaction. |
+| An order the vault signs | The vault registers an order's hash (B1) only under the commitment for it, and only for an order whose price leg pays this vault itself, at or above the committed lowest price and never below the principal the lien records, with fee legs inside the lien's budgets. This is the payment-leg check Stage B1 left open. What a buyer pays is held for that `ref` and leaves by the rows above, to the lender side's holder first. |
+| The treasury's fee, and the reserve's part (#3641) | The lien's fee budget, or a fee authorization. Both addresses are fixed in the vault code. |
+| The backstop | The lien's backstop budget, to the backstop address fixed in the vault code. |
+| A non-party paid at a wallet: liquidator, matcher, keeper, inviter | The lien's budget for that class. A liquidator that pays the debt is paid only against the receipt for that payment. |
+| An integrator's or a referred user's share | The budget set from the opening fee when the lien was recorded, to a genuine vault. |
+| A seller's claim (#1209) | Only the seller the signed sale terms record, up to that claim. |
+| Lending for one transaction (#3748) | The mandate's consent, the part not lent, and the balance check at the end of the call. |
+| The full tariff in the platform token | A fee authorization. It is the one payment a vault still makes to the Diamond, which holds the recycled amount by design. |
+| A side's custody moved to its new holder's vault | Only to the vault of whoever holds this side's position token now, and it stays under a lien there. |
+| A grant to a marketplace conduit, a listing escrow, recovery | As built in stages A to B2. |
+
+After this table no class is "checked by the Diamond only". The Stage A residual branch in `_destinationAllowed` is
+removed. The Diamond-transient class retires with it, apart from the full tariff: where a payment passes through the
+Diamond today (a repayment from a reserve, a sale's price, a takeover's principal, the partial swap-to-repay, an NFT
+consolidation, a listing's proceeds), the paying vault pays the receiving vault directly, because a receipt needs to
+know which vault paid.
+
+#### 3.7.5 Who the other side is, and how that changes
+
+The payee of a lien is the current holder of the other side's position token, read from the position-NFT contract,
+which no facet can write (§3.9). A holder with no vault yet gets one deployed in the same transaction. When this vault's
+own side changes hands, the lien answers to the new holder: its actions need the new holder's authorization, and what
+is released goes to the new holder's vault. A plain transfer therefore changes nothing in any vault.
+
+A protocol route is different. A sale, a takeover or a handover retires the leaving side's token and mints a new one
+(`LibLoan.migrateLenderPosition`), and both the retirement and the loan's pointer to the new token are Diamond storage.
+The Diamond can mint. If a lien followed the Diamond's pointer, a faulty Diamond could mint a token to itself and
+become the payee of every lien. So:
+
+- **A lien's other side is replaced only by a record the leaving side made.** The position-NFT contract gains one
+  entry and one read: "this token is replaced by that one", accepted only from the replaced token's holder or that
+  holder's genuine vault. A lien follows that record and nothing else.
+- **A vault declares a replacement only in two cases.** Under its owner's authorization for that sale. Or, with no
+  owner present, under a standing consent in its mandate (a takeover, a continuation), once it holds a receipt for at
+  least the principal it lent on that loan and has not yet received back. A lender's vault never gives up a position
+  for less than its principal unless its owner signs.
+- A seller's claim exists only from signed sale terms, as before.
+
+#### 3.7.6 Release
+
+Under the payout rule a lender is paid vault to vault on every route, so the release check of §8 Q5 is the general case
+and its list of exceptions shrinks to two:
+
+- **A forced sale** (liquidation, a default on a priced asset, swap-to-repay): the vault makes the sale itself and pays
+  the proceeds to the lender side's holder first, so there is nothing to release on trust.
+- **A holder who cannot be paid now** (sanctioned or parked): the amount stays in the paying vault under a lien whose
+  payee is that position, and leaves only to that holder's vault later.
+
+#### 3.7.7 What a fill may do with no owner present
+
+A fill under the lending mandate can: move principal within the amount set aside and the slot's exposure cap, in the
+mandate's asset, for a loan whose collateral is locked in a genuine vault, in the slot's collateral asset, worth enough
+at the slot's loan-to-value limit, before the slot's end date. It cannot: touch free balance outside the amount set
+aside, pay any other destination, or lend against collateral the vault itself does not price as sufficient. On the
+borrower's side a continuation or a refinance can carry the collateral lien, whole, to the continued or the new loan,
+and only once the old lender side's holder vault has a receipt for the principal.
+
+#### 3.7.8 What the vault does not check (stated)
+
+- **The rate and the term of a fill, and the interest due.** They are loan-record terms. A faulty Diamond could record
+  a fill at a worse rate than the slot allows, or a continuation above the borrower's highest rate. The principal is
+  still locked against sufficient collateral and returns only against a receipt, so the loss is bounded to interest for
+  the time it takes to pause.
+- **Whether a priced loan may be liquidated now, and what it owes on the day.** A faulty Diamond could sell a healthy
+  loan's collateral early, or overstate the debt. The sale is made by the vault at no worse than its outer floor, the
+  lender side receives no more than the ceiling and the rest stays with the real borrower. The loss is bounded to
+  slippage, the class budgets and the difference between the debt and the ceiling. Collateral with no price cannot be
+  taken before the lien's own date at all.
+- **Who a budgeted non-party is.** A keeper's or a matcher's wallet is not something a vault can establish. The budget
+  bounds it.
+- A bad price through a legitimate route stays covered by the price guard's own rules (§7).
+
+#### 3.7.9 The owner record and protected mode
+
+The vault records its owner wallet and, under protected mode, its signers and its allowlist with its own delay, all
+from owner-authorized changes. A protected account's primary replacement (a majority of signers, after the delay) is
+checked by the vault itself, and the new owner wallet is then both the payout destination and the signer of later
+authorizations. Stage B2 built this, and its build notes record how.
+
+B3 moves the last of protected mode into the vault: the queued payouts and the co-sign setting, which B2 left in
+Diamond storage. A protected account's withdrawal becomes a row its vault records under the owner's authorization. The
+vault holds the amount while the row waits, so nothing else can spend it. It releases the row itself, only after its
+own delay, only to the recorded destination, and with a signer's co-signature where its own record requires one. A
+lock cancels every waiting row in the same step, with no separate run to apply it.
+
+#### Alternatives considered
+
+1. **A second ledger: the vault keeps a bound, the Diamond keeps the liens.** Rejected: two records of one fact can
+   disagree, and the vault's balance check needs the amounts anyway.
+2. **The owner signs every fill.** Not possible: fills happen with no owner present. The mandate is the owner's
+   signature, given once, over what a fill may do.
+3. **The vault checks the rate and the term too**, by reading the borrower's signed terms. Not chosen: the Diamond
+   computes what is due from its own loan record, so the check would bind nothing. Stated in §3.7.8 instead.
+4. **Every funded action goes through the vault** (the owner calls the vault, which calls the Diamond), one prompt on
+   every wallet. Not chosen now: every entry in the Diamond reads its actor from the caller today, and each would have
+   to learn it a second way, from a vault. That is a change to every facet and a new thing for an audit to trust. The
+   rule in §3.7.1 already accepts a direct call, so this can be added later without changing the vault.
+5. **Keep the wallet's standing allowance to the Diamond for payments that open no commitment** (a repayment, a
+   top-up, a deposit). One prompt after a first approval. Not recommended: the published statement would then have to
+   say that a change to the Diamond can move tokens out of wallets, up to what each has approved.
+6. **A sale moves the same token, and nothing is ever replaced.** It meets the rule of §3.7.5 with no new entry on the
+   position-NFT contract. Not recommended as the first choice: the retired token is the seller's own receipt today, and
+   the sale of part of a position needs a new token in any case. The builder may show it fits better.
+7. **`tx.origin`, or trusting the Diamond.** Rejected by the owner on 2026-11-06 (§8 Q1).
+8. **Leave the residual classes bounded by the Diamond.** Rejected: the statement that the vault bounds amounts would
+   be untrue for exactly the classes paid at wallets.
+
+#### Recommendation
+
+Build B3 as stacked PRs by one builder, after the one-transaction lending build (#3748): the vault's records, entries
+and checks with the outflow library moved onto them; the commitments at each opening entry and the wallet rule (after
+the lending balance's first part and the borrowing record merge); the vault-to-vault payments, the receipts and the
+replacement record; the order check and protected mode's queued payouts; then the apps and the keeper (B4). B3 is
+launch code and belongs to the first audit phase. The position-NFT contract and the vault code both change, so it
+reaches a chain by fresh deploy, as every stage has.
+
+#### Tests
+
+- An outflow of every class with no matching commitment or lien is refused by the vault with the Diamond's check
+  stubbed out, and passes with it.
+- A fill beyond the amount set aside, in another asset, with no collateral lien for the loan, or against collateral
+  worth too little at the slot's limit, is refused by the lender's vault.
+- With the Diamond's checks stubbed out, a loan cannot be opened whose lender token is held by anyone but the paying
+  side's entitled holder, and a collateral lien with no receipt for its principal is released by its owner.
+- A lien's other side changes only by the position-NFT contract's replacement record. A minted token that no holder
+  declared is never paid. A vault declares a replacement without its owner only against a receipt for the principal
+  still out.
+- Collateral returns in full only after receipts cover the principal, and in part only while the rest still covers it.
+- A forced sale below the vault's outer floor is refused, and its proceeds can leave only to the lender side's holder.
+  An internal-match leg is held to the same floor on both loans.
+- With the Diamond's checks stubbed out, the lender side of a loan never receives more than the ceiling from its
+  collateral, and collateral with no price cannot be taken before the lien's date. Across the lifecycle suites the
+  ceiling is never below what the loan owes, and the date is never after the time the Diamond allows a default.
+- A non-party is paid no more than its class budget, and a liquidator only against the receipt for the debt it paid.
+- An order whose price leg pays anyone but this vault, or whose price is below the committed lowest price or the
+  principal the lien records, is not registered. A listing at the floor inside the grace period is registered only on
+  a loan whose signed terms allow a listing.
+- A protected account's queued withdrawal is released by the vault only after the vault's own delay, with the
+  co-signature its record requires, and a lock cancels it in the same call.
+- The three routes of §3.7.1 open the same lien, a replayed signature is refused, and an `authorize` does not outlive
+  its transaction.
+- No entry pulls from a wallet on an allowance to the Diamond: a guard in the pre-deploy check refuses one.
+- The vault's free figure plus what it holds under liens never exceeds its token balance after every step of the
+  lifecycle suites, and the Diamond holds no second figure.
+
+#### Open items for the builder to raise, not decide silently
+
+- The mapping of each held-amount family in `LibEncumbrance` (lender proceeds, seller interest, held for lender,
+  borrower proceeds, the parked refinance leg, the fallback custody row) to a lien kind, or to nothing under the payout
+  rule. The claim-custody class of §3.3 is one of them.
+- The Diamond's own balance figures (the tracked ledger, the depository holding): which retire and which become reads
+  of the vault. The fee-discount record keeps its day history and reads the live figure.
+- Each payment that passes through the Diamond today, with the direct form that replaces it. Any that cannot be made
+  direct is raised with its reason, never bounded silently.
+- Which vault makes the pull for a payer that is no party to the loan (a liquidator, a buyer). Designed: its own.
+- The vault's outer slippage figure: the setting's ceiling (25% today) or a tighter figure fixed in code. The
+  internal-match leg is confirmed against it on both loans.
+- How the ceiling and the date are computed from the signed terms, so that neither can ever refuse a legitimate step:
+  the highest rate over the whole term and its grace, the late-fee ceiling, time added by a pause, a renewal or a
+  continuation under a plan, a floating rate with no cap, and a loan that ends by notice (#3813), whose date comes
+  from the notice the lender side's vault recorded.
+- The gas of a lien change that moves no tokens, of the receipt call, and of the price read on a fill.
+- The class budgets (§8 Q4), read from the configuration bounds.
+- Where the lien code lives: the vault code was measured at about 16.8 KB of the 24,576-byte limit on 2026-11-15, and
+  protected mode already runs as fixed code the vault delegates to. The lien code likely needs the same form.
+- Whether a borrowing's shared collateral record ([BorrowingDesign.md](BorrowingDesign.md)) is one lien or one per
+  loan.
+- How a buyer's payment for a registered order is recorded as held for the loan when it arrives. A marketplace pays
+  the price leg by a plain transfer, so the fill callback is where the vault can measure and record it. Today the
+  price leg pays the Diamond, which splits it.
+
+#### For the owner (open)
+
+One user-facing change. On a plain wallet a funded action becomes sign, then send. Today an action funded from the
+wallet is a first approval of the token and then one send, and an action funded from the vault is one send. A wallet
+that sends several calls as one keeps one prompt, and no wallet gives the Diamond a standing approval any more.
+Alternative 4 would keep one prompt on every wallet, at the cost named there. Alternative 5 would keep one prompt for
+payments only, at the cost named there. Recommended: accept sign, then send.
 
 ### 3.8 What stays as it is
 
 - Sanctions: the lock and move-out windows stay, as layer 1 rules.
 - Protected mode's hold, queue and release stay, as layer 1 for the owner
-  class, plus the vault's own allowlist check.
+  class, plus the vault's own allowlist check. (Stage B3 moves the queue
+  into the vault, §3.7.9.)
 - The #3178 counterparty principle: no protocol class ever reads the
   owner's allowlist or version. (#3204 removes the version rules anyway.)
 - Delivery measurement and the tracked-balance counter, now inside the one
-  library function.
+  library function. (Stage B3 moves the counter into the vault's balance
+  record, §3.7.2.)
 
 ### 3.9 Position NFTs outside the Diamond (§8 Q6, decided)
 
@@ -503,21 +722,27 @@ opens by itself.
   transient leg) stay bounded by their budgets and are listed below.
 - **A bad price through a legitimate route.** Oracle floors, slippage caps,
   #3227's two-source rule and the #3206 rate limit cover it.
-- **Diamond-transient legs.** Once value is in the Diamond for a swap or a
-  forced sale, only layer 1 checks the onward leg. The vault bounds the
-  amount to the lien. Routing vault-to-adapter directly, where the route
-  allows it, would remove the transient leg and is a follow-up.
+- **Diamond-transient legs.** Stage B3 retires them (§3.7.4): a paying vault
+  pays the receiving vault directly, and the only payment a vault still
+  makes to the Diamond is the full tariff in the platform token, under a
+  fee authorization. Until B3 merges, the vault bounds the amount to the
+  lien and only layer 1 checks the onward leg.
 - **A grant left standing by a faulty Diamond** can be used by its
   registry spender until someone runs the open cleanup, up to the granted
   amount, which never exceeds that one lien (§3.5). Cleanup debits the
   lien by what actually left.
-- **Incentive recipients** are checked only by the per-lien budget.
-- **A forged close-out, on the listed exceptions only** (§8 Q5). A
-  compromised Diamond can release a lien it should not, and the collateral then reaches the borrower's own wallet,
-  never a third party's. The loss is the lender's, bounded by that one
-  lien, and is slowed by the #3206 delay above its threshold. This bites
-  where the borrower is the attacker. Who acted is
-  not something a vault can verify.
+- **Incentive recipients** are checked only by the per-lien budget, before
+  and after B3: who a keeper or a matcher is is not something a vault can
+  establish (§3.7.8).
+- **A forged close-out.** Until B3 merges, on the listed exceptions of
+  §8 Q5 a compromised Diamond can release a lien it should not, and the
+  collateral then reaches the borrower's own wallet, never a third party's.
+  The loss is the lender's, bounded by that one lien, and is slowed by the
+  #3206 delay above its threshold. After B3 the exceptions shrink to the
+  two of §3.7.6, neither of which releases on trust. What a faulty Diamond
+  can still do is stated in §3.7.8: record a worse rate, or sell a priced
+  loan's collateral early, with the loss bounded by the vault's floor, the
+  ceiling and the class budgets.
 
 ## 8. Questions for the owner
 
@@ -534,7 +759,10 @@ opens by itself.
    means a new vault version for every adapter change.
 3. **Diamond-transient legs.** Accept the residual now and file the direct
    vault-to-adapter routing as a follow-up (recommended), or do the routing
-   in this change, which widens it a lot.
+   in this change, which widens it a lot. **Answered by the Stage B3 design
+   (2026-11-19):** the swap leg was made the vault's own in Stage B1
+   (`swapOut`), and the remaining transient legs become direct
+   vault-to-vault payments (§3.7.4).
 4. **The class budgets.** Default: for incentives, fees and backstop, the
    highest rate each configuration bound allows today, applied to the
    lien. They are read from `ConfigFacet`'s bounds in the build PR and
@@ -564,7 +792,8 @@ opens by itself.
      and the pause bound how much can then leave.
 
    **End state:** every release is vault-checked, once every payout goes
-   vault to vault. Filed as a follow-up.
+   vault to vault. Designed in §3.7 as refreshed on 2026-11-19, and built in
+   Stage B3.
 
 6. **How position NFTs change hands.** **Decided (owner, 2026-11-07):
    the position NFTs move out of the Diamond** into their own contract
@@ -906,6 +1135,12 @@ decisions 2026-11-10 (delegatecall split; the vault is the only writer).
    until then it cannot release, because release reads the lock from the
    vault. The app and keeper move to the vault's entries in B4.
 
+### Build notes, part 2 Stage B3: owner-authorized commitments and the vault's own bounds
+
+Not built yet. The design is §3.7 as refreshed on 2026-11-19. The build
+records here the choices it made where §3.7 left room, starting with that
+section's open items.
+
 ## 9. Order of work
 
 1. #3204's build (central vault code; it supplies the code-hash identity
@@ -914,7 +1149,12 @@ decisions 2026-11-10 (delegatecall split; the vault is the only writer).
    both before the fresh deploy): Stage A (the vault's two entries, the
    policy, all call sites moved, the old entries deleted, the grants and the
    escrow), then Stage B (#3379: the owner-signed liens, the class budgets,
-   the receipt release and the seller-claim check).
+   the receipt release and the seller-claim check). Stage B is built in
+   parts: B1 (outcome checks), B2 (protected mode held by the vault), then
+   B3 (§3.7 as refreshed on 2026-11-19: the vault's records; the commitments
+   at each opening entry and the wallet rule; the vault-to-vault payments
+   with their receipts and the replacement record; the order check and
+   protected mode's queued payouts) and B4 (the apps and the keeper).
    The position-NFT contract (§3.9) is part of it, or lands just before it,
    since counterparty payouts read their holder from it.
 3. #3206 (rate limits held in the vault's own storage) builds on this
