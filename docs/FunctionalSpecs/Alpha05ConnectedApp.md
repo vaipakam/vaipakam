@@ -249,6 +249,13 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   its owner signs for it. Where the market can take its pair, its card
   offers one line that opens a review of those consents alone, each
   pre-selected and switchable; it moves no money and changes no limit.
+- Every Auto-lend starts with lending paused while the collateral price is
+  moving fast. Its card states, from the protocol's own answer, whether
+  fills may go ahead, are paused and why (a fast move, the pair lacking its
+  last two hourly price checks, no readable price), or the owner switched
+  the pause off; a paused Auto-lend never reads as "no matches". The owner
+  may switch it off or back on for one Auto-lend through a review that moves
+  no money, and the setup review says the pause starts on and what off means.
 - A live loan's page says what the loan is to the side the reader holds:
   a fixed-rate loan for its term that does not renew (until renewal is
   built), that lent funds cannot be withdrawn, and, for the borrower,

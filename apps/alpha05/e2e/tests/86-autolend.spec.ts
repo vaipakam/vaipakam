@@ -106,6 +106,9 @@ test('a lender sets up Auto-lend: one choice, an exact approval, terms and fundi
   // as a claim instead.
   await expect(receipt).toContainText('comes back to you as a claim instead of being lent again');
   await expect(receipt).toContainText('take back money that is not lent at any time while it is not paused');
+  // The pause for a moving price starts on; the test chain has no hourly price checks yet.
+  await expect(receipt).toContainText('Lending pauses while the collateral price is moving fast');
+  await expect(receipt).toContainText('fills start after two hourly price checks');
   await expect(receipt).toContainText('Wallet prompts: 2');
   await fitsWidth(page);
 

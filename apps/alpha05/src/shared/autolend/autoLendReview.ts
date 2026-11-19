@@ -17,6 +17,7 @@ import type { Receipt, ReceiptRow, ReceiptText } from '../receipt/types';
 import { allowanceSteps } from '../tx/approval';
 import { chainValidUntil } from '../tx/deadline';
 import { askThrough } from '../tx/simulate';
+import { readCalmStatus, type CalmStatus } from './calmCheck';
 import type { Posture } from '../capability/types';
 import {
   exposureOf,
@@ -91,6 +92,11 @@ export interface AutoLendReview {
    *  review's prices; null when it could not be read. Checked at each fill,
    *  not when the setup is sent, so the dry run cannot show it. */
   ltvCap: LtvCap | null;
+  /** Where a fill from the slot stands against the pause for a moving price,
+   *  read at the facts' block: 'off' only for an active slot whose owner
+   *  switched it off (a new or restarted Auto-lend starts with it on). null
+   *  when it could not be read. */
+  calm: CalmStatus | null;
   /** #3761 — what the lender's choices stand on (keeper settings, the
    *  instant market's reach for the pair), and what the batch carries. */
   preset: PresetFacts;
@@ -145,7 +151,7 @@ export async function readAutoLendReview(own: OwnStateClient, diamond: Hex, draf
         ).length;
   const base = draft.change ? facts.record : null;
   const minFill = resolvedMinFill(draft.parsed, facts.floor, base);
-  const [risk, preset, instantRecord, ltvCap, handover] = await Promise.all([
+  const [risk, preset, instantRecord, ltvCap, handover, calm] = await Promise.all([
     readRiskNeed(own, diamond, draft.lending, draft.collateral),
     own.read((c) => readPresetFacts(c, diamond, account, own.chainId, draft.lending, draft.collateral, draft.slot, rollRunner)).then((x) => x.value),
     draft.change
@@ -164,6 +170,10 @@ export async function readAutoLendReview(own: OwnStateClient, diamond: Hex, draf
       .read((c) => takeoverRouted(c, diamond))
       .then((x) => x.value)
       .catch(() => false),
+    own
+      .read((c) => readCalmStatus(c, diamond, account, draft.lending, draft.collateral, draft.slot, facts.blockNumber))
+      .then((x) => x.value)
+      .catch(() => null),
   ]);
   const capBlock = ltvCapBlock(ltvCap);
   const blocks = capBlock === null ? setupBlocks(draft, facts) : [...setupBlocks(draft, facts), capBlock];
@@ -209,6 +219,7 @@ export async function readAutoLendReview(own: OwnStateClient, diamond: Hex, draf
     risk,
     roll,
     ltvCap,
+    calm,
     preset,
     effective,
     instantRecord,
@@ -229,6 +240,7 @@ export function reviewKey(r: AutoLendReview): string {
     r.risk ?? '',
     r.roll,
     r.handover,
+    r.calm ?? 'x',
     r.ltvCap === null ? 'x' : r.ltvCap.kind === 'cap' ? `${r.ltvCap.fits}:${r.ltvCap.approxBps}` : r.ltvCap.kind,
     r.blocks.map((b) => b.kind).join(','),
     r.facts.minTermsAgeSec,
@@ -336,6 +348,7 @@ export function autoLendReceipt(r: AutoLendReview, meta: TokenMetaMap | null, co
     },
     { label: text('autoLend.rowInterest'), value: { kind: 'text', text: text(p.acceptsProRata ? 'autoLend.interestBoth' : 'autoLend.interestFull') }, binding: true },
     ...presetRows(r, copy),
+    { label: text('autoLend.calmTitle'), value: { kind: 'text', text: text(r.calm === 'off' ? 'autoLend.calmRowOff' : 'autoLend.calmRowOn') }, binding: false },
     { label: text('autoLend.rowFiller'), value: { kind: 'text', text: text(base?.requiresKeeperAuth === true ? 'autoLend.fillerAllowed' : 'autoLend.fillerAny') }, binding: true },
     { label: text('autoLend.rowFirstFill'), value: { kind: 'time', unixSeconds: Number(r.facts.chainNow + r.facts.minTermsAgeSec) }, binding: false },
   ];
@@ -358,6 +371,7 @@ export function autoLendReceipt(r: AutoLendReview, meta: TokenMetaMap | null, co
     text('autoLend.loseVault'),
   ];
   consequences.push(...presetConsequences(r, copy));
+  consequences.push(...calmConsequences(r.calm, copy));
   if (r.ltvCap === null) consequences.push(text('autoLend.loseLtvCapUnread'));
   else if (r.ltvCap.kind === 'cap' && r.ltvCap.fits) consequences.push(text('autoLend.loseLtvCap'));
   if (d.lendUntil !== 0n) consequences.push(format('autoLend.loseUntil', { date: new Date(Number(d.lendUntil) * 1000).toLocaleString() }));
@@ -511,4 +525,18 @@ export function presetLegs(logs: PresetLogs, e: EffectivePreset, copy: Copy): Le
     else legs.push({ status: 'not-done', label, reason: text('autoLend.legRelendMissing') });
   }
   return legs;
+}
+
+/** What the pause for a moving price means for this setup: on for a new or
+ *  restarted Auto-lend, kept as it is for a change, and why fills would wait
+ *  now when the pair's price checks or price say so. */
+export function calmConsequences(calm: CalmStatus | null, copy: Copy): ReceiptText[] {
+  const { text, format } = copy;
+  if (calm === null) return [text('autoLend.calmSetupUnread')];
+  if (calm === 'off') return [format('autoLend.calmSetupKept', { state: text('autoLend.calmRowOff') }), text('autoLend.calmLoseOff')];
+  const out: ReceiptText[] = [text('autoLend.calmSetupOn')];
+  if (calm === 'no-checkpoint') out.push(text('autoLend.calmSetupNoCheckpoint'));
+  else if (calm === 'moving') out.push(text('autoLend.calmSetupMoving'));
+  else if (calm === 'unpriced') out.push(text('autoLend.calmSetupUnpriced'));
+  return out;
 }
