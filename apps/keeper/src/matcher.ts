@@ -98,6 +98,7 @@ import { revertErrorName } from '@vaipakam/lib/contractRevert';
 import { ROLL_MIN_VALUE_TO_GAS, judgeRollValue } from './rollGasFloor';
 import { estimateTxFeeWei, txFeeUnpricedReason } from './txFee';
 import { CALM_INTENT_ERRORS } from './intentCalm';
+import { stepPublisher } from './stepStatus';
 
 // `getActiveOffersCount` / `getActiveOffersPaginated` live on
 // MetricsFacet; `getOffer` on OfferCancelFacet post the EIP-170 facet
@@ -2131,14 +2132,58 @@ async function runOfferMatcherTickForChain(
 }
 
 /**
+ * The matcher's steps the app reads (#3763, `DefaultPathsDesign.md` rule 7),
+ * published to `keeper_step_status` as pass `matcher`:
+ *
+ *   - `roll` — repayments of auto-lend loans are lent again
+ *     (`rollIntentLoan`, {@link runIntentRollPass}) for owners who gave this
+ *     keeper the roll permission.
+ *
+ * The app pre-selects "Re-lend repayments for me" only where `roll` reads as
+ * running. It is armed on a chain when the matcher is armed and the keeper can
+ * value that chain's transaction fee: without that the roll pass rolls nothing
+ * there (rollGasFloor.ts), so it is not running, whatever the flags say.
+ */
+export const MATCHER_STEPS = ['roll'] as const;
+export type MatcherStep = (typeof MATCHER_STEPS)[number];
+
+const matcherStatus = stepPublisher('matcher', MATCHER_STEPS);
+/** Forget what was published (tests). */
+export const resetMatcherSteps = matcherStatus.reset;
+
+/** Pure rule: the matcher steps armed on `chainId`. */
+export function armedMatcherSteps(passOn: boolean, chainId: number): Set<MatcherStep> {
+  const armed = new Set<MatcherStep>();
+  if (passOn && txFeeUnpricedReason(chainId) === null) armed.add('roll');
+  return armed;
+}
+
+/** Publish the matcher's steps for every chain with a Diamond. */
+export async function publishMatcherSteps(
+  db: D1Database,
+  chains: readonly ChainConfig[],
+  passOn: boolean,
+  nowSec: number,
+): Promise<void> {
+  for (const c of chains) {
+    if (!c.diamond) continue;
+    await matcherStatus.publish(db, [{ id: c.id, diamond: c.diamond }], armedMatcherSteps(passOn, c.id), nowSec);
+  }
+}
+
+/**
  * Top-level matching pass — one tick across every configured chain.
  * No-op (and a single log line) when the keeper is disabled. Each
  * chain runs in its own try/catch so a transient RPC hiccup on one
  * can't wedge the rest.
  */
 export async function runMatcher(env: Env, tick: PassTick): Promise<void> {
-  if (!passIsArmed(env, 'matcher')) return;
+  const passOn = passIsArmed(env, 'matcher');
   const chains: ChainConfig[] = getChainConfigs(env);
+  // #3763 — whether repayments are lent again here is stated, never assumed:
+  // published every few minutes, armed or not, for the app to read.
+  await publishMatcherSteps(env.DB, chains, passOn, Math.floor(Date.now() / 1000));
+  if (!passOn) return;
   const run = runIndex(tick, 60_000);
   const share = freshLaneShare(env.MATCHER_FRESH_LANE_SHARE);
   // #3688 — the collection-offer step, its own sub-flag (ships disarmed).

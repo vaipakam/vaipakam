@@ -17,6 +17,8 @@ Today this Worker does:
 
 Also LIVE (per [`RangeOffersDesign.md`](../../docs/DesignsAndPlans/RangeOffersDesign.md) §7 of the Stage 3 plan; this said "Tomorrow"): the off-chain offer matcher, scheduled every cron tick, for Range Orders + Lender Partial Fills, submitting `matchOffers(lenderId, borrowerId)` to earn the 1% LIF matcher fee.
 
+The matcher also re-lends repaid auto-lend loans (`rollIntentLoan`) for owners who gave this keeper the roll permission. Whether it does so on each network is published every five minutes, armed or not, as the `matcher` step `roll` in `keeper_step_status` (served on the indexer's `GET /keeper/steps`), so the app pre-selects "Re-lend repayments for me" only where it runs (#3763). `roll` reads as armed when the matcher is armed and the keeper can value that network's transaction fee, since without that it rolls nothing there.
+
 **Non-goals:** no user-facing reads (those belong to `apps/indexer`); no notifications setup endpoints (those belong to `apps/agent`); no public Frame / Telegram bot surface (also `apps/agent`).
 
 **Important:** this Worker is **distinct from the public reference keeper bot** at the sibling [`vaipakam-keeper-bot`](https://github.com/vaipakam/vaipakam-keeper-bot) repo. That one is for third-party operators who want to run their own keeper. This one is the project's own and the only privileged Worker.

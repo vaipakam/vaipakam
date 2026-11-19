@@ -24,8 +24,11 @@
  * `alerts` (the owner alerts, among them the recovery-claim reminders),
  * `alertsTelegram` (the keeper can reach the agent that sends Telegram; the
  * agent's own bot token is not covered) and `alertsPush` (the keeper's Push
- * rail can send). A channel step is armed only while `alerts` is. A step
- * with no row has never been published on this chain: read it as not running.
+ * rail can send). A channel step is armed only while `alerts` is. Step for
+ * the matcher pass (#3763, whether repayments are lent again here): `roll`
+ * (the keeper re-lends a repaid auto-lend loan for owners who gave it the
+ * roll permission). A step with no row has never been published on this
+ * chain: read it as not running.
  *
  * D1 only, dispatched before `resolveEnv` (index.ts) like `/assets/rankings`.
  * Tolerates the previous schema: before 0098 is applied the table does not
