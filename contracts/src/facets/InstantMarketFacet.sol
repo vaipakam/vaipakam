@@ -162,6 +162,12 @@ contract InstantMarketFacet is DiamondReentrancyGuard, DiamondPausable, DiamondA
     error InstantRequestInvalid();
     /// @notice More sources than one instant borrow may walk.
     error InstantTooManySources(uint256 count, uint256 max);
+    /// @notice #3761 — a request named the same source twice (the same slot
+    ///         of the same owner, or the same offer). A fill takes all the
+    ///         room its source has, so a repeat could never add to the borrow,
+    ///         and refusing it keeps the preview from sizing one source's
+    ///         capital twice.
+    error InstantSourceRepeated(uint256 index);
     /// @notice The loans opened came to less than the stated least.
     error InstantBelowLeast(uint256 received, uint256 least);
     /// @notice The slot is not active.
@@ -284,7 +290,7 @@ contract InstantMarketFacet is DiamondReentrancyGuard, DiamondPausable, DiamondA
     {
         LibTiming.requireDeadline(req.validUntil);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        _requireRequest(s, req, sources.length, msg.sender);
+        _requireRequest(s, req, sources, msg.sender);
 
         groupId = ++s.lastInstantGroupId;
         uint256 maxFills = _maxFills(s.instantCfg);
@@ -384,7 +390,7 @@ contract InstantMarketFacet is DiamondReentrancyGuard, DiamondPausable, DiamondA
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        _requireRequest(s, req, sources.length, borrower);
+        _requireRequest(s, req, sources, borrower);
         uint256 maxFills = _maxFills(s.instantCfg);
         fills = new InstantFill[](sources.length);
         skipped = new InstantSkip[](sources.length);
@@ -415,14 +421,33 @@ contract InstantMarketFacet is DiamondReentrancyGuard, DiamondPausable, DiamondA
 
     // ─── Internals ────────────────────────────────────────────────────────
 
+    /// @dev Each source at most once: a slot source is its owner and slot, an
+    ///      offer source its offer id (the fields a source of the other kind
+    ///      carries are not read). Bounded by {MAX_MAX_FILLS}.
+    function _requireDistinctSources(InstantFillFacet.InstantSource[] calldata sources) private pure {
+        for (uint256 i = 1; i < sources.length; ++i) {
+            bytes32 key = _sourceKey(sources[i]);
+            for (uint256 j; j < i; ++j) {
+                if (_sourceKey(sources[j]) == key) revert InstantSourceRepeated(i);
+            }
+        }
+    }
+
+    function _sourceKey(InstantFillFacet.InstantSource calldata src) private pure returns (bytes32) {
+        return src.kind == 0
+            ? keccak256(abi.encode(uint8(0), src.owner, src.slot))
+            : keccak256(abi.encode(uint8(1), src.offerId));
+    }
+
     /// @dev The request-level admission {borrowInstant} runs before any
     ///      source, for `borrower`; {previewBorrowInstant} runs it too.
     function _requireRequest(
         LibVaipakam.Storage storage s,
         InstantBorrowRequest calldata req,
-        uint256 nSources,
+        InstantFillFacet.InstantSource[] calldata sources,
         address borrower
     ) private view {
+        uint256 nSources = sources.length;
         if (!s.instantCfg.enabled) revert InstantMarketDisabled();
         if (!req.riskAndTermsConsent) revert IVaipakamErrors.RiskAndTermsConsentRequired();
         LibVaipakam._assertNotSanctioned(borrower);
@@ -436,6 +461,7 @@ contract InstantMarketFacet is DiamondReentrancyGuard, DiamondPausable, DiamondA
                 || nSources == 0
         ) revert InstantRequestInvalid();
         if (nSources > MAX_MAX_FILLS) revert InstantTooManySources(nSources, MAX_MAX_FILLS);
+        _requireDistinctSources(sources);
         _requireEligiblePair(req.lendingAsset, req.collateralAsset);
     }
 

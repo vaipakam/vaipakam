@@ -283,6 +283,30 @@ contract InstantMarketTest is InstantMarketBase {
         InstantMarketFacet(address(diamond)).previewBorrowInstant(req, srcs, taker);
     }
 
+    /// @dev #3761 — a request naming one source twice is refused by the
+    ///      borrow and by its preview alike, for a slot and for an offer.
+    function test_repeatedSourceRefused() public {
+        _slot(lender, 500, 1000 ether, true);
+        _age();
+        InstantFillFacet.InstantSource[] memory srcs = new InstantFillFacet.InstantSource[](3);
+        srcs[0] = _src(lender);
+        srcs[1] = _offerSrc(7);
+        srcs[2] = _src(lender);
+        InstantMarketFacet.InstantBorrowRequest memory req = _req(1500 ether, 3000 ether, 700, 100 ether);
+        bytes memory refusal = abi.encodeWithSelector(InstantMarketFacet.InstantSourceRepeated.selector, 2);
+        vm.expectRevert(refusal);
+        InstantMarketFacet(address(diamond)).previewBorrowInstant(req, srcs, taker);
+        vm.prank(taker);
+        vm.expectRevert(refusal);
+        InstantMarketFacet(address(diamond)).borrowInstant(req, srcs);
+
+        srcs[2] = _offerSrc(7);
+        refusal = abi.encodeWithSelector(InstantMarketFacet.InstantSourceRepeated.selector, 2);
+        vm.prank(taker);
+        vm.expectRevert(refusal);
+        InstantMarketFacet(address(diamond)).borrowInstant(req, srcs);
+    }
+
     /// @dev The call reverts only when what was received is below the least.
     function test_revertsBelowLeast() public {
         _slot(lender, 500, 1000 ether, true);

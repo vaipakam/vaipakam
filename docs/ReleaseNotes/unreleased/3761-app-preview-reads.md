@@ -8,7 +8,9 @@ A lender handing an instant-market loan to another lender's Auto-lend
 intent can see whether the takeover would be accepted now and the
 principal the incoming intent would pay. The read runs the takeover's own
 admission, so it and the takeover cannot disagree, and a refusal comes
-back as the takeover's own reason.
+back as the takeover's own reason. The takeover now also checks that the
+incoming intent holds enough funded capital for the principal before
+anything else runs, so the read refuses an underfunded intent too.
 
 A lender selling a loan into a standing buy offer can see whether the
 sale would be accepted, what they would net, the rate shortfall left for
@@ -22,7 +24,10 @@ which sources would be refused and why, and how much collateral would come
 from the vault and how much from the wallet, without approving a token
 first. It sizes each source by the fill's own rule but does not run the
 loan checks a fill runs when it opens its loan, and says so: a simulation
-of the borrow stays the binding answer.
+of the borrow stays the binding answer. A request that names the same
+source twice is now refused, by the borrow and by the read alike: a source
+can only ever be filled once, and counting it twice made the read overstate
+what it could lend.
 
 The late-fee schedule (1% on the first day past due, 0.5% more each
 further day, capped at 5%) is now readable, from the same fixed figures

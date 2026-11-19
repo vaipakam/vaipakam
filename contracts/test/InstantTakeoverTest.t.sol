@@ -19,6 +19,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
+import {LibEncumbrance} from "../src/libraries/LibEncumbrance.sol";
 
 /**
  * @title  InstantTakeoverTest
@@ -317,6 +318,30 @@ contract InstantTakeoverTest is InstantMarketBase {
         ProfileFacet(address(diamond)).setLoanKeeperEnabled(loanId, keeper, true);
         (accepted, , ) = InstantTakeoverFacet(address(diamond)).previewTakeover(loanId, keeper, lender2, 0);
         assertTrue(accepted, "the mandated keeper is accepted");
+    }
+
+    /// @dev #3761 — an incoming slot whose funded capital is below the
+    ///      principal is refused by the takeover and by its preview with the
+    ///      same error.
+    function test_refusedWhenTheIncomingSlotIsUnderfunded() public {
+        uint256 loanId = _openAndOffer(500, TERM, true);
+        vm.prank(lender2);
+        LenderIntentFacet(address(diamond)).withdrawLenderIntentCapital(
+            lender2, mockERC20, mockCollateralERC20, 0, PRINCIPAL / 2
+        );
+        vm.warp(vm.getBlockTimestamp() + 5 days);
+        LibTestCalmPair.checkpoint(address(diamond), mockERC20, mockCollateralERC20);
+        bytes memory expected = abi.encodeWithSelector(
+            LibEncumbrance.IntentCapitalInsufficient.selector,
+            lender2, mockERC20, mockCollateralERC20, uint8(0), PRINCIPAL, PRINCIPAL / 2
+        );
+        (bool accepted, bytes memory refusal, uint256 principalPaid) =
+            InstantTakeoverFacet(address(diamond)).previewTakeover(loanId, lender, lender2, 0);
+        assertFalse(accepted, "refused");
+        assertEq(principalPaid, 0, "nothing paid");
+        assertEq(refusal, expected, "the takeover's own error");
+        vm.expectRevert(expected);
+        _takeover(lender, loanId, lender2);
     }
 
     /// @dev Only the position's holder (or its direct-sale keeper) starts it.

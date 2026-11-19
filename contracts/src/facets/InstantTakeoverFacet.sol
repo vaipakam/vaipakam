@@ -290,6 +290,16 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
             s.lenderIntentLivePrincipal[incoming][loan.principalAsset][loan.collateralAsset][slot] + loan.principal
                 > intent.maxExposure
         ) revert LibIntentFill.LenderIntentExposureExceeded();
+        {
+            // The slot pays the principal out of its funded capital, which an
+            // active slot can lack (never funded, or withdrawn).
+            uint256 funded = s.lenderIntentCapital[incoming][loan.principalAsset][loan.collateralAsset][slot];
+            if (loan.principal > funded) {
+                revert LibEncumbrance.IntentCapitalInsufficient(
+                    incoming, loan.principalAsset, loan.collateralAsset, slot, loan.principal, funded
+                );
+            }
+        }
         uint256 ltv = RiskFacet(address(this)).calculateLTV(loan.id);
         if (ltv > intent.maxInitLtvBps) revert InstantTakeoverLtvAboveSlot(ltv, intent.maxInitLtvBps);
         // The incoming lender takes the loan on as new: the one new-loan
