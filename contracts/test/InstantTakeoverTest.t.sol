@@ -268,6 +268,57 @@ contract InstantTakeoverTest is InstantMarketBase {
         assertEq(_loan(loanId).lender, lender2, "position moved");
     }
 
+    /// @dev #3761 — the preview accepts what the takeover accepts and states
+    ///      the principal the incoming slot pays; the takeover then pays it.
+    function test_previewAcceptsAndStatesThePrincipal() public {
+        uint256 loanId = _openAndOffer(500, TERM, true);
+        vm.warp(vm.getBlockTimestamp() + 5 days);
+        LibTestCalmPair.checkpoint(address(diamond), mockERC20, mockCollateralERC20);
+        (bool accepted, bytes memory refusal, uint256 principalPaid) =
+            InstantTakeoverFacet(address(diamond)).previewTakeover(loanId, lender, lender2, 0);
+        assertTrue(accepted, "accepted");
+        assertEq(refusal.length, 0, "no refusal");
+        assertEq(principalPaid, PRINCIPAL, "face value");
+        uint256 holderVaultBefore = _vaultBal(lender, mockERC20);
+        _takeover(lender, loanId, lender2);
+        assertEq(_vaultBal(lender, mockERC20) - holderVaultBefore, principalPaid, "the takeover paid the preview");
+    }
+
+    /// @dev #3761 — a refusal comes back as the error the takeover raises.
+    function test_previewReturnsTheTakeoversRefusal() public {
+        uint256 loanId = _openAndOffer(600, TERM, true);
+        (bool accepted, bytes memory refusal, uint256 principalPaid) =
+            InstantTakeoverFacet(address(diamond)).previewTakeover(loanId, lender, lender2, 0);
+        assertFalse(accepted, "refused");
+        assertEq(principalPaid, 0, "nothing paid");
+        assertEq(
+            refusal,
+            abi.encodeWithSelector(InstantTakeoverFacet.InstantTakeoverRateBelowSlot.selector, 500, 600),
+            "the takeover's own error"
+        );
+        (accepted, refusal, ) = InstantTakeoverFacet(address(diamond)).previewTakeover(999, lender, lender2, 0);
+        assertEq(refusal, abi.encodeWithSelector(InstantTakeoverFacet.InstantLoanNotEligible.selector, 999));
+    }
+
+    /// @dev #3761 — the preview reads the caller it is given: a stranger is
+    ///      refused, a keeper holding the holder's mandate accepted.
+    function test_previewReadsTheCaller() public {
+        uint256 loanId = _openAndOffer(500, TERM, true);
+        vm.warp(vm.getBlockTimestamp() + 5 days);
+        LibTestCalmPair.checkpoint(address(diamond), mockERC20, mockCollateralERC20);
+        (bool accepted, , ) = InstantTakeoverFacet(address(diamond)).previewTakeover(loanId, lender2, lender2, 0);
+        assertFalse(accepted, "a stranger is refused");
+        address keeper = makeAddr("preview-keeper");
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setKeeperAccess(true);
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).approveKeeper(keeper, LibVaipakam.KEEPER_ACTION_INIT_EARLY_WITHDRAW);
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setLoanKeeperEnabled(loanId, keeper, true);
+        (accepted, , ) = InstantTakeoverFacet(address(diamond)).previewTakeover(loanId, keeper, lender2, 0);
+        assertTrue(accepted, "the mandated keeper is accepted");
+    }
+
     /// @dev Only the position's holder (or its direct-sale keeper) starts it.
     function test_refusedForAStranger() public {
         uint256 loanId = _openAndOffer(500, TERM, true);

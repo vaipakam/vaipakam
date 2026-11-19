@@ -1510,8 +1510,11 @@ contract RedeployFacets is Script {
     ///      Mirrors `DeployDiamond._getEarlyWithdrawalDirectSelectors`. #3412
     ///      left one entry, the quote- and deadline-bound sale.
     function _earlyWithdrawalDirectSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
+        s = new bytes4[](3);
         s[0] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer.selector;
+        // #3761 — the sale's admission as a preview and its revert form.
+        s[1] = EarlyWithdrawalDirectFacet.previewDirectSale.selector;
+        s[2] = EarlyWithdrawalDirectFacet.requireDirectSaleAdmissible.selector;
     }
 
     /// @dev #658 PR-B2 — RefinanceFacet selectors, mirrors

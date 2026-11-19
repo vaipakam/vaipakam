@@ -12,6 +12,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {LibTestCalmPair} from "./helpers/LibTestCalmPair.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -216,6 +217,70 @@ contract InstantMarketTest is InstantMarketBase {
         assertEq(fills.length, 1);
         assertEq(fills[0].sourceIndex, 2);
         assertEq(_loan(fills[0].loanId).lender, lender2);
+    }
+
+    /// @dev #3761 — the preview sizes each source as the borrow does, reports
+    ///      the refused ones with the fill's own error, splits the collateral
+    ///      between vault and wallet, and needs no approval; the borrow then
+    ///      opens exactly the fills it showed.
+    function test_previewShowsTheBorrowSourceBySource() public {
+        _slot(lender, 500, 1000 ether, false); // no instant consent
+        _slot(lender2, 600, 1000 ether, true);
+        address dear = _newParty("previewDearLender");
+        _slot(dear, 900, 1000 ether, true);
+        _age();
+        InstantFillFacet.InstantSource[] memory srcs = new InstantFillFacet.InstantSource[](3);
+        srcs[0] = _src(lender);
+        srcs[1] = _src(dear);
+        srcs[2] = _src(lender2);
+        InstantMarketFacet.InstantBorrowRequest memory req = _req(800 ether, 1600 ether, 700, 800 ether);
+
+        // No approval is needed to read it.
+        vm.prank(taker);
+        ERC20(mockCollateralERC20).approve(address(diamond), 0);
+        (
+            InstantMarketFacet.InstantFill[] memory fills,
+            InstantMarketFacet.InstantSkip[] memory skipped,
+            uint256 received,
+            uint256 fromVault,
+            uint256 fromWallet
+        ) = InstantMarketFacet(address(diamond)).previewBorrowInstant(req, srcs, taker);
+        assertEq(fills.length, 1, "one fill");
+        assertEq(fills[0].sourceIndex, 2);
+        assertEq(fills[0].loanId, 0, "no loan yet");
+        assertEq(fills[0].amount, 800 ether);
+        assertEq(fills[0].rateBps, 600, "the slot's own rate");
+        assertEq(fills[0].collateral, 1600 ether);
+        assertEq(skipped.length, 2, "two refused");
+        assertEq(skipped[0].sourceIndex, 0);
+        assertEq(bytes4(skipped[0].reason), InstantFillFacet.InstantSlotNotOffered.selector, "no consent");
+        assertEq(skipped[1].sourceIndex, 1);
+        assertEq(
+            skipped[1].reason,
+            abi.encodeWithSelector(InstantFillFacet.InstantRateAboveLimit.selector, 900, 700),
+            "dearer than the limit"
+        );
+        assertEq(received, 800 ether);
+        assertEq(fromVault + fromWallet, 1600 ether, "the collateral taken");
+        assertEq(fromWallet, 1600 ether - fromVault, "the rest from the wallet");
+
+        vm.prank(taker);
+        ERC20(mockCollateralERC20).approve(address(diamond), type(uint256).max);
+        (, InstantMarketFacet.InstantFill[] memory opened) = _borrow(req, srcs);
+        assertEq(opened.length, 1);
+        assertEq(opened[0].sourceIndex, fills[0].sourceIndex);
+        assertEq(opened[0].amount, fills[0].amount, "the borrow lent what the preview showed");
+        assertEq(opened[0].collateral, fills[0].collateral);
+    }
+
+    /// @dev #3761 — a request-level refusal is the borrow's own error.
+    function test_previewRefusesWhatTheBorrowRefuses() public {
+        InstantFillFacet.InstantSource[] memory srcs = new InstantFillFacet.InstantSource[](1);
+        srcs[0] = _src(lender);
+        InstantMarketFacet.InstantBorrowRequest memory req = _req(800 ether, 1600 ether, 700, 800 ether);
+        req.riskAndTermsConsent = false;
+        vm.expectRevert(IVaipakamErrors.RiskAndTermsConsentRequired.selector);
+        InstantMarketFacet(address(diamond)).previewBorrowInstant(req, srcs, taker);
     }
 
     /// @dev The call reverts only when what was received is below the least.

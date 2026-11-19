@@ -263,6 +263,178 @@
   },
   {
     "type": "function",
+    "name": "previewBorrowInstant",
+    "inputs": [
+      {
+        "name": "req",
+        "type": "tuple",
+        "internalType": "struct InstantMarketFacet.InstantBorrowRequest",
+        "components": [
+          {
+            "name": "lendingAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "collateralAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amountWanted",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralOffered",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "termDays",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "maxRateBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "allowsPartialRepay",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "minTotal",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "validUntil",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "riskAndTermsConsent",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "rateFarFromAverageAcknowledged",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      },
+      {
+        "name": "sources",
+        "type": "tuple[]",
+        "internalType": "struct InstantFillFacet.InstantSource[]",
+        "components": [
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "owner",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "slot",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "offerId",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "borrower",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "fills",
+        "type": "tuple[]",
+        "internalType": "struct InstantMarketFacet.InstantFill[]",
+        "components": [
+          {
+            "name": "sourceIndex",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "loanId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "amount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "rateBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateral",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "skipped",
+        "type": "tuple[]",
+        "internalType": "struct InstantMarketFacet.InstantSkip[]",
+        "components": [
+          {
+            "name": "sourceIndex",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "reason",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      },
+      {
+        "name": "received",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "fromVault",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "fromWallet",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "setInstantMarketEnabled",
     "inputs": [
       {
