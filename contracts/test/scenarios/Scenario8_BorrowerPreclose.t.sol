@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibTestCollateralCut} from "../helpers/LibTestCollateralCut.sol";
 import {LibTestTermsCut} from "../helpers/LibTestTermsCut.sol";
+import {LibTestRateLinkCut} from "../helpers/LibTestRateLinkCut.sol";
 import {LibTestClaimViewCut} from "../helpers/LibTestClaimViewCut.sol";
 import {LibTestProtectedCut} from "../helpers/LibTestProtectedCut.sol";
 import {LibTestPositionNFT} from "../helpers/LibTestPositionNFT.sol";
@@ -285,7 +286,7 @@ contract Scenario8_BorrowerPreclose is Test {
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
         cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
-        cuts = LibTestTermsCut.withTermsHost(cuts); // #3734
+        cuts = LibTestRateLinkCut.withRateLinkHost(LibTestTermsCut.withTermsHost(cuts)); // #3734, #3635 A
         cuts = LibTestClaimViewCut.withClaimView(cuts); // the claim reads
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
         LibTestSettlementLeg.install(address(diamond)); // #3669
@@ -510,6 +511,7 @@ contract Scenario8_BorrowerPreclose is Test {
         vm.prank(borrower);
         uint256 newOfferId = PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(
             activeLoanId, 500, 29, mockCollateralERC20, COLLATERAL, true, mockERC20,
+            false,
             type(uint64).max
         );
         assertEq(newOfferId, expectedNewOfferId, "Returned offerId should match expected");

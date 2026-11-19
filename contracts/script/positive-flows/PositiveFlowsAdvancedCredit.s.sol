@@ -868,7 +868,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsStaged {
             address(weth),
             COLLATERAL_AMOUNT,
             true,                   // creatorRiskAndTermsConsent
-            address(usdc),           // prepayAsset (unused on ERC20 path)
+            address(usdc),           false,           // prepayAsset (unused on ERC20 path)
             type(uint64).max
         );
         vm.stopBroadcast();

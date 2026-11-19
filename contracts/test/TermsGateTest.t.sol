@@ -358,7 +358,7 @@ contract TermsGateTest is SetupTest {
         _expectTerms(borrower, 2);
         vm.prank(borrower);
         PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(
-            loanId, 500, 20, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max
+            loanId, 500, 20, mockCollateralERC20, COLLATERAL, true, mockERC20, false, type(uint64).max
         );
     }
 

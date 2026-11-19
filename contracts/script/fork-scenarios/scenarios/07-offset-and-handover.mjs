@@ -40,7 +40,7 @@ export async function run() {
     const { loanId } = await openLoan({ lender, borrower });
 
     const impostor = await simulate(DIAMOND, ABIS.precloseOffset, 'offsetWithNewOffer',
-      [loanId, 400n, 7n, collateral, parseUnits('1.25', 18), true, lending, await txValidUntil()], outsider.address);
+      [loanId, 400n, 7n, collateral, parseUnits('1.25', 18), true, lending, false, await txValidUntil()], outsider.address);
     expectRefusal('A7.1', 'only the borrower can offset their own loan', impostor, 'KeeperAccessRequired');
 
     // The replacement's maturity must not pass the ORIGINAL loan's, and the
@@ -50,18 +50,18 @@ export async function run() {
     // that makes a simulate-then-send pair disagree.
     await warpDays(1 / 1440); // one minute, so the comparison is not same-second
     const sameTerm = await simulate(DIAMOND, ABIS.precloseOffset, 'offsetWithNewOffer',
-      [loanId, 400n, 7n, collateral, parseUnits('1.25', 18), true, lending, await txValidUntil()], borrower.address);
+      [loanId, 400n, 7n, collateral, parseUnits('1.25', 18), true, lending, false, await txValidUntil()], borrower.address);
     expectRefusal('A7.2a', 'a same-length replacement is refused once any time has passed — the maturity bound is seconds-precise', sameTerm, 'InvalidOfferTerms');
 
     const OFFSET_DAYS = 6n;
     const sim = await simulate(DIAMOND, ABIS.precloseOffset, 'offsetWithNewOffer',
-      [loanId, 400n, OFFSET_DAYS, collateral, parseUnits('1.25', 18), true, lending, await txValidUntil()], borrower.address);
+      [loanId, 400n, OFFSET_DAYS, collateral, parseUnits('1.25', 18), true, lending, false, await txValidUntil()], borrower.address);
     if (!sim.ok) cannotContinue('A7.2 offset offer', sim.name);
     const prePostPos = await positionOf(loanId);
     const beforeOffsetPost = await snapshot(tokens, holders);
     const posted = await tx(borrower, {
       address: DIAMOND, abi: ABIS.precloseOffset, functionName: 'offsetWithNewOffer',
-      args: [loanId, 400n, OFFSET_DAYS, collateral, parseUnits('1.25', 18), true, lending, await txValidUntil()],
+      args: [loanId, 400n, OFFSET_DAYS, collateral, parseUnits('1.25', 18), true, lending, false, await txValidUntil()],
     }, 'offsetWithNewOffer');
     const offsetOfferId = BigInt(sim.result);
     const stillOpen = await read(ABIS.loan, 'getLoanDetails', [loanId]);

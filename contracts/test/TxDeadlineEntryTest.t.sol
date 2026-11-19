@@ -55,7 +55,7 @@ contract TxDeadlineEntryTest is SetupTest {
         } else if (i == 10) {
             EarlyWithdrawalDirectFacet(d).sellLoanViaBuyOffer(1, 2, 0, type(uint256).max, validUntil);
         } else if (i == 11) {
-            PrecloseOffsetFacet(d).offsetWithNewOffer(1, 1, 1, address(1), 1, true, address(0), validUntil);
+            PrecloseOffsetFacet(d).offsetWithNewOffer(1, 1, 1, address(1), 1, true, address(0), false, validUntil);
         } else {
             PrecloseFacet(d).transferObligationViaOffer(1, 2, validUntil);
         }

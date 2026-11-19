@@ -8,6 +8,7 @@ import {RegistryKeys} from "../src/governance/RegistryKeys.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
+import {PrecloseOffsetFacet} from "../src/facets/PrecloseOffsetFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
@@ -257,6 +258,34 @@ contract RateLinkTest is SetupTest {
         assertEq(l.interestRateBps, 500);
         assertTrue(l.rateFromLink);
         assertEq(link.loanRateWarnings(loanId), 0);
+    }
+
+    /// The borrower posting an offset is the new offer's maker: a rate
+    /// outside the band needs its acknowledgement, which the offset entry
+    /// carries (#3782 review).
+    function test_offset_bandNeedsTheBorrowersAcknowledgement() public {
+        _install();
+        uint256 offerId = _create(lender, _params(LibVaipakam.OfferType.Lender, 500, 500));
+        LibTestTiming.waitOutTermsAge(address(diamond), offerId);
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig) = _terms(offerId, 500, false);
+        vm.prank(borrower);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, t, sig);
+        vm.warp(block.timestamp + 1 days);
+        ERC20Mock(mockERC20).mint(borrower, PRINCIPAL);
+
+        vm.prank(borrower);
+        vm.expectRevert(
+            abi.encodeWithSelector(RateLinkFacet.RateFarFromTermAverage.selector, mockERC20, 20, 1000, 500, true)
+        );
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(
+            loanId, 1000, 20, mockCollateralERC20, PRINCIPAL * 2, true, mockERC20, false, type(uint64).max
+        );
+
+        vm.prank(borrower);
+        uint256 offsetId = PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(
+            loanId, 1000, 20, mockCollateralERC20, PRINCIPAL * 2, true, mockERC20, true, type(uint64).max
+        );
+        assertGt(offsetId, 0);
     }
 
     /// The taker is checked on the actual rate, with its own flag.

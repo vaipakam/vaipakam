@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibTestCollateralCut} from "./helpers/LibTestCollateralCut.sol";
 import {LibTestTermsCut} from "./helpers/LibTestTermsCut.sol";
+import {LibTestRateLinkCut} from "./helpers/LibTestRateLinkCut.sol";
 import {LibTestClaimViewCut} from "./helpers/LibTestClaimViewCut.sol";
 import {LibTiming} from "../src/libraries/LibTiming.sol";
 import {LibTestSettlementLeg} from "./helpers/LibTestSettlementLeg.sol";
@@ -465,7 +466,7 @@ contract EarlyWithdrawalFacetTest is Test {
             functionSelectors: helperTest.getReferralFacetSelectors()
         });
         cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
-        cuts = LibTestTermsCut.withTermsHost(cuts); // #3734
+        cuts = LibTestRateLinkCut.withRateLinkHost(LibTestTermsCut.withTermsHost(cuts)); // #3734, #3635 A
         cuts = LibTestClaimViewCut.withClaimView(cuts); // the claim reads
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         LibTestSettlementLeg.install(address(diamond)); // #3669

@@ -40,7 +40,7 @@ actually open at, and names a link refusal (reference unavailable, unusual, or
 no acceptable rate left) instead of quoting the typed rate.
 
 Breaking for integrators: `CreateOfferParams`, `OfferModifyParams`,
-`setOfferRate`, `setLenderIntent`, the signed-offer and accept-terms typed
+`setOfferRate`, `setLenderIntent`, `offsetWithNewOffer` (the borrower's band acknowledgement for the offset offer), the signed-offer and accept-terms typed
 data, `MatchResult` and several events gained fields. The next fresh deploy
 carries them; ABIs are re-exported in this change.
 

@@ -368,7 +368,7 @@
       "class": "user",
       "why": "completes the borrower's own offset; an accepted offset offer completes it automatically"
     },
-    "PrecloseOffsetFacet.offsetWithNewOffer(uint256,uint256,uint256,address,uint256,bool,address,uint64)": {
+    "PrecloseOffsetFacet.offsetWithNewOffer(uint256,uint256,uint256,address,uint256,bool,address,bool,uint64)": {
       "class": "user",
       "why": "the borrower offsets its own loan"
     },
