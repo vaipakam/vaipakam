@@ -13,10 +13,13 @@ describe('balanceLines', () => {
         { standard: 'erc20', asset: USDC, withdrawable: 100n },
         { standard: 'erc721', asset: NFT, withdrawable: 1n },
       ],
-      [
-        { lendingAsset: USDC, availableCapital: 40n, active: true },
-        { lendingAsset: usdcLower(), availableCapital: 10n, active: false },
-      ],
+      {
+        slots: [
+          { lendingAsset: USDC, availableCapital: 40n, active: true },
+          { lendingAsset: usdcLower(), availableCapital: 10n, active: false },
+        ],
+        complete: true,
+      },
       [
         { principalAsset: USDC, principal: 500n, assetType: 0 },
         { principalAsset: WETH, principal: 7n, assetType: 0 },
@@ -24,13 +27,21 @@ describe('balanceLines', () => {
       ],
     );
     expect(lines).toEqual([
-      { asset: USDC, free: 100n, waiting: 50n, inLoans: 500n },
-      { asset: WETH, free: 0n, waiting: 0n, inLoans: 7n },
+      { asset: USDC, free: 100n, waiting: 50n, waitingPartial: false, inLoans: 500n },
+      { asset: WETH, free: 0n, waiting: 0n, waitingPartial: false, inLoans: 7n },
     ]);
   });
   it('states an unread free figure as unread, and drops a token with nothing on any line', () => {
-    expect(balanceLines([{ standard: 'erc20', asset: USDC, withdrawable: null }], [], [])).toEqual([{ asset: USDC, free: null, waiting: 0n, inLoans: 0n }]);
-    expect(balanceLines([{ standard: 'erc20', asset: USDC, withdrawable: 0n }], [{ lendingAsset: WETH, availableCapital: 0n, active: true }], [])).toEqual([]);
+    expect(balanceLines([{ standard: 'erc20', asset: USDC, withdrawable: null }], { slots: [], complete: true }, [])).toEqual([
+      { asset: USDC, free: null, waiting: 0n, waitingPartial: false, inLoans: 0n },
+    ]);
+    expect(balanceLines([{ standard: 'erc20', asset: USDC, withdrawable: 0n }], { slots: [{ lendingAsset: WETH, availableCapital: 0n, active: true }], complete: true }, [])).toEqual([]);
+  });
+  it('never shows unread Auto-lend capital as zero, and marks a partial slot list as a floor', () => {
+    expect(balanceLines([{ standard: 'erc20', asset: USDC, withdrawable: 5n }], null, [])).toEqual([{ asset: USDC, free: 5n, waiting: null, waitingPartial: false, inLoans: 0n }]);
+    expect(balanceLines([], { slots: [{ lendingAsset: USDC, availableCapital: 9n, active: true }], complete: false }, [])).toEqual([
+      { asset: USDC, free: 0n, waiting: 9n, waitingPartial: true, inLoans: 0n },
+    ]);
   });
 });
 

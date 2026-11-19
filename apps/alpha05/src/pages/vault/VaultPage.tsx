@@ -233,7 +233,7 @@ export function VaultPage() {
                 </section>
               )}
               {book.loans.data !== null && (slots.data !== null || slots.state === 'failed') && (
-                <BalanceLines lines={balanceLines(data.rows, slots.data?.slots ?? [], lent)} meta={meta} slotsError={slots.data === null ? (slots.error ?? '') : null} />
+                <BalanceLines lines={balanceLines(data.rows, slots.data, lent)} meta={meta} slotsError={slots.data === null ? (slots.error ?? '') : null} slotsPartial={slots.data !== null && !slots.data.complete} />
               )}
               <section className="home-section" aria-labelledby="vault-holdings">
                 <h2 id="vault-holdings">{text('vault.holdingsTitle')}</h2>
@@ -399,7 +399,17 @@ function HandoffLink({ to, label }: { to: ReturnType<typeof pageHandoff>; label:
 
 /** #3761 §4.3 — the three lines per token: free, waiting in Auto-lend, and
  *  in loans (not withdrawable). Withdraw offers the free balance only. */
-function BalanceLines({ lines, meta, slotsError }: { lines: ReturnType<typeof balanceLines>; meta: TokenMetaMap | null; slotsError: string | null }) {
+function BalanceLines({
+  lines,
+  meta,
+  slotsError,
+  slotsPartial,
+}: {
+  lines: ReturnType<typeof balanceLines>;
+  meta: TokenMetaMap | null;
+  slotsError: string | null;
+  slotsPartial: boolean;
+}) {
   const { text, format } = useCopy();
   if (lines.length === 0 && slotsError === null) return null;
   return (
@@ -407,6 +417,7 @@ function BalanceLines({ lines, meta, slotsError }: { lines: ReturnType<typeof ba
       <h2 id="vault-balances">{text('vault.balancesTitle')}</h2>
       <p className="tier-b">{text('vault.balancesLead')}</p>
       {slotsError !== null && <p className="tier-a">{format('vault.balancesSlotsFailed', { reason: slotsError })}</p>}
+      {slotsPartial && <p className="tier-a">{text('vault.balancesSlotsPartial')}</p>}
       <ul className="rows">
         {lines.map((l) => {
           const key = l.asset.toLowerCase();
@@ -418,11 +429,19 @@ function BalanceLines({ lines, meta, slotsError }: { lines: ReturnType<typeof ba
                 <dt className="tier-b">{text('vault.rowFree')}</dt>
                 <dd data-testid={`vault-free-${key}`}>{l.free === null ? <span className="tier-a">{text('vault.unreadFigure')}</span> : amount(l.free)}</dd>
                 <dt className="tier-b">{text('vault.rowWaiting')}</dt>
-                <dd data-testid={`vault-waiting-${key}`}>{amount(l.waiting)}</dd>
+                <dd data-testid={`vault-waiting-${key}`}>
+                  {l.waiting === null ? (
+                    <span className="tier-a">{text('vault.unreadFigure')}</span>
+                  ) : l.waitingPartial ? (
+                    format('vault.waitingAtLeast', { amount: amount(l.waiting) })
+                  ) : (
+                    amount(l.waiting)
+                  )}
+                </dd>
                 <dt className="tier-b">{text('vault.rowInLoans')}</dt>
                 <dd data-testid={`vault-in-loans-${key}`}>{amount(l.inLoans)}</dd>
               </dl>
-              {l.waiting > 0n && <p className="tier-b">{text('vault.waitingNote')}</p>}
+              {l.waiting !== null && l.waiting > 0n && <p className="tier-b">{text('vault.waitingNote')}</p>}
             </li>
           );
         })}
