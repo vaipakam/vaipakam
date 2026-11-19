@@ -11,4 +11,4 @@ Every workflow was brought to a clean result first:
 - The Pages deploy grants write access only to the job that publishes.
 - The mainnet release gate compiles from scratch instead of restoring a shared build cache.
 
-The docs path check now also covers links in every living document, not only the operator runbooks; history (shipped release notes and older docs) is left as written. The 75 dead links it found are fixed. Links that had the wrong depth now point at the right file. Links to files that no longer exist are kept as plain text.
+The docs path check now also covers links in every living document, not only the operator runbooks; history (shipped release notes and older docs) and the owner's to-do list are left as written. The dead links it found are fixed. Links that had the wrong depth now point at the right file. Links to files that no longer exist are kept as plain text.
