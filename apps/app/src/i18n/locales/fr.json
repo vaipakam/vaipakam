@@ -3149,6 +3149,13 @@
       "viewAria": "Voir {{address}} dans l'explorateur de blocs",
       "copied": "Adresse copiée"
     },
+    "walletDelegation": {
+      "title": "Votre portefeuille exécute le code d’un autre contrat",
+      "body": "Ce portefeuille est délégué (EIP-7702) au contrat {{delegate}}. Ce contrat peut agir comme votre portefeuille, y compris sur votre coffre Vaipakam. Si vous ne l’avez pas configuré, considérez le portefeuille comme compromis et activez le mode protégé, afin que les paiements depuis votre coffre attendent avant de partir.",
+      "protect": "Ouvrir la protection du coffre",
+      "ack": "C’est moi qui l’ai configuré",
+      "ackNote": "Votre réponse est conservée dans ce navigateur uniquement. Si la délégation passe à un autre contrat, vous serez de nouveau averti."
+    },
     "legalGate": {
       "verifying": "Vérification que les conditions s’appliquent à votre portefeuille…",
       "readErrorTitle": "Impossible de vérifier les conditions",

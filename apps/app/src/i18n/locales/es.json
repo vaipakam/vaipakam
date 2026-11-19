@@ -3149,6 +3149,13 @@
       "viewAria": "Ver {{address}} en el explorador de bloques",
       "copied": "Dirección copiada"
     },
+    "walletDelegation": {
+      "title": "Tu billetera ejecuta el código de otro contrato",
+      "body": "Esta billetera está delegada (EIP-7702) al contrato {{delegate}}. Ese contrato puede actuar como tu billetera, también en tu bóveda de Vaipakam. Si no lo configuraste tú, trata la billetera como comprometida y activa el modo protegido, para que los pagos desde tu bóveda esperen antes de salir.",
+      "protect": "Abrir la protección de la bóveda",
+      "ack": "Lo configuré yo",
+      "ackNote": "Tu respuesta se guarda solo en este navegador. Si la delegación pasa a otro contrato, se te avisará de nuevo."
+    },
     "legalGate": {
       "verifying": "Comprobando si las condiciones se aplican a tu cartera…",
       "readErrorTitle": "No se han podido comprobar las condiciones",

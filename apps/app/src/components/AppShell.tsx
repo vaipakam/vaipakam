@@ -46,6 +46,7 @@ import { EmptyState } from './EmptyState';
 import { LegalGate } from './LegalGate';
 import { DiagnosticsDrawer } from './DiagnosticsDrawer';
 import { NetworkBanner } from './NetworkBanner';
+import { WalletDelegationBanner } from './WalletDelegationBanner';
 import { SeoMeta } from './SeoMeta';
 // UX2-008 — SanctionsBanner is the shell's ONLY eager Diamond-ABI
 // consumer (it reads the on-chain sanctions oracle). Loading it lazily
@@ -316,6 +317,13 @@ export function AppShell() {
 
         <main className="shell-main" id="main-content" tabIndex={-1} ref={mainRef}>
           <NetworkBanner />
+          {/* #3434 — warns, never blocks, when the connected wallet is
+              EIP-7702 delegated; quiet on any failed read. */}
+          {isConnected ? (
+            <ErrorBoundary fallback={null}>
+              <WalletDelegationBanner />
+            </ErrorBoundary>
+          ) : null}
           {/* UX2-008 — gate on connection, not just lazy render:
               `React.lazy` fetches the SanctionsBanner chunk (→ the ~761
               kB Diamond ABI) the moment it MOUNTS, so an unconditional

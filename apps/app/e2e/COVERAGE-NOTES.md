@@ -2022,3 +2022,12 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 
 **Gap.** Live-only: real Telegram and Push delivery needs the deployed agent and its rails.
 
+<a id="cov-3434-delegation-warning"></a>
+### #3434 EIP-7702 delegation warning
+
+**Journey.** `WalletDelegationBanner` (in the shell, connected only) reads the wallet's code on its own supported chain every two minutes and passes it to `walletDelegationNotice`, which reads it with the shared `readDelegation` rule. A delegated wallet sees the delegate, a link to vault protection and "I set this up", which stores that delegate under `vaipakam.delegationAck.<chain>.<wallet>`; a different delegate warns again. A failed read shows nothing. Nothing is blocked. The agent's `runDelegationWatch` reads the code of every wallet with an alerts row (50 a chain a tick, least recently checked first, one batched request) into `owner_delegation` (migration 0111) and tells the owner on their linked channels when the reading changes.
+
+**Tier.** Unit: `src/data/walletDelegationNotice.test.ts` (none, contract, delegated, acknowledged, moved, key); `packages/lib/src/delegation7702.test.ts`; `apps/agent/test/delegationWatch.test.ts` (first reading, change, removal, a failed read keeps every reading, allowance).
+
+**Gap.** Live-only: a real 7702 delegation needs a dev wallet to sign an authorization on a testnet, and channel delivery needs the deployed agent.
+

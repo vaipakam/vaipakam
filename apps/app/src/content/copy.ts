@@ -361,6 +361,19 @@ const copySource = {
     ),
     phaseSend: tmpl(`Submitting… ({{c}} of {{t}})`, ['c', 't']),
   },
+  // #3434 — the connected wallet is EIP-7702 delegated. A warning only:
+  // nothing is blocked, and "I set this up" is kept in this browser only.
+  walletDelegation: {
+    title: 'Your wallet runs another contract’s code',
+    body: tmpl(
+      `This wallet is delegated (EIP-7702) to the contract {{delegate}}. That contract can act as your wallet, including on your Vaipakam vault. If you did not set this up, treat the wallet as compromised and turn on protected mode, so payouts from your vault wait before they leave.`,
+      ['delegate'],
+    ),
+    protect: 'Open vault protection',
+    ack: 'I set this up',
+    ackNote:
+      'Your answer is kept in this browser only. If the delegation moves to another contract, you are warned again.',
+  },
   // #1961 — the Terms-of-Service route gate. The contracts delegate
   // this enforcement to the client, so this copy is the only place a
   // user is ever told a ToS applies to them.

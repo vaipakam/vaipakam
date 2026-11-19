@@ -3149,6 +3149,13 @@
       "viewAria": "{{address}} im Block-Explorer anzeigen",
       "copied": "Adresse kopiert"
     },
+    "walletDelegation": {
+      "title": "Deine Wallet führt den Code eines anderen Vertrags aus",
+      "body": "Diese Wallet ist (EIP-7702) an den Vertrag {{delegate}} delegiert. Dieser Vertrag kann als deine Wallet handeln, auch in deinem Vaipakam-Tresor. Wenn du das nicht eingerichtet hast, behandle die Wallet als kompromittiert und schalte den Schutzmodus ein, damit Auszahlungen aus deinem Tresor warten, bevor sie ihn verlassen.",
+      "protect": "Tresorschutz öffnen",
+      "ack": "Das habe ich eingerichtet",
+      "ackNote": "Deine Antwort wird nur in diesem Browser gespeichert. Wechselt die Delegation zu einem anderen Vertrag, wirst du erneut gewarnt."
+    },
     "legalGate": {
       "verifying": "Wird geprüft, ob die Bedingungen für Ihre Wallet gelten…",
       "readErrorTitle": "Bedingungen konnten nicht geprüft werden",

@@ -260,6 +260,13 @@
       "phasePermit": "Signing the permission… ({{c}} of {{t}}) — free, no gas",
       "phaseSend": "Submitting… ({{c}} of {{t}})"
     },
+    "walletDelegation": {
+      "title": "Your wallet runs another contract’s code",
+      "body": "This wallet is delegated (EIP-7702) to the contract {{delegate}}. That contract can act as your wallet, including on your Vaipakam vault. If you did not set this up, treat the wallet as compromised and turn on protected mode, so payouts from your vault wait before they leave.",
+      "protect": "Open vault protection",
+      "ack": "I set this up",
+      "ackNote": "Your answer is kept in this browser only. If the delegation moves to another contract, you are warned again."
+    },
     "legalGate": {
       "verifying": "Checking whether the terms apply to your wallet…",
       "readErrorTitle": "Couldn’t check the terms",

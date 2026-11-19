@@ -1,4 +1,4 @@
-## Owner alerts — position-token approvals and vault outflows
+## Owner alerts — position-token approvals, vault outflows and wallet delegation
 
 A position token can be approved for transfer, either one token to one address
 or every token of an owner to an operator. Whoever holds such an approval can
@@ -21,5 +21,14 @@ an event that reaches it more than a day late. Amounts are in whole units
 only when the token's decimals could be read, and nothing the token names
 itself is shown. The messages are in English for now.
 
-Part of #3721 (the alert; the contract's per-token-only rule is separate) and
-part of #3434 (the EIP-7702 delegation watch follows).
+A wallet that signs an EIP-7702 "upgrade your account" authorization runs
+another contract's code with its own authority, so that contract can act on
+the owner's vault too. The connected app now warns when the connected wallet
+is delegated, names the contract, and points to vault protection. The owner
+can answer "I set this up"; that answer stays in their browser and covers only
+that contract. The alert service also reads the wallet code of every owner who
+linked a channel, in turns, and tells them when a delegation appears, moves to
+another contract or is removed. Both only warn; nothing is blocked.
+
+Part of #3721 (the alert; the contract's per-token-only rule is separate).
+Closes #3434.
