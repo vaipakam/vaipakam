@@ -1295,6 +1295,29 @@ serves. Each ships switched off behind its own flag.
   every asset whose price reads.
 - The duty ships switched off behind its own flag and pays only gas.
 
+## Recording the rates of rate-priced tokens
+
+- A rate-priced token (a wrapped or yield-bearing token valued as an
+  exchange rate against what it wraps) is priced from the rate the price
+  guard has accepted, not from what its source reports now. The accepted
+  rate follows the source down at once but rises only by the binding's daily
+  bound for the time since the last record. A rate nobody records stops
+  following honest growth, so the collateral is valued low, never high.
+- Anyone may record a rate, and nobody chooses it: the guard reads the
+  source itself and applies its own bounds. The keeper records each binding
+  about once an hour.
+- A loan keeps the binding it opened under, so the keeper records every
+  binding a token has ever had, not only its current one. It learns them
+  from the guard's own registration records, up to the chain's finalized
+  block, and never drops one.
+- A binding the guard holds no state for is named, not sent. A record that
+  finds a fall past the binding's bound (the guard distrusts the rate and
+  observes it before it can be confirmed) is named as distrusted, or as
+  under observation, from the guard's own events, so an operator sees it.
+- A Diamond with no price guard is named and skipped. The step is bounded
+  per run, says what it deferred, pays only gas, and ships switched off
+  behind its own flag inside the price checkpoint duty.
+
 ## Refreshing the market-cap rankings behind asset trust tiers
 
 - The app shows each token's trust tier (blue chip, top 100 to top 500) from
@@ -1674,9 +1697,9 @@ The master keeper switch and each duty's own arming choice are separate.
 The periodic-interest settler and grace auto-list each have their own
 disabled-by-default activation.
 Late acknowledgements, sanctions observation, reward-day
-automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, protocol upkeep, its prepay-sale sanctions sync, its tier-push retry, its tier-version sync, its tier-exclusion refresh, its reward-entry index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, collection-offer matching, vault-beacon upkeep, the hourly price checkpoints and the daily asset rankings must each
+automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, protocol upkeep, its prepay-sale sanctions sync, its tier-push retry, its tier-version sync, its tier-exclusion refresh, its reward-entry index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, collection-offer matching, vault-beacon upkeep, the hourly price checkpoints and their rate record, and the daily asset rankings must each
 disclose whether they are armed on the selected deployment. Reward-day
-automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, protocol upkeep, its sanctions sync, its tier-push retry, its tier-version sync, its tier-exclusion refresh, its index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, collection-offer matching, vault-beacon upkeep, the hourly price checkpoints and the daily asset rankings ship disabled and require
+automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, protocol upkeep, its sanctions sync, its tier-push retry, its tier-version sync, its tier-exclusion refresh, its index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, collection-offer matching, vault-beacon upkeep, the hourly price checkpoints and their rate record, and the daily asset rankings ship disabled and require
 deliberate activation. Deploying their software does not prove they run, that rewards have launched, or that custody or the
 expiry horizon has been activated. The mirror's day-delivery protection is
 required by its reward role, as stated in the current tokenomics spec; it is

@@ -102,6 +102,7 @@ function makeEnv(): Env {
     REWARD_INDEX_COMPACT_ENABLED: 'true',
     SANCTIONS_FLAG_REFRESH_ENABLED: 'true',
     TIER_VERSION_SYNC_ENABLED: 'true',
+    RATE_RECORD_ENABLED: 'true',
     KEEPER_PRIVATE_KEY:
       '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
     // The agent's keeper route (#1722): watcher and preGrace post every

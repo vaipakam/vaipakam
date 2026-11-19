@@ -895,7 +895,8 @@ export type PassArmingFlag =
   | 'TIER_EXCLUSION_REFRESH_ENABLED'
   | 'REWARD_INDEX_COMPACT_ENABLED'
   | 'SANCTIONS_FLAG_REFRESH_ENABLED'
-  | 'TIER_VERSION_SYNC_ENABLED';
+  | 'TIER_VERSION_SYNC_ENABLED'
+  | 'RATE_RECORD_ENABLED';
 
 /**
  * Describe a rejected flag value WITHOUT echoing it.

@@ -531,6 +531,11 @@ journalctl -u vaipakam-keeper -f
    which the #3359 forced-sale floor reads, and of open offers carrying a
    #3358 price-move guard; while it is unarmed every forced sale uses the
    full slippage cap and a guarded offer cannot be filled),
+   `RATE_RECORD_ENABLED` (a step of `priceCheckpoint`: calls the price
+   guard's `recordRate` once an hour for every binding a rate-priced token
+   has had, found from the guard's own `RateBindingRegistered` logs; while
+   it is unarmed an unrecorded rate stops following honest growth, so the
+   collateral is undervalued, never overvalued),
    `ASSET_RANKINGS_ENABLED` (`assetRankings`, hourly at :56: once a UTC day
    per source and mainnet chain, writes the top 500 tokens by market-cap rank
    from two public market-data sources to the shared `asset_ranking` table

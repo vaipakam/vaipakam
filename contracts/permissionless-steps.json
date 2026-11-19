@@ -439,9 +439,10 @@
       "why": "governance applies a config change it proposed through the Timelock once the guard's own delay has passed; a change nobody executes leaves the current entry in place"
     },
     "PriceGuard.recordRate(address,bytes32)": {
-      "class": "gap",
-      "issue": "#3683",
-      "why": "records a rate-priced token's exchange rate under its binding, bounded by the binding's daily rise and fall rules; no one chooses the value. Unrecorded, the accepted rate stops following honest growth, which undervalues the collateral and never overvalues it. The keeper's hourly price checkpoint pass is to call it for every binding a token has had, shipped disarmed"
+      "class": "keeper",
+      "pass": "priceCheckpoint",
+      "flag": "RATE_RECORD_ENABLED",
+      "evidence": "apps/keeper/src/rateRecord.ts"
     },
     "PriceGuard.executeSecondaryRemoval(enum:PriceGuardState.Source)": {
       "class": "user",

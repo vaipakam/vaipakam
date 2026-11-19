@@ -70,13 +70,20 @@
 // The second run in each hour is the retry. It sends only what the first run
 // left unrecorded, so a healthy hour costs one transaction per chain.
 //
+// After the checkpoints, the RATE RECORD step (`rateRecord.ts`, #3683 /
+// #3437) records each rate-priced token's exchange rate under every binding
+// it has had, once an hour. Off unless RATE_RECORD_ENABLED is also set.
+//
 // Gated by KEEPER_ENABLED + PRICE_CHECKPOINT_ENABLED. Ships disarmed.
 
 import { createPublicClient, decodeEventLog, http, type Abi, type Address, type Hex, type Log, type PublicClient } from 'viem';
 import { BackstopFacetABI, LenderIntentFacetABI, OfferPriceGuardFacetABI, OracleFacetABI, SaleFloorFacetABI } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
-import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
+import { buildKeeperContext, passIsArmed, subStepArmed, type KeeperContext } from './keeper';
+import { describeReport as describeRateRecord, recordRatesOnce, WORK_KIND as RATE_WORK_KIND } from './rateRecord';
+import { d1ScanCursors } from './scanCursors';
+import { deploymentFloor, enqueueWork, listOpenWorkPage, touchOpenWork } from './db';
 import type { PassTick } from './passSchedule';
 import { deadlineClient, PastRunDeadline, settledGroupedRead, type BatchResult } from './batchRead';
 import { boundedCall } from './passReader';
@@ -212,6 +219,7 @@ export async function runPriceCheckpoint(env: Env, tick: PassTick): Promise<void
   if (!passIsArmed(env, 'priceCheckpoint', 'PRICE_CHECKPOINT_ENABLED')) return;
   const sendDeadline = tick.deadlineMs;
   const visit = runIndex(tick, PASS_CADENCE_SEC * 1000);
+  const rateRecord = subStepArmed(env, 'priceCheckpoint', 'its rate record step', 'RATE_RECORD_ENABLED');
   const chains = getChainConfigs(env).filter((c) => c.diamond);
   // Chains side by side (runWindow.ts, rule 1): each has its own nonce lane.
   await Promise.all(
@@ -233,6 +241,29 @@ export async function runPriceCheckpoint(env: Env, tick: PassTick): Promise<void
         console.log(describeReport(report));
       } catch (err) {
         console.error(`[keeper] priceCheckpoint chain=${chain.id} failed: ${shortErr(err)}`);
+      }
+      if (!rateRecord) return;
+      try {
+        const plain = createPublicClient({ transport: http(chain.rpc) }) as PublicClient;
+        const client = deadlineClient(plain, sendDeadline);
+        const diamond = chain.diamond as Address;
+        const report = await recordRatesOnce(chain.id, diamond, {
+          client,
+          readClient: plain,
+          context: () => buildKeeperContext(env, chain, client, { notAfterMs: sendDeadline }),
+          sendDeadline,
+          visit,
+          floor: deploymentFloor(chain.id),
+          cursors: d1ScanCursors(env.KEEPER_DB, chain.id, diamond, 'priceCheckpoint'),
+          queue: {
+            enqueue: (items) => enqueueWork(env.KEEPER_DB, chain.id, diamond, RATE_WORK_KIND, items),
+            open: async (limit) => (await listOpenWorkPage<Record<string, never>>(env.KEEPER_DB, chain.id, diamond, RATE_WORK_KIND, limit)).items.map((i) => i.item),
+            touch: (items) => touchOpenWork(env.KEEPER_DB, chain.id, diamond, RATE_WORK_KIND, items),
+          },
+        });
+        console.log(describeRateRecord(report));
+      } catch (err) {
+        console.error(`[keeper] priceCheckpoint rateRecord chain=${chain.id} failed: ${shortErr(err)}`);
       }
     }),
   );
