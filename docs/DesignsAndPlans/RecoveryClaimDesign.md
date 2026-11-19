@@ -211,3 +211,10 @@ Build it as designed: one setting and a wait in the protected record, a request 
 2. **The owner's authorization step.** Confirm that one place tells a direct call by the owner's key from a signature someone else submitted, for every write to the protected record, so the drop of 4.4 is added once.
 3. **The alert schedule.** Whether the keeper's alert pass can hold the four timed reminders with its present state, or needs a small table of its own.
 4. **Reading the pause and the outage window from the vault's code.** The vault's protection code runs in the vault, and both facts live with the Diamond and the price guard. The builder chooses the read; the run fails closed if either cannot be read.
+
+Settled with the builder on 2026-11-19:
+
+1. The claim's endpoints fit in the vault's recovery code; nothing is split off.
+2. The owner's authorization is told apart in one place, the base's authorize step. A direct call by the current owner key ends an open claim. A signature someone else submits never does.
+3. The alert schedule is with the keeper thread.
+4. The pause and the outage are checked in the Diamond's half of the clawback, for a run started by a claim only. The owner's and the signers' own clawback is unchanged. The 24 hours count from the end of the price guard's outage window, which already includes the guard's own grace, so the run waits a little longer than 24 hours after the sequencer returned; the difference favours the owner and the lapse date does not move. A guard that cannot be read refuses the run. On a network with no sequencer the check does not apply.

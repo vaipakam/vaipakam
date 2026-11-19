@@ -664,7 +664,11 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   configured on the network. Earlier frozen versions remain unchanged.
   Version 3 rewords the software and network risk line, which now ends
   "These risks come with every blockchain system"; the app's key-risk list
-  carries the same sentence as the Terms text. The approved
+  carries the same sentence as the Terms text. Version 4 adds to the lending
+  risk line that lent funds stay in the loan until the borrower repays and
+  cannot be withdrawn before that, and that a sale of the loan to another
+  lender is possible only if one accepts. The list stays at six entries, and
+  the app's lending entry carries the same sentences. The approved
   clauses describe the interface's non-party role, non-custody, eligibility,
   as-is service, indemnity, and a liability ceiling of the prior twelve months'
   fees bounded between $10 and $1,000; governing law and dispute handling are

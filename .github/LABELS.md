@@ -31,6 +31,26 @@ Use these labels consistently when triaging issues, creating project items, or l
 | `iteration-kickoff` | Applied only by `iteration-kickoff-sync.yml` to its weekly card. It is how that workflow finds the previous card to close, so do not put it on any other issue. |
 | `breaking-change` | Changes that break API / ABI / on-chain compatibility. Drives the MAJOR semver bump per `.github/release-drafter.yml`. Apply to contract-surface changes that shift function selectors or storage layout, frontend API shape changes consumers pin against, and CCIP message-format changes. Most pre-mainnet work doesn't need this label — it's reserved for genuinely incompatible changes. |
 
+## Owner Labels (`thread:*`)
+
+Each open issue carries one `thread:<name>` label naming the project thread that owns it, so the owner is visible on the board instead of living in session notes (owner decision 2026-11-19). The board has no field API the agents can write, so a label is the carrier. Move the label when ownership moves; an issue with no `thread:*` label is unowned and goes to the coordinator's weekly sweep.
+
+| Label | Use for |
+| --- | --- |
+| `thread:desktop` | Contract builds and signing run from the desktop computer session, and the fresh deploy. |
+| `thread:security` | The security threats thread. |
+| `thread:secured-vault` | The secured vault and protected account thread. |
+| `thread:auto-lend` | The Auto-lend and standing-intent contract build thread. |
+| `thread:cash-out` | The lender cash-out build thread. |
+| `thread:rate-reference` | The rate reference and market-linked limits build thread. |
+| `thread:app-fixes` | Indexer, agent, www and connected-app fixes. |
+| `thread:alpha05` | The new user-friendly app (`apps/alpha05`). |
+| `thread:keeper` | Keeper passes and the public keeper bot. |
+| `thread:design` | Designs awaiting a decision on the design thread. |
+| `thread:governance` | Mainnet governance gates, deploy scripts, ops and backups. |
+| `thread:issues-plan` | The open-issues plan thread, including VPFI rewards and recycling items. |
+| `thread:owner` | Waiting on an owner or operator step, not on a thread. |
+
 ## Triage Notes
 
 - Prefer one primary type label: `bug`, `enhancement`, `documentation`, `chore`, `refactor`, `infra`, or `perf`.

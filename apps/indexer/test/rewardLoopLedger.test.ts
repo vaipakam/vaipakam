@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 import type { Env } from '../src/env';
 import {
   applyRewardLoopLedger,
+  ensureRewardLoopBackfill,
   type RewardLoopLog,
 } from '../src/rewardLoopLedger';
 import { handleLoopClosure, handleRewardsClaimed } from '../src/rewardRoutes';
@@ -56,6 +57,19 @@ function makeHarness() {
   return { h, env };
 }
 
+/**
+ * One scan pass as `runChainPass` drives it (#2835): the one-time backfill
+ * runs once in the pass prologue, then the per-block writer. The writer no
+ * longer runs the backfill check itself, so a bare call would skip the
+ * replay the real pass always runs first.
+ */
+async function scanPass(
+  ...args: Parameters<typeof applyRewardLoopLedger>
+): Promise<number> {
+  await ensureRewardLoopBackfill(args[1], args[2]);
+  return applyRewardLoopLedger(...args);
+}
+
 let logCounter = 0;
 function log(
   eventName: string,
@@ -89,7 +103,7 @@ async function retained(h: SqliteD1, user: string): Promise<string> {
 describe('applyRewardLoopLedger', () => {
   it('credits retention on vault delivery and records the day flow', async () => {
     const { h, env } = makeHarness();
-    const applied = await applyRewardLoopLedger(
+    const applied = await scanPass(
       [
         log('InteractionRewardsClaimed', ALICE, 100n),
         log('RewardDeliveredToVault', ALICE, 100n, 100n, { claimDayId: 5n }),
@@ -114,7 +128,7 @@ describe('applyRewardLoopLedger', () => {
 
   it('min-clamps debits: rewards spent first, never negative, personal deposits never re-inflate', async () => {
     const { h, env } = makeHarness();
-    await applyRewardLoopLedger(
+    await scanPass(
       [
         log('RewardDeliveredToVault', ALICE, 60n),
         // Debit 100 > retained 60 → ledger drops to 0, clamp records 60.
@@ -144,13 +158,13 @@ describe('applyRewardLoopLedger', () => {
       log('RewardDeliveredToVault', ALICE, 40n),
       log('InteractionRewardsClaimed', ALICE, 40n),
     ];
-    const first = await applyRewardLoopLedger(
+    const first = await scanPass(
       logs,
       env,
       CHAIN,
       ts([[100n, TODAY_TS]]),
     );
-    const replay = await applyRewardLoopLedger(
+    const replay = await scanPass(
       logs,
       env,
       CHAIN,
@@ -198,7 +212,7 @@ describe('GET /metrics/loop-closure', () => {
   it('same-day claim-and-spend counts once, never 200% (pre-governor: reads as 0, the conservative lower bound)', async () => {
     const { env } = makeHarness();
     // Alice claims 100 to the vault and spends the same 100 the same day.
-    await applyRewardLoopLedger(
+    await scanPass(
       [
         log('InteractionRewardsClaimed', ALICE, 100n),
         log('RewardDeliveredToVault', ALICE, 100n),
@@ -226,14 +240,14 @@ describe('GET /metrics/loop-closure', () => {
 
   it('nets PER USER: Bob spending old rewards cannot cancel Alice’s same-day delivery', async () => {
     const { env } = makeHarness();
-    await applyRewardLoopLedger(
+    await scanPass(
       // The day before: Bob earned 50 into his vault.
       [log('RewardDeliveredToVault', BOB, 50n, 90n)],
       env,
       CHAIN,
       ts([[90n, CLOSED_TS - 86400]]),
     );
-    await applyRewardLoopLedger(
+    await scanPass(
       [
         // The closed day: Alice claims 100 to vault and keeps it; Bob spends his 50.
         log('InteractionRewardsClaimed', ALICE, 100n),
@@ -256,7 +270,7 @@ describe('GET /metrics/loop-closure', () => {
     const { env } = makeHarness();
     // A delivery-only day (no InteractionRewardsClaimed row — synthetic,
     // but exercises the convention directly).
-    await applyRewardLoopLedger(
+    await scanPass(
       [log('RewardDeliveredToVault', ALICE, 70n)],
       env,
       CHAIN,
@@ -289,7 +303,7 @@ describe('GET /metrics/loop-closure — which days are known (#1349 M5)', () => 
     return (await res.json()) as { recordedBefore: string | null; daily: Day[]; cumulative: unknown };
   }
   async function claimOn(env: Env, at: number) {
-    await applyRewardLoopLedger(
+    await scanPass(
       [log('InteractionRewardsClaimed', ALICE, 100n), log('RewardDeliveredToVault', ALICE, 100n)],
       env,
       CHAIN,
@@ -385,7 +399,7 @@ describe('robustness (Codex #1310 round 1)', () => {
     // and the cursor never advances past the reward event (the cron path
     // has no guaranteed overlapping scan — a silent skip loses it).
     await expect(
-      applyRewardLoopLedger(
+      scanPass(
         [l],
         env,
         CHAIN,
@@ -397,7 +411,7 @@ describe('robustness (Codex #1310 round 1)', () => {
     expect(await retained(h, ALICE)).toBe('0');
     // Same log, retry now returns the real chain timestamp → applied
     // under the true day (no dedup row was written by the failed pass).
-    const applied = await applyRewardLoopLedger(
+    const applied = await scanPass(
       [l],
       env,
       CHAIN,
@@ -447,7 +461,7 @@ describe('robustness (Codex #1310 round 1)', () => {
     seedActivity(30, 0, 'VaultVpfiDebited', { user: ALICE, amount: '10', recipient: ALICE }, t0 + 7200);
     seedActivity(30, 1, 'VPFIWithdrawnFromVault', { user: ALICE, amount: '10', newVaultBalance: '50' }, t0 + 7200);
 
-    await applyRewardLoopLedger([], env, CHAIN, ts([]));
+    await scanPass([], env, CHAIN, ts([]));
 
     // 100 delivered − 40 (pre-boundary withdraw) − 10 (boundary debit,
     // counted ONCE despite its withdraw twin) = 50.
@@ -483,7 +497,7 @@ describe('robustness (Codex #1310 round 1)', () => {
       newVaultBalance: '40',
     });
 
-    await applyRewardLoopLedger([], env, CHAIN, ts([]));
+    await scanPass([], env, CHAIN, ts([]));
 
     // A null boundary must mean "replay ALL withdraws", not "skip all"
     // (Codex #1310 r3): 100 − 60 = 40; skipping would overstate at 100.
@@ -492,7 +506,7 @@ describe('robustness (Codex #1310 round 1)', () => {
 
   it('VpfiRecycled feeds the absorption term: daily absorbed + cumulative + ratio', async () => {
     const { env } = makeHarness();
-    await applyRewardLoopLedger(
+    await scanPass(
       [
         log('InteractionRewardsClaimed', ALICE, 100n),
         // A forfeit recycled into the bucket the same day (PR-3a feed).
@@ -536,7 +550,7 @@ describe('robustness (Codex #1310 round 1)', () => {
     // Dropping the new event here would have made `absorbed`, `cum_absorbed`
     // and both ratios permanently undercount — a fix for one metric
     // silently breaking another (Codex #1508 r1 P2).
-    await applyRewardLoopLedger(
+    await scanPass(
       [
         log('InteractionRewardsClaimed', ALICE, 100n),
         {
@@ -625,7 +639,7 @@ describe('robustness (Codex #1310 round 1)', () => {
       configuredFeeVpfi1e18: '20',
     });
 
-    await applyRewardLoopLedger([], env, CHAIN, ts([]));
+    await scanPass([], env, CHAIN, ts([]));
 
     // 100 − 15 (fee) − 10 (same-block pre-boundary withdraw) − 20
     // (canonical debit; its fee twin skipped) = 55.
@@ -655,7 +669,7 @@ describe('robustness (Codex #1310 round 1)', () => {
       );
 
     // First ledger invocation (empty live logs) runs the backfill.
-    await applyRewardLoopLedger([], env, CHAIN, ts([]));
+    await scanPass([], env, CHAIN, ts([]));
     let totals = h.db
       .prepare(
         `SELECT cum_distributed, backfill_done FROM reward_loop_totals
@@ -667,7 +681,7 @@ describe('robustness (Codex #1310 round 1)', () => {
 
     // A live re-delivery of the SAME log (overlap) must not double-count,
     // and the backfill must not re-run.
-    await applyRewardLoopLedger(
+    await scanPass(
       [
         {
           eventName: 'InteractionRewardsClaimed',
@@ -706,7 +720,7 @@ describe('/rewards/claimed (RW-31)', () => {
 
   it('sums every claim the wallet was paid, venue or not, on the claim-day basis', async () => {
     const { env } = makeHarness();
-    await applyRewardLoopLedger(
+    await scanPass(
       [
         // Day before yesterday: 100 claimed into the vault.
         log('InteractionRewardsClaimed', ALICE, 100n, 100n),
@@ -741,7 +755,7 @@ describe('/rewards/claimed (RW-31)', () => {
 
   it('a wallet that never claimed reads zero only against a recorded moment', async () => {
     const { env } = makeHarness();
-    await applyRewardLoopLedger([log('InteractionRewardsClaimed', BOB, 1n)], env, CHAIN, ts([[100n, CLOSED_TS]]));
+    await scanPass([log('InteractionRewardsClaimed', BOB, 1n)], env, CHAIN, ts([[100n, CLOSED_TS]]));
     // No caught-up pass yet: unknown, never zero.
     let r = await fetchClaimed(env, ALICE);
     expect(r.body.pending).toBe('unrecorded');
@@ -765,5 +779,49 @@ describe('/rewards/claimed (RW-31)', () => {
     const { env } = makeHarness();
     const r = await fetchClaimed(env, '0x1234');
     expect(r.status).toBe(400);
+  });
+});
+
+describe('per-block writer reads no one-time flag (#2835)', () => {
+  it('applyRewardLoopLedger does not re-check the backfill flag per block', async () => {
+    const { env } = makeHarness();
+    // The pass prologue's check, done once.
+    await ensureRewardLoopBackfill(env, CHAIN);
+    const seen: string[] = [];
+    const db = env.DB;
+    const spied = {
+      ...env,
+      DB: new Proxy(db, {
+        get(target, prop, receiver) {
+          if (prop === 'prepare') {
+            return (sql: string) => {
+              seen.push(sql);
+              return target.prepare(sql);
+            };
+          }
+          const v = Reflect.get(target, prop, receiver);
+          return typeof v === 'function' ? v.bind(target) : v;
+        },
+      }),
+    } as Env;
+    // Three event blocks, as the block-by-block scan delivers them.
+    for (const b of [100n, 101n, 102n]) {
+      await applyRewardLoopLedger(
+        [log('InteractionRewardsClaimed', ALICE, 10n, b)],
+        spied,
+        CHAIN,
+        ts([[b, TODAY_TS]]),
+      );
+    }
+    expect(seen.filter((q) => /backfill_done/.test(q))).toEqual([]);
+    // A block with none of the ledger's events costs no query at all.
+    seen.length = 0;
+    await applyRewardLoopLedger(
+      [{ eventName: 'LoanRepaid', args: {}, blockNumber: 103n, transactionHash: `0x${'01'.repeat(32)}`, logIndex: 0 }],
+      spied,
+      CHAIN,
+      ts([[103n, TODAY_TS]]),
+    );
+    expect(seen).toEqual([]);
   });
 });

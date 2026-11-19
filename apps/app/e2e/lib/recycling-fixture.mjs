@@ -140,6 +140,8 @@ function backingVariants(diamond, asOf) {
     // three subtrahends are in this same reading.
     platformRetained: vpfi(480),
     blockNumber: '123456',
+    // #2210 — the chain answered the `safe` tag for this reading.
+    blockSettled: true,
     diamond,
     releasedRemitStranded: '0',
     strandedRecoveryReserved: vpfi(40),
@@ -259,6 +261,20 @@ function backingVariants(diamond, asOf) {
         reason: 'custody-state-unknown',
       },
     },
+    // #2210 — the default reading, but pinned to an ESTIMATED block: the
+    // chain did not answer for a settled one when it was taken.
+    'estimated-block': {
+      ...reading,
+      blockSettled: false,
+      custodyActivated: true,
+      holderBalanceKnown: true,
+      holderBalance: vpfi(700),
+      holderAttributed: vpfi(625),
+      backed: {
+        determinable: true, relation: 'holder', ok: true,
+        diamondShortfall: null, holderShortfall: null, reason: null,
+      },
+    },
     // A pre-#1930 row: it predates BOTH reservations (the handler serves
     // them null, not missing) AND migration 0056's custody columns. The
     // reservation cells must read as predating the figure, never as 0, and
@@ -268,6 +284,8 @@ function backingVariants(diamond, asOf) {
       ...reading,
       // That era's view subtracted only the bucket: 800 − 600.
       unearmarked: vpfi(200),
+      // Nor did that era record whether the block was settled (#2210).
+      blockSettled: null,
       strandedRecoveryReserved: null,
       recoveryPositionReserved: null,
       custodyActivated: null,
@@ -288,7 +306,7 @@ function backingVariants(diamond, asOf) {
       strandedRecoveryReserved: null, recoveryPositionReserved: null,
       custodyActivated: null, holderBalanceKnown: null,
       holderBalance: null, holderAttributed: null,
-      backed: null, blockNumber: null, diamond: null,
+      backed: null, blockNumber: null, blockSettled: null, diamond: null,
       unavailableReason: 'snapshot-stale', asOf: null,
     },
   };
@@ -303,6 +321,7 @@ export const RECYCLING_FIXTURE_VARIANTS = [
   'diamond-backed',
   'diamond-short',
   'custody-unknown',
+  'estimated-block',
   'older-reading',
   'withheld',
 ];

@@ -88,7 +88,7 @@ Settled with the builder on 2026-11-15:
 
 ### 6.1 The lender gives no renewal: the loan continues with another lender
 
-Added 2026-11-19 (#3763). Built with renewal.
+Added 2026-11-19 (#3763). Built with renewal. `DueDatePlanDesign.md` (#3785) opens this step to every ERC-20 loan with interest by time on an instant-market pair, whichever way the loan was opened, and places it as the second step of the borrower's plan for the due date.
 
 Section 6 ends a borrower's loan when its lender gives no renewal and no other lender has taken the loan over. This closes that case wherever another lender stands ready at a rate the borrower has already accepted. The lender's exit is unchanged: it is paid in full at the moment it would otherwise have waited for.
 

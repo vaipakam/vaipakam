@@ -36,7 +36,7 @@ import { spawnSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { authorize, call } from './lib/b2-native.mjs';
+import { authorize, call, isMasterKey, keyScopeDrift } from './lib/b2-native.mjs';
 import { ARCHIVE_KEY_SCOPE, LEDGER_KEY_SCOPE } from './backup-ledger.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -112,7 +112,7 @@ async function main() {
     fail('BACKBLAZE_MASTER_KEY_ID and BACKBLAZE_MASTER_APP_KEY must both be set in the repo .env; creating a bucket and keys needs the master key.');
   }
   const auth = await authorize(env.BACKBLAZE_MASTER_KEY_ID, env.BACKBLAZE_MASTER_APP_KEY);
-  if (!auth.capabilities.includes('writeKeys') || auth.bucketId) {
+  if (!isMasterKey(auth)) {
     fail('the key in BACKBLAZE_MASTER_* is not the account master key (it lacks writeKeys or is confined to a bucket).');
   }
 
@@ -138,15 +138,14 @@ async function main() {
   for (const k of KEYS) {
     const existing = await listKeysByName(auth, k.name);
     if (existing.length > 0) {
-      const live = existing[0];
-      const caps = [...(live.capabilities ?? [])].sort().join(',');
-      if (live.bucketId !== bucketIds[k.bucket] || caps !== [...k.caps].sort().join(',') || live.namePrefix) {
-        fail(`key ${k.name} exists with a different scope (bucket ${live.bucketId}, capabilities ${caps}). Revoke it in the B2 console and run this again.`);
+      const drift = keyScopeDrift(existing[0], { bucketId: bucketIds[k.bucket], capabilities: k.caps });
+      if (drift.length > 0) {
+        fail(`key ${k.name} exists with a different scope (${drift.join('; ')}). Revoke it in the B2 console and run this again.`);
       }
       log(`key ${k.name} exists with the expected scope. Its secret cannot be shown again, so ${k.idSecret} / ${k.keySecret} are left as they are.`);
       continue;
     }
-    const made = await call(auth, 'b2_create_key', { accountId: auth.accountId, keyName: k.name, capabilities: k.caps, bucketId: bucketIds[k.bucket] });
+    const made = await call(auth, 'b2_create_key', { accountId: auth.accountId, keyName: k.name, capabilities: k.caps, bucketIds: [bucketIds[k.bucket]] });
     for (const [name, value] of [[k.idSecret, made.applicationKeyId], [k.keySecret, made.applicationKey]]) {
       const set = gh(['secret', 'set', name, '--repo', repo], value);
       if (set.status !== 0) {
