@@ -1057,7 +1057,7 @@ contract HelperTest {
 
     /// @dev #3656 — mirrors `DeployDiamond._getInstantMarketSelectors`.
     function getInstantMarketFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](8);
         selectors[0] = InstantMarketFacet.setInstantMarketEnabled.selector;
         selectors[1] = InstantMarketFacet.setInstantMaxFills.selector;
         selectors[2] = InstantMarketFacet.getInstantMarketConfig.selector;
@@ -1065,6 +1065,7 @@ contract HelperTest {
         selectors[4] = InstantMarketFacet.getInstantSlot.selector;
         selectors[5] = InstantMarketFacet.borrowInstant.selector;
         selectors[6] = InstantMarketFacet.getInstantGroup.selector;
+        selectors[7] = InstantMarketFacet.instantPairEligible.selector;
     }
 
     /// @dev #3656 — mirrors `DeployDiamond._getInstantFillSelectors`.
