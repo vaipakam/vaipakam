@@ -164,7 +164,7 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         // so only its current holder may spend the pledged collateral.
         LibAuth.requireBorrowerNftOwner(LibVaipakam.storageSlot().loans[loanId]);
         _swapToRepayPartial(
-            loanId, collateralSwapAmount, adapterCalls, validUntil, msg.sender,
+            loanId, collateralSwapAmount, adapterCalls, validUntil, msg.sender, false,
             LibVaipakam.cfgMaxSwapToRepaySlippageBps()
         );
     }
@@ -199,20 +199,26 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         if (msg.sender != address(this)) revert OnlyDiamondInternal();
         uint256 routeCap = LibVaipakam.cfgMaxSwapToRepaySlippageBps();
         if (capBps > routeCap) revert SlippageAboveRouteCap(capBps, routeCap);
-        return _swapToRepayPartial(loanId, collateralSwapAmount, adapterCalls, validUntil, holder, capBps);
+        return _swapToRepayPartial(loanId, collateralSwapAmount, adapterCalls, validUntil, holder, true, capBps);
     }
 
     /// @dev The partial repayment both entries run. `actor` is the borrower
     ///      side it is made for: the caller on the manual entry (whose
     ///      position authority the entry checks), the instruction's holder on
-    ///      the instruction entry (checked by the executor). `capBps` is the
-    ///      slippage bound of the sale's floor.
+    ///      the instruction entry (checked by the executor). `instructed`
+    ///      marks the instruction entry: an instruction set before its holder
+    ///      was sanctions-flagged still runs (#3752 design §4.1), so the
+    ///      collateral pull and the unspent-input refund resolve the stored
+    ///      borrower's existing vault under the narrow move-out exemption,
+    ///      exactly as the full route does. The manual entry stays a voluntary
+    ///      Tier-1 action. `capBps` is the slippage bound of the sale's floor.
     function _swapToRepayPartial(
         uint256 loanId,
         uint256 collateralSwapAmount,
         LibSwap.AdapterCall[] calldata adapterCalls,
         uint64 validUntil,
         address actor,
+        bool instructed,
         uint256 capBps
     ) private returns (uint256, uint256, uint256) {
         LibTiming.requireDeadline(validUntil);
@@ -305,7 +311,19 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         _decrementLienAtSwapToRepayPartial(loanId, collateralSwapAmount);
         // #2440 — the borrower chose this repayment, so a short arrival is
         // refused: the sale never spends the Diamond's other balance.
-        LibVaultOutflow.toDiamondExact(loan.borrower, loan.collateralAsset, collateralSwapAmount, loanId, OutflowReason.SWAP);
+        if (instructed) {
+            LibDelivery.requireFull(
+                loan.collateralAsset,
+                collateralSwapAmount,
+                LibSanctionedLock.pullToDiamond(
+                    s, loan.borrower, loan.collateralAsset, collateralSwapAmount, loanId, OutflowReason.SWAP
+                )
+            );
+        } else {
+            LibVaultOutflow.toDiamondExact(
+                loan.borrower, loan.collateralAsset, collateralSwapAmount, loanId, OutflowReason.SWAP
+            );
+        }
 
         (bool success, uint256 outputAmount, uint256 adapterUsed, uint256 actualCollateralConsumed) =
             LibSwap.swapWithFailoverUpTo(
@@ -324,11 +342,16 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         if (partialFillRefund > 0) {
             // #2440 — refused unless the vault got all of it back, so the
             // re-lien and the loan's collateral match what the vault holds.
+            // On the instruction entry the stored borrower may have been
+            // flagged since: resolve their existing vault under the narrow
+            // move-out window, never spanning the swap.
+            if (instructed) LibSanctionedLock.beginMoveOut(s, loan.borrower);
             LibDelivery.pushExact(
                 loan.collateralAsset,
                 LibFacet.getOrCreateVault(loan.borrower),
                 partialFillRefund
             );
+            if (instructed) LibSanctionedLock.endMoveOut(s);
             LibVaipakam.recordVaultDeposit(
                 loan.borrower,
                 loan.collateralAsset,

@@ -423,6 +423,38 @@ contract ExitInstructionTest is SetupTest {
         assertLe(RiskFacet(address(diamond)).calculateLTV(LOAN), 7000, "back inside the opening cap");
     }
 
+    /// @dev Whole-unit tokens: the route floors the oracle conversion and the
+    ///      tolerance in token units, so the sale must be sized against those
+    ///      rounded figures, not the continuous ones. A route that delivers
+    ///      just its floor still ends back inside the opening cap.
+    function test_7_reduceHoldsTheCapInWholeUnits() public {
+        principalAsset = new ERC20Mock("Principal0", "PRIN0", 0);
+        collateralAsset = new ERC20Mock("Collateral0", "COLL0", 0);
+        collateralAsset.mint(borrowerVault, 2_000);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(
+            borrowerEoa, address(collateralAsset), 2_000
+        );
+        _price(address(principalAsset), 1e8);
+        _price(address(collateralAsset), 1e8);
+        principalAsset.mint(address(adapter1), 10_000);
+        _scaffold(true);
+        LibVaipakam.Loan memory l = _withCap(7000);
+        l.principal = 1_000;
+        l.collateralAmount = 2_000;
+        TestMutatorFacet(address(diamond)).setLoan(LOAN, l);
+        _set(REDUCE, 1.1e18, 1.15e18, 100, false);
+        _price(address(collateralAsset), 0.64e8);
+        LibTestCalmPair.checkpoint(address(diamond), address(collateralAsset), address(principalAsset));
+        ExitInstructionFacet.ExitPreview memory pv = _x().previewExit(LOAN);
+        assertEq(pv.skip, 0, "due");
+        assertEq(pv.form, REDUCE);
+        // Deliver 0.64 x 0.99 per unit: the floor, give or take one unit.
+        adapter1.setOutputMultiplierBps(6336);
+        vm.prank(runner);
+        _x().runReduce(LOAN, _routes(1), type(uint64).max);
+        assertLe(RiskFacet(address(diamond)).calculateLTV(LOAN), 7000, "back inside the opening cap");
+    }
+
     function test_7_reduceRefusedWithoutPartialRepay() public {
         _scaffold(false);
         vm.expectRevert(abi.encodeWithSelector(ExitInstructionFacet.ExitInstructionNotOffered.selector, LOAN));
@@ -595,6 +627,21 @@ contract ExitInstructionTest is SetupTest {
         vm.prank(runner);
         _x().runExit(LOAN, _routes(1), type(uint64).max);
         assertEq(uint256(_loan().status), uint256(LibVaipakam.LoanStatus.Repaid), "the lender is made whole");
+    }
+
+    function test_12_flaggedHoldersReductionRuns() public {
+        _scaffold(true);
+        _set(REDUCE, LEVEL, 1.25e18, 0, false);
+        MockSanctionsList list = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(list));
+        list.setFlagged(borrowerEoa, true);
+        _fall();
+        adapter1.setOutputMultiplierBps(6800);
+        uint256 hfBefore = _hf();
+        vm.prank(runner);
+        _x().runReduce(LOAN, _routes(1), type(uint64).max);
+        assertEq(uint256(_loan().status), uint256(LibVaipakam.LoanStatus.Active), "stays open");
+        assertGt(_hf(), hfBefore, "the reduction ran");
     }
 
     // ─── 15 — a busy loan ────────────────────────────────────────────

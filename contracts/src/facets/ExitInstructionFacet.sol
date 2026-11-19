@@ -278,6 +278,9 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
     uint8 private constant CALM_NOT_READ = 3;
     uint256 private constant WAD = 1e18;
     uint256 private constant BPS_TO_WAD = 1e14;
+    /// @dev How many times a reduction's sale may be stepped up (doubling
+    ///      each time) before the run reports it cannot be sized.
+    uint256 private constant REDUCE_STEP_LIMIT = 48;
 
     // ─── Errors ──────────────────────────────────────────────────────
 
@@ -705,6 +708,23 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
         }
         if (least > sell) sell = least;
 
+        // The closed form works in continuous value; the route settles in
+        // whole token units, flooring the oracle conversion and the
+        // tolerance. Check the candidate against those rounded figures and
+        // step it up until the result is back inside the opening limit.
+        if (c != 0) {
+            uint256 capBps = c / BPS_TO_WAD;
+            uint256 step = 1;
+            for (uint256 i; !_reduceWithinCap(loan, rate, sell, p.tolerance, interest, capBps); ++i) {
+                if (i == REDUCE_STEP_LIMIT || sell + step >= loan.collateralAmount) {
+                    p.skip = LibStandingInstructions.SKIP_CANNOT_COVER;
+                    return;
+                }
+                sell += step;
+                step <<= 1;
+            }
+        }
+
         if (LibFallback.toPrincipal(rate, sell) >= interest + loan.principal) {
             // It would retire the whole principal: close instead.
             p.form = LibVaipakam.EXIT_FORM_CLOSE;
@@ -716,6 +736,29 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
         p.sell = sell;
         p.floor = LibSaleSizing.floorAtRate(rate, sell, p.tolerance);
         p.debt = p.floor > interest ? p.floor : interest;
+    }
+
+    /// @dev True when selling `sell` and repaying exactly its floor (interest
+    ///      first, then principal) leaves the loan-to-value at or under
+    ///      `capBps`, with every figure rounded against the holder: the floor
+    ///      and the remaining collateral's value down, the ratio up. A sale
+    ///      whose floor would retire the whole principal counts as within (the
+    ///      caller turns it into a close).
+    function _reduceWithinCap(
+        LibVaipakam.Loan storage loan,
+        LibFallback.Rate memory rate,
+        uint256 sell,
+        uint256 tolerance,
+        uint256 interest,
+        uint256 capBps
+    ) private view returns (bool) {
+        uint256 floor = LibSaleSizing.floorAtRate(rate, sell, tolerance);
+        if (floor <= interest) return false;
+        uint256 retired = floor - interest;
+        if (retired >= loan.principal) return true;
+        uint256 value = LibFallback.toPrincipal(rate, loan.collateralAmount - sell);
+        if (value == 0) return false;
+        return Math.mulDiv(loan.principal - retired, LibVaipakam.BASIS_POINTS, value, Math.Rounding.Ceil) <= capBps;
     }
 
     /// @dev True when the holder's collateral top-up could run now and would
