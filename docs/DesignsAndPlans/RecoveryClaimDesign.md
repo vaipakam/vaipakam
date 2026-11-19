@@ -100,6 +100,7 @@ Each cancellation and each drop emits an event naming the account, who acted (or
 
 - Accepted from the time the wait has passed until the claim lapses 30 days later, while the claim's epoch is the vault's current one and the caller is still the recovery address in force.
 - **Refused while a change of recovery address is pending.** With the rule of 4.2 this makes the protection of 4.1 rest on a check, and on no arithmetic between two waits.
+- **A claim belongs to the address that asked.** When a change of recovery address comes into force, a claim the replaced address asked is void: the new address cannot run it, and it starts no pause, so the new address may ask for itself at once and wait the full wait. This covers a change the owner signed and someone else submitted, which drops nothing while it waits.
 - **Refused while the platform is paused.**
 - **Refused until 24 hours after the latest sequencer outage ended**, on a network that has a sequencer, read from the price guard's outage window, the source the loan clock already uses. During an outage the owner cannot send a cancel, so the claim does not complete on the first block after one.
 - The lapse date does not move for a pause or an outage. A claim whose last days are lost to one lapses, and the recovery address asks again and waits again. Section 8 states this.

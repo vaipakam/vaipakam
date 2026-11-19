@@ -227,11 +227,14 @@ library LibVaultProtectionStorage {
     }
 
     /// @notice #3756 — the open claim's request time, or 0. A claim counts
-    ///         only while its epoch is the record's current one and until it
-    ///         lapses; a lapsed claim is void.
+    ///         only while its epoch is the record's current one, until it
+    ///         lapses, and while the address that asked is still the recovery
+    ///         address in force: a lapsed claim, or one asked by an address a
+    ///         change has since replaced, is void (RecoveryClaimDesign 4.5).
     function claimOpen(Layout storage l) internal view returns (uint64) {
         uint64 at = l.claimRequestedAt;
-        return at != 0 && l.claimEpoch == l.epoch && block.timestamp <= l.claimLapsesAt ? at : 0;
+        return at != 0 && l.claimEpoch == l.epoch && block.timestamp <= l.claimLapsesAt
+            && l.claimBy == recoveryInForce(l) ? at : 0;
     }
 
     function layout() internal pure returns (Layout storage l) {

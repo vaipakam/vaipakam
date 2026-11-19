@@ -453,6 +453,7 @@ contract VaultRecovery is VaultProtectionBase {
         if (P.recoveryPending(l) != address(0)) revert RecoveryChangePending();
         address recovery = l.recovery;
         if (recovery == address(0) || auth.key != recovery) revert NotRecovery(auth.key);
+        // Open only while its asker is the recovery address in force (4.5).
         uint64 at = P.claimOpen(l);
         if (at == 0) revert NoClaim();
         if (block.timestamp < l.claimRunnableAt) revert NotReady(l.claimRunnableAt);

@@ -635,6 +635,41 @@ contract RecoveryClaimTest is SetupTest {
         _expectRevert(rec, _runData(rec), _err(VaultProtectionBase.RecoveryChangePending.selector));
     }
 
+    /// @dev A claim is its asker's own: once a signed change submitted by
+    ///      someone else comes into force, the old address's claim is void.
+    ///      The new address cannot run it, and may ask for itself at once.
+    function test_16_aMaturedChangeVoidsTheOldClaim_theNewAddressAsksAfresh() public {
+        _allow(WAIT);
+        _ask();
+        address rec2 = vm.addr(REC2_KEY);
+        uint8 purpose = code.PURPOSE_RECOVERY();
+        uint64 exp = uint64(vm.getBlockTimestamp() + 400 days);
+        VaultProtectionBase.Auth memory a = _sign(
+            OWNER_KEY,
+            keccak256(abi.encode(code.RECOVERY_SET_TYPEHASH(), rec2, vault.protectionNonce(acct, purpose), exp))
+        );
+        VaultProtectionBase.Auth memory proof = _sign(
+            REC2_KEY,
+            keccak256(
+                abi.encode(
+                    code.RECOVERY_PROOF_TYPEHASH(), acct, address(diamond), vault.protectionNonce(rec2, code.PURPOSE_RECOVERY_PROOF()), exp
+                )
+            )
+        );
+        _protect(stranger, abi.encodeCall(VaultRecovery.requestRecoveryAddress, (rec2, a, proof)));
+        assertTrue(_open() != 0, "open while the change waits");
+        // The old claim's run date passes after the change is in force.
+        vm.warp(vm.getBlockTimestamp() + WAIT);
+        assertEq(_open(), 0, "void once the change is in force");
+        _expectRevert(rec2, _runData(rec2), _err(VaultProtectionBase.NoClaim.selector));
+        // The new address asks at once, with no pause, and waits its own wait.
+        _protect(rec2, _askData(rec2));
+        (,, uint64 requestedAt, uint64 runnableAt,,) = _claim();
+        assertEq(requestedAt, uint64(vm.getBlockTimestamp()));
+        assertEq(runnableAt, uint64(vm.getBlockTimestamp()) + WAIT);
+        _expectRevert(rec2, _runData(rec2), abi.encodeWithSelector(VaultProtectionBase.NotReady.selector, runnableAt));
+    }
+
     // ─── 17. Pause and escape window ───────────────────────────────────
 
     function test_17_whilePaused_everyCancelWorks_aRunIsRefused() public {

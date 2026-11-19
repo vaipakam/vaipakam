@@ -87,6 +87,10 @@ abstract contract VaultProtectionBase {
     uint8 internal constant CLAIM_END_REPLACEMENT = 4;
     uint8 internal constant CLAIM_END_CLAWBACK = 5;
     uint8 internal constant CLAIM_END_PROTECTION_OFF = 6;
+    /// @dev A change of recovery address came into force: the claim belonged
+    ///      to the address it replaced. Starts no pause, so the new address
+    ///      may ask at once (and waits the full wait).
+    uint8 internal constant CLAIM_END_RECOVERY_CHANGED = 7;
     /// @notice #3756 — no new request for this long after a claim was
     ///         cancelled or dropped (internal, like the end reasons).
     uint32 internal constant CLAIM_PAUSE = 30 days;
@@ -439,6 +443,18 @@ abstract contract VaultProtectionBase {
         l.recovery = p;
         _clearPendingRecovery(l);
         emit RecoveryAddressSet(_account(), previous, p);
+        // A claim is the requesting address's own: one asked by the address
+        // just replaced is void from the change on (`claimOpen`), and is
+        // cleared and reported here, starting no pause, so the new address
+        // may ask for itself at once (RecoveryClaimDesign 4.5).
+        if (l.claimRequestedAt != 0 && l.claimBy != p) {
+            uint64 at = l.claimRequestedAt;
+            // Live until this change: the claim's own epoch, not lapsed, and
+            // asked by the address now replaced.
+            bool live = l.claimEpoch == l.epoch && block.timestamp <= l.claimLapsesAt && l.claimBy == previous;
+            _clearClaim(l);
+            if (live) emit RecoveryClaimEnded(_account(), at, address(0), CLAIM_END_RECOVERY_CHANGED, l.claimPauseUntil);
+        }
     }
 
     function _clearPendingRecovery(P.Layout storage l) internal {

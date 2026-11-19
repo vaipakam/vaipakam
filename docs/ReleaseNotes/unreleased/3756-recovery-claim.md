@@ -13,7 +13,10 @@ Only the recovery address in force may ask, and not while a change of
 recovery address is pending. A request is accepted on a locked account, since
 the clawback is the way out of one. Its dates are fixed when it is asked: it
 may be run from the end of the wait until 30 days later, when it lapses and
-must be asked again. Nothing on the account is frozen while a claim is open.
+must be asked again. Nothing on the account is frozen while a claim is open. A claim belongs to the address
+that asked: once a change of recovery address is in force, the replaced
+address's claim is void, and the new address asks for itself, at once and with
+the full wait.
 
 The owner or any signer may cancel an open claim at any time before it runs,
 also while the account is locked and while the platform is paused. A lock, a
