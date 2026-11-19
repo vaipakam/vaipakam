@@ -317,6 +317,17 @@
   },
   {
     "type": "error",
+    "name": "FunctionDisabled",
+    "inputs": [
+      {
+        "name": "whichFlag",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InstantNothingToFill",
     "inputs": []
   },

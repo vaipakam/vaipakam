@@ -63,6 +63,11 @@ library LibIntentFill {
 
     /// @dev The slot exists and its terms have stood the minimum age (#3443).
     function requireSlotLive(LibVaipakam.LenderIntent memory intent, address lender) internal view {
+        // The standing-intent fill switch stops every route that draws a
+        // slot's capital (a match, an instant borrow, a takeover), here, once.
+        if (!LibVaipakam.storageSlot().protocolCfg.lenderIntentEnabled) {
+            revert LibOfferMatchExecute.FunctionDisabled(4);
+        }
         if (!intent.active) revert LenderIntentInactive();
         LibTiming.requireIntentAged(lender, intent.termsSetAt);
     }

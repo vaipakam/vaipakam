@@ -28,6 +28,8 @@ import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {ITreasuryFeeHost} from "../src/interfaces/ITreasuryFeeHost.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
+import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {MockSwapAdapter} from "./mocks/MockSwapAdapter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
@@ -265,6 +267,30 @@ contract StandingInstructionTest is SetupTest {
         vm.prank(runner);
         vm.expectPartialRevert(StandingInstructionFacet.LoanHealthAboveTrigger.selector);
         _si().runCollateralTopUp(LOAN);
+    }
+
+    /// @dev The top-up stands in for adding collateral, which a flagged
+    ///      holder may not do: it is skipped by name and moves nothing.
+    function test_topUp_skippedWhileTheOwnerIsSanctioned() public {
+        _fund(borrower, COLLATERAL, 3000 ether);
+        _set(1.3e18, 1.6e18, false, false, 0);
+        _mockHf(1.2e18);
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(borrower, true);
+
+        assertEq(_view().topUpSkipNow, 10, "the view states the skip");
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit StandingInstructionFacet.StandingInstructionSkipped(LOAN, 1, 10, 0, runner);
+        vm.prank(runner);
+        _si().runCollateralTopUp(LOAN);
+        assertEq(_loan().collateralAmount, 5000 ether, "nothing moved");
+        assertEq(_view().collateralReserve, 3000 ether, "the reserve is intact");
+
+        m.setFlagged(borrower, false);
+        vm.prank(runner);
+        _si().runCollateralTopUp(LOAN);
+        assertGt(_loan().collateralAmount, 5000 ether, "runs once cleared");
     }
 
     // ─── 3. Pay my interest ───────────────────────────────────────────

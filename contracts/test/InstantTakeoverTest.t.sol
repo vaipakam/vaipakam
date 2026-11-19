@@ -218,6 +218,16 @@ contract InstantTakeoverTest is InstantMarketBase {
         _takeover(lender, 999, lender2);
     }
 
+    /// @dev The standing-intent fill switch stops a takeover drawing the
+    ///      incoming slot's capital, as it stops a match.
+    function test_refusedWhenIntentFillsOff() public {
+        uint256 loanId = _openAndOffer(500, TERM, true);
+        vm.prank(owner);
+        LenderIntentFacet(address(diamond)).setLenderIntentEnabled(false);
+        vm.expectRevert(abi.encodeWithSignature("FunctionDisabled(uint8)", uint8(4)));
+        _takeover(lender, loanId, lender2);
+    }
+
     function test_refusedWhenMarketOff() public {
         uint256 loanId = _openAndOffer(500, TERM, true);
         vm.prank(owner);

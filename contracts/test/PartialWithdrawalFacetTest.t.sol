@@ -42,6 +42,7 @@ import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
+import {LibTestGuard} from "./helpers/LibTestGuard.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
@@ -786,6 +787,9 @@ contract PartialWithdrawalFacetTest is Test {
         LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
 
         (uint256 n0,,) = VaipakamNFTFacet(address(diamond)).positionState(tokenId);
+        // A vault move runs only inside the Diamond's guard, as every caller
+        // holds it.
+        LibTestGuard.hold(address(diamond));
         vm.prank(address(diamond));
         VaultOutflowFacet(address(diamond)).vaultOutflowArgs(
             borrower,
@@ -799,6 +803,7 @@ contract PartialWithdrawalFacetTest is Test {
             tokenId,
             19 // PARTIAL_WITHDRAWAL
         );
+        LibTestGuard.release(address(diamond));
         (uint256 n1, uint64 b1, uint64 r1) = VaipakamNFTFacet(address(diamond)).positionState(tokenId);
         assertEq(n1, n0 + 1, "one value-out");
         assertEq(b1, uint64(block.number), "value left in this block");

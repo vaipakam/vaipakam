@@ -285,6 +285,21 @@ contract InstantMarketTest is InstantMarketBase {
         InstantMarketFacet(address(diamond)).borrowInstant(req, srcs);
     }
 
+    /// @dev The standing-intent fill switch stops instant fills from slots
+    ///      too: with it off the slot source is skipped and nothing is lent.
+    function test_intentSwitchOffSkipsSlots() public {
+        _slot(lender, 500, 1000 ether, true);
+        _age();
+        vm.prank(owner);
+        LenderIntentFacet(address(diamond)).setLenderIntentEnabled(false);
+        InstantFillFacet.InstantSource[] memory srcs = new InstantFillFacet.InstantSource[](1);
+        srcs[0] = _src(lender);
+        InstantMarketFacet.InstantBorrowRequest memory req = _req(500 ether, 1000 ether, 700, 1);
+        vm.prank(taker);
+        vm.expectRevert(abi.encodeWithSelector(InstantMarketFacet.InstantBelowLeast.selector, 0, 1));
+        InstantMarketFacet(address(diamond)).borrowInstant(req, srcs);
+    }
+
     /// @dev A pair asset that is not blue-chip is refused.
     function test_pairMustBeBlueChip() public {
         vm.mockCall(

@@ -97,13 +97,13 @@ Execution, callable by anyone from that moment until the grace period ends:
 
 ### 4.4 When an instruction does not run
 
-An instruction is skipped, with an event naming the reason, when: the position holder is no longer the wallet that set it; the reserve is empty or short (4.3); a preclose offset, a sale listing, a refinance or a fallback is live on the loan; the price is missing or distrusted (4.1); the asset or the platform is paused; for 4.2, a delivery of the payment was refused (a frozen lender vault or treasury: mid-loan interest does not park, the hand path refuses it too, so the whole payment is undone). A keeper learns that last reason before sending from the executor's preview, which runs the payment and undoes it. A skip changes nothing and can be retried. An instruction is a convenience the user must still watch: the app says so, and the alerts in section 6 tell them when one could not run.
+An instruction is skipped, with an event naming the reason, when: the position holder is no longer the wallet that set it; the reserve is empty or short (4.3); a preclose offset, a sale listing, a refinance or a fallback is live on the loan; the price is missing or distrusted (4.1); the asset or the platform is paused; for 4.1, the reserve's owner is sanctions-flagged (section 5); for 4.2, a delivery of the payment was refused (a frozen lender vault or treasury: mid-loan interest does not park, the hand path refuses it too, so the whole payment is undone). A keeper learns that last reason before sending from the executor's preview, which runs the payment and undoes it. A skip changes nothing and can be retried. An instruction is a convenience the user must still watch: the app says so, and the alerts in section 6 tell them when one could not run.
 
 ## 5. Who may run it, and why no keeper permission
 
 All three executors are permissionless. Every input is fixed by the loan, the user's setting and the reserve; the caller chooses nothing and receives nothing. This differs from #1206, which proposed a new keeper permission bit. A permission would tie the user's protection to one named keeper being alive, and it guards nothing here because there is no discretion to guard.
 
-Sanctions follow the manual action each instruction stands in for: funding is refused for a flagged wallet; paying interest and repaying stay open, as repayment does today, so the lender is made whole.
+Sanctions follow the manual action each instruction stands in for: funding is refused for a flagged wallet; the collateral top-up is skipped (reason: sanctioned) while the reserve's owner is flagged, as adding collateral by hand is refused; paying interest and repaying stay open, as repayment does today, so the lender is made whole.
 
 Per the platform rule, every permissionless step is keeper-backed: one new keeper pass with a separate arming flag per instruction, each shipped unset. Each step gets a row in `contracts/permissionless-steps.json`.
 

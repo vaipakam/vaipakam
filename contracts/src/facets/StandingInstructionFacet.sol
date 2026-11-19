@@ -313,6 +313,11 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
     ///         beside the skip, carries the attempt's own error selector so
     ///         the cause is stated, not guessed.
     uint8 internal constant SKIP_LEG_REFUSED = 9;
+    /// @notice The reserve's owner is sanctions-flagged. Only the collateral
+    ///         top-up uses it: it stands in for adding collateral, which a
+    ///         flagged holder may not do, while paying interest and repaying
+    ///         stay open so the lender is made whole.
+    uint8 internal constant SKIP_SANCTIONED = 10;
 
     /// @dev The gas the interest payment's one attempt is given: well above
     ///      a draw, a booking with open seller claims, and the credit.
@@ -518,6 +523,9 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
 
         address holder = si.owner;
         uint8 skip = _commonSkip(s, loanId, loan, holder, loan.collateralAsset);
+        // The top-up follows the manual add-collateral's Tier-1 gate: a
+        // flagged holder's loan is not strengthened from its reserve.
+        if (skip == 0 && LibVaipakam.isSanctionedAddress(holder)) skip = SKIP_SANCTIONED;
         if (skip == 0) skip = _consolidated(loanId, loan, holder);
         uint256 reserve = s.collateralReserve[loanId][holder];
         if (skip == 0 && reserve == 0) skip = SKIP_RESERVE_EMPTY;
@@ -780,6 +788,9 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
         v.consolidationPending = loan.borrower != holderNow;
         if (v.instructions.owner != address(0)) {
             v.topUpSkipNow = _commonSkip(s, loanId, loan, v.instructions.owner, loan.collateralAsset);
+            if (v.topUpSkipNow == 0 && LibVaipakam.isSanctionedAddress(v.instructions.owner)) {
+                v.topUpSkipNow = SKIP_SANCTIONED;
+            }
             v.paymentSkipNow = _commonSkip(s, loanId, loan, v.instructions.owner, loan.principalAsset);
         }
         uint256 hf;
