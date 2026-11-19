@@ -75,7 +75,8 @@ import { attemptOrder, readLedgerRotation } from './ledgerRotation';
 import { PassReader } from './passReader';
 import { runIndex } from './runWindow';
 import { d1ScanCursors, type ScanCursors } from './scanCursors';
-import { listThresholdsForChain, publishKeeperStepStatus, type UserThresholds } from './db';
+import { listThresholdsForChain, type UserThresholds } from './db';
+import { stepPublisher } from './stepStatus';
 import { AlertDelivery, delivered, worthRetrying } from './alertDelivery';
 import { StepSender } from './stepSender';
 
@@ -337,48 +338,13 @@ export interface StandingInstructionsReport {
   stopped: string | null;
 }
 
-/** How often the armed steps are republished while the keeper runs. The
- *  indexer's `/keeper/steps` reads a row older than three times this as not
- *  running (`KEEPER_STEP_STALE_SEC`). */
-export const STATUS_PUBLISH_SEC = 5 * 60;
-/** When this process last published each chain's steps, and what. */
-const lastPublished = new Map<number, { at: number; armed: string }>();
-
-/**
- * Publish which steps are armed on each chain (`keeper_step_status`), so the
- * app can say whether an instruction has an automatic runner here: at most
- * once per STATUS_PUBLISH_SEC per chain, and at once when the armed set
- * changes. Every chain the keeper serves is published, armed or not, and a
- * keeper that is not armed at all publishes every step off. A failed write is
- * logged and retried next run; it never stops the pass. Exported for tests.
- */
-export async function publishArmedSteps(
-  db: D1Database,
-  chains: readonly { id: number; diamond: string }[],
-  armed: ReadonlySet<Step>,
-  nowSec: number,
-): Promise<void> {
-  const key = STEPS.filter((s) => armed.has(s)).join(',');
-  const due = chains.filter((c) => {
-    const last = lastPublished.get(c.id);
-    return last === undefined || last.armed !== key || nowSec - last.at >= STATUS_PUBLISH_SEC;
-  });
-  if (due.length === 0) return;
-  try {
-    await publishKeeperStepStatus(
-      db,
-      due.flatMap((c) =>
-        STEPS.map((step) => ({ chain_id: c.id, diamond: c.diamond, pass: 'standingInstructions', step, armed: armed.has(step) ? (1 as const) : (0 as const), observed_at: nowSec })),
-      ),
-    );
-    for (const c of due) lastPublished.set(c.id, { at: nowSec, armed: key });
-  } catch (err) {
-    console.warn(`[keeper] standingInstructions: the armed steps could not be published, so the app may read them as stale (${shortErr(err)})`);
-  }
-}
-
+/** This pass's armed-step publisher (`stepStatus.ts`): the app reads, per
+ *  instruction, whether an automatic runner is active on this deployment.
+ *  Exported for tests. */
+const stepStatus = stepPublisher('standingInstructions', STEPS);
+export const publishArmedSteps = stepStatus.publish;
 /** Forget what was published (tests). */
-export const resetPublishedSteps = () => lastPublished.clear();
+export const resetPublishedSteps = stepStatus.reset;
 
 export async function runStandingInstructions(env: Env, tick: PassTick): Promise<void> {
   const chains = getChainConfigs(env).filter((c) => c.diamond);

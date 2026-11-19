@@ -19,7 +19,12 @@
  * The app should also compare `diamond` with the Diamond it serves.
  *
  * Steps for the standing-instructions pass: `topUp` (the collateral top-up),
- * `repay` (the due repayment) and `interest` (the interest payment). A step
+ * `repay` (the due repayment) and `interest` (the interest payment). Steps for
+ * the protected-account pass (#3756 §4.6, whether owner alerts are sent here):
+ * `alerts` (the owner alerts, among them the recovery-claim reminders),
+ * `alertsTelegram` (the keeper can reach the agent that sends Telegram; the
+ * agent's own bot token is not covered) and `alertsPush` (the keeper's Push
+ * rail can send). A channel step is armed only while `alerts` is. A step
  * with no row has never been published on this chain: read it as not running.
  *
  * D1 only, dispatched before `resolveEnv` (index.ts) like `/assets/rankings`.

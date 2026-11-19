@@ -4,6 +4,7 @@
  * the contract's own admission rules and skip rules to each call.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { STATUS_PUBLISH_SEC } from '../src/stepStatus';
 import {
   ContractFunctionRevertedError,
   encodeAbiParameters,
@@ -31,7 +32,6 @@ import {
   type NoticeOutcome,
   publishArmedSteps,
   resetPublishedSteps,
-  STATUS_PUBLISH_SEC,
   runStandingInstructions,
   standingInstructionsOnce,
   type ReserveView,

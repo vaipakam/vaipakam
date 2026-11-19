@@ -21,7 +21,10 @@ import {
   ABI,
   CHANGE_FLOOR_ITEM,
   CHANGE_EVENTS,
+  armedAlertSteps,
   changeOf,
+  publishAlertSteps,
+  resetAlertSteps,
   describeReport,
   PAYOUT_EVENT,
   PAYOUT_FLOOR_ITEM,
@@ -460,6 +463,39 @@ describe('changeOf', () => {
 
   it('names the same events the step reads', () => {
     expect([...CHANGE_EVENTS].sort()).toEqual(['AllowlistAddRequested', 'ReplacementScheduled', 'SettingChangeRequested', 'SignerAddRequested', 'SignerRemoveRequested']);
+  });
+});
+
+describe('the alert status the app reads (#3756)', () => {
+  it('arms a channel only while the alerts themselves are armed', () => {
+    expect([...armedAlertSteps(false, true, true)]).toEqual([]);
+    expect([...armedAlertSteps(true, false, false)]).toEqual(['alerts']);
+    expect([...armedAlertSteps(true, true, false)]).toEqual(['alerts', 'alertsTelegram']);
+    expect([...armedAlertSteps(true, false, true)]).toEqual(['alerts', 'alertsPush']);
+  });
+
+  it('publishes every alert step of every chain, armed or not', async () => {
+    resetAlertSteps();
+    const batches: unknown[][][] = [];
+    const db = {
+      prepare(sql: string) {
+        expect(sql).toMatch(/INSERT INTO keeper_step_status/);
+        return { bind: (...v: unknown[]) => v };
+      },
+      async batch(stmts: unknown[][]) {
+        batches.push(stmts);
+        return [];
+      },
+    } as unknown as D1Database;
+    await publishAlertSteps(db, [{ id: 84532, diamond: '0x2c300b26bc15359E7948dA61a1960303772b0335' }], armedAlertSteps(true, true, false), 1_000);
+    const d = '0x2c300b26bc15359e7948da61a1960303772b0335';
+    expect(batches).toEqual([
+      [
+        [84532, d, 'protectedAccount', 'alerts', 1, 1_000],
+        [84532, d, 'protectedAccount', 'alertsTelegram', 1, 1_000],
+        [84532, d, 'protectedAccount', 'alertsPush', 0, 1_000],
+      ],
+    ]);
   });
 });
 

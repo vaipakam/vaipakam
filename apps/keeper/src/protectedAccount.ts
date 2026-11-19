@@ -77,7 +77,9 @@ import {
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, subStepArmed, type KeeperContext } from './keeper';
-import { AlertDelivery, type Alert, type DeliveryOutcome } from './alertDelivery';
+import { AlertDelivery, pushRailConfigOf, type Alert, type DeliveryOutcome } from './alertDelivery';
+import { stepPublisher } from './stepStatus';
+import { pushRailStatus } from '@vaipakam/push';
 import { agentClientOf, agentUnconfiguredReason } from './agentClient';
 import { alertOwners, protectedStoreOf, LOCK_REQUEST_TTL_SEC, lockFromTelegram, type AlertReport, type LockResult, type ProtectedStore } from './protectedTelegram';
 import type { PassTick } from './passSchedule';
@@ -364,11 +366,45 @@ export interface ProtectedReport {
   stopped: string | null;
 }
 
+/** The steps of this pass the app reads (`stepStatus.ts`): whether owner
+ *  alerts are sent on this deployment, and on which channel. `alertsTelegram`
+ *  is armed when the agent that sends Telegram alerts is configured,
+ *  `alertsPush` when this keeper's Push rail can send; each only while
+ *  `alerts` itself is armed, so neither is read as alerts being sent. */
+export const ALERT_STEPS = ['alerts', 'alertsTelegram', 'alertsPush'] as const;
+export type AlertStep = (typeof ALERT_STEPS)[number];
+const alertStatus = stepPublisher('protectedAccount', ALERT_STEPS);
+/** Publish the alert steps (exported for tests). */
+export const publishAlertSteps = alertStatus.publish;
+/** Forget what was published (tests). */
+export const resetAlertSteps = alertStatus.reset;
+
+/** Which alert steps are armed, from the flags and the channels' configuration. Pure. */
+export function armedAlertSteps(alertsOn: boolean, telegramConfigured: boolean, pushUsable: boolean): Set<AlertStep> {
+  const armed = new Set<AlertStep>();
+  if (!alertsOn) return armed;
+  armed.add('alerts');
+  if (telegramConfigured) armed.add('alertsTelegram');
+  if (pushUsable) armed.add('alertsPush');
+  return armed;
+}
+
 export async function runProtectedAccount(env: Env, tick: PassTick): Promise<void> {
-  if (!passIsArmed(env, 'protectedAccount', 'PROTECTED_ACCOUNT_ENABLED')) return;
-  const alertsOn = subStepArmed(env, 'protectedAccount', 'owner alerts', 'PROTECTED_ALERTS_ENABLED');
-  const agent = agentClientOf(env);
+  const passOn = passIsArmed(env, 'protectedAccount', 'PROTECTED_ACCOUNT_ENABLED');
+  const alertsOn = passOn && subStepArmed(env, 'protectedAccount', 'owner alerts', 'PROTECTED_ALERTS_ENABLED');
   const unconfigured = agentUnconfiguredReason(env);
+  // #3756 §4.6 — whether owner alerts are sent here is stated, never assumed:
+  // published every few minutes, armed or not, for the app to read.
+  await publishAlertSteps(
+    env.DB,
+    getChainConfigs(env)
+      .filter((c) => c.diamond)
+      .map((c) => ({ id: c.id, diamond: c.diamond as string })),
+    armedAlertSteps(alertsOn, unconfigured === null, pushRailStatus(pushRailConfigOf(env)).usable),
+    Math.floor(Date.now() / 1000),
+  );
+  if (!passOn) return;
+  const agent = agentClientOf(env);
   // The LOCK requests are the agent's (#1722): with no agent configured
   // the step cannot read one, so it runs as if unarmed, and says so. The
   // agent then hears from no keeper and sends owners to the app.

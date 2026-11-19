@@ -14,7 +14,8 @@
 --   diamond     — the Diamond the keeper serves there, lowercase, so a reader
 --                 can tell a row written for another deployment.
 --   pass, step  — the keeper pass and its step ('standingInstructions' with
---                 'topUp', 'repay' or 'interest').
+--                 'topUp', 'repay' or 'interest'; 'protectedAccount' with
+--                 'alerts', 'alertsTelegram' or 'alertsPush', #3756).
 --   armed       — 1 when the step's flag (and the keeper itself) is armed.
 --                 Not "it will succeed": the contract decides each call.
 --   observed_at — when the keeper last read its own flags (unix seconds, the
