@@ -1,9 +1,10 @@
 /**
  * #3433 — the issuer-power line under an asset: what the keeper's checker
  * found, what it could not tell, what it looked for and did not find, and
- * when, at which block. Nothing is shown until the index holds a run for the
- * asset, or when it cannot be read (the rankings line already says the index
- * is down). Never a claim that the asset is safe.
+ * when, at which block. Nothing is shown while the index answers that it
+ * holds no run for the asset. When the index cannot be read, a token's
+ * rankings line already says so; an NFT collection has no such line, so this
+ * one says the checks could not be read. Never a claim that the asset is safe.
  */
 import { useQuery } from '@tanstack/react-query';
 import type { SupportedChain } from '../../chain/chains';
@@ -19,7 +20,11 @@ type Hex = `0x${string}`;
 /** The checker writes once a day at most; an hour keeps a page fresh enough. */
 const ISSUER_STALE_MS = 60 * 60 * 1000;
 
-export function useIssuerPowers(chain: SupportedChain, asset: Hex) {
+/** What the index said about an asset's issuer powers: a stored run, an
+ *  affirmative "no run yet", or no answer (unreadable or no index). */
+export type IssuerPowersRead = { kind: 'checked'; run: IssuerRun } | { kind: 'none' } | { kind: 'unread' } | { kind: 'reading' };
+
+export function useIssuerPowers(chain: SupportedChain, asset: Hex): IssuerPowersRead {
   const world = useWorldRail();
   const configured = world.indexer.origin !== null;
   const q = useQuery({
@@ -29,13 +34,23 @@ export function useIssuerPowers(chain: SupportedChain, asset: Hex) {
     staleTime: ISSUER_STALE_MS,
     retry: 1,
   });
-  return q.data?.kind === 'checked' ? q.data.run : null;
+  if (q.data?.kind === 'checked') return { kind: 'checked', run: q.data.run };
+  if (q.data !== undefined) return { kind: 'none' };
+  if (!configured || q.isError) return { kind: 'unread' };
+  return { kind: 'reading' };
 }
 
 export function IssuerPowersLine({ chain, asset, collection = false }: { chain: SupportedChain; asset: Hex; collection?: boolean }) {
-  const run = useIssuerPowers(chain, asset);
-  if (run === null) return null;
-  return <IssuerRunView run={run} collection={collection} />;
+  const { text } = useCopy();
+  const read = useIssuerPowers(chain, asset);
+  if (read.kind === 'checked') return <IssuerRunView run={read.run} collection={collection} />;
+  if (read.kind === 'unread' && collection)
+    return (
+      <p className="tier-a" data-testid="issuer-check-unread">
+        {text('trust.issuerUnread')}
+      </p>
+    );
+  return null;
 }
 
 export function IssuerRunView({ run, collection }: { run: IssuerRun; collection: boolean }) {

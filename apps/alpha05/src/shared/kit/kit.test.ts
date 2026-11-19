@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { kitLink } from '@vaipakam/lend-kit';
 import { buildAcceptTerms } from '../offers/acceptTerms';
-import { kitRoute, readIntegratorEntry, readIntegratorShare, readKitLink, shareApplies } from './kit';
+import { kitRequestInput, kitRoute, readIntegratorEntry, readIntegratorShare, readKitLink, shareApplies } from './kit';
 
 const A = '0x1111111111111111111111111111111111111111' as const;
 const I = '0x2222222222222222222222222222222222222222' as const;
@@ -92,5 +92,16 @@ describe('the integrator in the signed terms', () => {
   it('names none unless the reader kept one', () => {
     expect(buildAcceptTerms(offer as never, ctx).integrator).toBe('0x0000000000000000000000000000000000000000');
     expect(buildAcceptTerms(offer as never, { ...ctx, integrator: I }).integrator).toBe(I);
+  });
+});
+
+describe('kitRequestInput (#3773)', () => {
+  it('carries an NFT link’s token id and quantity into a fresh borrow form', () => {
+    expect(kitRequestInput({ action: 'borrow', chainId: 1, asset: A, tokenId: 42n, quantity: 3n })).toMatchObject({ tokenId: '42', collateral: '3' });
+    const plain = kitRequestInput({ action: 'borrow', chainId: 1, asset: A });
+    expect(plain).toMatchObject({ tokenId: '', collateral: '' });
+  });
+  it('leaves other actions’ forms alone', () => {
+    expect(kitRequestInput({ action: 'rent', chainId: 1, asset: A, tokenId: 1n })).toBeNull();
   });
 });

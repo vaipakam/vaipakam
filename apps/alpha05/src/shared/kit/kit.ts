@@ -18,10 +18,25 @@
 import type { Abi } from 'viem';
 import { IntegratorFacetABI } from '@vaipakam/contracts/abis';
 import { KitLinkError, parseKitParams, SHARE_RULE, type KitRequest, type ShareRule } from '@vaipakam/lend-kit';
+import { DEFAULT_INPUT, type PostInput } from '../post/postModel';
 
 type Hex = `0x${string}`;
 
 const INTEGRATOR = IntegratorFacetABI as Abi;
+
+/** #3773 — the borrow form a "borrow against this" link opens on. A link
+ *  naming an NFT carries its token id (and an ERC-1155 quantity) into the
+ *  form; continuing a new link starts the form fresh, so nothing typed for
+ *  an earlier collateral (another token, another amount) stays beside it.
+ *  Null for any other action. */
+export function kitRequestInput(r: KitRequest): PostInput | null {
+  if (r.action !== 'borrow') return null;
+  return {
+    ...DEFAULT_INPUT,
+    tokenId: r.tokenId !== undefined ? r.tokenId.toString() : '',
+    collateral: r.quantity !== undefined ? r.quantity.toString() : '',
+  };
+}
 
 /** Where the hand-off is kept while the user moves to the filled-in page. */
 export const KIT_HANDOFF_KEY = 'kit.handoff';

@@ -3,7 +3,9 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import { getSupportedChain } from '../../chain/chains';
 import { useCopy } from '../../shared/copy/useCopy';
-import { KIT_HANDOFF_KEY, kitRoute, readKitLink, type KitHandoff } from '../../shared/kit/kit';
+import { KIT_HANDOFF_KEY, kitRequestInput, kitRoute, readKitLink, type KitHandoff } from '../../shared/kit/kit';
+import { REQUEST_KEY } from '../../shared/post/OfferForm';
+import type { PostInput } from '../../shared/post/postModel';
 import { entryLine, kitWhat, kitWho, ruleLine, useIntegratorEntry, useKitMeta } from '../../shared/kit/kitStatements';
 import { assetName } from '../../shared/reads/tokens';
 import { useStoredValue } from '../../shared/tx/txStore';
@@ -36,6 +38,7 @@ export function KitPage() {
   const [keep, setKeep] = useState(true);
   const entry = useIntegratorEntry(integrator !== null ? linkChain : null, integrator);
   const [, setHandoff] = useStoredValue<KitHandoff>(KIT_HANDOFF_KEY);
+  const [, setRequestInput] = useStoredValue<PostInput>(`${REQUEST_KEY}:input`);
 
   if (!read.ok) {
     return (
@@ -65,6 +68,8 @@ export function KitPage() {
   const entryText = integrator !== null ? entryLine(entry, format) : null;
   const go = () => {
     setHandoff({ request: r, integrator: keep ? integrator : null });
+    const seeded = kitRequestInput(r);
+    if (seeded !== null) setRequestInput(seeded);
     navigate(kitRoute(r));
   };
   return (

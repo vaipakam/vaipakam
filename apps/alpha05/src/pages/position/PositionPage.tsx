@@ -4,7 +4,8 @@ import { useSwitchChain } from 'wagmi';
 import { LOAN_LINK_CHAIN_PARAM, linkChainId } from '../../shared/loans/loanLink';
 import { LoanLinkCard } from './LoanLinkCard';
 import { WatchLoanCard } from './WatchLoanCard';
-import { GiveLoanCard } from '../../shared/give/GiveLoan';
+import { GiveLoanCard, giveKey } from '../../shared/give/GiveLoan';
+import { useStoredValue } from '../../shared/tx/txStore';
 import { refusalFromError } from '../../shared/eligibility/refusal';
 import { useAccount } from 'wagmi';
 import { getSupportedChain, type SupportedChain } from '../../chain/chains';
@@ -148,6 +149,11 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
   // neither reads the lender's (no "you must repay").
   const borrowerSide = role?.borrower === true && role.lender !== true;
   const cashHeld = useCashFlowHeld(loanId);
+  // A gift already under way stays on the page through its outcome, even
+  // once the refreshed holders show the receiver as lender: its finish card
+  // is the only place that outcome is shown, and it closes on the reader's
+  // own act (which clears this record).
+  const [giving] = useStoredValue<Hex>(`${giveKey(loanId)}:receiver`);
   const canCashOut = erc20 && role?.lender === true && l.status === LOAN_STATUS_ACTIVE;
   const obligations = live ? loanObligations({ loan: l, borrowerSide, healthFactor: v.healthFactor ?? 0n }, v.deadlines, nowSec) : null;
   const unknown = text('receipt.unknown');
@@ -219,7 +225,7 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
 
       <LoanActions loanId={loanId} view={v} role={role} own={own} chain={chain} meta={meta} />
       {erc20 && live && role?.borrower === true && <LoanLinkCard loanId={loanId} chainId={chain.chainId} />}
-      {erc20 && l.status === LOAN_STATUS_ACTIVE && role?.lender === true && <GiveLoanCard loanId={loanId} chain={chain} own={own} meta={meta} />}
+      {erc20 && ((l.status === LOAN_STATUS_ACTIVE && role?.lender === true) || giving !== null) && <GiveLoanCard loanId={loanId} chain={chain} own={own} meta={meta} />}
       {l.status === LOAN_STATUS_ACTIVE && v.holders.lender !== null && v.holders.borrower !== null && !holder && <WatchLoanCard loanId={loanId} chainId={chain.chainId} wallet={account} />}
       <LoanClaims loanId={loanId} view={v} own={own} chain={chain} meta={meta} frozen={frozen} />
       {held !== null && (

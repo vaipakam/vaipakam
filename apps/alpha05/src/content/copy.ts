@@ -4730,6 +4730,7 @@ export const copy = {
     issuerIncompleteBare: B('Not every check ran.'),
     issuerAsOf: B('Checked {{date}}, at block {{block}}.'),
     issuerScope: B('This covers the contract as it stood then, nothing more.'),
+    issuerUnread: A('Whether the issuer of this collection can move or freeze its tokens could not be read right now, so it is not known here.'),
     check_upgradeable_proxy: B('its code can be replaced'),
     check_admin_transfer: B('an admin can move holders’ tokens'),
     check_freeze: B('an admin can freeze an address'),
