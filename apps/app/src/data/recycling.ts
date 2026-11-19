@@ -114,6 +114,7 @@ interface BackingWire {
   keeperBudget?: unknown;
   platformRetained?: unknown;
   blockNumber?: unknown;
+  blockSettled?: unknown;
   diamond?: unknown;
   releasedRemitStranded?: unknown;
   strandedRecoveryReserved?: unknown;
@@ -164,6 +165,14 @@ export interface PublishableBacking {
   holderAttributed: string | null;
   verdict: BackingVerdictView;
   blockNumber: string;
+  /**
+   * Whether the chain confirmed `blockNumber` as settled (#2210). `false` =
+   * no settled block could be read when the figures were taken, so the block
+   * is an estimate a fixed distance behind the newest one. `null` = the
+   * reading does not record it (an older indexer, or a reading taken before
+   * the indexer recorded it) — never shown as either answer.
+   */
+  blockSettled: boolean | null;
   diamond: string;
   /** The timestamp of the block these figures describe (ISO 8601). */
   asOf: string;
@@ -518,9 +527,11 @@ export function parseBacking(raw: unknown): BackingView {
   }
   const custodyActivated = optional(b.custodyActivated);
   const holderBalanceKnown = optional(b.holderBalanceKnown);
+  const blockSettled = optional(b.blockSettled);
   if (
     (custodyActivated !== null && !isBool(custodyActivated)) ||
-    (holderBalanceKnown !== null && !isBool(holderBalanceKnown))
+    (holderBalanceKnown !== null && !isBool(holderBalanceKnown)) ||
+    (blockSettled !== null && !isBool(blockSettled))
   ) {
     return { kind: 'withheld', reason: { kind: 'malformed' } };
   }
@@ -574,6 +585,7 @@ export function parseBacking(raw: unknown): BackingView {
       holderAttributed: optional(b.holderAttributed) as string | null,
       verdict,
       blockNumber: b.blockNumber as string,
+      blockSettled: blockSettled as boolean | null,
       diamond: b.diamond,
       asOf: b.asOf,
       pendingMigration: pendingMigration as string | null,

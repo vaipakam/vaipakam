@@ -158,6 +158,24 @@ export interface BackingSnapshot {
   /** The block both pinned reads observed. */
   blockNumber: string | null;
   /**
+   * Whether the CHAIN confirmed `blockNumber` as settled (#2210).
+   *
+   * `true` — the chain answered the `safe` tag and the reading is pinned to
+   * that block. `false` — no settled block could be read when the figures
+   * were taken, so the block is a fixed step back from the newest one
+   * (`latest - SAFE_FALLBACK_BUFFER`): an estimate of finality chosen by the
+   * indexer, which a reorganisation deeper than the step would leave
+   * describing an orphaned block. `null` — the reading does not record it
+   * (a row captured before migration 0104, or a withheld block).
+   *
+   * Never inferred: `null` is not read as either answer. Why the settled
+   * read failed is NOT published — the fallback is taken on any failure,
+   * including a timeout on a provider that supports the tag, so a cause
+   * named here would be a guess; the provider's own reason goes to the
+   * operator log.
+   */
+  blockSettled: boolean | null;
+  /**
    * The Diamond the figures came from.
    *
    * Published, not merely checked. A block identifies WHEN; after a
@@ -280,6 +298,7 @@ const BACKING_UNAVAILABLE = (reason: BackingReason): BackingSnapshot => ({
   backed: null,
   pendingMigration: null,
   blockNumber: null,
+  blockSettled: null,
   diamond: null,
   unavailableReason: reason,
   asOf: null,
@@ -572,9 +591,10 @@ export async function captureBackingSnapshot(
     // Capturing anyway is still the better of the two: declining would age
     // the snapshot into `snapshot-stale`, which tells a reader the CHAIN is
     // quiet when the truth is that no settled block could be read. What must
-    // not happen is capturing quietly. The stored row does not yet carry the
-    // distinction — that needs a column, a migration and a word on the
-    // public surface, and is #2210.
+    // not happen is capturing quietly: the stored row records the block as
+    // NOT settled (`block_settled = 0`, #2210), the route publishes that as
+    // `blockSettled: false` beside the block number, and the surface that
+    // renders the figure says the block is an estimate.
     //
     // The provider's own reason is quoted rather than assumed: the settled
     // read falls back on ANY failure, so a timeout on a provider that
@@ -766,8 +786,8 @@ export async function captureBackingSnapshot(
       `INSERT INTO recycle_backing_snapshot
          (chain_id, payload, diamond, observed_at, block_time, block_number,
           chain_count, tick_minutes, custody_activated, holder_balance_known,
-          holder_balance, holder_attributed)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+          holder_balance, holder_attributed, block_settled)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
        ON CONFLICT(chain_id) DO UPDATE SET
          payload = excluded.payload,
          diamond = excluded.diamond,
@@ -779,7 +799,8 @@ export async function captureBackingSnapshot(
          custody_activated = excluded.custody_activated,
          holder_balance_known = excluded.holder_balance_known,
          holder_balance = excluded.holder_balance,
-         holder_attributed = excluded.holder_attributed
+         holder_attributed = excluded.holder_attributed,
+         block_settled = excluded.block_settled
        WHERE
          -- NEVER GO BACKWARDS. A load-balanced RPC can serve an older safe
          -- head, and two captures can complete out of order; an
@@ -805,6 +826,9 @@ export async function captureBackingSnapshot(
         custody?.known ?? null,
         custody?.balance ?? null,
         custody?.attributed ?? null,
+        // #2210 — written on EVERY capture, beside the block it qualifies, so
+        // a newer reading never inherits an older one's answer.
+        head.settled ? 1 : 0,
       )
       .run();
   } catch (err) {
@@ -819,6 +843,13 @@ export async function captureBackingSnapshot(
     // a migration that failed to apply would otherwise leave every verdict
     // "not determinable" with nothing to say why.
     if (!/no column named|no such column/i.test(String(err))) throw err;
+    // NOT a fallback for 0104 (#2210). The capture runs only from the
+    // scheduled tick, which the schema gate declines until every migration
+    // in the build is recorded, so a missing `block_settled` cannot reach
+    // here in a gated deployment — and if it ever did, writing the legacy
+    // shape would publish a guessed block with nothing marking it. Refuse
+    // instead: a capture that fails is withheld as stale, never mislabelled.
+    if (/block_settled/i.test(String(err))) throw err;
     warnCustodyMigrationMissing('capture');
     await env.DB.prepare(
       `INSERT INTO recycle_backing_snapshot
@@ -1074,6 +1105,28 @@ interface StoredBackingRow extends StoredCustodyColumns {
   block_number: string;
   chain_count: number;
   tick_minutes: number;
+  /** Migration 0104 (#2210). Absent when the column is not there yet. */
+  block_settled?: unknown;
+}
+
+/**
+ * The migration that adds `block_settled` (#2210). Named once, for the read
+ * side's rollout warning.
+ */
+export const SETTLED_MIGRATION = '0104_recycle_backing_block_settled';
+
+/** Read-side latch for the 0104 warning, once per isolate like the custody one. */
+let settledMigrationReadWarned = false;
+
+/**
+ * The stored `block_settled` as served. `1`/`0` are the only answers; NULL,
+ * an absent column or anything else is "not recorded" — never read as
+ * settled, which would present an estimated block as a confirmed one.
+ */
+export function storedBlockSettled(raw: unknown): boolean | null {
+  if (raw === 1 || raw === 1n) return true;
+  if (raw === 0 || raw === 0n) return false;
+  return null;
 }
 
 async function readBacking(env: Env, chainId: number): Promise<BackingSnapshot> {
@@ -1093,14 +1146,45 @@ async function readStoredBacking(
   schema: { pendingMigration: string | null },
 ): Promise<BackingSnapshot> {
   try {
+    // The pre-0104 select, kept as the first rollout fallback below.
+    const selectWithCustody = () =>
+      env.DB.prepare(
+        `SELECT payload, diamond, observed_at, block_time, block_number,
+                chain_count, tick_minutes, custody_activated,
+                holder_balance_known, holder_balance, holder_attributed
+           FROM recycle_backing_snapshot WHERE chain_id = ?1`,
+      )
+        .bind(chainId)
+        .first<StoredBackingRow>();
     const row = await env.DB.prepare(
       `SELECT payload, diamond, observed_at, block_time, block_number,
               chain_count, tick_minutes, custody_activated,
-              holder_balance_known, holder_balance, holder_attributed
+              holder_balance_known, holder_balance, holder_attributed,
+              block_settled
          FROM recycle_backing_snapshot WHERE chain_id = ?1`,
     )
       .bind(chainId)
       .first<StoredBackingRow>()
+      .catch((err: unknown) => {
+        // ROLLOUT WINDOW for 0104 (#2210). This is an HTTP read, which must
+        // tolerate the previous schema. Without the column every reading's
+        // block is "not recorded" — which is what the absent field reads
+        // back as, so nothing is presented as settled. Any missing column
+        // falls through to the pre-0104 select, whose own fallback handles a
+        // database that also lacks the custody columns (SQLite names only
+        // the first missing column, so the message cannot say which).
+        if (!/no such column/i.test(String(err))) throw err;
+        if (/block_settled/i.test(String(err)) && !settledMigrationReadWarned) {
+          settledMigrationReadWarned = true;
+          console.warn(
+            `[recycling] migration ${SETTLED_MIGRATION} is NOT applied to this ` +
+              `database: the backing read served every reading's block as not ` +
+              `recorded as settled or estimated. Apply the migration; no ` +
+              `redeploy is needed.`,
+          );
+        }
+        return selectWithCustody();
+      })
       .catch((err: unknown) => {
         // ROLLOUT WINDOW — the read-side twin of the capture's fallback: the
         // Worker deploys before 0056 applies, and an uncaught `no such
@@ -1199,6 +1283,7 @@ async function readStoredBacking(
         | 'unavailableReason'
         | 'asOf'
         | 'blockNumber'
+        | 'blockSettled'
         | keyof ServedCustody
         | 'backed'
         | 'pendingMigration'
@@ -1219,6 +1304,8 @@ async function readStoredBacking(
       // Overwritten by `readBacking` when the columns turned out missing.
       pendingMigration: null,
       blockNumber: row.block_number,
+      // #2210 — published beside the block it qualifies, from the same row.
+      blockSettled: storedBlockSettled(row.block_settled),
       diamond: row.diamond,
       unavailableReason: null,
       // The BLOCK's time — what these figures describe. `observed_at` is

@@ -201,6 +201,21 @@ export function reviewAnalytics({ rec, loop, snap, copy, diamond, chainId }) {
       text('recycling-asof') === norm(wantAsOf),
       `expected "${norm(wantAsOf)}"; page "${text('recycling-asof')}"`,
     );
+
+    // #2210 — the block's finality is stated as the indexer published it;
+    // an indexer that predates the field is "not recorded", never settled.
+    const settled = b.blockSettled ?? null;
+    const wantFinality =
+      settled === null
+        ? c.blockFinalityUnknown
+        : settled
+          ? c.blockFinalitySettled
+          : c.blockFinalityEstimated;
+    check(
+      "whether the block was confirmed as settled is the reading's own",
+      text('recycling-block-finality') === norm(wantFinality),
+      `blockSettled ${settled}; page "${text('recycling-block-finality')}"`,
+    );
   }
 
   // ── the scope the totals speak for ──────────────────────────────────────

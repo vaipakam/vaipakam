@@ -753,6 +753,25 @@ function BackingFigures({
             {copy.recycling.asOfValue(b.blockNumber, b.asOf, b.diamond)}
           </dd>
         </div>
+        {/* #2210 — whether the CHAIN confirmed that block as settled, or the
+            reading was pinned to an estimate. Rendered in every case, the
+            unknown included: a reader invited to check these figures at that
+            block must not take an estimated block for a confirmed one. */}
+        <div>
+          <dt>{copy.recycling.blockFinalityLabel}</dt>
+          <dd
+            data-testid="recycling-block-finality"
+            data-finality={
+              b.blockSettled === null ? 'unknown' : b.blockSettled ? 'settled' : 'estimated'
+            }
+          >
+            {b.blockSettled === null
+              ? copy.recycling.blockFinalityUnknown
+              : b.blockSettled
+                ? copy.recycling.blockFinalitySettled
+                : copy.recycling.blockFinalityEstimated}
+          </dd>
+        </div>
       </dl>
       {/* Which amounts the remainder subtracts depends on where custody is
           held; the note says which, or that the reading does not record it. */}

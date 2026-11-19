@@ -7836,6 +7836,15 @@ const copySource = {
       'Block {{block}} ({{at}}), read from contract {{contract}}. The platform reads these figures on a rotating schedule, so they trail the chain.',
       ['block', 'at', 'contract'],
     ),
+    // #2210 — whether the block above is one the chain confirmed as settled.
+    // The cause of a fallback is NOT named: it is taken on any failure of the
+    // settled read, a timeout included, so a stated cause would be a guess.
+    blockFinalityLabel: 'Block confirmed as settled?',
+    blockFinalitySettled: 'Yes — the chain reported this block as settled when the figures were read.',
+    blockFinalityEstimated:
+      'No — the chain did not report a settled block when these figures were read, so the block is an estimate a fixed number of blocks behind the newest one. If the chain later reorganised past that point, these figures would describe a block that is no longer part of it.',
+    blockFinalityUnknown:
+      'Not recorded — this reading does not say whether the chain confirmed the block as settled.',
     backingUnavailable:
       'The retained reserve is not shown. It is published only alongside the tokens actually behind it, never on its own, and no current reading of those tokens is available to publish.',
     backingReasonNotCaptured: 'No reading of the chain has been taken yet.',

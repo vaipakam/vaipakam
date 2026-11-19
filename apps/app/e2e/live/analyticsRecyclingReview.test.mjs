@@ -70,6 +70,15 @@ function pageFor(rec, loop) {
     snap['recycling-asof'] = {
       text: fill(c.asOfValue, { block: b.blockNumber, at: b.asOf, contract: b.diamond }),
     };
+    const settled = b.blockSettled ?? null;
+    snap['recycling-block-finality'] = {
+      text:
+        settled === null
+          ? c.blockFinalityUnknown
+          : settled
+            ? c.blockFinalitySettled
+            : c.blockFinalityEstimated,
+    };
   }
   for (const d of rec.daily) {
     snap[`recycling-day-${d.dayId}`] = { text: `Day ${d.dayId}` };
@@ -107,6 +116,17 @@ describe('reviewAnalytics', () => {
     const checks = run(recBody(), loopBody());
     expect(failed(checks)).toEqual([]);
     expect(checks.length).toBeGreaterThan(10);
+  });
+
+  it('fails a page that presents an estimated block as settled (#2210)', () => {
+    const rec = recBody();
+    rec.backing.blockSettled = false;
+    const snap = pageFor(rec, loopBody());
+    expect(failed(run(rec, loopBody(), snap))).toEqual([]);
+    snap['recycling-block-finality'].text = c.blockFinalitySettled;
+    expect(failed(run(rec, loopBody(), snap))).toEqual([
+      "whether the block was confirmed as settled is the reading's own",
+    ]);
   });
 
   it('fails a verdict cell whose posture is not the indexer’s', () => {
