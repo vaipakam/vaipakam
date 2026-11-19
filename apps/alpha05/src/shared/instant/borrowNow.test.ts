@@ -14,6 +14,7 @@ import {
   orderSources,
   parseBorrowNow,
   planFrom,
+  previewFrom,
   restOf,
   restRequestInput,
   slotCandidates,
@@ -218,5 +219,20 @@ describe('allowance override', () => {
     const slots = candidateSlots();
     expect(slots.slice(0, 2)).toEqual([1n, 2n]);
     expect(new Set(slots).size).toBe(slots.length);
+  });
+});
+
+describe('previewFrom (#3786)', () => {
+  const a = { kind: 1 as const, owner: L1, slot: 0, offerId: 7n };
+  const b = { kind: 0 as const, owner: L1, slot: 2, offerId: 0n };
+  it('reads fills and skips against the sources sent, with the vault and wallet split', () => {
+    const p = previewFrom([[{ sourceIndex: 1n, amount: 60n, rateBps: 500n, collateral: 90n }], [{ sourceIndex: 0n, reason: '0x1234' }], 60n, 40n, 20n], [a, b]);
+    expect(p.plan).toEqual({ fills: [{ source: b, amount: 60n, rateBps: 500n, collateral: 90n }], total: 60n, collateralLocked: 90n });
+    expect(p.skipped).toEqual([{ source: a, reason: '0x1234' }]);
+    expect([p.fromVault, p.fromWallet]).toEqual([40n, 20n]);
+  });
+  it('refuses a preview naming a source the borrow did not send', () => {
+    expect(() => previewFrom([[{ sourceIndex: 2n, amount: 1n, rateBps: 1n, collateral: 1n }], [], 1n, 0n, 0n], [a, b])).toThrow(/did not send/);
+    expect(() => previewFrom([[], [{ sourceIndex: 5n, reason: '0x' }], 0n, 0n, 0n], [a])).toThrow(/did not send/);
   });
 });

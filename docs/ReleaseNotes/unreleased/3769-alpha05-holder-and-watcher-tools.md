@@ -8,4 +8,4 @@ Borrow takes an optional "for someone" address, the app's own note only: every r
 
 Every write and signature now checks the wallet's live account and network when it is made, so nothing is prompted, sent or recorded for a wallet or network other than the one reviewed. The asset line states the issuer-power checker's findings once a run is stored, and a request pledging an NFT simulates the move to the vault first. Observed rates count the loans left out as unconfirmed beside each figure.
 
-Closes #3769, Closes #3771, Closes #3770, Closes #1691, Closes #2525
+Closes #3769, Closes #3771, Closes #1691, Closes #2525; advances #3770

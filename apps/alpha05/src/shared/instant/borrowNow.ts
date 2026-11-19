@@ -219,10 +219,17 @@ export function previewFrom(result: unknown, sources: readonly InstantSource[]):
     bigint,
     bigint,
   ];
-  const planned: PlannedFill[] = fills.map((f) => ({ source: sources[Number(f.sourceIndex)]!, amount: f.amount, rateBps: f.rateBps, collateral: f.collateral }));
+  // A preview naming a source the app did not send is refused, never read
+  // as some other source.
+  const at = (i: bigint): InstantSource => {
+    const s = i < BigInt(sources.length) ? sources[Number(i)] : undefined;
+    if (s === undefined) throw new Error(`The protocol's preview named source ${i}, which this borrow did not send.`);
+    return s;
+  };
+  const planned: PlannedFill[] = fills.map((f) => ({ source: at(f.sourceIndex), amount: f.amount, rateBps: f.rateBps, collateral: f.collateral }));
   return {
     plan: { fills: planned, total: planned.reduce((x, f) => x + f.amount, 0n), collateralLocked: planned.reduce((x, f) => x + f.collateral, 0n) },
-    skipped: skipped.map((k) => ({ source: sources[Number(k.sourceIndex)]!, reason: k.reason })),
+    skipped: skipped.map((k) => ({ source: at(k.sourceIndex), reason: k.reason })),
     fromVault,
     fromWallet,
   };
