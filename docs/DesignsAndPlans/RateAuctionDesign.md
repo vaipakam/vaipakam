@@ -48,7 +48,7 @@ The borrower's call states:
 - the **term** in days, and whether partial repayment is allowed, as a borrower's request states them;
 - the **highest rate** accepted;
 - the **least amount** they will take, from the smallest auction size up to the amount wanted (the amount wanted itself means all or nothing);
-- the **smallest bid**, at least 1% of the amount wanted (a setting, bounded 0.5% to 10%), so the borrower knows the most loans a full fill can leave them with;
+- the **smallest bid**, at least 1% of the amount wanted (a setting, bounded 0.5% to 10%). It bounds the number of loans the borrower can end with: at most twice the amount wanted divided by the smallest bid (4.4), so 40 loans at 5% and 200 at 1%. The review states that number;
 - the **closing time**, between 1 hour and 72 hours away (the ceiling is a setting, bounded 1 hour to 7 days);
 - the transaction deadline, the risk and terms consent, an optional registered integrator, and `rateFarFromAverageAcknowledged` where the highest rate is outside the warning band.
 
@@ -70,6 +70,7 @@ Bids name a step on a fixed ladder, not a free rate.
 - The top step is the borrower's highest rate. The steps go down from it in equal sizes of a whole number of basis points to zero or just above it. The size is the smallest that keeps the ladder to at most 256 steps: 1 basis point for a highest rate up to 2.55%, 5 basis points for 12%, 12 basis points for 30%.
 - The contract keeps one total per step. The close reads those totals and never the bids, so it is one bounded call however many bids stand.
 - A bid above the top step cannot be placed. That is the borrower's limit.
+- **A step holds at most the amount wanted.** A bid, or an improvement, that would take a step's total past the amount wanted is refused, and the lender bids on a lower step. A step can never hold more than the auction can use, the number of bids on one step is bounded by the smallest bid, and a lender who arrives at a full step has to offer a better rate.
 
 ### 4.3 Bidding
 
@@ -93,13 +94,14 @@ After the closing time anyone may call the close. It takes no input but the auct
 - Otherwise the amount to fill is the lesser of the amount wanted and the total bid. The **clearing step** is the lowest step at which the bids at or below it reach that amount. Its rate is the one rate of every loan.
 - Bids below the clearing step fill in full. Bids above it fill nothing.
 - Bids on the clearing step share what is left after the bids below it, **in proportion to their amounts**, rounded down. A share worth less than the smallest loan the platform opens is not filled.
+- **The number of loans is bounded.** The bids below the clearing step total less than the amount wanted, and the clearing step holds at most the amount wanted, so each group has at most the amount wanted divided by the smallest bid. The borrower ends with at most twice that many loans. A share at the clearing step can be smaller than the smallest bid; the smallest bid bounds the count, not the size of the last loans.
 - When the bids do not cover the amount wanted but reach the least amount, every bid fills in full at the highest bid's rate.
 
 The close records the rate, the amount to fill and the share at the clearing step, and states them in one event with the total bid. Bids above the clearing step can be released from that moment.
 
 ### 4.5 Settling
 
-After the close anyone may settle bids, a few at a time, until the **settle deadline**, 6 hours after the close (a setting, bounded 1 to 48 hours). The keeper does it at once. The window exists for the cases that must wait: a price that is not fresh, a sequencer outage and its grace period, a short pause.
+After the close anyone may settle bids, a few at a time, until the auction's **end time**: the final closing time plus the settle window of 6 hours (a setting, bounded 1 to 48 hours). The deadline is counted from the scheduled closing time, never from the moment someone called the close, so a late close shortens the time to settle and cannot move the end. A close called at or after the end time opens nothing. The keeper closes and settles at once. The window exists for the cases that must wait: a price that is not fresh, a sequencer outage and its grace period, a short pause.
 
 - **Each filled bid becomes one loan**, opened through the shared loan-opening step from a lender part made from the bid and a borrower part made from the auction, both at the one rate. This is the path an instant fill takes, with a bid as the source. Every check runs at that moment: health factor, loan-to-value, risk access, sanctions, self-trade, the level rules, the refusal of a stale or distrusted price, the timing rule.
 - **The Terms test is the one exception.** Settle asks whether the borrower had accepted the Terms in force when the auction opened, and the bidder those in force when the bid was placed. A new Terms version published in between does not stop the loan. Otherwise declining the new version would be a way out of a firm bid or a bound auction.
@@ -109,7 +111,7 @@ After the close anyone may settle bids, a few at a time, until the **settle dead
 - **Collateral** for the loan is its amount times the collateral for each unit borrowed, rounded down, moved from the auction's lien to the loan's own lien in the borrower's vault.
 - **The term** runs from the moment each loan opens. The loans of one auction can therefore fall due minutes apart.
 - **The group.** The loans share a group label, the one instant-market loans use, so the group helpers (repay, add collateral, withdraw surplus) and the one-position view work for them.
-- **One bid that cannot open is skipped and reported** with its reason, and the rest go on. It may be tried again until the deadline.
+- **One bid that cannot open is skipped and reported** with its reason, and the rest go on. It may be tried again until the end time.
 - The remainder of a bid filled in part is released in the same step.
 
 The fee on each loan is the ordinary one, split as for a direct accept: no matcher is named, so no match share is paid, and whoever calls the settle is paid nothing from it.
@@ -124,16 +126,17 @@ The auction has a fixed **end time**: the final closing time plus the settle win
 - A lapsed auction, and a bid above the clearing step, can be released as soon as the close has run. The keeper releases bids above the clearing step at the close, and releases a lapsed auction's slot bids first, so Auto-lend funds return to their slots soonest.
 - Released funds are free balance in their owner's vault. Nothing is sent to a wallet.
 
-**What the borrower may end with.** Less than the amount wanted, in three stated cases: the bids did not cover it (but reached the least amount), a share at the clearing step was too small to open, or a filled bid's loan could not open before the deadline. The least amount is tested at the close, on the bids standing then. A loan that fails to open afterwards is not made up from the bids above the clearing step, because that would bring in a second rate.
+**What the borrower may end with.** Less than the amount wanted, in three stated cases: the bids did not cover it (but reached the least amount), a share at the clearing step was too small to open, or a filled bid's loan could not open before the end time. The least amount is tested at the close, on the bids standing then. A loan that fails to open afterwards is not made up from the bids above the clearing step, because that would bring in a second rate.
 
 ### 4.7 Auto-lend slots may bid (second step)
 
 Idle Auto-lend funds are the deepest source of lenders. A slot gains one consent, **bids in rate auctions**, with two limits of its owner: the longest its funds may be held for one auction, and the largest share of the slot's capital that may be held in auctions at one time.
 
-- A step anyone may call places a slot's bid in an auction. It runs the one slot rule every fill of a slot runs: the slot is live and its terms aged, the amount is within its smallest fill and its exposure, the term within its longest term and its lend-until time (measured from the auction's end time), it accepts interest by time and the repayment shape asked for, and the auction's collateral for each unit borrowed meets the slot's loan-to-value limit.
+- A step anyone may call places a slot's bid in an auction. It runs the one slot rule every fill of a slot runs: the slot is live and its terms aged, the amount is within its smallest fill and its exposure, the term within its longest term and its lend-until time (measured from the auction's latest possible end time), it accepts interest by time and the repayment shape asked for, and the auction's collateral for each unit borrowed meets the slot's loan-to-value limit.
 - **The rate** is the slot's own lowest rate, rounded up to a ladder step. A slot whose lowest rate is above the top step does not bid. A slot is never filled below its lowest rate, and under one rate for all it usually receives more.
 - **The amount** is the slot's free capital within its limits, no more than the amount wanted and no less than the smallest bid.
-- **Only near the end.** A slot's bid is placed only when the auction's end time is within the slot's hold limit. The funds move from the slot's capital lien to the bid's lien in the same vault, and return to the slot when the bid is released.
+- **All slot bids in one auction together hold at most the amount wanted.** When that total is reached, a slot may still bid on a lower step if the caller names a standing slot bid on a higher step, which is released to make room. So the cheapest slots end up holding the room whoever places them and in whatever order, and an auction can never hold more Auto-lend funds than it could borrow.
+- **Only near the end, measured to the latest possible end.** A slot's bid is placed only when the auction's latest possible end time is within the slot's hold limit: the closing time first stated, plus the full hour a late bid can add, plus the settle window. The currently scheduled end is never used, because a later bid can move it and a firm bid cannot leave. The lend-until test uses the same latest time. The funds move from the slot's capital lien to the bid's lien in the same vault, and return to the slot when the bid is released.
 - One standing bid for each slot in one auction. It is firm like any bid, and a later change of the slot's settings does not change it. Turning the consent off stops new bids only.
 - Fixed-rate slots only.
 
@@ -152,13 +155,13 @@ Idle Auto-lend funds are the deepest source of lenders. A slot gains one consent
 - **The borrower bidding in their own auction:** their own address is refused. From a second wallet it gains nothing: the bid takes part of the amount at the same one rate, which is the same as asking for less, and both sides pay the usual fees on it.
 - **A lender holding funds back to lift the rate:** possible in any auction with one rate. It is bounded by the borrower's highest rate and by every other bidder, and a held-back bid may simply not fill.
 - **Lenders agreeing among themselves to bid high:** the platform cannot see it or stop it. The borrower's highest rate is the limit of what it can cost, and any lender outside the agreement undercuts it. Stated to the borrower.
-- **Dust:** the smallest bid, and the smallest loan at the clearing step.
+- **Dust and too many loans:** the smallest bid, the limit on what one step holds, and the smallest loan at the clearing step.
 - **Steering the close or the settle:** the close takes no input, and the shares are fixed by it, so the order of settling changes nothing.
 - **Making your own loan fail after the close.** The funds and the collateral are held, so they cannot be moved away. The cheap ways out are closed: a bid carries no price-move guard, and a new Terms version does not stop a loan (4.3, 4.5). What remains is costly or outside the party's control, and is stated, not prevented: locking a protected account (a lock that only a clawback ends), replacing or retiring a protected account, and being flagged by the sanctions list. Each stops that party's loans only; the funds are released at the end time.
-- **A caller timing the settle to a dip in the price:** the most it does is make a loan fail the health test at that moment. The bid is tried again until the deadline, and the cushion absorbs ordinary movement.
-- **Tying up Auto-lend funds with an auction that cannot fill:** costs the borrower more locked collateral than the funds they tie up. It is bounded by each slot owner's hold limit and share, and slot bids arrive only near the end.
+- **A caller timing the settle to a dip in the price:** the most it does is make a loan fail the health test at that moment. The bid is tried again until the end time, and the cushion absorbs ordinary movement.
+- **Tying up Auto-lend funds with an auction that cannot fill:** all slot bids in one auction together hold at most the amount wanted, and the borrower has locked collateral worth more than that amount. It is further bounded by each slot owner's hold limit and share, and slot bids arrive only near the end. Lenders who bid by hand choose each auction themselves, and no step holds more than the amount wanted.
 - **Trading with yourself across two wallets:** as everywhere, the platform cannot see it. It pays the usual fees and moves no figure the platform relies on.
-- **Stated to the lender:** the funds are held for up to the stated time and may come back unused. The loan can open at any moment before the settle deadline. Its rate may be above their bid and is never below it.
+- **Stated to the lender:** the funds are held for up to the stated time and may come back unused. The loan can open at any moment before the end time. Its rate may be above their bid and is never below it.
 - **Stated to the borrower:** the four points of the review in 4.8.
 
 ## 6. Wording rules
@@ -185,11 +188,11 @@ Append storage at the tail and run the storage-layout guard's `write`. Check fac
 
 1. Open: collateral locked from vault then wallet; refused below the smallest size, without the cushion, with a least amount above the amount wanted, a smallest bid below its floor, a closing time outside the bounds, a third open auction, and for each ordinary refusal.
 2. The ladder for several highest rates: step size, at most 256 steps, the top step equal to the highest rate.
-3. Bid: funds held; refused below the smallest bid, above the top step, at or after the closing time, from the borrower's address, past 8 standing bids, and for each ordinary refusal.
+3. Bid: funds held; refused below the smallest bid, above the top step, on a step it would take past the amount wanted, at or after the closing time, from the borrower's address, past 8 standing bids, and for each ordinary refusal.
 4. Improve: a lower step and a larger amount accepted and the step totals follow; a higher step, a smaller amount and a withdrawal refused.
 5. The closing time moves for a bid or an improvement in the last 10 minutes, and never past one hour after the first closing time.
 6. Cancel: accepted with no bid, refused after the first.
-7. Close, fully covered: the clearing step is the lowest that covers; bids below fill in full; bids on it share in proportion, rounded down; bids above fill nothing; the totals add up to at most the amount to fill.
+7. Close, fully covered: the clearing step is the lowest that covers; bids below fill in full; bids on it share in proportion, rounded down; bids above fill nothing; the totals add up to at most the amount to fill; the number of loans never exceeds twice the amount wanted divided by the smallest bid.
 8. Close, part covered at or above the least amount: every bid fills at the highest bid's rate.
 9. Close below the least amount: lapsed, and everything can be released.
 10. The close takes no input, cannot run before the closing time, and gives the same result whoever calls it.
@@ -197,14 +200,14 @@ Append storage at the tail and run the storage-layout guard's `write`. Check fac
 12. Every loan-opening refusal applies to each loan; a refused bid is skipped and reported, the rest open, and it can be tried again.
 13. A fall in the collateral's price inside the cushion does not stop the loans; a fall beyond it stops them until collateral is added; an addition raises the collateral of loans not yet opened only.
 14. A share at the clearing step below the smallest loan is not filled and is released.
-15. From the end time every bid and all unused collateral can be released by anyone, while paused, and when the close was never called; nothing can be released earlier except a bid above the clearing step and a lapsed auction. A release refuses an amount already moved to a loan, and settle is refused from the end time on. A change of the settle-window setting does not move the end time of an open auction.
+15. From the end time every bid and all unused collateral can be released by anyone, while paused, and when the close was never called; nothing can be released earlier except a bid above the clearing step and a lapsed auction. A release refuses an amount already moved to a loan, and settle is refused from the end time on. A change of the settle-window setting does not move the end time of an open auction, and a close called late does not move it either.
 16. After any sequence of open, bid, improve, close, settle and release, each vault's held amounts equal the sum of its standing liens, and nothing rests in the Diamond.
 17. The warning band: the acknowledgement is asked for the borrower's highest rate and for a bid's rate outside the band, and never inside it.
-18. Slot bids: the consent and both limits; every slot refusal; the rate rounded up to a step and never below the slot's lowest; placed only within the hold limit; capital returns to the slot on release; funds held count toward exposure.
+18. Slot bids: the consent and both limits; every slot refusal; the rate rounded up to a step and never below the slot's lowest; the hold limit and lend-until tested against the latest possible end time, so no later bid can carry a slot past either; all slot bids together never above the amount wanted, and a lower-step slot bid replaces a named higher-step one; capital returns to the slot on release; funds held count toward exposure.
 19. With the master switch off, every new entry refuses, and an auction already open can still close, settle and release.
 20. The fee on each loan equals the fee of a direct accept of the same loan, with no match share.
 21. A bid cannot arm a price-move guard. A new Terms version published after the open, or after a bid, does not stop that party's loan; a party who had not accepted the version in force at that moment could not have opened or bid.
-22. Settle is refused while the sequencer is down and through its grace period, and succeeds afterwards within the deadline.
+22. Settle is refused while the sequencer is down and through its grace period, and succeeds afterwards before the end time.
 
 ## 9. Alternatives considered
 
