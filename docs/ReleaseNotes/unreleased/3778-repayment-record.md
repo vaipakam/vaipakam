@@ -19,6 +19,8 @@ A loan counts for the address that held the borrower position when the loan clos
 
 The fees paid to the platform are not stated yet, because the events do not state each loan's fees. The answer says so instead of showing a partial sum.
 
+The record is also the public data feed's eleventh route, `/public/v1/repayment-record/{address}`, in the feed's envelope. It is the only feed route that takes an address, and it answers for one address at a time: no feed route lists, ranks, searches or filters addresses by their record. The feed's table test now asks a sharper question than before. Every table a feed route reads must be one the indexer rebuilds from the chain alone, never one born off chain or mixed.
+
 The rules are in `docs/RepaymentRecordDerivation.md`. The app's views are separate work.
 
 Part of #3778. Design: `docs/DesignsAndPlans/RepaymentRecordDesign.md`.

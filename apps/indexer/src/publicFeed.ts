@@ -26,6 +26,11 @@
  * (claimables, notifications, by-participant): they are chain data, but they
  * exist to serve one wallet's own page, not a public feed.
  *
+ * TABLES. The feed reads only tables `scripts/check-table-classification.mjs`
+ * classes as replay-derived (rebuilt from the chain alone), never one born
+ * off-chain or hybrid. A route taking an address joins only when a design
+ * names it public; today that is the repayment record alone (#3778).
+ *
  * PARAMETERS. Each route lists the query parameters it takes. Only those
  * and `chainId` reach the handler; any other is refused with a 400 naming
  * it, so a caller never relies on an app-only switch that may change.
@@ -55,6 +60,7 @@ import {
   handleLoansRecent,
   handleLoansStats,
 } from './loanRoutes';
+import { RECORD_EXCLUDES, handleRepaymentRecord } from './repaymentRecord';
 
 export const PUBLIC_FEED_PREFIX = '/public/v1';
 export const PUBLIC_FEED_VERSION = 'v1';
@@ -202,6 +208,22 @@ export const FEED_ROUTES: readonly FeedRoute[] = Object.freeze([
     handler: handleLoanById,
     params: [],
     about: { what: 'One loan by id, with its status.', source: CHAIN_EVENTS, excludes: [] },
+  },
+  {
+    // #3778 — the one route that takes an address. It answers for ONE
+    // address the caller names; no feed route lists, ranks, searches or
+    // filters addresses by their record (publicFeedContract.test.ts holds
+    // that). See docs/RepaymentRecordDerivation.md.
+    pattern: /^\/repayment-record\/([^/]+)$/,
+    path: '/repayment-record/{address}',
+    target: '/repayment-record/$1',
+    handler: handleRepaymentRecord,
+    params: [],
+    about: {
+      what: 'A count of how the loans and rentals one address held as borrower or renter on this platform closed, with the statements of what it is and is not.',
+      source: CHAIN_EVENTS,
+      excludes: [...RECORD_EXCLUDES],
+    },
   },
 ]);
 

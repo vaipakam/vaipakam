@@ -9,14 +9,22 @@
  *      here; an addition passes. The names live in
  *      `fixtures/publicFeedFields.json` (regenerate with
  *      `UPDATE_FEED_FIELDS=1`, and only to ADD names);
- *  (c) the tables each route reads, recorded from the SQL it runs, none of
- *      them keyed to a wallet.
+ *  (c) the tables each route reads, recorded from the SQL it runs. Every
+ *      one is a table `scripts/check-table-classification.mjs` classes as
+ *      replay-derived (rebuilt from the chain alone), never born off-chain
+ *      or hybrid. One wallet's own-page reads stay out, and a route taking
+ *      an address joins only when a design names it public: today that is
+ *      the repayment record alone (#3778), which answers for one address
+ *      and never lists, ranks, searches or filters addresses.
  */
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { createSqliteD1 } from './helpers/sqliteD1';
 import { FEED_RATE_LIMIT, FEED_ROUTES, handlePublicFeed } from '../src/publicFeed';
 import type { Env } from '../src/env';
+import { RECORD_STATEMENTS, RECORD_VERSION } from '../src/repaymentRecord';
+// @ts-expect-error — a plain .mjs script with no type declarations.
+import { CLASSIFICATION } from '../scripts/check-table-classification.mjs';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
 const MIGRATIONS = readdirSync(MIGRATIONS_DIR)
@@ -45,6 +53,7 @@ const SAMPLE: Record<string, string> = {
   '/loans/stats': '/loans/stats',
   '/loans/rate-candles': `/loans/rate-candles?${PAIR}&interval=1d&range=30d`,
   '/loans/{id}': '/loans/1',
+  '/repayment-record/{address}': `/repayment-record/${B}`,
 };
 
 function insert(db: { prepare(sql: string): { run(...a: unknown[]): unknown } }, table: string, row: Record<string, unknown>) {
@@ -87,6 +96,7 @@ function seeded() {
       status: 'active',
       lender: A,
       borrower: B,
+      borrower_current_owner: B,
       principal: '1000',
       collateral_amount: '2',
       lending_asset: USDC,
@@ -105,6 +115,21 @@ function seeded() {
       init_terms_unbacked: 0,
     });
   }
+  // B held both loans as borrower and paid interest on the first, so the
+  // repayment record has rows in every list it returns.
+  for (const id of [1, 2]) {
+    insert(h.db, 'loan_participants', { chain_id: CHAIN, loan_id: id, wallet: B, role: 'borrower', from_at: NOW - 3600 * id });
+  }
+  insert(h.db, 'activity_events', {
+    chain_id: CHAIN,
+    block_number: 20,
+    log_index: 0,
+    tx_hash: '0x' + '14'.repeat(32),
+    kind: 'LoanInterestPaid',
+    loan_id: 1,
+    args_json: JSON.stringify({ loanId: '1', asset: USDC, gross: '5' }),
+    block_at: NOW - 1800,
+  });
   const sql: string[] = [];
   const d1 = h.d1 as { prepare(s: string): unknown };
   const prepare = d1.prepare.bind(d1);
@@ -150,7 +175,7 @@ describe('(a) each route takes only the parameters it lists', () => {
     parseMarketFilter: ['lendingAsset', 'collateralAsset', 'durationDays'],
   };
   const handlerParams = (name: string): string[] => {
-    for (const file of ['offerRoutes.ts', 'loanRoutes.ts']) {
+    for (const file of ['offerRoutes.ts', 'loanRoutes.ts', 'repaymentRecord.ts']) {
       const src = readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8');
       const starts = [...src.matchAll(/^export async function (\w+)\(/gm)];
       const i = starts.findIndex((m) => m[1] === name);
@@ -184,6 +209,7 @@ describe('(a) each route takes only the parameters it lists', () => {
       '/loans/stats': [],
       '/loans/rate-candles': ['lendingAsset', 'collateralAsset', 'durationDays', 'interval', 'range'],
       '/loans/{id}': [],
+      '/repayment-record/{address}': [],
     });
   });
 
@@ -238,13 +264,7 @@ describe('(c) the tables each route reads', () => {
       (r) => r.name,
     ),
   );
-  // A wallet-keyed table: one whose rows belong to a wallet (a column that
-  // names one), which a public feed must never read.
-  const WALLET_KEYED = [...ALL_TABLES].filter((t) =>
-    (h.db.prepare(`PRAGMA table_info("${t}")`).all() as { name: string }[]).some((c) =>
-      ['wallet', 'wallet_hash', 'redacted_wallet', 'user'].includes(c.name),
-    ),
-  );
+  const CLASSES = CLASSIFICATION as Record<string, { class: string }>;
   const tablesIn = (sql: string[]) =>
     [
       ...new Set(
@@ -254,23 +274,33 @@ describe('(c) the tables each route reads', () => {
       .filter((t) => ALL_TABLES.has(t))
       .sort();
 
-  it('finds the wallet-keyed tables it guards against', () => {
-    for (const t of ['user_thresholds', 'notify_state', 'telegram_links', 'loan_participants', 'activity_participants']) {
-      expect(WALLET_KEYED).toContain(t);
-    }
-  });
+  // The routes a design names public that take an address. Adding one
+  // here needs that design, in review.
+  const ADDRESS_ROUTES = ['/repayment-record/{address}'];
+  // One wallet's own-page reads: chain data, but each serves one wallet's
+  // own page, so the feed never carries them.
+  const OWN_PAGE = [
+    /^\/loans\/by-participant\b/,
+    /^\/loans\/by-current-holder\b/,
+    /^\/claimables\b/,
+    /^\/notifications\b/,
+    /^\/activity\b/,
+    /^\/offers\/by-creator\b/,
+  ];
 
-  it('records each route reading only chain records', async () => {
+  it('reads only tables classed replay-derived, never born-off-chain or hybrid', async () => {
     const recorded: Record<string, string[]> = {};
     for (const r of FEED_ROUTES) {
       const { env, sql } = seeded();
       const res = await handlePublicFeed(new Request(`https://x${withChain(SAMPLE[r.path])}`), env);
       expect(res.status, r.path).toBe(200);
       recorded[r.path] = tablesIn(sql);
-      for (const t of recorded[r.path]) expect(WALLET_KEYED, `${r.path} reads ${t}`).not.toContain(t);
+      for (const t of recorded[r.path]) {
+        expect(CLASSES[t]?.class, `${r.path} reads ${t}`).toBe('replay-derived');
+      }
     }
     // The record. A route that starts reading another table changes this
-    // on purpose, in review, and the wallet check above still applies.
+    // on purpose, in review, and the class check above still applies.
     expect(recorded).toEqual({
       '/offers/active': ['indexer_cursor', 'offers'],
       '/offers/recent': ['indexer_cursor', 'offers'],
@@ -290,7 +320,77 @@ describe('(c) the tables each route reads', () => {
         'protocol_config',
         'swap_to_repay_intents',
       ],
+      '/repayment-record/{address}': [
+        'activity_events',
+        'indexer_cursor',
+        'indexer_deployment',
+        'loan_participants',
+        'loans',
+      ],
     });
+  });
+
+  it('knows the classes it relies on', () => {
+    // A sanity check that the import is the live classification.
+    expect(CLASSES.telegram_links.class).toBe('born-off-chain');
+    expect(CLASSES.loan_participants.class).toBe('replay-derived');
+  });
+
+  it('carries no own-page read', () => {
+    for (const r of FEED_ROUTES) {
+      for (const re of OWN_PAGE) expect(re.test(r.target), `${r.path} is an own-page read`).toBe(false);
+    }
+  });
+
+  it('takes an address only where a design names the route public', () => {
+    const takesAddress = FEED_ROUTES.filter((r) => /\{address\}|wallet|holder|participant|creator/i.test(r.path));
+    expect(takesAddress.map((r) => r.path)).toEqual(ADDRESS_ROUTES);
+    // No route lists, ranks, searches or filters addresses: no route
+    // takes an address-shaped parameter, and none returns a list of
+    // records keyed by address.
+    for (const r of FEED_ROUTES) {
+      for (const p of r.params) {
+        expect(/wallet|address|borrower|lender|holder|creator|owner|rank|sort|order|search|min|max/i.test(p), `${r.path} takes ${p}`).toBe(false);
+      }
+    }
+  });
+});
+
+describe('the repayment record on the feed', () => {
+  it('answers one address with the statements, block, version, unclassified count and fee state', async () => {
+    const { env } = seeded();
+    const res = await handlePublicFeed(new Request(`https://x${withChain(`/repayment-record/${B}`)}`), env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, any>;
+    expect(body.asOf.block).toBe(500);
+    expect(body.data.version).toBe(RECORD_VERSION);
+    expect(body.data.statements).toEqual([...RECORD_STATEMENTS]);
+    expect(body.data.asOf.block).toBe(500);
+    expect(typeof body.data.loans.unclassified).toBe('number');
+    expect(typeof body.data.rentals.unclassified).toBe('number');
+    expect(body.data.feesPaid.stated).toBe(false);
+    expect(body.data.loans.openNow).toBe(2);
+    expect(body.data.interestPaid).toEqual([{ asset: USDC, total: '5' }]);
+  });
+
+  it('answers an address with no history with an empty record, not an error', async () => {
+    const { env } = seeded();
+    const nobody = '0x' + '99'.repeat(20);
+    const res = await handlePublicFeed(new Request(`https://x${withChain(`/repayment-record/${nobody}`)}`), env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, any>;
+    expect(body.data.address).toBe(nobody);
+    expect(body.data.loans.closed).toBe(0);
+    expect(body.data.loans.openNow).toBe(0);
+    expect(body.data.interestPaid).toEqual([]);
+    expect(body.data.statements).toEqual([...RECORD_STATEMENTS]);
+  });
+
+  it('refuses a malformed address with a 400, passed through', async () => {
+    const { env } = seeded();
+    const res = await handlePublicFeed(new Request(`https://x${withChain('/repayment-record/not-an-address')}`), env);
+    expect(res.status).toBe(400);
+    expect(res.headers.get('X-Feed-Version')).toBe('v1');
   });
 });
 
