@@ -272,8 +272,9 @@ wallet approves two things only: Permit2, for its tokens, which moves nothing wi
 spender and the purpose, and its own vault, for one NFT it is about to lock. Every pull from a wallet is made by the
 payer's own vault under a permit signed for that purpose. This holds for a payment that opens no commitment too (a
 repayment from a wallet, a top-up, a deposit, a liquidator's or a buyer's payment). The platform can then state, as a
-fact a reader can check on chain, that no change to the Diamond can move tokens out of a wallet or out of a vault
-beyond what its owner signed.
+fact a reader can check on chain, that no change to the Diamond can move tokens out of a wallet at all without a
+permit signed for that purpose, or out of a vault beyond the bounds its owner signed. The same statement has to carry
+what those bounds leave open, which §3.7.8 lists.
 
 #### 3.7.2 The records the vault keeps
 
