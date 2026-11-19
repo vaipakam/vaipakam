@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 /**
  * @file Builds the ERC-7730 clear-signing descriptors for the Diamond's user
- *       calls and for every EIP-712 message Vaipakam asks a person to sign
- *       (#3348, #3718 step 1).
+ *       calls, for the direct calls a person sends to their own vault, and
+ *       for every EIP-712 message Vaipakam asks a person to sign (#3348,
+ *       #3718 step 1, #3818).
  *
  * Inputs, all in this repository:
  *   - the exported facet ABIs (src/abis/*.json) and the facet list
  *     (scripts/diamond-facets.json);
- *   - which functions a person signs (clear-signing/scope.json);
+ *   - which functions a person signs (clear-signing/scope.json), for the
+ *     Diamond's facets and for the vault code (the vault itself and the
+ *     protection and recovery code it delegatecalls);
  *   - what the wallet shows for them (clear-signing/display.mjs);
  *   - the Solidity sources, for every enum, every constant-coded choice and
  *     every EIP-712 type string, so none of them is copied by hand;
@@ -346,6 +349,16 @@ function buildFields(leaves, { overrides = {}, structs, leavesRules, structAlias
 
 // ── Inputs ──────────────────────────────────────────────────────────────
 
+/**
+ * The code a person's vault runs (#3818): the vault itself, and the
+ * protection and recovery code it delegatecalls through `protect(bytes)`.
+ * Every vault is a BeaconProxy the Diamond creates, so one descriptor bound
+ * through the factory constraint covers all of them.
+ */
+export const VAULT_CONTRACTS = Object.freeze(['VaipakamVaultImplementation', 'VaultProtection', 'VaultRecovery']);
+/** The Diamond event that names each new vault, and the facet that declares it. */
+const VAULT_DEPLOY_EVENT = { facet: 'VaultFactoryFacet', name: 'UserVaultCreated' };
+
 export function loadInputs(opts = {}) {
   const abiDir = opts.abiDir ?? path.join(PKG, 'src/abis');
   const manifest = JSON.parse(fs.readFileSync(path.join(PKG, 'scripts/diamond-facets.json'), 'utf8'));
@@ -354,8 +367,15 @@ export function loadInputs(opts = {}) {
     const j = JSON.parse(fs.readFileSync(path.join(abiDir, `${f}.json`), 'utf8'));
     abis[f] = Array.isArray(j) ? j : j.abi;
   }
+  const vaultAbis = {};
+  for (const c of VAULT_CONTRACTS) {
+    if (!manifest.standalone.includes(c)) throw new ClearSigningError([`vault: ${c} is not in scripts/diamond-facets.json standalone`]);
+    const j = JSON.parse(fs.readFileSync(path.join(abiDir, `${c}.json`), 'utf8'));
+    vaultAbis[c] = Array.isArray(j) ? j : j.abi;
+  }
   return {
     abis,
+    vaultAbis,
     scope: JSON.parse(fs.readFileSync(path.join(PKG, 'clear-signing/scope.json'), 'utf8')),
     deployments: JSON.parse(fs.readFileSync(opts.deployments ?? path.join(PKG, 'src/deployments.json'), 'utf8')),
     ledger: JSON.parse(fs.readFileSync(path.join(REPO, 'contracts/permissionless-steps.json'), 'utf8')).steps,
@@ -365,37 +385,61 @@ export function loadInputs(opts = {}) {
 
 // ── Build ───────────────────────────────────────────────────────────────
 
-/** Classify every non-view function; return the user ones. */
-export function classify({ abis, scope, ledger }, problems) {
+/**
+ * Classify every non-view function of `abis` against `functions` (one scope
+ * section); return the user ones. `where` names the section in refusals.
+ */
+function classifySet(abis, functions, ledger, where, problems) {
   const user = [];
   const seen = new Set();
-  for (const [facet, abi] of Object.entries(abis)) {
+  for (const [contract, abi] of Object.entries(abis)) {
     const fns = abi.filter((x) => x.type === 'function' && x.stateMutability !== 'view' && x.stateMutability !== 'pure');
     const names = new Map();
     for (const fn of fns) names.set(fn.name, (names.get(fn.name) ?? 0) + 1);
     for (const fn of fns) {
-      const key = `${facet}.${fn.name}`;
-      const cls = scope.functions[key];
+      const key = `${contract}.${fn.name}`;
+      const cls = functions[key];
       if (names.get(fn.name) > 1 && cls === 'user') problems.push(`scope: ${key} is overloaded; a user function needs one display per signature`);
       seen.add(key);
-      if (!cls) problems.push(`scope: ${key} is not classified (user, upkeep, admin or internal) in clear-signing/scope.json`);
+      if (!cls) problems.push(`scope: ${key} is not classified (user, upkeep, admin or internal) in clear-signing/scope.json ${where}`);
       else if (!['user', 'upkeep', 'admin', 'internal'].includes(cls)) problems.push(`scope: ${key} has unknown class ${cls}`);
-      else if (cls === 'user') user.push({ facet, fn, key });
+      else if (cls === 'user') user.push({ facet: contract, fn, key });
     }
   }
-  for (const k of Object.keys(scope.functions)) if (!seen.has(k)) problems.push(`scope: ${k} names no non-view function of a Diamond facet`);
-  if (scope.facets) problems.push('scope: facet-wide defaults are not allowed; name every function');
+  for (const k of Object.keys(functions)) if (!seen.has(k)) problems.push(`scope: ${k} names no non-view function of ${where === 'functions' ? 'a Diamond facet' : 'the vault code'}`);
   for (const [sig, row] of Object.entries(ledger)) {
     const [contract, rest] = sig.split('.');
     if (!abis[contract]) continue;
     const key = `${contract}.${rest.slice(0, rest.indexOf('('))}`;
-    const cls = scope.functions[key];
+    const cls = functions[key];
     if (row.class === 'user' && cls !== 'user') problems.push(`scope: ${key} is a user step in contracts/permissionless-steps.json but ${cls ?? 'unclassified'} in clear-signing/scope.json`);
     if ((row.class === 'keeper' || row.class === 'alternative') && cls !== 'upkeep' && cls !== 'user') {
       problems.push(`scope: ${key} is a ${row.class} step in contracts/permissionless-steps.json, so anyone may run it; it cannot be ${cls ?? 'unclassified'}`);
     }
   }
   return user;
+}
+
+/** Classify every non-view Diamond function; return the user ones. */
+export function classify({ abis, scope, ledger }, problems) {
+  if (scope.facets) problems.push('scope: facet-wide defaults are not allowed; name every function');
+  return classifySet(abis, scope.functions, ledger, 'functions', problems);
+}
+
+/** Classify every non-view function of the vault code; return the user ones. */
+export function classifyVault({ vaultAbis, scope, ledger }, problems) {
+  if (!scope.vaultFunctions) {
+    problems.push('scope: clear-signing/scope.json has no vaultFunctions section');
+    return [];
+  }
+  return classifySet(vaultAbis, scope.vaultFunctions, ledger, 'vaultFunctions', problems);
+}
+
+/** `Name(type [indexed ]name,...)` for the event the factory constraint names, from the ABI. */
+export function deployEventSignature(abis) {
+  const ev = (abis[VAULT_DEPLOY_EVENT.facet] ?? []).find((x) => x.type === 'event' && x.name === VAULT_DEPLOY_EVENT.name);
+  if (!ev) throw new ClearSigningError([`vault: ${VAULT_DEPLOY_EVENT.facet} no longer declares ${VAULT_DEPLOY_EVENT.name}`]);
+  return `${ev.name}(${ev.inputs.map((i) => `${i.type}${i.indexed ? ' indexed' : ''} ${i.name}`).join(',')})`;
 }
 
 function diamondDeployments(deployments) {
@@ -423,30 +467,34 @@ export async function build(inputs, display) {
     ...(Object.keys(enums.out).length ? { enums: sortKeys(enums.out) } : {}),
   });
 
-  // Calldata
-  const user = classify(inputs, problems);
+  // Calldata: one format per user function, keyed by its signature.
+  const calldataFormats = (users, calls, callsName, enums) => {
+    const formats = {};
+    for (const k of Object.keys(calls)) if (!users.some((u) => u.key === k)) problems.push(`display: ${callsName} has ${k}, which is not a user function in scope.json`);
+    for (const { fn, key } of users.sort((a, b) => a.key.localeCompare(b.key))) {
+      const call = calls[key];
+      if (!call?.intent) {
+        problems.push(`display: ${key} has no intent in ${callsName}`);
+        continue;
+      }
+      let leaves;
+      try {
+        leaves = abiLeaves(fn.inputs);
+      } catch (e) {
+        problems.push(`${key}: ${e.message}`);
+        continue;
+      }
+      if (call.fields?.['@.value'] && fn.stateMutability !== 'payable') problems.push(`${key}: shows @.value but is not payable`);
+      const fields = buildFields(leaves, { overrides: call.fields, structs: STRUCTS, leavesRules: LEAVES }, enums, key, problems);
+      const fk = formatKey(fn);
+      if (formats[fk]) problems.push(`${key}: two functions share the signature ${fk} (${formats[fk].$id})`);
+      formats[fk] = { $id: key, intent: call.intent, fields };
+    }
+    return formats;
+  };
+
   const enums = new Enums(inputs.sources);
-  const formats = {};
-  for (const k of Object.keys(CALLS)) if (!user.some((u) => u.key === k)) problems.push(`display: CALLS has ${k}, which is not a user function in scope.json`);
-  for (const { fn, key } of user.sort((a, b) => a.key.localeCompare(b.key))) {
-    const call = CALLS[key];
-    if (!call?.intent) {
-      problems.push(`display: ${key} has no intent in CALLS`);
-      continue;
-    }
-    let leaves;
-    try {
-      leaves = abiLeaves(fn.inputs);
-    } catch (e) {
-      problems.push(`${key}: ${e.message}`);
-      continue;
-    }
-    if (call.fields?.['@.value'] && fn.stateMutability !== 'payable') problems.push(`${key}: shows @.value but is not payable`);
-    const fields = buildFields(leaves, { overrides: call.fields, structs: STRUCTS, leavesRules: LEAVES }, enums, key, problems);
-    const fk = formatKey(fn);
-    if (formats[fk]) problems.push(`${key}: two functions share the signature ${fk}`);
-    formats[fk] = { $id: key, intent: call.intent, fields };
-  }
+  const formats = calldataFormats(classify(inputs, problems), CALLS, 'CALLS', enums);
   const files = {
     'calldata-VaipakamDiamond.json': {
       $schema: SCHEMA_URL,
@@ -455,6 +503,32 @@ export async function build(inputs, display) {
       display: { formats },
     },
   };
+
+  // The person's own vault (#3818). Its protected-mode writes run as
+  // `protect(bytes data)`, which the vault delegatecalls into its protection
+  // code, so the inner call executes AS the vault: the embedded calldata's
+  // callee is the transaction's own target, and its formats live in this
+  // same file. No vault address is known ahead of time, so the file binds
+  // through the factory constraint: the Diamond's own creation event.
+  if (display.VAULT_CALLS) {
+    const venums = new Enums(inputs.sources);
+    const vformats = calldataFormats(classifyVault(inputs, problems), display.VAULT_CALLS, 'VAULT_CALLS', venums);
+    let deployEvent = null;
+    try {
+      deployEvent = deployEventSignature(inputs.abis);
+    } catch (e) {
+      if (e instanceof ClearSigningError) problems.push(...e.problems);
+      else throw e;
+    }
+    files['calldata-VaipakamVault.json'] = {
+      $schema: SCHEMA_URL,
+      context: { $id: 'Vaipakam vault', contract: { factory: { deployEvent, deployments: diamonds } } },
+      metadata: metadata(venums),
+      display: { formats: vformats },
+    };
+  } else {
+    problems.push('display: no VAULT_CALLS for the direct calls to a person\'s vault');
+  }
 
   // EIP-712
   for (const group of TYPED) {

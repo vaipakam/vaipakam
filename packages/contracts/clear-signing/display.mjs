@@ -852,13 +852,8 @@ export const CALLS = {
   },
 };
 
-// ── EIP-712 messages ────────────────────────────────────────────────────
-// Each type string is READ from the named Solidity constant, so a change to
-// a signed type changes the descriptor (and `--check` fails until it is
-// rebuilt). `structs` maps an EIP-712 type name to the STRUCTS rules it
-// shares with the calldata.
-const VAULT_SOURCE = 'contracts/src/vault/VaultProtectionBase.sol';
-const vaultMsg = (constant, intent, fields = {}) => ({ source: [VAULT_SOURCE, constant], intent, fields });
+// The vault's protected-mode choices, shared by its signed messages and its
+// direct calls.
 const SIGNER_ACTIONS = {
   SIGNER_ADD: 'Add a signer',
   SIGNER_ACCEPT: 'Accept being a signer',
@@ -871,6 +866,124 @@ const SETTINGS_ACTIONS = {
   SETTINGS_DISABLE: 'Turn protected mode off',
   SETTINGS_UNLOCK: 'Unlock the account',
 };
+const REPLACE_ACTIONS = {
+  REPLACE_PROPOSE: 'Propose a new owner',
+  REPLACE_APPROVE: 'Approve the new owner',
+  REPLACE_CANCEL: 'Cancel the replacement',
+};
+
+// ── Direct calls to a person's own vault (#3818) ─────────────────────────
+// Protected mode's no-signature route: the key sends the call itself, to its
+// own vault, as `protect(bytes data)`, and the vault delegatecalls its
+// protection code with `data` (and that code its recovery code). So the
+// wallet sees `protect` with the real action inside `data`. The inner
+// formats below sit in the same descriptor as `protect`, because the inner
+// call runs AS the vault: its callee is the transaction's own target.
+//
+// `auth` says who acts. On this route its signature is empty and the vault
+// requires the sender to be `auth.key`; a non-empty signature is a key's
+// EIP-712 signature someone else relays, and then its expiry applies.
+const AUTH_SIG = 'empty when the key sends the call itself; otherwise the key’s signature, which the vault checks';
+const AUTH = (who = 'Acting key', until = 'Signature valid until') => ({
+  'auth.key': account(who),
+  'auth.expiry': unless(date(until), [0]),
+  'auth.sig': hide(AUTH_SIG),
+});
+const PURPOSES = {
+  PURPOSE_SETTINGS: 'Protected-mode changes',
+  PURPOSE_ALLOWLIST_ADD: 'Adding a payout destination',
+  PURPOSE_ALLOWLIST_CANCEL: 'Cancelling or removing a payout destination',
+  PURPOSE_SIGNER_CHANGE: 'Co-signer changes',
+  PURPOSE_REPLACEMENT: 'Owner replacement',
+  PURPOSE_LOCK: 'Locking the account',
+  PURPOSE_VERIFY: 'Verifying a payout destination',
+  PURPOSE_RECOVERY: 'Recovery address changes',
+  PURPOSE_RECOVERY_PROOF: 'Proving control of a recovery address',
+  PURPOSE_CLAWBACK: 'Moving assets to the recovery address',
+  PURPOSE_POSITION_MOVE: 'Moving position NFTs',
+};
+
+export const VAULT_CALLS = {
+  'VaipakamVaultImplementation.protect': {
+    intent: 'Change your account protection',
+    fields: { data: { label: 'Change', format: 'calldata', params: { calleePath: '@.to' } } },
+  },
+  'VaultProtection.enable': {
+    intent: 'Turn protected mode on',
+    fields: { delay: seconds('Waiting period'), ...AUTH() },
+  },
+  'VaultProtection.setDelay': {
+    intent: 'Change the waiting period',
+    fields: { delay: seconds('New waiting period'), ...AUTH() },
+  },
+  'VaultProtection.requestDisable': { intent: 'Turn protected mode off', fields: AUTH() },
+  'VaultProtection.requestUnlock': { intent: 'Unlock the account', fields: AUTH() },
+  'VaultProtection.lock': { intent: 'Lock your account', fields: AUTH() },
+  'VaultProtection.cancelSetting': {
+    intent: 'Cancel a pending protected-mode change',
+    fields: { action: constEnum('Change', 'VaultProtectionBase', 'SETTINGS_', SETTINGS_ACTIONS), ...AUTH() },
+  },
+  'VaultProtection.addAllowlisted': {
+    intent: 'Add a payout destination',
+    fields: { destination: account('Destination'), ...AUTH() },
+  },
+  'VaultProtection.cancelAllowlisted': {
+    intent: 'Cancel adding a payout destination',
+    fields: { destination: account('Destination'), ...AUTH() },
+  },
+  'VaultProtection.removeAllowlisted': {
+    intent: 'Remove a payout destination',
+    fields: { destination: account('Destination'), ...AUTH() },
+  },
+  'VaultProtection.verifyDestination': {
+    intent: 'Verify a payout destination',
+    fields: { account: account('For account'), diamond: mustBeDiamond(), ...AUTH('Destination') },
+  },
+  'VaultProtection.signerChange': {
+    intent: 'Change a co-signer',
+    fields: {
+      action: constEnum('Change', 'VaultProtectionBase', 'SIGNER_', SIGNER_ACTIONS),
+      who: account('Signer'),
+      ...AUTH(),
+    },
+  },
+  'VaultProtection.replacement': {
+    intent: 'Replace the account owner',
+    fields: {
+      action: constEnum('Step', 'VaultProtectionBase', 'REPLACE_', REPLACE_ACTIONS),
+      nominee: account('New owner'),
+      ...AUTH(),
+    },
+  },
+  'VaultProtection.burnNonce': {
+    intent: 'Void a signature you gave',
+    fields: { purpose: constEnum('Signatures for', 'VaultProtectionBase', 'PURPOSE_', PURPOSES) },
+  },
+  'VaultRecovery.requestRecoveryAddress': {
+    intent: 'Set a recovery address',
+    fields: {
+      recovery: account('Recovery address'),
+      ...AUTH(),
+      'proof.key': account('Proof from'),
+      'proof.expiry': unless(date('Proof valid until'), [0]),
+      'proof.sig': hide('the recovery address’s own signature proving it controls itself; the vault checks it'),
+    },
+  },
+  'VaultRecovery.cancelRecoveryAddress': { intent: 'Cancel a recovery address change', fields: AUTH() },
+  'VaultRecovery.clearRecoveryAddress': { intent: 'Remove the recovery address', fields: AUTH() },
+  'VaultRecovery.settleRecoveryAddress': { intent: 'Bring a waiting recovery address into force' },
+  'VaultRecovery.clawback': { intent: 'Move assets to your recovery address', fields: AUTH() },
+  'VaultRecovery.requestPositionMove': { intent: 'Move position NFTs to the new owner', fields: AUTH() },
+  'VaultRecovery.cancelPositionMove': { intent: 'Cancel a position NFT move', fields: AUTH() },
+};
+
+// ── EIP-712 messages ────────────────────────────────────────────────────
+// Each type string is READ from the named Solidity constant, so a change to
+// a signed type changes the descriptor (and `--check` fails until it is
+// rebuilt). `structs` maps an EIP-712 type name to the STRUCTS rules it
+// shares with the calldata.
+const VAULT_SOURCE = 'contracts/src/vault/VaultProtectionBase.sol';
+const vaultMsg = (constant, intent, fields = {}) => ({ source: [VAULT_SOURCE, constant], intent, fields });
 const VAULT_COMMON = {
   expiry: date('Signature valid until'),
 };
@@ -966,11 +1079,7 @@ export const TYPED = [
         ...VAULT_COMMON,
       }),
       vaultMsg('REPLACEMENT_TYPEHASH', 'Replace the account owner', {
-        action: constEnum('Step', 'VaultProtectionBase', 'REPLACE_', {
-          REPLACE_PROPOSE: 'Propose a new owner',
-          REPLACE_APPROVE: 'Approve the new owner',
-          REPLACE_CANCEL: 'Cancel the replacement',
-        }),
+        action: constEnum('Step', 'VaultProtectionBase', 'REPLACE_', REPLACE_ACTIONS),
         nominee: account('New owner'),
         round: raw('Proposal round'),
         ...VAULT_COMMON,

@@ -1,14 +1,14 @@
 # Clear-signing descriptors (ERC-7730)
 
 What a wallet or hardware device shows when a person signs a Vaipakam call or
-message: the action in words, assets by name, amounts in units, rates as
+message, including a direct call to their own vault (#3818): the action in words, assets by name, amounts in units, rates as
 percentages, terms in days and each acknowledgement flag spelled out, instead
 of raw data (#3348, #3718 step 1).
 
 | Path | What it is |
 | --- | --- |
-| `scope.json` | Every non-view Diamond function with its class: `user`, `upkeep`, `admin` or `internal`. Only `user` functions get a display. |
-| `display.mjs` | The display rules: one intent per user call, field rules per call, per struct and per input name, and the EIP-712 messages. |
+| `scope.json` | Every non-view Diamond function (`functions`) and every non-view function of the vault code (`vaultFunctions`: the vault, and the protection and recovery code it runs) with its class: `user`, `upkeep`, `admin` or `internal`. Only `user` functions get a display. |
+| `display.mjs` | The display rules: one intent per user call (`CALLS` for the Diamond, `VAULT_CALLS` for the vault), field rules per call, per struct and per input name, and the EIP-712 messages. |
 | `erc7730-v2.schema.json` | The ERC-7730 v2.1.0 JSON schema, vendored from the EIP assets (CC0), used to validate every descriptor. |
 | `descriptors/` | GENERATED. Do not edit; run the build. |
 
@@ -23,7 +23,8 @@ descriptors differ from a fresh build. `exportFrontendAbis.sh` and
 
 ## When you change the contracts
 
-- **A new non-view function on any facet** must be named in `scope.json`.
+- **A new non-view function on any facet, or in the vault code**, must be
+  named in `scope.json`.
   There are no facet-wide defaults: one hid two user calls in an admin facet
   while this was first written.
 - **A new user function** needs an intent in `display.mjs` `CALLS`, and every
@@ -39,9 +40,14 @@ descriptors differ from a fresh build. `exportFrontendAbis.sh` and
   formatted as if the wallet knew the token.
 - The vault-protection messages are signed to each person's own vault, so their
   descriptor binds the domain name only, not an address.
-- Direct calls to a person's vault (the no-signature route of protected mode,
-  through the vault's `protect(bytes)` entry) are not described yet; see the
-  issue linked from the release note.
+- A direct call to a person's vault (the no-signature route of protected
+  mode) arrives as `protect(bytes data)`, which the vault delegatecalls into
+  its protection code. `calldata-VaipakamVault.json` shows `data` as embedded
+  calldata whose callee is the vault itself, and describes every action it
+  can carry in the same file. No vault address is known ahead of time, so the
+  file binds every vault through the factory constraint: the Diamond's
+  `UserVaultCreated` event. A wallet that does not support embedded calldata
+  or factory constraints shows the raw data instead.
 
 ## Publishing
 

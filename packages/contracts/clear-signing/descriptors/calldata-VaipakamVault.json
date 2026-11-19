@@ -1,0 +1,916 @@
+{
+  "$schema": "https://eips.ethereum.org/assets/eip-7730/erc7730-v2.schema.json",
+  "context": {
+    "$id": "Vaipakam vault",
+    "contract": {
+      "factory": {
+        "deployEvent": "UserVaultCreated(address indexed user,address proxy)",
+        "deployments": [
+          {
+            "chainId": 97,
+            "address": "0xBc839c06Ee431d50EA6B087E0f26e80fb022564E"
+          },
+          {
+            "chainId": 84532,
+            "address": "0x2c300b26bc15359E7948dA61a1960303772b0335"
+          },
+          {
+            "chainId": 421614,
+            "address": "0x0EBd0536a698707958e1c327Ba1EB2b4f329A119"
+          }
+        ]
+      }
+    }
+  },
+  "metadata": {
+    "owner": "Vaipakam",
+    "info": {
+      "url": "https://vaipakam.com"
+    },
+    "enums": {
+      "AssetKind": {
+        "0": "Token (ERC-20)",
+        "1": "NFT (ERC-721)",
+        "2": "NFT (ERC-1155)"
+      },
+      "VaultProtectionBase_PURPOSE_": {
+        "1": "Protected-mode changes",
+        "2": "Adding a payout destination",
+        "3": "Cancelling or removing a payout destination",
+        "4": "Co-signer changes",
+        "5": "Owner replacement",
+        "6": "Locking the account",
+        "7": "Verifying a payout destination",
+        "8": "Recovery address changes",
+        "9": "Proving control of a recovery address",
+        "10": "Moving assets to the recovery address",
+        "11": "Moving position NFTs"
+      },
+      "VaultProtectionBase_REPLACE_": {
+        "1": "Propose a new owner",
+        "2": "Approve the new owner",
+        "3": "Cancel the replacement"
+      },
+      "VaultProtectionBase_SETTINGS_": {
+        "1": "Turn protected mode on",
+        "2": "Change the waiting period",
+        "3": "Turn protected mode off",
+        "4": "Unlock the account"
+      },
+      "VaultProtectionBase_SIGNER_": {
+        "1": "Add a signer",
+        "2": "Accept being a signer",
+        "3": "Remove a signer",
+        "4": "Cancel a signer change"
+      }
+    }
+  },
+  "display": {
+    "formats": {
+      "protect(bytes data)": {
+        "$id": "VaipakamVaultImplementation.protect",
+        "intent": "Change your account protection",
+        "fields": [
+          {
+            "path": "data",
+            "label": "Change",
+            "format": "calldata",
+            "params": {
+              "calleePath": "@.to"
+            }
+          }
+        ]
+      },
+      "addAllowlisted(address destination,(address key,uint64 expiry,bytes sig) auth)": {
+        "$id": "VaultProtection.addAllowlisted",
+        "intent": "Add a payout destination",
+        "fields": [
+          {
+            "path": "destination",
+            "label": "Destination",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "auth.key",
+            "label": "Acting key",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "auth.expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            },
+            "visible": {
+              "ifNotIn": [
+                0
+              ]
+            }
+          },
+          {
+            "path": "auth.sig",
+            "visible": "never"
+          }
+        ]
+      },
+      "burnNonce(uint8 purpose)": {
+        "$id": "VaultProtection.burnNonce",
+        "intent": "Void a signature you gave",
+        "fields": [
+          {
+            "path": "purpose",
+            "label": "Signatures for",
+            "format": "enum",
+            "params": {
+              "$ref": "$.metadata.enums.VaultProtectionBase_PURPOSE_"
+            }
+          }
+        ]
+      },
+      "cancelAllowlisted(address destination,(address key,uint64 expiry,bytes sig) auth)": {
+        "$id": "VaultProtection.cancelAllowlisted",
+        "intent": "Cancel adding a payout destination",
+        "fields": [
+          {
+            "path": "destination",
+            "label": "Destination",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "auth.key",
+            "label": "Acting key",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "auth.expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            },
+            "visible": {
+              "ifNotIn": [
+                0
+              ]
+            }
+          },
+          {
+            "path": "auth.sig",
+            "visible": "never"
+          }
+        ]
+      },
+      "cancelSetting(uint8 action,(address key,uint64 expiry,bytes sig) auth)": {
+        "$id": "VaultProtection.cancelSetting",
+        "intent": "Cancel a pending protected-mode change",
+        "fields": [
+          {
+            "path": "action",
+            "label": "Change",
+            "format": "enum",
+            "params": {
+              "$ref": "$.metadata.enums.VaultProtectionBase_SETTINGS_"
+            }
+          },
+          {
+            "path": "auth.key",
+            "label": "Acting key",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "auth.expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            },
+            "visible": {
+              "ifNotIn": [
+                0
+              ]
+            }
+          },
+          {
+            "path": "auth.sig",
+            "visible": "never"
+          }
+        ]
+      },
+      "enable(uint32 delay,(address key,uint64 expiry,bytes sig) auth)": {
+        "$id": "VaultProtection.enable",
+        "intent": "Turn protected mode on",
+        "fields": [
+          {
+            "path": "delay",
+            "label": "Waiting period",
+            "format": "duration"
+          },
+          {
+            "path": "auth.key",
+            "label": "Acting key",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "auth.expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            },
+            "visible": {
+              "ifNotIn": [
+                0
+              ]
+            }
+          },
+          {
+            "path": "auth.sig",
+            "visible": "never"
+          }
+        ]
+      },
+      "lock((address key,uint64 expiry,bytes sig) auth)": {
+        "$id": "VaultProtection.lock",
+        "intent": "Lock your account",
+        "fields": [
+          {
+            "path": "auth.key",
+            "label": "Acting key",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "auth.expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            },
+            "visible": {
+              "ifNotIn": [
+                0
+              ]
+            }
+          },
+          {
+            "path": "auth.sig",
+            "visible": "never"
+          }
+        ]
+      },
+      "removeAllowlisted(address destination,(address key,uint64 expiry,bytes sig) auth)": {
+        "$id": "VaultProtection.removeAllowlisted",
+        "intent": "Remove a payout destination",
+        "fields": [
+          {
+            "path": "destination",
+            "label": "Destination",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "auth.key",
+            "label": "Acting key",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "auth.expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            },
+            "visible": {
+              "ifNotIn": [
+                0
+              ]
+            }
+          },
+          {
+            "path": "auth.sig",
+            "visible": "never"
+          }
+        ]
+      },
+      "replacement(uint8 action,address nominee,(address key,uint64 expiry,bytes sig) auth)": {
+        "$id": "VaultProtection.replacement",
+        "intent": "Replace the account owner",
+        "fields": [
+          {
+            "path": "action",
+            "label": "Step",
+            "format": "enum",
+            "params": {
+              "$ref": "$.metadata.enums.VaultProtectionBase_REPLACE_"
+            }
+          },
+          {
+            "path": "nominee",
+            "label": "New owner",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "auth.key",
+            "label": "Acting key",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "auth.expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            },
+            "visible": {
+              "ifNotIn": [
+                0
+              ]
+            }
+          },
+          {
+            "path": "auth.sig",
+            "visible": "never"
+          }
+        ]
+      },
+      "requestDisable((address key,uint64 expiry,bytes sig) auth)": {
+        "$id": "VaultProtection.requestDisable",
+        "intent": "Turn protected mode off",
+        "fields": [
+          {
+            "path": "auth.key",
+            "label": "Acting key",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "auth.expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            },
+            "visible": {
+              "ifNotIn": [
+                0
+              ]
+            }
+          },
+          {
+            "path": "auth.sig",
+            "visible": "never"
+          }
+        ]
+      },
+      "requestUnlock((address key,uint64 expiry,bytes sig) auth)": {
+        "$id": "VaultProtection.requestUnlock",
+        "intent": "Unlock the account",
+        "fields": [
+          {
+            "path": "auth.key",
+            "label": "Acting key",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "auth.expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            },
+            "visible": {
+              "ifNotIn": [
+                0
+              ]
+            }
+          },
+          {
+            "path": "auth.sig",
+            "visible": "never"
+          }
+        ]
+      },
+      "setDelay(uint32 delay,(address key,uint64 expiry,bytes sig) auth)": {
+        "$id": "VaultProtection.setDelay",
+        "intent": "Change the waiting period",
+        "fields": [
+          {
+            "path": "delay",
+            "label": "New waiting period",
+            "format": "duration"
+          },
+          {
+            "path": "auth.key",
+            "label": "Acting key",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "auth.expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            },
+            "visible": {
+              "ifNotIn": [
+                0
+              ]
+            }
+          },
+          {
+            "path": "auth.sig",
+            "visible": "never"
+          }
+        ]
+      },
+      "signerChange(uint8 action,address who,(address key,uint64 expiry,bytes sig) auth)": {
+        "$id": "VaultProtection.signerChange",
+        "intent": "Change a co-signer",
+        "fields": [
+          {
+            "path": "action",
+            "label": "Change",
+            "format": "enum",
+            "params": {
+              "$ref": "$.metadata.enums.VaultProtectionBase_SIGNER_"
+            }
+          },
+          {
+            "path": "who",
+            "label": "Signer",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "auth.key",
+            "label": "Acting key",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "auth.expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            },
+            "visible": {
+              "ifNotIn": [
+                0
+              ]
+            }
+          },
+          {
+            "path": "auth.sig",
+            "visible": "never"
+          }
+        ]
+      },
+      "verifyDestination(address account,address diamond,(address key,uint64 expiry,bytes sig) auth)": {
+        "$id": "VaultProtection.verifyDestination",
+        "intent": "Verify a payout destination",
+        "fields": [
+          {
+            "path": "account",
+            "label": "For account",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "diamond",
+            "visible": {
+              "mustMatch": [
+                "0xBc839c06Ee431d50EA6B087E0f26e80fb022564E",
+                "0x2c300b26bc15359E7948dA61a1960303772b0335",
+                "0x0EBd0536a698707958e1c327Ba1EB2b4f329A119"
+              ]
+            }
+          },
+          {
+            "path": "auth.key",
+            "label": "Destination",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "auth.expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            },
+            "visible": {
+              "ifNotIn": [
+                0
+              ]
+            }
+          },
+          {
+            "path": "auth.sig",
+            "visible": "never"
+          }
+        ]
+      },
+      "cancelPositionMove((address key,uint64 expiry,bytes sig) auth)": {
+        "$id": "VaultRecovery.cancelPositionMove",
+        "intent": "Cancel a position NFT move",
+        "fields": [
+          {
+            "path": "auth.key",
+            "label": "Acting key",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "auth.expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            },
+            "visible": {
+              "ifNotIn": [
+                0
+              ]
+            }
+          },
+          {
+            "path": "auth.sig",
+            "visible": "never"
+          }
+        ]
+      },
+      "cancelRecoveryAddress((address key,uint64 expiry,bytes sig) auth)": {
+        "$id": "VaultRecovery.cancelRecoveryAddress",
+        "intent": "Cancel a recovery address change",
+        "fields": [
+          {
+            "path": "auth.key",
+            "label": "Acting key",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "auth.expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            },
+            "visible": {
+              "ifNotIn": [
+                0
+              ]
+            }
+          },
+          {
+            "path": "auth.sig",
+            "visible": "never"
+          }
+        ]
+      },
+      "clawback((uint8 kind,address asset,uint256 tokenId)[] assets,(address key,uint64 expiry,bytes sig) auth)": {
+        "$id": "VaultRecovery.clawback",
+        "intent": "Move assets to your recovery address",
+        "fields": [
+          {
+            "path": "assets.[].kind",
+            "label": "Asset kind",
+            "format": "enum",
+            "params": {
+              "$ref": "$.metadata.enums.AssetKind"
+            }
+          },
+          {
+            "path": "assets.[].asset",
+            "label": "Asset",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "token",
+                "collection"
+              ]
+            }
+          },
+          {
+            "path": "assets.[].tokenId",
+            "label": "Token ID (NFT only)",
+            "format": "raw"
+          },
+          {
+            "path": "auth.key",
+            "label": "Acting key",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "auth.expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            },
+            "visible": {
+              "ifNotIn": [
+                0
+              ]
+            }
+          },
+          {
+            "path": "auth.sig",
+            "visible": "never"
+          }
+        ]
+      },
+      "clearRecoveryAddress((address key,uint64 expiry,bytes sig) auth)": {
+        "$id": "VaultRecovery.clearRecoveryAddress",
+        "intent": "Remove the recovery address",
+        "fields": [
+          {
+            "path": "auth.key",
+            "label": "Acting key",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "auth.expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            },
+            "visible": {
+              "ifNotIn": [
+                0
+              ]
+            }
+          },
+          {
+            "path": "auth.sig",
+            "visible": "never"
+          }
+        ]
+      },
+      "requestPositionMove((address key,uint64 expiry,bytes sig) auth)": {
+        "$id": "VaultRecovery.requestPositionMove",
+        "intent": "Move position NFTs to the new owner",
+        "fields": [
+          {
+            "path": "auth.key",
+            "label": "Acting key",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "auth.expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            },
+            "visible": {
+              "ifNotIn": [
+                0
+              ]
+            }
+          },
+          {
+            "path": "auth.sig",
+            "visible": "never"
+          }
+        ]
+      },
+      "requestRecoveryAddress(address recovery,(address key,uint64 expiry,bytes sig) auth,(address key,uint64 expiry,bytes sig) proof)": {
+        "$id": "VaultRecovery.requestRecoveryAddress",
+        "intent": "Set a recovery address",
+        "fields": [
+          {
+            "path": "recovery",
+            "label": "Recovery address",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "auth.key",
+            "label": "Acting key",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "auth.expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            },
+            "visible": {
+              "ifNotIn": [
+                0
+              ]
+            }
+          },
+          {
+            "path": "auth.sig",
+            "visible": "never"
+          },
+          {
+            "path": "proof.key",
+            "label": "Proof from",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "proof.expiry",
+            "label": "Proof valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            },
+            "visible": {
+              "ifNotIn": [
+                0
+              ]
+            }
+          },
+          {
+            "path": "proof.sig",
+            "visible": "never"
+          }
+        ]
+      },
+      "settleRecoveryAddress()": {
+        "$id": "VaultRecovery.settleRecoveryAddress",
+        "intent": "Bring a waiting recovery address into force",
+        "fields": []
+      }
+    }
+  }
+}

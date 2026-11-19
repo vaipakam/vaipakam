@@ -1,9 +1,10 @@
 {
   "_readme": [
-    "Which Diamond functions a person signs in a wallet, and so need a clear-signing display (#3348, #3718 step 1).",
+    "Which Diamond functions, and which functions of a person's own vault, a person signs in a wallet, and so need a clear-signing display (#3348, #3718 step 1, #3818).",
     "Every non-view function of every facet in scripts/diamond-facets.json must be named here with its class. scripts/build-clear-signing.mjs refuses an unnamed one, so a new function cannot ship without a decision. There are no facet-wide defaults: one hid two user calls in an admin facet while this file was first written.",
     "Classes: user = a person signs it from their own wallet (it gets a display in clear-signing/display.mjs); upkeep = a keeper, solver or anyone runs it for the protocol, not for the signer's own position; admin = a role holder or the owner; internal = only the Diamond itself, a vault or another platform contract can call it.",
-    "A function the permissionless-steps ledger calls a user step must be user here, and a keeper or alternative step must be upkeep or user; the generator checks both."
+    "A function the permissionless-steps ledger calls a user step must be user here, and a keeper or alternative step must be upkeep or user; the generator checks both.",
+    "vaultFunctions classes the vault code the same way: the vault itself (VaipakamVaultImplementation) and the protection and recovery code it runs through protect(bytes) (VaultProtection, VaultRecovery). A user function there gets a display in display.mjs VAULT_CALLS, in the vault descriptor every vault is bound to through the Diamond's vault-creation event."
   ],
   "functions": {
     "AccessControlFacet.emergencyRevokeRole": "admin",
@@ -674,5 +675,49 @@
     "VaultPayoutFacet.creditOwnerVault": "internal",
     "VaultPayoutFacet.escapeWithdraw": "user",
     "VaultPayoutFacet.releasePayout": "upkeep"
+  },
+  "vaultFunctions": {
+    "VaipakamVaultImplementation.closeGrant": "upkeep",
+    "VaipakamVaultImplementation.closeListingEscrow": "internal",
+    "VaipakamVaultImplementation.depositERC1155": "internal",
+    "VaipakamVaultImplementation.depositERC20": "internal",
+    "VaipakamVaultImplementation.depositERC721": "internal",
+    "VaipakamVaultImplementation.grantAllowance": "internal",
+    "VaipakamVaultImplementation.initialize": "internal",
+    "VaipakamVaultImplementation.openListingEscrow": "internal",
+    "VaipakamVaultImplementation.protect": "user",
+    "VaipakamVaultImplementation.registerLimitOrder": "internal",
+    "VaipakamVaultImplementation.registerSeaportOrder": "internal",
+    "VaipakamVaultImplementation.revokeListingOrderHash": "internal",
+    "VaipakamVaultImplementation.setOwnerFromProtection": "internal",
+    "VaipakamVaultImplementation.setRental1155": "internal",
+    "VaipakamVaultImplementation.setUser": "internal",
+    "VaipakamVaultImplementation.swapOut": "internal",
+    "VaipakamVaultImplementation.transferOut": "internal",
+    "VaultProtection.addAllowlisted": "user",
+    "VaultProtection.burnNonce": "user",
+    "VaultProtection.cancelAllowlisted": "user",
+    "VaultProtection.cancelSetting": "user",
+    "VaultProtection.enable": "user",
+    "VaultProtection.finalizeAllowlisted": "upkeep",
+    "VaultProtection.finalizeReplacement": "upkeep",
+    "VaultProtection.finalizeSettings": "upkeep",
+    "VaultProtection.finalizeSigner": "upkeep",
+    "VaultProtection.lock": "user",
+    "VaultProtection.lockByPlatform": "internal",
+    "VaultProtection.removeAllowlisted": "user",
+    "VaultProtection.replacement": "user",
+    "VaultProtection.requestDisable": "user",
+    "VaultProtection.requestUnlock": "user",
+    "VaultProtection.setDelay": "user",
+    "VaultProtection.signerChange": "user",
+    "VaultProtection.verifyDestination": "user",
+    "VaultRecovery.cancelPositionMove": "user",
+    "VaultRecovery.cancelRecoveryAddress": "user",
+    "VaultRecovery.clawback": "user",
+    "VaultRecovery.clearRecoveryAddress": "user",
+    "VaultRecovery.requestPositionMove": "user",
+    "VaultRecovery.requestRecoveryAddress": "user",
+    "VaultRecovery.settleRecoveryAddress": "user"
   }
 }

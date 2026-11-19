@@ -9,12 +9,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { toFunctionSelector } from 'viem';
+import { toEventSelector, toFunctionSelector } from 'viem';
 
 import * as display from '../clear-signing/display.mjs';
 import {
   abiLeaves,
   build,
+  deployEventSignature,
   formatKey,
   loadInputs,
   parseEncodeType,
@@ -23,6 +24,7 @@ import {
   serialize,
   typedLeaves,
   validate,
+  VAULT_CONTRACTS,
 } from './build-clear-signing.mjs';
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -68,6 +70,66 @@ test('every input of every user function is covered once, and every token path n
     const types = Object.fromEntries(leaves.map((l) => [l.path, l.type]));
     for (const f of fields) {
       if (f.params?.tokenPath) assert.equal(types[f.params.tokenPath], 'address', `${key} ${f.path}: tokenPath ${f.params.tokenPath} is not an address input`);
+    }
+  }
+});
+
+// ── The person's own vault (#3818) ──────────────────────────────────────
+
+const VAULT_FILE = 'calldata-VaipakamVault.json';
+const vaultFn = (key) => {
+  const [contract, name] = key.split('.');
+  return inputs.vaultAbis[contract].find((x) => x.type === 'function' && x.name === name);
+};
+
+test('every vault user function has one format, keyed by its own selector, covering its inputs one to one', () => {
+  const formats = result.files[VAULT_FILE].display.formats;
+  const users = Object.entries(inputs.scope.vaultFunctions).filter(([, c]) => c === 'user').map(([k]) => k);
+  assert.equal(Object.keys(formats).length, users.length);
+  for (const key of users) {
+    const fn = vaultFn(key);
+    const fk = formatKey(fn);
+    assert.ok(formats[fk], `${key} has no format`);
+    assert.equal(formats[fk].$id, key);
+    assert.equal(selectorOfKey(fk), toFunctionSelector(fn), `${key}: the format key does not hash to the function's selector`);
+    const fields = formats[fk].fields.filter((f) => !f.path.startsWith('@.'));
+    assert.deepEqual(fields.map((f) => f.path), abiLeaves(fn.inputs).map((l) => l.path), `${key}: fields do not match the inputs`);
+  }
+});
+
+test('protect(bytes) shows its data as calldata the vault itself runs', () => {
+  const fmt = result.files[VAULT_FILE].display.formats['protect(bytes data)'];
+  assert.deepEqual(fmt.fields, [{ path: 'data', label: 'Change', format: 'calldata', params: { calleePath: '@.to' } }]);
+  // The inner call runs AS the vault (a delegatecall), so every function it
+  // can name must be described in this same file, and none may share a
+  // selector with the vault's own surface (the vault would run its own).
+  const own = new Set(inputs.vaultAbis.VaipakamVaultImplementation.filter((x) => x.type === 'function').map((f) => toFunctionSelector(f)));
+  for (const c of ['VaultProtection', 'VaultRecovery']) {
+    for (const f of inputs.vaultAbis[c].filter((x) => x.type === 'function')) {
+      assert.ok(!own.has(toFunctionSelector(f)), `${c}.${f.name} shares a selector with the vault itself`);
+    }
+  }
+});
+
+test('the vault descriptor binds every vault through the Diamond\'s vault-creation event', () => {
+  const ctx = result.files[VAULT_FILE].context.contract;
+  assert.equal(ctx.deployments, undefined, 'a vault address is not known ahead of time');
+  const diamonds = result.files['calldata-VaipakamDiamond.json'].context.contract.deployments;
+  assert.deepEqual(ctx.factory.deployments, diamonds);
+  assert.equal(ctx.factory.deployEvent, 'UserVaultCreated(address indexed user,address proxy)');
+  assert.equal(ctx.factory.deployEvent, deployEventSignature(inputs.abis));
+  const ev = inputs.abis.VaultFactoryFacet.find((x) => x.type === 'event' && x.name === 'UserVaultCreated');
+  assert.equal(toEventSelector(ctx.factory.deployEvent.replace(' indexed', '')), toEventSelector(ev));
+  assert.deepEqual(Object.keys(inputs.vaultAbis).sort(), [...VAULT_CONTRACTS].sort());
+});
+
+test('a vault Diamond field must be a Diamond, and a direct call hides only the signature', () => {
+  const diamonds = result.files['calldata-VaipakamDiamond.json'].context.contract.deployments.map((d) => d.address);
+  for (const fmt of Object.values(result.files[VAULT_FILE].display.formats)) {
+    const d = fmt.fields.find((f) => f.path === 'diamond');
+    if (d) assert.deepEqual(d.visible, { mustMatch: diamonds });
+    for (const f of fmt.fields) {
+      if (f.visible === 'never') assert.match(f.path, /(^|\.)sig$/, `${fmt.$id}: ${f.path} is hidden`);
     }
   }
 });
@@ -129,6 +191,19 @@ test('an unclassified function is refused by name', async () => {
   delete i.scope.functions['RepayFacet.repayLoan'];
   const p = await problemsOf(i);
   assert.ok(p.some((x) => x.includes('RepayFacet.repayLoan is not classified')), p.join('\n'));
+});
+
+test('an unclassified vault function is refused by name, and the ledger binds the vault too', async () => {
+  const i = { ...inputs, scope: clone(inputs.scope) };
+  delete i.scope.vaultFunctions['VaultProtection.lock'];
+  const p = await problemsOf(i);
+  assert.ok(p.some((x) => x.includes('VaultProtection.lock is not classified')), p.join('\n'));
+  const j = { ...inputs, scope: clone(inputs.scope) };
+  j.scope.vaultFunctions['VaultRecovery.settleRecoveryAddress'] = 'internal';
+  assert.ok((await problemsOf(j)).some((x) => x.includes('VaultRecovery.settleRecoveryAddress is a user step')));
+  const calls = clone(display.VAULT_CALLS);
+  delete calls['VaultProtection.lock'];
+  assert.ok((await problemsOf(null, { ...display, VAULT_CALLS: calls })).some((x) => x.includes('VaultProtection.lock has no intent in VAULT_CALLS')));
 });
 
 test('a facet-wide default is refused', async () => {
