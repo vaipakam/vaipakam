@@ -53,6 +53,7 @@ import {
   buildAlertSettingsMessage,
   buildTelegramLinkMessage,
   type AlertSettingsChange,
+  buildTelegramStatusMessage,
   buildTelegramTestMessage,
   buildTelegramUnlinkMessage,
 } from '@vaipakam/lib/alertsMessage';
@@ -87,7 +88,7 @@ const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
 /** The alert actions whose message names nothing but the wallet, the
  *  chain and the time. */
-export type AlertAuthAction = 'link' | 'unlink' | 'test-alert';
+export type AlertAuthAction = 'link' | 'unlink' | 'test-alert' | 'status';
 
 /** What a signed alert request authorises: one of the fixed actions,
  *  or a settings save, whose message also names the values it saves. */
@@ -104,6 +105,7 @@ const MESSAGE_BUILDERS: Record<
   link: buildTelegramLinkMessage,
   unlink: buildTelegramUnlinkMessage,
   'test-alert': buildTelegramTestMessage,
+  status: buildTelegramStatusMessage,
 };
 
 /** The exact message the wallet must have signed for `auth`. */

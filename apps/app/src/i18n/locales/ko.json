@@ -415,7 +415,20 @@
       "phraseRemoved": "삭제했습니다. 이 지갑의 Telegram 알림은 더 이상 문구로 시작하지 않습니다.",
       "phraseRemovedChainOnly": "{{network}}에서 삭제했습니다. 스마트 계정 지갑은 네트워크별로 문구를 설정하므로 다른 네트워크에서도 각각의 서명으로 삭제하세요.",
       "phraseInvalid": "이 문구는 사용할 수 없습니다. 글자나 숫자를 하나 이상 포함한 3~32자의 글자, 숫자, 공백 또는 간단한 문장 부호를 사용하세요.",
-      "phraseError": "지금은 문구를 저장하지 못했습니다. 잠시 후 다시 시도하세요."
+      "phraseError": "지금은 문구를 저장하지 못했습니다. 잠시 후 다시 시도하세요.",
+      "phraseIsSet": "이 네트워크에 문구가 설정되어 있습니다.",
+      "phraseNotSet": "이 네트워크에는 문구가 설정되어 있지 않습니다.",
+      "statusChecking": "알림 서비스에서 Telegram 연결을 확인하는 중…",
+      "statusNeedsSignature": "확인하기 전까지 이 브라우저는 Telegram 채팅이 연결되어 있는지 알 수 없습니다. 확인하려면 짧은 무료 메시지에 서명합니다. 그 후 12시간 동안은 다시 서명하지 않아도 이 탭에서 결과를 볼 수 있습니다.",
+      "statusCheck": "연결 상태 확인",
+      "statusUnreachable": "알림 서비스에 연결하지 못해 지금은 Telegram 채팅 연결 여부를 알 수 없습니다.",
+      "statusRefused": "알림 서비스가 그 서명을 받지 않아 연결 상태를 읽지 못했습니다. 다시 확인해 새 요청에 서명하세요.",
+      "statusNotLinked": "{{network}}에서 이 지갑에 연결된 Telegram 채팅이 없습니다.",
+      "linkedJustNow": "Telegram 연결됨 — 테스트 알림이 채팅에 도착했습니다. 연결 상태를 확인해 알림 서비스에서 확정하세요.",
+      "statusRemovalPending": "삭제 대기 중: {{date}}까지 채팅에 모든 알림이 계속 전송되고 그 후 중단됩니다. 보호 모드 때문에 대기합니다.",
+      "statusRemovalPendingUntold": "삭제 대기 중: 보호 모드의 대기는 채팅이 안내를 받는 시점에 시작됩니다. 그때까지는 모든 알림이 계속 전송됩니다.",
+      "statusMovePending": "새 채팅으로 이동 대기 중: {{date}}까지 현재 채팅으로 알림이 가고 그 후 이동합니다. 보호 모드 때문에 대기합니다.",
+      "statusMovePendingUntold": "새 채팅으로 이동 대기 중: 보호 모드의 대기는 현재 채팅이 안내를 받는 시점에 시작됩니다."
     },
     "notifications": {
       "bellLabel": "알림",

@@ -871,6 +871,33 @@ const copySource = {
       'That phrase can’t be used. Use 3 to 32 letters, numbers, spaces or simple punctuation, with at least one letter or number.',
     phraseError:
       'Couldn’t save your phrase just now. Please try again in a moment.',
+    phraseIsSet: 'A phrase is set for this network.',
+    phraseNotSet: 'No phrase is set for this network.',
+    /* #3573 — the link status is the alert service's answer, read back;
+       the card never states one it has not read. */
+    statusChecking: 'Checking your Telegram link with the alert service…',
+    statusNeedsSignature:
+      'This browser can’t see whether a Telegram chat is linked until you check. Checking signs a short, free message; the answer then stays readable in this tab for 12 hours without signing again.',
+    statusCheck: 'Check link status',
+    statusUnreachable:
+      'Couldn’t reach the alert service, so whether a Telegram chat is linked is unknown right now.',
+    statusRefused:
+      'The alert service did not accept that signature, so the link status was not read. Check again to sign a new request.',
+    statusNotLinked: tmpl('No Telegram chat is linked to this wallet on {{network}}.', ['network']),
+    linkedJustNow:
+      'Telegram linked — your test alert reached the chat. Check link status to confirm it with the alert service.',
+    statusRemovalPending: tmpl(
+      'Removal pending: your chat keeps getting every alert until {{date}}, and then it stops. Protected mode makes it wait.',
+      ['date'],
+    ),
+    statusRemovalPendingUntold:
+      'Removal pending: protected mode’s wait starts once your chat receives our notice; until then it keeps getting every alert.',
+    statusMovePending: tmpl(
+      'Move to a new chat pending: alerts keep going to your current chat until {{date}}, then move. Protected mode makes it wait.',
+      ['date'],
+    ),
+    statusMovePendingUntold:
+      'Move to a new chat pending: protected mode’s wait starts once your current chat receives our notice.',
     pushTitle: 'Prefer app push instead?',
     pushBody:
       'The same alerts are published to Vaipakam’s Push Protocol channel — subscribe there with your wallet and any Push-compatible app delivers them.',

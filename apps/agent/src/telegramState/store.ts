@@ -64,6 +64,25 @@ export interface PhraseChange {
   chatId: string | null;
 }
 
+/** What the owner may see of one chain's Telegram link (#3573): whether a
+ *  chat is linked, the removal or move pending for it, and whether an alert
+ *  phrase is set (never the phrase itself). */
+export interface LinkStatus {
+  chainId: number;
+  linked: boolean;
+  /** Null when nothing is pending. `effectiveAt` is null until the old chat
+   *  has been told, which starts the wait. */
+  pending: { kind: 'unlink' | 'replace'; effectiveAt: number | null } | null;
+  phraseSet: boolean;
+}
+
+/** Who a read pass speaks for: one wallet, on one chain or every chain. */
+export interface ReadPassScope {
+  wallet: string;
+  /** Null: every chain. */
+  chainId: number | null;
+}
+
 /** A pending removal or move of a chat (#3246). */
 export interface PendingChange {
   id: number;
@@ -206,6 +225,18 @@ const SCHEMA: readonly string[] = [
      set_at   INTEGER NOT NULL,
      PRIMARY KEY (wallet, chain_id)
    );`,
+  // #3573 — read passes for the owner's own Telegram status. Only a digest
+  // of each pass is kept; chain_id NULL covers every chain (a plain wallet
+  // signature), a number covers that chain alone (a smart account's
+  // approval). A pass reads; it changes nothing.
+  `CREATE TABLE IF NOT EXISTS read_passes (
+     pass_hash  TEXT PRIMARY KEY,
+     wallet     TEXT NOT NULL,
+     chain_id   INTEGER,
+     expires_at INTEGER NOT NULL
+   );
+   CREATE INDEX IF NOT EXISTS idx_read_passes_exp ON read_passes(expires_at);
+   CREATE INDEX IF NOT EXISTS idx_read_passes_wallet ON read_passes(wallet);`,
 ];
 
 /** Bring the schema to the current version. Idempotent. */
@@ -267,9 +298,74 @@ export class TelegramStateStore {
     });
   }
 
-  /** Delete expired codes; returns how many. */
+  /** Delete expired codes and read passes; returns how many codes. */
   sweepExpiredCodes(now: number): number {
+    this.sql.exec(`DELETE FROM read_passes WHERE expires_at < ?`, now);
     return this.sql.exec(`DELETE FROM link_codes WHERE expires_at < ?`, now).rowsWritten;
+  }
+
+  // ─── Status reads (#3573) ─────────────────────────────────────────────
+
+  /** The most passes one wallet may hold at once; issuing another drops
+   *  the oldest. */
+  static readonly MAX_READ_PASSES = 8;
+
+  /** Store a read pass by its digest, and drop the wallet's expired passes
+   *  and any beyond {@link TelegramStateStore.MAX_READ_PASSES}. */
+  issueReadPass(passHash: string, wallet: string, chainId: number | null, expiresAt: number, now: number): void {
+    const w = lower(wallet);
+    this.tx(() => {
+      this.sql.exec(`DELETE FROM read_passes WHERE wallet = ? AND expires_at < ?`, w, now);
+      this.sql.exec(
+        `INSERT INTO read_passes (pass_hash, wallet, chain_id, expires_at) VALUES (?, ?, ?, ?)`,
+        passHash,
+        w,
+        chainId,
+        expiresAt,
+      );
+      this.sql.exec(
+        `DELETE FROM read_passes WHERE wallet = ? AND pass_hash NOT IN (
+           SELECT pass_hash FROM read_passes WHERE wallet = ? ORDER BY expires_at DESC LIMIT ?)`,
+        w,
+        w,
+        TelegramStateStore.MAX_READ_PASSES,
+      );
+    });
+  }
+
+  /** Who the pass with digest `passHash` speaks for, or null when there is
+   *  no such pass or it has expired. */
+  readPassScope(passHash: string, now: number): ReadPassScope | null {
+    const row = this.sql
+      .exec<{ wallet: string; chain_id: number | null; expires_at: number }>(
+        `SELECT wallet, chain_id, expires_at FROM read_passes WHERE pass_hash = ?`,
+        passHash,
+      )
+      .toArray()[0];
+    if (!row || Number(row.expires_at) < now) return null;
+    return { wallet: row.wallet, chainId: row.chain_id === null ? null : Number(row.chain_id) };
+  }
+
+  /** One chain's link status for `wallet`. */
+  linkStatus(wallet: string, chainId: number): LinkStatus {
+    const w = lower(wallet);
+    const [chat] = this.chatsOf([{ wallet: w, chainId }]);
+    const [phrase] = this.phrasesOf([{ wallet: w, chainId }]);
+    const change = this.sql
+      .exec<{ kind: 'unlink' | 'replace'; effective_at: number | null }>(
+        `SELECT kind, effective_at FROM channel_changes WHERE wallet = ? AND chain_id = ? AND state = 'pending'`,
+        w,
+        chainId,
+      )
+      .toArray()[0];
+    return {
+      chainId,
+      linked: chat !== null && chat !== undefined,
+      pending: change
+        ? { kind: change.kind, effectiveAt: change.effective_at === null ? null : Number(change.effective_at) }
+        : null,
+      phraseSet: phrase !== null && phrase !== undefined,
+    };
   }
 
   // ─── Links ────────────────────────────────────────────────────────────

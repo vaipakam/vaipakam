@@ -215,3 +215,30 @@ export function buildAlertPhraseMessage(
     `Issued at (unix): ${issuedAt}`,
   ].join('\n');
 }
+
+/**
+ * Show my Telegram alert status (#3573). Signed before the agent answers
+ * whether a chat is linked and whether a removal or move is pending, and
+ * issues a short-lived read pass so the app can refresh that answer without
+ * asking for another signature. Whether a wallet has Telegram alerts, and
+ * when a protected owner's chat is about to change, is the owner's own
+ * business, so the read is not open.
+ */
+export function buildTelegramStatusMessage(
+  wallet: string,
+  chainId: number,
+  issuedAt: number,
+): string {
+  return [
+    'Vaipakam — Show my Telegram alert status',
+    '',
+    'I request to see whether a Telegram chat is linked for the wallet',
+    'below, and whether a removal or move of that chat is pending. Signing',
+    'this message proves ownership of the wallet. It is not a transaction',
+    'and costs no gas.',
+    '',
+    `Wallet: ${wallet.toLowerCase()}`,
+    `Chain id: ${chainId}`,
+    `Issued at (unix): ${issuedAt}`,
+  ].join('\n');
+}

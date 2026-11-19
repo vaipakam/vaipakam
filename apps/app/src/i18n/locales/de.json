@@ -415,7 +415,20 @@
       "phraseRemoved": "Entfernt. Ihre Telegram-Benachrichtigungen für diese Wallet beginnen nicht mehr mit einer Phrase.",
       "phraseRemovedChainOnly": "Für {{network}} entfernt. Eine Smart-Account-Wallet legt ihre Phrase pro Netzwerk fest; entfernen Sie sie in jedem anderen Netzwerk mit dessen eigener Signatur.",
       "phraseInvalid": "Diese Phrase kann nicht verwendet werden. Verwenden Sie 3 bis 32 Buchstaben, Zahlen, Leerzeichen oder einfache Satzzeichen, mit mindestens einem Buchstaben oder einer Zahl.",
-      "phraseError": "Ihre Phrase konnte gerade nicht gespeichert werden. Bitte versuchen Sie es gleich erneut."
+      "phraseError": "Ihre Phrase konnte gerade nicht gespeichert werden. Bitte versuchen Sie es gleich erneut.",
+      "phraseIsSet": "Für dieses Netzwerk ist eine Phrase festgelegt.",
+      "phraseNotSet": "Für dieses Netzwerk ist keine Phrase festgelegt.",
+      "statusChecking": "Ihre Telegram-Verknüpfung wird beim Benachrichtigungsdienst geprüft…",
+      "statusNeedsSignature": "Dieser Browser kann erst nach einer Prüfung sehen, ob ein Telegram-Chat verknüpft ist. Die Prüfung signiert eine kurze, kostenlose Nachricht; die Antwort bleibt danach 12 Stunden in diesem Tab lesbar, ohne erneut zu signieren.",
+      "statusCheck": "Verknüpfungsstatus prüfen",
+      "statusUnreachable": "Der Benachrichtigungsdienst war nicht erreichbar, daher ist gerade unbekannt, ob ein Telegram-Chat verknüpft ist.",
+      "statusRefused": "Der Benachrichtigungsdienst hat diese Signatur nicht akzeptiert, daher wurde der Verknüpfungsstatus nicht gelesen. Prüfen Sie erneut, um eine neue Anfrage zu signieren.",
+      "statusNotLinked": "Mit dieser Wallet ist auf {{network}} kein Telegram-Chat verknüpft.",
+      "linkedJustNow": "Telegram verknüpft — Ihre Testbenachrichtigung hat den Chat erreicht. Prüfen Sie den Verknüpfungsstatus, um es beim Benachrichtigungsdienst zu bestätigen.",
+      "statusRemovalPending": "Entfernung ausstehend: Ihr Chat erhält bis {{date}} weiter jede Benachrichtigung, danach endet es. Der geschützte Modus lässt sie warten.",
+      "statusRemovalPendingUntold": "Entfernung ausstehend: Die Wartezeit des geschützten Modus beginnt, sobald Ihr Chat unsere Mitteilung erhält; bis dahin erhält er weiter jede Benachrichtigung.",
+      "statusMovePending": "Wechsel zu einem neuen Chat ausstehend: Benachrichtigungen gehen bis {{date}} weiter an Ihren aktuellen Chat und wechseln dann. Der geschützte Modus lässt ihn warten.",
+      "statusMovePendingUntold": "Wechsel zu einem neuen Chat ausstehend: Die Wartezeit des geschützten Modus beginnt, sobald Ihr aktueller Chat unsere Mitteilung erhält."
     },
     "notifications": {
       "bellLabel": "Benachrichtigungen",

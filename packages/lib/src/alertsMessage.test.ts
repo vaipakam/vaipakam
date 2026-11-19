@@ -12,6 +12,7 @@ import {
   buildAlertPhraseMessage,
   buildAlertSettingsMessage,
   buildTelegramLinkMessage,
+  buildTelegramStatusMessage,
   buildTelegramTestMessage,
   buildTelegramUnlinkMessage,
 } from './alertsMessage';
@@ -159,6 +160,25 @@ describe('buildAlertPhraseMessage (#3346)', () => {
   });
 });
 
+describe('buildTelegramStatusMessage (#3573)', () => {
+  it('produces the frozen byte sequence, verbatim', () => {
+    expect(buildTelegramStatusMessage(WALLET, 84532, 1747000000)).toBe(
+      [
+        'Vaipakam — Show my Telegram alert status',
+        '',
+        'I request to see whether a Telegram chat is linked for the wallet',
+        'below, and whether a removal or move of that chat is pending. Signing',
+        'this message proves ownership of the wallet. It is not a transaction',
+        'and costs no gas.',
+        '',
+        `Wallet: ${LOWER}`,
+        'Chain id: 84532',
+        'Issued at (unix): 1747000000',
+      ].join('\n'),
+    );
+  });
+});
+
 describe('the alert messages as a family', () => {
   const builders = [
     buildTelegramLinkMessage,
@@ -166,6 +186,7 @@ describe('the alert messages as a family', () => {
     (wallet: string, chainId: number, issuedAt: number) =>
       buildAlertSettingsMessage(wallet, chainId, {}, issuedAt),
     buildTelegramTestMessage,
+    buildTelegramStatusMessage,
     (wallet: string, chainId: number, issuedAt: number) =>
       buildAlertPhraseMessage(wallet, chainId, 'blue heron', issuedAt),
     (wallet: string, chainId: number, issuedAt: number) =>

@@ -25,6 +25,8 @@ import {
   type ChatRoute,
   type CommitResult,
   type LinkedRow,
+  type LinkStatus,
+  type ReadPassScope,
   type LockLink,
   type LockRequest,
   type PendingChange,
@@ -81,6 +83,18 @@ export class TelegramState extends DurableObject {
   }
   phraseForChat(chatId: string): string | null {
     return this.store.phraseForChat(chatId);
+  }
+
+  issueReadPass(passHash: string, wallet: string, chainId: number | null, expiresAt: number, now: number): void {
+    this.store.issueReadPass(passHash, wallet, chainId, expiresAt, now);
+  }
+
+  readPassScope(passHash: string, now: number): ReadPassScope | null {
+    return this.store.readPassScope(passHash, now);
+  }
+
+  linkStatus(wallet: string, chainId: number): LinkStatus {
+    return this.store.linkStatus(wallet, chainId);
   }
   setPhrase(wallet: string, chainIds: number[], phrase: string | null, now: number): PhraseChange[] {
     return this.store.setPhrase(wallet, chainIds, phrase, now);

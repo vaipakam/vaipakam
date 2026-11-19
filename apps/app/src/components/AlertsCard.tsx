@@ -13,9 +13,13 @@
  *    fires nothing.
  *  - One honest privacy sentence + a working Unlink (the agent's
  *    /unlink/telegram, added with this feature).
- *  - Linked-state is an optimistic local record: the agent has no
- *    read-back endpoint, so "linked" mirrors what the user completed
- *    on this device; Unlink always works regardless.
+ *  - Linked-state is read from the alert service (#3573), the one
+ *    source: a signed read issues a pass this tab keeps for 12 hours, so
+ *    the card refreshes without another signature. Until it is read the
+ *    card says the status is unknown, and says so when the service cannot
+ *    be reached; it never falls back to a flag kept in the browser. The
+ *    one optimistic state is "your test alert just reached the chat",
+ *    held in memory until the read confirms it. Unlink always works.
  *  - Push is offered only when the agent says its rail can send
  *    (#2251), and the subscribe link opens the channel the agent posts
  *    as. An unavailable rail, or one the card could not ask about, is
@@ -27,7 +31,7 @@
  *    where the agent says Push is billed; withdrawing it always works.
  */
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { BellRing } from 'lucide-react';
 import { useAccount, useSignMessage } from 'wagmi';
 import { useMode } from '../app/ModeContext';
@@ -44,12 +48,15 @@ import {
   issueTelegramLink,
   loadAlertPrefs,
   fetchPushStatus,
+  readTelegramStatus,
+  refreshTelegramStatus,
   saveAlertPrefs,
   sendTestTelegramAlert,
   storeAlertPrefs,
   unlinkTelegram,
   type AlertPrefs,
   type TelegramLink,
+  type TelegramStatusResult,
   type VaultOutflowChoice,
 } from '../data/alerts';
 
@@ -67,6 +74,9 @@ export function AlertsCard() {
   );
   const [prefs, setPrefs] = useState<AlertPrefs | null>(initial);
   const [link, setLink] = useState<TelegramLink | null>(null);
+  // #3573 — the test alert just reached the chat: linked, until the
+  // service's own answer replaces it. Memory only, never stored.
+  const [justLinked, setJustLinked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -76,11 +86,25 @@ export function AlertsCard() {
     setScope(`${chainId}:${address ?? ''}`);
     setPrefs(address ? loadAlertPrefs(chainId, address) : null);
     setLink(null);
+    setJustLinked(false);
     setNotice(null);
     setError(null);
   }
 
   const configured = alertsConfigured();
+  const queryClient = useQueryClient();
+  // #3573 — the link status, read from the alert service with the read
+  // pass this tab holds (no signature); `needs-signature` until there is one.
+  const statusKey = ['telegramStatus', chainId, address?.toLowerCase()] as const;
+  const tgStatus = useQuery({
+    queryKey: statusKey,
+    queryFn: () => refreshTelegramStatus(address!, chainId),
+    enabled: configured && Boolean(address),
+    staleTime: 30_000,
+    retry: false,
+  });
+  const statusRead = tgStatus.data?.kind === 'status' ? tgStatus.data.status : null;
+  const tgLinked = statusRead ? statusRead.linked : justLinked;
   // #2251 — whether Push can be sent is the AGENT's answer, read before the
   // opt-in is offered, and the channel the subscribe link opens is the one
   // the agent posts as. Never inferred from a build-time address.
@@ -231,6 +255,8 @@ export function AlertsCard() {
         storeAlertPrefs(chainId, address, next);
         setPrefs(next);
         setLink(null);
+        setJustLinked(true);
+        void tgStatus.refetch();
         setNotice(copy.alerts.testAlertSent);
       } else if (result === 'not-linked') {
         setError(copy.alerts.testAlertNotLinked);
@@ -254,6 +280,25 @@ export function AlertsCard() {
     setNotice(null);
   }
 
+  // #3573 — sign a status read: the answer, and a read pass for this tab.
+  async function checkStatus() {
+    if (!address) return;
+    const forChain = chainId;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result: TelegramStatusResult = await readTelegramStatus(address, forChain, (message) =>
+        signMessageAsync({ message }),
+      );
+      queryClient.setQueryData(['telegramStatus', forChain, address.toLowerCase()], result);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function doUnlink() {
     if (!address || !prefs) return;
     // Captured at the click (#2013 r6): the completion can land after
@@ -269,6 +314,8 @@ export function AlertsCard() {
       const outcome = await unlinkTelegram(address, forChain, (message) =>
         signMessageAsync({ message }),
       );
+      setJustLinked(false);
+      void queryClient.invalidateQueries({ queryKey: ['telegramStatus', forChain] });
       if (outcome.protectionUnknown) {
         setError(copy.alerts.unlinkProtectionUnknown);
         return;
@@ -335,9 +382,18 @@ export function AlertsCard() {
         <div className="stack" style={{ gap: 12 }}>
           <p className="muted" style={{ margin: 0 }}>{copy.alerts.privacy}</p>
 
-          {prefs.telegramLinked ? (
+          <TelegramStatusLine
+            result={tgStatus.data}
+            loading={tgStatus.isLoading}
+            justLinked={justLinked}
+            network={chainDisplayName(chainId) ?? String(chainId)}
+            busy={busy}
+            onCheck={() => void checkStatus()}
+          />
+
+          {tgLinked ? (
             <div className="cluster" style={{ alignItems: 'center' }}>
-              <span>{copy.alerts.linked}</span>
+              <span>{statusRead ? copy.alerts.linked : copy.alerts.linkedJustNow}</span>
               <button
                 type="button"
                 className="btn btn-secondary"
@@ -393,7 +449,7 @@ export function AlertsCard() {
               {/* UX3-013 — say what this browser knows: no link was made
                   from here. It cannot see a link made on another device,
                   and says so instead of implying "not linked anywhere". */}
-              <p style={{ margin: 0 }}>{copy.alerts.notLinkedHere}</p>
+              {statusRead ? null : <p style={{ margin: 0 }}>{copy.alerts.notLinkedHere}</p>}
               <div className="cluster" style={{ alignItems: 'center' }}>
                 <button
                   type="button"
@@ -437,6 +493,8 @@ export function AlertsCard() {
             chainId={chainId}
             signMessage={(message) => signMessageAsync({ message })}
             disabled={busy}
+            phraseSet={statusRead ? statusRead.phraseSet : null}
+            onSaved={() => void tgStatus.refetch()}
           />
 
           <label className="cluster" style={{ alignItems: 'flex-start' }}>
@@ -645,6 +703,80 @@ function AdvancedBands({
       {!valid ? (
         <p className="muted" style={{ marginTop: 8 }}>{copy.alerts.bandsInvalid}</p>
       ) : null}
+    </div>
+  );
+}
+
+/** #3573 — what the alert service says of this network's Telegram link, or
+ *  why the card does not know: never a guess from this browser. */
+function TelegramStatusLine({
+  result,
+  loading,
+  justLinked,
+  network,
+  busy,
+  onCheck,
+}: {
+  result: TelegramStatusResult | undefined;
+  loading: boolean;
+  justLinked: boolean;
+  network: string;
+  busy: boolean;
+  onCheck: () => void;
+}) {
+  if (loading) {
+    return <p className="muted" style={{ margin: 0 }}>{copy.alerts.statusChecking}</p>;
+  }
+  if (result?.kind === 'status') {
+    const { status } = result;
+    const date = status.pending?.effectiveAt
+      ? new Date(status.pending.effectiveAt * 1000).toLocaleString()
+      : null;
+    const pending = !status.pending
+      ? null
+      : status.pending.kind === 'unlink'
+        ? date
+          ? copy.alerts.statusRemovalPending(date)
+          : copy.alerts.statusRemovalPendingUntold
+        : date
+          ? copy.alerts.statusMovePending(date)
+          : copy.alerts.statusMovePendingUntold;
+    return (
+      <div className="stack" style={{ gap: 4 }} data-testid="telegram-status">
+        {status.linked ? null : (
+          <p style={{ margin: 0 }}>{copy.alerts.statusNotLinked(network)}</p>
+        )}
+        {pending ? (
+          <div className="banner banner-warn" role="status">
+            <span className="banner-body">{pending}</span>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+  if (result?.kind === 'unreachable') {
+    return (
+      <div className="stack" style={{ gap: 4 }} data-testid="telegram-status">
+        <p className="muted" style={{ margin: 0 }}>{copy.alerts.statusUnreachable}</p>
+      </div>
+    );
+  }
+  // No read pass in this tab: the owner checks by signing.
+  return (
+    <div className="stack" style={{ gap: 4 }} data-testid="telegram-status">
+      {justLinked ? null : (
+        <p className="muted" style={{ margin: 0 }}>{copy.alerts.statusNeedsSignature}</p>
+      )}
+      <button
+        type="button"
+        className="btn btn-secondary btn-sm"
+        onClick={onCheck}
+        disabled={busy}
+        style={{ alignSelf: 'flex-start' }}
+        data-testid="telegram-status-check"
+      >
+        {copy.alerts.statusCheck}
+      </button>
     </div>
   );
 }

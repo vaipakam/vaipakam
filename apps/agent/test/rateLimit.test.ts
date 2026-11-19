@@ -159,6 +159,9 @@ describe('every key-spending route at the entry point', () => {
       ['POST', '/link/telegram'],
       ['POST', '/unlink/telegram'],
       ['POST', '/telegram/test'],
+      ['PUT', '/alerts/phrase'],
+      ['POST', '/telegram/status'],
+      ['POST', '/telegram/status/pass'],
     ]) {
       expect(callerBudgetFor(m, p)).toBe('ALERT_WRITE_RATELIMIT');
     }

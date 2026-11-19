@@ -2031,6 +2031,15 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 
 **Gap.** Live-only: delivery needs the deployed agent and a linked Telegram chat.
 
+<a id="cov-3573-telegram-status"></a>
+### #3573 Telegram link status read from the agent
+
+**Journey.** The Alerts card asks `refreshTelegramStatus` on open: with a read pass this tab holds it posts `/telegram/status/pass` and shows the answer; without one it says the status is unknown and offers "Check link status", which signs `buildTelegramStatusMessage` and posts `/telegram/status`. The agent answers the signed chain's status (linked, the pending removal or move and when it takes effect, whether a phrase is set; never the chat or the phrase) and issues a 12-hour pass, kept only as a SHA-256 in its Telegram state: a plain wallet signature's pass reads every chain, a smart account's only the signed one. The pass lives in session storage under `vaipakam.alerts.tgStatusPass.<wallet>`. An unreachable service is stated, never replaced by the browser flag; the one optimistic state is "your test alert reached the chat", held in memory until the read confirms it.
+
+**Tier.** Unit: `src/data/alerts.test.ts` (no pass, signed read then pass refresh, chain-scoped pass, refused and unreachable, status parsing); `apps/agent/test/telegramStatusRoute.test.ts` (status shape, scope, digest-only, expiry, cap); `rateLimit.test.ts` (both routes metered).
+
+**Gap.** Live-only: the round trip needs the deployed agent and a linked Telegram chat.
+
 <a id="cov-3434-delegation-warning"></a>
 ### #3434 EIP-7702 delegation warning
 

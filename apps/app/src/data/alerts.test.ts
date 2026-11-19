@@ -7,12 +7,20 @@
  * to switch a lane OFF (the round-8 defect — a gate trapping somebody
  * in a subscription), and permitting a held wallet to switch one on.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildAlertPhraseMessage, buildAlertSettingsMessage } from '@vaipakam/lib/alertsMessage';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  buildAlertPhraseMessage,
+  buildAlertSettingsMessage,
+  buildTelegramStatusMessage,
+} from '@vaipakam/lib/alertsMessage';
 import {
   DEFAULT_PREFS,
   FLOOR_BANDS,
   addsAlertOptIn,
+  parseLinkStatus,
+  readPassKey,
+  readTelegramStatus,
+  refreshTelegramStatus,
   saveAlertPrefs,
   setAlertPhrase,
   unlinkTelegram,
@@ -446,5 +454,94 @@ describe('setAlertPhrase (#3346)', () => {
     expect(await setAlertPhrase(WALLET, 84532, 'blue heron', recordingSigner().signMessage)).toEqual({
       kind: 'error',
     });
+  });
+});
+
+describe('the Telegram link status (#3573)', () => {
+  const WALLET = '0x1DAefA360ED370285f003Fa2d92DB75628088282' as const;
+  const PASS = 'p'.repeat(43);
+  const STATUS = { chainId: 84532, linked: true, pending: null, phraseSet: false };
+  // The tests run without a DOM: a Map stands in for this tab's storage.
+  const store = new Map<string, string>();
+  const sessionStorage = {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => void store.set(k, v),
+    removeItem: (k: string) => void store.delete(k),
+  };
+  beforeEach(() => {
+    store.clear();
+    vi.stubGlobal('sessionStorage', sessionStorage);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  function stubAgent(answers: Array<{ status: number; body: unknown }>) {
+    vi.stubGlobal('sessionStorage', sessionStorage);
+    vi.stubEnv('VITE_AGENT_ORIGIN', 'https://agent.test');
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: unknown, init?: RequestInit) => {
+        calls.push({ url: String(url), body: JSON.parse(String(init?.body)) as Record<string, unknown> });
+        const a = answers[Math.min(calls.length - 1, answers.length - 1)]!;
+        return new Response(JSON.stringify(a.body), { status: a.status });
+      }),
+    );
+    return calls;
+  }
+
+  it('asks for a signature while this tab holds no pass, and calls nothing', async () => {
+    const calls = stubAgent([{ status: 200, body: {} }]);
+    expect(await refreshTelegramStatus(WALLET, 84532)).toEqual({ kind: 'needs-signature' });
+    expect(calls).toEqual([]);
+  });
+
+  it('signs a read, keeps the pass for the tab, then refreshes on it without signing', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const calls = stubAgent([
+      { status: 200, body: { ok: true, wallet: WALLET.toLowerCase(), status: STATUS, pass: PASS, passExpiresAt: now + 3600, scope: 'wallet' } },
+      { status: 200, body: { ok: true, wallet: WALLET.toLowerCase(), status: { ...STATUS, chainId: 97 } } },
+    ]);
+    const wallet = recordingSigner();
+    expect(await readTelegramStatus(WALLET, 84532, wallet.signMessage)).toEqual({ kind: 'status', status: STATUS });
+    expect(calls[0]!.url).toBe('https://agent.test/telegram/status');
+    expect(wallet.signed).toEqual([buildTelegramStatusMessage(WALLET, 84532, calls[0]!.body.issuedAt as number)]);
+    expect(JSON.parse(sessionStorage.getItem(readPassKey(WALLET))!)).toMatchObject({ pass: PASS, chainId: null });
+    // A wallet-wide pass reads another network too.
+    const again = await refreshTelegramStatus(WALLET, 97);
+    expect(again).toEqual({ kind: 'status', status: { ...STATUS, chainId: 97 } });
+    expect(calls[1]!.url).toBe('https://agent.test/telegram/status/pass');
+    expect(calls[1]!.body).toEqual({ pass: PASS, chain_id: 97 });
+    expect(wallet.signed).toHaveLength(1);
+  });
+
+  it('a smart account pass covers its own network only', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    stubAgent([{ status: 200, body: { ok: true, wallet: WALLET.toLowerCase(), status: STATUS, pass: PASS, passExpiresAt: now + 3600, scope: 'chain' } }]);
+    await readTelegramStatus(WALLET, 84532, recordingSigner().signMessage);
+    expect(await refreshTelegramStatus(WALLET, 97)).toEqual({ kind: 'needs-signature' });
+  });
+
+  it('drops a pass the service refuses, and says unreachable rather than guessing', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    sessionStorage.setItem(readPassKey(WALLET), JSON.stringify({ pass: PASS, expiresAt: now + 3600, chainId: null }));
+    stubAgent([{ status: 503, body: {} }]);
+    expect(await refreshTelegramStatus(WALLET, 84532)).toEqual({ kind: 'unreachable' });
+    expect(sessionStorage.getItem(readPassKey(WALLET))).not.toBeNull();
+    stubAgent([{ status: 401, body: { error: 'pass-expired' } }]);
+    expect(await refreshTelegramStatus(WALLET, 84532)).toEqual({ kind: 'needs-signature' });
+    expect(sessionStorage.getItem(readPassKey(WALLET))).toBeNull();
+  });
+
+  it('reads only a well-formed status for the network asked about', () => {
+    expect(parseLinkStatus(STATUS, 84532)).toEqual(STATUS);
+    expect(parseLinkStatus(STATUS, 97)).toBeNull();
+    expect(
+      parseLinkStatus({ ...STATUS, pending: { kind: 'unlink', effectiveAt: null } }, 84532)?.pending,
+    ).toEqual({ kind: 'unlink', effectiveAt: null });
+    expect(parseLinkStatus({ ...STATUS, pending: { kind: 'other', effectiveAt: 1 } }, 84532)).toBeNull();
+    expect(parseLinkStatus({ ...STATUS, linked: 'yes' }, 84532)).toBeNull();
   });
 });

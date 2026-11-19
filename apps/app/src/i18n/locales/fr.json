@@ -415,7 +415,20 @@
       "phraseRemoved": "Supprimée. Vos alertes Telegram pour ce portefeuille ne commencent plus par une phrase.",
       "phraseRemovedChainOnly": "Supprimée pour {{network}}. Un portefeuille smart account définit sa phrase par réseau ; supprimez-la depuis chaque autre réseau avec sa propre signature.",
       "phraseInvalid": "Cette phrase ne peut pas être utilisée. Utilisez de 3 à 32 lettres, chiffres, espaces ou signes de ponctuation simples, avec au moins une lettre ou un chiffre.",
-      "phraseError": "Impossible d’enregistrer votre phrase pour le moment. Veuillez réessayer dans un instant."
+      "phraseError": "Impossible d’enregistrer votre phrase pour le moment. Veuillez réessayer dans un instant.",
+      "phraseIsSet": "Une phrase est définie pour ce réseau.",
+      "phraseNotSet": "Aucune phrase n’est définie pour ce réseau.",
+      "statusChecking": "Vérification de votre lien Telegram auprès du service d’alertes…",
+      "statusNeedsSignature": "Ce navigateur ne peut pas savoir si un chat Telegram est lié tant que vous n’avez pas vérifié. La vérification signe un court message gratuit ; la réponse reste ensuite lisible dans cet onglet pendant 12 heures sans nouvelle signature.",
+      "statusCheck": "Vérifier l’état du lien",
+      "statusUnreachable": "Impossible de joindre le service d’alertes : on ne sait pas pour l’instant si un chat Telegram est lié.",
+      "statusRefused": "Le service d’alertes n’a pas accepté cette signature, l’état du lien n’a donc pas été lu. Vérifiez à nouveau pour signer une nouvelle demande.",
+      "statusNotLinked": "Aucun chat Telegram n’est lié à ce portefeuille sur {{network}}.",
+      "linkedJustNow": "Telegram lié — votre alerte de test a atteint le chat. Vérifiez l’état du lien pour le confirmer auprès du service d’alertes.",
+      "statusRemovalPending": "Suppression en attente : votre chat reçoit toutes les alertes jusqu’au {{date}}, puis elles s’arrêtent. Le mode protégé impose cette attente.",
+      "statusRemovalPendingUntold": "Suppression en attente : l’attente du mode protégé commence dès que votre chat reçoit notre avis ; d’ici là, il reçoit toutes les alertes.",
+      "statusMovePending": "Passage à un nouveau chat en attente : les alertes vont à votre chat actuel jusqu’au {{date}}, puis changent. Le mode protégé impose cette attente.",
+      "statusMovePendingUntold": "Passage à un nouveau chat en attente : l’attente du mode protégé commence dès que votre chat actuel reçoit notre avis."
     },
     "notifications": {
       "bellLabel": "Notifications",

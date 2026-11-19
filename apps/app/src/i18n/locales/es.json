@@ -415,7 +415,20 @@
       "phraseRemoved": "Quitada. Tus alertas de Telegram para esta billetera ya no empiezan con una frase.",
       "phraseRemovedChainOnly": "Quitada para {{network}}. Una billetera de cuenta inteligente establece su frase por red; quítala desde cada otra red con su propia firma.",
       "phraseInvalid": "Esa frase no se puede usar. Usa de 3 a 32 letras, números, espacios o signos de puntuación sencillos, con al menos una letra o un número.",
-      "phraseError": "No se pudo guardar tu frase ahora mismo. Inténtalo de nuevo en un momento."
+      "phraseError": "No se pudo guardar tu frase ahora mismo. Inténtalo de nuevo en un momento.",
+      "phraseIsSet": "Hay una frase establecida para esta red.",
+      "phraseNotSet": "No hay ninguna frase establecida para esta red.",
+      "statusChecking": "Comprobando tu vínculo de Telegram con el servicio de alertas…",
+      "statusNeedsSignature": "Este navegador no puede ver si hay un chat de Telegram vinculado hasta que lo compruebes. Comprobarlo firma un mensaje corto y gratuito; después la respuesta sigue disponible en esta pestaña durante 12 horas sin volver a firmar.",
+      "statusCheck": "Comprobar estado del vínculo",
+      "statusUnreachable": "No se pudo contactar con el servicio de alertas, así que ahora mismo no se sabe si hay un chat de Telegram vinculado.",
+      "statusRefused": "El servicio de alertas no aceptó esa firma, así que no se leyó el estado del vínculo. Vuelve a comprobarlo para firmar una nueva solicitud.",
+      "statusNotLinked": "No hay ningún chat de Telegram vinculado a esta billetera en {{network}}.",
+      "linkedJustNow": "Telegram vinculado: tu alerta de prueba llegó al chat. Comprueba el estado del vínculo para confirmarlo con el servicio de alertas.",
+      "statusRemovalPending": "Eliminación pendiente: tu chat seguirá recibiendo todas las alertas hasta el {{date}} y luego dejará de hacerlo. El modo protegido la hace esperar.",
+      "statusRemovalPendingUntold": "Eliminación pendiente: la espera del modo protegido empieza cuando tu chat reciba nuestro aviso; hasta entonces sigue recibiendo todas las alertas.",
+      "statusMovePending": "Cambio a un chat nuevo pendiente: las alertas siguen yendo a tu chat actual hasta el {{date}} y luego cambian. El modo protegido lo hace esperar.",
+      "statusMovePendingUntold": "Cambio a un chat nuevo pendiente: la espera del modo protegido empieza cuando tu chat actual reciba nuestro aviso."
     },
     "notifications": {
       "bellLabel": "Notificaciones",

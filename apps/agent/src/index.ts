@@ -77,6 +77,11 @@
  *   POST /telegram/test                     — frontend → send ONE test alert
  *                                             to the linked chat (UX-012;
  *                                             EIP-191 signature required too)
+ *   POST /telegram/status                   — frontend → the owner's own Telegram
+ *                                             status, signed; issues a read
+ *                                             pass (#3573)
+ *   POST /telegram/status/pass              — frontend → the same status on a
+ *                                             read pass (#3573)
  *   POST /keeper/lock/poll|pending|handled  — keeper → LOCK requests (#1722;
  *                                             KEEPER_AGENT_TOKEN, keeperRoutes.ts)
  *   POST /keeper/alerts                     — keeper → owner alerts as data
@@ -180,6 +185,7 @@ import { isTickDue } from '@vaipakam/lib/cronCadence';
 import { AGENT_TICK_CADENCE_MINUTES } from './tickCadence';
 import { readJsonBody } from '@vaipakam/lib/requestBody';
 import { applyAlertPhrase, parsePhraseField } from './alertPhraseRoute';
+import { answerPassStatus, answerSignedStatus, parsePassRequest } from './telegramStatusRoute';
 import { withAlertPhrase } from '@vaipakam/lib/alertPhrase';
 import { chainProtectionReader, d1LocaleReader } from './alertChannelChange';
 import {
@@ -527,6 +533,14 @@ export default {
     if (url.pathname === '/telegram/test' && req.method === 'POST') {
       return handleTestTelegram(req, resolved);
     }
+    // #3573 — the owner's own Telegram status, read from the agent's state:
+    // a signed read that issues a read pass, then refreshes on the pass.
+    if (url.pathname === '/telegram/status' && req.method === 'POST') {
+      return handleTelegramStatus(req, resolved);
+    }
+    if (url.pathname === '/telegram/status/pass' && req.method === 'POST') {
+      return handleTelegramStatusPass(req, resolved);
+    }
     // #1040 phase 1 — support-ticket capture from the connected app support
     // widget (rate limit + validation inside the handler).
     if (url.pathname === '/support/ticket' && req.method === 'POST') {
@@ -673,7 +687,14 @@ type CallerBudget =
  */
 export function callerBudgetFor(method: string, path: string): CallerBudget | null {
   if (method === 'PUT' && (path === '/thresholds' || path === '/alerts/phrase')) return 'ALERT_WRITE_RATELIMIT';
-  if (method === 'POST' && (path === '/link/telegram' || path === '/unlink/telegram' || path === '/telegram/test')) {
+  if (
+    method === 'POST' &&
+    (path === '/link/telegram' ||
+      path === '/unlink/telegram' ||
+      path === '/telegram/test' ||
+      path === '/telegram/status' ||
+      path === '/telegram/status/pass')
+  ) {
     return 'ALERT_WRITE_RATELIMIT';
   }
   if (method === 'POST' && path === '/support/ticket') return 'SUPPORT_TICKET_RATELIMIT';
@@ -1039,6 +1060,39 @@ async function handlePutAlertPhrase(req: Request, env: Env): Promise<Response> {
   );
 }
 
+/** #3573 — `POST /telegram/status`: a signed read of the signed chain's
+ *  Telegram status, which also issues a read pass under the signer's scope. */
+async function handleTelegramStatus(req: Request, env: Env): Promise<Response> {
+  const corsOrigin = resolveAllowedOrigin(req, env);
+  const read = await readJsonBody(req, MAX_SIGNED_REQUEST_BODY_BYTES);
+  if (!read.ok) return json({ error: read.error }, read.status, corsOrigin);
+  const signed = parseSignedLinkRequest(read.value);
+  if (!signed.ok) return json({ error: 'invalid-payload', reason: signed.reason }, 400, corsOrigin);
+  if (!getChainConfigs(env).some((c) => c.id === signed.req.chain_id)) {
+    return json({ error: 'chain-not-configured' }, 400, corsOrigin);
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const verified = await authoriseAlertRequest(req, env, signed.req, 'status', now);
+  if (!verified.ok) return refusal(verified, corsOrigin);
+  const answer = await answerSignedStatus(stateStub(env), signed.req.wallet, signed.req.chain_id, verified.via, now);
+  return json({ ok: true, ...answer }, 200, corsOrigin, { 'cache-control': 'no-store' });
+}
+
+/** #3573 — `POST /telegram/status/pass`: the status again, on a read pass. */
+async function handleTelegramStatusPass(req: Request, env: Env): Promise<Response> {
+  const corsOrigin = resolveAllowedOrigin(req, env);
+  const read = await readJsonBody(req, MAX_SIGNED_REQUEST_BODY_BYTES);
+  if (!read.ok) return json({ error: read.error }, read.status, corsOrigin);
+  const parsed = parsePassRequest(read.value);
+  if (!parsed.ok) return json({ error: 'invalid-payload', reason: parsed.reason }, 400, corsOrigin);
+  if (!getChainConfigs(env).some((c) => c.id === parsed.chainId)) {
+    return json({ error: 'chain-not-configured' }, 400, corsOrigin);
+  }
+  const answer = await answerPassStatus(stateStub(env), parsed.pass, parsed.chainId, Math.floor(Date.now() / 1000));
+  if (!answer.ok) return json({ error: answer.error }, answer.error === 'pass-expired' ? 401 : 403, corsOrigin);
+  return json({ ok: true, wallet: answer.wallet, status: answer.status }, 200, corsOrigin, { 'cache-control': 'no-store' });
+}
+
 async function handleTestTelegram(req: Request, env: Env): Promise<Response> {
   const corsOrigin = resolveAllowedOrigin(req, env);
   if (!env.TG_BOT_TOKEN) {
@@ -1303,12 +1357,13 @@ function resolveAllowedOrigin(req: Request, env: CorsEnv): string {
   return allow[0] ?? '*';
 }
 
-function json(data: unknown, status: number, corsOrigin: string): Response {
+function json(data: unknown, status: number, corsOrigin: string, extra: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': corsOrigin,
+      ...extra,
     },
   });
 }

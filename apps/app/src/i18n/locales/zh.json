@@ -415,7 +415,20 @@
       "phraseRemoved": "已移除。此钱包的 Telegram 提醒不再以短语开头。",
       "phraseRemovedChainOnly": "已为 {{network}} 移除。智能账户钱包按网络设置短语，请在其他每个网络上用各自的签名移除。",
       "phraseInvalid": "无法使用该短语。请使用 3 到 32 个字母、数字、空格或简单标点，且至少包含一个字母或数字。",
-      "phraseError": "暂时无法保存你的短语，请稍后再试。"
+      "phraseError": "暂时无法保存你的短语，请稍后再试。",
+      "phraseIsSet": "此网络已设置短语。",
+      "phraseNotSet": "此网络未设置短语。",
+      "statusChecking": "正在向提醒服务查询你的 Telegram 关联…",
+      "statusNeedsSignature": "在你查询之前，此浏览器无法知道是否已关联 Telegram 聊天。查询需要签署一条简短的免费消息；之后 12 小时内，此标签页无需再次签名即可读取结果。",
+      "statusCheck": "查询关联状态",
+      "statusUnreachable": "无法连接提醒服务，因此目前不知道是否已关联 Telegram 聊天。",
+      "statusRefused": "提醒服务未接受该签名，因此未读取关联状态。请再次查询以签署新的请求。",
+      "statusNotLinked": "在 {{network}} 上，此钱包未关联任何 Telegram 聊天。",
+      "linkedJustNow": "已关联 Telegram：你的测试提醒已送达聊天。请查询关联状态，向提醒服务确认。",
+      "statusRemovalPending": "移除待生效：在 {{date}} 之前你的聊天仍会收到每条提醒，之后停止。这是受保护模式要求的等待。",
+      "statusRemovalPendingUntold": "移除待生效：受保护模式的等待从你的聊天收到我们的通知时开始；在此之前它仍会收到每条提醒。",
+      "statusMovePending": "迁移到新聊天待生效：在 {{date}} 之前提醒仍发送到你当前的聊天，之后迁移。这是受保护模式要求的等待。",
+      "statusMovePendingUntold": "迁移到新聊天待生效：受保护模式的等待从你当前的聊天收到我们的通知时开始。"
     },
     "notifications": {
       "bellLabel": "通知",

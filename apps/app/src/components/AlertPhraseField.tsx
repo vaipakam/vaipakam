@@ -27,9 +27,14 @@ export interface AlertPhraseFieldProps {
   signMessage: (message: string) => Promise<string>;
   /** Disabled while another alerts request is in flight. */
   disabled: boolean;
+  /** Whether the alert service holds a phrase for this network (#3573),
+   *  or null when the card has not read its status. Never the phrase. */
+  phraseSet: boolean | null;
+  /** Called after the service stored a change, so the card re-reads it. */
+  onSaved: () => void;
 }
 
-export function AlertPhraseField({ address, chainId, signMessage, disabled }: AlertPhraseFieldProps) {
+export function AlertPhraseField({ address, chainId, signMessage, disabled, phraseSet, onSaved }: AlertPhraseFieldProps) {
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -52,6 +57,7 @@ export function AlertPhraseField({ address, chainId, signMessage, disabled }: Al
       const result = await setAlertPhrase(address, forChain, remove ? null : draft, signMessage);
       if (result.kind === 'saved') {
         setDraft('');
+        onSaved();
         const network = chainDisplayName(forChain) ?? String(forChain);
         if (remove) {
           setNotice(
@@ -79,6 +85,9 @@ export function AlertPhraseField({ address, chainId, signMessage, disabled }: Al
     <div className="stack" style={{ gap: 8 }} data-testid="alert-phrase">
       <strong>{copy.alerts.phraseTitle}</strong>
       <span className="muted">{copy.alerts.phraseBody}</span>
+      {phraseSet === null ? null : (
+        <span data-testid="alert-phrase-state">{phraseSet ? copy.alerts.phraseIsSet : copy.alerts.phraseNotSet}</span>
+      )}
       <label className="stack" style={{ gap: 4 }}>
         <span>{copy.alerts.phraseLabel}</span>
         <input

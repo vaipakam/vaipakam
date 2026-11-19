@@ -43,6 +43,7 @@ import {
   buildAlertPhraseMessage,
   buildAlertSettingsMessage,
   buildTelegramLinkMessage,
+  buildTelegramStatusMessage,
   buildTelegramTestMessage,
   buildTelegramUnlinkMessage,
 } from '@vaipakam/lib/alertsMessage';
@@ -50,7 +51,7 @@ import type { AlertSettingsChange } from '@vaipakam/lib/alertsMessage';
 import { copy } from '../content/copy';
 import { agentOrigin as configuredAgentOrigin } from '../lib/endpoints';
 
-/* The signed messages (link, unlink, save settings, test alert, alert phrase) come from `@vaipakam/lib/alertsMessage`
+/* The signed messages (link, unlink, save settings, test alert, alert phrase, status) come from `@vaipakam/lib/alertsMessage`
  * (#2014) — ONE builder per action, imported by both this client and
  * the agent Worker, because the Worker reconstructs the exact bytes
  * to recover the signer and a drifted character rejects every
@@ -210,10 +211,10 @@ export interface AlertPrefs extends AlertBands {
   repayDue: boolean;
   /** "Message me if my loan gets risky" — HF-band alerts. */
   risky: boolean;
-  /** Optimistic local record that the Telegram handshake was done —
-   *  the agent has no read-back endpoint, so this mirrors what the
-   *  user completed on this device. Unlink stays reachable even when
-   *  this is false (linked elsewhere / storage cleared). */
+  /** Local record that the Telegram handshake was completed on this
+   *  device. Since #3573 it decides nothing the card shows: the link
+   *  status is read from the alert service. It is kept as the enrolment
+   *  baseline `addsAlertOptIn` compares against. */
   telegramLinked: boolean;
   /** Push rail opt-in. One-way on the backend: `push_channel` is
    *  COALESCE-preserved on later saves, so enabling sticks and there
@@ -604,6 +605,135 @@ export async function setAlertPhrase(
     return { kind: 'invalid' };
   }
   return { kind: 'error' };
+}
+
+/** One network's Telegram link as the alert service holds it (#3573): the
+ *  one source, read back, never inferred from this browser. `pending` is a
+ *  removal or chat move waiting out protected mode's delay; its
+ *  `effectiveAt` is null until the old chat was told, which starts the wait. */
+export interface TelegramLinkStatus {
+  chainId: number;
+  linked: boolean;
+  pending: { kind: 'unlink' | 'replace'; effectiveAt: number | null } | null;
+  phraseSet: boolean;
+}
+
+/** A status read: the status, or why there is none. `needs-signature`: no
+ *  read pass in this tab covers the network, so the owner must sign a read
+ *  first; `unreachable`: the service could not be asked or did not answer. */
+export type TelegramStatusResult =
+  | { kind: 'status'; status: TelegramLinkStatus }
+  | { kind: 'needs-signature' }
+  | { kind: 'unreachable' };
+
+interface StoredReadPass {
+  pass: string;
+  expiresAt: number;
+  /** Null: every network (a plain wallet signature). */
+  chainId: number | null;
+}
+
+/** Where this tab keeps the read pass the service issued for `wallet`.
+ *  Session storage, so it ends with the tab; the pass reads the status
+ *  and changes nothing. */
+export function readPassKey(wallet: string): string {
+  return `vaipakam.alerts.tgStatusPass.${wallet.toLowerCase()}`;
+}
+
+function loadReadPass(wallet: string, chainId: number, now: number): StoredReadPass | null {
+  try {
+    const raw = sessionStorage.getItem(readPassKey(wallet));
+    if (!raw) return null;
+    const v = JSON.parse(raw) as Partial<StoredReadPass>;
+    if (typeof v.pass !== 'string' || typeof v.expiresAt !== 'number' || v.expiresAt <= now) return null;
+    const scope = typeof v.chainId === 'number' ? v.chainId : null;
+    if (scope !== null && scope !== chainId) return null;
+    return { pass: v.pass, expiresAt: v.expiresAt, chainId: scope };
+  } catch {
+    return null;
+  }
+}
+
+function storeReadPass(wallet: string, value: StoredReadPass | null): void {
+  try {
+    if (value === null) sessionStorage.removeItem(readPassKey(wallet));
+    else sessionStorage.setItem(readPassKey(wallet), JSON.stringify(value));
+  } catch {
+    // Without session storage the card asks for a signature each visit.
+  }
+}
+
+/** Parse the service's status object; null when it is not one. */
+export function parseLinkStatus(raw: unknown, chainId: number): TelegramLinkStatus | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  if (r.chainId !== chainId || typeof r.linked !== 'boolean' || typeof r.phraseSet !== 'boolean') return null;
+  let pending: TelegramLinkStatus['pending'] = null;
+  if (r.pending !== null) {
+    const p = r.pending as Record<string, unknown> | undefined;
+    if (!p || (p.kind !== 'unlink' && p.kind !== 'replace')) return null;
+    if (p.effectiveAt !== null && typeof p.effectiveAt !== 'number') return null;
+    pending = { kind: p.kind, effectiveAt: p.effectiveAt as number | null };
+  }
+  return { chainId, linked: r.linked, pending, phraseSet: r.phraseSet };
+}
+
+/** Read the status with the read pass this tab holds, without a signature.
+ *  `needs-signature` when no pass covers this network or the service says
+ *  the pass ended; a pass the service refused is dropped. */
+export async function refreshTelegramStatus(
+  wallet: `0x${string}`,
+  chainId: number,
+): Promise<TelegramStatusResult> {
+  const now = Math.floor(Date.now() / 1000);
+  const held = loadReadPass(wallet, chainId, now);
+  if (!held) return { kind: 'needs-signature' };
+  let res: PostResult;
+  try {
+    res = await post('/telegram/status/pass', { pass: held.pass, chain_id: chainId });
+  } catch {
+    return { kind: 'unreachable' };
+  }
+  if (res.ok && typeof res.data?.wallet === 'string' && res.data.wallet === wallet.toLowerCase()) {
+    const status = parseLinkStatus(res.data.status, chainId);
+    return status ? { kind: 'status', status } : { kind: 'unreachable' };
+  }
+  if (res.status === 401 || res.status === 403 || res.ok) {
+    // Expired, another network's, or answered for another wallet: drop it.
+    storeReadPass(wallet, null);
+    return { kind: 'needs-signature' };
+  }
+  return { kind: 'unreachable' };
+}
+
+/** Sign a status read (free, not a transaction), keep the read pass the
+ *  service issues for this tab, and answer the status. Throws when the
+ *  service refuses the signature, so the card can show its reason. */
+export async function readTelegramStatus(
+  wallet: `0x${string}`,
+  chainId: number,
+  signMessage: (message: string) => Promise<string>,
+): Promise<TelegramStatusResult> {
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const signature = await signMessage(buildTelegramStatusMessage(wallet, chainId, issuedAt));
+  let res: PostResult;
+  try {
+    res = await post('/telegram/status', { wallet, chain_id: chainId, issuedAt, signature });
+  } catch {
+    return { kind: 'unreachable' };
+  }
+  if (!res.ok) {
+    if (res.status >= 500 || res.status === 429) return { kind: 'unreachable' };
+    throw new Error(copy.alerts.statusRefused);
+  }
+  const status = parseLinkStatus(res.data?.status, chainId);
+  if (!status) return { kind: 'unreachable' };
+  const pass = res.data?.pass;
+  const expiresAt = res.data?.passExpiresAt;
+  if (typeof pass === 'string' && typeof expiresAt === 'number') {
+    storeReadPass(wallet, { pass, expiresAt, chainId: res.data?.scope === 'chain' ? chainId : null });
+  }
+  return { kind: 'status', status };
 }
 
 /** Clear the stored wallet ↔ Telegram link server-side. Signs the
