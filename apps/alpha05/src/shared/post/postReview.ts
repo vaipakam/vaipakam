@@ -37,6 +37,7 @@ import { CADENCE_ERRORS, cadenceRefusalText, classifyCadenceError, periodGraceLo
 import { needFromRefusal, type RiskNeed } from '../risk/riskAccess';
 import { readPostTariff, tariffBlockers, tariffKey, type PostTariff } from './tariffReview';
 import { postCall, readGuardPriced } from './guardPost';
+import { probeTransfer, type TransferProbe } from '../nft/transferProbe';
 import { diamondMayMove, holds, readErc1155, readErc721, type Erc1155State, type Erc721State } from '../nft/nft';
 
 type Hex = `0x${string}`;
@@ -113,6 +114,8 @@ export interface PostReview {
    *  request, the amount for an offer) and what it lets the protocol move,
    *  read at the same time as the rest. */
   holding: Holding;
+  /** #3433: a test transfer of a pledged NFT, at the holding's block. */
+  transfer: TransferProbe;
   readAt: number;
 }
 
@@ -341,6 +344,7 @@ export async function readPostReview(own: OwnStateClient, diamond: Hex, draft: P
     holding = { kind: 'erc20', funds, approvalSteps };
   }
   const allowanceCovers = !needsApproval({ holding, draft, diamond });
+  const transfer = await probePledge(own, { holding, draft, diamond, account, vault: vault as Hex });
   // The post exactly as it is sent: with a guard, the batch that arms it
   // (guardPost), so the protocol's verdict covers the guard too.
   const dry = await askThrough(own, async (c) => c.simulateContract({ address: diamond, ...postCall(CREATE_ABI, params, parsed.guardBps, await chainValidUntil(c)), account }));
@@ -411,8 +415,26 @@ export async function readPostReview(own: OwnStateClient, diamond: Hex, draft: P
     protocolShareBps: protocolShareBps as bigint | null,
     vault,
     holding,
+    transfer,
     readAt: Date.now(),
   };
+}
+
+/** #3433: a request pledging an NFT the wallet holds tests its move first. */
+function probePledge(own: OwnStateClient, r: Pick<PostReview, 'holding' | 'draft' | 'diamond' | 'account' | 'vault'>): Promise<TransferProbe> {
+  const h = r.holding;
+  if (r.draft.side !== 'borrower' || h.kind === 'erc20' || collateralLack(r).kind !== 'none') return Promise.resolve({ kind: 'not-asked' });
+  return probeTransfer(own, {
+    asset: r.draft.pair.collateral,
+    standard: h.kind,
+    tokenId: h.tokenId,
+    quantity: h.kind === 'erc1155' ? h.quantity : 1n,
+    holder: r.account,
+    diamond: r.diamond,
+    vault: r.vault,
+    protocolMayMove: !needsApproval(r),
+    blockNumber: h.state.blockNumber,
+  });
 }
 
 /** What posting locks of an ERC-20, as the draft states it. */
@@ -484,6 +506,16 @@ export function postBlockers(r: PostReview, meta: TokenMetaMap | null, copy: Pic
     out.push(copy.format(lack.kind === 'no-token' ? 'request.blockNoToken' : 'request.blockNotHeld', { id: String(h.tokenId) }));
   } else if (lack.kind === 'units' && h.kind === 'erc1155') {
     out.push(copy.format('request.blockUnits', { have: String(h.state.balance), need: String(h.quantity), id: String(h.tokenId) }));
+  }
+  // #3433: a token that would not move is refused before anything is built.
+  if (r.transfer.kind === 'refused' && h.kind !== 'erc20') {
+    out.push(
+      copy.format(r.transfer.by === 'protocol' ? 'request.blockTransferProtocol' : 'request.blockTransferHolder', {
+        id: String(h.tokenId),
+        reason: r.transfer.reason,
+        block: String(r.transfer.blockNumber),
+      }),
+    );
   }
   // A risk-access refusal comes before the pull, so the shortfall never
   // explains it; it is named with the step that clears it (ACC-RISK).

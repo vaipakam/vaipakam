@@ -464,6 +464,7 @@ export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onC
                 {b}
               </Notice>
             ))}
+            <TransferLine review={review} />
             {riskNeed !== null && riskPair !== null && (
               <RiskGate chain={chain} own={own} need={riskNeed} source={{ kind: 'pair', pair: riskPair }} pairLabel={pairLabel} onOpen={() => setRiskOpen(riskNeed)} />
             )}
@@ -559,4 +560,27 @@ export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onC
       )}
     </div>
   );
+}
+
+/** #3433: what the test move of a pledged NFT found, when it found no
+ *  refusal (a refusal is a blocker above). */
+function TransferLine({ review }: { review: PostReview }) {
+  const { format } = useCopy();
+  const t = review.transfer;
+  const h = review.holding;
+  if (h.kind === 'erc20') return null;
+  const id = String(h.tokenId);
+  if (t.kind === 'moves')
+    return (
+      <p className="tier-b" data-testid="nft-transfer-probe" data-probe="moves">
+        {format(t.by === 'protocol' ? 'request.transferMoves' : 'request.transferMovesHolder', { id, block: String(t.blockNumber) })}
+      </p>
+    );
+  if (t.kind === 'unread')
+    return (
+      <p className="tier-a" data-testid="nft-transfer-probe" data-probe="unread">
+        {format('request.transferUnread', { id, reason: t.reason })}
+      </p>
+    );
+  return null;
 }
