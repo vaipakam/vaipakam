@@ -551,6 +551,14 @@
       "title": "Search — Vaipakam Documentation",
       "description": "Search across the Vaipakam Overview, User Guide, and Whitepaper for any concept, function, or feature."
     },
+    "sharedAccounts": {
+      "title": "Shared accounts with a contract wallet | Vaipakam",
+      "description": "How a family, club or team can hold one Vaipakam account through a multi-signature contract wallet, what its rules can and cannot stop, and the known limits."
+    },
+    "runYourOwnAgent": {
+      "title": "Running your own agent — keepers | Vaipakam",
+      "description": "What a keeper you approve may do for your positions, what it can never do, and where to find the open-source reference keeper."
+    },
     "adminKnobs": {
       "title": "Protocol Console Docs — Governance Parameters Reference | Vaipakam",
       "description": "Reference for every governance-tunable Vaipakam parameter: current defaults, hard bounds, and recommended operational zones — LTV tiers, fees, grace periods, and more."

@@ -36,6 +36,7 @@ const DataRights = lazy(() => import('./pages/DataRights'));
 const Overview = lazy(() => import('./pages/Overview'));
 const UserGuide = lazy(() => import('./pages/UserGuide'));
 const Whitepaper = lazy(() => import('./pages/Whitepaper'));
+const GuidePage = lazy(() => import('./pages/GuidePage'));
 const HelpSearch = lazy(() => import('./pages/HelpSearch'));
 // `/protocol-console/docs` — canonical home for the Admin
 // Configurable Knobs & Switches reference. The interactive
@@ -153,6 +154,8 @@ function pageRoutes(): ReactElement {
       <Route path="help/basic" element={<UserGuide variant="basic" />} />
       <Route path="help/advanced" element={<UserGuide variant="advanced" />} />
       <Route path="help/technical" element={<Whitepaper />} />
+      <Route path="help/shared-accounts" element={<GuidePage guide="sharedAccounts" />} />
+      <Route path="help/run-your-own-agent" element={<GuidePage guide="runYourOwnAgent" />} />
       <Route path="help/search" element={<HelpSearch />} />
       {/* Admin Configurable Knobs & Switches reference. The
        *  defi-side `/protocol-console` dashboard's info-icons

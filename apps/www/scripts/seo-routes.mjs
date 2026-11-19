@@ -66,6 +66,8 @@ export const ROUTES = [
   '/help/advanced',
   '/help/technical',
   '/help/search',
+  '/help/shared-accounts',
+  '/help/run-your-own-agent',
   '/discord',
   '/terms',
   '/privacy',

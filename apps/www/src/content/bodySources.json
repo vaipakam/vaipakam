@@ -4,6 +4,8 @@
   "/help/advanced": "userguide/Advanced.{locale}.md",
   "/help/technical": "whitepaper/Whitepaper.{locale}.md",
   "/protocol-console/docs": "admin/AdminConfigurableKnobsAndSwitches.{locale}.md",
+  "/help/shared-accounts": "guides/SharedAccounts.{locale}.md",
+  "/help/run-your-own-agent": "guides/RunYourOwnAgent.{locale}.md",
   "/terms": null,
   "/privacy": null
 }
