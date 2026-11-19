@@ -28,7 +28,10 @@ retirement signal. A reward whose removal had begun also gets the
 expiry's completion signal. A reward that simply cannot be priced yet,
 because its days are not final, is left untouched for a later sweep: only
 an empty window is final. The forfeit path's empty remainder is retired
-the same way.
+the same way. As on the claim path, a reward's earlier-era slice is first
+brought to its settled state before the empty window is retired, so no
+half-prepared slice is left behind a retired reward; until it is, the
+sweep retries.
 
 No value moves differently. Indexers that treat the completion signal as
 the end of an expiry now see every begun expiry end.

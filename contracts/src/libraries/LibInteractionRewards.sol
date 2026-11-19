@@ -4745,6 +4745,16 @@ library LibInteractionRewards {
             // rescanned by every later sweep. A removed entry also gets its
             // expiry's terminal signal, so a begun expiry always ends.
             if (st.emptyWindow) {
+                // #1789 — as on the claim paths, the legacy slice's domain is
+                // driven to consumed BEFORE its settle: the settle tears down
+                // only a consumed domain, so retiring the entry while its
+                // domain was still staging would strand that domain. Only a
+                // claimable entry can have opened one (the claim paths open
+                // it under the same gate); a step taken now is a retry.
+                if (_entryClaimable(s, e)) {
+                    (bool sliceReady, , ) = LibRewardCustody.callLegacySliceEpochs(id);
+                    if (!sliceReady) return (expired, 0, 0);
+                }
                 _retireEmpty(s, id, e);
                 LibRewardCustody.callLegacySliceSettled(id, 0, 0); // a domain it opened holds nothing: dropped
                 _closeBegunExpiry(s, id, e);
