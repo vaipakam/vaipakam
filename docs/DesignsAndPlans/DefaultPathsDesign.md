@@ -153,7 +153,20 @@ Each switch stays the pause lever for its feature. Turning one on for a network 
 - **A user arriving from pooled lending:** a position with no end date on either side, and one plain statement of the difference: funds in a loan are not available on demand, and a loan can end at a renewal date.
 - **Everyone:** a vault whose free balance never moves without a step they signed.
 
-## 7. Wording rules
+### 6.1 A loan is a term, not a balance: the words and where they stand
+
+Added 2026-11-19 (#3763, owner's follow-up the same day). A renewing loan is a fixed-rate loan for a term that renews for the same term. It is never shown as a balance the user can draw on. The same statement stands in three places: the review screen before signing, the position's page, and the key risks list.
+
+**Lender, fixed rate.** "This is a fixed-rate loan to one borrower for {term}. It renews for another {term} at the same rate while you and the borrower both keep it going. Funds in a loan cannot be withdrawn. To get them back sooner, use Get cash from this loan, which hands the loan to another lender or sells it when one is available, or stop renewals: repayment then falls due on the loan's due date. Repayment can be late, or short if the borrower defaults."
+
+**Borrower, fixed rate.** "This is a fixed-rate loan from one lender for {term}. It renews at the same rate while you and your lender both keep it going. You can repay on any day and pay interest only for the days used. Your lender can stop renewals. The loan then continues with another lender at no more than the rate limit you set, or you repay by the due date."
+
+- **The borrower is not held to the term.** Every renewing loan charges interest by time, so the borrower's statement says so. What it must also say is the opposite risk, that the lender can end the loan at a renewal date.
+- **Variants, never silence.** A loan that does not renew says "It does not renew" in place of the renewal sentence. A floating loan names its rate as the reference plus a margin, never as a fixed rate, and follows 4.1 for its limit. Where the keeper's renewal pass is not running or not known, the renewal sentence says that a renewal happens only when someone submits it (rule 7). With "continue with another lender" off, the borrower's last sentence reads "The loan then falls due on its due date."
+- **The action stands beside the statement.** The lender's position shows **Get cash from this loan** (`LenderCashOutDesign.md`) and **Stop renewals**. The borrower's shows **Repay** and **Stop renewals**. The borrower's stop clears that loan's renewal limits, or a whole group's. The lender's renewal consent belongs to the slot, so the lender's stop says that it covers every loan the slot made, and lists them before it is signed.
+- **Every position shows its next renewal date,** on both sides, labelled as the date the loan renews or falls due, never as the date funds come back (3.6).
+- **Balances keep the two apart.** The account's balance view shows three lines: free balance, capital waiting in a slot, and principal in loans, the last labelled "in loans, not withdrawable". Withdraw offers the free balance only, and taking waiting capital out of a slot is its own step.
+
 
 The app says **pre-selected**, **switch off** and **one-time offer**. It never says auto-invest, never says idle funds are put to work, never presents a suggested rate as the platform's rate, and never states a return. The instant market is never called a pool.
 
@@ -196,7 +209,10 @@ For length the app says **no end date** and **set period** or **set term**. It n
 22. No highest rate and no reserve amount is sent that the borrower did not see on the review.
 23. With the keeper's renewal pass not running or not known on a network, "no end date" opens unselected and its review says who must submit a renewal. The same holds for "Re-lend repayments for me" and the roll pass, and for "continue with another lender".
 24. A floating loan's review shows the reference, the margin and the cap on separate lines, and no line presents the margin as a limit on the whole rate.
-25. Until the pair read exists, a dry run that fails for any reason other than the two named ones shows the pair's state as not known.
+25. The review screen, the position's page and the key risks list carry the same statement for the same loan, in the variant that matches it (renewing or not, fixed or floating, runner state, "continue with another lender" on or off).
+26. Withdraw never offers an amount above the free balance, and principal in loans is shown on its own line as not withdrawable.
+27. The lender's "Stop renewals" lists every loan of the slot before signing, and the borrower's clears only the loan or group chosen.
+28. Until the pair read exists, a dry run that fails for any reason other than the two named ones shows the pair's state as not known.
 
 ## 10. Alternatives considered
 
@@ -237,4 +253,5 @@ Still open:
 1. The fee the app suggests for single-transaction lending. The line is absent, not greyed, until the flash consent's setter exists.
 2. Which of the slot's existing controls gives exactly the outcome "Stop lending" states (no new loan, no renewal, no re-lending, un-lent capital free), and what the roll step does for a slot in that state.
 3. Whether the suggested reserve amount in 4.1 should cover one base term or more.
-4. Where the app reads a keeper pass's state from (rule 7): a status the keeper publishes per network and step, or the time of the platform keeper's latest run of that step on chain. Where neither answers, the state is "not known".
+4. Whether a lender needs a stop for one loan alone (6.1). Today the renewal consent is the slot's, and a handover request is the per-loan route.
+5. Where the app reads a keeper pass's state from (rule 7): a status the keeper publishes per network and step, or the time of the platform keeper's latest run of that step on chain. Where neither answers, the state is "not known".
