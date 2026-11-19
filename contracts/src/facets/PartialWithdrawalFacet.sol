@@ -10,7 +10,6 @@ import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
-import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -72,7 +71,9 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
 
     /**
      * @notice Allows borrower to withdraw partial collateral from an active loan.
-     * @dev Checks liquidity (must be liquid), simulates post-HF >= min and post-LTV <= max, withdraws from vault, updates loan.collateralAmount.
+     * @dev Checks liquidity (must be liquid), simulates post-HF >= min and post-LTV <= max, releases the
+     *      amount into the borrower token holder's vault as free balance (#3710), updates loan.collateralAmount.
+     *      Moving it to a wallet is the holder's own vault withdrawal.
      *      Reverts if illiquid, low HF, or high LTV post-withdrawal.
      *      Emits PartialCollateralWithdrawn.
      * @param loanId The active loan ID.
@@ -123,7 +124,7 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         // `loan.borrower == msg.sender` let a borrower who had SOLD their
         // position still pass the HF/LTV checks, decrement the lien, and
         // withdraw collateral (including the transferee's top-up) out of
-        // that vault. Requiring the NFT owner — and delivering to them —
+        // that vault. Requiring the NFT owner — and releasing into their vault —
         // aligns the authority with the entitlement. Common case
         // (`msg.sender == loan.borrower == NFT owner`) is unchanged.
         LibAuth.requireBorrowerNftOwner(loan);
@@ -183,15 +184,22 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
 
         // #569 round-10 P1 — withdraw from the STORED `loan.borrower`'s
         // vault (where the collateral physically sits and the lien is
-        // keyed). #3710 — the payee is read from the borrower token by the
-        // outflow policy, never chosen here: the holder that owns that vault
-        // (the side was consolidated above, so normally the caller) is paid
-        // as its own Owner payout, under protected mode's delay and lock and
-        // to a replaced account's manager; any other holder is paid at its
-        // wallet, or into its vault when it has protected mode on.
-        if (msg.sender == loan.borrower) LibProtectedAccount.requirePayoutRoom(loan.borrower);
-        LibVaultOutflow.toHolderWallet(
-            loan.borrower, loan.collateralAsset, amount, loanId, loan.borrowerTokenId, OutflowReason.PARTIAL_WITHDRAWAL
+        // keyed). #3710 (owner decision 2026-11-19) — the released collateral
+        // lands in the borrower token holder's VAULT as free balance, read
+        // from the token by the outflow policy, never chosen here. The side
+        // was consolidated above, so the holder normally owns that vault and
+        // nothing moves: only the lien drops and the amount becomes its own.
+        // Reaching a wallet is the holder's own vault withdrawal, under
+        // protected mode's delay and lock.
+        LibVaultOutflow.toPositionHolder(
+            loan.borrower,
+            LibVaultOutflow.ERC20,
+            loan.collateralAsset,
+            0,
+            amount,
+            loanId,
+            loan.borrowerTokenId,
+            OutflowReason.PARTIAL_WITHDRAWAL
         );
 
         // #3710 — the one collateral writer: it marks the loan (cooldown,

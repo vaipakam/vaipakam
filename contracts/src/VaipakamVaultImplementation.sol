@@ -829,15 +829,6 @@ contract VaipakamVaultImplementation is
         ) {
             return _isHolderVault(o.to, o.positionToken);
         }
-        // #3710 — the wallet of the token's current holder, or that holder's
-        // own vault (a protected holder is paid there). Never this vault's
-        // owner: its own payout is the Owner class, under its own rules.
-        if (c == VaultOutflowTypes.OutflowClass.HolderWallet) {
-            if (POSITION_NFT == address(0) || o.to == address(this)) return false;
-            address holder = IPositionHolderView(POSITION_NFT).holderOf(o.positionToken);
-            if (holder == address(0) || holder == ownerWallet || holder == creationOwner) return false;
-            return o.to == holder || _isHolderVault(o.to, o.positionToken);
-        }
         if (c == VaultOutflowTypes.OutflowClass.Treasury) return TREASURY != address(0) && o.to == TREASURY;
         if (c == VaultOutflowTypes.OutflowClass.Backstop) {
             address backstop = BACKSTOP;

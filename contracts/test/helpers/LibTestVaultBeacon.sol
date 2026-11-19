@@ -227,14 +227,13 @@ library LibTestVaultBeacon {
     /// @notice The policy host's whole routed surface, the one test-side
     ///         list (HelperTest's getter returns it).
     function outflowSelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](6);
         selectors[0] = VaultOutflowFacet.vaultOutflow.selector;
         selectors[1] = VaultOutflowFacet.vaultGrant.selector;
         selectors[2] = VaultOutflowFacet.vaultCloseGrant.selector;
         selectors[3] = VaultOutflowFacet.vaultOutflowToOwner.selector;
         selectors[4] = VaultOutflowFacet.vaultOutflowArgs.selector;
         selectors[5] = VaultOutflowFacet.vaultOutflowToDiamondERC20.selector;
-        selectors[6] = VaultOutflowFacet.holderWalletAttempt.selector;
     }
 
 }

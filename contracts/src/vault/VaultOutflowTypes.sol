@@ -82,13 +82,6 @@ library VaultOutflowTypes {
      *           that address's own vault when it is itself a protected
      *           account. Only a clawback and a recovered account's sweep use
      *           it; it passes no payout queue.
-     *         - HolderWallet (#3710): the WALLET of whoever holds
-     *           `positionToken` of loan `ref` now, read from the token by the
-     *           policy, never named by the route. A holder that is the paying
-     *           vault's own owner is paid as an Owner payout (its delay, its
-     *           lock, a replaced account's manager); any other holder at its
-     *           wallet, or at its own vault when it has protected mode on.
-     *           ERC-20 only.
      *         - IntegratorShare: a registered integrator's share of a new
      *           loan's initiation fee (#3682), from the lender's vault into the
      *           vault of the integrator's payout account, which the Diamond
@@ -100,6 +93,10 @@ library VaultOutflowTypes {
      *           Diamond derives the inviter from that user's own binding and
      *           refuses one whose period has ended. A protected inviter is
      *           paid into its vault, as for every wallet payout.
+     *         What a loan or an open offer owes a party always lands in the
+     *         position holder's VAULT as free balance (PositionHolder); only
+     *         the owner's own withdrawal reaches a wallet (owner decision
+     *         2026-11-19, #3710).
      */
     enum OutflowClass {
         Owner,
@@ -119,7 +116,6 @@ library VaultOutflowTypes {
         PrincipalToBorrower,
         Consolidation,
         Recovery,
-        HolderWallet,
         IntegratorShare,
         ReferralShare
     }
