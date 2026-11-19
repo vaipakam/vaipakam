@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import { encodeFunctionData } from 'viem';
 import { DIAMOND_ABI_VIEM, PositionNFTABI, VaipakamVaultImplementationABI } from '@vaipakam/contracts/abis';
-import { directAuth, protectionCall } from '@vaipakam/lib/protectedAccountView';
+import { directAuth, protectionCall, recoveryCall } from '@vaipakam/lib/protectedAccountView';
 import { EXIT_WRITES, isExitWrite } from './tosWriteGate';
 
 const call = (functionName: string, args: readonly unknown[]) => ({
@@ -151,6 +151,13 @@ describe('isExitWrite', () => {
     }
     expect(isExitWrite('protect', [])).toBe(false);
     expect(isExitWrite('protect', ['0xdeadbeef'])).toBe(false);
+  });
+
+  it('permits cancelling a pending recovery-address change, and gates the rest of recovery', () => {
+    const me = '0x00000000000000000000000000000000000000a1' as const;
+    expect(isExitWrite('protect', [recoveryCall('cancelRecoveryAddress', [directAuth(me)])])).toBe(true);
+    expect(isExitWrite('protect', [recoveryCall('clearRecoveryAddress', [directAuth(me)])])).toBe(false);
+    expect(isExitWrite('protect', [recoveryCall('settleRecoveryAddress', [])])).toBe(false);
   });
 
   it('still gates the protected-account writes that add exposure or reach', () => {
