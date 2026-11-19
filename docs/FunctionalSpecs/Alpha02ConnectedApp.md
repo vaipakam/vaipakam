@@ -1481,17 +1481,6 @@ The app uses chain reads and indexed reads for different jobs.
   wallet's own risk-access choices (its risk level, strict mode, and its
   consents and acknowledgements for asset pairings) are rows on its page: the
   protocol records each against the account that chose it. (#2703, #2707)
-- The vault code's change history is readable from the indexer: every
-  proposal, cancellation, application, version and revocation the vault
-  beacon records is kept per chain, in chain order, with the block it landed
-  in, the version it names and the time from which it may apply. A reader can
-  ask for one vault's history (its own requests plus the changes that apply
-  to every vault), for one kind of record, and page backwards. The answer
-  states the last block the indexer has read, so a reader never takes a
-  missing record for a change that did not happen. The beacon's records are
-  read in the same request as the Diamond's and never take a Diamond
-  record's place: a record both contracts can emit under the same name is
-  filed by the contract that emitted it. (#3281, #3422)
 - An Activity row states the asset and amount its transaction moved or offered
   when the activity record carries them as normalized fields — exact, or as a
   range for an offer that commits one. It never reconstructs an amount the
