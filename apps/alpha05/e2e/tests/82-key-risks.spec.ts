@@ -29,6 +29,7 @@ test('the risk page is one tap from the footer, with no wallet, and states the s
   await expect(list).toContainText('You can lose some or all of your funds.');
   await expect(list).toContainText('If it cannot be sold, you receive the collateral itself');
   await expect(page.getByTestId('risks-more')).toContainText('Tax on what you do here is your own responsibility.');
+  await expect(page.getByTestId('risks-more')).toContainText('Funds in a loan cannot be withdrawn.');
   await fitsWidth(page);
 });
 

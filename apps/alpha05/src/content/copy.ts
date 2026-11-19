@@ -904,6 +904,7 @@ export const copy = {
     moreTitle: B('Also worth knowing'),
     peg: A('A token meant to hold a steady value, such as a dollar token, can lose that value.'),
     feed: A('A price feed can be wrong or late, and a sale or a limit can act on that price.'),
+    lentFunds: A('Funds in a loan cannot be withdrawn. Repayment can be late, or short if the borrower defaults.'),
     tax: A('Rules and taxes differ by country and can change. Tax on what you do here is your own responsibility.'),
     thirdParty: A('Wallets, networks, swap routes and cross-chain transfers are run by others, outside this platform’s control.'),
     footerLink: B('Key risks'),
