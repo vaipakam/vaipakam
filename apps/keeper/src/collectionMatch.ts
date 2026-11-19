@@ -42,6 +42,7 @@
 // Ships disarmed. The caller is the matcher and earns the match share like any
 // match; the fill counts against the keeper's solver capacity.
 
+import type { TermsGate } from './termsGate';
 import type { Hex } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
@@ -192,6 +193,8 @@ export interface CollectionMatchArgs {
   uncertainBorrowers: Set<string>;
   now?: () => number;
   io: CollectionMatchIO;
+  /** #3734 — the pass's record of wallets the Terms rule stops. */
+  terms?: TermsGate;
   log: (line: string) => void;
 }
 
@@ -260,7 +263,7 @@ export async function runCollectionMatches(args: CollectionMatchArgs): Promise<C
       if (result.sims >= args.maxSims || result.submits >= args.maxSubmits || now() >= args.passEndMs) {
         return result;
       }
-      const b = nextCandidate(r, matched, args.uncertainBorrowers);
+      const b = nextCandidate(r, matched, args.uncertainBorrowers, args.terms);
       if (!b) {
         r.done = true;
         continue;
@@ -273,6 +276,13 @@ export async function runCollectionMatches(args: CollectionMatchArgs): Promise<C
       const v = await io.simulate(r.p, b, proof, args.passEndMs);
       if ('unread' in v) continue;
       if ('refused' in v) {
+        // #3734 — a party has not accepted the Terms in force: name it, and
+        // end the parent when it is the parent's creator.
+        if (v.refused === 'TermsNotAccepted' && args.terms) {
+          await args.terms.refused(`collection offer ${r.p.offer.id} B=${b.id}`, [r.p.offer.creator, b.creator]);
+          if (args.terms.blocks(r.p.offer.creator)) r.done = true;
+          continue;
+        }
         const stop = STEP_STOPS.get(v.refused);
         if (stop) {
           log(`collection step stopped: ${stop}`);
@@ -302,11 +312,16 @@ export async function runCollectionMatches(args: CollectionMatchArgs): Promise<C
   }
 }
 
-function nextCandidate(r: ParentRun, matched: ReadonlySet<string>, uncertain: ReadonlySet<string>): OfferLite | null {
+function nextCandidate(
+  r: ParentRun,
+  matched: ReadonlySet<string>,
+  uncertain: ReadonlySet<string>,
+  terms?: TermsGate,
+): OfferLite | null {
   while (r.next < r.candidates.length) {
     const b = r.candidates[r.next++];
     const id = b.id.toString();
-    if (!matched.has(id) && !uncertain.has(id)) return b;
+    if (!matched.has(id) && !uncertain.has(id) && !terms?.blocks(b.creator)) return b;
   }
   return null;
 }

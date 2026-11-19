@@ -329,6 +329,14 @@ evidence that the migration has completed.
   Standing-intent sizing searches upward after a minimum-size refusal and
   downward after a capacity, collateral, or risk refusal; a dust refusal is
   not proof that every larger fill would fail.
+- Matching, collection matching and standing-intent fills send nothing the
+  Terms rule refuses: a wallet that has not accepted the Terms in force gets
+  no new position (#3734). The first pair a wallet's refusal stops is
+  followed by a read of which party is not current, and the run log names
+  that wallet once with the reason. Its later pairs are passed over for the
+  rest of the run. The keeper records no acceptance for anyone. A party
+  whose standing cannot be read is not passed over, and the log says it was
+  not read.
 - Offers created or re-priced in the last few minutes are looked at first
   each run, once their terms are old enough for the protocol's terms-age
   rule, so a new offer with a resting counterparty is matched on the next

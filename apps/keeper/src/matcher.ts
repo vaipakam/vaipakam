@@ -45,6 +45,7 @@
  * table via the shared D1 binding and only `previewMatch` on-chain.
  */
 
+import { MATCH_ERR_TERMS_NOT_ACCEPTED, TermsGate, termsCurrentReader } from './termsGate';
 import { createPublicClient, decodeEventLog, http, zeroAddress, type Abi, type Address, type Hex } from 'viem';
 import {
   MetricsFacetABI,
@@ -1294,6 +1295,9 @@ export async function runIntentFillPass(
   // #2572 r8 — this run's index ({@link runIndex}), which moves where the
   // intent registry walk starts.
   run = 0,
+  // #3734 — the run's record of wallets the Terms rule stops, shared with the
+  // offer-match walk.
+  terms?: TermsGate,
   // #625 WI-2c part 2b — returns the cumulative submit count so the tick can
   // thread the SHARED per-tick budget on into the roll pass.
 ): Promise<number> {
@@ -1366,7 +1370,10 @@ export async function runIntentFillPass(
     // and one with no fill the intent can size. All three cost no preview, so
     // they are passed over inside the walk rather than handed out.
     skip: (i, o) =>
-      uncertainBorrowers.has(o.id.toString()) || !borrowerFitsIntent(i, o) || sizeIntentFill(i, o) === null,
+      uncertainBorrowers.has(o.id.toString()) ||
+      !borrowerFitsIntent(i, o) ||
+      sizeIntentFill(i, o) === null ||
+      (terms !== undefined && (terms.blocks(i.owner) || terms.blocks(o.creator))),
     stop: overBudget,
     maxLive: MAX_PREVIEW_CALLS_PER_TICK,
   })) {
@@ -1431,6 +1438,15 @@ export async function runIntentFillPass(
     }
     // `ok` already folds intentError == Ok && matchError == Ok && riskBlock == 0.
     if (!preview.ok) {
+      // #3734 — a party has not accepted the Terms in force: name it, and stop
+      // the intent when it is the intent's owner.
+      if (preview.matchError === MATCH_ERR_TERMS_NOT_ACCEPTED && terms) {
+        await terms.refused(`intent of ${intent.owner} B=${b.id}`, [intent.owner, b.creator]);
+        if (terms.blocks(intent.owner)) {
+          deadIntents.add(intent);
+          continue;
+        }
+      }
       const e = preview.intentError;
       const scope = intentRefusalScope(e);
       // GLOBAL terminal — same verdict for EVERY intent + borrower this tick,
@@ -1869,6 +1885,9 @@ export interface MatchWalkArgs {
   onEntered: (o: OfferLite) => void;
   io: MatchWalkIO;
   log: (line: string) => void;
+  /** #3734 — the run's record of wallets the Terms rule stops; their pairs are
+   *  passed over once one is found. Absent in tests that do not exercise it. */
+  terms?: TermsGate;
 }
 
 export interface MatchWalkResult {
@@ -1920,6 +1939,8 @@ export async function runMatchWalks(args: MatchWalkArgs): Promise<MatchWalkResul
   // Pairs the lane previewed, so the walk does not preview them again.
   const tried = new Set<string>();
   const pairKey = (L: OfferLite, B: OfferLite) => `${L.id}:${B.id}`;
+  const termsStop = (L: OfferLite, B: OfferLite) =>
+    args.terms !== undefined && (args.terms.blocks(L.creator) || args.terms.blocks(B.creator));
 
   /** Previews one pair and submits it when the preview clears it. Returns
    *  the preview's code (null when it could not be read) and whether the
@@ -1936,6 +1957,9 @@ export async function runMatchWalks(args: MatchWalkArgs): Promise<MatchWalkResul
       log("match pass: this keeper's fill capacity is spent; waiting for it to refill");
       capacitySpent = true;
       return { code: p.errorCode, stop: true };
+    }
+    if (p && p.errorCode === MATCH_ERR_TERMS_NOT_ACCEPTED && args.terms) {
+      await args.terms.refused(`match L=${L.id} B=${B.id}`, [L.creator, B.creator]);
     }
     if (!p || p.errorCode !== MATCH_ERR_OK) {
       // Defence-in-depth: the units never pair a creator with itself (#235 /
@@ -1991,7 +2015,7 @@ export async function runMatchWalks(args: MatchWalkArgs): Promise<MatchWalkResul
     for (const [L, B] of fairPairs(offerMatchUnits(fb.lenders, fb.borrowers, run), {
       deadA: (l) => doneLenders.has(l),
       skip: (l, b) =>
-        (!isFresh(l) && !isFresh(b)) || uncertainBorrowers.has(b.id.toString()) || !termsFit(l, b),
+        (!isFresh(l) && !isFresh(b)) || uncertainBorrowers.has(b.id.toString()) || !termsFit(l, b) || termsStop(l, b),
       stop: laneStop,
       maxLive: lane.previews,
     })) {
@@ -2017,7 +2041,7 @@ export async function runMatchWalks(args: MatchWalkArgs): Promise<MatchWalkResul
     for (const [L, B] of fairPairs(offerMatchUnits(lenders, borrowers, run), {
       deadA: (l) => doneLenders.has(l),
       skip: (l, b) =>
-        uncertainBorrowers.has(b.id.toString()) || !termsFit(l, b) || tried.has(pairKey(l, b)),
+        uncertainBorrowers.has(b.id.toString()) || !termsFit(l, b) || tried.has(pairKey(l, b)) || termsStop(l, b),
       stop,
       maxLive: MAX_PREVIEW_CALLS_PER_TICK,
     })) {
@@ -2100,6 +2124,9 @@ async function runOfferMatcherTickForChain(
   const laneStart = Date.now();
   const passEnd = Math.min(tickStart + PER_CHAIN_WALL_TIME_BUDGET_MS, ctx.notAfterMs);
   const laneEnd = freshLaneDeadline(share, laneStart, passEnd);
+  const terms = new TermsGate(termsCurrentReader(ctx.client, ctx.diamond), (line) =>
+    console.log(`[matcher] chain=${ctx.chainId} ${line}`),
+  );
   const walk = await runMatchWalks({
     lenders,
     borrowers,
@@ -2114,6 +2141,7 @@ async function runOfferMatcherTickForChain(
       submit: (L, B, p, deadlineMs) => submitMatch(ctx, L.id, B.id, p, deadlineMs),
     },
     log: (line) => console.log(`[matcher] chain=${ctx.chainId} ${line}`),
+    terms,
   });
   let previewCalls = walk.previews;
   let submits = walk.submits;
@@ -2132,6 +2160,7 @@ async function runOfferMatcherTickForChain(
   if (collection && parents.length > 0 && !capacitySpent && !overBudget() && borrowers.size > 0) {
     const allBorrowers = [...borrowers.values()].flat();
     const c = await runCollectionMatches({
+      terms,
       parents,
       borrowers: allBorrowers,
       run,
@@ -2172,6 +2201,7 @@ async function runOfferMatcherTickForChain(
       uncertainBorrowers,
       capacitySpent,
       run,
+      terms,
     );
   }
 

@@ -23,6 +23,7 @@ import {
   type MatchWalkIO,
   type OfferLite,
 } from '../src/matcher';
+import { MATCH_ERR_TERMS_NOT_ACCEPTED, TermsGate } from '../src/termsGate';
 
 const COLL = '0x00000000000000000000000000000000000000c2';
 const addr = (n: number) => `0x${n.toString(16).padStart(40, '0')}` as `0x${string}`;
@@ -140,6 +141,21 @@ describe('FreshLaneTracker', () => {
 });
 
 describe('runMatchWalks', () => {
+  it('names a wallet the Terms rule stops once and passes over its later pairs (#3734)', async () => {
+    const offers = [
+      offer(1, addr(1), 0), offer(2, addr(2), 1), offer(3, addr(3), 1),
+    ];
+    const seen: string[] = [];
+    const lines: string[] = [];
+    const terms = new TermsGate(async (w) => w.toLowerCase() !== addr(1), (l) => lines.push(l));
+    const args = { ...walkArgs(offers, new Set(), refusingIO(MATCH_ERR_TERMS_NOT_ACCEPTED, seen)), terms };
+    await runMatchWalks(args);
+    // The lender (wallet 1) is not current: one pair previewed, the other passed over.
+    expect(seen).toHaveLength(1);
+    expect(terms.blocks(addr(1))).toBe(true);
+    expect(lines.filter((l) => l.includes('has not accepted the Terms'))).toHaveLength(1);
+  });
+
   it('previews a fresh pair first and does not preview it again in the walk', async () => {
     const offers = [
       offer(1, addr(1), 0), offer(2, addr(2), 1), // resting pair, bucket A
