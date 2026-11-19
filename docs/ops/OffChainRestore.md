@@ -1406,10 +1406,15 @@ For each table:
    tested converter** (#1477):
 
    ```bash
-   ( cd ops/offchain-data-warm && \
+   ( cd ops/offchain-data-warm && npm ci --ignore-scripts && \
      node scripts/restore-from-archive.mjs /path/to/decrypted-archive.json \
        --outdir /path/to/restore )
    ```
+
+   `npm ci` installs the package's own dependencies: the converter
+   re-checks every signed order's signature with `viem` (#2899, see
+   the `signed_offers` note below), and stops at the import if they
+   are missing.
 
    It writes one batch per table under `restore/d1/` (and
    `restore/d1-lz-alerts/` for a pre-#1440 archive's `lzAlerts`
@@ -1494,10 +1499,22 @@ For each table:
    >   writes it: the order is the canonical serialization of a well-formed
    >   order, and every market column the book filters on is that order's
    >   field (both writers read one rule, `packages/lib/src/signedOfferWire.mjs`).
-   >   It does NOT re-verify signatures. A forged row cannot be filled,
-   >   because the Diamond checks the signature at fill, but it would be
-   >   listed in the book until it expires (#2899 tracks re-verifying at
-   >   restore).
+   >
+   >   **It re-checks every order's signature with the route's own rule**
+   >   (#2899, `packages/lib/src/signedOfferCrypto.mjs`, which the route
+   >   uses too). An order is restored only when its chain has a Diamond in
+   >   this build's deployment bundle, its `order_hash` is the struct hash
+   >   of its `order_json`, and its signature recovers its signer under that
+   >   Diamond's EIP-712 domain, alone or in the set its `offer_set` names.
+   >   Any other row, such as one written straight into the database before
+   >   the backup ran, or one signed for a Diamond this build has replaced,
+   >   is **left out, not restored**: the route would never have admitted
+   >   it, and the Diamond would refuse to fill it. The converter carries on
+   >   with the rest and prints each left-out row with its key and reason
+   >   after the apply list. Keep that list in the incident record. The
+   >   printed row count, which step 4 checks, counts only the rows
+   >   restored. Like the route, the check is EOA-only: an order from a
+   >   contract signer cannot be in the book, so none is in the archive.
    >
    >   **Each imported order stays off the book until the replay has re-read
    >   it** (#3544). The converter stamps every order with the height its

@@ -24,22 +24,17 @@
  * so vitest can exercise it without a Worker runtime.
  */
 
-import {
-  hashStruct,
-  hashTypedData,
-  recoverAddress,
-  type Address,
-  type Hex,
-  type TypedDataDomain,
-} from 'viem';
+import { hashTypedData, type Address, type Hex } from 'viem';
 import {
   SIGNED_OFFER_FIELDS,
   SIGNED_OFFER_FIELD_NAMES,
   type SignedOrderWire,
 } from '@vaipakam/lib/signedOfferWire';
 import {
-  signedDigest,
+  signedOfferDomain as sharedSignedOfferDomain,
   signedOfferMessage,
+  signedOfferOrderHash,
+  verifySignedOffer,
   type SignedOfferDomain,
   type SignedOfferMessage,
   type SignedOfferPlacement,
@@ -64,12 +59,7 @@ export function signedOfferDomain(
   chainId: number,
   diamond: Address,
 ): SignedOfferDomain {
-  return {
-    name: 'Vaipakam SignedOffer',
-    version: '1',
-    chainId,
-    verifyingContract: diamond,
-  };
+  return sharedSignedOfferDomain(chainId, diamond);
 }
 
 /** Convert the wire shape (decimal strings) into the bigint-typed message
@@ -84,11 +74,7 @@ export function toTypedMessage(order: SignedOrderWire): SignedOfferMessage {
  *  `SignedOfferFacet.signedOfferOrderHash`. Domain-independent: the D1 PK and
  *  the on-chain fill ledger both key on it. */
 export function orderHashOf(order: SignedOrderWire): Hex {
-  return hashStruct({
-    data: toTypedMessage(order),
-    primaryType: 'SignedOffer',
-    types: SIGNED_OFFER_TYPES,
-  });
+  return signedOfferOrderHash(order);
 }
 
 /** The full EIP-712 digest the signer signs (`\x19\x01` ‖ domainSeparator ‖
@@ -129,17 +115,9 @@ export async function verifySignedOfferSignature(
   diamond: Address,
   placement: SignedOfferPlacement | null = null,
 ): Promise<boolean> {
-  try {
-    const recovered = await recoverAddress({
-      hash: signedDigest(orderHashOf(order), placement, signedOfferDomain(chainId, diamond)),
-      signature,
-    });
-    return recovered.toLowerCase() === order.signer.toLowerCase();
-  } catch {
-    // Malformed signature bytes (bad length / invalid recovery id) — treat
-    // as a verification failure, never a route 500.
-    return false;
-  }
+  // The one rule, shared with the restore converter (#2899):
+  // `@vaipakam/lib/signedOfferCrypto`, bound to viem in `signedOfferSet`.
+  return verifySignedOffer(order, signature, chainId, diamond, placement);
 }
 
 /** The order's principal ceiling — the fully-consumed threshold. Mirrors

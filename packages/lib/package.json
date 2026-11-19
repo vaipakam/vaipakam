@@ -206,6 +206,10 @@
       "types": "./src/signedOfferWire.d.mts",
       "default": "./src/signedOfferWire.mjs"
     },
+    "./signedOfferCrypto": {
+      "types": "./src/signedOfferCrypto.d.mts",
+      "default": "./src/signedOfferCrypto.mjs"
+    },
     "./rateLimit": {
       "types": "./src/rateLimit.ts",
       "default": "./src/rateLimit.ts"

@@ -483,8 +483,15 @@ function signedOrder(over = {}) {
     ...over,
   };
 }
+/** Signature verdicts that pass every row (#2899); the real check has its
+ *  own tests in signed-offer-signatures.test.mjs. */
+class AllSigned extends Map {
+  has() { return true; }
+  get() { return null; }
+}
+const SIGNED = new AllSigned();
 /** The chain's indexed height the replay-pending stamp is read from (#3544). */
-const AT = { replayThrough: new Map([[84532, 500]]) };
+const AT = { replayThrough: new Map([[84532, 500]]), signatureVerdicts: SIGNED };
 function signedOfferRow(over = {}, order = signedOrder()) {
   return {
     chain_id: 84532, order_hash: `0x${'b'.repeat(64)}`,
@@ -573,6 +580,7 @@ test('convertD1 counts what it imports, and an archive without the hybrid table 
       },
     },
     dir,
+    { signatureVerdicts: SIGNED },
   );
   const signed = entries.find((e) => e.name === 'signed_offers');
   assert.equal(signed.rowCount, 1);
@@ -592,7 +600,10 @@ function cursorTable(rows) {
 }
 const ARB = 421614;
 function restoreWith(tables, opts) {
-  const entries = convertD1({ version: 1, d1: { archive: [...baselineArchive(), ...tables] } }, outDir(), opts);
+  const entries = convertD1({ version: 1, d1: { archive: [...baselineArchive(), ...tables] } }, outDir(), {
+    signatureVerdicts: SIGNED,
+    ...opts,
+  });
   return readFileSync(entries.find((e) => e.name === 'signed_offers').file, 'utf8');
 }
 
@@ -651,6 +662,37 @@ test('signed_offers: a chain with no known indexed height is refused, not listed
   assert.match(restoreWith([orders], { replayThrough: addReplayThrough(new Map(), `${ARB}=42`) }), /NULL, 42\);/);
   // An archive with no orders needs no height.
   assert.doesNotThrow(() => restoreWith([tableFixture('signed_offers', SIGNED_OFFER_COLUMNS, [])]));
+});
+
+test('signed_offers: an order that fails the signature rule is left out and reported, never restored (#2899)', () => {
+  const good = signedOfferRow();
+  const forged = signedOfferRow({ order_hash: `0x${'a'.repeat(64)}` });
+  const table = tableFixture('signed_offers', SIGNED_OFFER_COLUMNS, [good, forged]);
+  const verdicts = new Map([
+    [`84532:${good.order_hash}`, null],
+    [`84532:${forged.order_hash}`, 'the signature does not recover the signer'],
+  ]);
+  const batch = tableToBatch(table, { ...AT, signatureVerdicts: verdicts });
+  assert.equal(batch.imported, 1);
+  assert.deepEqual(batch.dropped, [{ row: 1, key: `84532:${forged.order_hash}`, problem: 'the signature does not recover the signer' }]);
+  assert.match(batch.sql, new RegExp(good.order_hash));
+  assert.doesNotMatch(batch.sql, new RegExp(forged.order_hash));
+  // The table is never restored unchecked: no verdicts, or none for a row.
+  assert.throws(() => tableToBatch(table, { replayThrough: AT.replayThrough }), /no signature verdicts/);
+  assert.throws(
+    () => tableToBatch(table, { ...AT, signatureVerdicts: new Map([[`84532:${good.order_hash}`, null]]) }),
+    /row 1: no signature verdict/,
+  );
+  // convertD1 carries the drops to the printed summary, and the count to check.
+  const entries = convertD1(
+    { version: 1, d1: { archive: [...baselineArchive(), cursorTable([{ chain_id: 84532, kind: 'diamond', last_block: 1, updated_at: 1 }]), table] } },
+    outDir(),
+    { signatureVerdicts: verdicts },
+  );
+  const signed = entries.find((e) => e.name === 'signed_offers');
+  assert.equal(signed.rowCount, 1);
+  assert.equal(signed.dropped.length, 1);
+  assert.equal(entries.find((e) => e.name === 'user_thresholds').dropped, undefined);
 });
 
 test('replay heights: a malformed cursor or flag is refused (#3544)', () => {

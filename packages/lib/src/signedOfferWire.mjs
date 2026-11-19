@@ -21,8 +21,9 @@
  * Plain JavaScript with no imports, because the converter runs under plain
  * Node outside the pnpm workspace; `signedOfferWire.d.mts` carries the types.
  * What this module does NOT decide is whether the signature is the signer's
- * over this order on this deployment: that needs the EIP-712 domain and is
- * the indexer's `signedOfferEip712.ts`.
+ * over this order on this deployment: that needs the EIP-712 domain and
+ * keccak, and is `signedOfferCrypto.mjs`, which the route and the converter
+ * also share (#2899).
  */
 
 /** The 46 fields, in struct order, with their EIP-712 types. Field order is

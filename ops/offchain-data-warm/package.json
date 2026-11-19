@@ -16,7 +16,9 @@
     "backup:ledger": "node scripts/backup-ledger.mjs",
     "backup:ledger:setup": "node scripts/setup-backup-ledger.mjs"
   },
-  "dependencies": {},
+  "dependencies": {
+    "viem": "2.48.11"
+  },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240924.0",
     "typescript": "^5.5.0",

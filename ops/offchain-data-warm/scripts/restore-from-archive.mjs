@@ -331,6 +331,16 @@ export const RESTORE_REPLAY_PENDING = {
   signed_offers: 'replay_pending_through',
 };
 
+/**
+ * Tables whose rows are restored only after their signature passes the
+ * indexer route's own rule again (#2899): `scripts/lib/signed-offer-signatures.mjs`
+ * computes a verdict per row before conversion, and a row that fails is left
+ * out and reported rather than restored. A table listed here is refused
+ * without a verdict for every row, so no caller can skip the check.
+ */
+export const SIGNATURE_CHECKED_TABLES = new Set(['signed_offers']);
+const verdictKeyOf = (row) => `${row.chain_id}:${row.order_hash}`;
+
 // Whole-row checks the writer's own invariants allow, run before any SQL is
 // emitted (#2636 r6). A `loan_orphans` entry is only worth restoring if its
 // payloads can put the withdrawal back: `row_json` is the `loans` row as it
@@ -377,7 +387,8 @@ const TRUSTED_ROW_CHECKS = {
   // every market column the field it copies. The rule is the indexer POST
   // route's own (`packages/lib/src/signedOfferWire.mjs`), so an archived row
   // is re-admitted only in the form the route would have written. Whether the
-  // signature is the signer's is #2899.
+  // signature is the signer's is decided separately, by the route's own
+  // signature rule (SIGNATURE_CHECKED_TABLES, #2899).
   signed_offers: signedOfferRowProblem,
 };
 
@@ -532,7 +543,7 @@ export function addReplayThrough(map, value) {
  *  (`imported`, the figure the post-import COUNT(*) must equal). Every
  *  archived row is validated before a hybrid table's projection (see
  *  RESTORE_PROJECTIONS) resets the part the §6 replay rebuilds. */
-export function tableToBatch(table, { replayThrough = new Map() } = {}) {
+export function tableToBatch(table, { replayThrough = new Map(), signatureVerdicts = null } = {}) {
   const name = assertIdentifier(table.name, 'table');
   if (!Array.isArray(table.schema) || table.schema.length === 0) {
     fail(`table ${name}: archive carries no schema — cannot order columns`);
@@ -542,6 +553,10 @@ export function tableToBatch(table, { replayThrough = new Map() } = {}) {
   // inserted even from an archive written before its column existed.
   const pendingCol = Object.hasOwn(RESTORE_REPLAY_PENDING, name) ? RESTORE_REPLAY_PENDING[name] : null;
   const insertColumns = pendingCol && !columns.includes(pendingCol) ? [...columns, pendingCol] : columns;
+  const signatureChecked = SIGNATURE_CHECKED_TABLES.has(name);
+  if (signatureChecked && !(signatureVerdicts instanceof Map)) {
+    fail(`table ${name}: no signature verdicts — every order's signature is re-checked before it is restored (#2899)`);
+  }
   const rows = Array.isArray(table.rows) ? table.rows : fail(`table ${name}: rows is not an array`);
   if (typeof table.rowCount === 'number' && table.rowCount !== rows.length) {
     fail(
@@ -582,6 +597,7 @@ export function tableToBatch(table, { replayThrough = new Map() } = {}) {
   const seenKeys = uniqueSets.map(() => new Set());
   const shapes = TRUSTED_COLUMN_SHAPES[name] ?? {};
   let imported = 0;
+  const dropped = [];
   for (const [i, row] of rows.entries()) {
     const keys = Object.keys(row);
     // Strict shape check: a row keyed differently from the schema is
@@ -607,6 +623,16 @@ export function tableToBatch(table, { replayThrough = new Map() } = {}) {
     }
     const problem = TRUSTED_ROW_CHECKS[name]?.(row);
     if (problem) fail(`table ${name} row ${i}: ${problem} — refusing to restore it`);
+    if (signatureChecked) {
+      const key = verdictKeyOf(row);
+      if (!signatureVerdicts.has(key)) fail(`table ${name} row ${i}: no signature verdict for ${key} — refusing to restore it unchecked`);
+      const problem = signatureVerdicts.get(key);
+      if (problem !== null) {
+        // Left out, not restored: the route would never have admitted it.
+        dropped.push({ row: i, key, problem });
+        continue;
+      }
+    }
     const projection = Object.hasOwn(RESTORE_PROJECTIONS, name) ? RESTORE_PROJECTIONS[name] : null;
     const restored = projection ? projection(row) : row;
     if (pendingCol) restored[pendingCol] = replayStamp(name, i, row, pendingCol, replayThrough);
@@ -614,7 +640,7 @@ export function tableToBatch(table, { replayThrough = new Map() } = {}) {
     lines.push(`INSERT INTO "${name}" (${colList}) VALUES (${values.join(', ')});`);
     imported++;
   }
-  return { sql: lines.join('\n') + '\n', imported };
+  return { sql: lines.join('\n') + '\n', imported, dropped };
 }
 
 /** The replay-pending stamp for one restored row (#3544): its chain's indexed
@@ -682,7 +708,11 @@ function dropRetiredTables(tables) {
   return kept;
 }
 
-export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db', replayThrough = new Map() } = {}) {
+export function convertD1(
+  archive,
+  outDir,
+  { lzDatabase = 'vaipakam-lz-alerts-db', replayThrough = new Map(), signatureVerdicts = null } = {},
+) {
   assertVersion(archive);
   // A version-1 archive ALWAYS carries d1.archive — backup.ts emits it
   // unconditionally. Treating its absence like the genuinely optional
@@ -854,9 +884,12 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
     secureStagingDir(dir);
     // Each chain's indexed height, for the replay-pending stamp (#3544). The
     // cursor is in the main section; the legacy section has no hybrid table.
-    const context = { replayThrough: database === ARCHIVE_DATABASE ? replayHeights(importable, replayThrough) : new Map() };
+    const context = {
+      replayThrough: database === ARCHIVE_DATABASE ? replayHeights(importable, replayThrough) : new Map(),
+      signatureVerdicts,
+    };
     for (const table of applyOrder(importable)) {
-      const { sql, imported } = tableToBatch(table, context);
+      const { sql, imported, dropped } = tableToBatch(table, context);
       const file = path.join(dir, `${table.name}.sql`);
       // Fresh inode, never write-through: a reused predictable file
       // could already be held open by another local account, and
@@ -868,6 +901,7 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
         name: table.name,
         file,
         rowCount: imported,
+        ...(dropped.length > 0 ? { dropped } : {}),
         database,
         tier:
           database !== ARCHIVE_DATABASE
@@ -1390,7 +1424,7 @@ export function shQuote(s) {
   return `'${String(s).replaceAll("'", `'\\''`)}'`;
 }
 
-export function main(argv) {
+export async function main(argv) {
   const args = argv.slice(2);
   const positional = [];
   let outDir = 'restore';
@@ -1419,7 +1453,12 @@ export function main(argv) {
   }
 
   const archive = JSON.parse(readFileSync(positional[0], 'utf8'));
-  const d1 = convertD1(archive, outDir, { lzDatabase, replayThrough });
+  // #2899: the route's signature rule, applied to every archived order before
+  // conversion. Loaded here, not at the top, because it needs this package's
+  // viem; the indexer's classification check imports this file without it.
+  const { signedOfferVerdicts } = await import('./lib/signed-offer-signatures.mjs');
+  const signatureVerdicts = await signedOfferVerdicts(archive);
+  const d1 = convertD1(archive, outDir, { lzDatabase, replayThrough, signatureVerdicts });
   const r2 = materializeR2(archive, outDir);
 
   // Per-row writer invariants on the legal tables first — a malformed
@@ -1474,6 +1513,12 @@ export function main(argv) {
   console.log('(parents before children — OffChainRestore.md §4), then verify');
   console.log('each post-import COUNT(*) EQUALS the row count printed here:\n');
   for (const [i, e] of born.entries()) console.log(`  ${i + 1}. ${cmd(e)}`);
+  for (const e of born.filter((b) => b.dropped)) {
+    console.log(`\n⚠ ${e.name}: ${e.dropped.length} row(s) left out, not restored — each fails the`);
+    console.log('  indexer route\'s own signature rule, so the route would never have admitted it');
+    console.log('  (OffChainRestore.md §4). Keep this list for the incident record:');
+    for (const d of e.dropped) console.log(`    row ${d.row} (${d.key}): ${d.problem}`);
+  }
 
   if (derived.length > 0) {
     console.log(`\nD1 (re-derivable): ${derived.length} batch(es) written but SKIP BY DEFAULT.`);
@@ -1500,7 +1545,7 @@ export function main(argv) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    process.exit(main(process.argv));
+    process.exit(await main(process.argv));
   } catch (e) {
     if (e instanceof RestoreError) {
       console.error(`FATAL: ${e.message}`);
