@@ -68,6 +68,9 @@ A repayment is lent again by the roll step, which only the slot's owner or a kee
 - With the switch off, "Keep lending when repaid" reads as it then is: each repayment waits as a claim until the lender re-lends it with one tap or collects it. The slot still fills new requests from its un-lent capital.
 - **Where the platform token is the lending asset, repayments are never lent again.** The roll step refuses that asset by rule, whoever calls it. The line is shown off and greyed with that reason, the batch carries no authorization for it, and the slot is described as it then is: it lends its capital once, and each repayment returns to the lender by the ordinary claim.
 - The review screen states which case the lender is in, using the app's existing reading of the roll permission (allowed, not authorized, not available for this asset, not known), and any cost of a keeper action that the existing roll review states.
+- **The roll action alone, and only where that is true.** A keeper acts for a wallet only while the wallet's own keeper access is on, and that one flag covers every keeper the wallet has approved, for every action it gave them. So:
+  - Where the wallet's keeper access is on, or the wallet has approved no keeper before, the line is pre-selected. The batch adds the roll action to what the platform's keeper already holds for that wallet, removes nothing and adds nothing else, and turns keeper access on only where no other approval exists for it to bring back.
+  - Where the wallet has switched keeper access off and still has keepers approved, the line is **not** pre-selected. Switching it on opens a list of every approved keeper and the actions each would regain, and the lender confirms that list before the batch may carry the flag. The words "the roll action only" are not shown in that case.
 - The permission is a wallet's, not a slot's. Where the wallet already gave it, the line shows it as given and the batch carries no call for it. Switching it off on this form leaves an existing permission as it is and says where to remove it.
 
 ### 3.3 Two forms of the same consent
@@ -149,9 +152,10 @@ The app says **pre-selected**, **switch off** and **one-time offer**. It never s
 11. An existing slot gains no consent until its owner signs the review.
 12. With "Re-lend repayments for me" on and no earlier permission, the batch authorizes the platform's keeper for the roll action alone, and a repayment of the slot's loan is lent again by the keeper. With it off, no authorization is sent, the review screen says each repayment waits for the lender, and the keeper's roll is refused.
 13. Renewal on with takeover off sets exactly that, and the slot takes over no loan.
-14. A slot that lends the platform token shows "Re-lend repayments for me" off and greyed, sends no authorization, and its review screen says repayments return by the ordinary claim.
-15. A request that allows a prepay listing or carries a cadence is not shown as fillable by a slot, on the Lend review or in the Borrow form's count.
-16. With the form set to "choose one", nothing is selected on opening, the form cannot be submitted until an option is tapped, and the batch sent equals the pre-selected form's for the same choices.
+14. A wallet with keeper access off and another keeper approved opens the form with "Re-lend repayments for me" off. Switching it on shows that keeper and its actions, and no batch turns keeper access on without that list confirmed. The platform keeper's earlier actions are unchanged by the batch apart from the roll action added.
+15. A slot that lends the platform token shows "Re-lend repayments for me" off and greyed, sends no authorization, and its review screen says repayments return by the ordinary claim.
+16. A request that allows a prepay listing or carries a cadence is not shown as fillable by a slot, on the Lend review or in the Borrow form's count.
+17. With the form set to "choose one", nothing is selected on opening, the form cannot be submitted until an option is tapped, and the batch sent equals the pre-selected form's for the same choices.
 
 ## 10. Alternatives considered
 
