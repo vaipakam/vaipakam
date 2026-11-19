@@ -1006,8 +1006,8 @@ describe('backing capture + serve — whether the pinned block was settled (#221
     await capture(env, FIGS, SAFE_BLOCK, false);
     await capture(env, FIGS, SAFE_BLOCK + 1n, true);
     expect((await served(env)).blockSettled).toBe(true);
-    await capture(env, FIGS, SAFE_BLOCK + 2n, false);
-    expect((await served(env)).blockSettled).toBe(false);
+    await capture(env, FIGS, SAFE_BLOCK + 2n, true);
+    expect((await served(env)).blockSettled).toBe(true);
   });
 
   it('a row captured before 0104 reads as NOT RECORDED, never as settled', async () => {
@@ -1061,5 +1061,95 @@ describe('backing capture + serve — whether the pinned block was settled (#221
     expect(storedBlockSettled(1)).toBe(true);
     expect(storedBlockSettled(0)).toBe(false);
     for (const v of [null, undefined, 2, '1', true, -1]) expect(storedBlockSettled(v)).toBeNull();
+  });
+});
+
+// ─── The capture-replacement rule (#2210) ───────────────────────────────
+
+function stored(h: ReturnType<typeof harness>['h']) {
+  return h.db
+    .prepare(`SELECT block_number, block_settled FROM recycle_backing_snapshot WHERE chain_id = ?`)
+    .get(CHAIN);
+}
+
+describe('backing capture — which reading replaces the stored one (#2210)', () => {
+  const FIGS = { ...BASE, activated: true, known: true, holderBalance: 9n, holderAttributed: 9n };
+  const T0 = Date.parse('2026-11-19T00:00:00.000Z');
+
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(T0);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  /** The staleness window the read route would apply to the stored row now. */
+  function windowMs(h: ReturnType<typeof harness>['h']): number {
+    const row = h.db
+      .prepare(`SELECT chain_count, tick_minutes FROM recycle_backing_snapshot WHERE chain_id = ?`)
+      .get(CHAIN) as { chain_count: number; tick_minutes: number };
+    return snapshotMaxAgeMs(row.chain_count, row.tick_minutes, row.chain_count, row.tick_minutes);
+  }
+
+  it('a settled capture beats a guessed one, even at a LOWER block', async () => {
+    const { h, env } = harness();
+    await capture(env, FIGS, SAFE_BLOCK + 10n, false);
+    expect(stored(h)).toEqual({ block_number: (SAFE_BLOCK + 10n).toString(), block_settled: 0 });
+    vi.setSystemTime(T0 + 60_000);
+    await capture(env, FIGS, SAFE_BLOCK, true);
+    expect(stored(h)).toEqual({ block_number: SAFE_BLOCK.toString(), block_settled: 1 });
+    expect((await served(env)).blockSettled).toBe(true);
+  });
+
+  it('settled over settled: the block only rises', async () => {
+    const { h, env } = harness();
+    await capture(env, FIGS, SAFE_BLOCK, true);
+    await capture(env, FIGS, SAFE_BLOCK - 1n, true);
+    expect(stored(h)).toEqual({ block_number: SAFE_BLOCK.toString(), block_settled: 1 });
+    await capture(env, FIGS, SAFE_BLOCK, true);
+    expect(stored(h)).toEqual({ block_number: SAFE_BLOCK.toString(), block_settled: 1 });
+    await capture(env, FIGS, SAFE_BLOCK + 1n, true);
+    expect(stored(h)).toEqual({ block_number: (SAFE_BLOCK + 1n).toString(), block_settled: 1 });
+  });
+
+  it('guessed over guessed: the block only rises', async () => {
+    const { h, env } = harness();
+    await capture(env, FIGS, SAFE_BLOCK, false);
+    await capture(env, FIGS, SAFE_BLOCK - 1n, false);
+    expect(stored(h)).toEqual({ block_number: SAFE_BLOCK.toString(), block_settled: 0 });
+    await capture(env, FIGS, SAFE_BLOCK + 1n, false);
+    expect(stored(h)).toEqual({ block_number: (SAFE_BLOCK + 1n).toString(), block_settled: 0 });
+  });
+
+  it('a guessed capture never replaces a settled one still inside its staleness window', async () => {
+    const { h, env } = harness();
+    await capture(env, FIGS, SAFE_BLOCK, true);
+    const w = windowMs(h);
+    // A higher guessed block, inside the window and right at its edge: refused.
+    for (const at of [T0 + 60_000, T0 + w]) {
+      vi.setSystemTime(at);
+      await capture(env, FIGS, SAFE_BLOCK + 5n, false);
+      expect(stored(h), `at +${at - T0}ms`).toEqual({ block_number: SAFE_BLOCK.toString(), block_settled: 1 });
+    }
+    expect((await served(env)).blockSettled).toBe(true);
+  });
+
+  it('once the settled reading is past its window, a RISING guessed one may replace it', async () => {
+    const { h, env } = harness();
+    await capture(env, FIGS, SAFE_BLOCK, true);
+    // One millisecond past the window: the read route would now withhold it.
+    vi.setSystemTime(T0 + windowMs(h) + 1);
+    // Never backwards, even then.
+    await capture(env, FIGS, SAFE_BLOCK - 1n, false);
+    expect(stored(h)).toEqual({ block_number: SAFE_BLOCK.toString(), block_settled: 1 });
+    await capture(env, FIGS, SAFE_BLOCK + 5n, false);
+    expect(stored(h)).toEqual({ block_number: (SAFE_BLOCK + 5n).toString(), block_settled: 0 });
+    const b = await served(env);
+    expect(b.unavailableReason).toBeNull();
+    expect(b.blockSettled).toBe(false);
   });
 });

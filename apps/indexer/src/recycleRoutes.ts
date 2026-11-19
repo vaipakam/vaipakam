@@ -802,16 +802,44 @@ export async function captureBackingSnapshot(
          holder_attributed = excluded.holder_attributed,
          block_settled = excluded.block_settled
        WHERE
-         -- NEVER GO BACKWARDS. A load-balanced RPC can serve an older safe
-         -- head, and two captures can complete out of order; an
-         -- unconditional upsert then replaces a newer reading with an older
-         -- one AND refreshes observed_at, so the regression passes every
-         -- freshness check and the dashboard silently moves back to a
-         -- previous verdict. A different Diamond is not a regression — it
-         -- is a new subject, and must always win.
+         -- THE REPLACEMENT RULE (#2210), on the stored row's own columns:
+         --
+         -- 1. A different Diamond always wins: a new subject, not a regression.
+         -- 2. A SETTLED reading beats a GUESSED (or unrecorded) one, even at a
+         --    lower block: the guessed block was only ever an estimate, and the
+         --    settled one is the chain's own statement.
+         -- 3. Otherwise the block only rises (equal allowed). NEVER GO
+         --    BACKWARDS: a load-balanced RPC can serve an older safe head, and
+         --    two captures can complete out of order; an unconditional upsert
+         --    would replace a newer reading with an older one AND refresh
+         --    observed_at, so the regression would pass every freshness check
+         --    and the dashboard would silently move back to a previous verdict.
+         -- 4. ...and a GUESSED reading never replaces a SETTLED one that is
+         --    still inside its staleness window (the window the read route
+         --    applies, snapshotMaxAgeMs, measured at this capture's
+         --    observed_at, with this capture's rotation as the current one).
+         --    Once the settled reading would be withheld as stale, a rising
+         --    guessed one may take its place, so a provider that stops
+         --    answering the settled read does not take the reading dark.
          recycle_backing_snapshot.diamond != excluded.diamond
-         OR CAST(excluded.block_number AS INTEGER)
-            >= CAST(recycle_backing_snapshot.block_number AS INTEGER)`,
+         OR (excluded.block_settled = 1
+             AND recycle_backing_snapshot.block_settled IS NOT 1)
+         OR (CAST(excluded.block_number AS INTEGER)
+               >= CAST(recycle_backing_snapshot.block_number AS INTEGER)
+             AND (excluded.block_settled = 1
+                  OR recycle_backing_snapshot.block_settled IS NOT 1
+                  OR NOT COALESCE(
+                    -- Age in whole milliseconds, ROUNDED: julianday is a
+                    -- float, and an unrounded difference misreads the edge.
+                    ROUND((julianday(excluded.observed_at)
+                       - julianday(recycle_backing_snapshot.observed_at)) * 86400000.0)
+                    <= MAX(
+                      ?14,
+                      MAX(1, recycle_backing_snapshot.chain_count)
+                        * MAX(1, recycle_backing_snapshot.tick_minutes) * ?15,
+                      MAX(1, excluded.chain_count) * MAX(1, excluded.tick_minutes) * ?15
+                    ),
+                    0)))`,
     )
       .bind(
         chainId,
@@ -829,6 +857,9 @@ export async function captureBackingSnapshot(
         // #2210 — written on EVERY capture, beside the block it qualifies, so
         // a newer reading never inherits an older one's answer.
         head.settled ? 1 : 0,
+        // Rule 4's window, from the same constants `snapshotMaxAgeMs` uses.
+        SNAPSHOT_MIN_MAX_AGE_MS,
+        ROTATION_MS_PER_CHAIN_TICK,
       )
       .run();
   } catch (err) {
@@ -916,6 +947,13 @@ const MAX_BLOCK_LAG_MS = 30 * 60_000;
 const SNAPSHOT_MIN_MAX_AGE_MS = 30 * 60_000;
 
 /**
+ * Milliseconds of allowed age per chain per tick minute: two full cycles of
+ * the round-robin rotation (see `snapshotMaxAgeMs`). Shared with the
+ * capture's replacement rule, which applies the same window in SQL.
+ */
+const ROTATION_MS_PER_CHAIN_TICK = 2 * 60_000;
+
+/**
  * How old this row may be before the SCHEDULE is judged to have stalled.
  *
  * Takes the LARGER of the rotation that produced the row and the rotation
@@ -946,7 +984,7 @@ export function snapshotMaxAgeMs(
   currentTickMinutes: number,
 ): number {
   const rotation = (chains: number, tick: number) =>
-    Math.max(1, chains) * Math.max(1, tick) * 2 * 60_000;
+    Math.max(1, chains) * Math.max(1, tick) * ROTATION_MS_PER_CHAIN_TICK;
   return Math.max(
     SNAPSHOT_MIN_MAX_AGE_MS,
     rotation(storedChainCount, storedTickMinutes),
