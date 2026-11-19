@@ -533,6 +533,33 @@ contract RateReferenceTest is Test {
         assertEq(avg, 5 * PCT);
     }
 
+    /// A series on the longest permitted interval (6 hours), updated on
+    /// time at 00:00, 06:00, 12:00 and 18:00, stays readable for a short
+    /// window at every hour: the hourly search reaches back across one whole
+    /// interval, so it never falls through to a day checkpoint that is too
+    /// old (Codex #3782 r7).
+    function test_ShortWindowReadableAtEveryHourOnLongestInterval() public {
+        IRateReference.SeriesConfig memory c = _cfg(3);
+        c.interval = uint32(rr.INTERVAL_MAX());
+        vm.prank(owner);
+        rr.proposeSeries(ASSET, c);
+        rr.executeChange(IRateReference.Kind.OpenSeries, bytes32(uint256(uint160(ASSET))));
+        // Align to a UTC midnight, then update every six hours for three days.
+        _warp((now_ / 1 days + 1) * 1 days - now_);
+        for (uint256 i; i < 12; ++i) {
+            rr.update(ASSET);
+            _warp(6 hours);
+        }
+        rr.update(ASSET); // 00:00 of day four
+        for (uint256 h = 1; h < 6; ++h) {
+            _warp(1 hours);
+            (bool ok, uint256 avg, IRateReference.AvgReason why) = rr.averaged(ASSET, 12 hours);
+            assertTrue(ok, "a punctual 6-hour series is readable over 12 hours at every hour");
+            assertEq(uint8(why), uint8(IRateReference.AvgReason.Ok));
+            assertEq(avg, 5 * PCT);
+        }
+    }
+
     function test_Unusual_EntersAtDistance_TermAverageAndBand() public {
         _open(3);
         _hourly(24 * 31);

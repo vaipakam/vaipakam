@@ -53,6 +53,8 @@ const NONE: IntentRecord = {
   termsSetAt: 0n,
   lendUntil: 0n,
   acceptsProRata: false,
+  linkKind: 0,
+  linkMarginBps: 0,
 };
 const RECORD: IntentRecord = {
   ...NONE,
@@ -229,6 +231,12 @@ describe('a change of an Auto-lend', () => {
     expect(call.args[3]).toBe(2000n * E6);
     expect(call.args[8]).toBe(false);
     expect(setupCall(change(), 200n * E6, 99n, { ...RECORD, requiresKeeperAuth: true }).args[8]).toBe(true);
+  });
+
+  it('keeps a recorded market link, so a change never drops the slot\'s linked floor', () => {
+    const linked = setupCall(change(), 200n * E6, 99n, { ...RECORD, linkKind: 1, linkMarginBps: 100 });
+    expect(linked.args[12]).toEqual({ linkKind: 1, linkMarginBps: 100, rateFarFromAverageAcknowledged: false });
+    expect(setupCall(change(), 200n * E6, 99n, RECORD).args[12]).toEqual({ linkKind: 0, linkMarginBps: 0, rateFarFromAverageAcknowledged: false });
   });
 
   it('adds money in the same batch when an amount is typed', () => {

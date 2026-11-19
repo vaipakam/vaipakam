@@ -101,9 +101,17 @@ contract RateReference is IRateReference, Ownable2Step {
     /// @notice The term (days) of each row of the term-average weight table.
     uint256 private constant ROWS = 5;
 
-    /// @notice How many empty hour or day slots a checkpoint search steps
-    ///         back over before it gives up on that resolution.
-    uint256 private constant SEARCH_SLOTS = 4;
+    /// @notice How many hour slots a checkpoint search reads: one more than
+    ///         the hours in the longest permitted update interval, so a
+    ///         series updating on time always has an hourly checkpoint in
+    ///         reach and never falls back to a day checkpoint that may be
+    ///         too old for a short window. Tied to `INTERVAL_MAX`, so raising
+    ///         that bound widens the search with it.
+    uint256 private constant HOUR_SEARCH_SLOTS = INTERVAL_MAX / 1 hours + 1;
+
+    /// @notice How many day slots a checkpoint search reads before it gives
+    ///         up; a day always holds many updates, so a few suffice.
+    uint256 private constant DAY_SEARCH_SLOTS = 4;
 
     /// @notice The gas one source read is given: exactly this much.
     uint256 public constant SOURCE_READ_GAS = 150_000;
@@ -809,21 +817,22 @@ contract RateReference is IRateReference, Ownable2Step {
     }
 
     /// @dev The newest checkpoint of series `id` at or before `t`: the hour
-    ///      slot of `t` (or, if written after `t`, the one before it), else a
-    ///      few earlier hour slots, else the same search by day. Bounded
-    ///      reads; the caller refuses a find older than twice the window.
+    ///      slot of `t` (or, if written after `t`, the one before it), else the
+    ///      earlier hour slots back across one longest update interval, else
+    ///      the same search by day. Bounded reads; the caller refuses a find
+    ///      older than twice the window.
     function _find(uint32 id, uint256 t) private view returns (bool, Checkpoint memory) {
-        (bool f, Checkpoint memory c) = _findIn(_hourly[id], t, t / 1 hours);
+        (bool f, Checkpoint memory c) = _findIn(_hourly[id], t, t / 1 hours, HOUR_SEARCH_SLOTS);
         if (f) return (true, c);
-        return _findIn(_daily[id], t, t / 1 days);
+        return _findIn(_daily[id], t, t / 1 days, DAY_SEARCH_SLOTS);
     }
 
-    function _findIn(mapping(uint256 => Checkpoint) storage book, uint256 t, uint256 slot)
+    function _findIn(mapping(uint256 => Checkpoint) storage book, uint256 t, uint256 slot, uint256 slots)
         private
         view
         returns (bool, Checkpoint memory)
     {
-        for (uint256 k; k < SEARCH_SLOTS && k <= slot; ++k) {
+        for (uint256 k; k < slots && k <= slot; ++k) {
             Checkpoint memory c = book[slot - k];
             if (c.at == 0) continue;
             if (c.at <= t) return (true, c);
