@@ -41,10 +41,11 @@ export interface NearestQuery {
 
 /** The closest candidates with their rate gap, and how many stand in all. */
 export async function nearestOpposite(env: Env, q: NearestQuery): Promise<{ rows: (OfferRow & { rate_gap: number })[]; count: number }> {
-  // The two statements carry the same filter, written out in each so the
-  // schema guard prepares both against the migrated schema.
+  // The two statements carry the same filter, written out in each, and no
+  // interpolated SQL (the term order is a bound flag), so the schema guard
+  // prepares both against the migrated schema.
   const binds = [q.chainId, q.side, q.lendingAsset.toLowerCase(), q.collateralAsset.toLowerCase(), q.exclude, q.now];
-  const termOrder = q.term === 'distance' ? 'ABS(duration_days - ?)' : 'MAX(0, duration_days - ?)';
+  const byDistance = q.term === 'distance' ? 1 : 0;
   const [rows, count] = await Promise.all([
     env.DB.prepare(
       `SELECT *, MAX(0, interest_rate_bps - ?, ? - MAX(interest_rate_bps, interest_rate_bps_max)) AS rate_gap
@@ -55,9 +56,11 @@ export async function nearestOpposite(env: Env, q: NearestQuery): Promise<{ rows
           AND is_sale_vehicle = 0 AND is_offset_vehicle = 0
           AND lower(creator) <> lower(?)
           AND (expires_at = 0 OR expires_at > ?)
-        ORDER BY rate_gap ASC, ${termOrder} ASC, offer_id DESC LIMIT ?`,
+        ORDER BY rate_gap ASC,
+                 CASE WHEN ? = 1 THEN ABS(duration_days - ?) ELSE MAX(0, duration_days - ?) END ASC,
+                 offer_id DESC LIMIT ?`,
     )
-      .bind(q.rateMax, q.rateMin, ...binds, q.durationDays, q.limit)
+      .bind(q.rateMax, q.rateMin, ...binds, byDistance, q.durationDays, q.durationDays, q.limit)
       .all<OfferRow & { rate_gap: number }>(),
     env.DB.prepare(
       `SELECT COUNT(*) AS n
