@@ -35,5 +35,7 @@ describe('signedIdentity', () => {
     expect(signedIdentity(84532, a)).toBe(signedIdentity(84532, a.toLowerCase()));
     expect(signedIdentity(84532, a)).not.toBe(signedIdentity(421614, a));
     expect(signedIdentity(84532, a)).not.toBe(signedIdentity(84532, '0x' + 'cd'.repeat(20)));
+    // A request about one loan is not another loan's.
+    expect(signedIdentity(84532, a, 'loan:1')).not.toBe(signedIdentity(84532, a, 'loan:2'));
   });
 });

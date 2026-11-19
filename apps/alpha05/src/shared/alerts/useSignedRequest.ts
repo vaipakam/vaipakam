@@ -46,15 +46,16 @@ export interface SignedRoute<Action, Answer> {
  * by the route's own reader. The `issuedAt` is the one the Alerts page uses,
  * so a request never repeats a second another request already signed.
  *
- * Everything is scoped to the identity it was asked for, the network and
- * the wallet (`signedIdentity`): a run started under one wallet is not shown
- * under another, and an answer that arrives after the wallet or network
- * changed is dropped (the caller gets null), so one wallet's private list
- * can never be shown, or counted, under the next.
+ * Everything is scoped to the identity it was asked for, the network, the
+ * wallet and the subject the request is about, such as one loan
+ * (`signedIdentity`): a run started under one is not shown under another,
+ * and an answer that arrives after any of them changed is dropped (the
+ * caller gets null), so one wallet's private list can never be shown, or
+ * counted, under the next, nor one loan's answer on another loan's page.
  */
-export function useSignedRequest<Action, Answer>(route: SignedRoute<Action, Answer>, chainId: number, wallet: Hex, client: AgentClient = AGENT) {
+export function useSignedRequest<Action, Answer>(route: SignedRoute<Action, Answer>, chainId: number, wallet: Hex, client: AgentClient = AGENT, subject = '') {
   const config = useConfig();
-  const who = signedIdentity(chainId, wallet);
+  const who = signedIdentity(chainId, wallet, subject);
   const live = useRef(who);
   useEffect(() => {
     live.current = who;
@@ -65,7 +66,7 @@ export function useSignedRequest<Action, Answer>(route: SignedRoute<Action, Answ
 
   const send = useCallback(
     async (action: Action): Promise<Answer | null> => {
-      const asked = signedIdentity(chainId, wallet);
+      const asked = signedIdentity(chainId, wallet, subject);
       // A step after the identity moved is not shown under the new one.
       const setRun = (r: SignedRun<Answer>) => {
         if (live.current === asked) setState({ who: asked, run: r });
@@ -101,13 +102,14 @@ export function useSignedRequest<Action, Answer>(route: SignedRoute<Action, Answ
         return null;
       }
     },
-    [config, client, route, wallet, chainId],
+    [config, client, route, wallet, chainId, subject],
   );
 
   return { run, busy, send, off: client.origin === null, who };
 }
 
-/** The identity a signed request belongs to: the network and the wallet. */
-export function signedIdentity(chainId: number, wallet: string): string {
-  return `${chainId}:${wallet.toLowerCase()}`;
+/** The identity a signed request belongs to: the network, the wallet and
+ *  the subject it is about (empty for a wallet-wide list). */
+export function signedIdentity(chainId: number, wallet: string, subject = ''): string {
+  return `${chainId}:${wallet.toLowerCase()}:${subject}`;
 }
