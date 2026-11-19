@@ -12,11 +12,17 @@ export class IndexerUnavailable extends Error {
   /** The HTTP status when `why` is 'status', so a caller can read a route's
    *  stated refusal (a 404 or a 429) apart from an outage; null otherwise. */
   readonly status: number | null;
-  constructor(why: IndexerFailure, message: string, status: number | null = null) {
+  /** The `error` code a refusing route named in its JSON body; null when the
+   *  answer named none (a generic 404 from a service without the route, an
+   *  outage page). A route's stated refusal is read from this code, never
+   *  from the status alone. */
+  readonly code: string | null;
+  constructor(why: IndexerFailure, message: string, status: number | null = null, code: string | null = null) {
     super(message);
     this.name = 'IndexerUnavailable';
     this.why = why;
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -41,6 +47,17 @@ export interface IndexerPoster {
 
 export const DEFAULT_TIMEOUT_MS = 10_000;
 
+/** The `error` string of a refusal's JSON body, or null when it has none. */
+async function refusalCode(res: Response): Promise<string | null> {
+  try {
+    const body = (await res.json()) as unknown;
+    const code = body !== null && typeof body === 'object' ? (body as { error?: unknown }).error : undefined;
+    return typeof code === 'string' && code.length <= 64 ? code : null;
+  } catch {
+    return null;
+  }
+}
+
 export function createIndexerClient(origin: string | null, fetchImpl: typeof fetch = fetch): IndexerClient & IndexerPoster {
   return {
     origin,
@@ -55,7 +72,7 @@ export function createIndexerClient(origin: string | null, fetchImpl: typeof fet
       } catch (e) {
         throw new IndexerUnavailable('network', `The indexer did not answer: ${(e as Error).message}`);
       }
-      if (!res.ok) throw new IndexerUnavailable('status', `The indexer answered ${res.status} for ${path}.`, res.status);
+      if (!res.ok) throw new IndexerUnavailable('status', `The indexer answered ${res.status} for ${path}.`, res.status, await refusalCode(res));
       try {
         return (await res.json()) as T;
       } catch {

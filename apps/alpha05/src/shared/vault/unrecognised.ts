@@ -108,11 +108,13 @@ function parseArrival(c: WireCandidate, path: string): Arrival {
   return { asset: c.asset.toLowerCase() as Hex, kind: c.kind, tokenId, firstBlock: c.firstBlock, lastBlock: c.lastBlock };
 }
 
-/** A refusal the route answers by status: no vault (404), too many asks
- *  (429). Anything else the client could not read stays a failure. */
+/** A refusal the route states: no vault (404 naming `no-vault`), too many
+ *  asks (429). A 404 that names nothing is an index without the route, so
+ *  the list stays unknown rather than read as an empty vault. Anything else
+ *  stays a failure. */
 function refusal(e: unknown): 'noVault' | 'busy' | null {
   if (!(e instanceof IndexerUnavailable) || e.why !== 'status') return null;
-  if (e.status === 404) return 'noVault';
+  if (e.status === 404 && e.code === 'no-vault') return 'noVault';
   if (e.status === 429) return 'busy';
   return null;
 }

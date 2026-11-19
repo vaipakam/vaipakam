@@ -62,8 +62,10 @@ describe('readArrivals', () => {
     expect(r.kind === 'scan' && r.scan.pagesCut).toBe(true);
   });
 
-  it('reads 404 as no vault and 429 as busy; a 503 is a failure', async () => {
-    expect((await readArrivals(indexer({}, new IndexerUnavailable('status', 'x', 404)), 84532, OWNER)).kind).toBe('noVault');
+  it('reads a 404 naming no-vault as no vault and 429 as busy; a bare 404 or a 503 is a failure', async () => {
+    expect((await readArrivals(indexer({}, new IndexerUnavailable('status', 'x', 404, 'no-vault')), 84532, OWNER)).kind).toBe('noVault');
+    // An index without the route: never read as an empty vault.
+    await expect(readArrivals(indexer({}, new IndexerUnavailable('status', 'x', 404)), 84532, OWNER)).rejects.toBeInstanceOf(IndexerUnavailable);
     expect((await readArrivals(indexer({}, new IndexerUnavailable('status', 'x', 429)), 84532, OWNER)).kind).toBe('busy');
     await expect(readArrivals(indexer({}, new IndexerUnavailable('status', 'x', 503)), 84532, OWNER)).rejects.toBeInstanceOf(IndexerUnavailable);
   });

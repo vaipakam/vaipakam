@@ -17,10 +17,10 @@ const rates = {
   truncated: false,
 };
 const answer = { ...ref, owner: O.toUpperCase().replace('0X', '0x'), basis: 'past-loans-not-a-forecast', terms: {}, lentShare: { available: false, periodStart: 1, periodEnd: 2, daysOfRecord: 0, reason: 'no-record-at-period-start' }, rates };
-const client = (body: unknown, status = 200): IndexerClient => ({
+const client = (body: unknown, status = 200, code: string | null = null): IndexerClient => ({
   origin: 'https://i',
   getJson: async <T,>() => {
-    if (status !== 200) throw new IndexerUnavailable('status', 'x', status);
+    if (status !== 200) throw new IndexerUnavailable('status', 'x', status, code);
     return body as T;
   },
 });
@@ -34,7 +34,9 @@ describe('slot history', () => {
     expect(r.history.rates.comparison).toMatchObject({ enough: true, lowestBps: 400n, highestBps: 900n, halfAmountBps: 600n });
   });
   it('states a slot the index has not filed, and refuses another slot or a missing basis', async () => {
-    expect(await readSlotHistory(client(null, 404), ref)).toEqual({ kind: 'not-indexed' });
+    expect(await readSlotHistory(client(null, 404, 'slot-not-indexed'), ref)).toEqual({ kind: 'not-indexed' });
+    // An index without the route answers a 404 naming nothing: a failure, never "not indexed".
+    await expect(readSlotHistory(client(null, 404), ref)).rejects.toThrow(IndexerUnavailable);
     await expect(readSlotHistory(client({ ...answer, slot: 3 }), ref)).rejects.toThrow('different Auto-lend');
     await expect(readSlotHistory(client({ ...answer, basis: 'x' }), ref)).rejects.toThrow('basis');
     await expect(readSlotHistory(client(null, 503), ref)).rejects.toThrow(IndexerUnavailable);

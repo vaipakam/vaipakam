@@ -43,7 +43,9 @@ export interface SlotHistory {
 }
 
 /** What the read could say: the history, or that the index has no record of
- *  this slot yet (a 404, a stated answer rather than an outage). */
+ *  this slot yet (a 404 naming `slot-not-indexed`, a stated answer rather
+ *  than an outage; a 404 naming nothing is an index without the route, and
+ *  stays a failure). */
 export type SlotHistoryRead = { kind: 'history'; history: SlotHistory } | { kind: 'not-indexed' };
 
 const SHARE_REASONS = new Set(['no-record-at-period-start', 'unreadable-record', 'record-too-long']);
@@ -120,7 +122,7 @@ export async function readSlotHistory(indexer: IndexerClient, ref: SlotRef): Pro
   try {
     body = await indexer.getJson<Record<string, unknown>>(`/loans/slot-history?${q}`);
   } catch (e) {
-    if (e instanceof IndexerUnavailable && e.status === 404) return { kind: 'not-indexed' };
+    if (e instanceof IndexerUnavailable && e.status === 404 && e.code === 'slot-not-indexed') return { kind: 'not-indexed' };
     throw e;
   }
   const same = (a: unknown, b: string) => typeof a === 'string' && a.toLowerCase() === b.toLowerCase();
