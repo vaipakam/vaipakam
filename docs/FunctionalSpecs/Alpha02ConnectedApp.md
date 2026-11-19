@@ -4513,9 +4513,9 @@ Its intended behaviour, as the test oracle for this surface:
   card offers a new signature after rechecking eligibility and the live bound.
   The card distinguishes a short permit from a short wallet balance; only
   a balance top-up or cancellation remedies the latter. An unused permit
-  expires with the request. Historical deployments without these features
-  may retain the disclosed whole-payoff approval route; it is not the
-  required route for the freshly deployed testnets.
+  expires with the request. The permit is the only payoff route: the app
+  never asks for a payoff approval of the protocol, and a deployment that
+  cannot take the permit cannot be refinanced through the app.
   Posting shows the ordered wallet prompts and writes required guardrails
   immediately before the request. A failure leaves no implied posted request
   or spent permit. Cancellation and pending-request details remain available

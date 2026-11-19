@@ -194,16 +194,3 @@ export function repayRefinanceDecision(
     needed === null || shown === 'pending' || (shown === 'unchecked' && needed === 'unchecked');
   return { proceed: covered, notice: needed };
 }
-
-
-/** #2429 r3 — whether cancelling the named request also revokes its payoff
- *  approval. Never for a leftover the protocol will never take: the same
- *  approval serves every refinance request this wallet posts on the token,
- *  and another may stand now or be posted from another device at any moment
- *  — no read before a separate revoke transaction can rule that out, so the
- *  card leaves it and names the manual removal. Cancelling the loan's own
- *  request revokes as before (a request posted meanwhile elsewhere shows its
- *  short approval on its own card, with Re-approve). */
-export function cancelRevokesApproval(state: Pick<NamedRequestFacts, 'untakeable'>): boolean {
-  return !state.untakeable;
-}

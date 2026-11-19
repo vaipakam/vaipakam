@@ -27,55 +27,17 @@
  * approval moves nothing on its own: Permit2 pays out only against a
  * signature the wallet made.
  *
- * BRIDGE until the all-waves fresh deploy (owner decision 2026-10-29,
- * "merge now"): a Diamond deployed before #1558 has no permit entry and
- * still pays the payoff from a standing ERC-20 approval of the Diamond.
- * Such a Diamond also predates #3042, so on that route the new principal
- * reaches the wallet first and the approval covers the WHOLE payoff.
- * `readPayoffRoute` tells the two apart from the Diamond's own routing,
- * and every refinance surface takes the route it answers. The approval
- * route, and the app-side payoff mirror it sizes with, are removed once
- * every chain runs the fresh deploy (#3074).
+ * The permit is the only route (#3074). The standing-approval bridge for
+ * Diamonds deployed before #1558, and the app-side payoff mirror it sized
+ * with, were removed once every chain ran the fresh deploy.
  */
-import { toFunctionSelector, zeroAddress, type PublicClient, type WalletClient } from 'viem';
-import type { LifTerms } from '../lib/initiationFee';
+import { zeroAddress, type PublicClient, type WalletClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from './diamond';
 import { ensureAllowance, restoreAllowance } from './erc20';
 import { settleFailedSend } from './ownReceipt';
-import {
-  loanEndTimeOf,
-  refinanceApprovalOf,
-  refinancePayoffOf,
-  refinanceWalletPullOf,
-  type LoanLive,
-} from './loanLive';
+import { loanEndTimeOf, type LoanLive } from './loanLive';
 import { PERMIT2_ADDRESS, randomNonce } from './usePermit2Signing';
 import type { DiamondWriteResult } from './diamond';
-
-/** How a refinance pays off the old loan on this Diamond: through the
- *  request's single-use permit, or (a Diamond deployed before #1558)
- *  through a standing ERC-20 approval of the Diamond. */
-export type PayoffRoute = 'permit' | 'approval';
-
-const SET_PERMIT_SELECTOR = toFunctionSelector(
-  'setRefinancePayoffPermit(uint256,uint256,uint256,uint256,bytes)',
-);
-
-/** Which route this Diamond pays a refinance payoff by, from its own
- *  routing table. A failed read throws: guessing either route would post
- *  a request its acceptance cannot pay. */
-export async function readPayoffRoute(
-  publicClient: PublicClient,
-  diamond: `0x${string}`,
-): Promise<PayoffRoute> {
-  const host = (await publicClient.readContract({
-    address: diamond,
-    abi: DIAMOND_ABI_VIEM,
-    functionName: 'facetAddress',
-    args: [SET_PERMIT_SELECTOR],
-  })) as `0x${string}`;
-  return host.toLowerCase() === zeroAddress ? 'approval' : 'permit';
-}
 
 /** The last moment a request can still be accepted: one second before its
  *  own expiry (acceptance refuses at the expiry itself), and never after
@@ -110,8 +72,7 @@ export interface RefinancePayoff {
 }
 
 /** Read the payoff now and at `by`, and the permit attached to `offerId`
- *  (pass 0 for the figures alone). Only on a Diamond whose route is
- *  `'permit'`. */
+ *  (pass 0 for the figures alone). */
 export async function readRefinancePayoff(
   publicClient: PublicClient,
   diamond: `0x${string}`,
@@ -152,33 +113,26 @@ export async function readRefinancePayoff(
 
 /**
  * Today's payoff, what the wallet pays, and the most a request's
- * acceptance can pull from the wallet, on either route. On the permit
- * route they come from the contract; on a Diamond deployed before #1558
- * they come from the app-side mirror that sized the standing approval (it
- * over-covers a pro-rata loan, never under-covers).
- * `expiresAt` is the request's own expiry (posted, or the one about to be
- * posted); `graceSeconds` the loan's grace window.
+ * acceptance can pull from the wallet, all from the contract
+ * (`getRefinancePayoff`). `expiresAt` is the request's own expiry (posted,
+ * or the one about to be posted); `graceSeconds` the loan's grace window.
  */
 export interface PayoffQuote {
-  route: PayoffRoute;
   /** The whole payoff of an acceptance in this block. */
   payoff: bigint;
   /** What the wallet must hold SPARE for an acceptance in this block: the
-   *  payoff less the new loan's net principal. On the permit route that
-   *  is exactly what is pulled (#3042); on the approval route the whole
-   *  payoff is pulled and the net principal arrives first. */
+   *  payoff less the new loan's net principal, which is exactly what is
+   *  pulled (#3042). */
   topUp: bigint;
   /** How much the payoff can still grow before `lastFillable` (late fee
    *  plus interest that keeps building up). */
   growth: bigint;
   /** What an acceptance at `lastFillable` pulls from the wallet: the most
-   *  it can be. On the permit route the permit is signed for exactly this
-   *  (the wallet's share); on the approval route it is the approval's size
-   *  (the whole payoff). */
+   *  it can be, and the figure the permit is signed for. */
   bound: bigint;
   /** The request's last fillable moment, which is the permit's deadline. */
   lastFillable: bigint;
-  /** The permit attached to `offerId` (permit route, `offerId` > 0). */
+  /** The permit attached to `offerId` (`offerId` > 0). */
   permit: RefinancePayoff | null;
 }
 
@@ -192,45 +146,11 @@ export async function readPayoffQuote(a: {
   chainNow: bigint;
   expiresAt: bigint;
   graceSeconds: bigint;
-  /** The route, when the caller has already read it. */
-  route?: PayoffRoute;
-  /** The request's amount, the live initiation-fee term rule and the
-   *  request's term (#3649). Required on the approval route, where they
-   *  size the wallet's spare balance; the permit route reads the
-   *  contract's own figure. */
-  requestAmount?: bigint;
-  lifTerms?: LifTerms;
-  termDays?: number;
 }): Promise<PayoffQuote> {
-  const route = a.route ?? (await readPayoffRoute(a.publicClient, a.diamond));
   const graceEnd = loanEndTimeOf(a.live, a.chainNow) + a.graceSeconds;
   const lastFillable = lastFillableMoment(a.expiresAt, graceEnd);
-  if (route === 'approval') {
-    if (a.requestAmount === undefined || a.lifTerms === undefined || a.termDays === undefined) {
-      throw new Error('readPayoffQuote: the approval route needs the request amount, fee rule and term');
-    }
-    const payoff = refinancePayoffOf(a.live, a.chainNow);
-    const bound = refinanceApprovalOf(a.live, {
-      expiresAt: a.expiresAt,
-      graceSeconds: a.graceSeconds,
-    });
-    return {
-      route,
-      payoff,
-      topUp: refinanceWalletPullOf(
-        a.live,
-        { requestAmount: a.requestAmount, lifTerms: a.lifTerms, termDays: a.termDays },
-        a.chainNow,
-      ),
-      growth: bound > payoff ? bound - payoff : 0n,
-      bound,
-      lastFillable,
-      permit: null,
-    };
-  }
   const p = await readRefinancePayoff(a.publicClient, a.diamond, a.loanId, a.offerId, lastFillable);
   return {
-    route,
     payoff: p.payoffNow,
     topUp: p.walletShareNow,
     growth: p.payoffBy > p.payoffNow ? p.payoffBy - p.payoffNow : 0n,

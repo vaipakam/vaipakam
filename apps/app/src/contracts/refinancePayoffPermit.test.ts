@@ -129,7 +129,7 @@ describe('lastFillableMoment', () => {
   });
 });
 
-describe('readPayoffQuote — permit route (#1558, #3042)', () => {
+describe('readPayoffQuote (#1558, #3042)', () => {
   const VIEW = [TOKEN, 1_000n, 1_100n, 30n, 130n, HOLDER, 130n, 1n, 2_000n, false] as const;
   const quote = (offerId: bigint, extra: Record<string, unknown> = {}) => {
     const readContract = vi.fn(async (_r: { args: readonly unknown[] }) => VIEW);
@@ -142,7 +142,6 @@ describe('readPayoffQuote — permit route (#1558, #3042)', () => {
       chainNow: 1_000n,
       expiresAt: 5_000n,
       graceSeconds: 3_000n,
-      route: 'permit',
       ...extra,
     });
     return { q, readContract };
@@ -151,7 +150,6 @@ describe('readPayoffQuote — permit route (#1558, #3042)', () => {
   it('takes every figure from the contract: the wallet share bounds the pull', async () => {
     const { q, readContract } = quote(0n);
     await expect(q).resolves.toEqual({
-      route: 'permit',
       payoff: 1_000n,
       // Today's share is what the wallet must hold spare; the share at the
       // last fillable moment is what the permit is signed for.
@@ -169,10 +167,6 @@ describe('readPayoffQuote — permit route (#1558, #3042)', () => {
     await expect(quote(42n).q).resolves.toMatchObject({
       permit: { signer: HOLDER, maxAmount: 130n, walletShareBy: 130n, deadline: 2_000n },
     });
-  });
-
-  it('refuses the approval route without the request amount, fee rule and term', async () => {
-    await expect(quote(0n, { route: 'approval' }).q).rejects.toThrow(/request amount, fee rule and term/);
   });
 });
 

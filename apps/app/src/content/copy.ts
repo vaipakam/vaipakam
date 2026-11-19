@@ -1817,10 +1817,6 @@ const copySource = {
       'Together: about {{topUp}} spare in your wallet if every request is accepted. Your wallet holds enough for that now, or nothing is sent.',
       ['topUp'],
     ),
-    approval: tmpl(
-      'You’ll approve {{amount}}: the sum of each request’s largest possible payoff. Each payoff is pulled from this one approval when its request is accepted, and so is the payoff of any other refinance request you have open on the same token. A lender taking one request can therefore leave too little for another; each loan’s page says when its request’s approval runs short.',
-      ['amount'],
-    ),
     consentLabel:
       'I understand the payoff and wallet-balance terms below and agree to them for every loan listed above.',
     confirm: 'Confirm — post these requests',
@@ -1828,8 +1824,6 @@ const copySource = {
     dismiss: 'Done',
     receiveEach:
       'For each request a lender accepts, a new loan at your terms the moment it is accepted: that loan’s collateral moves to the new loan without ever unlocking, and the old loan closes in the same transaction.',
-    youMayOwe:
-      'Each loan’s payoff shown above, pulled from your wallet through the approval below when a lender accepts its request. Your wallet must hold that loan’s spare amount at that moment.',
     endsEach:
       'Each request ends when a lender accepts it, when you cancel it from its loan’s page, or when it expires; each loan’s line above says when. One transaction posts up to 15 requests. A request that fails is skipped, and the results say why; the guardrails written for it can stay set at your rate and end date, and they only limit what a request on that loan can complete at.',
     posted: tmpl(
@@ -1858,10 +1852,6 @@ const copySource = {
     ownPageRental: 'A rental can’t take a refinance request; only token loans can.',
     ownPageOpenRequest:
       'A refinance request is already open on this loan. Its own page shows it and lets you cancel it.',
-    approvalLeft: tmpl(
-      'Your token approval for the protocol now stands at {{amount}}. Your open refinance requests draw their payoffs from it, so lowering it can leave a request unable to complete.',
-      ['amount'],
-    ),
     // #1558 — the batch on a Diamond that pays the payoff through each
     // request's single-use payoff permit.
     permit: {
@@ -2124,17 +2114,6 @@ const copySource = {
     // request can be posted on it.
     inFallback:
       'This loan is in its fallback period, so it can’t take a refinance request. Its own page explains its options.',
-    /** Shown when the request transaction was sent but its outcome could
-     *  not be observed. The spending approval is deliberately LEFT IN
-     *  PLACE here — if the request did land, a lender accepting it needs
-     *  that approval to collect the payoff, and revoking it would break
-     *  a commitment they are entitled to act on. */
-    postedButUnconfirmed:
-      'Your request was sent, but we could not confirm whether it went' +
-      ' through. Check your open requests before trying again — if it did' +
-      ' land, requesting a second time would create a duplicate. The' +
-      ' spending approval has been left in place, because a lender' +
-      ' accepting the request needs it to collect the payoff.',
     // Composed receipt lines (extracted from RefinanceFlow.tsx); catalog
     // refs (payoffNote, walletNote, guardrailNote, …) stay composed at
     // the call site.
@@ -2208,8 +2187,6 @@ const copySource = {
       'Automatic matching of refinance requests is switched on for this deployment, so the order matcher may fill your request, as well as a lender accepting it directly.',
     periodicWarning:
       'This loan pays interest on a periodic schedule. If a payment period becomes overdue while the request is open, a lender’s acceptance will fail until the period is settled — keep the loan’s payments current.',
-    done:
-      'Refinance request posted. When a lender accepts it, this loan closes automatically — you don’t need to do anything else. You can cancel the request below (cancellation opens a few minutes after posting).',
     pending: tmpl(
       `Refinance request #{{offerId}} is live. When a lender accepts it, this loan closes automatically in the same transaction.`,
       ['offerId'],
@@ -2224,42 +2201,21 @@ const copySource = {
     ),
     pendingAccepted:
       'Your refinance request was accepted — this loan is being replaced by the new one. Refresh in a moment to see the final state.',
-    pendingLoanClosed:
-      'This loan has since closed another way, so the request can no longer complete — cancel it to also remove its standing payoff approval.',
-    pendingExpired: tmpl(
-      `This refinance request expired on {{date}} — no lender can accept it any more, and it no longer holds up your other actions here. Cancel it below to also remove its standing payoff approval; the loan continues unchanged.`,
-      ['date'],
-    ),
     cancel: 'Cancel refinance request',
     cancelSoon:
       'Cancellation opens a few minutes after posting — try again shortly.',
-    cancelled:
-      'Refinance request cancelled and the payoff approval removed — this loan continues unchanged. If you have other listings or requests using the same token, restore their approvals from their cards.',
-    cancelledRevokeFailed:
-      'Refinance request cancelled — this loan continues unchanged. The standing payoff approval couldn’t be removed automatically; you can revoke it from your wallet’s token-approvals view.',
-    allowanceShort:
-      'The payoff approval no longer covers everything this request could pull — a lender’s acceptance could fail (an acceptance after the due date also pulls the late fee and extra interest). Restore it below or cancel the request.',
     balanceShort: tmpl(
       `Your wallet holds less than the ~{{topUp}} spare this request needs — a lender’s acceptance would fail right now. Top up your wallet or cancel the request.`,
       ['topUp'],
     ),
-    reapprove: 'Restore the payoff approval',
-    reapproved: 'Payoff approval restored — the request can complete again.',
-    reapproveAborted:
-      'This request is no longer completable (accepted, cancelled, or the loan closed) — nothing was approved. Refresh to see the latest state.',
     guardrailNote:
       'Your request carries its own expiry and on-chain guardrails: it can only complete at or below the rate you set here, and never after the expiry you see in this review.',
     // #1236 — a refinance can complete inside the grace window, and
     // the accept-time payoff then includes the same late fee repaying
     // charges. The disclosure and the past-due banner keep the quoted
-    // figures honest; the approval covers the fee so a grace-window
-    // acceptance can't fail on a short allowance.
+    // figures honest; the payoff permit is sized to cover the fee.
     graceNote:
       'This loan is past its due date. A lender can still accept this request until the grace window ends, and the payoff already includes the late fee for being late (it grows a little each day).',
-    lateFeeDisclosure: tmpl(
-      `If a lender accepts after the loan’s due date, the payoff grows — the late fee for being late plus interest that keeps building up — by up to ~{{maxGrowth}} more for this request. The approval you grant covers that too, so a late acceptance can’t fail on it.`,
-      ['maxGrowth'],
-    ),
     expiresAtGraceEnd: tmpl(
       `when it expires with this loan’s grace window ({{date}}) — a refinance request can’t outlive the loan it replaces`,
       ['date'],
@@ -2267,26 +2223,17 @@ const copySource = {
     // #2429 r2 — the record answered but the search for an older request it
     // does not name did not.
     leftoversFailed:
-      'We couldn’t check this wallet’s offers just now for an older refinance request on this loan (one posted before the protocol kept a record of requests). Such a request can never be accepted and doesn’t hold the loan back, but it may still carry a standing payoff approval. If one is still open, you can cancel it under “Your open offers” on the Rate Desk; remove the token approval it relied on under “Standing token approvals” in Settings (Advanced mode) if nothing else needs it.',
+      'We couldn’t check this wallet’s offers just now for an older refinance request on this loan (one posted before the protocol kept a record of requests). Such a request can never be accepted and doesn’t hold the loan back. If one is still open, you can cancel it under “Your open offers” on the Rate Desk.',
     leftoversCapped:
-      'This wallet has posted more offers since this loan’s offer was made than we can check here, so an older refinance request on this loan (one posted before the protocol kept a record of requests) may not be shown. Such a request can never be accepted and doesn’t hold the loan back, but it may still carry a standing payoff approval. If one is still open, you can cancel it under “Your open offers” on the Rate Desk; remove the token approval it relied on under “Standing token approvals” in Settings (Advanced mode) if nothing else needs it.',
-    pendingUntakeable:
-      'This refinance request can never be accepted: it isn’t the request the protocol has on record for this loan (it was posted before that record existed, or a newer request replaced it). It does not hold the loan back. Cancel it below to remove it. Its payoff approval is not removed with it, because the same approval serves every refinance request this wallet posts on this token; if nothing else needs it, remove it under “Standing token approvals” in Settings (Advanced mode).',
+      'This wallet has posted more offers since this loan’s offer was made than we can check here, so an older refinance request on this loan (one posted before the protocol kept a record of requests) may not be shown. Such a request can never be accepted and doesn’t hold the loan back. If one is still open, you can cancel it under “Your open offers” on the Rate Desk.',
     // #3205 — the borrower position moved since the request was posted.
     pendingMoved:
       'This refinance request can no longer be accepted: the borrower position NFT moved (to another wallet, or away and back) after it was posted, and a request completes only while the position has not moved since. It does not hold the loan back. Only the wallet that posted it can cancel it before it expires; after that, anyone can. The position’s current holder can post a new request.',
     // #3205 — the chain says the request no longer stands, reason unnamed.
     pendingNotStanding:
       'The protocol no longer counts this refinance request as standing, so no lender can accept it: since it was posted, the borrower position NFT has moved, or another wallet now holds it. It does not hold the loan back. Only the wallet that posted it can cancel it before it expires; after that, anyone can.',
-    // #2429 r3 — cancelling a leftover never revokes the shared approval.
-    cancelledLeftoverApprovalKept:
-      'Request cancelled. Its payoff approval was left in place, because the same approval serves every refinance request this wallet posts on this token. If nothing else needs it, remove it under “Standing token approvals” in Settings (Advanced mode).',
-    pendingPastGrace:
-      'This loan has passed its due date and grace window, so no lender can accept this request any more — it no longer holds up your other actions here. Cancel it below to also remove its standing payoff approval.',
     cadenceChangeNote:
       'Your current loan pays interest on a schedule. The replacement loan will NOT — its interest settles when it closes. Make sure that cash-flow change is what you want.',
-    multiStepNote:
-      'Posting takes up to three wallet confirmations (guardrails, payoff approval, the request itself). If you stop partway, the earlier steps stay in place on-chain until you finish posting or cancel — cancelling also removes the approval.',
     partialBlockedByPending:
       'A refinance request is live for this loan. A partial repayment would change the amount and make that request permanently unacceptable — cancel the refinance request first.',
     precloseBlockedByPending:

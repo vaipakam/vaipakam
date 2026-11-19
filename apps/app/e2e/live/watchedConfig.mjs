@@ -75,9 +75,9 @@ export const WATCHED_CONFIG = Object.freeze([
   { key: 'graceBuckets', fn: 'getGraceBuckets' },
   // THE PAYOFF ROUTE (#1558, #3295): the facet the Diamond routes
   // setRefinancePayoffPermit to — the zero address on a Diamond deployed
-  // before #1558, which pays the payoff from a standing approval instead.
-  // It is the Diamond's own routing, so a cut changes it; the app reads the
-  // same (`readPayoffRoute`), and it decides which write plan applies.
+  // before #1558. Since #3074 the app has only the permit route, so the
+  // drive refuses such a Diamond. It is the Diamond's own routing, so a cut
+  // changes it.
   { key: 'payoffPermitHost', fn: 'facetAddress', args: () => [toFunctionSelector(SET_PAYOFF_PERMIT_SIGNATURE)] },
   // The risk-terms epoch the lender's AcceptTerms is anchored to.
   { key: 'riskTermsHash', fn: 'getCurrentRiskTermsHash' },

@@ -13,17 +13,14 @@
  * hard expiry), the guardrail write it needs first when the loan's
  * auto-refinance caps do not already cover it, and the figures the
  * borrower reviews — today's payoff, what the wallet must hold spare at
- * acceptance, and the most the acceptance can pull (`bound`): on the
- * permit route the wallet's share of the payoff at the request's LAST
- * fillable moment, which the payoff permit is signed for (#1236, #1558,
- * #3042: the new loan's net principal pays the rest inside the Diamond);
- * on the approval bridge the whole payoff at that moment.
+ * acceptance, and the most the acceptance can pull (`bound`): the
+ * wallet's share of the payoff at the request's LAST fillable moment,
+ * which the payoff permit is signed for (#1236, #1558, #3042: the new
+ * loan's net principal pays the rest inside the Diamond).
  * Or the reason the loan cannot take a request now.
  *
- * The payoff figures come from the contract (`getRefinancePayoff`). On a
- * Diamond deployed before #1558 the payoff is paid from a standing
- * approval instead, sized by the app-side mirror; `route` says which, and
- * that branch goes with the fresh deploy (#3074).
+ * The payoff figures come from the contract (`getRefinancePayoff`); the
+ * permit is the only payoff route (#3074).
  *
  * What a plan is NOT: the guardrail write, a balance check, an approval
  * or a signature. A batch checks the wallet against the SUM of its loans'
@@ -45,11 +42,7 @@ import {
   readLoanLive,
   type LoanLive,
 } from '../contracts/loanLive';
-import {
-  readPayoffQuote,
-  readPayoffRoute,
-  type PayoffRoute,
-} from '../contracts/refinancePayoffPermit';
+import { readPayoffQuote } from '../contracts/refinancePayoffPermit';
 import {
   assertAssetNotPausedLive,
   assertPositionNftHeldLive,
@@ -124,9 +117,6 @@ export interface RefinanceRequestReady {
   liveLoan: LoanLive;
   /** Chain time of the block the plan was judged at. */
   chainNow: bigint;
-  /** How this Diamond pays the payoff: the request's permit, or (before
-   *  #1558) a standing approval of the Diamond. */
-  route: PayoffRoute;
   /** Today's payoff to the old lender. */
   payoff: bigint;
   /** What the wallet must hold spare at acceptance, and what the accept
@@ -134,12 +124,10 @@ export interface RefinanceRequestReady {
    *  pays the old lender inside the Diamond (#3042) — the interest share
    *  plus the new loan's initiation fee. Judged at today's payoff. */
   topUp: bigint;
-  /** The most the acceptance can pull from the wallet. On the permit
-   *  route: the wallet's share of the payoff at the request's last
-   *  fillable moment, at the live fee rate with no discount (an upper
-   *  bound; a discount only lowers the pull) — the permit is signed for
-   *  exactly this. On the approval bridge: the whole payoff at that
-   *  moment, the approval's size. */
+  /** The most the acceptance can pull from the wallet: the wallet's
+   *  share of the payoff at the request's last fillable moment, at the
+   *  live fee rate with no discount (an upper bound; a discount only
+   *  lowers the pull) — the permit is signed for exactly this. */
   bound: bigint;
   /** The request's last fillable moment: the permit's deadline, so the
    *  permit lapses with the request. */
@@ -205,7 +193,7 @@ export async function checkRefinanceRequest(
   // collateral identity VERBATIM — stale values would break carry-over),
   // chain time, the existing guardrails, live fees (the review quoted a
   // cached config), and both legs' pause state.
-  const [, liveLoan, latestBlock, caps, liveFees, route] = await Promise.all([
+  const [, liveLoan, latestBlock, caps, liveFees] = await Promise.all([
     assertPositionNftHeldLive({
       publicClient,
       diamondAddress: diamond,
@@ -221,7 +209,6 @@ export async function checkRefinanceRequest(
       args: [BigInt(loan.loanId)],
     }) as Promise<{ enabled: boolean; maxRateBps: number; maxNewExpiry: bigint }>,
     readLiveProtocolFees(publicClient, diamond),
-    readPayoffRoute(publicClient, diamond),
     assertAssetNotPausedLive({
       publicClient,
       diamondAddress: diamond,
@@ -301,11 +288,9 @@ export async function checkRefinanceRequest(
     caps.enabled && Number(caps.maxRateBps) >= terms.rateBps && caps.maxNewExpiry >= neededExpiry;
   // The bound is sized at the request's LAST fillable moment (its own
   // expiry or the grace end, whichever first): since #1189 the pull
-  // GROWS past maturity by the grace-window late fee. On the permit route
-  // it is the wallet's share — the payoff less the new loan's net
-  // principal (#3042); the request asks for the old principal
-  // (`toRefinanceOfferPayload`), with the live fee rule at the request's
-  // term as the bound.
+  // GROWS past maturity by the grace-window late fee. It is the wallet's
+  // share — the payoff less the new loan's net principal (#3042), as the
+  // contract sizes it for the request's term.
   const quote = await readPayoffQuote({
     publicClient,
     diamond,
@@ -315,10 +300,6 @@ export async function checkRefinanceRequest(
     chainNow,
     expiresAt: requestExpiry,
     graceSeconds,
-    route,
-    requestAmount: liveLoan.principal,
-    lifTerms: liveFees.lifTerms,
-    termDays: terms.durationDays,
   });
   const { payoff, bound } = quote;
   // OfferCreateFacet clamps a refinance request's expiry to the grace
@@ -330,7 +311,6 @@ export async function checkRefinanceRequest(
     loanId: loan.loanId,
     liveLoan,
     chainNow,
-    route,
     payoff,
     topUp: quote.topUp,
     bound,
@@ -355,18 +335,17 @@ export async function checkRefinanceRequest(
 
 /**
  * Whether a send must refuse what its review showed (#3311 / Codex #1256
- * r3): the Diamond now pays the payoff by another route, or the bound —
- * the most the acceptance can pull, which the permit or approval is sized
- * on — GREW. Both plans must be for the same request (the send passes the
+ * r3): the bound — the most the acceptance can pull, which the permit
+ * is sized on — GREW. Both plans must be for the same request (the send passes the
  * reviewed expiry to `checkRefinanceRequest`), so a growth here is a real
  * change (a late fee, a changed loan, the fee rate), never the clock.
  * A bound that shrank is fine: the pull only gets smaller.
  */
 export function reviewedBoundMoved(
-  plan: Pick<RefinanceRequestReady, 'route' | 'bound'>,
-  reviewed: Pick<RefinanceRequestReady, 'route' | 'bound'>,
+  plan: Pick<RefinanceRequestReady, 'bound'>,
+  reviewed: Pick<RefinanceRequestReady, 'bound'>,
 ): boolean {
-  return plan.route !== reviewed.route || plan.bound > reviewed.bound;
+  return plan.bound > reviewed.bound;
 }
 
 /** The Diamond calls a ready request makes, in order: the guardrail
@@ -477,12 +456,11 @@ export type RefinanceBatchPlan = (RefinanceRequestReady & { notes: string[] }) |
  * Every read failure is that loan's refusal, never the batch's.
  *
  * With a `reviewed` plan it is the late re-check before a send: a loan
- * whose bound or spare amount grew past the one reviewed, whose payoff
- * route changed (the Diamond was upgraded), or
+ * whose bound or spare amount grew past the one reviewed, or
  * whose statements changed (it went past due, its request would now end
  * at the grace end), is left out rather than posted on terms the
  * borrower did not see. The reviewed figures are what the balance check
- * and the approval of the Diamond or of Permit2 were sized on, so a loan is sent only while its
+ * and the Permit2 approval were sized on, so a loan is sent only while its
  * figures are at most those: in grace the spare amount grows with each
  * day's late fee while the bound stays fixed at the grace end, and a
  * request sent on a grown spare amount could be posted already unfunded.

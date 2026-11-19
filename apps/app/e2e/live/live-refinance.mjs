@@ -1749,11 +1749,10 @@ const pre = await precondition('reading the preconditions from chain', async () 
   // The loan's grace window, read the way the app reads it — the payoff
   // permit the borrower signs expires no later than its end.
   const { graceBuckets } = watched;
-  // THE PAYOFF ROUTE (#1558, #3295), read the way the app's
-  // `readPayoffRoute` reads it: a Diamond that routes
+  // THE PAYOFF ROUTE (#1558, #3295): a Diamond that routes
   // setRefinancePayoffPermit pays the payoff through the request's permit;
-  // one that does not predates #1558 and pays it from a standing approval
-  // of the Diamond. This drive models the permit route only.
+  // one that does not predates #1558. Since #3074 the app has only the
+  // permit route, so this drive blocks on such a Diamond.
   // It is watched config (the Diamond's routing; a cut changes it).
   const payoffRoute = /^0x0{40}$/i.test(watched.payoffPermitHost) ? 'approval' : 'permit';
   // The wallet's share of the payoff at the request's last fillable moment
@@ -1865,15 +1864,15 @@ console.log(
   `pre   grace window: ${GRACE_SECONDS}s (${pre.graceBuckets.length ? 'from getGraceBuckets' : 'no buckets published — the app\u2019s default table'})`,
 );
 GRACE_END = loan.startTime + loan.durationDays * 86_400n + GRACE_SECONDS;
-// The payoff route (#1558). The approval route is the pre-#1558 bridge
-// (#3074): its write plan is not modelled here, so it is BLOCKED rather
-// than driven with steps that do not describe it.
+// The payoff route (#1558). The app removed the pre-#1558 approval bridge
+// in #3074, so a Diamond without the permit route is BLOCKED: the app
+// itself cannot refinance on it.
 want(
   'the Diamond pays the refinance payoff through the request\u2019s payoff permit (routes setRefinancePayoffPermit, #1558)',
   pre.payoffRoute === 'permit',
   pre.payoffRoute === 'permit'
     ? 'permit route'
-    : 'approval route — a Diamond deployed before #1558; this drive models only the permit route',
+    : 'no permit route — a Diamond deployed before #1558, which the app no longer supports (#3074)',
 );
 PERMIT_NEEDED = pre.walletShare !== null && pre.walletShare > 0n;
 want('accepting lender is not the borrower', !eq(LENDER, BORROWER), LENDER);

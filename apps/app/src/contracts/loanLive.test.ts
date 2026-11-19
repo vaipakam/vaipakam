@@ -1,21 +1,15 @@
 /**
- * #1235/#1236 grace-window parity — the late-fee slope and the
- * refinance payoff/approval bounds, pinned against the contract's
- * `LibVaipakam.calculateLateFee` (1% + 0.5%/whole-day, cap 5%) and
- * the #1189 rule that preclose/refinance stay valid THROUGH the
- * grace window and charge the same fee repay does.
+ * The app-side loan mirrors: the seller's sale economics and the loan
+ * clock. (The refinance payoff mirror and its late-fee slope were removed
+ * with the approval route, #3074: the payoff comes from the contract.)
  */
 import { describe, expect, it } from 'vitest';
 import {
-  lateFeeAt,
   loanEndTimeOf,
   offsetCompletionBoundOf,
   originalLoanEndTimeOf,
   pauseCreditOf,
   remainingInterestSecondsOf,
-  refinanceApprovalOf,
-  refinancePayoffOf,
-  refinanceWalletPullOf,
   SellerQuoteUnavailableError,
   sellerEconomics,
   type LoanLive,
@@ -34,147 +28,6 @@ const live = {
   // Never paused: every deadline is the original one.
   pauseLog: [] as LoanLive['pauseLog'],
 } as LoanLive;
-
-const endTime = loanEndTimeOf(live); // 1000 + 30d
-
-describe('lateFeeAt', () => {
-  it('is zero at and before maturity', () => {
-    expect(lateFeeAt(live, endTime - 1n)).toBe(0n);
-    expect(lateFeeAt(live, endTime)).toBe(0n);
-  });
-
-  it('charges the 1% base the first second past maturity', () => {
-    expect(lateFeeAt(live, endTime + 1n)).toBe(
-      (live.principal * 100n) / 10_000n,
-    );
-  });
-
-  it('steps 0.5% per whole day late', () => {
-    expect(lateFeeAt(live, endTime + 2n * DAY + 5n)).toBe(
-      (live.principal * 200n) / 10_000n, // 1% + 2×0.5%
-    );
-  });
-
-  it('caps at 5% of principal', () => {
-    expect(lateFeeAt(live, endTime + 400n * DAY)).toBe(
-      (live.principal * 500n) / 10_000n,
-    );
-  });
-});
-
-/** Interest on `days` whole days at the fixture's rate — the same
- *  pro-rata expression the contract uses. */
-const interestFor = (days: bigint) =>
-  (live.principal * live.interestRateBps * days) / (365n * 10_000n);
-
-describe('refinancePayoffOf', () => {
-  it('is principal + full-term remaining interest within term (floor binds)', () => {
-    expect(refinancePayoffOf(live, live.startTime + DAY)).toBe(
-      live.principal + interestFor(30n),
-    );
-  });
-
-  it('keeps accruing interest past maturity AND adds the late fee', () => {
-    // One day + 1s past maturity: 31 days and 1 second elapsed > the 30-day
-    // floor (settlementInterest's max(elapsed, minimum), to the second since
-    // #3169), late fee = 1% + 1×0.5%.
-    const elapsed = endTime + DAY + 1n - live.startTime;
-    expect(refinancePayoffOf(live, endTime + DAY + 1n)).toBe(
-      live.principal +
-        (live.principal * live.interestRateBps * elapsed) / (365n * DAY * 10_000n) +
-        (live.principal * 150n) / 10_000n,
-    );
-  });
-});
-
-describe('refinanceWalletPullOf', () => {
-  // #3042 — the new principal less its initiation fee pays the old lender
-  // inside the accept, so the wallet pays only the rest of the payoff.
-  // #3649 — the fee is term-scaled; at a 30-day request it is the base rate.
-  const lif = { requestAmount: 0n, lifTerms: { baseBps: 20, baseTermDays: 30, yearlyBps: 50, yearDays: 365 }, termDays: 30 };
-  const net = (amount: bigint) => amount - (amount * 20n) / 10_000n;
-
-  it('is the payoff minus the net new principal (interest + initiation fee)', () => {
-    const asOf = live.startTime + DAY;
-    expect(
-      refinanceWalletPullOf(
-        live,
-        { ...lif, requestAmount: live.principal },
-        asOf,
-      ),
-    ).toBe(interestFor(30n) + (live.principal * 20n) / 10_000n);
-    expect(
-      refinanceWalletPullOf(
-        live,
-        { ...lif, requestAmount: live.principal },
-        asOf,
-      ),
-    ).toBe(refinancePayoffOf(live, asOf) - net(live.principal));
-  });
-
-  it('grows when the request asks for less than the old principal', () => {
-    const asOf = live.startTime + DAY;
-    const half = live.principal / 2n;
-    expect(
-      refinanceWalletPullOf(
-        live,
-        { ...lif, requestAmount: half },
-        asOf,
-      ),
-    ).toBe(refinancePayoffOf(live, asOf) - net(half));
-  });
-
-  it('takes the fee at the request\'s own term (#3649)', () => {
-    const asOf = live.startTime + DAY;
-    // A one-year request pays the yearly rate (50 bps), not the base rate.
-    expect(
-      refinanceWalletPullOf(live, { ...lif, requestAmount: live.principal, termDays: 365 }, asOf),
-    ).toBe(refinancePayoffOf(live, asOf) - (live.principal - (live.principal * 50n) / 10_000n));
-  });
-});
-
-describe('refinanceApprovalOf', () => {
-  const graceSeconds = 3n * DAY; // 30-day bucket
-  const payoffInTerm = live.principal + interestFor(30n);
-
-  it('carries no fee headroom when the request expires before maturity', () => {
-    expect(
-      refinanceApprovalOf(live, { expiresAt: endTime - DAY, graceSeconds }),
-    ).toBe(payoffInTerm);
-  });
-
-  it('covers grace interest + fee at the grace end when the request outlives it', () => {
-    // Last fillable moment = endTime + 3d → 33 elapsed days of
-    // interest and a 1% + 3×0.5% = 2.5% fee.
-    expect(
-      refinanceApprovalOf(live, {
-        expiresAt: endTime + 30n * DAY,
-        graceSeconds,
-      }),
-    ).toBe(
-      live.principal + interestFor(33n) + (live.principal * 250n) / 10_000n,
-    );
-  });
-
-  it('covers the fee at expiry - 1 when the offer clock binds first', () => {
-    // expiresAt one second past a whole late day: last fillable is
-    // expiresAt - 1 = endTime + 1d exactly → 31 elapsed days,
-    // daysLate = 1 → 1.5%.
-    expect(
-      refinanceApprovalOf(live, { expiresAt: endTime + DAY + 1n, graceSeconds }),
-    ).toBe(
-      live.principal + interestFor(31n) + (live.principal * 150n) / 10_000n,
-    );
-  });
-
-  it('falls back to the grace end for a no-expiry offer', () => {
-    expect(
-      refinanceApprovalOf(live, { expiresAt: 0n, graceSeconds }),
-    ).toBe(
-      live.principal + interestFor(33n) + (live.principal * 250n) / 10_000n,
-    );
-  });
-});
 
 /**
  * #1503 item 28 — the seller's forfeiture measures the stretch the lender has
@@ -247,14 +100,6 @@ describe('the loan clock (#2808, D2 #668 / #935)', () => {
     expect(originalLoanEndTimeOf(paused)).toBe(1_000n + 30n * DAY);
     expect(pauseCreditOf(paused)).toBe(2n * DAY);
     expect(loanEndTimeOf(paused)).toBe(1_000n + 32n * DAY);
-  });
-
-  it('charges no late fee for paused time', () => {
-    // A day past the ORIGINAL due date is still inside the moved one.
-    expect(lateFeeAt(paused, 1_000n + 31n * DAY)).toBe(0n);
-    expect(lateFeeAt(paused, 1_000n + 32n * DAY + 1n)).toBe(
-      (paused.principal * 100n) / 10_000n,
-    );
   });
 
   it('counts a pause still in force up to the moment asked about', () => {

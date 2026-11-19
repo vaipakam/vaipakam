@@ -123,7 +123,8 @@ export function approvalBetween(min, max, why) {
 const DAY = 86_400n;
 const loanEndOf = (l) => l.startTime + l.durationDays * DAY;
 
-/** `lateFeeAt`: 0 at/before maturity, then 1% + 0.5% per whole day late, ≤ 5%. */
+/** The grace-window late fee (the contract's rule; the app no longer
+ *  mirrors it since #3074): 0 at/before maturity, then 1% + 0.5% per whole day late, ≤ 5%. */
 export function lateFeeAt(l, ts) {
   const end = loanEndOf(l);
   if (ts <= end) return 0n;
@@ -132,7 +133,7 @@ export function lateFeeAt(l, ts) {
   return (l.principal * bps) / 10_000n;
 }
 
-/** `refinancePayoffOf`: principal + interest for max(seconds elapsed since the
+/** The refinance payoff, mirrored for this drive's own checks: principal + interest for max(seconds elapsed since the
  *  interest clock, the full-term minimum) + the grace-window late fee. #3169:
  *  to the second, and the minimum runs from the clock's start to the term's
  *  end (`startTime + durationDays`; this drive reads no pause log, as the
@@ -222,9 +223,9 @@ export function graceSecondsFrom(buckets, durationDays) {
  *  (src/contracts/usePermit2Signing.ts; pinned to it by the test). */
 export const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
 
-/** The selector whose routing tells the two payoff routes apart, as the
- *  app's `readPayoffRoute` reads it: a Diamond that routes it pays a
- *  refinance payoff through the request's permit. */
+/** The selector the payoff permit is attached through (#1558). Since #3074
+ *  the app has only the permit route, so this drive refuses a Diamond that
+ *  does not route it rather than driving a flow the app no longer has. */
 export const SET_PAYOFF_PERMIT_SIGNATURE = 'setRefinancePayoffPermit(uint256,uint256,uint256,uint256,bytes)';
 
 /** `lastFillableMoment` (refinancePayoffPermit.ts): one second before the
