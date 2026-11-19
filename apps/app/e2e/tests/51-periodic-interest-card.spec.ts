@@ -9,15 +9,14 @@
  *     the period, and says settling is switched off before the period is
  *     due, so it does not warn of a collateral sale that cannot happen.
  *     No button (Codex #3030 r1).
- *  2. Fully paid, past grace, with the deployment's periodic-interest
- *     switch OFF: the card says settling is switched off on this
- *     deployment and offers nothing. This is the posture the e2e chain
- *     ships with, and the one the card most needs to disclose.
- *  3. The same period with the switch ON: the card offers to record it,
- *     the borrower records it from the page, and the chain's own preview
- *     moves to the next period with nothing paid toward it. That period is
- *     open with settlement running, so the card now says what happens if
- *     it is still short when the grace ends, in each party's terms.
+ *  2. Paid inside the grace: the borrower pays a fifth of the principal
+ *     after the deadline, inside the grace, with the switch still OFF.
+ *     The payment covers everything the period owes, so it records the
+ *     period itself (#3779): the chain's own preview moves to the next
+ *     period with nothing paid toward it.
+ *  3. With the switch ON, that next period is open with settlement
+ *     running, so the card says what happens if it is still short when
+ *     the grace ends, in each party's terms.
  *  4. The next period left unpaid past its grace: the card says anyone
  *     may now settle it by selling collateral, in the borrower's and the
  *     lender's own terms, and offers no button: the sale needs a swap
@@ -88,7 +87,7 @@ async function repayPartialAsBorrower(loanId: bigint, amount: bigint): Promise<v
   await confirm(hash, 'repayPartial');
 }
 
-test('the interest card follows a period from open to recorded, and the next one to a sale', async ({
+test('the interest card follows a period from open to paid, and the next one to a sale', async ({
   launchWallet,
 }) => {
   const periodicWas = await read<boolean>('getPeriodicInterestEnabled');
@@ -150,46 +149,28 @@ test('the interest card follows a period from open to recorded, and the next one
   );
   await expect(lCard.getByText(/you are paid up to what is owed/i)).toHaveCount(0);
 
-  // ── 2. Fully paid, past grace, switch off ──────────────────────────────
-  // Pay a fifth of the principal an hour before the deadline: the
-  // interest accrued over almost the whole period rides along, and the
-  // period's expected interest drops with the principal, so the period
-  // reads fully paid. Before the deadline nothing records it inline.
-  await warpTo(first.periodEndAt - 3_600n);
+  // ── 2. Paid inside the grace: the payment records the period ─────────
+  // #3779 — interest accrues by the second and a payment restarts the
+  // accrual, so a payment before the deadline always leaves the time from
+  // the payment to the deadline owed. A payment inside the grace pays all
+  // the period owes, and every period that is over with nothing short
+  // closes inline, so the payment itself moves the checkpoint one interval,
+  // whatever the switch says. A wallet payment therefore never leaves a
+  // period fully paid but unrecorded on a loan that accrues.
+  await warpTo(first.periodEndAt + 60n);
   const loan = await read<{ principal: bigint }>('getLoanDetails', [loanId]);
   await repayPartialAsBorrower(loanId, loan.principal / 5n);
-  const paidUp = await previewOf(loanId);
-  expect(paidUp.shortfall, 'the period should read fully paid').toBe(0n);
-  expect(paidUp.periodEndAt, 'the period must not have advanced yet').toBe(first.periodEndAt);
-
-  await warpTo(paidUp.graceEndsAt + 60n);
-  expect((await previewOf(loanId)).canSettleNow).toBe(true);
-  await bPage.reload({ waitUntil: 'domcontentloaded' });
-  await expect(bCard.getByText(/switched off on this deployment/i)).toBeVisible({
-    timeout: 60_000,
-  });
-  await expect(bCard.getByRole('button')).toHaveCount(0);
+  const second = await previewOf(loanId);
+  expect(second.periodEndAt, 'the payment moves the checkpoint one interval').toBe(
+    first.periodEndAt + 30n * 86_400n,
+  );
+  expect(second.paid, 'the new period starts with nothing paid').toBe(0n);
+  expect(second.canSettleNow, 'nothing is due until the new grace ends').toBe(false);
 
   try {
     await sendAsAdmin('setPeriodicInterestEnabled', [true]);
 
-    // ── 3. Record it ─────────────────────────────────────────────────────
-    await bPage.reload({ waitUntil: 'domcontentloaded' });
-    await expect(bCard.getByText(/this period is fully paid/i)).toBeVisible({
-      timeout: 60_000,
-    });
-    const record = bCard.getByRole('button', { name: 'Record this period' });
-    await expect(record).toBeEnabled({ timeout: 30_000 });
-    await record.click();
-    await expect(bCard.getByText(/next period has started/i)).toBeVisible({
-      timeout: 120_000,
-    });
-    const second = await previewOf(loanId);
-    expect(second.periodEndAt, 'the checkpoint moves one interval').toBe(
-      first.periodEndAt + 30n * 86_400n,
-    );
-    expect(second.paid, 'the new period starts with nothing paid').toBe(0n);
-
+    // ── 3. The next period, open with settlement running ─────────────────
     // The next period is open with settlement running: the sale rule is
     // now said, in each party's terms, and the switched-off line is gone.
     await bPage.reload({ waitUntil: 'domcontentloaded' });
