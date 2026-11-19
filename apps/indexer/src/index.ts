@@ -76,6 +76,7 @@ import {
 import { handleApiIndex } from './apiIndex';
 import { handleIngestHealth } from './healthRoutes';
 import { handleAssetRankings } from './assetRankings';
+import { handleAssetIssuerPowers } from './issuerPowers';
 import { handleConfigSnapshot } from './configSnapshot';
 import {
   resolveEnv,
@@ -571,6 +572,16 @@ export default {
     if (url.pathname === '/assets/rankings') {
       if (req.method === 'OPTIONS') return handleOffersPreflight();
       if (req.method === 'GET') return handleAssetRankings(req, earlyRouteEnv(env).DB);
+      return new Response('Not found', { status: 404 });
+    }
+
+    // ─── /assets/issuer-powers ──────────────────────────────────
+    // #3433 — what the keeper's issuer-power checker found per token or
+    // collection (what was checked, when, and the evidence). D1 only, like
+    // /assets/rankings beside it.
+    if (url.pathname === '/assets/issuer-powers') {
+      if (req.method === 'OPTIONS') return handleOffersPreflight();
+      if (req.method === 'GET') return handleAssetIssuerPowers(req, earlyRouteEnv(env).DB);
       return new Response('Not found', { status: 404 });
     }
 
