@@ -58,7 +58,7 @@ New rules:
 
 Each instruction is a setting of the borrowing (amended 2026-11-19; per loan as first built), written by the borrowing's owner (or that owner's protected-account manager), and cleared by the same wallet at any time. Setting one is refused where the matching manual action could not run on a loan of the borrowing, with that loan named.
 
-**The executors take a borrowing, not a loan** (amended 2026-11-19). With one reserve for several loans, a step that named one loan would let its caller choose which loan is paid when the reserve cannot pay them all. Each executor walks the borrowing's open loans in a fixed order: payments to the loan that falls due earliest first, top-ups to the lowest health factor first, ties to the lower loan id. A loan whose step cannot run is skipped with its reason and the walk goes on (`BorrowingDesign.md` section 5).
+**The executors take a borrowing, not a loan** (amended 2026-11-19). With one reserve for several loans, a step that named one loan would let its caller choose which loan is paid when the reserve cannot pay them all. Each executor walks the borrowing's open loans in a fixed order. The interest payment and the repayment at the due date become one payment step with one walk, paid in the order each payment fell due, so a caller cannot choose between them either; top-ups go to the lowest health factor first, ties to the lower loan id. A loan whose step cannot run is skipped with its reason and the walk goes on (`BorrowingDesign.md` section 5).
 
 ### 4.1 Keep my loan healthy
 

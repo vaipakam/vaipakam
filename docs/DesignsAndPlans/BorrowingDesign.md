@@ -1,6 +1,6 @@
 # A borrowing: one record over a borrower's loans on a pair
 
-**Status:** the owner approved these changes on 2026-11-19, as the "parent position" of the instant market. Card #3808. Design first, no code yet. Reaches a chain by fresh deploy. Section 9 (one close-out for several loans) is an outline that needs a security review before anything is built from it. Section 11 (one borrower token) is a check for the builder, not a decision.
+**Status:** the owner approved these changes on 2026-11-19, as the "parent position" of the instant market. Card #3808. Design first, no code yet. Reaches a chain by fresh deploy. Section 9 (one close-out for several loans) was reviewed in outline by the security thread on 2026-11-19; its conditions are written in, and it is built last. Section 11 (one borrower token) is a check for the builder, not a decision.
 
 **Related:** `InstantMarketDesign.md` (#3656; this replaces its group label and amends its sections 5, 6, 6.1 and 15), `StandingInstructionsDesign.md` (#3681; this moves its reserve and its settings from the loan to the borrowing), `DueDatePlanDesign.md` (#3785), `ExitBeforeLiquidationDesign.md` (#3752), `RateAuctionDesign.md` (whose loans share the same record), `DefaultPathsDesign.md`, `PositionSaleStateGuardDesign.md` (#3710).
 
@@ -25,7 +25,7 @@ So a borrower with eight loans funds eight payment reserves, sets eight plans, a
 - **One set of settings.** The renewal limits, the plan for the due date, the standing instructions and the exit level are set once and apply to every loan of the borrowing.
 - **One transaction** to repay, add collateral or withdraw surplus across the loans the borrower names.
 - **Borrow more into the same borrowing** later, at the price of the lenders then standing.
-- **A fairer rate when a loan moves to another lender.** The highest rate the loan may move at starts at the loan's own rate and rises over two days to the borrower's limit, so a cheaper lender is always taken before a dearer one can be.
+- **A tighter limit when a loan moves to another lender.** The highest rate the loan may move at starts at the loan's own rate and rises over two days to the borrower's limit, so a lender at a lower rate can be taken earlier than a dearer one. It is an earlier chance for the cheaper lender, not a promise that the cheapest is chosen (section 10).
 
 ## 3. The rule
 
@@ -53,7 +53,9 @@ A loan in no borrowing has no reserve and no settings. Nothing is lost by that: 
 
 **Which loans may be in one borrowing.** ERC-20 loans on the borrowing's pair, held by the borrowing's owner as borrower. A fixed loan and a floating loan may share a borrowing: the renewal limits carry a highest rate and a highest margin, and each applies to the loans of its kind. This is needed because a fixed loan may continue as a floating one (`DueDatePlanDesign.md` 4.4) and must not leave its borrowing when it does.
 
-**Gathering and separating, by the holder only.** The holder may add a loan they hold to a borrowing of theirs on the same pair, and may move a loan out to a borrowing of its own. Either changes which reserve and which settings that loan uses, and nothing else. A loan that a refinance opens in place of one of the borrowing's loans is added the same way; whether that happens in the refinance itself is an open item (section 16).
+**Gathering and separating, by the holder only.** The holder may add a loan they hold to a borrowing of theirs on the same pair, and may move a loan out to a borrowing of its own. Either changes which reserve and which settings that loan uses, and nothing else.
+
+**A gather is a change of settings for the loan gathered, and is checked as one.** The loan comes under the destination's settings, so every check that writing those settings on that loan would meet applies to the gather: the bounds, the refusals (a setting the loan cannot carry refuses the gather, named), the sanctions rule, and the protected account's delay. On a protected account, a gather that would switch on or loosen for that loan anything a direct change would have to wait for (a collateral sale, a sale sooner or at a worse price, a higher highest rate, a floating rate) waits the account's delay before the loan counts as in the borrowing, and may be cancelled meanwhile. Until then the loan keeps the settings it had. A gather that only lessens these is immediate. Without this a protected owner's loan could be put under a live sale instruction at once, which the delay exists to prevent (`ExitBeforeLiquidationDesign.md` 4.1). Moving a loan out to a borrowing of its own leaves it with no instruction, which can only lessen them, and is immediate. A loan that a refinance opens in place of one of the borrowing's loans is added the same way; whether that happens in the refinance itself is an open item (section 16).
 
 **A loan that moves to another wallet** (an obligation handover, a transfer of the borrower token) stays on the old borrowing's list but no longer counts: every step skips it, with the reason "the holder is not the borrowing's owner". The new holder may open their own borrowing for it, which rewrites `borrowingOf` for that loan.
 
@@ -74,10 +76,13 @@ This reverses the settlement of 2026-11-15 ("renewal uses the one per-loan reser
 
 **The order of draws is the contract's.** With one reserve for several loans, a step that named one loan would let its caller choose which loan is paid when the reserve cannot pay them all. `StandingInstructionsDesign.md` section 5 gives "the caller chooses nothing" as the reason no keeper permission is needed, and that must stay true. So:
 
-- **The three instruction steps name the borrowing.** `runCollateralTopUp`, `runInterestPayment` and `runDueRepayment` take a borrowing and walk its open loans in a fixed order. Payments go to the loan that falls due earliest first, ties to the lower loan id. Top-ups go to the lowest health factor first, ties to the lower loan id. A loan whose step cannot run is skipped with its reason and the walk goes on. A payment the reserve cannot cover follows the rule that step already has: a repayment is whole or not made, an interest payment may be made in part.
+- **The instruction steps name the borrowing.** Each takes a borrowing and walks its open loans in a fixed order. A loan whose step cannot run is skipped with its reason and the walk goes on.
+- **One step for every payment from the payment reserve.** Today `runInterestPayment` and `runDueRepayment` are two entries. Two entries on one reserve would give the choice back to the caller: with a repayment of 100 due on one loan, interest of 10 due on another and 100 in the reserve, whoever calls first decides which is paid. So the two become **one payment step with one walk**. It lists every payment that can run now for the borrowing's loans (an interest payment whose instruction is on, a repayment at the due date inside its window) and pays them in the order in which each fell due: an interest payment at its period's end, a repayment at the loan's due date. Ties go to the lower loan id, and to interest before a repayment on the same loan. A payment the reserve cannot cover follows the rule it already has: a repayment is whole or not made, an interest payment may be made in part. There is one entry, so there is no order of calls to choose.
+- **The collateral top-up** (`runCollateralTopUp`) draws on the other balance, the collateral reserve. It goes to the lowest health factor first, ties to the lower loan id.
 - **The cap of section 4 bounds the walk.** The pair's prices are read once for the walk.
 - **Each loan is settled through the same internal step as today**, by a self-call, so one loan's failure unwinds alone.
-- **The renewal and continuation entry still names one loan**, because its caller also names the incoming lender for that loan. Where the reserve cannot fund every loan inside its window, the caller's choice of loan decides which is funded. The harm is bounded: each draw is a charge the borrower owes for a continuation they asked for, the entry already falls back to the owner's other free balance in that asset, and the keeper runs the earliest due first. Section 16 asks the security review whether a tighter rule is worth its cost.
+- **The renewal and continuation entry still names one loan**, because its caller also names the incoming lender for that loan. It is the one draw on the payment reserve outside the payment step, so it is fenced (security review, 2026-11-19). Left open, renewing one loan could drain the reserve and leave a loan that falls due earlier unable to pay, to be sold or charged late. **The entry draws on the shared reserve only when both hold:** its loan is the earliest-due loan of the borrowing that is inside its window and still needs a charge, ties to the lower loan id; and the payment step has nothing it could pay now. Otherwise the entry may use only the owner's other free balance in that asset, as an extension already can. It is one walk of the borrowing, bounded by the cap.
+- **What that fence costs.** A loan whose own lender gives no renewal and that no other lender takes stays the earliest-due loan in its window until it is repaid or its grace ends. While it does, a later-due loan of the same borrowing renews from the owner's free balance or not at all. The card for a borrowing says so, and the owner's remedies are to keep free balance in the asset or to move a loan to a borrowing of its own.
 
 **The exit before liquidation** (`ExitBeforeLiquidationDesign.md`) takes a borrowing the same way and sells loan by loan, lowest health factor first. A joint sale waits for section 9.
 
@@ -126,27 +131,31 @@ The holder's own actions may name loans, because the holder may choose. A step t
 
 A rate auction's loans must fit the cap. That is an item for its builder (section 16).
 
-## 9. One close-out for loans that fall together (outline, security review first)
+## 9. One close-out for loans that fall together
 
-The loans of one borrow are opened with collateral in proportion to principal, so a price fall takes their health factors below one at nearly the same moment. Today each is liquidated by its own transaction and its own sale. One sale would cost less gas and would not have one loan's sale move the price against the next.
+The loans of one borrow are opened with collateral in proportion to principal, so a price fall takes their health factors below one at nearly the same moment. Today each is liquidated by its own transaction and its own sale. One sale costs less gas and spares the later loans a price the earlier sales have already moved.
 
-**Proposed shape**, for the security thread to test before any build:
+The security thread reviewed this section in outline on 2026-11-19 and found it sound on the conditions below, which are now part of the design. It is built last (section 18) and its build gets its own adversarial review.
 
-- The health-factor liquidation only, and its single-sale route only. Not the split route, not the internal match, not the time-based default, not the periodic sale.
-- The caller names loans of one borrowing. **Every named loan must itself be liquidatable at that block.** If one is not, the whole call reverts and nothing moves, since the caller's quote was built for the sum.
-- The amount sold is the sum of what each loan's own plan sizes. The caller's quote must lie inside the summed range.
-- **One sale.** The least output accepted is set by the strictest floor among the named loans, so no loan receives a worse price than its own rule allows.
-- **Proceeds are divided by collateral sold**, the last loan taking the remainder. Each loan then books through the existing forced-sale booking, lender whole first, with its own handling fee, its own bonus and its own extra held for the borrower.
-- **When every route fails,** each loan enters the fallback by itself, under its own gate, as it would alone.
+- **Which sale.** The health-factor liquidation only, and its single-sale route only. Not the split route, not the internal match, not the time-based default, not the periodic sale.
+- **Every named loan must itself be liquidatable at that block.** The caller names loans of one borrowing. If one is not liquidatable, the whole call reverts and nothing moves.
+- **One quote per loan.** The caller gives a quoted amount for each loan, and each is checked against that loan's own plan and its own accepted range, exactly as a single liquidation checks it. The amount sold is their sum. A single summed quote is not accepted: its excess could fall on one loan beyond that loan's own range.
+- **One sale, two floor checks.** The least output accepted for the sale is the sum of each loan's own floor, each at its own floor rate for its own amount. After the proceeds are divided, each loan's share is checked against that loan's own floor, and the call reverts if any share falls short. So no loan is sold below the price its own rule allows.
+- **Proceeds are divided by collateral sold**, the last loan taking the remainder. One sale has one price, so no loan pays for another. Each loan then books through the existing forced-sale booking, lender whole first, with its own handling fee, its own bonus and its own extra held for the borrower. The bonus is per loan and in proportion, so joining loans does not change what a liquidator earns.
+- **Each loan runs its own opening and settling steps**, by self-call, so no per-loan guard is skipped: the health test, the fill lock, the forced cancel of a pending swap-to-repay order, the clearing of a sale listing, the pull that a flagged borrower cannot block, the lien, the custody rows and the seller claims.
+- **A joint call never enters the fallback.** A larger sale fails more often than a small one, so a failed joint sale must not push loans that could each have been sold alone into the fallback. If the joint sale fails, or any check fails, the whole call reverts and nothing moves. Only the single-loan liquidation reaches the fallback, under its own gate.
 - A loan may always be liquidated alone. The joint form removes nothing.
 
-**What the review must answer:** whether dividing by collateral sold can ever leave one lender with less than that loan's own sale would have paid; whether the summed quote range can be used to push one loan's sale outside its own range; whether the bonus summed over loans changes a liquidator's incentive; and whether any per-loan guard (the fallback gate, the fill lock, the forced cancel of a pending swap-to-repay order) is skipped by entering through a joint call.
+**Limits, stated.**
 
-A joint run of the exit before liquidation is considered only after this is settled.
+- A larger trade moves the price more than a small one. A loan whose collateral no longer covers its debt may recover a little less in a joint sale than it would have recovered alone and first. Its own floor still binds, and a liquidator who expects that sells such a loan alone.
+- The borrower can make a joint call revert by topping up one of its loans first. That costs the caller gas and nothing else; the caller then liquidates the loans that remain liquidatable, alone or together.
+
+A joint run of the exit before liquidation follows the same conditions and is considered after this is built.
 
 ## 10. A rising ceiling for "continue with another lender"
 
-`InstantMarketDesign.md` 6.1 lets a loan whose lender gives no renewal continue with another lender, at that lender's minimum rate and never above the borrower's limit. Its caller chooses the lender, so a caller could pick a dear lender while a cheaper one stood ready. The borrower's limit bounded the harm; this removes most of it.
+`InstantMarketDesign.md` 6.1 lets a loan whose lender gives no renewal continue with another lender, at that lender's minimum rate and never above the borrower's limit. Its caller chooses the lender, so a caller could pick a dear lender while a cheaper one stood ready. The borrower's limit bounded the harm; this narrows it for the first two days of the window. It does not remove it.
 
 - **The ceiling at a moment** is the most the continued loan's rate may be if the step runs at that moment.
 - **It starts at the loan's own rate** when the extension window opens, three days before the due date.
@@ -157,9 +166,18 @@ A joint run of the exit before liquidation is considered only after this is sett
 - **A fixed loan continuing at a floating rate:** the rule applies to the starting rate (the reference at that moment plus the margin). The cap on the whole rate stays at or below the borrower's highest rate, as `DueDatePlanDesign.md` 4.4 requires.
 - **The loan's own lender at a higher rate** is a candidate under the same ceiling.
 
-A lender whose minimum rate is under the ceiling can be taken as soon as the ceiling passes it, and the keeper's pass does so. A dearer lender cannot be taken until the ceiling reaches its rate, by which time the cheaper one has had first place. The rule reads the clock and two stored numbers, so it costs almost nothing on-chain.
+A lender whose minimum rate is under the ceiling can be taken as soon as the ceiling passes it. A dearer lender cannot be taken until the ceiling reaches its rate. The rule reads the clock and two stored numbers, so it costs almost nothing on-chain.
 
-**What the borrower is told** is unchanged in substance: "if your lender leaves, this loan may continue with another lender at up to X%". One line is added: "Lenders at lower rates are tried first. The rate that may be accepted rises to X% over the two days before the last day."
+**What the contract enforces, and what it does not.** The contract enforces the ceiling of the moment and nothing else about the choice. Among the lenders under that ceiling the caller still chooses, as in 6.1. So:
+
+- Taking the cheapest lender under the ceiling is the **keeper's policy**, not a rule of the contract. The platform's keeper tries the loan's own lender first, then the cheapest lender under the ceiling.
+- Anyone else who runs the step may choose a dearer lender that is under the ceiling at that moment, even while a cheaper one stands ready.
+- A cheaper lender that appears after the ceiling has passed a dearer lender's rate has no first place. Nor does one the keeper missed earlier in the window.
+- From one day before the due date the ceiling is the borrower's limit, and the worst case is the limit, exactly as before this change.
+
+The borrower's limit therefore stays the stated worst case in every review.
+
+**What the borrower is told** is unchanged in substance: "if your lender leaves, this loan may continue with another lender at up to X%". One line is added, and it promises only what the contract enforces: "The highest rate that may be accepted starts at this loan's rate three days before the due date and rises to X% by one day before it. Whoever runs this step chooses the lender within that limit; the platform's keeper chooses the cheapest." Where the keeper pass is not running on a network, the last clause is left out and the card says so, as for every step.
 
 **The renewal keeper pass is on at launch** (owner, 2026-11-19), with no bounty for running it, and the operator alert for a due renewal that has not run is kept. Arming it on each network is still the owner's step.
 
@@ -199,15 +217,15 @@ Decided by the owner on 2026-11-19 with these changes:
 | --- | --- |
 | Storage | The borrowing record, `borrowingOf[loanId]`, the governed cap. The group label's two fields go. Reserve rows, instruction records, borrower renewal limits, the due-date plan and the exit level are keyed by borrowing. Run the storage-layout guard's `write`. |
 | Reserve library | Lien and release by borrowing and depositor. One writer, as now. |
-| Standing instructions facet | Fund, withdraw, set and clear by borrowing (opening one for a loan that has none). The three executors take a borrowing and walk it. Views by borrowing. Split along a seam if it nears the size limit. |
+| Standing instructions facet | Fund, withdraw, set and clear by borrowing (opening one for a loan that has none). The top-up executor takes a borrowing and walks it. The interest and due-repayment executors become one payment step with one walk (section 5). Views by borrowing. Split along a seam if it nears the size limit. |
 | New facet for borrowings | Open, gather, separate, prune, the views (a borrowing's loans, totals and settings version), and the actions of section 7. |
 | Instant borrow | Takes an optional borrowing and the settings version; opens a borrowing otherwise. |
 | Rate auction settle | Opens or joins a borrowing in place of stamping the label. |
 | Renewal and continuation entry | Reads the limits from the borrowing; applies the ceiling of section 10; draws its charge from the borrowing's reserve. |
 | Exit before liquidation | Level and tolerance by borrowing; the executor walks the borrowing. |
-| Joint close-out | Nothing until section 9 is reviewed. |
-| Permissionless-steps ledger | Rows for the borrowing-keyed executors and the prune, replacing the per-loan rows. |
-| Keeper | The standing-instruction pass and the exit pass read borrowings. The renewal pass applies the ceiling: own lender first, then the cheapest lender under the ceiling. |
+| Joint close-out | A new entry beside the single liquidation, on its own facet (the risk and forced-sale facets have no room): one quote per loan, one sale, the two floor checks, per-loan opening and settling by self-call, and a whole-call revert in place of the fallback (section 9). Built last. |
+| Permissionless-steps ledger | Rows for the top-up step, the one payment step and the prune, replacing the per-loan rows. |
+| Keeper | The standing-instruction pass and the exit pass read borrowings; the pass's interest and repayment steps become one step with one arming flag. The renewal pass applies the ceiling: own lender first, then the cheapest lender under the ceiling. |
 | Indexer | Borrowing opened, loan added, loan removed, settings set, reserve funded and withdrawn, action run. A borrowing table; a loan's row names its borrowing. |
 | App | One line per borrowing with its loans beneath; one "Reserve and instructions" panel and one "At the due date" card per borrowing; the add flow; the source list of section 12; the statements of sections 6, 8 and 10. |
 
@@ -216,18 +234,20 @@ Decided by the owner on 2026-11-19 with these changes:
 1. Opening: by an instant borrow, by an auction's settle, by a request filled by a slot, and by the holder for a single loan; the pair is fixed; a loan on another pair or held by another wallet is refused.
 2. Membership: a loan whose borrower token moved is skipped by every step with the reason; the new holder opens their own borrowing for it; the old borrowing's list drops it at the next prune; a closed loan is pruned; a loan in the fallback counts as open.
 3. No close-out path writes to a borrowing: repay, default, liquidate and claim each loan of a full borrowing, with the list never pruned, and each behaves as for a loan in no borrowing.
-4. Reserve: funded once, drawn by any loan of the borrowing; the order of draws is earliest due first for payments and lowest health first for top-ups, whatever the caller does; a short reserve pays whole repayments in that order and stops; the depositor withdraws the rest at any time; encumbrance holds against an offer, an intent, a claim and a payout.
+4. Reserve: funded once, drawn by any loan of the borrowing; the payment step pays in the order each payment fell due, interest and repayments in one walk, and top-ups go to the lowest health first, whatever the caller does; with a repayment due on one loan, interest due on another and a reserve that covers only one, the outcome is the same on every call; a short reserve pays what it can in that order and skips a repayment it cannot make whole; the depositor withdraws the rest at any time; encumbrance holds against an offer, an intent, a claim and a payout.
 5. Settings: set once and read by every loan; the version rises on each change; a setting one loan cannot carry is refused with the loan named; a loan added later takes them.
 6. Actions: each equals the same single-loan calls one by one, in both modes; a loan that cannot complete is reported and the rest complete; funds for it stay with the holder; an over-long list is refused.
 7. Add: only the owner; same pair; refused on a stale settings version; a source above the borrowing's limit is skipped and reported; the cap is checked after a prune.
-8. The ceiling: at the window's opening only a lender at the loan's own rate can be taken; halfway, only lenders up to halfway; one day before the due date and after, any lender up to the limit; a limit at or below the loan's rate; a window shorter than a day; the margin for a floating loan; the starting rate for a fixed loan continuing as floating.
+8. The ceiling: at the window's opening only a lender at the loan's own rate can be taken; halfway, only lenders up to halfway; one day before the due date and after, any lender up to the limit; a caller may take a dearer lender under the ceiling while a cheaper one stands ready, and the contract allows it (the stated limit of section 10); a limit at or below the loan's rate; a window shorter than a day; the margin for a floating loan; the starting rate for a fixed loan continuing as floating.
 9. A fixed loan that continues as floating stays in its borrowing and reads the highest margin from then on.
-10. Gather and separate: only the holder; the loan uses the new borrowing's reserve and settings from that moment; no fund moves.
+10. Gather and separate: only the holder; the loan uses the new borrowing's reserve and settings from that moment; no fund moves; a gather is refused where the destination carries a setting the loan cannot; on a protected account a gather into a borrowing with a live collateral-sale instruction, a higher highest rate or a floating rate waits the delay, the loan keeps its old settings meanwhile, no instruction of the destination runs on it before the delay ends, and a gather that only lessens is immediate.
+11. The renewal fence: with two loans in their windows and a reserve that covers one charge, only the earlier-due loan's renewal draws on the reserve, whichever is called first, and the other uses free balance or does not run; a renewal does not draw while the payment step has a payment it could make.
+12. Joint close-out: one quote per loan, each refused outside its own range; the least output is the sum of the loans' own floors; a share under its loan's own floor reverts the call; a named loan that is not liquidatable reverts the call; a failed sale reverts and no loan enters the fallback; each per-loan guard fires as in a single liquidation; the bookings equal those of single liquidations at the same price.
 
 ## 16. Open items for the builder to raise, not decide silently
 
-1. **The gas of an eight-loan instant borrow, a repay-all, and a whole-borrowing top-up, repayment and interest run**, measured. The cap on open loans per borrowing and the per-transaction limit of section 7 are set from it.
-2. **The renewal entry's draw order** (section 5): whether a rule that sets aside what earlier-due loans need is practical, for the security review to weigh.
+1. **The gas of an eight-loan instant borrow, a repay-all, and a whole-borrowing top-up and payment run**, measured. The cap on open loans per borrowing and the per-transaction limit of section 7 are set from it.
+2. **The renewal entry's draw order** (section 5). Settled by the security review on 2026-11-19: the fence written there. The builder confirms the walk fits the entry's size and gas.
 3. **A refinance's replacement loan:** added to the borrowing inside the refinance, or by the holder afterwards with the app prompting. The refinance facet is near the size limit, so the second is the default unless the first is cheap.
 4. **A protected account's replacement:** whether the borrowing record moves to the replacement owner with the tokens, or is opened again there.
 5. **The rate auction's bound** on the number of loans against the cap of section 4, for the auction's builder.
@@ -240,9 +260,9 @@ Decided by the owner on 2026-11-19 with these changes:
 2. **One loan shared by several lenders, with one collateral holding.** Tidiest for the borrower. The lenders would share that loan's loss, and one lender's liquidation would reach another's security. Rejected again by the owner on 2026-11-19.
 3. **One reserve per user across every pair.** Fewer deposits still. The limit becomes unclear across unrelated borrowings, and a reserve would need to hold several assets. The borrowing is the unit the borrower already thinks in.
 4. **Per-loan overrides of a borrowing's settings.** A setting would then live in two places and the card could not state one rule. A loan that needs its own settings is moved to a borrowing of its own.
-5. **Keep the executors per loan and enforce the draw order with a check.** The check would have to prove that no earlier-due loan could run, which means running it. Walking the borrowing does the same work once and leaves the caller no choice.
+5. **Keep the executors per loan and enforce the draw order with a check.** The check would have to prove that no earlier-due loan could run, which means running it. Walking the borrowing does the same work once and leaves the caller no choice. Keeping interest and repayment as two walks was the first draft; it left the caller the choice between them, so they are one step.
 6. **Write the borrowing on every close-out so its list is always exact.** It would put a new write, and a new way to fail, on every repayment, default and liquidation. Rejected for the lazy prune.
-7. **For the dearer-lender problem: have the contract find the cheapest lender.** It would need a sorted list of slots on-chain, kept by every slot change. The ceiling gives nearly the same outcome from the clock.
+7. **For the dearer-lender problem: have the contract find the cheapest lender.** It would need a sorted list of slots on-chain, kept by every slot change. The ceiling narrows the choice from the clock at almost no cost, and leaves the rest as a stated limit (section 10).
 8. **For the same problem: only the keeper may run the continuation.** It would tie the borrower's continuation to one runner being alive. The step stays open to anyone.
 9. **Call the record a "position".** The word the approval used. Not chosen for the record's name: "position" already means a loan's tokens everywhere in the code, and two meanings side by side are an audit hazard. The app may still say it.
 
@@ -254,6 +274,6 @@ Build it, behind the instant market's master switch, in this order:
 2. The actions of section 7 and the add of section 8, with the gas measurement that sets the cap.
 3. The rising ceiling, with the continuation step it bounds (#3763) and the renewal pass.
 4. The app's borrowing view, panels and source list; the indexer's borrowing table.
-5. The joint close-out, only after its security review, and the joint exit after that.
+5. The joint close-out, on the conditions of section 9, with its own adversarial review, and the joint exit after that.
 
-Proposed owners: the Auto-lend build thread for 1 to 3; the security thread for the review of section 9 and of the draw order; the rate auction's builder for its settle and its bound; the keeper thread for the passes; the indexer and app threads for 4.
+Proposed owners: the Auto-lend build thread for 1 to 3; the security thread for the review of the joint close-out's build; the rate auction's builder for its settle and its bound; the keeper thread for the passes; the indexer and app threads for 4.
