@@ -34,6 +34,7 @@ import { BorrowNowForm, BORROW_NOW_KEY } from '../../shared/instant/BorrowNowFor
 import { BorrowNowFlow, type BorrowNowRest } from '../../shared/instant/BorrowNowFlow';
 import { restRequestInput, type BorrowNowTerms } from '../../shared/instant/borrowNow';
 import { ReceiptAddendum } from '../../shared/receipt/addendum';
+import { KitNotice, useKitUse } from '../../shared/kit/KitNotice';
 import { BorrowFor } from './BorrowFor';
 
 type Hex = `0x${string}`;
@@ -100,7 +101,12 @@ export function BorrowPage() {
 
   const suggested = chain ? suggestedAssets(chain) : [];
   const [pairByChain, setPairByChain] = useState<Record<number, { lending: Hex | null; collateral: Hex | null }>>({});
-  const pair = chain ? (pairByChain[chain.chainId] ?? initialPair(chain.chainId, suggested)) : { lending: null, collateral: null };
+  // #3773 — a kit link's "borrow against this" opens on its collateral (and
+  // its suggested lending asset), on the link's own network only.
+  const kit = useKitUse('borrow', walletChain, address ?? null);
+  const kitPair = (base: { lending: Hex | null; collateral: Hex | null }) =>
+    kit.handoff?.request.action === 'borrow' ? { lending: kit.handoff.request.lendingAsset ?? base.lending, collateral: kit.handoff.request.asset } : base;
+  const pair = chain ? (pairByChain[chain.chainId] ?? kitPair(initialPair(chain.chainId, suggested))) : { lending: null, collateral: null };
   const setPair = (next: { lending: Hex | null; collateral: Hex | null }) => {
     if (!chain) return;
     setPairByChain((p) => ({ ...p, [chain.chainId]: next }));
@@ -149,7 +155,10 @@ export function BorrowPage() {
 
   // OFF-35 holds for a request too: it is new exposure, so an unaccepted
   // Terms version is accepted before its review opens.
-  const reviewRequest = (next: PostDraft) => {
+  const reviewRequest = (typed: PostDraft) => {
+    // #3773 — the integrator a kit link named and the reader kept rides on
+    // the request it is reviewed with.
+    const next: PostDraft = kit.integrator !== null ? { ...typed, integrator: kit.integrator } : typed;
     if (terms.data?.kind === 'needed') {
       setPendingDraft(next);
       termsGate.start(terms.data);
@@ -217,6 +226,7 @@ export function BorrowPage() {
           </button>
         </Notice>
       )}
+      {!flowOpen && <KitNotice action="borrow" chain={walletChain} />}
       {chain && connected && walletChain !== null && !flowOpen && (
         <PairPicker key={chain.chainId} role="borrower" chain={chain} meta={meta} lending={pair.lending} collateral={pair.collateral} onChange={setPair} />
       )}
@@ -341,8 +351,17 @@ export function BorrowPage() {
           <h2 id="borrow-review" className="sr-only">
             {text('borrow.stepSign')}
           </h2>
-          <ReceiptAddendum lines={forLines}>
-            <AcceptOffer flowKey={ACCEPT_KEY} source={storedSource(taking)} chain={walletChain} own={own} meta={meta} terms={terms.data} onClose={() => setTaking(null)} />
+          <ReceiptAddendum lines={[...forLines, ...kit.lines]}>
+            <AcceptOffer
+              flowKey={ACCEPT_KEY}
+              source={storedSource(taking)}
+              chain={walletChain}
+              own={own}
+              meta={meta}
+              terms={terms.data}
+              integrator={kit.integrator}
+              onClose={() => setTaking(null)}
+            />
           </ReceiptAddendum>
         </section>
       )}
@@ -373,7 +392,7 @@ export function BorrowPage() {
           <h2 id="borrow-request-review" className="sr-only">
             {text('borrow.stepSign')}
           </h2>
-          <ReceiptAddendum lines={forLines}>
+          <ReceiptAddendum lines={[...forLines, ...(draft.integrator !== undefined ? kit.lines : [])]}>
             <PostOffer
               flowKey={REQUEST_KEY}
               draft={draft}

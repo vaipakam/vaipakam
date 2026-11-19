@@ -8,4 +8,6 @@ The alerts card offers a choice for messages when something leaves the vault: De
 
 A new workspace package, the embedded lending kit, builds the link that opens the platform's own borrow, lend or rent review for an integrator's user. It holds no key and signs nothing; the app reads the link with the same parser.
 
+That link now lands on a page of its own. It says what the link asks for, which network it is for, and which app it names, with the integrator registry's answer read from the chain: active, suspended, not registered, or unread. Continuing opens Borrow, Lend or Rent filled in from the link, with a notice the user can act on: remove the named app from what they sign, or stop using the link. On a borrow, the review states what the protocol would pay that app today, or why nothing; on a lending offer, that naming it is a record only; a rental names no app.
+
 Closes #3435, Advances #3721, #3434 and #3773

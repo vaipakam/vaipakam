@@ -3,6 +3,7 @@ import {
   advancedSet,
   bucketsWithin,
   createParams,
+  ZERO,
   DEFAULT_INPUT,
   durationOk,
   expiresAt,
@@ -130,6 +131,10 @@ describe('createParams for a lending offer', () => {
       guardBps: null,
     };
     const p = createParams(parsed, { lending, collateral, leg: { kind: 'erc20' } }, 99n, 'lender');
+    // #3773 — no integrator unless a kit link named one the reader kept.
+    expect(p.integrator).toBe(ZERO);
+    const named = '0x2222222222222222222222222222222222222222' as const;
+    expect(createParams(parsed, { lending, collateral, leg: { kind: 'erc20' } }, 99n, 'lender', named).integrator).toBe(named);
     expect(p.offerType).toBe(0);
     expect([p.amount, p.amountMax]).toEqual([10n, 10n]);
     expect([p.interestRateBps, p.interestRateBpsMax]).toEqual([850n, 850n]);

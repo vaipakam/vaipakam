@@ -58,6 +58,8 @@ export interface PostDraft {
   parsed: ParsedPost;
   pair: PostPair;
   expiresAt: bigint;
+  /** #3773 — the integrator a kit link named and the reader kept. */
+  integrator?: Hex;
 }
 
 /** The protocol's answer to the request as a dry run from this wallet. */
@@ -312,7 +314,7 @@ export async function readPostReview(own: OwnStateClient, diamond: Hex, draft: P
   const account = own.account;
   const r = <T>(fn: Parameters<OwnStateClient['read']>[0]) => own.read(fn).then((x) => x.value as T);
   const { pair, parsed } = draft;
-  const params = createParams(parsed, pair, draft.expiresAt, draft.side);
+  const params = createParams(parsed, pair, draft.expiresAt, draft.side, draft.integrator);
   const leg = pair.leg;
   const stake = stakeOf(draft.side, parsed, pair);
   const [lendingClass, collateralClass, maxDurationDays, graceSeconds, lif, vault, held, protocolShareBps] = await Promise.all([

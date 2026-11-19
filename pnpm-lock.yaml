@@ -52,6 +52,9 @@ importers:
       '@vaipakam/i18n':
         specifier: workspace:*
         version: link:../../packages/i18n
+      '@vaipakam/lend-kit':
+        specifier: workspace:*
+        version: link:../../packages/lend-kit
       '@vaipakam/lib':
         specifier: workspace:*
         version: link:../../packages/lib

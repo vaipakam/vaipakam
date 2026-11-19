@@ -23,6 +23,7 @@
     "@tanstack/react-query": "^5.100.1",
     "@vaipakam/contracts": "workspace:*",
     "@vaipakam/i18n": "workspace:*",
+    "@vaipakam/lend-kit": "workspace:*",
     "@vaipakam/lib": "workspace:*",
     "connectkit": "^1.9.2",
     "i18next": "^26.0.8",

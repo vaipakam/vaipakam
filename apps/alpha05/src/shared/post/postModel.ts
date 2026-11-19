@@ -375,7 +375,10 @@ export type LifecycleTerms = ReturnType<typeof lifecycleTerms>;
  * not offer is sent at its stated default (no listing rights, no refinance
  * target), and the review states each.
  */
-export function createParams(p: ParsedPost, pair: PostPair, expiry: bigint, side: PostSide) {
+/** `integrator` is the one a kit link named and the reader kept (#3773):
+ *  paid a share only on a borrower's request, attribution only on a
+ *  lender's offer. The app names none of its own. */
+export function createParams(p: ParsedPost, pair: PostPair, expiry: bigint, side: PostSide, integrator: Hex = ZERO) {
   const leg = pair.leg;
   const nft = leg.kind !== 'erc20';
   return {
@@ -407,10 +410,9 @@ export function createParams(p: ParsedPost, pair: PostPair, expiry: bigint, side
     allowsParallelSale: false,
     refinanceTargetLoanId: 0n,
     ...lifecycleTerms(p),
-    // #3621 — this app posts no lender "either" offers; #3682 — and names
-    // no integrator on its own offers.
+    // #3621 — this app posts no lender "either" offers.
     lifecycleFlex: 0,
-    integrator: ZERO,
+    integrator,
   } as const;
 }
 

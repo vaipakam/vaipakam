@@ -61,6 +61,9 @@ interface AcceptOfferProps {
   meta: TokenMetaMap | null;
   terms: TermsState | null;
   onClose: () => void;
+  /** #3773 — the integrator a kit link named and the reader kept, signed
+   *  into the terms. The page states it on the review. */
+  integrator?: Hex | null;
 }
 
 /**
@@ -78,7 +81,7 @@ interface AcceptOfferProps {
  * arrived in the wallet and what moved into the vault, for a lender what
  * left the wallet and the fee share that came back.
  */
-export function AcceptOffer({ flowKey, source, chain, own, meta, terms, onClose }: AcceptOfferProps) {
+export function AcceptOffer({ flowKey, source, chain, own, meta, terms, onClose, integrator = null }: AcceptOfferProps) {
   const copy = useCopy();
   const { text, format } = copy;
   const config = useConfig();
@@ -163,6 +166,7 @@ export function AcceptOffer({ flowKey, source, chain, own, meta, terms, onClose 
         illiquidCollateral: r.collateralClass === 'illiquid',
         // A signed order's fill binds the terms to the order's hash.
         ...(r.source.kind === 'signed' ? { offerKey: r.source.order.orderHash } : {}),
+        ...(integrator !== null ? { integrator } : {}),
       });
       say(text('accept.stepSign'));
       const signature = await signTypedDataFor(config, chain.chainId, {

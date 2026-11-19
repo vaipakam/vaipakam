@@ -5,6 +5,7 @@ import { BorrowPage } from '../pages/borrow/BorrowPage';
 import { ClaimsPage } from '../pages/claims/ClaimsPage';
 import { DeskPage } from '../pages/desk/DeskPage';
 import { HomePage } from '../pages/home/HomePage';
+import { KitPage } from '../pages/kit/KitPage';
 import { LendPage } from '../pages/lend/LendPage';
 import { OfferPage } from '../pages/offers/OfferPage';
 import { OffersPage } from '../pages/offers/OffersPage';
@@ -58,4 +59,5 @@ export const BUILT_PAGES: Readonly<Record<string, ComponentType>> = {
   '/risks': RisksPage,
   '/wallet-keys': WalletKeysPage,
   '/rates': RatesPage,
+  '/kit': KitPage,
 };
