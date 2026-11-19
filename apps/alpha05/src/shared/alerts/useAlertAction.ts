@@ -64,7 +64,7 @@ export function nextIssuedAt(nowMs: number = Date.now(), store: IssuedStore = br
 }
 
 /** A wallet refusal, by the EIP-1193 code wallets use or by its words. */
-function isUserRejection(e: unknown): boolean {
+export function isUserRejection(e: unknown): boolean {
   let cur: unknown = e;
   for (let i = 0; i < 5 && cur && typeof cur === 'object'; i++) {
     const c = cur as { code?: unknown; name?: unknown; cause?: unknown };

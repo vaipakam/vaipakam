@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useSwitchChain } from 'wagmi';
 import { LOAN_LINK_CHAIN_PARAM, linkChainId } from '../../shared/loans/loanLink';
 import { LoanLinkCard } from './LoanLinkCard';
+import { WatchLoanCard } from './WatchLoanCard';
 import { refusalFromError } from '../../shared/eligibility/refusal';
 import { useAccount } from 'wagmi';
 import { getSupportedChain, type SupportedChain } from '../../chain/chains';
@@ -208,6 +209,7 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
 
       <LoanActions loanId={loanId} view={v} role={role} own={own} chain={chain} meta={meta} />
       {erc20 && live && role?.borrower === true && <LoanLinkCard loanId={loanId} chainId={chain.chainId} />}
+      {l.status === LOAN_STATUS_ACTIVE && v.holders.lender !== null && v.holders.borrower !== null && !holder && <WatchLoanCard loanId={loanId} chainId={chain.chainId} wallet={account} />}
       <LoanClaims loanId={loanId} view={v} own={own} chain={chain} meta={meta} frozen={frozen} />
       {held !== null && (
         <div data-testid="position-held-for-lender">
