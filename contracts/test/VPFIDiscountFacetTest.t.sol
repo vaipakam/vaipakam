@@ -11,6 +11,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {VPFIToken} from "../src/token/VPFIToken.sol";
+import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
@@ -398,12 +399,12 @@ contract VPFIDiscountFacetTest is SetupTest {
         );
         uint256 free = staked - encumbered; // 60
 
-        // Unstaking more than the free balance is refused with the
-        // specific F-1 error (before the chokepoint guard would).
+        // Unstaking more than the free balance is refused by the one
+        // Withdraw's bound (payout rule 2026-11-19).
         vm.prank(borrower);
         vm.expectRevert(
             abi.encodeWithSelector(
-                VPFIDiscountFacet.VPFIEncumberedByActiveLoan.selector,
+                LibProtectedAccount.AmountExceedsFree.selector,
                 free + 1 ether,
                 free
             )

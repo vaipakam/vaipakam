@@ -985,6 +985,14 @@
       "class": "user",
       "why": "the vault owner disowns its own untracked asset"
     },
+    "VaultDepositoryFacet.withdrawCredited(uint8,address,uint256)": {
+      "class": "user",
+      "why": "the account withdraws, to its own wallet, what its own batch credited to its free balance (the one Withdraw, for msg.sender only)"
+    },
+    "VaultDepositoryFacet.withdrawFromVault(address,uint8,address,uint256,uint256,address)": {
+      "class": "user",
+      "why": "the one Withdraw: the account's manager (LibVaultWithdraw, requireManager) withdraws the account's own free balance"
+    },
     "VaultFactoryFacet.getOrCreateUserVault(address)": {
       "class": "user",
       "why": "creates or returns a user's own vault; no step waits on it"

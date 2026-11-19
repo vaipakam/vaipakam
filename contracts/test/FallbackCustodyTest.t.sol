@@ -23,6 +23,7 @@ import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
+import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
@@ -220,7 +221,7 @@ contract FallbackCustodyTest is CustodyInvariantBase {
         assertEq(_fcTracked(fcBorrower, vpfi), FC_COLLATERAL + d, "fixture-live: custody plus the free deposit");
 
         vm.prank(fcBorrower);
-        vm.expectRevert(abi.encodeWithSelector(VPFIDiscountFacet.VPFIEncumberedByActiveLoan.selector, d + 1, d));
+        vm.expectRevert(abi.encodeWithSelector(LibProtectedAccount.AmountExceedsFree.selector, d + 1, d));
         VPFIDiscountFacet(address(diamond)).withdrawVPFIFromVault(d + 1);
 
         uint256 wallet0 = IERC20(vpfi).balanceOf(fcBorrower);

@@ -495,6 +495,13 @@ contract SetupTest is Test {
             + VaultDepositoryFacet(address(diamond)).getDepositoryHolding(who, token, 0);
     }
 
+    /// @dev Payout rule (2026-11-19): what a party is paid lands in its vault
+    ///      as free balance. This reads that free (depository) balance of
+    ///      `asset` (ERC-20) for `user`.
+    function _vaultFree(address user, address asset) internal view returns (uint256) {
+        return VaultDepositoryFacet(address(diamond)).getDepositoryHolding(user, asset, 0);
+    }
+
     function setupHelper() public {
         owner = address(this);
         (lender, lenderPk) = makeAddrAndKey("lender");

@@ -261,6 +261,24 @@ else
   FAIL=1
 fi
 
+# ── 1d3b. Wallet payout guard ─────────────────────────────────────────
+# The payout rule (owner decision 2026-11-19): a party is paid into its
+# vault; only the one Withdraw and the protected payout queue reach a
+# party's wallet. Every other direct push is listed with its reason. Same
+# AST artifacts as 1d.
+echo
+echo "[predeploy 1d3b/4] wallet payout guard (payout rule)"
+if [ "$BUILD_OK" -ne 1 ] || [ ! -d "$SCRIPT_DIR/../out-measured-delivery" ]; then
+  echo "  ✗ skipped — no AST artifacts to read (step 1 or 1c failed)" >&2
+  FAIL=1
+elif node "$SCRIPT_DIR/check-wallet-payouts.mjs"; then
+  : # the script prints its own lines
+else
+  echo "  ✗ wallet payout guard failed — pay a party into its vault, or list a" >&2
+  echo "    non-party or vault push with its reason (see above)" >&2
+  FAIL=1
+fi
+
 # ── 1d-ii. Intent-origin writer guard ─────────────────────────────────
 # A loan is recorded as made by a lender intent slot only in matchIntent,
 # where every slot check (terms, funding, the calm-price check) runs. Same

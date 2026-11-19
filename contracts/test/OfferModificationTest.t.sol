@@ -155,7 +155,7 @@ contract OfferModificationTest is SetupTest {
     function testSetOfferRateRevertsNotCreator() public {
         uint256 id = _createLender();
         vm.prank(borrower);
-        vm.expectRevert(IVaipakamErrors.NotOfferCreator.selector);
+        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
         _mutate().setOfferRate(id, 700, 900, type(uint64).max);
     }
 
@@ -234,7 +234,7 @@ contract OfferModificationTest is SetupTest {
     function testSetOfferAmountRevertsNotCreator() public {
         uint256 id = _createLender();
         vm.prank(borrower);
-        vm.expectRevert(IVaipakamErrors.NotOfferCreator.selector);
+        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
         _mutate().setOfferAmount(id, 500 ether, 600 ether, type(uint64).max);
     }
 

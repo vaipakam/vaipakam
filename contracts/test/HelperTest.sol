@@ -755,7 +755,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](10);
         selectors[0] = OfferCancelFacet.cancelOffer.selector;
         selectors[1] = OfferCancelFacet.getCompatibleOffers.selector;
         selectors[2] = OfferCancelFacet.getOffer.selector;
@@ -766,6 +766,10 @@ contract HelperTest {
         selectors[5] = OfferCancelFacet.teardownStaleSaleListing.selector;
         // #3336 — the dead-vehicle read the keeper's teardown sweep uses.
         selectors[6] = OfferCancelFacet.isOfferRouteDead.selector;
+        // #3744 — the offer escrow refund host, the holder's collection, its read.
+        selectors[7] = OfferCancelFacet.refundOfferEscrow.selector;
+        selectors[8] = OfferCancelFacet.collectOfferRefund.selector;
+        selectors[9] = OfferCancelFacet.getOfferRefundHeld.selector;
         return selectors;
     }
 
@@ -2754,7 +2758,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](39);
+        selectors = new bytes4[](38);
         selectors[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         selectors[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         selectors[2] = RewardCustodyFacet.rewardCustodyHolder.selector;
@@ -2783,7 +2787,7 @@ contract HelperTest {
         selectors[23] = RewardCustodyFacet.custodyMove.selector;
         selectors[25] = RewardCustodyFacet.custodyUnclassifiedQuarantine.selector;
         selectors[26] = RewardCustodyFacet.custodyReleaseFromRow.selector;
-        selectors[27] = RewardCustodyFacet.custodyPayoutToWallet.selector;
+        selectors[27] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
         selectors[28] = RewardCustodyFacet.custodyDrawForTransport.selector;
         // #1566 slice 4 PR B (Codex #2186 r1) — restitution dispositions + the versioned snapshot.
         selectors[29] = RewardCustodyFacet.releaseRestitutionAsPaidCorrection.selector;
@@ -2798,7 +2802,6 @@ contract HelperTest {
         // Diamond-internal entry points (the quarantine one took slot 25).
         selectors[35] = RewardCustodyFacet.custodyRecordIngressPacket.selector;
         selectors[36] = RewardCustodyFacet.custodyUnclassifiedIngress.selector;
-        selectors[38] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
         // #1566 sanctions rule (owner 2026-10-14) — reward set apart / released.
         selectors[37] = RewardCustodyFacet.custodySetApartReward.selector;
         selectors[24] = RewardCustodyFacet.custodyReleaseSanctionsHeld.selector;

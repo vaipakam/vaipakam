@@ -267,11 +267,11 @@ contract RecycleBucketTest is SetupTest, IVaipakamErrors {
 
         vm.prank(alice);
         (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
-            LibVaipakam.RewardDelivery.Wallet
+            LibVaipakam.RewardDelivery.Vault
         );
 
         assertGt(paid, 0, "clean entry pays the user");
         assertEq(_cfg().getRecycleBucket(), 0, "no credit on a clean claim");
-        assertEq(vpfi.balanceOf(alice), paid, "user received the reward");
+        assertEq(_vaultFree(alice, address(vpfi)), paid, "user received the reward in the vault");
     }
 }

@@ -252,6 +252,10 @@ contract VaultOutflowFacet is IVaipakamErrors {
         // Nothing to move is a no-op, as a zero withdrawal always was.
         if (o.amount == 0) return 0;
         address proxy = LibFacet.getOrCreateVault(user);
+        // Payout rule (2026-11-19) — an amount already in the account's own
+        // vault, just released from its lien or reservation, becomes free
+        // balance. Nothing moves, so no position mark and no payout gate.
+        if (o.class_ == VaultOutflowTypes.OutflowClass.OwnRelease) return _releaseOwn(user, proxy, o);
         // #3413 / #3710 — THE seam for payouts: every outflow that names a
         // loan takes value out of its positions, so its tokens cool down and
         // its state number goes up. A consolidation keeps the value under the
@@ -457,6 +461,24 @@ contract VaultOutflowFacet is IVaipakamErrors {
             // A consolidation moves custody under the lien: the move books it.
             // A holder payout is free money for the holder: booked here.
             payeeOwner = holder;
+        } else if (c == VaultOutflowTypes.OutflowClass.OfferHolder) {
+            // #3744 — offer `ref`'s escrow, from its creator's vault (the
+            // paying vault) to the vault of whoever holds the offer's
+            // position token now. The token must be that offer's, or the
+            // token whose held escrow sits in this vault (the offer record
+            // may be gone by the time its holder collects).
+            LibVaipakam.Offer storage offer = s.offers[o.ref];
+            if (
+                o.positionToken == 0
+                    || !(
+                        (offer.positionTokenId == o.positionToken && offer.creator == user)
+                            || s.offerTokenHeldFrom[o.positionToken] == user
+                    )
+            ) revert OutflowPositionMismatch(o.ref, o.positionToken);
+            address holder = LibPositionNFT.core().holderOf(o.positionToken);
+            if (holder == address(0)) revert OutflowRecipientInvalid(c, address(0));
+            o.to = LibFacet.getOrCreateVault(holder);
+            payeeOwner = holder;
         } else if (c == VaultOutflowTypes.OutflowClass.ClaimCustody) {
             // The STORED party of the receiving side of THAT loan, from loan
             // state: `o.positionToken` names the side. Its vault must exist
@@ -544,6 +566,28 @@ contract VaultOutflowFacet is IVaipakamErrors {
         }
     }
 
+    /// @dev The own-balance release (OwnRelease). The caller has just dropped
+    ///      a lien or reservation on `user`'s own vault by exactly `o.amount`;
+    ///      the lien guard then confirms the vault holds it unencumbered, and
+    ///      the depository ledger rises by it. The credit is capped so the
+    ///      ledger never exceeds the vault's unencumbered balance: a ledger
+    ///      already at or above it (a VPFI figure the depository does not
+    ///      debit on every spend, see LibDepositoryLedger) loses nothing,
+    ///      since the withdrawal is bounded by that balance anyway, and a
+    ///      release can never create a credit tokens do not back.
+    function _releaseOwn(address user, address proxy, VaultOutflowTypes.Outflow memory o)
+        private
+        returns (uint256)
+    {
+        uint256 free = LibEncumbrance.vaultFree(user, o.kind == VaultOutflowTypes.AssetKind.ERC20, o.asset, o.tokenId);
+        if (o.amount > free) revert WithdrawWouldUnderflowLien(user, o.asset, o.tokenId, o.amount, free);
+        uint256 held = LibDepositoryLedger.holding(user, o.asset, o.tokenId);
+        uint256 room = free > held ? free - held : 0;
+        LibDepositoryLedger.credit(user, o.asset, o.tokenId, o.amount < room ? o.amount : room);
+        emit VaultOutflow(user, proxy, o.asset, o.tokenId, o.amount, o.amount, proxy, o.class_, o.reason, o.ref);
+        return o.amount;
+    }
+
     /// @dev The lien guard: the amount must be free (balance, capped by the
     ///      tracked ledger so unsolicited dust never counts, less the active
     ///      liens on it). Terminal paths release their lien before paying.
@@ -599,7 +643,8 @@ contract VaultOutflowFacet is IVaipakamErrors {
     function _credits(VaultOutflowTypes.OutflowClass c) private pure returns (bool) {
         return c == VaultOutflowTypes.OutflowClass.PositionHolder || c == VaultOutflowTypes.OutflowClass.Counterparty
             || c == VaultOutflowTypes.OutflowClass.PrincipalToBorrower
-            || c == VaultOutflowTypes.OutflowClass.IntegratorShare;
+            || c == VaultOutflowTypes.OutflowClass.IntegratorShare
+            || c == VaultOutflowTypes.OutflowClass.OfferHolder;
     }
 
     function _paysWallet(VaultOutflowTypes.OutflowClass c) private pure returns (bool) {

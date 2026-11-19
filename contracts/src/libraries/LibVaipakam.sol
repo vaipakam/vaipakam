@@ -8981,6 +8981,19 @@ library LibVaipakam {
         ///      `isAggregatorAdapter` (the adapter's principal is fixed at its
         ///      initialize, so the two cannot drift). Appended — append-only.
         mapping(address => address) adapterPrincipal;
+        /// @dev #3744 — an open offer's escrow that a step someone else
+        ///      triggered could not pay to the holder of the offer's position
+        ///      token, kept in the creator's vault under a reservation, per
+        ///      position token, asset and asset token id. Written only by
+        ///      `LibEncumbrance.holdForOfferToken` / `releaseOfferTokenHold`;
+        ///      the token's holder collects it
+        ///      (`OfferCancelFacet.collectOfferRefund`). Appended — append-only.
+        mapping(uint256 => mapping(address => mapping(uint256 => uint256))) offerTokenHeld;
+        /// @dev #3744 — the creator whose vault holds an offer token's held
+        ///      escrow ({offerTokenHeld}). Set once, at the first hold; an
+        ///      offer token belongs to one offer, so it never changes.
+        ///      Appended — append-only.
+        mapping(uint256 => address) offerTokenHeldFrom;
     }
 
     /// @notice #3344 — a protected account's Ready settings. See

@@ -7,13 +7,12 @@ import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibCollateralSet} from "../libraries/LibCollateralSet.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
-import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibIntentFill} from "../libraries/LibIntentFill.sol";
 import {LibOfferMatchExecute} from "../libraries/LibOfferMatchExecute.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
-import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {LibOfferRefund} from "../libraries/LibOfferRefund.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -227,15 +226,17 @@ contract CollectionOfferFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
     }
 
     /// @notice Lower the loans a collection offer still funds to
-    ///         `loansLeft`; the released principal goes back to the lender's
-    ///         wallet in this call. At least one loan must stay; to withdraw
-    ///         the offer whole, cancel it.
+    ///         `loansLeft`; the released principal goes to the vault of the
+    ///         holder of the offer's position token as free balance (#3744,
+    ///         payout rule 2026-11-19). For that holder's account manager.
+    ///         At least one loan must stay; to withdraw the offer whole,
+    ///         cancel it.
     function reduceCollectionLoans(uint256 offerId, uint16 loansLeft) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.CollectionOffer storage c = s.collectionOffer[offerId];
         LibVaipakam.Offer storage p = s.offers[offerId];
         if (c.set.kind == LibVaipakam.CollateralSetKind.None) revert NotCollectionOffer(offerId);
-        if (LibProtectedAccount.manager(p.creator) != msg.sender) revert NotCollectionOfferLender();
+        if (!LibOfferRefund.managedBy(p, msg.sender)) revert NotCollectionOfferLender();
         TakeFailure open = _openFailure(s, offerId, p);
         if (open != TakeFailure.None) revert CollectionTakeRefused(offerId, 0, open);
         uint16 left = c.loans - c.filled;
@@ -246,7 +247,7 @@ contract CollectionOfferFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
         p.amount -= released;
         p.amountMax -= released;
         _decrementReserve(offerId, released);
-        LibVaultOutflow.toOwner(p.creator, LibVaultOutflow.ERC20, p.lendingAsset, 0, released, OutflowReason.OFFER_REFUND);
+        LibOfferRefund.refund(offerId, LibVaultOutflow.ERC20, p.lendingAsset, 0, released, true);
         emit CollectionOfferReduced(offerId, left, loansLeft, released);
     }
 

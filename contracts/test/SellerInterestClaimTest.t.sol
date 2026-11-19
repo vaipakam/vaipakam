@@ -24,6 +24,7 @@ import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
 import {LibTestTiming} from "./helpers/LibTestTiming.sol";
@@ -220,10 +221,10 @@ contract SellerInterestClaimTest is SetupTest {
         uint256 held = SellerClaimFacet(address(diamond)).getSellerInterestHeld(loanId, lender, mockERC20);
         assertApproxEqAbs(held, _net(loanId, sellerGross), 2, "the seller's share, net of the fee, waits in their vault");
 
-        uint256 before = ERC20(mockERC20).balanceOf(lender);
+        uint256 before = _sellerFree();
         vm.prank(lender);
         SellerClaimFacet(address(diamond)).claimAsSeller(loanId);
-        assertEq(ERC20(mockERC20).balanceOf(lender) - before, held, "the seller withdraws it");
+        assertEq(_sellerFree() - before, held, "the seller collects it into free balance");
         assertEq(
             SellerClaimFacet(address(diamond)).getSellerInterestHeld(loanId, lender, mockERC20), 0, "nothing left waiting"
         );
@@ -242,11 +243,11 @@ contract SellerInterestClaimTest is SetupTest {
         RepayFacet(address(diamond)).repayLoan(loanId);
 
         // The seller claims first: the split runs then, not at the holder's claim.
-        uint256 sellerBefore = ERC20(mockERC20).balanceOf(lender);
+        uint256 sellerBefore = _sellerFree();
         vm.prank(lender);
         SellerClaimFacet(address(diamond)).claimAsSeller(loanId);
         assertEq(
-            ERC20(mockERC20).balanceOf(lender) - sellerBefore,
+            _sellerFree() - sellerBefore,
             _net(loanId, sellerGross),
             "the seller is paid their net claim at the terminal"
         );
@@ -290,14 +291,14 @@ contract SellerInterestClaimTest is SetupTest {
         (,, LibVaipakam.SellerInterestClaim[] memory open) = _ledger(loanId);
         assertEq(open.length, 1, "the seller's claim is open");
 
-        uint256 sellerBefore = ERC20(mockERC20).balanceOf(lender);
+        uint256 sellerBefore = _sellerFree();
         vm.prank(lender);
         SellerClaimFacet(address(diamond)).claimAsSeller(loanId);
         assertEq(
             SettlementLegFacet(address(diamond)).getParkedLenderLeg(loanId).payer, address(0), "released first"
         );
         assertEq(
-            ERC20(mockERC20).balanceOf(lender) - sellerBefore, _net(loanId, sellerGross), "the seller's net share"
+            _sellerFree() - sellerBefore, _net(loanId, sellerGross), "the seller's net share"
         );
         (,, open) = _ledger(loanId);
         assertEq(open.length, 0, "the split closed the claims");
@@ -327,10 +328,10 @@ contract SellerInterestClaimTest is SetupTest {
         uint256 held = SellerClaimFacet(address(diamond)).getSellerInterestHeld(loanId, lender, mockERC20);
         assertApproxEqAbs(held, _net(loanId, sellerGross), 2, "the prior seller's net share waits in its vault");
 
-        uint256 before = ERC20(mockERC20).balanceOf(lender);
+        uint256 before = _sellerFree();
         vm.prank(lender);
         SellerClaimFacet(address(diamond)).claimAsSeller(loanId);
-        assertEq(ERC20(mockERC20).balanceOf(lender) - before, held, "the seller withdraws it");
+        assertEq(_sellerFree() - before, held, "the seller collects it into free balance");
     }
 
     // ─── The bound ───────────────────────────────────────────────────────────
@@ -609,5 +610,11 @@ contract SellerInterestClaimTest is SetupTest {
             0,
             "the flagged seller's share is parked in their vault"
         );
+    }
+
+    /// @dev Payout rule (2026-11-19): a seller's collection lands as free
+    ///      balance in the seller's own vault, never in the wallet.
+    function _sellerFree() internal view returns (uint256) {
+        return VaultDepositoryFacet(address(diamond)).getDepositoryHolding(lender, mockERC20, 0);
     }
 }

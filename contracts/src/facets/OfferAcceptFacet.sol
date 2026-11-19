@@ -7,6 +7,7 @@ import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibAcceptTerms} from "../libraries/LibAcceptTerms.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
+import {LibOfferRefund} from "../libraries/LibOfferRefund.sol";
 import {LibAcceptContext} from "../libraries/LibAcceptContext.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -672,9 +673,10 @@ contract OfferAcceptFacet is
         if (offer.collateralAssetType != LibVaipakam.AssetType.ERC20) return;
         if (offer.collateralAmountMax <= offer.collateralAmount) return;
         uint256 collRefund = offer.collateralAmountMax - offer.collateralAmount;
-        // refund to borrower's wallet
-        LibVaultOutflow.toOwner(offer.creator, LibVaultOutflow.ERC20, // pull from borrower's vault
-                offer.collateralAsset, 0, collRefund, OutflowReason.OFFER_REFUND);
+        // #3744 — to the vault of the holder of the offer's position token,
+        // as free balance; the acceptor triggered it, so a holder who cannot
+        // be paid never blocks the accept (held for the token instead).
+        LibOfferRefund.refund(offer.id, LibVaultOutflow.ERC20, offer.collateralAsset, 0, collRefund, false);
     }
 
     /// @dev #573 — release the borrower offer-collateral lock on a DIRECT

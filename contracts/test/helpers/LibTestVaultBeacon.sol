@@ -204,7 +204,7 @@ library LibTestVaultBeacon {
     /// @notice The depository facet's whole routed surface, the one test-side
     ///      list (HelperTest's getter returns it).
     function depositorySelectors() internal pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](17);
+        selectors = new bytes4[](18);
         selectors[0] = VaultDepositoryFacet.adoptUntracked.selector;
         selectors[1] = VaultDepositoryFacet.adoptionAckTextHash.selector;
         selectors[2] = VaultDepositoryFacet.adoptionDigest.selector;
@@ -222,6 +222,7 @@ library LibTestVaultBeacon {
         selectors[14] = VaultDepositoryFacet.getDepositoryHolding.selector;
         selectors[15] = VaultDepositoryFacet.getDepositoryAssets.selector;
         selectors[16] = VaultDepositoryFacet.getVaultOwner.selector;
+        selectors[17] = VaultDepositoryFacet.withdrawCredited.selector;
     }
 
     /// @notice The policy host's whole routed surface, the one test-side

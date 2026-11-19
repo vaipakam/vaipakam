@@ -5418,7 +5418,14 @@ contract EarlyWithdrawalFacetTest is Test {
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeCall(VaultOutflowFacet.vaultOutflowToOwner, (lender, uint8(VaultOutflowTypes.AssetKind.ERC20), mockERC20, uint256(0), uint256(500 ether), OutflowReason.COLLATERAL_RELEASE)),
+            abi.encodeCall(
+                VaultOutflowFacet.vaultOutflowArgs,
+                (
+                    lender, uint8(VaultOutflowTypes.AssetKind.ERC20), mockERC20, uint256(0), uint256(500 ether),
+                    address(0), uint8(VaultOutflowTypes.OutflowClass.OwnRelease), uint256(2), uint256(0),
+                    OutflowReason.COLLATERAL_RELEASE
+                )
+            ),
             "release fail"
         );
 

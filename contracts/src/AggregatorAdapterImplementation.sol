@@ -11,7 +11,7 @@ import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Recei
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IPositionNFTSource} from "./interfaces/IPositionNFTSource.sol";
 import {LibVaipakam} from "./libraries/LibVaipakam.sol";
-import {LibHolderClaim} from "./libraries/LibHolderClaim.sol";
+import {LibHolderClaim, IHolderClaimDiamond} from "./libraries/LibHolderClaim.sol";
 import {LibSwap} from "./libraries/LibSwap.sol";
 
 /**
@@ -124,9 +124,9 @@ interface IVaipakamIntentSurface {
 
     /// @dev Pays the caller (`msg.sender`) any finalized interaction rewards
     ///      to an explicit delivery venue (RL-1). `deliverTo` is the
-    ///      `LibVaipakam.RewardDelivery` enum (ABI uint8): 1 = Wallet (raw
-    ///      transfer to the caller), 2 = Vault. The adapter hardwires
-    ///      Wallet — it must hold the raw VPFI for {sweepToPrincipal}.
+    ///      `LibVaipakam.RewardDelivery` enum (ABI uint8): 2 = Vault (the
+    ///      only delivery since the payout rule; the adapter then withdraws
+    ///      the credit to itself for {sweepToPrincipal}).
     function claimInteractionRewardsTo(uint8 deliverTo) external;
 
     function isAssetPaused(address asset) external view returns (bool);
@@ -541,8 +541,13 @@ contract AggregatorAdapterImplementation is
         // screen the REAL principal here. Funds stay locked (not released to an
         // OFAC-listed wallet) until the screen clears.
         _screenPrincipal();
-        // The adapter is the intent's own account, so it withdraws its own
-        // capital (`account` = this adapter, which manages itself).
+        // The adapter is the intent's own account, so it takes back its own
+        // capital (`account` = this adapter, which manages itself). The
+        // capital is released into the adapter's vault as free balance
+        // (payout rule, 2026-11-19), and the adapter withdraws exactly that
+        // to itself through its own Withdraw before the OZ transfer.
+        IHolderClaimDiamond d = IHolderClaimDiamond(diamond);
+        uint256 before = d.getDepositoryHolding(address(this), asset(), 0);
         IVaipakamIntentSurface(diamond).withdrawLenderIntentCapital(
             address(this),
             asset(),
@@ -550,6 +555,7 @@ contract AggregatorAdapterImplementation is
             LibVaipakam.PROTOCOL_INTENT_SLOT,
             assets
         );
+        LibHolderClaim.withdrawCredit(d, uint8(LibVaipakam.AssetType.ERC20), asset(), 0, before);
         super._withdraw(caller, receiver, owner, assets, shares);
     }
 
@@ -813,17 +819,18 @@ contract AggregatorAdapterImplementation is
     /// @dev    #626 round-9 P3 — the claimed VPFI lands raw on the adapter and is
     ///         forwarded to the principal via {sweepToPrincipal} (the principal's
     ///         earned yield; not part of the underlying-denominated NAV).
-    ///         RL-1 — HARDWIRED to Wallet delivery (`deliverTo = 1`): the
-    ///         adapter depends on the claim paying a raw balance to itself;
-    ///         a vault delivery would strand the VPFI where
-    ///         {sweepToPrincipal} can't reach it. Explicit rather than
-    ///         relying on the contract-caller default so the behaviour
-    ///         can't drift with the default's resolution rule.
+    ///         A reward is always paid into the claimant's vault (payout
+    ///         rule, 2026-11-19), so the adapter withdraws exactly what the
+    ///         claim credited to itself, where {sweepToPrincipal} reaches it.
     function claimInteractionRewards() external {
         _onlyKeeperOrPrincipal();
+        IHolderClaimDiamond d = IHolderClaimDiamond(diamond);
+        address vpfi = d.getVPFIToken();
+        uint256 before = d.getDepositoryHolding(address(this), vpfi, 0);
         IVaipakamIntentSurface(diamond).claimInteractionRewardsTo(
-            uint8(LibVaipakam.RewardDelivery.Wallet)
+            uint8(LibVaipakam.RewardDelivery.Vault)
         );
+        LibHolderClaim.withdrawCredit(d, uint8(LibVaipakam.AssetType.ERC20), vpfi, 0, before);
     }
 
     // ─── ERC721 receiver (#626 Codex P1) ────────────────────────────────────

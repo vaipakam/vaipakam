@@ -386,15 +386,11 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      *         no matching wallet balance/allowance, or silently move the
      *         user's own tokens instead of the payout.
      *
-     *         Vault resolution is READ-ONLY on purpose: never
-     *         {getOrCreateUserVault}, which mints vaults. A payout path must
-     *         not mint a vault as a side effect, and callers (the reward
-     *         claim) treat any revert here as "fall back to wallet delivery"
-     *         — so `NoVault` below is the fallback trigger, not
-     *         hard failures. The whole body runs in the caller's
-     *         revert-isolated cross-facet frame: a failure at ANY step
-     *         (transfer, record) rolls back every vault-side effect
-     *         before the caller's fallback pays.
+     *         The vault is created when the claimant has none (payout
+     *         rule, owner decision 2026-11-19: a reward is always paid into
+     *         the vault, there is no wallet fallback). A failure at any step
+     *         reverts, and the caller's claim with it, so the reward stays
+     *         claimable.
      *
      *         The tier push this credit causes is not sent here: the claim
      *         holds the reentrancy guard, so the user is queued and pushed
@@ -414,8 +410,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         address token,
         uint256 amount
     ) external onlyDiamondInternal {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address proxy = _currentVault(s, user);
+        address proxy = getOrCreateUserVault(user);
         IERC20(token).safeTransfer(proxy, amount);
         LibVaipakam.recordVaultDeposit(user, token, amount);
         // A reward paid into the vault is the owner's, free: it joins the
@@ -484,8 +479,8 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         uint256 recycled,
         uint256 epoch
     ) private {
+        address proxy = getOrCreateUserVault(user);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address proxy = _currentVault(s, user);
         (address holder, address vpfi) = LibRewardCustody.boundHolderAndToken(s);
         if (token != vpfi) revert IVaipakamErrors.RewardCustodyPayoutTokenMismatch(vpfi, token);
         LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.LiveFresh, fresh, proxy);
@@ -500,9 +495,8 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     }
 
     /// @dev READ-ONLY resolution of an EXISTING vault (`NoVault` otherwise),
-    ///      with no sanctions screen. Shared by both protocol-payout credits
-    ///      (see {vaultCreditFromDiamondERC20} for why it never mints) and,
-    ///      since #1566 S3e, the swap fill's {recordVaultOutflowERC20}.
+    ///      with no sanctions screen. Used by the swap fill's
+    ///      {recordVaultOutflowERC20} (#1566 S3e).
     function _currentVault(
         LibVaipakam.Storage storage s,
         address user

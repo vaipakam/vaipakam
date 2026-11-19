@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibBatchCredit} from "./LibBatchCredit.sol";
 
 /**
  * @title LibDepositoryLedger
@@ -73,6 +74,8 @@ library LibDepositoryLedger {
         if (amount == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.depositoryHolding[user][asset][tokenId] += amount;
+        // "And withdraw": counted for the open batch's caller (#3745).
+        LibBatchCredit.onCredit(user, asset, tokenId, amount);
         if (!s.depositoryAssetListed[user][asset]) {
             s.depositoryAssetListed[user][asset] = true;
             s.depositoryAssets[user].push(asset);
@@ -107,6 +110,7 @@ library LibDepositoryLedger {
         unchecked {
             m[tokenId] = h - amount;
         }
+        LibBatchCredit.onDebit(user, asset, tokenId, amount);
     }
 
     /// @notice The owner spent `amount` of free vault balance through
@@ -120,5 +124,6 @@ library LibDepositoryLedger {
         unchecked {
             m[tokenId] = amount < h ? h - amount : 0;
         }
+        LibBatchCredit.onDebit(user, asset, tokenId, amount < h ? amount : h);
     }
 }

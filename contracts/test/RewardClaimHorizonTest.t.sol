@@ -146,7 +146,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         assertEq(_sweeper().sweepExpiredInteractionRewards(_ids(id)), 0);
         vm.prank(alice);
         (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
-            LibVaipakam.RewardDelivery.Wallet
+            LibVaipakam.RewardDelivery.Vault
         );
         assertGt(paid, 0, "reward untouched while dark");
     }
@@ -252,7 +252,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         assertEq(_lens().getUserRewardEntryIds(alice).length, 1, "before: the open entry is listed");
         vm.prank(alice);
         (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
-            LibVaipakam.RewardDelivery.Wallet
+            LibVaipakam.RewardDelivery.Vault
         );
         assertGt(paid, 0, "fixture: the claim settled the entry");
         assertTrue(_mut().getRewardEntryProcessedRaw(id), "fixture: settled");
@@ -272,7 +272,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
 
         vm.prank(alice);
         (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
-            LibVaipakam.RewardDelivery.Wallet
+            LibVaipakam.RewardDelivery.Vault
         );
         assertGt(paid, 0, "claim wins before expiry");
 
@@ -628,7 +628,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         assertGt(liveExpiry, 0, "live entry has a countdown");
 
         vm.prank(alice);
-        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Vault);
 
         (, uint64 processedExpiry) = _lens().getRewardEntryExpiry(id);
         assertEq(processedExpiry, 0, "claimed entry shows no countdown");

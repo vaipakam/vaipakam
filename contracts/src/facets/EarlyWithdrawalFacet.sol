@@ -901,14 +901,15 @@ contract EarlyWithdrawalFacet is
 
         // Release liam's collateral that was locked when creating the
         // borrower-style sale offer. liam locked collateral into his vault
-        // via createOffer(Borrower, ...) — return it to him.
+        // via createOffer(Borrower, ...) — release it into his own free
+        // vault balance (payout rule, owner decision 2026-11-19).
         // #569 §4.6 (2026-06-13) — defensive lien release for the sale-
         // vehicle temp loan before returning its collateral. The lender-
         // side sale vehicle posts ZERO collateral today (`_buildSaleParams`
         // forces `collateralAmount = 0`), so the temp loan's lien is
         // empty and this is a no-op. It is wired defensively so that if
         // a future change ever lets a sale vehicle carry real collateral,
-        // the chokepoint guard on the withdraws below clears. No-op on
+        // the policy's guard on the releases below clears. No-op on
         // NFT rentals (D-1). EncumbranceLifecycleMap.md §4.6.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
@@ -919,16 +920,16 @@ contract EarlyWithdrawalFacet is
         );
         if (tempLoan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
             if (tempLoan.collateralAmount > 0) {
-                LibVaultOutflow.toOwner(originalLender, LibVaultOutflow.ERC20, tempLoan.collateralAsset, 0, tempLoan.collateralAmount, OutflowReason.COLLATERAL_RELEASE);
+                LibVaultOutflow.releaseOwn(originalLender, LibVaultOutflow.ERC20, tempLoan.collateralAsset, 0, tempLoan.collateralAmount, tempLoanId, OutflowReason.COLLATERAL_RELEASE);
             }
         } else if (
             tempLoan.collateralAssetType == LibVaipakam.AssetType.ERC721
         ) {
-            LibVaultOutflow.toOwner(originalLender, LibVaultOutflow.ERC721, tempLoan.collateralAsset, tempLoan.collateralTokenId, 1, OutflowReason.COLLATERAL_RELEASE);
+            LibVaultOutflow.releaseOwn(originalLender, LibVaultOutflow.ERC721, tempLoan.collateralAsset, tempLoan.collateralTokenId, 1, tempLoanId, OutflowReason.COLLATERAL_RELEASE);
         } else if (
             tempLoan.collateralAssetType == LibVaipakam.AssetType.ERC1155
         ) {
-            LibVaultOutflow.toOwner(originalLender, LibVaultOutflow.ERC1155, tempLoan.collateralAsset, tempLoan.collateralTokenId, tempLoan.collateralQuantity, OutflowReason.COLLATERAL_RELEASE);
+            LibVaultOutflow.releaseOwn(originalLender, LibVaultOutflow.ERC1155, tempLoan.collateralAsset, tempLoan.collateralTokenId, tempLoan.collateralQuantity, tempLoanId, OutflowReason.COLLATERAL_RELEASE);
         }
 
         // Mark temp loan as Repaid with zeroed-out claim records so

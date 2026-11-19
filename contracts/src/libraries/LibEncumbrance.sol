@@ -396,6 +396,42 @@ library LibEncumbrance {
         _decrementAggregate(seller, asset, 0, amount);
     }
 
+    // ─── #3744 — an offer's escrow held for its position token ─────────────
+
+    /// @notice Keep `amount` of `asset` / `tokenId` in `creator`'s vault,
+    ///         reserved for whoever holds offer position token
+    ///         `positionToken`, because a step someone else triggered could
+    ///         not pay that holder. Neither the creator's withdrawal nor any
+    ///         other spend reaches it; the holder collects it.
+    function holdForOfferToken(
+        address creator,
+        uint256 positionToken,
+        address asset,
+        uint256 tokenId,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.offerTokenHeld[positionToken][asset][tokenId] += amount;
+        s.offerTokenHeldFrom[positionToken] = creator;
+        s.encumbered[creator][asset][tokenId] += amount;
+    }
+
+    /// @notice Release the whole of what is held for `positionToken` in
+    ///         `asset` / `tokenId`, for its collection. Returns the creator
+    ///         whose vault holds it and the amount (zero when nothing is held).
+    function releaseOfferTokenHold(uint256 positionToken, address asset, uint256 tokenId)
+        internal
+        returns (address creator, uint256 amount)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        amount = s.offerTokenHeld[positionToken][asset][tokenId];
+        creator = s.offerTokenHeldFrom[positionToken];
+        if (amount == 0) return (creator, 0);
+        s.offerTokenHeld[positionToken][asset][tokenId] = 0;
+        _decrementAggregate(creator, asset, tokenId, amount);
+    }
+
     // ─── #2814 / #3681 — the loan reserve, in the depositor's own vault ───
 
     /// @notice Reserve `amount` of `asset` that `holder` just placed in their

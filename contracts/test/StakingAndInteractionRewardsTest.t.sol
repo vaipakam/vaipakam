@@ -7,6 +7,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
+import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
@@ -92,7 +93,9 @@ contract StakingAndInteractionRewardsTest is SetupTest, IVaipakamErrors {
     function testWithdrawRevertsOnOverflow() public {
         _deposit(lender, 1_000 ether);
         vm.prank(lender);
-        vm.expectRevert(VPFIVaultBalanceInsufficient.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibProtectedAccount.AmountExceedsFree.selector, 2_000 ether, 1_000 ether)
+        );
         VPFIDiscountFacet(address(diamond)).withdrawVPFIFromVault(2_000 ether);
     }
 

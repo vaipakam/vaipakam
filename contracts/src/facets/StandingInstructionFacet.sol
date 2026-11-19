@@ -156,7 +156,8 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
         uint256 reserved
     );
 
-    /// @notice A depositor withdrew `amount` of their unused reserve.
+    /// @notice A depositor took `amount` of their unused reserve back into
+    ///         their own free vault balance.
     /// @param reserved What is left in that reserve.
     /// @custom:event-category state-change/vault-mutation
     event LoanReserveWithdrawn(
@@ -392,37 +393,34 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
         emit LoanReserveFunded(loanId, msg.sender, kind, asset, amount, reserved);
     }
 
-    /// @notice Withdraw `amount` of `account`'s unused reserve of `kind` for
-    ///         `loanId` to the caller, who must be the account's manager (its
-    ///         own wallet, or its controller once a replacement retired it).
+    /// @notice Take `amount` of `account`'s unused reserve of `kind` for
+    ///         `loanId` back into `account`'s own free vault balance. The
+    ///         caller must be the account's manager (its own wallet, or its
+    ///         controller once a replacement retired it).
     /// @dev    Open whatever the loan's state and whoever holds the position:
-    ///         the reserve is the depositor's own money. An ordinary vault
-    ///         payout under the outflow policy (a protected account's payout
-    ///         queues behind its delay). Tier-1 sanctions-gated.
+    ///         the reserve is the depositor's own money, in the depositor's
+    ///         own vault, so it is released there (payout rule, owner decision
+    ///         2026-11-19): nothing reaches a wallet here, and the account's
+    ///         ordinary Withdraw takes it out. It is not paid to the borrower
+    ///         position's current holder: the depositor funded it, and a
+    ///         position sold since does not carry it. Tier-1 sanctions-gated.
     ///         #3246 part 2 — a RECOVERED account's standing instructions are
-    ///         dead and its owner key may be lost, so anyone may return its
-    ///         unused reserve to the account's own vault, where it stays free
-    ///         for the recovered account's sweep to the recovery address
-    ///         (RecoveryAddressClawbackDesign §4.3; the same rule as
-    ///         `LenderIntentFacet.withdrawLenderIntentCapital`).
+    ///         dead and its owner key may be lost, so anyone may release its
+    ///         unused reserve, for the recovered account's sweep to the
+    ///         recovery address (RecoveryAddressClawbackDesign §4.3; the same
+    ///         rule as `LenderIntentFacet.withdrawLenderIntentCapital`).
     function withdrawLoanReserve(address account, uint256 loanId, uint8 kind, uint256 amount) external nonReentrant {
         LibPausable.requireNotPaused();
-        bool recovered = LibProtectedAccount.isRecovered(account);
-        if (!recovered) {
+        if (!LibProtectedAccount.isRecovered(account)) {
             LibProtectedAccount.requireManager(account);
             LibVaipakam._assertNotSanctioned(msg.sender);
         }
         if (amount == 0) revert LoanReserveZeroAmount();
         address asset = _reserveAsset(LibVaipakam.storageSlot().loans[loanId], kind);
-        // Released BEFORE the withdraw, so the chokepoint's guard sees it free.
+        // Released from the reservation BEFORE the credit, so the policy's
+        // guard sees it unencumbered.
         uint256 left = LibEncumbrance.unlienLoanReserve(loanId, account, kind, asset, amount);
-        if (recovered || msg.sender == account) {
-            LibVaultOutflow.toOwner(account, LibVaultOutflow.ERC20, asset, 0, amount, OutflowReason.WITHDRAW);
-        } else {
-            LibVaultOutflow.toAllowlisted(
-                account, LibVaultOutflow.ERC20, asset, 0, amount, msg.sender, OutflowReason.WITHDRAW
-            );
-        }
+        LibVaultOutflow.releaseOwn(account, LibVaultOutflow.ERC20, asset, 0, amount, loanId, OutflowReason.RESERVE_RELEASE);
         emit LoanReserveWithdrawn(loanId, account, kind, asset, amount, left);
     }
 

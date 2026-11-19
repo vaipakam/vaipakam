@@ -21,6 +21,7 @@ import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
 import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.sol";
 import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
@@ -160,12 +161,20 @@ contract StandingInstructionTest is SetupTest {
         assertEq(reserved, 30 ether, "the extension reads the same payment reserve");
         assertEq(otherFree, free0, "the funded amount is reserved, not added to the free balance");
 
+        // Payout rule (2026-11-19): the reserve becomes free balance in the
+        // depositor's own vault; the wallet is untouched.
         uint256 wallet0 = IERC20(mockCollateralERC20).balanceOf(borrower);
+        uint256 dep0 = VaultDepositoryFacet(address(diamond)).getDepositoryHolding(borrower, mockCollateralERC20, 0);
         vm.expectEmit(true, true, false, true, address(diamond));
         emit StandingInstructionFacet.LoanReserveWithdrawn(LOAN, borrower, COLLATERAL, mockCollateralERC20, 150 ether, 250 ether);
         vm.prank(borrower);
         _si().withdrawLoanReserve(borrower, LOAN, COLLATERAL, 150 ether);
-        assertEq(IERC20(mockCollateralERC20).balanceOf(borrower) - wallet0, 150 ether);
+        assertEq(IERC20(mockCollateralERC20).balanceOf(borrower), wallet0, "wallet untouched");
+        assertEq(
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(borrower, mockCollateralERC20, 0) - dep0,
+            150 ether,
+            "free in the depositor's vault"
+        );
 
         vm.prank(borrower);
         vm.expectRevert(

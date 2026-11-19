@@ -10,11 +10,10 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibProtectedAccount, IVaultProtectionRead} from "../libraries/LibProtectedAccount.sol";
 import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
-import {LibReadyBalance} from "../libraries/LibReadyBalance.sol";
-import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
-import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {LibBatchCredit} from "../libraries/LibBatchCredit.sol";
+import {LibVaultWithdraw} from "../libraries/LibVaultWithdraw.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
-import {DiamondPausable, LibPausable} from "../libraries/LibPausable.sol";
+import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaultBeacon} from "../VaultBeacon.sol";
 import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
@@ -204,36 +203,43 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
         uint256 amount,
         address recipient
     ) external nonReentrant returns (uint256 queuedId) {
-        if (
-            LibPausable.paused()
-                && !(LibProtectedAccount.isProtected(account)
-                    && LibProtectedAccount.escapeOpen())
-        ) revert LibPausable.EnforcedPause();
-        LibProtectedAccount.requireManager(account);
-        LibVaipakam._assertNotSanctioned(msg.sender);
-        // Funds out to a caller-chosen address: the recipient is screened
-        // too, whether it is paid now or queued (a queued payout is
-        // screened again at release).
-        LibVaipakam.assertRecipientNotBarred(recipient);
         if (kind > uint8(LibVaipakam.AssetType.ERC1155)) revert InvalidAssetKind(kind);
         if (kind == uint8(LibVaipakam.AssetType.ERC20)) tokenId = 0;
         if (kind == uint8(LibVaipakam.AssetType.ERC721)) amount = 1;
-        if (amount == 0) revert AmountZero();
-        {
-            uint256 free = withdrawableNow(account, kind, asset, tokenId);
-            if (amount > free) revert LibProtectedAccount.AmountExceedsFree(amount, free);
-        }
-        // Debited when asked for, paid or queued: a queued payout that is
-        // later cancelled is credited back (`LibProtectedAccount.cancelPayout`).
-        LibDepositoryLedger.debit(account, asset, tokenId, amount);
-        if (LibProtectedAccount.isProtected(account)) {
-            queuedId = LibProtectedAccount.queuePayout(account, kind, asset, tokenId, amount, recipient);
-            emit VaultWithdrawRequested(account, asset, kind, tokenId, amount, recipient, true);
-            return queuedId;
-        }
-        if (recipient != account) revert RecipientNotOwnWallet(account, recipient);
-        LibVaultOutflow.toOwner(account, kind, asset, tokenId, amount, OutflowReason.WITHDRAW);
-        emit VaultWithdrawRequested(account, asset, kind, tokenId, amount, recipient, false);
+        return LibVaultWithdraw.withdraw(account, kind, asset, tokenId, amount, recipient);
+    }
+
+    /**
+     * @notice "And withdraw" (payout rule, PayoutDestinationRuleDesign.md
+     *         §4.4): as the last item of a `multicall` batch, withdraw to
+     *         your own wallet what the batch's earlier items credited to
+     *         your free balance in this asset (a claim, a cancel, a
+     *         release), so a one-transaction "collect and withdraw" never
+     *         has to state an amount it cannot know in advance.
+     * @dev    Takes the lesser of the batch figure (`LibBatchCredit`) and
+     *         {withdrawableNow}, then runs the ordinary Withdraw for
+     *         `msg.sender` to `msg.sender`: same pause rule, same manager
+     *         and sanctions checks, same protected-account queue. Returns
+     *         zero, moving nothing, outside a batch or when nothing was
+     *         credited. The figure sizes the withdrawal and grants nothing.
+     *         Tier-1.
+     * @return amount   What was withdrawn (paid or queued).
+     * @return queuedId The pending payout id for a protected account, else 0.
+     */
+    function withdrawCredited(uint8 kind, address asset, uint256 tokenId)
+        external
+        nonReentrant
+        returns (uint256 amount, uint256 queuedId)
+    {
+        if (kind > uint8(LibVaipakam.AssetType.ERC1155)) revert InvalidAssetKind(kind);
+        if (kind == uint8(LibVaipakam.AssetType.ERC20)) tokenId = 0;
+        amount = LibBatchCredit.credited(asset, tokenId);
+        if (amount == 0) return (0, 0);
+        uint256 free = withdrawableNow(msg.sender, kind, asset, tokenId);
+        if (amount > free) amount = free;
+        if (kind == uint8(LibVaipakam.AssetType.ERC721) && amount > 1) amount = 1;
+        if (amount == 0) return (0, 0);
+        queuedId = LibVaultWithdraw.withdraw(msg.sender, kind, asset, tokenId, amount, msg.sender);
     }
 
     // ─── Adopt and disown ────────────────────────────────────────────────
@@ -387,22 +393,7 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
         view
         returns (uint256)
     {
-        uint256 free = freeHolding(user, kind, asset, tokenId);
-        if (kind == uint8(LibVaipakam.AssetType.ERC20)) {
-            tokenId = 0;
-            // #3344 — Ready never pays a wallet: a protected account's Ready
-            // balance leaves only after it is released back to Protected.
-            uint256 ready = _readyOf(user, asset);
-            free = free > ready ? free - ready : 0;
-        }
-        return LibDepositoryLedger.withdrawable(user, asset, tokenId, free);
-    }
-
-    /// @dev #3344 — `user`'s effective Ready balance of `asset` (zero for an
-    ///      account not in protected mode).
-    function _readyOf(address user, address asset) private view returns (uint256) {
-        if (!LibProtectedAccount.isProtected(user)) return 0;
-        return LibReadyBalance.spendableViaHost(user, asset);
+        return LibVaultWithdraw.withdrawableNow(user, kind, asset, tokenId);
     }
 
     /// @notice `user`'s depository holding of `asset` / `tokenId`: what they

@@ -985,11 +985,19 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
     function test_TheClaimant_BindsTheVenue_BeforeReservation() public {
         _stagedScene();
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingVenueNotSettable.selector, _key()));
+        _settle().setStagingVenue(_key(), LibVaipakam.RewardDelivery.Vault);
+        // The wallet venue is retired by the payout rule (2026-11-19).
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.RewardDeliveryNotSelectable.selector, uint8(LibVaipakam.RewardDelivery.Wallet)
+            )
+        );
         _settle().setStagingVenue(_key(), LibVaipakam.RewardDelivery.Wallet);
         vm.prank(alice);
-        _settle().setStagingVenue(_key(), LibVaipakam.RewardDelivery.Wallet);
+        _settle().setStagingVenue(_key(), LibVaipakam.RewardDelivery.Vault);
         assertTrue(_rec().venueSet);
-        assertEq(_rec().venue, uint8(LibVaipakam.RewardDelivery.Wallet));
+        assertEq(_rec().venue, uint8(LibVaipakam.RewardDelivery.Vault));
         _staging().prepareStagedDay(_key());
         _staging().prepareStagedDay(_key());
         _liveFresh(1e18);
@@ -1687,30 +1695,30 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
     }
 
     function test_AnExplicitVenue_RidesTheClaimIntoTheRecord() public {
-        // Alice has a vault, so her DEFAULT delivery is the vault; she claims
-        // to her WALLET explicitly. The day stages; the record carries the
-        // wallet, and the payout reaches it.
+        // Alice claims to her VAULT explicitly (since the payout rule of
+        // 2026-11-19 the only venue a claim may name). The day stages; the
+        // record carries the vault, and the payout reaches it.
         _scene();
         _wideDay(true);
-        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(alice);
+        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(alice);
         vm.prank(alice);
-        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Vault);
         assertEq(paid, 0);
         RewardStagingDomainFacet.StagingRecordView memory r = _rec();
         assertTrue(r.venueSet, "the explicit venue is bound at opening");
-        assertEq(r.venue, uint8(LibVaipakam.RewardDelivery.Wallet));
+        assertEq(r.venue, uint8(LibVaipakam.RewardDelivery.Vault));
         _staging().prepareStagedDay(_key());
         _staging().prepareStagedDay(_key());
         _liveFresh(1e18);
         _staging().reserveStagedDay(_key());
         uint256 walletBefore = vpfi.balanceOf(alice);
-        uint256 vaultBefore = vpfi.balanceOf(vault);
+        uint256 vaultBefore = _vaultFree(alice, address(vpfi));
         _settle().resolveStagedDayPage(_key());
         vm.expectEmit(true, true, false, true, address(diamond));
-        emit StagingDelivered(_key(), alice, NEED, uint8(LibVaipakam.RewardDelivery.Wallet)); // the venue reached, announced on its own (r22)
+        emit StagingDelivered(_key(), alice, NEED, uint8(LibVaipakam.RewardDelivery.Vault)); // the venue reached, announced on its own (r22)
         assertTrue(_settle().resolveStagedDayPage(_key()));
-        assertEq(vpfi.balanceOf(alice) - walletBefore, NEED, "paid to the wallet the claim named");
-        assertEq(vpfi.balanceOf(vault), vaultBefore, "not to the vault the default would have chosen");
+        assertEq(_vaultFree(alice, address(vpfi)) - vaultBefore, NEED, "paid to the vault the claim named");
+        assertEq(vpfi.balanceOf(alice), walletBefore, "never to the wallet");
     }
 
     function test_ADefaultClaim_From7702DelegatedEoa_SettlesToTheVault() public {

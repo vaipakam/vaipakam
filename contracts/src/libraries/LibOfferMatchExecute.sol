@@ -7,7 +7,7 @@ import {LibTiming} from "./LibTiming.sol";
 import {LibOfferMatch} from "./LibOfferMatch.sol";
 import {LibAutoRefinanceCheck} from "./LibAutoRefinanceCheck.sol";
 import {LibVaultOutflow} from "./LibVaultOutflow.sol";
-import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {LibOfferRefund} from "./LibOfferRefund.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
 import {RefinanceFacet} from "../facets/RefinanceFacet.sol";
@@ -517,9 +517,11 @@ library LibOfferMatchExecute {
                     : B.collateralAmountMax;
                 if (borrowerPulled > mr.reqCollateral) {
                     uint256 excess = borrowerPulled - mr.reqCollateral;
-                    // The unused collateral, from the borrower's vault back to
-                    // the borrower's own wallet.
-                    LibVaultOutflow.toOwner(B.creator, LibVaultOutflow.ERC20, B.collateralAsset, 0, excess, OutflowReason.OFFER_REFUND);
+                    // The unused collateral, to the vault of the holder of
+                    // the borrower offer's position token (#3744), as free
+                    // balance; held for that token if its holder cannot be
+                    // paid, so the match never stalls on it.
+                    LibOfferRefund.refund(borrowerOfferId, LibVaultOutflow.ERC20, B.collateralAsset, 0, excess, false);
                 }
             }
         }
@@ -562,14 +564,15 @@ library LibOfferMatchExecute {
                 bytes4(0)
             );
             if (lenderRemaining > 0) {
-                // Dust refund: pull the unfilled remainder back to the
-                // lender's wallet. createOffer pre-vaulted amountMax;
+                // Dust refund: the unfilled remainder to the vault of the
+                // holder of the lender offer's position token (#3744), as
+                // free balance. createOffer pre-vaulted amountMax;
                 // _acceptOffer already pulled `mr.matchAmount` for the
                 // borrower's principal, leaving `lenderRemaining` still
                 // in custody. Lender ERC-20 only — NFT / ERC1155 lender
                 // offers are single-fill (amount == amountMax) so this
                 // branch is unreachable for them in practice.
-                LibVaultOutflow.toOwner(L.creator, LibVaultOutflow.ERC20, L.lendingAsset, 0, lenderRemaining, OutflowReason.OFFER_REFUND);
+                LibOfferRefund.refund(lenderOfferId, LibVaultOutflow.ERC20, L.lendingAsset, 0, lenderRemaining, false);
             }
             L.accepted = true;
             // #3242 (Codex #3283 r1 P1) — the lender offer is terminal, so it
@@ -647,9 +650,9 @@ library LibOfferMatchExecute {
                         : bm.collateralAmountMax;
                     if (borrowerCollPulled > bm.collateralAmountFilled) {
                         uint256 collRefund = borrowerCollPulled - bm.collateralAmountFilled;
-                        // The unused collateral, from the borrower's vault back
-                        // to the borrower's own wallet.
-                        LibVaultOutflow.toOwner(bm.creator, LibVaultOutflow.ERC20, bm.collateralAsset, 0, collRefund, OutflowReason.OFFER_REFUND);
+                        // The unused collateral, to the vault of the holder of
+                        // the borrower offer's position token (#3744).
+                        LibOfferRefund.refund(borrowerOfferId, LibVaultOutflow.ERC20, bm.collateralAsset, 0, collRefund, false);
                     }
                 }
                 bm.accepted = true;

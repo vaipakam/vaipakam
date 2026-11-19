@@ -401,23 +401,28 @@ contract AcceptRangedOfferTest is SetupTest {
             "post-create: borrower collateral wallet down by collateralAmountMax"
         );
 
+        uint256 freeBefore = _vaultFree(borrower, mockCollateralERC20);
         uint256 loanId = _signAndAcceptOffer(lender, lenderPk, offerId);
 
         // The loan only locks `collateralAmount` (500); the unused
-        // `collateralAmountMax - collateralAmount = 4_500` was refunded
-        // to the borrower's wallet by
+        // `collateralAmountMax - collateralAmount = 4_500` was released
+        // into the borrower's free vault balance (payout rule) by
         // `_refundBorrowerCollateralResidualIfNeeded`.
         LibVaipakam.Loan memory loan =
             LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(loan.collateralAmount, 500, "loan locks only the floor");
 
-        // Borrower's net wallet delta: -5_000 (create) + 4_500 (residual
-        // refund on direct-accept) = -500. The 500 sits in vault as the
-        // loan's locked collateral.
+        // The wallet stays down 5_000; the 4_500 residual is free in the
+        // borrower's vault and the 500 is the loan's locked collateral.
         assertEq(
             ERC20(mockCollateralERC20).balanceOf(borrower),
-            borrowerCollatBefore - 500,
-            "post-accept: borrower net out 500 (the locked portion); 4_500 refunded"
+            borrowerCollatBefore - 5_000,
+            "post-accept: wallet untouched by the refund"
+        );
+        assertEq(
+            _vaultFree(borrower, mockCollateralERC20) - freeBefore,
+            4_500,
+            "post-accept: 4_500 residual free in the vault"
         );
     }
 

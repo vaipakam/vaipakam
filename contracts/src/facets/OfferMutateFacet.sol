@@ -6,9 +6,8 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibOfferBounds} from "../libraries/LibOfferBounds.sol";
 import {LibOfferShape} from "../libraries/LibOfferShape.sol";
-import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
-import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {LibOfferRefund} from "../libraries/LibOfferRefund.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibCadenceAdmission} from "../libraries/LibCadenceAdmission.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -48,7 +47,8 @@ import {ProfileFacet} from "./ProfileFacet.sol";
  *             union of deltas, emits a single `OfferModified` event.
  *
  *         Invariants enforced on every entry point:
- *           - msg.sender == offer.creator (`NotOfferCreator`).
+ *           - msg.sender manages the holder of the offer's position
+ *             token (#3744; `NotNFTOwner`).
  *           - !offer.accepted (`OfferAlreadyAccepted`).
  *           - Range invariants identical to {OfferCreateFacet} so the
  *             post-mutation offer satisfies the same shape any
@@ -473,7 +473,8 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     ///      the sanctions policy.
     function _assertMutableBy(LibVaipakam.Offer storage offer) private view {
         if (offer.creator == address(0)) revert InvalidOffer();
-        LibAuth.requireOfferCreator(offer);
+        // #3744 — the offer is edited by the holder of its position token.
+        if (!LibOfferRefund.managedBy(offer, msg.sender)) revert NotNFTOwner();
         if (offer.accepted) revert OfferAlreadyAccepted();
         // #3328 — a collection offer's terms are fixed; it changes only by
         // lowering its loans (`reduceCollectionLoans`) or by cancel.
@@ -717,9 +718,9 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                         ),
                         bytes4(0)
                     );
-                    _pullOrRefundErc20(offer.lendingAsset, oldAmountMax, newAmountMax);
+                    _pullOrRefundErc20(offerId, offer, offer.lendingAsset, oldAmountMax, newAmountMax);
                 } else {
-                    _pullOrRefundErc20(offer.lendingAsset, oldAmountMax, newAmountMax);
+                    _pullOrRefundErc20(offerId, offer, offer.lendingAsset, oldAmountMax, newAmountMax);
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(
                             EncumbranceMutateFacet.incrementOfferPrincipalLien.selector,
@@ -759,7 +760,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                 uint256 bufBps = LibVaipakam.effectiveRentalBufferBps(offer);
                 uint256 oldPrepay = _nftRentalPrepayTotal(oldAmount, offer.durationDays, bufBps);
                 uint256 newPrepay = _nftRentalPrepayTotal(newAmount, offer.durationDays, bufBps);
-                _pullOrRefundErc20(offer.prepayAsset, oldPrepay, newPrepay);
+                _pullOrRefundErc20(offerId, offer, offer.prepayAsset, oldPrepay, newPrepay);
             }
             return;
         }
@@ -800,12 +801,16 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                     bytes4(0)
                 );
                 _pullOrRefundErc20(
+                    offerId,
+                    offer,
                     offer.collateralAsset,
                     oldCollateralAmountMax,
                     newCollateralAmountMax
                 );
             } else {
                 _pullOrRefundErc20(
+                    offerId,
+                    offer,
                     offer.collateralAsset,
                     oldCollateralAmountMax,
                     newCollateralAmountMax
@@ -824,29 +829,29 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // `collateralAmountMax`, so storage-only update is correct.
     }
 
-    /// @dev Generic ERC-20 vault delta: pulls or refunds the difference
-    ///      between `oldAmount` and `newAmount` using the same vault
-    ///      deposit / withdraw selectors `OfferCreateFacet` and
-    ///      `OfferCancelFacet` use.
+    /// @dev Generic ERC-20 escrow delta. A grow pulls the difference from
+    ///      the caller's wallet into the CREATOR's vault, where the offer's
+    ///      escrow and its lien live (the caller is the holder's manager,
+    ///      which may be another account since #3744). A shrink returns the
+    ///      difference to the vault of the holder of the offer's position
+    ///      token, as free balance (`LibOfferRefund`, payout rule
+    ///      2026-11-19).
     function _pullOrRefundErc20(
+        uint256 offerId,
+        LibVaipakam.Offer storage offer,
         address token,
         uint256 oldAmount,
         uint256 newAmount
     ) private {
         if (newAmount > oldAmount) {
-            uint256 pull = newAmount - oldAmount;
             LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultDepositERC20.selector,
-                    msg.sender,
-                    token,
-                    pull
+                abi.encodeCall(
+                    VaultFactoryFacet.vaultDepositERC20From, (msg.sender, offer.creator, token, newAmount - oldAmount)
                 ),
                 VaultDepositFailed.selector
             );
         } else {
-            uint256 refund = oldAmount - newAmount;
-            LibVaultOutflow.toOwner(msg.sender, LibVaultOutflow.ERC20, token, 0, refund, OutflowReason.OFFER_REFUND);
+            LibOfferRefund.refund(offerId, LibVaultOutflow.ERC20, token, 0, oldAmount - newAmount, true);
         }
     }
 

@@ -175,21 +175,18 @@ contract InteractionRewardVaultDeliveryTest is SetupTest, IVaipakamErrors {
 
     // ─── Explicit venues ─────────────────────────────────────────────────────
 
-    function testEoaExplicitWalletOptOut() public {
-        address vault = _vaultFacet().getOrCreateUserVault(alice);
-        uint256 expected = _seedClaimable(alice);
+    /// @dev Payout rule (2026-11-19): the wallet venue is retired and refused.
+    function testEoaExplicitWalletVenueRefused() public {
+        _vaultFacet().getOrCreateUserVault(alice);
+        _seedClaimable(alice);
 
         vm.prank(alice);
-        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
-            LibVaipakam.RewardDelivery.Wallet
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.RewardDeliveryNotSelectable.selector, uint8(LibVaipakam.RewardDelivery.Wallet)
+            )
         );
-
-        assertEq(paid, expected, "full amount paid");
-        assertEq(vpfi.balanceOf(alice), expected, "wallet paid on opt-out");
-        assertEq(vpfi.balanceOf(vault), 0, "vault untouched");
-        assertEq(_tracked(alice), 0, "no tracked credit");
-        (uint40 startSec, , , ) = _mut().getStakeRollupStateRaw(alice);
-        assertEq(startSec, 0, "no tier stamp on wallet delivery");
+        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
     }
 
     function testEoaExplicitVaultMatchesDefault() public {
@@ -208,37 +205,33 @@ contract InteractionRewardVaultDeliveryTest is SetupTest, IVaipakamErrors {
 
     // ─── Fallback triggers — delivery never reduces availability ────────────
 
-    function testNoVaultFallsBackToWallet() public {
-        // alice never created a vault; the read-only resolution must NOT
-        // mint one as a payout side effect.
+    /// @dev Payout rule: a claimant with no vault gets one; nothing reaches
+    ///      the wallet.
+    function testNoVaultCreatesTheVault() public {
         uint256 expected = _seedClaimable(alice);
 
         vm.prank(alice);
         (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
         assertEq(paid, expected, "claim availability unchanged");
-        assertEq(vpfi.balanceOf(alice), expected, "wallet fallback paid");
-        assertEq(
-            _vaultFacet().getUserVaultAddress(alice),
-            address(0),
-            "no vault minted as a payout side effect"
-        );
+        assertEq(vpfi.balanceOf(alice), 0, "no wallet payment");
+        address vault = _vaultFacet().getUserVaultAddress(alice);
+        assertTrue(vault != address(0), "vault created");
+        assertEq(vpfi.balanceOf(vault), expected, "credited to the new vault");
     }
 
     // ─── Contract callers ────────────────────────────────────────────────────
 
-    function testContractCallerDefaultsToRawWalletTransfer() public {
+    /// @dev Payout rule: a contract caller is paid into its vault too.
+    function testContractCallerDefaultsToVault() public {
         ClaimingContractWallet w = new ClaimingContractWallet();
         uint256 expected = _seedClaimable(address(w));
 
         uint256 paid = w.claimDefault(address(diamond));
 
         assertEq(paid, expected, "full amount paid");
-        assertEq(
-            vpfi.balanceOf(address(w)),
-            expected,
-            "raw balance lands on the calling contract (pre-RL-1 behaviour)"
-        );
+        assertEq(vpfi.balanceOf(address(w)), 0, "no raw transfer");
+        assertEq(vpfi.balanceOf(_vaultFacet().getUserVaultAddress(address(w))), expected, "vault credited");
     }
 
     function testContractWalletExplicitVaultOptIn() public {
@@ -276,52 +269,30 @@ contract InteractionRewardVaultDeliveryTest is SetupTest, IVaipakamErrors {
         assertEq(_tracked(alice), expected, "tracked counter recorded");
     }
 
-    function testEip7702DelegatedEoaWalletOptOutStillHonoured() public {
-        address vault = _vaultFacet().getOrCreateUserVault(alice);
-        uint256 expected = _seedClaimable(alice);
-        vm.etch(alice, _designator(address(0xDE1E6A7E)));
-
-        vm.prank(alice);
-        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
-            LibVaipakam.RewardDelivery.Wallet
-        );
-
-        assertEq(paid, expected, "full amount paid");
-        assertEq(vpfi.balanceOf(alice), expected, "explicit wallet opt-out");
-        assertEq(vpfi.balanceOf(vault), 0, "vault untouched");
-    }
-
-    /// @dev Only the designator reads as an EOA. Code that merely has the
-    ///      designator's LENGTH is a contract and keeps the raw wallet
-    ///      transfer. (Code that starts `0xef` but is not a valid designator
-    ///      cannot exist on an account at all: the EVM refuses it, and so does
-    ///      `vm.etch`, so there is no near-miss prefix to test.)
+    /// @dev Account shape no longer matters: code of the designator's length
+    ///      is a contract, and a contract is paid into its vault as well.
     function test23ByteContractStaysContract() public {
-        _assertContractShaped(abi.encodePacked(bytes3(0x600060), address(0xDE1E6A7E)));
-    }
-
-    function _assertContractShaped(bytes memory code) internal {
         address vault = _vaultFacet().getOrCreateUserVault(alice);
         uint256 expected = _seedClaimable(alice);
-        vm.etch(alice, code);
+        vm.etch(alice, abi.encodePacked(bytes3(0x600060), address(0xDE1E6A7E)));
 
         vm.prank(alice);
         (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
         assertEq(paid, expected, "full amount paid");
-        assertEq(vpfi.balanceOf(alice), expected, "a contract keeps the raw transfer");
-        assertEq(vpfi.balanceOf(vault), 0, "vault untouched");
+        assertEq(vpfi.balanceOf(alice), 0, "no raw transfer");
+        assertEq(vpfi.balanceOf(vault), expected, "vault credited");
     }
 
     // ─── Atomicity of the fallback ───────────────────────────────────────────
 
-    function testForcedRollupFailureRollsBackVaultSideAndPaysWalletOnce() public {
+    /// @dev A credit that cannot complete refuses the claim as a whole: no
+    ///      wallet fallback, nothing left behind, and the reward stays
+    ///      claimable.
+    function testForcedRollupFailureRevertsTheClaim() public {
         address vault = _vaultFacet().getOrCreateUserVault(alice);
         uint256 expected = _seedClaimable(alice);
 
-        // Replace the tier record refresh with a reverting mock: the
-        // credit primitive's transfer + record succeed in-frame, then the
-        // rollup reverts — the WHOLE vault-side unit must roll back.
         RevertingRollupLocalMock mock = new RevertingRollupLocalMock();
         bytes4[] memory sel = new bytes4[](1);
         sel[0] = VPFIDiscountAccumulatorFacet.syncTierRecord.selector;
@@ -334,16 +305,14 @@ contract InteractionRewardVaultDeliveryTest is SetupTest, IVaipakamErrors {
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
         vm.prank(alice);
-        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        vm.expectRevert();
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
-        assertEq(paid, expected, "claim availability unchanged");
-        assertEq(vpfi.balanceOf(alice), expected, "wallet paid exactly once");
-        assertEq(vpfi.balanceOf(vault), 0, "vault transfer rolled back");
-        assertEq(_tracked(alice), 0, "tracked record rolled back");
-        (uint40 startSec, , uint120 dayClose, ) =
-            _mut().getStakeRollupStateRaw(alice);
-        assertEq(startSec, 0, "no lifecycle residue");
-        assertEq(uint256(dayClose), 0, "no ring-buffer residue");
+        assertEq(vpfi.balanceOf(alice), 0, "no wallet payment");
+        assertEq(vpfi.balanceOf(vault), 0, "nothing credited");
+        assertEq(_tracked(alice), 0, "no tracked record");
+        (uint256 still, , ) = _lens().previewInteractionRewards(alice);
+        assertEq(still, expected, "still claimable");
     }
 
     // ─── Guard rails ─────────────────────────────────────────────────────────

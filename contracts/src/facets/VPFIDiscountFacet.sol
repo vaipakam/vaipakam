@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
+import {LibVaultWithdraw} from "../libraries/LibVaultWithdraw.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
-import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibTierRecord} from "../libraries/LibTierRecord.sol";
@@ -70,18 +69,6 @@ contract VPFIDiscountFacet is
 {
     using SafeERC20 for IERC20;
     using Address for address payable;
-
-    /// @notice #569 §6 F-1 (2026-06-13) — raised by
-    ///         {withdrawVPFIFromVault} when the requested unstake amount
-    ///         exceeds the FREE vault VPFI balance because some of the
-    ///         caller's VPFI backs a live loan as ERC-20 collateral
-    ///         (it's in the encumbrance sub-ledger). The encumbered
-    ///         portion can only exit through the loan's own lifecycle
-    ///         (repay / liquidation / default), not this staking-unwind
-    ///         door.
-    /// @param requested The amount the caller asked to withdraw.
-    /// @param free      The withdrawable free balance (raw − encumbered).
-    error VPFIEncumberedByActiveLoan(uint256 requested, uint256 free);
 
     // ─── Events ──────────────────────────────────────────────────────────────
 
@@ -293,10 +280,15 @@ contract VPFIDiscountFacet is
      *      time and failing the tier check simply reverts to the normal
      *      non-discounted path.
      *
-     *      Reverts `VPFITokenNotSet` when the token is unregistered,
-     *      `InvalidAmount` on zero, and
-     *      `VPFIVaultBalanceInsufficient` when the caller's vault
-     *      doesn't hold `amount`. Pausable + reentrancy-guarded.
+     *      The one Withdraw for the VPFI token (`LibVaultWithdraw`, payout
+     *      rule 2026-11-19): bounded by `VaultDepositoryFacet.
+     *      withdrawableNow` (VPFI under a lien stays), paid at once to the
+     *      caller's own wallet, or queued behind the delay for a protected
+     *      account. Reverts `VPFITokenNotSet` when the token is
+     *      unregistered, `InvalidAmount` on zero, and
+     *      `AmountExceedsFree` beyond the withdrawable figure. Pause-gated
+     *      like every withdrawal (a protected account may still queue
+     *      while its escape window is open); reentrancy-guarded.
      *
      *      Emits {VPFIWithdrawnFromVault}.
      * @param amount VPFI wei amount to withdraw (18 decimals).
@@ -305,56 +297,17 @@ contract VPFIDiscountFacet is
     function withdrawVPFIFromVault(uint256 amount)
         external
         nonReentrant
-        whenNotPaused
     {
-        // Tier-1 sanctions gate. Funds OUT to msg.sender — block.
-        LibVaipakam._assertNotSanctioned(msg.sender);
-        // Protected account mode: a wallet a replacement retired lost every
-        // right over its account, spending its vault included.
-        LibProtectedAccount.requireManager(msg.sender);
         if (amount == 0) revert InvalidAmount();
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address vpfi = s.vpfiToken;
+        address vpfi = LibVaipakam.storageSlot().vpfiToken;
         if (vpfi == address(0)) revert VPFITokenNotSet();
-
-        address vault = s.userVaipakamVaults[msg.sender];
-        if (vault == address(0)) revert VPFIVaultBalanceInsufficient();
-        uint256 prevBal = IERC20(vpfi).balanceOf(vault);
-        if (prevBal < amount) revert VPFIVaultBalanceInsufficient();
-
-        uint256 prevTracked = LibVaipakam.trackedHolding(msg.sender, vpfi, 0);
-
-        // #569 §6 F-1 (2026-06-13) — explicit encumbrance consult. VPFI
-        // is collateral-eligible (triaged code-wrong: safe under P2P +
-        // lender discretion). If the caller has VPFI backing a live loan
-        // as ERC-20 collateral, that portion is in
-        // `encumbered[msg.sender][vpfi][0]` and is NOT withdrawable
-        // through this staking-unwind door — only down to the free
-        // balance. The shared chokepoint guard in `vaultWithdrawERC20`
-        // (line below) enforces the same bound, but checking up-front
-        // (a) gives a clean, specific revert BEFORE the withdraw runs
-        // on a doomed amount, and (b) keeps
-        // this fund-exit surface self-protecting against any future
-        // refactor that bypasses the chokepoint. Defense-in-depth.
-        //
-        // #569 Codex #572 round-2 P2 — cap by the tracked balance first
-        // (same rationale as the chokepoint): unsolicited VPFI dust must
-        // not inflate the free figure, or the post-withdraw tracked
-        // decrement would dip below the active lien.
-        uint256 cappedBal = prevBal < prevTracked ? prevBal : prevTracked;
-        uint256 freeVpfi = LibEncumbrance.freeBalance(msg.sender, vpfi, 0, cappedBal);
-        if (amount > freeVpfi) {
-            revert VPFIEncumberedByActiveLoan(amount, freeVpfi);
-        }
-        // The withdraw refreshes the caller's tier record at the write
-        // (#1820); the tracked counter alone feeds it, so dust never counts.
-        // Protected account mode: this withdrawal is paid now or queued,
-        // never held in the vault as a success that moved nothing.
-        LibProtectedAccount.requirePayoutRoom(msg.sender);
-        LibVaultOutflow.toOwner(msg.sender, LibVaultOutflow.ERC20, vpfi, 0, amount, OutflowReason.WITHDRAW);
-        // Taken from the depository holding first (a queued protected payout
-        // that is cancelled is credited back, as for any withdrawal).
-        LibDepositoryLedger.spend(msg.sender, vpfi, 0, amount);
+        // Payout rule (owner decision 2026-11-19, design §4.5): the VPFI
+        // exit IS the one Withdraw, for the VPFI token — the same pause
+        // rule, manager and sanctions checks, the same bound (free and
+        // never liened: VPFI pledged as collateral stays), and the same
+        // protected-account queue. The withdraw refreshes the caller's
+        // tier record at the write (#1820).
+        LibVaultWithdraw.withdraw(msg.sender, LibVaultOutflow.ERC20, vpfi, 0, amount, msg.sender);
 
         emit VPFIWithdrawnFromVault(msg.sender, amount, LibVPFIDiscount.vaultVpfiBalance(msg.sender));
     }

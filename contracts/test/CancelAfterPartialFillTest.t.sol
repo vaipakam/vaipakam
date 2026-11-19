@@ -194,7 +194,8 @@ contract CancelAfterPartialFillTest is SetupTest {
     /// @notice Protected account mode — a good-till-cancelled offer left
     ///         open by a wallet that a signer majority replaced is cancelled
     ///         by the new wallet (the controller), not the old one, and the
-    ///         refund queues to the controller behind the delay.
+    ///         refund is released into the account's free vault balance
+    ///         (payout rule): nothing is paid or queued.
     function test_controllerCancelsARetiredCreatorsOffer() public {
         uint256 offerId = _postLenderOffer({
             creator: lender2,
@@ -222,10 +223,12 @@ contract CancelAfterPartialFillTest is SetupTest {
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 
         uint256 before = ERC20(mockERC20).balanceOf(nominee);
+        uint256 free0 = _vaultFree(lender2, mockERC20);
         vm.prank(nominee);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
-        assertEq(ERC20(mockERC20).balanceOf(nominee), before, "queued, not paid at once");
-        assertEq(VaultPayoutFacet(address(diamond)).getPendingPayoutIds(lender2).length, 1, "refund queued");
+        assertEq(ERC20(mockERC20).balanceOf(nominee), before, "nothing paid to a wallet");
+        assertEq(VaultPayoutFacet(address(diamond)).getPendingPayoutIds(lender2).length, 0, "nothing queued");
+        assertEq(_vaultFree(lender2, mockERC20) - free0, 1_000, "escrow free in the account's vault");
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -339,19 +342,19 @@ contract CancelAfterPartialFillTest is SetupTest {
 
         // Lender cancels. Cooldown is bypassed because amountFilled > 0
         // (per OfferCancelFacet line ~110-118).
+        uint256 lenderFree0 = _vaultFree(lender, mockERC20);
         vm.prank(lender);
         OfferCancelFacet(address(diamond)).cancelOffer(lenderOfferId);
 
-        // Refund check: lender's wallet receives `amountMax -
-        // amountFilled = 10_000 - 5_000 = 5_000` back. Net wallet
-        // delta from pre-create: -10_000 (create) + 5_000 (cancel
-        // refund) = -5_000. The other 5_000 is sitting in the
-        // borrower's vault as the loan's principal.
+        // Refund check: `amountMax - amountFilled = 10_000 - 5_000 =
+        // 5_000` is released into the lender's free vault balance
+        // (payout rule); the wallet stays down the whole 10_000.
         assertEq(
             ERC20(mockERC20).balanceOf(lender),
-            lenderWalletBefore - 5_000,
-            "post-cancel: lender net out 5k (the matched portion)"
+            lenderWalletBefore - 10_000,
+            "post-cancel: wallet untouched by the refund"
         );
+        assertEq(_vaultFree(lender, mockERC20) - lenderFree0, 5_000, "post-cancel: 5k free in the vault");
 
         // Storage row preserved with accepted = true (per the design;
         // partial-filled offers don't get the storage delete that
@@ -456,16 +459,22 @@ contract CancelAfterPartialFillTest is SetupTest {
         // Borrower cancels. Refund = collateralAmountMax -
         // collateralAmountFilled = 5_000 - 500 = 4_500. The 500
         // backing the live loan stays in vault.
+        uint256 borrowerFree0 = _vaultFree(borrower, mockCollateralERC20);
         vm.prank(borrower);
         OfferCancelFacet(address(diamond)).cancelOffer(borrowerOfferId);
 
-        // Net borrower wallet delta from pre-create:
-        //   -5_000 (create deposit) + 4_500 (cancel refund) = -500
-        // The 500 sitting in vault is the live loan's collateral.
+        // The 4_500 refund is released into the borrower's free vault
+        // balance (payout rule); the 500 in the vault is the live loan's
+        // collateral and the wallet stays down the whole 5_000.
         assertEq(
             ERC20(mockCollateralERC20).balanceOf(borrower),
-            borrowerWalletBefore - 500,
-            "post-cancel: borrower net out 500 (the locked portion)"
+            borrowerWalletBefore - 5_000,
+            "post-cancel: wallet untouched by the refund"
+        );
+        assertEq(
+            _vaultFree(borrower, mockCollateralERC20) - borrowerFree0,
+            4_500,
+            "post-cancel: 4_500 free in the vault"
         );
 
         // Loan-invariant assertion (P2.4 Codex round-1 #189): the live

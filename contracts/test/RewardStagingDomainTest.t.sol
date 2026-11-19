@@ -406,17 +406,18 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
         );
     }
 
-    /// @dev #1566 PR 1 review (P3) — a claim's explicit venue binds the DOMAIN: Alice has a vault, so
-    ///      her default is the vault; she claims to her WALLET, and every day of the domain pays the
-    ///      wallet. No day record announces a venue of its own (the payout reads the domain's).
+    /// @dev #1566 PR 1 review (P3) — a claim's venue binds the DOMAIN. Since the payout rule
+    ///      (2026-11-19) the vault is the only venue a claim may name, so every day of the domain
+    ///      pays Alice's vault and none her wallet. No day record announces a venue of its own
+    ///      (the payout reads the domain's).
     function test_AClaimsNamedVenue_BindsTheDomain_AndEveryDayPaysThere() public {
         _longScene(DAYS);
         _liveFresh(20e18);
-        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(alice);
+        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(alice);
         uint256 calls;
         while (true) {
             vm.prank(alice);
-            RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+            RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Vault);
             (, uint64 p, uint64 l, , ) = _dom();
             if (p >= l) break;
             if (++calls > 8) fail();
@@ -425,11 +426,11 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
         assertEq(prepared, DAYS, "fixture-live: the whole extent prepared");
         assertFalse(_view().getStagingRecord(_key(1)).venueSet, "a domain record binds no venue of its own");
         uint256 walletBefore = vpfi.balanceOf(alice);
-        uint256 vaultBefore = vpfi.balanceOf(vault);
+        uint256 vaultBefore = _vaultFree(alice, address(vpfi));
         _reserveAll();
         _resolveAll();
-        assertEq(vpfi.balanceOf(alice) - walletBefore, uint256(DAYS) * NEED, "every day paid to the wallet the claim named");
-        assertEq(vpfi.balanceOf(vault), vaultBefore, "not to the vault the default would have chosen");
+        assertEq(_vaultFree(alice, address(vpfi)) - vaultBefore, uint256(DAYS) * NEED, "every day paid to the vault");
+        assertEq(vpfi.balanceOf(alice), walletBefore, "never to the wallet");
     }
 
     /// @dev Two entries with a gap between them: [1, 11) and [31, 41) — one 40-day extent whose

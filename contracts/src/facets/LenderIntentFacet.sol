@@ -110,9 +110,9 @@ contract LenderIntentFacet is
         uint256 newCapital
     );
 
-    /// @notice A lender withdrew un-lent working capital from a standing intent
-    ///         back to their wallet (#393 v1-d). `remainingCapital` is the
-    ///         post-withdraw liened total.
+    /// @notice A lender took un-lent working capital from a standing intent
+    ///         back into their own free vault balance (#393 v1-d; payout rule
+    ///         2026-11-19). `remainingCapital` is the liened total after it.
     event LenderIntentCapitalWithdrawn(
         address indexed owner,
         address indexed lendingAsset,
@@ -511,28 +511,26 @@ contract LenderIntentFacet is
         );
     }
 
-    /// @notice #393 v1-d — withdraw un-lent intent working capital back to the
-    ///         caller's wallet: the standing-capital exit, modelled on
-    ///         `cancelOffer`. Releases `amount` from the intent's capital lien
-    ///         (reverts if it exceeds the un-lent liened capital) and withdraws
-    ///         it from the vault to the caller. Because it only ever touches
-    ///         the distinct intent lien, it can NEVER reach repaid proceeds
-    ///         (which return as free balance + a Position-NFT claim) — so the
-    ///         repaid-proceeds double-spend the #592 VPFI reservation guards
-    ///         against is structurally impossible through this door.
-    /// @dev    Tier-1 sanctions-gated (funds flow OUT to the caller). Does NOT
-    ///         require the intent to still be active — a cancelled intent's
-    ///         residual capital must stay withdrawable so a lender can fully
-    ///         wind down. The lien release runs BEFORE the withdraw so the
-    ///         vault chokepoint's free-balance guard sees the amount as free
-    ///         (same ordering as `ClaimFacet` releasing the proceeds
-    ///         reservation before paying out).
+    /// @notice #393 v1-d — take un-lent intent working capital back into the
+    ///         account's own free vault balance. Releases `amount` from the
+    ///         intent's capital lien (reverts if it exceeds the un-lent liened
+    ///         capital) and credits it as free balance in the same vault
+    ///         (payout rule, owner decision 2026-11-19): nothing reaches a
+    ///         wallet here, and the account's ordinary Withdraw takes it out.
+    ///         Because it only ever touches the distinct intent lien, it can
+    ///         NEVER reach repaid proceeds (which return as free balance + a
+    ///         Position-NFT claim).
+    /// @dev    Tier-1 sanctions-gated, as before. Does NOT require the intent
+    ///         to still be active — a cancelled intent's residual capital must
+    ///         stay releasable so a lender can fully wind down. The lien
+    ///         release runs BEFORE the free-balance credit so the policy's
+    ///         guard sees the amount unencumbered.
     /// @param account         The intent's owner; the caller must be its
     ///                        manager (`LibProtectedAccount.requireManager`).
     /// @param lendingAsset    The intent's lending asset (intent key).
     /// @param collateralAsset The intent's collateral asset (intent key).
     /// @param slot            The intent's slot (intent key, #3626).
-    /// @param amount          Un-lent capital to return wallet-ward (> 0,
+    /// @param amount          Un-lent capital to release (> 0,
     ///                        <= the liened capital).
     function withdrawLenderIntentCapital(
         address account,
@@ -541,38 +539,29 @@ contract LenderIntentFacet is
         uint8 slot,
         uint256 amount
     ) external nonReentrant whenNotPaused {
-        // The account's manager: its own wallet, or its controller once a
-        // replacement retired it, so a recovered account's capital is never
-        // stranded behind the lost key. Paid to the manager (a protected
-        // account's payout queues behind the delay).
+        // The account's manager (its own wallet, or its controller once a
+        // replacement retired it) takes its un-lent capital back into the
+        // account's own free balance (payout rule, owner decision
+        // 2026-11-19): nothing leaves the vault, and the ordinary Withdraw is
+        // the one way to a wallet.
         // #3246 part 2 — a RECOVERED account's intent can never fill again and
-        // its owner key may be lost, so anyone may return its un-lent capital
-        // to the account's vault (ruling 2026-11-18): it is paid to the owner
-        // class, which the locked account's payout gate keeps in the vault,
-        // free, for the recovered account's sweep to the recovery address.
-        bool recovered = LibProtectedAccount.isRecovered(account);
-        if (!recovered) {
+        // its owner key may be lost, so anyone may release its un-lent capital
+        // (ruling 2026-11-18), for the recovered account's sweep to the
+        // recovery address.
+        if (!LibProtectedAccount.isRecovered(account)) {
             LibProtectedAccount.requireManager(account);
             LibVaipakam._assertNotSanctioned(msg.sender);
         }
         if (amount == 0) revert LenderIntentInvalidBounds();
         // Release from the lien (reverts `IntentCapitalInsufficient` if it
-        // exceeds the un-lent capital) BEFORE the withdraw, so the chokepoint
-        // guard sees the amount as free balance.
+        // exceeds the un-lent capital), then into free balance by exactly
+        // that amount. A VPFI-denominated intent refreshes no tier: the
+        // tokens stay in the same vault.
         LibEncumbrance.unlienIntentCapital(
             account, lendingAsset, collateralAsset, slot, amount
         );
-        // A VPFI-denominated intent withdraws like any other asset: the
-        // withdraw below refreshes the lender's VPFI tier record itself
-        // (#1820), so pulling VPFI out lowers their tier at once.
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        // The capital back to the account's own wallet, or to its controller
-        // once a replacement retired it (#3205 part 2: the owner classes).
-        if (recovered || msg.sender == account) {
-            LibVaultOutflow.toOwner(account, LibVaultOutflow.ERC20, lendingAsset, 0, amount, OutflowReason.WITHDRAW);
-        } else {
-            LibVaultOutflow.toAllowlisted(account, LibVaultOutflow.ERC20, lendingAsset, 0, amount, msg.sender, OutflowReason.WITHDRAW);
-        }
+        LibVaultOutflow.releaseOwn(account, LibVaultOutflow.ERC20, lendingAsset, 0, amount, 0, OutflowReason.CAPITAL_RELEASE);
         // #625 WI-2a — capital may now be 0 ⇒ de-list the intent if depleted.
         LibVaipakam.syncIntentRegistry(account, lendingAsset, collateralAsset, slot);
         _syncSlot(account, lendingAsset, collateralAsset, slot); // #3714 Available

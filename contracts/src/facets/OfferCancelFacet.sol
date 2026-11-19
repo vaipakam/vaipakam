@@ -9,6 +9,9 @@ import {LibScanPage} from "../libraries/LibScanPage.sol";
 // gate that admits the creator OR any caller against an expired offer;
 // see `cancelOffer` for the full rule.
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
+import {LibOfferRefund} from "../libraries/LibOfferRefund.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibAuth} from "../libraries/LibAuth.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
@@ -36,8 +39,9 @@ import {ProfileFacet} from "./ProfileFacet.sol";
  *         are a separate concern from create + accept.
  *
  *         Hosted entry points:
- *           - `cancelOffer(offerId)` — creator-only; refunds
- *             whatever was locked at create-time, burns the position
+ *           - `cancelOffer(offerId)` — the offer token holder's manager
+ *             (anyone once expired); returns whatever was locked at
+ *             create-time to that holder's vault, retires the position
  *             NFT, and emits `OfferCanceled` + `OfferCanceledDetails`
  *             + `OfferClosed(reason=Cancelled)`.
  *           - `getCompatibleOffers(user, offset, limit)` — paginated
@@ -95,25 +99,133 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     /// Partial-filled offers can be cancelled immediately and don't
     /// raise this.
     error CancelCooldownActive();
-    /// #195 — caller is neither the offer creator nor cancelling an
-    /// expired offer. Surfaces `(creator, expiresAt)` so the caller's
-    /// UI can render either "you're not the creator" or "this offer
-    /// hasn't expired yet" without an additional read. The lazy-clear
-    /// path widens the access gate to "anyone can clear when expired",
-    /// but the refund still routes to `creator` so the cleaner gets
-    /// no kickback — the SSTORE-clear gas refund discount they earn on
-    /// their own tx is the only economic incentive, and it's bounded
-    /// (EIP-3529 caps refunds at 1/5 of gas used).
-    error NotCreatorOrNotExpired(address creator, uint64 expiresAt);
+    /// #195 / #3744 — the caller manages neither the holder of the offer's
+    /// position token nor is cancelling an expired offer. Surfaces
+    /// `(holder, expiresAt)`: the first field is the token's HOLDER (the
+    /// creator until the token moves; the name predates #3744 and is kept
+    /// for the decoders that read it), so a UI can render either "you do not
+    /// hold this offer" or "this offer hasn't expired yet" without another
+    /// read. On the expired cleanup the refund still goes to the holder's
+    /// vault, so the cleaner gets no kickback — the SSTORE-clear gas refund
+    /// is its only incentive, bounded by EIP-3529.
+    error NotCreatorOrNotExpired(address holder, uint64 expiresAt);
+    /// @notice #3744 — the refund entry is the Diamond's own.
+    error OfferRefundOnlyDiamond();
+    /// @notice #3744 — nothing is held for `positionToken` in that asset.
+    error NothingHeldForOfferToken(uint256 positionToken, address asset, uint256 tokenId);
+
+    /// @notice #3744 — an offer's escrow went back to the holder of the
+    ///         offer's position token. `held` true: that holder could not be
+    ///         paid during a step someone else triggered, so the amount stays
+    ///         in the creator's vault, held for the token, until its holder
+    ///         collects it ({collectOfferRefund}); false: it is free balance
+    ///         in `holder`'s vault now.
+    /// @custom:event-category state-change/vault-mutation
+    event OfferEscrowReturned(
+        uint256 indexed offerId,
+        uint256 indexed positionToken,
+        address indexed holder,
+        address asset,
+        uint256 tokenId,
+        uint256 amount,
+        bool held
+    );
+
+    /// @notice #3744 — the holder of `positionToken` collected escrow held
+    ///         for it into its vault's free balance.
+    /// @custom:event-category state-change/vault-mutation
+    event OfferRefundCollected(
+        uint256 indexed positionToken,
+        address indexed holder,
+        address asset,
+        uint256 tokenId,
+        uint256 amount
+    );
+
+    // ─── #3744 — the offer's escrow follows its position token ────────────
+
+    /**
+     * @notice Return `amount` of offer `offerId`'s escrow to the vault of the
+     *         holder of the offer's position token, as free balance. The
+     *         Diamond's own entry ({LibOfferRefund.refund}); every step that
+     *         returns an offer's escrow reaches it, and the caller has
+     *         already dropped the escrow's lien by the amount.
+     * @dev    When the creator still holds the token, nothing moves (the
+     *         policy's same-vault payout). Otherwise the escrow moves from the
+     *         creator's vault into the holder's. For a step someone else
+     *         triggered (`byHolder` false) a holder who cannot be paid (a
+     *         flagged wallet, a vault that cannot be made) never blocks it:
+     *         the amount stays in the creator's vault, held for the token.
+     */
+    function refundOfferEscrow(
+        uint256 offerId,
+        uint8 kind,
+        address asset,
+        uint256 tokenId,
+        uint256 amount,
+        bool byHolder
+    ) external {
+        if (msg.sender != address(this)) revert OfferRefundOnlyDiamond();
+        LibVaipakam.Offer storage offer = LibVaipakam.storageSlot().offers[offerId];
+        address creator = offer.creator;
+        uint256 token = offer.positionTokenId;
+        address holder = LibOfferRefund.holder(offer);
+        bool held;
+        if (token == 0) {
+            // No position token (none is minted for every offer shape): the
+            // creator is the holder, and the escrow is already in its vault.
+            LibVaultOutflow.releaseOwn(creator, kind, asset, tokenId, amount, offerId, OutflowReason.OFFER_REFUND);
+        } else if (holder == creator || byHolder) {
+            LibVaultOutflow.toOfferHolder(creator, kind, asset, tokenId, amount, offerId, token);
+        } else if (
+            LibVaipakam.isSanctionedAddress(holder)
+                || !LibVaultOutflow.tryToOfferHolder(creator, kind, asset, tokenId, amount, offerId, token)
+        ) {
+            LibEncumbrance.holdForOfferToken(creator, token, asset, tokenId, amount);
+            held = true;
+        }
+        emit OfferEscrowReturned(offerId, token, holder, asset, tokenId, amount, held);
+    }
+
+    /**
+     * @notice Collect what a step someone else triggered kept for offer
+     *         position token `positionToken` in `asset` / `tokenId` (kind 0
+     *         ERC-20, 1 ERC-721, 2 ERC-1155) into the vault of the token's
+     *         holder, as free balance. For the holder's account manager.
+     *         Tier-1 sanctions-gated.
+     */
+    function collectOfferRefund(uint256 positionToken, uint8 kind, address asset, uint256 tokenId)
+        external
+        nonReentrant
+        whenNotPaused
+    {
+        LibAuth.requirePositionManager(positionToken);
+        LibVaipakam._assertNotSanctioned(msg.sender);
+        if (kind == LibVaultOutflow.ERC20) tokenId = 0;
+        (address creator, uint256 amount) = LibEncumbrance.releaseOfferTokenHold(positionToken, asset, tokenId);
+        if (amount == 0) revert NothingHeldForOfferToken(positionToken, asset, tokenId);
+        LibVaultOutflow.toOfferHolder(creator, kind, asset, tokenId, amount, 0, positionToken);
+        emit OfferRefundCollected(positionToken, LibPositionNFT.ownerOf(positionToken), asset, tokenId, amount);
+    }
+
+    /// @notice What is held for offer position token `positionToken` in
+    ///         `asset` / `tokenId`, collectable by its holder.
+    function getOfferRefundHeld(uint256 positionToken, address asset, uint256 tokenId)
+        external
+        view
+        returns (uint256)
+    {
+        return LibVaipakam.storageSlot().offerTokenHeld[positionToken][asset][tokenId];
+    }
 
     /**
      * @notice Cancels an unaccepted offer and returns the locked assets.
-     * @dev Access gate (post-#195):
-     *      - The creator can cancel their own offer unconditionally
-     *        (this is the legacy path; semantics unchanged).
+     * @dev Access gate (#195, #3744):
+     *      - The account manager of the holder of the offer's position
+     *        token can cancel at any time.
      *      - ANYONE can cancel an offer whose GTT deadline has elapsed
      *        (`expiresAt != 0 && block.timestamp >= expiresAt`). The
-     *        refund still routes to `offer.creator` — the cleaner pays
+     *        refund still goes to that holder's vault — the cleaner pays
      *        gas and earns only the SSTORE-clear gas-refund discount
      *        on their own tx (capped at 1/5 per EIP-3529). This is the
      *        lazy permissionless-clear path; no keeper sweep, no
@@ -167,37 +279,30 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     function cancelOffer(uint256 offerId) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[offerId];
-        // #195 — access gate widened. Either the creator (unconditional)
-        // or any caller against an expired offer can cancel; the refund
-        // destination is `offer.creator` in both branches (see below),
-        // so the cleaner never receives the creator's vaulted assets.
-        // Note: an `expiresAt == 0` (GTC) offer can be cancelled only
-        // by its creator — `isOfferExpired` returns false on the GTC
-        // sentinel, so the second branch evaluates `false`.
-        // The creator's side is acted on by its account manager: the
-        // creator's own wallet, or its controller once a protected-account
-        // replacement retired it (the old wallet then loses the right), so
-        // a recovered account's open offers can still be withdrawn. The
-        // refund still goes to `offer.creator`, whose protected payout gate
-        // queues it to the controller.
+        // #3744 — the offer's escrow and the right to withdraw it follow the
+        // holder of the offer's position token. Its account manager (the
+        // holder's own wallet, or its controller once a protected-account
+        // replacement retired it) may cancel at any time; anyone may clear an
+        // expired offer. The escrow always returns to that holder's vault
+        // (`refundOfferEscrow`), never to the caller, so a cleaner gains
+        // nothing but the storage-clear refund.
+        // (#195 opened the expired cleanup to anyone.)
         address creator = offer.creator;
-        // #3246 part 2 — and anyone against an offer of a RECOVERED account:
-        // a clawed-back account opens nothing, so its offers can never fill,
-        // and its owner key may be lost. The backing returns to the account's
-        // vault (the locked account's payout gate keeps it there, free), and
-        // the recovered account's sweep moves it to the recovery address.
-        bool routeDead = _vehicleRouteDead(s, offerId) || LibProtectedAccount.isRecovered(creator);
+        address holder = LibOfferRefund.holder(offer);
+        bool byHolder = msg.sender == LibProtectedAccount.manager(holder);
+        // #3246 part 2 — and anyone against an offer of a RECOVERED account
+        // (its creator's or its holder's): a clawed-back account opens
+        // nothing, so the offer can never fill, and its owner key may be
+        // lost. The backing returns to the holder's vault, where a recovered
+        // account's sweep moves it to the recovery address.
         // #3205 — and anyone against an offset or sale vehicle whose route is
         // dead: the position it is bound to moved (or its route was closed),
-        // so it can never complete, and only its creator could otherwise
-        // clear it, leaving the position's new holder encumbered. The refund
-        // still goes to `offer.creator`.
-        if (
-            LibProtectedAccount.manager(creator) != msg.sender
-                && !LibVaipakam.isOfferExpired(offer)
-                && !routeDead
-        ) {
-            revert NotCreatorOrNotExpired(creator, offer.expiresAt);
+        // so it can never complete, and only its holder could otherwise
+        // clear it, leaving the position's new holder encumbered.
+        bool routeDead = _vehicleRouteDead(s, offerId) || LibProtectedAccount.isRecovered(creator)
+            || LibProtectedAccount.isRecovered(holder);
+        if (!byHolder && !LibVaipakam.isOfferExpired(offer) && !routeDead) {
+            revert NotCreatorOrNotExpired(holder, offer.expiresAt);
         }
         if (offer.accepted) revert OfferAlreadyAccepted();
         // T-086 Round-8 (#358) Codex round-2 P1 #1 — block cancel of a
@@ -260,7 +365,8 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         LibPrepayCleanup.clearOfferListing(uint96(offerId));
 
         // ── Strategic-flow NFT unlock on cancel ─────────────────────────────
-        // requireOfferCreator above bound msg.sender to offer.creator.
+        // The access gate above admitted the holder's manager, or anyone on an
+        // expired or dead offer.
         // For the native-lock design the position NFT never leaves its
         // owner; we only clear the LibERC721 lock to restore ordinary
         // transfer rights.
@@ -308,14 +414,9 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             );
         }
 
-        // #195 — refund destination is ALWAYS the creator's vault (and
-        // the creator's wallet for the withdraw target), never
-        // `msg.sender`. On the legacy creator-cancel path these are the
-        // same address; on the new lazy-clear path the cleaner is NOT
-        // the creator, so routing via `msg.sender` would let an
-        // arbitrary third party drain the creator's vaulted principal
-        // / collateral / prepay. The access-gate widening above is
-        // safe ONLY because every withdraw below targets `creator`.
+        // #3744 — every refund below returns the escrow to the holder of the
+        // offer's position token, through `refundOfferEscrow`, never to
+        // `msg.sender`: on the expired cleanup the caller is a stranger.
         if (offer.offerType == LibVaipakam.OfferType.Lender) {
             if (offer.assetType == LibVaipakam.AssetType.ERC20) {
                 // T-407-C (#566) — release the offer-principal lock
@@ -343,12 +444,12 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                     : offer.amountMax;
                 uint256 refund = effAmountMax - offer.amountFilled;
                 if (refund > 0) {
-                    LibVaultOutflow.toOwner(creator, LibVaultOutflow.ERC20, offer.lendingAsset, 0, refund, OutflowReason.OFFER_REFUND);
+                    LibOfferRefund.refund(offerId, LibVaultOutflow.ERC20, offer.lendingAsset, 0, refund, byHolder);
                 }
             } else if (offer.assetType == LibVaipakam.AssetType.ERC721) {
-                LibVaultOutflow.toOwner(creator, LibVaultOutflow.ERC721, offer.lendingAsset, offer.tokenId, 1, OutflowReason.OFFER_REFUND);
+                LibOfferRefund.refund(offerId, LibVaultOutflow.ERC721, offer.lendingAsset, offer.tokenId, 1, byHolder);
             } else if (offer.assetType == LibVaipakam.AssetType.ERC1155) {
-                LibVaultOutflow.toOwner(creator, LibVaultOutflow.ERC1155, offer.lendingAsset, offer.tokenId, offer.quantity, OutflowReason.OFFER_REFUND);
+                LibOfferRefund.refund(offerId, LibVaultOutflow.ERC1155, offer.lendingAsset, offer.tokenId, offer.quantity, byHolder);
             }
         } else if (lockedSaleLoanId == 0) {
             // #3318 — a lender-sale VEHICLE (a Borrower-type offer the
@@ -415,15 +516,15 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                         : offer.collateralAmountMax;
                     uint256 borrowerColRefund = borrowerColMax - offer.collateralAmountFilled;
                     if (borrowerColRefund > 0 && !carryOver) {
-                        LibVaultOutflow.toOwner(creator, LibVaultOutflow.ERC20, offer.collateralAsset, 0, borrowerColRefund, OutflowReason.OFFER_REFUND);
+                        LibOfferRefund.refund(offerId, LibVaultOutflow.ERC20, offer.collateralAsset, 0, borrowerColRefund, byHolder);
                     }
                 } else if (offer.collateralAssetType == LibVaipakam.AssetType.ERC721) {
                     if (!carryOver) {
-                        LibVaultOutflow.toOwner(creator, LibVaultOutflow.ERC721, offer.collateralAsset, offer.collateralTokenId, 1, OutflowReason.OFFER_REFUND);
+                        LibOfferRefund.refund(offerId, LibVaultOutflow.ERC721, offer.collateralAsset, offer.collateralTokenId, 1, byHolder);
                     }
                 } else if (offer.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
                     if (!carryOver) {
-                        LibVaultOutflow.toOwner(creator, LibVaultOutflow.ERC1155, offer.collateralAsset, offer.collateralTokenId, offer.collateralQuantity, OutflowReason.OFFER_REFUND);
+                        LibOfferRefund.refund(offerId, LibVaultOutflow.ERC1155, offer.collateralAsset, offer.collateralTokenId, offer.collateralQuantity, byHolder);
                     }
                 }
             } else if (
@@ -440,7 +541,7 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                 uint256 buffer = (prepayAmount * LibVaipakam.effectiveRentalBufferBps(offer)) /
                     LibVaipakam.BASIS_POINTS;
                 uint256 totalPrepay = prepayAmount + buffer;
-                LibVaultOutflow.toOwner(creator, LibVaultOutflow.ERC20, offer.prepayAsset, 0, totalPrepay, OutflowReason.OFFER_REFUND);
+                LibOfferRefund.refund(offerId, LibVaultOutflow.ERC20, offer.prepayAsset, 0, totalPrepay, byHolder);
             }
         }
 

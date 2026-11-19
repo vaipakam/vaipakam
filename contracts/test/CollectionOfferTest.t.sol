@@ -302,10 +302,10 @@ contract CollectionOfferTest is SetupTest {
     function test_reduceReturnsExactlyTheReleasedLoans() public {
         uint256 id = _create(_set(LibVaipakam.CollateralSetKind.Collection), 4);
         _fill(id, 4, _noProof());
-        uint256 before = IERC20(mockERC20).balanceOf(lender);
+        uint256 before = _vaultFree(lender, mockERC20);
         vm.prank(lender);
         CollectionOfferFacet(address(diamond)).reduceCollectionLoans(id, 1);
-        assertEq(IERC20(mockERC20).balanceOf(lender) - before, 2 * PER, "two loans released");
+        assertEq(_vaultFree(lender, mockERC20) - before, 2 * PER, "two loans released");
         (, , uint16 loans, uint16 filled) = CollectionOfferFacet(address(diamond)).getCollectionOffer(id);
         assertEq(loans, 2);
         assertEq(filled, 1);
@@ -339,10 +339,10 @@ contract CollectionOfferTest is SetupTest {
     function test_cancelReturnsTheUnusedLoans() public {
         uint256 id = _create(_set(LibVaipakam.CollateralSetKind.Collection), 3);
         _fill(id, 4, _noProof());
-        uint256 before = IERC20(mockERC20).balanceOf(lender);
+        uint256 before = _vaultFree(lender, mockERC20);
         vm.prank(lender);
         OfferCancelFacet(address(diamond)).cancelOffer(id);
-        assertEq(IERC20(mockERC20).balanceOf(lender) - before, 2 * PER, "two unused loans back");
+        assertEq(_vaultFree(lender, mockERC20) - before, 2 * PER, "two unused loans back");
     }
 
     // ─── The parent fills only through its entry ──────────────────────────

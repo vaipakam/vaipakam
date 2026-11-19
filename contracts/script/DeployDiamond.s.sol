@@ -2310,7 +2310,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      separate facet — frontend and keeper-bot bindings
     ///      unaffected by the move.
     function _getOfferCancelSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](10);
         s[0] = OfferCancelFacet.cancelOffer.selector;
         s[1] = OfferCancelFacet.getCompatibleOffers.selector;
         s[2] = OfferCancelFacet.getOffer.selector;
@@ -2321,6 +2321,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[5] = OfferCancelFacet.teardownStaleSaleListing.selector;
         // #3336 — the dead-vehicle read the keeper's teardown sweep uses.
         s[6] = OfferCancelFacet.isOfferRouteDead.selector;
+        // #3744 — an offer's escrow follows its position token: the refund
+        // host every offer step self-calls, the holder's collection of what
+        // a third-party step held for the token, and its read.
+        s[7] = OfferCancelFacet.refundOfferEscrow.selector;
+        s[8] = OfferCancelFacet.collectOfferRefund.selector;
+        s[9] = OfferCancelFacet.getOfferRefundHeld.selector;
     }
 
     /// @dev OfferMutateFacet — #193 in-place modification surface
@@ -3038,7 +3044,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// @dev Selectors for `VaultDepositoryFacet` — the depository vault: deposit, withdraw, adopt, disown and the upgrade pin.
     function _getVaultDepositorySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](17);
+        s = new bytes4[](18);
         s[0] = VaultDepositoryFacet.adoptUntracked.selector;
         s[1] = VaultDepositoryFacet.adoptionAckTextHash.selector;
         s[2] = VaultDepositoryFacet.adoptionDigest.selector;
@@ -3056,6 +3062,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[14] = VaultDepositoryFacet.getDepositoryHolding.selector;
         s[15] = VaultDepositoryFacet.getDepositoryAssets.selector;
         s[16] = VaultDepositoryFacet.getVaultOwner.selector;
+        // Payout rule §4.4 — "and withdraw", the last item of a batch.
+        s[17] = VaultDepositoryFacet.withdrawCredited.selector;
     }
 
     /// @dev Selectors for `OfferBookFacet` (#3242) — the offer book's entry step and its bounds.
@@ -4433,7 +4441,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](39);
+        s = new bytes4[](38);
         s[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         s[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         s[2] = RewardCustodyFacet.rewardCustodyHolder.selector;
@@ -4462,7 +4470,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[23] = RewardCustodyFacet.custodyMove.selector;
         s[25] = RewardCustodyFacet.custodyUnclassifiedQuarantine.selector;
         s[26] = RewardCustodyFacet.custodyReleaseFromRow.selector;
-        s[27] = RewardCustodyFacet.custodyPayoutToWallet.selector;
+        s[27] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
         s[28] = RewardCustodyFacet.custodyDrawForTransport.selector;
         // #1566 slice 4 PR B (Codex #2186 r1) — restitution dispositions + the versioned snapshot.
         s[29] = RewardCustodyFacet.releaseRestitutionAsPaidCorrection.selector;
@@ -4477,7 +4485,6 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // Diamond-internal entry points (the quarantine one took slot 25).
         s[35] = RewardCustodyFacet.custodyRecordIngressPacket.selector;
         s[36] = RewardCustodyFacet.custodyUnclassifiedIngress.selector;
-        s[38] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
         // #1566 sanctions rule (owner 2026-10-14) — reward set apart / released.
         s[37] = RewardCustodyFacet.custodySetApartReward.selector;
         s[24] = RewardCustodyFacet.custodyReleaseSanctionsHeld.selector;
