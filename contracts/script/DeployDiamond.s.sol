@@ -2504,7 +2504,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      Diamond-internal booking entries, the advance's payment to its
     ///      slot owner, the holder's repayment and the read.
     function _getLenderSideSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](8);
         s[0] = LenderSideFacet.bookArrival.selector;
         s[1] = LenderSideFacet.bookFinal.selector;
         s[2] = LenderSideFacet.settleAtTake.selector;
@@ -2512,6 +2512,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[4] = LenderSideFacet.payAdvance.selector;
         s[5] = LenderSideFacet.repayAdvance.selector;
         s[6] = LenderSideFacet.getAdvance.selector;
+        s[7] = LenderSideFacet.inKindRateNow.selector;
     }
 
     /// @dev Selectors for `RecoveryClawbackFacet` (#3246 part 2) — the

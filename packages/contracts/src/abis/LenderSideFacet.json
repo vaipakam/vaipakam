@@ -211,11 +211,60 @@
             "name": "heldElsewhere",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "inKindRateNum",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "inKindRateDen",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "inKindRateRead",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       },
       {
         "name": "interestOwedNow",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "inKindRateNow",
+    "inputs": [
+      {
+        "name": "collateralAsset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "principalAsset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "priced",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "num",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "den",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -572,6 +621,11 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "OraclePriceDivergence",
+    "inputs": []
   },
   {
     "type": "error",

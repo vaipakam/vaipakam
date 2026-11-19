@@ -12,6 +12,7 @@ import {LibAdvancePayAuth} from "../libraries/LibAdvancePayAuth.sol";
 import {LibAdvance} from "../libraries/LibAdvance.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
+import {LibFallback} from "../libraries/LibFallback.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -158,6 +159,8 @@ contract LenderSideFacet is DiamondReentrancyGuard, DiamondPausable, ILenderSide
         LibVaipakam.Loan storage loan = s.loans[loanId];
         LibVaipakam.Advance storage a = s.advances[loanId];
         LibVaipakam.ClaimInfo storage row = s.lenderClaims[loanId];
+        bool inKindRow = row.asset != loan.principalAsset || row.assetType != LibVaipakam.AssetType.ERC20;
+        if (inKindRow && a.open) _fixInKindRate(s, loanId, a);
 
         if (s.parkedLenderLeg[loanId].payer != address(0)) {
             // Not arrived (a leg parked in the payer's vault, cash or in
@@ -166,7 +169,7 @@ contract LenderSideFacet is DiamondReentrancyGuard, DiamondPausable, ILenderSide
             row.amount = amount;
             return amount;
         }
-        if (row.asset != loan.principalAsset || row.assetType != LibVaipakam.AssetType.ERC20) {
+        if (inKindRow) {
             if (!inKind && s.fallbackSnapshot[loanId].active) {
                 row.amount = amount; // the retry has not run yet
                 return amount;
@@ -322,6 +325,23 @@ contract LenderSideFacet is DiamondReentrancyGuard, DiamondPausable, ILenderSide
         interestOwedNow = a.interestOwed + _accrued(a);
     }
 
+    /**
+     * @notice The rate a direct in-kind default of a loan with an open
+     *         advance is split at: collateral units per `den` principal units
+     *         at the current oracle, as a fallback would store it.
+     * @dev    External so the booking can read it without reverting
+     *         (`try`); `priced` false where either leg has no price.
+     */
+    function inKindRateNow(address collateralAsset, address principalAsset)
+        external
+        view
+        returns (bool priced, uint256 num, uint256 den)
+    {
+        LibFallback.Rate memory r;
+        (priced, r) = LibFallback.tryOracleRate(address(this), collateralAsset, principalAsset);
+        return (priced, r.num, r.den);
+    }
+
     // ─── Internals ────────────────────────────────────────────────────────
 
     function _onlySelf() private view {
@@ -442,10 +462,12 @@ contract LenderSideFacet is DiamondReentrancyGuard, DiamondPausable, ILenderSide
         emit AdvanceClosed(loanId, a.slotOwner, a.shortfall);
     }
 
-    /// @dev The fallback's in-kind split, after its one retry: the advance
-    ///      takes collateral worth what it is owed at the fallback's own rate
-    ///      (rounded up, lender first), capped at the slice; all of it where
-    ///      the fallback had no price. Closes the advance.
+    /// @dev The in-kind split: the advance takes collateral worth what it is
+    ///      owed at the rate recorded for this end of the loan ({_fixInKindRate}:
+    ///      a fallback's own stored rate, or the rate read when a direct
+    ///      in-kind default wrote its claim), rounded up, lender first, capped
+    ///      at the slice; all of it where there was no price. Closes the
+    ///      advance.
     function _splitInKind(
         LibVaipakam.Storage storage s,
         uint256 loanId,
@@ -456,70 +478,33 @@ contract LenderSideFacet is DiamondReentrancyGuard, DiamondPausable, ILenderSide
     ) private returns (uint256 toAdvance) {
         if (!a.open || slice == 0) return 0;
         _accrue(a);
-        bool priced;
-        (toAdvance, priced) = _inKindPart(s.fallbackSnapshot[loanId], a, slice);
-        _setAsideInKind(loan, a, asset, toAdvance);
-        emit AdvanceInKindSplit(loanId, asset, slice, toAdvance, a.inKindInterest, priced);
-        if (!priced) {
-            // The whole slice went to the advance and its worth cannot be
-            // stated: the advance is settled by it, no shortfall is stated,
-            // and the event above says the split was unpriced.
+        (uint256 num, uint256 den) = (a.inKindRateNum, a.inKindRateDen);
+        if (num == 0 || den == 0) {
+            // No price: the whole slice goes to the advance and settles it;
+            // its worth cannot be stated, so no shortfall is stated and the
+            // interest part is in proportion to what was owed.
+            uint256 owed = a.interestOwed + a.principalOwed;
+            _setAsideInKind(loan, a, asset, slice, owed == 0 ? 0 : Math.mulDiv(slice, a.interestOwed, owed));
+            emit AdvanceInKindSplit(loanId, asset, slice, slice, a.inKindInterest, false);
             a.interestPaid += a.interestOwed;
             if (a.principalOwed != 0) _slot(loan, a, a.principalOwed, 0);
             a.interestOwed = 0;
             a.principalOwed = 0;
             _close(s, loanId, a, false);
-            return toAdvance;
+            return slice;
         }
-        _settlePriced(s, loanId, loan, a, toAdvance);
-    }
-
-    /// @dev The advance's part of an in-kind slice: collateral worth what it
-    ///      is owed at the fallback's own rate (rounded up), capped at the
-    ///      slice; the whole slice where the fallback had no price.
-    function _inKindPart(LibVaipakam.FallbackSnapshot storage snap, LibVaipakam.Advance storage a, uint256 slice)
-        private
-        view
-        returns (uint256 toAdvance, bool priced)
-    {
-        priced = snap.rateDen != 0;
-        toAdvance = priced
-            ? Math.mulDiv(a.interestOwed + a.principalOwed, snap.rateNum, snap.rateDen, Math.Rounding.Ceil)
-            : slice;
+        toAdvance = Math.mulDiv(a.interestOwed + a.principalOwed, num, den, Math.Rounding.Ceil);
         if (toAdvance > slice) toAdvance = slice;
-    }
-
-    /// @dev Set `toAdvance` of the collateral aside for the slot owner, its
-    ///      interest share in proportion to what is owed.
-    function _setAsideInKind(
-        LibVaipakam.Loan storage loan,
-        LibVaipakam.Advance storage a,
-        address asset,
-        uint256 toAdvance
-    ) private {
-        uint256 owed = a.interestOwed + a.principalOwed;
-        a.inKindInterest += owed == 0 ? 0 : Math.mulDiv(toAdvance, a.interestOwed, owed);
-        a.inKindSetAside += toAdvance;
-        if (a.setAside == 0 && a.inKindSetAside == toAdvance) a.custody = loan.lender;
-        LibEncumbrance.lienAdvanceSetAside(loan.lender, asset, toAdvance);
-        LibSanctionedLock.mustFreezeParty(LibVaipakam.storageSlot(), a.slotOwner);
-    }
-
-    /// @dev Priced: the collateral counts for what it is worth at the
-    ///      fallback's rate; whatever it does not cover is the stated
-    ///      shortfall.
-    function _settlePriced(
-        LibVaipakam.Storage storage s,
-        uint256 loanId,
-        LibVaipakam.Loan storage loan,
-        LibVaipakam.Advance storage a,
-        uint256 toAdvance
-    ) private {
-        LibVaipakam.FallbackSnapshot storage snap = s.fallbackSnapshot[loanId];
-        uint256 owed = a.interestOwed + a.principalOwed;
-        uint256 covered = Math.mulDiv(toAdvance, snap.rateDen, snap.rateNum);
-        if (covered > owed) covered = owed;
+        // What the collateral covers, interest first (the order of payment),
+        // and the collateral that stands for that interest, for the
+        // treasury's cut.
+        uint256 covered = Math.mulDiv(toAdvance, den, num);
+        if (covered > a.interestOwed + a.principalOwed) covered = a.interestOwed + a.principalOwed;
         uint256 ic = covered < a.interestOwed ? covered : a.interestOwed;
+        uint256 icInKind = Math.mulDiv(ic, num, den);
+        if (icInKind > toAdvance) icInKind = toAdvance;
+        _setAsideInKind(loan, a, asset, toAdvance, icInKind);
+        emit AdvanceInKindSplit(loanId, asset, slice, toAdvance, a.inKindInterest, true);
         uint256 pc = covered - ic;
         if (pc > a.principalOwed) pc = a.principalOwed;
         a.interestPaid += ic;
@@ -527,6 +512,48 @@ contract LenderSideFacet is DiamondReentrancyGuard, DiamondPausable, ILenderSide
         a.principalOwed -= pc;
         if (pc != 0) _slot(loan, a, pc, 0);
         _close(s, loanId, a, true);
+    }
+
+    /// @dev Set `toAdvance` of the collateral aside for the slot owner,
+    ///      `interestPart` of it standing for interest.
+    function _setAsideInKind(
+        LibVaipakam.Loan storage loan,
+        LibVaipakam.Advance storage a,
+        address asset,
+        uint256 toAdvance,
+        uint256 interestPart
+    ) private {
+        a.inKindInterest += interestPart;
+        a.inKindSetAside += toAdvance;
+        if (a.setAside == 0 && a.inKindSetAside == toAdvance) a.custody = loan.lender;
+        LibEncumbrance.lienAdvanceSetAside(loan.lender, asset, toAdvance);
+        LibSanctionedLock.mustFreezeParty(LibVaipakam.storageSlot(), a.slotOwner);
+    }
+
+    /// @dev Record the rate an in-kind end of the loan is split at. A
+    ///      fallback's own stored rate while its snapshot stands (so its
+    ///      retry splits at the rate it was entered at, never one read
+    ///      later); otherwise, for a default that delivers the collateral
+    ///      directly, the rate read the first time its claim is written,
+    ///      which a parked leg's later release reuses. Never reverts: a
+    ///      read that fails counts as no price.
+    function _fixInKindRate(LibVaipakam.Storage storage s, uint256 loanId, LibVaipakam.Advance storage a)
+        private
+    {
+        LibVaipakam.FallbackSnapshot storage snap = s.fallbackSnapshot[loanId];
+        if (snap.active) {
+            (a.inKindRateNum, a.inKindRateDen, a.inKindRateRead) = (snap.rateNum, snap.rateDen, false);
+            return;
+        }
+        if (a.inKindRateRead) return;
+        a.inKindRateRead = true;
+        (a.inKindRateNum, a.inKindRateDen) = (0, 0);
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        try this.inKindRateNow(loan.collateralAsset, loan.principalAsset) returns (
+            bool priced, uint256 num, uint256 den
+        ) {
+            if (priced) (a.inKindRateNum, a.inKindRateDen) = (num, den);
+        } catch {}
     }
 
     /// @dev Pay both set-asides (cash, then in kind) to the slot owner, the

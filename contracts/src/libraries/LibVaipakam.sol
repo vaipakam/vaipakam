@@ -1746,6 +1746,17 @@ library LibVaipakam {
     ///                        other than `custody` (a holder's own repayment
     ///                        while the slot owner is flagged), listed by
     ///                        vault in `advanceHolds`; their sum.
+    /// @param inKindRateNum   Collateral units per `inKindRateDen` principal
+    ///                        units: the rate an in-kind end of the loan is
+    ///                        split at. A fallback's own stored rate, or, for
+    ///                        a default that delivers collateral directly, the
+    ///                        rate read when the default wrote its claim.
+    ///                        `inKindRateDen` 0: no price (the advance takes
+    ///                        the whole slice).
+    /// @param inKindRateDen   See `inKindRateNum`.
+    /// @param inKindRateRead  The rate was read at a direct in-kind default
+    ///                        (not copied from a fallback), so a release of a
+    ///                        parked leg later splits at that same rate.
     struct Advance {
         address slotOwner;
         address collateralAsset;
@@ -1769,6 +1780,9 @@ library LibVaipakam {
         uint256 inKindSetAside;
         uint256 inKindInterest;
         uint256 heldElsewhere;
+        uint256 inKindRateNum;
+        uint256 inKindRateDen;
+        bool inKindRateRead;
     }
 
     /// @notice #3760 — cash set aside for an advance's slot owner in one

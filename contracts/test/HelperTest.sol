@@ -1170,7 +1170,7 @@ contract HelperTest {
 
     /// @dev #3760 — mirrors `DeployDiamond._getLenderSideSelectors`.
     function getLenderSideFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](8);
         selectors[0] = LenderSideFacet.bookArrival.selector;
         selectors[1] = LenderSideFacet.bookFinal.selector;
         selectors[2] = LenderSideFacet.settleAtTake.selector;
@@ -1178,6 +1178,7 @@ contract HelperTest {
         selectors[4] = LenderSideFacet.payAdvance.selector;
         selectors[5] = LenderSideFacet.repayAdvance.selector;
         selectors[6] = LenderSideFacet.getAdvance.selector;
+        selectors[7] = LenderSideFacet.inKindRateNow.selector;
     }
 
     /// @dev #3669 — the refused settlement leg host. Mirrors

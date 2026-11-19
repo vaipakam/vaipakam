@@ -97,6 +97,7 @@ describe('parseActivityEvent', () => {
 type AbiItem = { type: string; name?: string; inputs?: ReadonlyArray<{ name: string; type: string }> };
 
 const NEUTRAL_FLAGS: Readonly<Record<string, string>> = {
+  AdvanceInKindSplit: 'the flag is whether the split had a price, stated with the split',
   AutoExtendBorrowerCapsChanged: 'says the limits changed, not which way',
   AutoExtendLenderCapsChanged: 'says the limits changed, not which way',
   AutoRefinanceCapsChanged: 'says the limits changed, not which way',

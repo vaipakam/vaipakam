@@ -2568,6 +2568,14 @@ export const copy = {
         yes: B('Keeper access was switched on.'),
         no: B('Keeper access was switched off.'),
       },
+      AdvanceSlotSet: {
+        yes: B('An Auto-lend standing order was opened to giving advances.'),
+        no: B('An Auto-lend standing order stopped giving advances.'),
+      },
+      AdvancesEnabledSet: {
+        yes: B('Advances against lender positions were switched on.'),
+        no: B('Advances against lender positions were switched off.'),
+      },
       LenderBackstopOptInSet: {
         yes: B('The lender opted in to the backstop’s cash exit.'),
         no: B('The lender opted out of the backstop’s cash exit.'),

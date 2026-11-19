@@ -128,6 +128,8 @@ function addressOrNull(v: unknown): Hex | null | undefined {
  * holds either way (the test holds both lists to the contract's events).
  */
 export const STATED_ARGS: Readonly<Record<string, string>> = {
+  AdvanceSlotSet: 'consent',
+  AdvancesEnabledSet: 'enabled',
   AutoLendConsentChanged: 'enabled',
   AutoOptInOnNewLoanChanged: 'enabled',
   ClaimRetryExecuted: 'succeeded',

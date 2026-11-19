@@ -498,6 +498,7 @@ contract LenderAdvanceTest is InstantMarketBase {
         (LibVaipakam.Advance memory a,) = _advance();
         assertFalse(a.open, "closed by the split");
         assertEq(a.inKindSetAside, owed * 2, "collateral worth what is owed, at 2 per 1");
+        assertEq(a.inKindInterest, interest * 2, "the interest part, interest first");
         assertEq(kept, 2000 ether - owed * 2, "the holder keeps the rest");
         assertEq(a.shortfall, 0, "nothing short");
     }
@@ -617,12 +618,35 @@ contract LenderAdvanceTest is InstantMarketBase {
         assertTrue(a.open, "still open while the leg is parked");
         assertEq(a.inKindSetAside, 0, "nothing split before it arrives");
         assertEq(kept, 2000 ether);
+        assertTrue(a.inKindRateRead, "the default's rate is recorded when its claim is written");
+        uint256 den = a.inKindRateDen;
 
         LenderSideHarnessFacet(address(diamond)).harnessParkLeg(loanId, address(0)); // released
         kept = LenderSideHarnessFacet(address(diamond)).harnessSetFinalAmount(loanId, 2000 ether);
         (a,) = _advance();
         assertFalse(a.open, "split on arrival");
         assertEq(a.inKindSetAside + kept, 2000 ether, "split once");
+        assertEq(a.inKindRateDen, den, "at the rate recorded at the default");
+    }
+
+    /// @dev A default that delivers the collateral directly (no fallback) is
+    ///      split at the price read at the default, not as if unpriced; a
+    ///      shortfall leaves the interest part interest first.
+    function test_directInKindDefaultSplitAtItsRate() public {
+        _open();
+        _take(300 ether);
+        vm.warp(vm.getBlockTimestamp() + 3 days);
+        (LibVaipakam.Advance memory before, uint256 interest) = _advance();
+        uint256 owed = before.principalOwed + interest;
+        _harness();
+        LenderSideHarnessFacet(address(diamond)).harnessRowInKind(loanId, mockCollateralERC20, 2000 ether);
+        uint256 kept = LenderSideHarnessFacet(address(diamond)).harnessSetFinalAmount(loanId, 2000 ether);
+        (LibVaipakam.Advance memory a,) = _advance();
+        assertFalse(a.open, "closed by the split");
+        assertGt(a.inKindRateDen, 0, "priced at the default");
+        uint256 expected = (owed * a.inKindRateNum + a.inKindRateDen - 1) / a.inKindRateDen;
+        assertEq(a.inKindSetAside, expected, "collateral worth what is owed");
+        assertEq(kept, 2000 ether - expected, "the holder keeps the rest");
     }
 
     /// @dev A keeper under the holder's early-withdrawal mandate is answered
