@@ -444,6 +444,12 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
         bool allowDowngrade
     );
 
+    /// @notice #3744 — the wallet whose Full-tariff consent `offerId` now
+    ///         carries (0 = none). The consent counts at a fill only while
+    ///         that wallet holds the offer's position token.
+    /// @custom:event-category state-change/offer-mutation
+    event OfferFullTariffConsentBy(uint256 indexed offerId, address indexed by);
+
     /**
      * @notice Authorize (or clear) the OFFER CREATOR's per-party Full VPFI
      *         fee-entitlement tariff opt-in for `offerId` (#1347 M2 PR-5a/5b).
@@ -480,18 +486,23 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
         LibVaipakam.Offer storage offer = s.offers[offerId];
         if (offer.creator == address(0)) revert InvalidOffer();
         if (offer.accepted) revert OfferAlreadyAccepted();
-        // #3526 — refused to a creator a replacement retired.
-        if (msg.sender != offer.creator || LibProtectedAccount.manager(msg.sender) != msg.sender) revert NotNFTOwner();
+        // #3744 — the consent belongs to the wallet that would be charged:
+        // the holder of the offer's token, as for cancel and edit (#3526:
+        // never a retired account). It is recorded with that wallet and
+        // counts at a fill only while that wallet still holds the token.
+        LibAuth.requireOfferHolder(offer);
         if (creatorFull && maxCStar == 0) revert FullTariffMaxCStarRequired();
         offer.creatorFull = creatorFull;
         offer.creatorMaxCStar = maxCStar;
         offer.creatorAllowFullDowngrade = allowDowngrade;
+        s.offerFullTariffBy[offerId] = creatorFull ? msg.sender : address(0);
         emit OfferCreatorFullTariffSet(
             offerId,
             creatorFull,
             maxCStar,
             allowDowngrade
         );
+        emit OfferFullTariffConsentBy(offerId, creatorFull ? msg.sender : address(0));
     }
 
     // ─── Keeper Whitelist (README §3/§9) ──────────────────────────────────

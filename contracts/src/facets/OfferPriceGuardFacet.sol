@@ -6,6 +6,7 @@ import {LibOfferPriceGuard} from "../libraries/LibOfferPriceGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
+import {LibOfferRefund} from "../libraries/LibOfferRefund.sol";
 import {LegalFacet} from "./LegalFacet.sol";
 import {OfferPreviewFacet} from "./OfferPreviewFacet.sol";
 
@@ -190,15 +191,21 @@ contract OfferPriceGuardFacet is DiamondPausable, IVaipakamErrors {
         None,
         CadenceNotAdmitted,
         PriceGuardRefused,
-        TermsNotAccepted
+        TermsNotAccepted,
+        // #3744 — the holder of `offerId`'s or `otherOfferId`'s position
+        // token, who owns the loan side that offer creates, is flagged by
+        // the sanctions oracle.
+        // The accept refuses `SanctionedAddress(holder)`. Appended.
+        OfferHolderFlagged
     }
 
     /**
      * @notice The first origination check loan creation would refuse a loan
      *         opened now from `offerId` with `principal` funded, between
      *         `partyA` and `partyB` (0 = skip), where `otherOfferId` (0 =
-     *         none) is the other maker's offer in a match: the parties' Terms
-     *         acceptance, the cadence rule, then the price-move guards, in
+     *         none) is the other maker's offer in a match: the screens on the
+     *         holder of each offer's token where it is not the creator
+     *         (#3744), the parties' Terms acceptance, the cadence rule, then the price-move guards, in
      *         loan creation's order.
      * @dev The match and standing-intent previews ask it; each check asks
      *      the entry loan creation itself calls, so the refusal is the one it
@@ -214,17 +221,34 @@ contract OfferPriceGuardFacet is DiamondPausable, IVaipakamErrors {
         address partyA,
         address partyB
     ) external view returns (OriginationRefusal) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #3744 — the holder of the offer's token takes the creator's side of
+        // the loan, so the fill screens it as it screens the parties.
+        OriginationRefusal held = _holderRefusal(s, offerId);
+        if (held == OriginationRefusal.None && otherOfferId != 0) held = _holderRefusal(s, otherOfferId);
+        if (held != OriginationRefusal.None) return held;
         (address blocked,) = LegalFacet(address(this)).termsBlocker(partyA, partyB);
         if (blocked != address(0)) return OriginationRefusal.TermsNotAccepted;
         try OfferPreviewFacet(address(this)).requireOriginationCadenceAdmitted(offerId, principal) {} catch {
             return OriginationRefusal.CadenceNotAdmitted;
         }
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.offerPriceGuard[offerId].maxMoveBps != 0 || s.offerPriceGuard[otherOfferId].maxMoveBps != 0) {
             try OfferPriceGuardFacet(address(this)).requireOfferPriceGuardsClear(offerId, otherOfferId) {} catch {
                 return OriginationRefusal.PriceGuardRefused;
             }
         }
+        return OriginationRefusal.None;
+    }
+
+    /// @dev #3744 — the screens on the holder of `offerId`'s token, which
+    ///      owns the loan side the offer creates, where it is not the creator
+    ///      (the creator is screened as a party).
+    function _holderRefusal(LibVaipakam.Storage storage s, uint256 offerId) private view returns (OriginationRefusal) {
+        address holder = LibOfferRefund.holder(s.offers[offerId]);
+        if (holder == s.offers[offerId].creator) return OriginationRefusal.None;
+        if (LibVaipakam.isSanctionedAddress(holder)) return OriginationRefusal.OfferHolderFlagged;
+        (address blocked,) = LegalFacet(address(this)).termsBlocker(holder, address(0));
+        if (blocked != address(0)) return OriginationRefusal.TermsNotAccepted;
         return OriginationRefusal.None;
     }
 

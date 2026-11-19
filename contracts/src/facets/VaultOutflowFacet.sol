@@ -501,13 +501,19 @@ contract VaultOutflowFacet is IVaipakamErrors {
             if (o.to == address(0)) revert OutflowRecipientInvalid(c, address(0));
         } else if (c == VaultOutflowTypes.OutflowClass.PrincipalToBorrower) {
             // The borrower side of THIS accept of offer `ref`, derived here:
-            // a borrower offer's creator, or a lender offer's acceptor as the
-            // accept recorded it in this transaction. Paid into its vault as
-            // free money, which the borrower withdraws.
+            // for a borrower offer the holder of the offer's position token
+            // at the fill (#3744: the offer's rights follow its token, so
+            // whoever holds it takes the principal), else the creator while
+            // no token is live; for a lender offer the acceptor as the accept
+            // recorded it in this transaction. Paid into its vault as free
+            // money, which the borrower withdraws.
             LibVaipakam.Offer storage offer = s.offers[o.ref];
-            payeeOwner = offer.offerType == LibVaipakam.OfferType.Borrower
-                ? offer.creator
-                : LibAcceptContext.acceptor(o.ref);
+            if (offer.offerType == LibVaipakam.OfferType.Borrower) {
+                if (offer.positionTokenId != 0) payeeOwner = LibPositionNFT.core().holderOf(offer.positionTokenId);
+                if (payeeOwner == address(0)) payeeOwner = offer.creator;
+            } else {
+                payeeOwner = LibAcceptContext.acceptor(o.ref);
+            }
             if (payeeOwner == address(0)) revert OutflowRecipientInvalid(c, address(0));
             o.to = LibFacet.getOrCreateVault(payeeOwner);
         } else if (c == VaultOutflowTypes.OutflowClass.Treasury) {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibOfferRefund} from "../libraries/LibOfferRefund.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibPriceRead} from "../libraries/LibPriceRead.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
@@ -248,7 +249,7 @@ contract RiskPreviewFacet {
             address actorA,
             address actorB,
             LibRiskAccess.PairId memory pair
-        ) = _resolveMatchActors(s, s.offers[lenderOfferId].creator, borrowerOfferId);
+        ) = _resolveMatchActors(s, LibOfferRefund.holder(s.offers[lenderOfferId]), borrowerOfferId);
         LibRiskAccess.assertActorMayTransact(s, actorA, pair);
         if (actorB != address(0)) {
             LibRiskAccess.assertActorMayTransact(s, actorB, pair);
@@ -275,7 +276,7 @@ contract RiskPreviewFacet {
             address actorA,
             address actorB,
             LibRiskAccess.PairId memory pair
-        ) = _resolveMatchActors(s, s.offers[lenderOfferId].creator, borrowerOfferId);
+        ) = _resolveMatchActors(s, LibOfferRefund.holder(s.offers[lenderOfferId]), borrowerOfferId);
         uint8 a = LibRiskAccess.previewActorBlock(s, actorA, pair);
         if (a != 0) return a;
         if (actorB != address(0)) {
@@ -471,7 +472,9 @@ contract RiskPreviewFacet {
                     ? LibOfferMatch.MatchError.CadenceNotAdmitted
                     : refusal == OfferPriceGuardFacet.OriginationRefusal.TermsNotAccepted
                         ? LibOfferMatch.MatchError.TermsNotAccepted
-                        : LibOfferMatch.MatchError.PriceGuardRefused;
+                        : refusal == OfferPriceGuardFacet.OriginationRefusal.OfferHolderFlagged
+                            ? LibOfferMatch.MatchError.OfferHolderFlagged
+                            : LibOfferMatch.MatchError.PriceGuardRefused;
                 res.ok = false;
                 return res;
             }
@@ -606,7 +609,8 @@ contract RiskPreviewFacet {
         }
         LibVaipakam.Offer storage bo = s.offers[borrowerOfferId];
         actorA = lenderCreator;
-        actorB = bo.creator;
+        // #3744 — the owner of each side is the holder of its offer's token.
+        actorB = LibOfferRefund.holder(bo);
         pair = LibRiskAccess.PairId({
             lendAsset: bo.lendingAsset,
             lendType: bo.assetType,

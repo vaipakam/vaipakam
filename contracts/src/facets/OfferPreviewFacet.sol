@@ -15,6 +15,7 @@ import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibOfferAdmission} from "../libraries/LibOfferAdmission.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibOfferRefund} from "../libraries/LibOfferRefund.sol";
 import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
 import {LegalFacet} from "./LegalFacet.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
@@ -328,6 +329,13 @@ contract OfferPreviewFacet {
             preview.errorCode = OfferAcceptFacet.AcceptError.SanctionedCreator;
             return preview;
         }
+        // #3744 — the holder of the offer's token takes the creator's side
+        // of the loan, so a flagged holder makes the offer unfillable.
+        address offerHolder = LibOfferRefund.holder(LibVaipakam.storageSlot().offers[offerId]);
+        if (offerHolder != offer.creator && LibVaipakam.isSanctionedAddress(offerHolder)) {
+            preview.errorCode = OfferAcceptFacet.AcceptError.SanctionedOfferHolder;
+            return preview;
+        }
         // Per-asset pause check — read storage directly so we don't
         // re-enter the reverting helper (`LibFacet.requireAssetNotPaused`).
         if (
@@ -485,7 +493,10 @@ contract OfferPreviewFacet {
 
         // #3734 — loan creation asks both parties' Terms acceptance (the
         // exiting seller of a sale vehicle is not asked) before its cadence.
-        if (!_termsClear(_saleLoanId == 0 ? offer.creator : address(0), acceptor)) {
+        if (
+            !_termsClear(_saleLoanId == 0 ? offer.creator : address(0), acceptor)
+                || (_saleLoanId == 0 && offerHolder != offer.creator && !_termsClear(offerHolder, address(0)))
+        ) {
             preview.errorCode = OfferAcceptFacet.AcceptError.TermsNotAccepted;
             return preview;
         }

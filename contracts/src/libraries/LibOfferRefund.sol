@@ -54,4 +54,47 @@ library LibOfferRefund {
         if (token != 0) h = LibPositionNFT.core().holderOf(token);
         if (h == address(0)) h = offer.creator;
     }
+
+    /// @notice #3744 — the owner of the loan side an ACCEPTOR takes: in a
+    ///         match, the holder of the matched lender offer's position token
+    ///         (the creator's vault still funds it, and `loan.lender` stays
+    ///         the creator as the funding-vault record); otherwise the
+    ///         acceptor itself. A lender offer that carries no position token
+    ///         of its own keeps its creator.
+    function acceptorSideOwner(address acceptor) internal view returns (address) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!s.matchOverride.active) return acceptor;
+        uint256 lenderOfferId = s.matchLenderAuthOfferId;
+        if (lenderOfferId == 0) return acceptor;
+        LibVaipakam.Offer storage lo = s.offers[lenderOfferId];
+        if (lo.creator != acceptor) return acceptor;
+        return holder(lo);
+    }
+
+    bytes32 private constant SLICE_TOKEN_TO = keccak256("vaipakam.offer.sliceTokenTo");
+
+    /// @notice #3744 — a collection offer's one-loan slice is minted with its
+    ///         position token in the hands of the holder of the PARENT
+    ///         offer's token, so the loan side it creates follows the parent.
+    ///         Set by the slice's drawer for the next offer token minted in
+    ///         this transaction; {takeSliceTokenTo} consumes it.
+    function bindSliceTokenTo(address to) internal {
+        bytes32 key = SLICE_TOKEN_TO;
+        assembly ("memory-safe") {
+            tstore(key, to)
+        }
+    }
+
+    /// @notice Who receives the offer token being minted for `creator`: the
+    ///         bound slice recipient once (then cleared), else the creator.
+    function takeSliceTokenTo(address creator) internal returns (address to) {
+        bytes32 key = SLICE_TOKEN_TO;
+        assembly ("memory-safe") {
+            to := tload(key)
+        }
+        if (to == address(0)) return creator;
+        assembly ("memory-safe") {
+            tstore(key, 0)
+        }
+    }
 }

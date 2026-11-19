@@ -317,6 +317,22 @@ supports; (C) parking each refund in a claim the holder takes later, which
 adds a step where 3.3 chose "hold the token, not the assets". Recommendation
 and decision: as above (A).
 
+At the fill (design rulings of 2026-11-19), the holder of a borrower offer's
+token is the borrower: the net principal goes into its vault as free balance,
+the initiation fee's hold discount is its own, and a holder that is
+sanctions-flagged or has not accepted the Terms in force makes the offer
+unfillable, with a named refusal the previews report. The creator, whose vault
+holds the collateral, is screened as before, and its risk consents stay with
+the offer. An offer's Full-tariff consent is given by the token's holder,
+recorded with that wallet, and counts only while that wallet holds the token;
+a transfer lapses it and the fill runs on the standard tariff. The same rule
+covers the lender side of a match and a collection offer's slices: the loan
+side an offer creates belongs to whoever holds the offer's token when the loan
+opens, while the creator's vault funds it and stays recorded as the funding
+vault. Every ownership check reads the holder and refuses by name; nothing
+falls back to the creator. An offer with no token of its own keeps its
+creator.
+
 ## 4. What a user is told
 
 - **On any marketplace, in the token's own details.** Most marketplaces do

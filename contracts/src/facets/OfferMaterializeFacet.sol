@@ -283,6 +283,11 @@ contract OfferMaterializeFacet is DiamondPausable, IVaipakamErrors {
     ///         opt-in is applied at materialization, so indexers see one shape.
     event OfferCreatorFullTariffSet(uint256 indexed offerId, bool creatorFull, uint256 maxCStar, bool allowDowngrade);
 
+    /// @notice #3744 — the same event `ProfileFacet.setOfferCreatorFullTariff`
+    ///         emits: the wallet whose Full-tariff consent the offer carries.
+    /// @custom:event-category state-change/offer-mutation
+    event OfferFullTariffConsentBy(uint256 indexed offerId, address indexed by);
+
     /// @dev #1949 — apply the maker's Full opt-in carried on the signed artifact.
     ///      A signed offer is materialized and accepted in ONE transaction, so
     ///      there is no post-create moment for the standing-offer setter; the
@@ -300,7 +305,11 @@ contract OfferMaterializeFacet is DiamondPausable, IVaipakamErrors {
         o.creatorFull = true;
         o.creatorMaxCStar = full.maxCStar;
         o.creatorAllowFullDowngrade = full.allowDowngrade;
+        // #3744 — recorded with the maker who gave it, so it counts only while
+        // the maker holds the offer's token.
+        LibVaipakam.storageSlot().offerFullTariffBy[offerId] = o.creator;
         emit OfferCreatorFullTariffSet(offerId, true, full.maxCStar, full.allowDowngrade);
+        emit OfferFullTariffConsentBy(offerId, o.creator);
     }
 
     /// @dev #3328 — a collection slice is a Lender offer of an ERC-20

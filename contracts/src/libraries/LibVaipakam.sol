@@ -8994,6 +8994,14 @@ library LibVaipakam {
         ///      offer token belongs to one offer, so it never changes.
         ///      Appended — append-only.
         mapping(uint256 => address) offerTokenHeldFrom;
+        /// @dev #3744 — the wallet that gave an offer's Full-tariff consent
+        ///      (`Offer.creatorFull`), recorded with it by
+        ///      `ProfileFacet.setOfferCreatorFullTariff` and by a signed
+        ///      offer's materialization. The consent counts at a fill only
+        ///      while this wallet holds the offer's position token
+        ///      (`LibFeeEntitlement.offerFullConsented`); a transfer lapses it.
+        ///      Appended — append-only.
+        mapping(uint256 => address) offerFullTariffBy;
     }
 
     /// @notice #3344 — a protected account's Ready settings. See

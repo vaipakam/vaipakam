@@ -11,6 +11,7 @@ import {LibOfferBounds} from "./LibOfferBounds.sol";
 import {LibInitRiskGate} from "./LibInitRiskGate.sol";
 import {LibAutoRefinanceCheck} from "./LibAutoRefinanceCheck.sol";
 import {LibAuth} from "./LibAuth.sol";
+import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibPausable} from "./LibPausable.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 import {RiskPreviewFacet} from "../facets/RiskPreviewFacet.sol";
@@ -116,7 +117,12 @@ library LibOfferMatch {
         // #3734 — a party of the loan has not accepted the Terms in force
         // (`LibTerms.TermsNotAccepted`); `LegalFacet.termsBlocker` names it.
         // Reported by the match and intent previews. Appended.
-        TermsNotAccepted
+        TermsNotAccepted,
+        // #3744 — the holder of either offer's position token, who owns the
+        // loan side that offer creates, is flagged by the sanctions oracle.
+        // The match reverts `SanctionedAddress(holder)`. Reported by
+        // the match and intent previews. Appended.
+        OfferHolderFlagged
     }
 
     /// @notice Structured return from `previewMatch`. Bots check
@@ -410,6 +416,13 @@ library LibOfferMatch {
         );
     }
 
+    /// @dev #3744 — the owner of the loan side an offer creates: the holder
+    ///      of its position token, or its creator when it carries none.
+    function _sideOwner(uint256 token, address creator) private view returns (address h) {
+        if (token != 0) h = LibPositionNFT.core().holderOf(token);
+        if (h == address(0)) h = creator;
+    }
+
     /// @notice Struct-based core of `previewMatch` — runs the full
     ///         match-admission mirror on offer VALUES instead of stored ids.
     /// @dev    The lender leg is `memory` so a not-yet-stored intent slice can
@@ -503,7 +516,10 @@ library LibOfferMatch {
         // when that happens (the load-bearing gate). Surfacing it here
         // as a typed `MatchError` saves bots an `acceptOfferInternal`
         // submission + revert + gas burn for an obviously-bad pair.
-        if (L.creator == B.creator) {
+        // #3744 — each side belongs to the holder of its offer's token, so
+        // the holders are compared too: a creator cannot take back the side
+        // its transferred offer now gives another wallet by matching itself.
+        if (L.creator == B.creator || _sideOwner(L.positionTokenId, L.creator) == _sideOwner(B.positionTokenId, B.creator)) {
             r.errorCode = MatchError.SelfTrade;
             return r;
         }

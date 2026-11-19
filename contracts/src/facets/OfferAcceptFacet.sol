@@ -969,6 +969,15 @@ contract OfferAcceptFacet is
         if (LibVaipakam.isSanctionedAddress(offer.creator)) {
             revert ProfileFacet.SanctionedAddress(offer.creator);
         }
+        // #3744 — the creator side of the new loan is whoever holds the
+        // offer's position token now: the borrower party of a borrower offer
+        // (it takes the net principal, the fee discount and the screens) and
+        // the holder of the creator-side position. A flagged holder makes the
+        // offer unfillable.
+        address creatorParty = LibOfferRefund.holder(offer);
+        if (creatorParty != offer.creator && LibVaipakam.isSanctionedAddress(creatorParty)) {
+            revert ProfileFacet.SanctionedAddress(creatorParty);
+        }
 
         // T-092 Phase 2b (#506) — re-check the borrower's per-loan
         // refinance caps at accept time. Caps may have been
@@ -1126,6 +1135,11 @@ contract OfferAcceptFacet is
         // submitting; the load-bearing revert is here (every match
         // routes through `_acceptOffer` via `acceptOfferInternal`).
         if (lender == borrower) revert SelfTradeForbidden(lender);
+        // #3744 — the borrower PARTY of a borrower offer is the offer token's
+        // holder (the creator's vault still holds the collateral). The fee,
+        // its discount and the net principal key on it.
+        address borrowerParty = offer.offerType == LibVaipakam.OfferType.Borrower ? creatorParty : borrower;
+        if (lender == borrowerParty) revert SelfTradeForbidden(lender);
 
         // #1835 (Codex #1891 F3/F4/F5/F10/F11) — the sale VEHICLE must MIRROR
         // the position it sells. A listing created before #1779 taught
@@ -1345,7 +1359,7 @@ contract OfferAcceptFacet is
                         offerId,
                         offer.lendingAsset,
                         lender,
-                        borrower,
+                        borrowerParty,
                         effectivePrincipal,
                         lendingAssetLiquidity ==
                             LibVaipakam.LiquidityStatus.Liquid,
@@ -2012,7 +2026,11 @@ contract OfferAcceptFacet is
         // #3734 — a party of the loan has not accepted the Terms in force
         // (`LibTerms.TermsNotAccepted`); `LegalFacet.termsBlocker` names it.
         // APPENDED.
-        TermsNotAccepted
+        TermsNotAccepted,
+        // #3744 — the holder of the offer's position token (the creator side
+        // of the loan, once the token moved) is flagged by the sanctions
+        // oracle. APPENDED.
+        SanctionedOfferHolder
     }
 
     /// @notice Projection of the loan that would land if the supplied

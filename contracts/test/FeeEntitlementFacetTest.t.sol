@@ -1338,11 +1338,98 @@ contract FeeEntitlementFacetTest is SetupTest {
 
     function testCreatorFullTariff_OnlyCreator() public {
         uint256 offerId = _createLenderErc20Offer();
-        vm.prank(borrower); // not the creator
-        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
+        vm.prank(borrower); // not the holder of the offer's token
+        vm.expectRevert(IVaipakamErrors.NotOfferHolder.selector);
         ProfileFacet(address(diamond)).setOfferCreatorFullTariff(
             offerId, true, 1 ether, false
         );
+    }
+
+    // ─── #3744 — the Full consent belongs to the wallet that would pay ──────
+
+    /// @dev Hand a lender offer's position token to a fresh, VPFI-staked
+    ///      wallet and return it.
+    function _offerTokenTo(uint256 offerId, string memory label) private returns (address who) {
+        who = makeAddr(label);
+        vpfiToken.transfer(who, PARTY_VPFI_STAKE);
+        _stakeVpfi(who, PARTY_VPFI_STAKE);
+        LibTestPositionNFT.move(
+            address(diamond), OfferCancelFacet(address(diamond)).getOffer(offerId).positionTokenId, who
+        );
+    }
+
+    /// A transfer lapses the creator's consent: the fill runs on the standard
+    /// tariff (no revert, even with no downgrade allowed) and no VPFI leaves
+    /// either the creator's or the new holder's vault.
+    function test3744_TransferLapsesTheCreatorsConsent() public {
+        _config().setFeeEntitlementEnabled(true);
+        _stakeVpfi(lender, PARTY_VPFI_STAKE);
+        uint256 offerId = _createLenderErc20Offer();
+        uint256 c = _cStar();
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setOfferCreatorFullTariff(offerId, true, c, /*allowDowngrade=*/ false);
+        address holder = _offerTokenTo(offerId, "full-new-holder");
+
+        uint256 creatorBefore = vpfiToken.balanceOf(_vault(lender));
+        uint256 holderBefore = vpfiToken.balanceOf(_vault(holder));
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
+
+        LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(loanId);
+        assertTrue(fe.lenderMode != LibVaipakam.FeeEntitlementMode.Full, "the lapsed consent is not Full");
+        assertEq(fe.lenderTariffPaid, 0, "no lender tariff");
+        assertEq(vpfiToken.balanceOf(_vault(lender)), creatorBefore, "the creator pays nothing");
+        assertEq(vpfiToken.balanceOf(_vault(holder)), holderBefore, "the holder pays nothing it did not consent to");
+    }
+
+    /// The old creator can no longer give or change the consent once it no
+    /// longer holds the token.
+    function test3744_CreatorCannotConsentAfterTransfer() public {
+        uint256 offerId = _createLenderErc20Offer();
+        _offerTokenTo(offerId, "full-new-holder-2");
+        vm.prank(lender);
+        vm.expectRevert(IVaipakamErrors.NotOfferHolder.selector);
+        ProfileFacet(address(diamond)).setOfferCreatorFullTariff(offerId, true, 1 ether, false);
+    }
+
+    /// The new holder gives its own consent, which counts at the fill and is
+    /// charged from the new holder's vault only.
+    function test3744_NewHolderConsent_ChargesTheHoldersVault() public {
+        _config().setFeeEntitlementEnabled(true);
+        _stakeVpfi(lender, PARTY_VPFI_STAKE);
+        uint256 offerId = _createLenderErc20Offer();
+        uint256 c = _cStar();
+        address holder = _offerTokenTo(offerId, "full-new-holder-3");
+        vm.prank(holder);
+        ProfileFacet(address(diamond)).setOfferCreatorFullTariff(offerId, true, c, /*allowDowngrade=*/ false);
+
+        uint256 creatorBefore = vpfiToken.balanceOf(_vault(lender));
+        uint256 holderBefore = vpfiToken.balanceOf(_vault(holder));
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
+
+        LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(loanId);
+        assertEq(uint8(fe.lenderMode), uint8(LibVaipakam.FeeEntitlementMode.Full), "the holder's consent counts");
+        assertEq(fe.lenderTariffPaid, c, "C* charged");
+        assertEq(holderBefore - vpfiToken.balanceOf(_vault(holder)), c, "from the holder's vault");
+        assertEq(vpfiToken.balanceOf(_vault(lender)), creatorBefore, "never from the creator's vault");
+    }
+
+    /// A consent given by a holder that then passes the token on lapses too:
+    /// it counts only while its giver holds the token.
+    function test3744_HoldersConsentLapsesWhenItPassesTheTokenOn() public {
+        _config().setFeeEntitlementEnabled(true);
+        uint256 offerId = _createLenderErc20Offer();
+        uint256 c = _cStar();
+        address first = _offerTokenTo(offerId, "full-holder-a");
+        vm.prank(first);
+        ProfileFacet(address(diamond)).setOfferCreatorFullTariff(offerId, true, c, false);
+        address second = _offerTokenTo(offerId, "full-holder-b");
+
+        uint256 firstBefore = vpfiToken.balanceOf(_vault(first));
+        uint256 secondBefore = vpfiToken.balanceOf(_vault(second));
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
+        assertEq(_feFacet().getFeeEntitlement(loanId).lenderTariffPaid, 0, "lapsed");
+        assertEq(vpfiToken.balanceOf(_vault(first)), firstBefore, "the giver pays nothing");
+        assertEq(vpfiToken.balanceOf(_vault(second)), secondBefore, "the holder pays nothing");
     }
 
     // ─── #1353 (M2 PR-5c) — loan-side reward-cap stamp + haircut knob ──────────

@@ -19,6 +19,7 @@ import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -253,6 +254,22 @@ contract CollectionOfferTest is SetupTest {
         LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(id);
         assertTrue(o.accepted, "spent offer leaves the book");
         assertEq(uint8(_take(id, 5, _noProof())), uint8(CollectionOfferFacet.TakeFailure.Closed));
+    }
+
+    /// #3744 — the loans a collection offer opens belong to whoever holds
+    /// the collection offer's token: each slice's token, and so each loan's
+    /// lender side, goes to that holder; the creator's vault still funds it.
+    function test_transferredParent_holderOwnsEachLoansLenderSide() public {
+        uint256 id = _create(_set(LibVaipakam.CollateralSetKind.Collection), 2);
+        address holder = makeAddr("collectionOfferHolder");
+        LibTestPositionNFT.move(address(diamond), OfferCancelFacet(address(diamond)).getOffer(id).positionTokenId, holder);
+        uint256 loanA = _fill(id, 4, _noProof());
+        uint256 loanB = _fill(id, 9, _noProof());
+        LibVaipakam.Loan memory a = LoanFacet(address(diamond)).getLoanDetails(loanA);
+        LibVaipakam.Loan memory b = LoanFacet(address(diamond)).getLoanDetails(loanB);
+        assertEq(LibTestPositionNFT.core(address(diamond)).ownerOf(a.lenderTokenId), holder, "first loan");
+        assertEq(LibTestPositionNFT.core(address(diamond)).ownerOf(b.lenderTokenId), holder, "second loan");
+        assertEq(a.lender, lender, "the creator's vault funded it");
     }
 
     function test_theNextFillAfterTheLastIsRefused() public {

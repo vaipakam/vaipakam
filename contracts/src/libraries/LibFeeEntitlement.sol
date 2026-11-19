@@ -8,6 +8,7 @@ import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {LibPriceRead} from "./LibPriceRead.sol";
+import {LibOfferRefund} from "./LibOfferRefund.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
@@ -196,6 +197,22 @@ library LibFeeEntitlement {
         }
         LibVpfiRecycle.creditFullTariff(loanId, cStar, balanceBefore);
         return (LibVaipakam.FeeEntitlementMode.Full, cStar);
+    }
+
+    /**
+     * @notice #3744 — whether `offerId`'s Full-tariff consent counts for
+     *         `party` at a fill now: the offer carries one, the wallet that
+     *         gave it is `party`, and that wallet still holds the offer's
+     *         position token. A transfer of the token lapses the consent (the
+     *         fill then runs on the standard tariff, never reverts); the new
+     *         holder may give its own. The VPFI is only ever drawn from the
+     *         consenting holder's vault.
+     */
+    function offerFullConsented(uint256 offerId, address party) internal view returns (bool) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Offer storage offer = s.offers[offerId];
+        address by = s.offerFullTariffBy[offerId];
+        return offer.creatorFull && by != address(0) && by == party && by == LibOfferRefund.holder(offer);
     }
 
     /**
