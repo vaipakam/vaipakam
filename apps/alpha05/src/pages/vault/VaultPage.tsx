@@ -18,6 +18,8 @@ import { FrozenNotice, useFrozenState } from '../../shared/sanctions/FrozenNotic
 import { OwnStamp } from '../../shared/ui/OwnStamp';
 import { SafetyCard } from '../../shared/protection/SafetyCard';
 import { EscapeNotice } from '../../shared/vault/EscapeNotice';
+import { UnrecognisedItems } from '../../shared/vault/UnrecognisedItems';
+import type { UnrecognisedItem } from '../../shared/vault/unrecognised';
 import { balanceLines, readSlotCapital } from '../../shared/vault/balances';
 import { holdingFigures, positionAssets, readVaultHoldings, shownRows, type HoldingRow, type HoldingSource } from '../../shared/vault/holdings';
 import { CreateVault, useCreateVaultHeld } from '../../shared/vault/CreateVault';
@@ -294,6 +296,7 @@ export function VaultPage() {
                 <p className="tier-b">{text('vault.discoveryNote')}</p>
                 <WhyLink summaryKey="vault.whySummary" detailKey="vault.why" />
               </section>
+              {data.vault !== null && <UnrecognisedItems chain={chain} account={account} action={(i) => <RecoverLink item={i} />} />}
             </>
           )}
           {/* Read on its own facts, never behind holdings discovery, so a failed
@@ -381,6 +384,20 @@ function HoldingCard({
         </div>
       )}
     </li>
+  );
+}
+
+/** #3435 — an unrecognised item's way to Recover, which states the
+ *  protocol's figure and both choices; the link names neither. */
+function RecoverLink({ item }: { item: UnrecognisedItem }) {
+  const { text } = useCopy();
+  const page = pageHandoff('/recover');
+  const to: ReturnType<typeof pageHandoff> =
+    page.kind === 'here' ? { kind: 'here', to: `/recover?asset=${item.asset}${item.tokenId === null ? '' : `&id=${item.tokenId.toString()}`}` } : page;
+  return (
+    <p className="tier-b">
+      <HandoffLink to={to} label={text('unrecognised.decide')} />
+    </p>
   );
 }
 

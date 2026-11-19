@@ -157,3 +157,10 @@ export async function setConfigSnapshot(body: { chainId: number; available: bool
   });
   if (!res.ok) throw new Error(`stub refused config snapshot: ${res.status}`);
 }
+
+/** Store what the index answers for `owner`'s vault arrivals (#3435), in the
+ *  route's shape, or a refusal status. The suite's reset clears it. */
+export async function setArrivals(control: { chainId: number; owner: string; answer: unknown } | { chainId: number; owner: string; status: number }): Promise<void> {
+  const res = await fetch(`${STUB_ORIGIN}/__stub/arrivals`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(control) });
+  if (!res.ok) throw new Error(`stub refused arrivals: ${res.status} ${await res.text()}`);
+}

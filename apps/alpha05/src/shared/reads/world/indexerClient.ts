@@ -9,10 +9,14 @@ export type IndexerFailure = 'not-configured' | 'network' | 'status' | 'shape';
 
 export class IndexerUnavailable extends Error {
   readonly why: IndexerFailure;
-  constructor(why: IndexerFailure, message: string) {
+  /** The HTTP status when `why` is 'status', so a caller can read a route's
+   *  stated refusal (a 404 or a 429) apart from an outage; null otherwise. */
+  readonly status: number | null;
+  constructor(why: IndexerFailure, message: string, status: number | null = null) {
     super(message);
     this.name = 'IndexerUnavailable';
     this.why = why;
+    this.status = status;
   }
 }
 
@@ -51,7 +55,7 @@ export function createIndexerClient(origin: string | null, fetchImpl: typeof fet
       } catch (e) {
         throw new IndexerUnavailable('network', `The indexer did not answer: ${(e as Error).message}`);
       }
-      if (!res.ok) throw new IndexerUnavailable('status', `The indexer answered ${res.status} for ${path}.`);
+      if (!res.ok) throw new IndexerUnavailable('status', `The indexer answered ${res.status} for ${path}.`, res.status);
       try {
         return (await res.json()) as T;
       } catch {
