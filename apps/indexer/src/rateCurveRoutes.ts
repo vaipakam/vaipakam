@@ -286,8 +286,6 @@ export function ruleStatement() {
     ...OWN_LOANS_RULE,
     provisional: true,
     excludes: [
-      'open-loans',
-      'defaulted-or-liquidated-loans',
       'linked-rate-loans',
       'self-trade-pairs',
       'unconfirmed-terms',
@@ -296,7 +294,10 @@ export function ruleStatement() {
       'loans-younger-than-min-age',
     ],
     interestSources: PAID_INTEREST_SOURCES,
-    interestNotYetCounted: ['refinance-payoff', 'swap-to-repay', 'partial-repayment'],
+    // Every interest payment states itself (#3755) except a fallback
+    // recovery, which settles principal, interest and the bonus as one
+    // amount, so no interest figure exists for it to count.
+    interestNotCounted: ['fallback-recovery'],
     points: CURVE_TERMS.map((days) => ({
       days,
       termRange: TERM_RANGES[days],

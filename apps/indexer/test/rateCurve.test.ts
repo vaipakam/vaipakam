@@ -226,6 +226,10 @@ describe('rate curve: the pass and the stated rule', () => {
     const r = ruleStatement();
     expect(r.provisional).toBe(true);
     expect(r.weight).toBe('interest-paid');
+    expect(r.loans).toBe('any-status');
+    expect(r.excludes).not.toContain('open-loans');
+    expect(r.excludes).not.toContain('defaulted-or-liquidated-loans');
+    expect(r.interestNotCounted).toEqual(['fallback-recovery']);
     expect(r.points.map((p) => p.lookbackDays)).toEqual([90, 90, 180, 360, 730]);
     expect(r.points[4].termRange).toEqual([271, null]);
   });
