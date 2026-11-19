@@ -62,6 +62,7 @@ export {
   forcedSaleQuoteAmount,
   noQuoteReason,
   previewCloseOut,
+  previewCloseOutDetail,
   readForcedSalePlan,
   readCloseOutRoster,
   routeMissingAnswers,

@@ -2013,3 +2013,5 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 
 **Gap.** No Anvil spec: recording a failure needs a forced sale whose every route fails on the fork, which the harness does not stage yet.
 
+**The forced-close card.** Its pre-send preview now reads `previewCloseOutDetail` from `@vaipakam/lib/routeBuilder`, and when the simulated close-out emits `ForcedSaleFallbackDeferred` for this loan (every route failed before the fallback opened) the card sends nothing and says the close-out would only record the failed sale, that settlement in kind can open ten minutes after the first recorded failure, and that it can be tried again after that wait. The detail's `deferred` flag is pinned in `src/data/closeOutRoute.test.ts`; the card's branch has no unit of its own.
+

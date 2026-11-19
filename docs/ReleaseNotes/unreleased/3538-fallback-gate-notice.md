@@ -11,5 +11,11 @@ when settlement in kind can open, using the contract's own time. Once that
 time has passed it says the next failed sale can move the loan there. A
 deployment without the record shows nothing.
 
+The lender's forced-close card checks the same thing before it asks the
+wallet. When every route would fail and the protocol would defer the
+close-out, it sends nothing and says so: sending now would only record the
+failed sale, settlement in kind can open ten minutes after the first recorded
+failure, and the close-out can be tried again after that wait.
+
 Part of #3538. The keeper's retry at the opening time belongs to the keeper's
 own work, and the design thread adds the spec lines.

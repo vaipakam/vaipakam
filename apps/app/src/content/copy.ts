@@ -3578,6 +3578,11 @@ const copySource = {
     // was being built, so the sale copy on this card no longer applies.
     routeEndingChanged:
       'The loan changed while the route was being found: checked against the chain just now, this close-out would no longer end in a sale, so the description on this card no longer matches what it would do. Nothing was sent and nothing was spent. Reload the page to see how the loan can be closed now.',
+    // #3538 — the close-out would be deferred: every route failed before the
+    // loan's fallback opened. The ten minutes is LibFallbackGate.MIN_SPAN, a
+    // contract constant.
+    routeDeferred:
+      'Checked against the chain just now, every exchange route for this sale failed, and the protocol defers a close-out like this one: sending it now would not close the loan, it would only record the failed sale. Settlement in kind can open ten minutes after the first recorded failure, and the loan page shows when. Nothing was sent and nothing was spent. The close-out can be tried again once that wait has passed.',
     routeWouldFallBack:
       'Checked against the chain just now, every exchange route for this sale failed, so sending it would close the loan into the protocol\'s fallback rather than a sale. Nothing was sent and nothing was spent. The app cannot tell from this check why the routes failed. Routes are built afresh each time, so trying again later may succeed; if it keeps happening, contact support.',
     // Round 31 P2 — a liquid, non-collapsed position the protocol can

@@ -67,7 +67,7 @@ import {
   forcedSaleQuoteAmount,
   noQuoteReason,
   type RoutePosture,
-  previewCloseOut,
+  previewCloseOutDetail,
   readForcedSalePlan,
   readRouteStanding,
   routeMissingAnswers,
@@ -429,7 +429,7 @@ export function ForcedCloseCard({
       // read a moment too early.
       // A sale route is previewed first, for the one outcome the ordinary
       // simulation cannot see: every attempt refused and the close-out
-      // succeeding into the fallback anyway (`previewCloseOut` says why).
+      // succeeding into the fallback anyway (`previewCloseOutDetail` says why).
       // The card promised a sale; a close-out that would not be one is not
       // sent on that promise. A node that cannot preview leaves the
       // disclosure on the card as the whole of what is known.
@@ -446,7 +446,7 @@ export function ForcedCloseCard({
         address &&
         routeDiamond
       ) {
-        const preview = await previewCloseOut({
+        const { preview, deferred } = await previewCloseOutDetail({
           client: publicClient,
           diamond: routeDiamond,
           account: address,
@@ -454,6 +454,15 @@ export function ForcedCloseCard({
           sellAmount: quotedAmount ?? 0n,
           calls: adapterCalls,
         });
+        // #3538 — every route failed and the loan's fallback is not open
+        // yet, so the call would close nothing: the sale is undone and only
+        // the failure recorded. Said apart from a changed ending, because the
+        // loan has not changed; the wait has (the loan page shows when it
+        // ends).
+        if (deferred) {
+          setError(copy.forcedClose.routeDeferred);
+          return;
+        }
         if (preview === 'fallback') {
           setError(copy.forcedClose.routeWouldFallBack);
           return;
