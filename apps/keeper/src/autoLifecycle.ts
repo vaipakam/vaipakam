@@ -89,6 +89,7 @@ import { runIndex } from './runWindow';
 import { pagedWalk } from './rotate';
 import { redactedError } from '@vaipakam/lib/errorDescription';
 import { revertErrorName } from '@vaipakam/lib/contractRevert';
+import { stepPublisher } from './stepStatus';
 
 const ADMIN_ABI: Abi = AdminFacetABI as Abi;
 const AUTO_LIFECYCLE_ABI: Abi = AutoLifecycleFacetABI as Abi;
@@ -173,9 +174,47 @@ interface ExtendCaps {
   setter: Address;
 }
 
+/**
+ * The step the app reads (#3763, `DefaultPathsDesign.md` rule 7), published
+ * to `keeper_step_status` as pass `autoLifecycle`:
+ *
+ *   - `extend` — loans whose two sides both consented are extended
+ *     (`extendLoanInPlace`).
+ *
+ * The app shows auto-extend as run by the platform only where `extend` reads
+ * as running. It is armed on a chain when this pass is armed and the chain's
+ * own switch (`getAutoExtendEnabled`) reads on; a switch that cannot be read
+ * publishes it as not armed, since the pass then extends nothing there.
+ */
+export const AUTO_LIFECYCLE_STEPS = ['extend'] as const;
+export type AutoLifecycleStep = (typeof AUTO_LIFECYCLE_STEPS)[number];
+
+const stepStatus = stepPublisher('autoLifecycle', AUTO_LIFECYCLE_STEPS);
+/** Forget what was published (tests). */
+export const resetAutoLifecycleSteps = stepStatus.reset;
+
+/** Publish `extend` for one chain: armed only when the pass is armed and the
+ *  chain's switch read on. */
+export async function publishAutoLifecycleStep(
+  db: D1Database,
+  chain: { id: number; diamond: string },
+  armed: boolean,
+  nowSec: number,
+): Promise<void> {
+  await stepStatus.publish(db, [chain], new Set<AutoLifecycleStep>(armed ? ['extend'] : []), nowSec);
+}
+
 export async function runAutoLifecycle(env: Env, tick: PassTick): Promise<void> {
-  if (!passIsArmed(env, 'autoLifecycle')) return;
+  const passOn = passIsArmed(env, 'autoLifecycle');
   const chains = getChainConfigs(env);
+  if (!passOn) {
+    // #3763 — stated, never assumed: published armed or not.
+    const nowSec = Math.floor(Date.now() / 1000);
+    for (const c of chains) {
+      if (c.diamond) await publishAutoLifecycleStep(env.DB, { id: c.id, diamond: c.diamond }, false, nowSec);
+    }
+    return;
+  }
   // Chains side by side, loans from a moving start (#2572 r5/r7, `runWindow.ts`).
   const run = runIndex(tick, 60_000);
   await Promise.all(
@@ -198,12 +237,21 @@ async function processChain(env: Env, chain: ChainConfig, deadlineMs: number, ru
     transport: http(chain.rpc),
   }) as PublicClient;
 
-  // Admin kill switch.
-  const adminEnabled = (await publicClient.readContract({
-    address: chain.diamond as Address,
-    abi: ADMIN_ABI,
-    functionName: 'getAutoExtendEnabled',
-  })) as boolean;
+  // Admin kill switch. Its reading is what the app is told (#3763): a switch
+  // that cannot be read is published as not armed before the error ends the
+  // chain's run.
+  let adminEnabled: boolean;
+  try {
+    adminEnabled = (await publicClient.readContract({
+      address: chain.diamond as Address,
+      abi: ADMIN_ABI,
+      functionName: 'getAutoExtendEnabled',
+    })) as boolean;
+  } catch (err) {
+    await publishAutoLifecycleStep(env.DB, { id: chain.id, diamond: chain.diamond }, false, Math.floor(Date.now() / 1000));
+    throw err;
+  }
+  await publishAutoLifecycleStep(env.DB, { id: chain.id, diamond: chain.diamond }, adminEnabled, Math.floor(Date.now() / 1000));
   if (!adminEnabled) {
     console.log(`[keeper] autoLifecycle chain=${chain.id} skipped: kill switch off`);
     return;

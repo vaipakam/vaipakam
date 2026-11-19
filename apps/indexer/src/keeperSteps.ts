@@ -27,7 +27,9 @@
  * rail can send). A channel step is armed only while `alerts` is. Step for
  * the matcher pass (#3763, whether repayments are lent again here): `roll`
  * (the keeper re-lends a repaid auto-lend loan for owners who gave it the
- * roll permission). A step with no row has never been published on this
+ * roll permission). Step for the auto-lifecycle pass (#3763): `extend` (loans
+ * both sides consented to are extended; armed only while the network's own
+ * auto-extend switch reads on). A step with no row has never been published on this
  * chain: read it as not running.
  *
  * D1 only, dispatched before `resolveEnv` (index.ts) like `/assets/rankings`.
