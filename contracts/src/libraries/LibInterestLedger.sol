@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibEntitlement} from "./LibEntitlement.sol";
@@ -247,6 +248,36 @@ library LibInterestLedger {
         if (loan.assetType != LibVaipakam.AssetType.ERC20) return;
         LibVaipakam.InterestLedger storage l = s.interestLedger[loan.id];
         l.principalOwed = l.principalOwed > delivered ? l.principalOwed - delivered : 0;
+    }
+
+    /// @notice #3779 — clears a slice of principal that pays NO interest (a
+    ///         partial internal match) without letting interest already
+    ///         settled on the loan cover interest the residual has not paid.
+    /// @dev    The accrual clock is not restarted here: nothing pays the
+    ///         interest accrued so far, so there is no segment to close. Read
+    ///         from one clock, the residual's accrual
+    ///         (`principal × rate × elapsed`) already treats the cleared slice
+    ///         as taking its share of the interest accrued so far; the settled
+    ///         credit is scaled by the same share
+    ///         (`interestSettled × residual / principal`, rounded down, so the
+    ///         credit never grows). What the residual owes at any later moment
+    ///         is then exactly its share of the unpaid interest at the match
+    ///         plus its own accrual since. Without the scaling the whole
+    ///         credit stayed against the residual's re-priced accrual, so
+    ///         interest paid for earlier periods could cover periods nothing
+    ///         paid (`LibPeriodicInterest.periodShortfall`). The cleared
+    ///         slice's own unpaid interest is not collected by the match.
+    function reducePrincipalUnpaidSlice(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.Loan storage loan,
+        uint256 cleared,
+        uint256 delivered
+    ) internal {
+        uint256 before = loan.principal;
+        if (loan.interestSettled != 0 && cleared < before) {
+            loan.interestSettled = Math.mulDiv(loan.interestSettled, before - cleared, before);
+        }
+        reducePrincipal(s, loan, cleared, delivered);
     }
 
     /// @notice Zeroes `loan.principal` for a shortfall written off at a

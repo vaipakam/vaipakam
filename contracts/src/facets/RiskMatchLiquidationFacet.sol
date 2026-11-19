@@ -770,7 +770,9 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         uint256 incentive
     ) private {
         uint256 delivered = paid == loan.principal ? 0 : paid - incentive;
-        LibInterestLedger.reducePrincipal(s, loan, paid, delivered);
+        // #3779 — a match pays principal only, so the settled interest is
+        // scaled with the principal it cleared (a full match leaves it for the terminal split).
+        LibInterestLedger.reducePrincipalUnpaidSlice(s, loan, paid, delivered);
     }
 
     /// @dev Internal helper for `triggerInternalMatchLiquidation` —

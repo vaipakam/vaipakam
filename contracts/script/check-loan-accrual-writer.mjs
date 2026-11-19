@@ -10,8 +10,10 @@
  * restart of the segment charged what had accrued and carried what was paid
  * ahead. So `interestAccrualStart` is written only by
  * `LibInterestLedger.restartAccrual`, the one restart writer, and
- * `interestSettled` only by that writer and by `LibInterestPayment.book`, the
- * one booking of interest paid on an open loan. Any other write in src/ fails
+ * `interestSettled` only by that writer, by the ledger's scaling of it when a
+ * partial internal match clears principal that pays no interest
+ * (`reducePrincipalUnpaidSlice`), and by `LibInterestPayment.book`, the one
+ * booking of interest paid on an open loan. Any other write in src/ fails
  * this check, and a listed site that no longer writes fails too.
  *
  * It uses the loan-terms writer check's AST walk (same artifacts, same rules
@@ -99,7 +101,7 @@ export function main(argv = process.argv.slice(2)) {
     for (const p of problems) console.error(`  ✗ ${p}`);
     return 1;
   }
-  console.log(`  ✓ a loan's accrual is restarted only by LibInterestLedger.restartAccrual, and its settled interest written only there and by LibInterestPayment.book`);
+  console.log(`  ✓ a loan's accrual is restarted only by LibInterestLedger.restartAccrual, and its settled interest written only in LibInterestLedger and by LibInterestPayment.book`);
   return 0;
 }
 
