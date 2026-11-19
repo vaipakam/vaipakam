@@ -206,6 +206,26 @@ library LibVaipakam {
     ///      date (the holder's own setting, 0 = at the due date).
     uint32 constant STANDING_REPAY_LEAD_MAX = 1 days;
 
+    // ─── #3752 — exit before liquidation ─────────────────────────────
+    // Defaults and outer bounds for the governed settings of the fourth
+    // standing instruction (health factors 1e18-scaled). A field of
+    // `ExitInstructionConfig` that reads 0 takes its default here.
+    uint64 constant EXIT_LEVEL_MIN_HF_DEFAULT = 1.03e18;
+    uint64 constant EXIT_LEVEL_MAX_HF_DEFAULT = 1.40e18;
+    uint16 constant EXIT_TOLERANCE_MIN_BPS_DEFAULT = 50;
+    /// @dev The tolerance a holder gets when they leave it at 0.
+    uint16 constant EXIT_TOLERANCE_DEFAULT_BPS = 100;
+    /// @dev No governed value may put the level at or below 1.0 (the
+    ///      liquidation line) or above 2.0, or the least tolerance below
+    ///      0.1%. The tolerance's upper bound is the manual route's cap
+    ///      (`cfgMaxSwapToRepaySlippageBps`), read live.
+    uint64 constant EXIT_LEVEL_CEILING = 2e18;
+    uint16 constant EXIT_TOLERANCE_MIN_FLOOR_BPS = 10;
+    /// @dev The two forms. `EXIT_FORM_NONE` = no instruction.
+    uint8 constant EXIT_FORM_NONE = 0;
+    uint8 constant EXIT_FORM_CLOSE = 1;
+    uint8 constant EXIT_FORM_REDUCE = 2;
+
     uint256 constant FLOOR_SIZE_PAD_DEFAULT = 5_000 * 1e6; // clear ⇒ `Liquid`; fail ⇒ `Illiquid`
     uint256 constant TIER1_SIZE_PAD_DEFAULT = 50_000 * 1e6; // → Tier 1 (50% init-LTV)
     uint256 constant TIER2_SIZE_PAD_DEFAULT = 500_000 * 1e6; // → Tier 2 (60% init-LTV)
@@ -8981,6 +9001,14 @@ library LibVaipakam {
         ///      `isAggregatorAdapter` (the adapter's principal is fixed at its
         ///      initialize, so the two cannot drift). Appended — append-only.
         mapping(address => address) adapterPrincipal;
+        /// @dev #3752 — per loan, the borrower holder's "sell and repay
+        ///      before liquidation" instruction, with a change waiting out a
+        ///      protected account's delay. Written only by
+        ///      `ExitInstructionFacet`. Appended — append-only.
+        mapping(uint256 => ExitInstruction) exitInstructions;
+        /// @dev #3752 — the governed bounds for that instruction. Written
+        ///      only by `ExitInstructionFacet.setExitInstructionConfig`.
+        ExitInstructionConfig exitInstructionCfg;
     }
 
     /// @notice #3344 — a protected account's Ready settings. See
@@ -9049,6 +9077,51 @@ library LibVaipakam {
         bool payInterest;
         bool repayAtDue;
         uint32 repayLeadSeconds;
+    }
+
+    /// @notice #3752 — the settings of a "sell and repay before liquidation"
+    ///         instruction, as they apply.
+    /// @param form            `EXIT_FORM_CLOSE` (sell the least that repays
+    ///                        the whole debt and close the loan) or
+    ///                        `EXIT_FORM_REDUCE` (sell the least that
+    ///                        restores `targetHf`, keeping the loan open).
+    /// @param actInFastMarket The holder switched the calm-market wait off.
+    /// @param toleranceBps    How far below the oracle value the sale may
+    ///                        fill.
+    /// @param levelHf         The health factor below which it runs.
+    /// @param targetHf        The health factor a reduction restores (0 on
+    ///                        a close).
+    struct ExitSettings {
+        uint8 form;
+        bool actInFastMarket;
+        uint16 toleranceBps;
+        uint64 levelHf;
+        uint64 targetHf;
+    }
+
+    /// @notice #3752 — one loan's exit instruction.
+    /// @param owner        The borrower-position holder it was set for; it
+    ///                     runs only while that wallet holds the position.
+    /// @param lastReduceAt When a reduction last ran (spaces two of them by
+    ///                     the top-up interval).
+    /// @param live         The settings in force.
+    /// @param pending      A change that waits out the owner's protected
+    ///                     delay; it replaces `live` from `pendingAt`.
+    /// @param pendingAt    When `pending` takes effect; 0 = none waiting.
+    struct ExitInstruction {
+        address owner;
+        uint64 lastReduceAt;
+        uint64 pendingAt;
+        ExitSettings live;
+        ExitSettings pending;
+    }
+
+    /// @notice #3752 — the governed bounds for the exit instruction. Every
+    ///         field reads 0 as its default (the `EXIT_*` constants).
+    struct ExitInstructionConfig {
+        uint64 levelMinHf;
+        uint64 levelMaxHf;
+        uint16 toleranceMinBps;
     }
 
     /// @notice #3681 — the governed bounds for the standing instructions.

@@ -56,6 +56,16 @@ const DELIBERATELY_NOT_HANDLED = {
     "#3681 — the legs of a repayment drawn from the reserve; the loan's state changes through LoanRepaid in the same transaction, which the indexer handles",
   DueRepaymentRun:
     '#3681 — a due repayment run from the reserve; the repayment itself is RepayFacet.repayLoan, whose LoanRepaid the indexer handles',
+  ExitInstructionSet:
+    "#3752 — a loan's exit instruction is a setting the app reads from the contract; no loans-row field changes",
+  ExitInstructionChangeQueued:
+    '#3752 — as ExitInstructionSet: a waiting change to a setting, no loans-row field changes',
+  ExitInstructionCleared:
+    '#3752 — as ExitInstructionSet: settings only, no loans-row field changes',
+  ExitInstructionRun:
+    "#3752 — the run record of a close on the holder's instruction; the loan closes through SwapToRepayExecuted in the same transaction, which the indexer handles. Showing the closing as 'repaid by your instruction' is the indexer follow-up of #3752",
+  ExitReductionRun:
+    "#3752 — the run record of a reduction on the holder's instruction; the loan's principal and collateral change through SwapToRepayPartialExecuted in the same transaction, which the indexer handles",
   ExtensionFeeCharged:
     '#3649 — the added initiation fee an extension charges; the term and rate the loans row tracks change through LoanExtended in the same transaction, which the indexer already handles. The fee and the term paid for are not loans-row fields today',
   PartialCollateralWithdrawn:

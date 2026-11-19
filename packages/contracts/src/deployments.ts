@@ -272,6 +272,8 @@ export interface DeploymentFacets {
   integratorFacet?: HexAddress;
   standingOfferCheckFacet?: HexAddress;
   referralFacet?: HexAddress;
+  /** #3752 — sell and repay before liquidation (the exit instruction). */
+  exitInstructionFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */

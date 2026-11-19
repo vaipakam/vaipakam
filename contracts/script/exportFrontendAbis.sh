@@ -338,6 +338,8 @@ FACETS=(
   "IntegratorFacet"
   "StandingOfferCheckFacet"
   "ReferralFacet"
+  # Sell and repay before liquidation (#3752).
+  "ExitInstructionFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"
