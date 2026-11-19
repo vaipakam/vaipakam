@@ -2636,6 +2636,7 @@ export const copy = {
       AdvanceInKindSplit: B('Collateral from a loan was split between an advance and the lender position.'),
       AdvancePaidFromPosition: B('Money that arrived for a lender position repaid part of its advance.'),
       AdvancePaidOut: B('Money set aside for an advance was paid to the Auto-lend owner who gave it.'),
+      AdvancePayoutDeferred: B('Paying an Auto-lend owner their advance did not go through this time. The money stays set aside for them and can be paid at any time.'),
       AdvanceRepaidByHolder: B('A lender repaid an advance on their position.'),
       AdvanceSlotSet: B('Consent to give advances from an Auto-lend standing order changed.'),
       AdvanceTaken: B('A lender took an advance against a loan they made.'),

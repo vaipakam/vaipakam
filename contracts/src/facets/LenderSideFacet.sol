@@ -119,6 +119,12 @@ contract LenderSideFacet is DiamondReentrancyGuard, DiamondPausable, ILenderSide
         uint256 treasuryCut
     );
 
+    /// @notice The payout to `loanId`'s slot owner failed inside the holder's
+    ///         own claim, so it was rolled back: what is set aside stays set
+    ///         aside, under its lien, for {payAdvance}, and the holder's claim
+    ///         went ahead (#3803). `reason` is the payout's revert data.
+    event AdvancePayoutDeferred(uint256 indexed loanId, address indexed slotOwner, bytes reason);
+
     /// @notice The holder repaid `paid` of `loanId`'s advance from their vault.
     event AdvanceRepaidByHolder(uint256 indexed loanId, address indexed holder, address asset, uint256 paid);
 
@@ -200,7 +206,22 @@ contract LenderSideFacet is DiamondReentrancyGuard, DiamondPausable, ILenderSide
         if (loanEnded && a.open) _close(s, loanId, a, true);
         if (!LibAdvance.hasSetAside(s, loanId)) return;
         if (LibSanctionedLock.mustFreezeParty(s, a.slotOwner)) return;
-        _payOut(loanId, a);
+        // The slot owner's payout runs in the holder's own step, so it runs
+        // as its own self-call: if it fails for any reason, it rolls back on
+        // its own (records, liens and money as they were), the set-aside
+        // waits for {payAdvance}, and the holder's step goes ahead (#3803).
+        (bool ok, bytes memory reason) = address(this).call(abi.encodeCall(this.payOutAtTake, (loanId)));
+        if (!ok) emit AdvancePayoutDeferred(loanId, a.slotOwner, reason);
+    }
+
+    /**
+     * @notice The slot owner's payout as {settleAtTake} runs it: a Diamond
+     *         self-call only, so a failure unwinds it alone.
+     * @dev    Runs under the guard the holder's step already holds.
+     */
+    function payOutAtTake(uint256 loanId) external {
+        _onlySelf();
+        _payOut(loanId, LibVaipakam.storageSlot().advances[loanId]);
     }
 
     /// @inheritdoc ILenderSideHost

@@ -282,6 +282,39 @@ contract LenderAdvanceTest is InstantMarketBase {
         assertGe(_vaultBal(lender, mockERC20), holderBefore, "holder keeps the rest");
     }
 
+    /// @dev #3803: a slot-owner payout that fails inside the holder's claim
+    ///      rolls back alone; the claim goes ahead and the set-aside waits.
+    function test_failedPayoutNeverHoldsTheHoldersClaim() public {
+        _open();
+        _take(300 ether);
+        vm.warp(vm.getBlockTimestamp() + 10 days);
+        vm.prank(taker);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+        (LibVaipakam.Advance memory a,) = _advance();
+        uint256 setAside = a.setAside;
+        assertGt(setAside, 0, "set aside as it arrived");
+
+        vm.mockCallRevert(
+            address(diamond), abi.encodeCall(LenderSideFacet.payOutAtTake, (loanId)), bytes("payout down")
+        );
+        uint256 holderBefore = _vaultBal(lender, mockERC20);
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit LenderSideFacet.AdvancePayoutDeferred(loanId, lender2, bytes("payout down"));
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimAsLender(loanId);
+        assertGe(_vaultBal(lender, mockERC20), holderBefore, "the holder's claim went ahead");
+        (a,) = _advance();
+        assertEq(a.setAside, setAside, "still set aside for the slot owner");
+
+        vm.clearMockedCalls();
+        uint256 slotBefore = _vaultBal(lender2, mockERC20);
+        vm.prank(makeAddr("anyone"));
+        LenderSideFacet(address(diamond)).payAdvance(loanId);
+        assertGt(_vaultBal(lender2, mockERC20) - slotBefore, 0, "paid later");
+        (a,) = _advance();
+        assertEq(a.setAside, 0, "nothing left set aside");
+    }
+
     /// @dev §10.14: switching advances off refuses new ones; an open one runs
     ///      to its end.
     function test_switchOffLetsAnOpenAdvanceRun() public {

@@ -231,6 +231,7 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   AdvanceRepaidByHolder: { label: 'Advance repaid', category: 'loan-modify', priority: 50 },
   AdvancePaidFromPosition: { label: 'Advance repaid from a loan payment', category: 'loan-modify', priority: 15 },
   AdvancePaidOut: { label: 'Advance paid out', category: 'loan-modify', priority: 40 },
+  AdvancePayoutDeferred: { label: 'Advance payout deferred', category: 'loan-modify', priority: 40 },
   AdvanceClosed: { label: 'Advance closed', category: 'loan-modify', priority: 30 },
   AdvanceInKindSplit: { label: 'Collateral split with an advance', category: 'loan-default', priority: 30 },
   AdvanceSlotSet: { label: 'Advance consent updated', category: 'other', priority: 40 },

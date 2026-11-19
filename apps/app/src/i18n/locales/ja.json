@@ -2741,6 +2741,7 @@
         "AdvanceRepaidByHolder": "前払いを返済",
         "AdvancePaidFromPosition": "ローンの支払いから前払いを返済",
         "AdvancePaidOut": "前払いを支払済み",
+        "AdvancePayoutDeferred": "前払いの支払いを延期",
         "AdvanceClosed": "前払いを終了",
         "AdvanceInKindSplit": "担保を前払いと分割",
         "AdvanceSlotSet": "前払いの同意を更新",

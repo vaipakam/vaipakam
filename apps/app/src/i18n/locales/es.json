@@ -2741,6 +2741,7 @@
         "AdvanceRepaidByHolder": "Anticipo devuelto",
         "AdvancePaidFromPosition": "Anticipo devuelto con un pago del préstamo",
         "AdvancePaidOut": "Anticipo pagado",
+        "AdvancePayoutDeferred": "Pago del anticipo aplazado",
         "AdvanceClosed": "Anticipo cerrado",
         "AdvanceInKindSplit": "Garantía repartida con un anticipo",
         "AdvanceSlotSet": "Consentimiento de anticipos actualizado",

@@ -2741,6 +2741,7 @@
         "AdvanceRepaidByHolder": "Avance remboursée",
         "AdvancePaidFromPosition": "Avance remboursée par un paiement du prêt",
         "AdvancePaidOut": "Avance versée",
+        "AdvancePayoutDeferred": "Versement de l’avance reporté",
         "AdvanceClosed": "Avance clôturée",
         "AdvanceInKindSplit": "Garantie partagée avec une avance",
         "AdvanceSlotSet": "Consentement aux avances mis à jour",

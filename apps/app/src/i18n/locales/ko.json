@@ -2741,6 +2741,7 @@
         "AdvanceRepaidByHolder": "선지급 상환됨",
         "AdvancePaidFromPosition": "대출 상환금으로 선지급 상환됨",
         "AdvancePaidOut": "선지급 지급됨",
+        "AdvancePayoutDeferred": "선지급 지급 연기됨",
         "AdvanceClosed": "선지급 종료됨",
         "AdvanceInKindSplit": "담보를 선지급과 분할",
         "AdvanceSlotSet": "선지급 동의 업데이트됨",

@@ -2741,6 +2741,7 @@
         "AdvanceRepaidByHolder": "预支已偿还",
         "AdvancePaidFromPosition": "预支已由贷款还款偿还",
         "AdvancePaidOut": "预支已支付",
+        "AdvancePayoutDeferred": "预支付款已推迟",
         "AdvanceClosed": "预支已结束",
         "AdvanceInKindSplit": "抵押品已与预支分割",
         "AdvanceSlotSet": "预支同意已更新",

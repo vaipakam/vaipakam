@@ -2741,6 +2741,7 @@
         "AdvanceRepaidByHolder": "अग्रिम चुकाया गया",
         "AdvancePaidFromPosition": "ऋण भुगतान से अग्रिम चुकाया गया",
         "AdvancePaidOut": "अग्रिम का भुगतान हुआ",
+        "AdvancePayoutDeferred": "अग्रिम भुगतान स्थगित",
         "AdvanceClosed": "अग्रिम बंद हुआ",
         "AdvanceInKindSplit": "संपार्श्विक अग्रिम के साथ बँटा",
         "AdvanceSlotSet": "अग्रिम सहमति अपडेट हुई",

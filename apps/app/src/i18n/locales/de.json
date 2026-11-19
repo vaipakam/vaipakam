@@ -2741,6 +2741,7 @@
         "AdvanceRepaidByHolder": "Vorschuss zurückgezahlt",
         "AdvancePaidFromPosition": "Vorschuss aus Kreditzahlung zurückgezahlt",
         "AdvancePaidOut": "Vorschuss ausgezahlt",
+        "AdvancePayoutDeferred": "Vorschussauszahlung verschoben",
         "AdvanceClosed": "Vorschuss abgeschlossen",
         "AdvanceInKindSplit": "Sicherheit mit Vorschuss geteilt",
         "AdvanceSlotSet": "Vorschuss-Zustimmung aktualisiert",

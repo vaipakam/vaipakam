@@ -2741,6 +2741,7 @@
         "AdvanceRepaidByHolder": "تم سداد السلفة",
         "AdvancePaidFromPosition": "سُددت السلفة من دفعة القرض",
         "AdvancePaidOut": "دُفعت السلفة",
+        "AdvancePayoutDeferred": "تأجّل دفع السلفة",
         "AdvanceClosed": "أُغلقت السلفة",
         "AdvanceInKindSplit": "قُسّم الضمان مع السلفة",
         "AdvanceSlotSet": "تم تحديث الموافقة على السلف",

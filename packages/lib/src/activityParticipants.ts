@@ -75,6 +75,7 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['AdvanceTaken', ['holder', 'slotOwner']],
   ['AdvanceRepaidByHolder', ['holder']],
   ['AdvancePaidOut', ['slotOwner']],
+  ['AdvancePayoutDeferred', ['slotOwner']],
   ['AdvanceClosed', ['slotOwner']],
   ['AdvanceSlotSet', ['owner']],
   ['SettlementLegReleased', ['payer']],
