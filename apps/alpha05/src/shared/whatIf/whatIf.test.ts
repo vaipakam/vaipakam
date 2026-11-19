@@ -16,6 +16,7 @@ const base: WhatIfInput = {
   interestText: (a) => `${a} USDC`,
   fullTermInterest: false,
   graceSeconds: 86_400n,
+  lateFee: null,
 };
 
 describe('price math', () => {
@@ -54,5 +55,9 @@ describe('whatIfLines', () => {
     const lender = whatIfLines({ ...base, side: 'lender', fullTermInterest: true }, copy);
     expect(lender).toContain('whatIf.earlyFullLender|full=100 USDC');
     expect(lender.some((l) => l.startsWith('whatIf.lateLender|'))).toBe(true);
+  });
+  it('states the late-fee schedule when it was read', () => {
+    const lines = whatIfLines({ ...base, lateFee: { firstDayBps: 100n, perDayBps: 50n, capBps: 500n } }, copy);
+    expect(lines.some((l) => l.startsWith('whatIf.lateBorrowerFee|') && l.includes('first=1,perDay=0.5,cap=5'))).toBe(true);
   });
 });

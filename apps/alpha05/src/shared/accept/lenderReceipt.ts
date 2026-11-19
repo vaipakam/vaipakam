@@ -133,6 +133,7 @@ export function lenderReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy: 
           interestText: (a) => tokenAmount(a, lending, meta, format),
           fullTermInterest: o.useFullTermInterest,
           graceSeconds: r.graceSeconds,
+          lateFee: r.lateFee,
         },
         copy,
       ),

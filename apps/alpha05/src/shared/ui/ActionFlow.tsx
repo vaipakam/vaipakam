@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
 import type { OwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
@@ -8,6 +8,7 @@ import { useTxStore } from '../tx/txStore';
 import { useCopy } from '../copy/useCopy';
 import type { Refusal } from '../eligibility/types';
 import type { FinishCard as FinishCardModel, Receipt as ReceiptModel } from '../receipt/types';
+import { useReceiptAddendum, withAddendum } from '../receipt/addendum';
 import type { TrackedTx } from '../tx/useTrackedTx';
 import { FinishCard } from './FinishCard';
 import { Icon } from './Icon';
@@ -99,7 +100,7 @@ export function ActionFlow({
   tx,
   identity,
   reviewedFor,
-  receipt,
+  receipt: flowReceipt,
   recheck,
   describeAsset,
   explorer,
@@ -113,6 +114,10 @@ export function ActionFlow({
 }: ActionFlowProps) {
   const { text, format } = useCopy();
   const nowMs = useNow();
+  // A page's own statement for this context (#3769), shown and frozen with
+  // the flow's receipt.
+  const addendum = useReceiptAddendum();
+  const receipt = useMemo(() => withAddendum(flowReceipt, addendum), [flowReceipt, addendum]);
   const [checking, setChecking] = useState(false);
   const [found, setFound] = useState<Exclude<Recheck, { kind: 'ok' }> | null>(null);
   /** The consent was cleared while the re-check ran (by the reader, or by a
@@ -307,7 +312,14 @@ export function ActionFlow({
           {senderNote}
           <p className="tier-b with-icon" role="status">
             <Icon meaning="pending" />
-            {text('flow.submitted')} {txLink(phase.hash)}
+            {phase.viaAccount ? (
+              // #3770 — a contract wallet's own id has no explorer page.
+              <span data-testid="flow-via-account">{format('flow.submittedAccount', { id: phase.hash })}</span>
+            ) : (
+              <>
+                {text('flow.submitted')} {txLink(phase.hash)}
+              </>
+            )}
           </p>
           {stepNote}
           {heldNotice}
@@ -346,7 +358,7 @@ export function ActionFlow({
         <div className="action-flow" data-phase="receipt-unknown">
           {senderNote}
           <Notice tone="warn" tier="A">
-            {format('flow.receiptUnknown', { reason: phase.message })} {txLink(phase.hash)}
+            {format('flow.receiptUnknown', { reason: phase.message })} {phase.viaAccount ? format('flow.accountId', { id: phase.hash }) : txLink(phase.hash)}
           </Notice>
           {heldNotice}
           <p className="actions">

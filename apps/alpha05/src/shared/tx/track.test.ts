@@ -92,3 +92,20 @@ describe('transition', () => {
     expect(() => transition({ kind: 'mined', hash: HASH, submittedHash: HASH, blockNumber: 1n, reverted: false }, { type: 'reset' })).toThrow(IllegalTransition);
   });
 });
+
+describe('a contract wallet as sender (#3770)', () => {
+  it("follows the wallet's id to the chain hash it runs under, through an unknown receipt and a resume", () => {
+    let p = transition(transition(transition({ kind: 'idle' }, { type: 'review' }), { type: 'sign' }), { type: 'submitted', hash: HASH, at: 1, viaAccount: true });
+    expect(p).toEqual({ kind: 'submitted', hash: HASH, at: 1, viaAccount: true });
+    p = transition(p, { type: 'receipt-unknown', hash: HASH, message: 'approvals unread' });
+    expect(p).toEqual({ kind: 'receipt-unknown', hash: HASH, at: 1, message: 'approvals unread', viaAccount: true });
+    p = transition(p, { type: 'resume', hash: HASH });
+    expect(p).toEqual({ kind: 'submitted', hash: HASH, at: 1, viaAccount: true });
+    expect(transition(p, { type: 'mined', submittedHash: HASH, hash: OTHER, repriced: false, blockNumber: 3n, reverted: false })).toMatchObject({ kind: 'mined', hash: OTHER, submittedHash: HASH });
+  });
+  it('still refuses another hash for an ordinary wallet', () => {
+    const p = transition(transition(transition({ kind: 'idle' }, { type: 'review' }), { type: 'sign' }), { type: 'submitted', hash: HASH, at: 1, viaAccount: false });
+    expect(p).toEqual({ kind: 'submitted', hash: HASH, at: 1 });
+    expect(() => transition(p, { type: 'mined', submittedHash: HASH, hash: OTHER, repriced: false, blockNumber: 3n, reverted: false })).toThrow(IllegalTransition);
+  });
+});

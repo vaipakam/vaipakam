@@ -12,6 +12,8 @@ import {
   readPositionOwner,
   type PositionNftSurface,
 } from '@vaipakam/lib/positionNft';
+import { zeroAddress } from 'viem';
+import { NFT_ABI } from '../nft/nft';
 import { answerOrNull } from '../reads/answer';
 
 /** The surface of the chain whose Diamond is `diamond`; throws when no
@@ -55,4 +57,26 @@ export async function readLiveHolderOrNull(
 /** The open route on `tokenId` (`positionRoute` on the Diamond). */
 export function positionRouteCallFor(diamond: string, tokenId: bigint) {
   return positionRouteCall(positionNftForDiamond(diamond), tokenId);
+}
+
+/** #3721 — the address `tokenId` is approved for transfer to (`getApproved`
+ *  on the PositionNFT, at `blockNumber`), `'none'` when there is none, or
+ *  `null` when the token answers with a refusal (never minted, or retired).
+ *  A failed source throws, so the own rail moves on to its next source. */
+export async function readTokenApprovalOrNull(
+  client: { readContract: (args: any) => Promise<unknown> },
+  diamond: string,
+  tokenId: bigint,
+  blockNumber?: bigint,
+): Promise<`0x${string}` | 'none' | null> {
+  const nft = positionNftForDiamond(diamond).nft;
+  const at = blockNumber === undefined ? {} : { blockNumber };
+  const to = (await answerOrNull(client.readContract({ address: nft, abi: NFT_ABI, functionName: 'getApproved', args: [tokenId], ...at }))) as `0x${string}` | null;
+  if (to === null) return null;
+  return to.toLowerCase() === zeroAddress ? 'none' : to;
+}
+
+/** #3721 — the call that removes `tokenId`'s single-token approval. */
+export function clearTokenApprovalCall(diamond: string, tokenId: bigint) {
+  return { address: positionNftForDiamond(diamond).nft, abi: NFT_ABI, functionName: 'approve' as const, args: [zeroAddress, tokenId] as const };
 }

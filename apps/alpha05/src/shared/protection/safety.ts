@@ -58,7 +58,7 @@ const POSITION_NFT = PositionNFTABI as Abi;
 const FACTORY = VaultFactoryFacetABI as Abi;
 const VAULT_PROTECTION = [...(VaultProtectionABI as Abi), ...(VaultRecoveryABI as Abi)] as Abi;
 
-export type SafetyAction = 'enable' | 'lock' | 'unlock' | 'finalize' | 'recovery' | 'recoveryCancel';
+export type SafetyAction = 'enable' | 'lock' | 'unlock' | 'finalize' | 'recovery' | 'recoveryCancel' | 'lockNfts';
 
 /** The `VaultProtection` function (or, for a due co-sign switch-off only,
  *  the Diamond's) each action's main step calls. */
@@ -69,6 +69,7 @@ export const SAFETY_FUNCTION = {
   finalize: 'finalizeSettings',
   recovery: 'requestRecoveryAddress',
   recoveryCancel: 'cancelRecoveryAddress',
+  lockNfts: 'lockPositionNfts',
 } as const satisfies Record<SafetyAction, string>;
 
 /** `ProtectedAccountFacet.CHANGE_*` (3, NFT protection off, retired with
@@ -289,6 +290,9 @@ export function safetySteps(
       ...(draft?.protectNfts ? [diamondStep(PROTECTED, 'lockPositionNfts', [account])] : []),
     ];
   }
+  // #3721 — the position tokens' lock on its own, for an account whose
+  // protected mode is on and whose tokens are not locked.
+  if (action === 'lockNfts') return [diamondStep(PROTECTED, 'lockPositionNfts', [account])];
   // A lock, an unlock and a switch-off apply their own platform side in the
   // vault's transaction (#3489 r9, r12).
   if (action === 'lock') return [vaultStep(SAFETY_FUNCTION.lock, [auth])];
@@ -361,6 +365,7 @@ export function safetyBlockers(r: SafetyReview, copy: Copy): string[] {
     if (!m.enabled) return [text('safety.notOn')];
     const now = safetyClock(f, Date.now());
     if (r.action === 'lock' && m.locked) return [text('safety.alreadyLocked')];
+    if (r.action === 'lockNfts' && m.nftLock === true && m.nftUnlockAt === 0) return [text('safety.nftsAlreadyLocked')];
     if (r.action === 'unlock') {
       if (!m.locked) return [text('safety.notLocked')];
       if (m.pendingUnlockAt !== 0) return [format('safety.unlockPending', { at: formatUtc(m.pendingUnlockAt) })];
@@ -412,6 +417,14 @@ export function changeText(change: PendingChange, m: SafetyMode | null, copy: Co
 /** The vault's `VaultProtection` setting actions (`SETTINGS_*`). */
 const VAULT_SETTING_OF: Partial<Record<PendingChange, number>> = { lowerDelay: 2, disable: 3, unlock: 4 };
 
+/** True when the logs carry the Diamond's `ProtectNftsSet(account, true)`. */
+function nftsLocked(find: (name: string) => { args: Args }[]): boolean {
+  return find('ProtectNftsSet').some((e) => Object.values(e.args).includes(true));
+}
+
+/** The leg for position tokens that were chosen to be locked and are not. */
+export const NFTS_NOT_LOCKED = (copy: Copy): LegOutcome => ({ status: 'not-done', label: copy.text('safety.legNftsLocked'), reason: copy.text('safety.nftsNotLocked') });
+
 /** The action's outcome, from the last transaction's own logs: the
  *  Diamond's for this account, and the account's vault's (#3379 B2: the
  *  vault records its own settings; the Diamond's `ProtectionApplied` states
@@ -460,8 +473,13 @@ export function measureSafety(r: SafetyReview, logs: readonly Log[], diamond: He
     if (delayOf === null) return [{ status: 'not-done', label: text('safety.titleEnable'), reason: text('safety.notEnabled') }];
     const label = format('safety.legEnabled', { delay: formatSpan(delayOf) });
     const leg: LegOutcome = r.draft !== null && delayOf !== r.draft.delaySeconds ? { status: 'unknown', label, reason: text('safety.enabledOther') } : { status: 'done', label };
-    return on ? [leg] : [leg, platformPending];
+    const legs: LegOutcome[] = on ? [leg] : [leg, platformPending];
+    // #3721 — the position tokens' lock is its own wallet prompt: when it did
+    // not land, protected mode is on and the tokens are not locked, said so.
+    if (r.draft?.protectNfts) legs.push(nftsLocked(find) ? { status: 'done', label: text('safety.legNftsLocked') } : NFTS_NOT_LOCKED(copy));
+    return legs;
   }
+  if (r.action === 'lockNfts') return [nftsLocked(find) ? { status: 'done', label: text('safety.legNftsLocked') } : NFTS_NOT_LOCKED(copy)];
   if (r.action === 'lock') {
     const platform = applied.some((e) => e.args.locked === true);
     const inVault = findVault('VaultLocked').length > 0;

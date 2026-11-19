@@ -11,7 +11,9 @@ export type TxPhase =
   | { kind: 'idle' }
   | { kind: 'review' }
   | { kind: 'signing' }
-  | { kind: 'submitted'; hash: `0x${string}`; at: number }
+  /** `viaAccount`: `hash` is a contract wallet's own transaction id (#3770),
+   *  which runs under a chain hash of its own once its owners approve. */
+  | { kind: 'submitted'; hash: `0x${string}`; at: number; viaAccount?: true }
   /** `hash` is the transaction that MINED; `submittedHash` the one this flow
    *  sent. They differ only when the wallet repriced it (sped it up: the same
    *  call at a higher fee), which still runs the intended action. */
@@ -41,7 +43,7 @@ export type TxPhase =
   /** Submitted, but the receipt could not be read (the node timed out or
    *  went away): the transaction may still execute, so the hash is kept and
    *  shown, tracking can resume, and no new review starts from here. */
-  | { kind: 'receipt-unknown'; hash: `0x${string}`; at: number; message: string }
+  | { kind: 'receipt-unknown'; hash: `0x${string}`; at: number; message: string; viaAccount?: true }
   /** The wallet refused or failed before anything was submitted. */
   | { kind: 'failed'; message: string };
 

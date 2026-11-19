@@ -146,7 +146,8 @@ export type AcceptTermsMessage = {
   acceptorFull: boolean;
   acceptorMaxCStar: bigint;
   acceptorAllowFullDowngrade: boolean;
-  /** The integrator named for a fee share (#3682); this app names none. */
+  /** The integrator named for a fee share (#3682): the one a kit link
+   *  carried (#3773) and the reader kept, else none. */
   integrator: Hex;
 };
 
@@ -184,6 +185,9 @@ export interface AcceptContext {
    *  id exists when the taker signs). Absent for a stored offer, whose key
    *  is `directOfferKey(id)`. */
   offerKey?: Hex;
+  /** #3773 — the integrator a kit link named and the reader kept. Absent
+   *  names none. The protocol reads it only from a borrower's acceptance. */
+  integrator?: Hex;
 }
 
 /** The message, from the offer as stored and the review's context. The Full
@@ -225,7 +229,7 @@ export function buildAcceptTerms(o: StoredOffer, ctx: AcceptContext): AcceptTerm
     acceptorFull: false,
     acceptorMaxCStar: 0n,
     acceptorAllowFullDowngrade: false,
-    integrator: ZERO_ADDRESS,
+    integrator: ctx.integrator ?? ZERO_ADDRESS,
   };
 }
 

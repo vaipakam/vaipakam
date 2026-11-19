@@ -50,6 +50,7 @@ function review(over: Partial<AcceptReview> = {}): AcceptReview {
     values: { principal: { kind: 'value', value: 3n * 10n ** 18n }, collateral: { kind: 'unpriced' }, unit: 'USD' },
     termsAge: null,
     priceRisk: { kind: 'ratio', ltvBps: 5000n, liqLtvBps: 8000n },
+    lateFee: null,
     readAt: 1,
     ...over,
   } as AcceptReview;

@@ -250,10 +250,46 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
           {text(known.dueDate?.on === false ? 'alertChannels.dueSwitchOn' : 'alertChannels.dueSwitchOff')}
         </button>
       </div>
+
+      <div className="card alert-channel" data-testid="alert-outflow">
+        <h3>{text('alertChannels.outflowTitle')}</h3>
+        <p className="tier-b">{text('alertChannels.outflowLead')}</p>
+        <p className="tier-b" data-testid="alert-outflow-state">
+          {known.outflow ? format(OUTFLOW_SAVED[known.outflow.choice], { time: formatUtc(known.outflow.at) }) : text('alertChannels.outflowUnknown')}
+        </p>
+        <div className="row-actions">
+          {OUTFLOW_CHOICES.map((c) => (
+            <button
+              key={c}
+              type="button"
+              className="btn"
+              aria-pressed={known.outflow?.choice === c}
+              disabled={action.busy || known.outflow?.choice === c}
+              onClick={() => void run({ save: { vaultOutflowAlerts: c } })}
+              data-testid={`alert-outflow-${c}`}
+            >
+              {text(OUTFLOW_LABEL[c])}
+            </button>
+          ))}
+        </div>
+      </div>
       <WhyLink summaryKey="alertChannels.whySummary" detailKey="alertChannels.why" />
     </section>
   );
 }
+
+/** #3434 — the vault outflow alert choices, in the order they are offered. */
+const OUTFLOW_CHOICES = ['default', 'on', 'off'] as const;
+const OUTFLOW_LABEL: Record<(typeof OUTFLOW_CHOICES)[number], CopyKey> = {
+  default: 'alertChannels.outflowDefault',
+  on: 'alertChannels.outflowAlways',
+  off: 'alertChannels.outflowNever',
+};
+const OUTFLOW_SAVED: Record<(typeof OUTFLOW_CHOICES)[number], CopyKey> = {
+  default: 'alertChannels.outflowDefaultHere',
+  on: 'alertChannels.outflowAlwaysHere',
+  off: 'alertChannels.outflowNeverHere',
+};
 
 /** The configuration problems the alert service names when push cannot be
  *  offered (the service's own reason codes); each is a setting of this

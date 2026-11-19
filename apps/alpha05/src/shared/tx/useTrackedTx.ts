@@ -24,10 +24,12 @@ import { useConfig } from 'wagmi';
 import { getPublicClient } from 'wagmi/actions';
 import type { ReplacementReason, TransactionReceipt } from 'viem';
 import { announceOwnChange } from '../reads/signals';
+import { AccountWithoutCode, accountTxReader, awaitAccountTx, requireAccountCode } from './accountWallet';
 import { useCopy } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
 import { cleanUpAfterEffect, cleanUpAfterNoEffect } from './cleanUp';
 import { summarize, type LegOutcome } from './outcome';
+import { liveIdentity, sendReviewed, WalletMoved } from './walletGuard';
 import { readRevertCause, revertSentence, type RevertReader } from './revertCause';
 import { IllegalTransition, transition, type TxEvent } from './track';
 import { useTxEntry, useTxStore, type Frozen, type Submission } from './txStore';
@@ -129,16 +131,42 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
   // From `submitted` or `receipt-unknown`: wait for the receipt, then
   // measure. A receipt that cannot be read keeps the hash in the phase.
   const track = useCallback(
-    async (hash: `0x${string}`, ctx: Submission) => {
+    async (hash: `0x${string}`, ctx: Submission, viaAccount: boolean) => {
       const client = getPublicClient(config, { chainId: ctx.chainId });
       if (!client) {
         apply({ type: 'receipt-unknown', hash, message: 'No chain client for this network; the transaction was sent and its receipt is not tracked here.' });
         return;
       }
+      // #3770 — a contract wallet's id: wait for its owners' approvals and
+      // follow the chain hash it runs under. The id stays in the phase.
+      let chainHash = hash;
+      if (viaAccount) {
+        const reader = await accountTxReader(config);
+        if (!reader) {
+          apply({ type: 'receipt-unknown', hash, message: text('flow.accountUnfollowed') });
+          return;
+        }
+        const end = await awaitAccountTx(
+          reader,
+          hash,
+          (s) =>
+            store.update(key, (e) => ({
+              ...e,
+              note: s.confirmed !== null && s.required !== null ? format('flow.awaitingApprovals', { confirmed: String(s.confirmed), required: String(s.required) }) : text('flow.awaitingApprovalsUnknown'),
+            })),
+          () => store.update(key, (e) => ({ ...e, note: text('flow.accountUnread') })),
+        );
+        store.update(key, (e) => ({ ...e, note: null }));
+        if (end.kind === 'ended') {
+          apply({ type: 'receipt-unknown', hash, message: text(end.reason === 'cancelled' ? 'flow.accountCancelled' : 'flow.accountFailed') });
+          return;
+        }
+        chainHash = end.hash;
+      }
       let receipt: TransactionReceipt;
       let replacement: ReplacementReason | null = null;
       try {
-        receipt = await client.waitForTransactionReceipt({ hash, onReplaced: (r) => void (replacement = r.reason) });
+        receipt = await client.waitForTransactionReceipt({ hash: chainHash, onReplaced: (r) => void (replacement = r.reason) });
       } catch (e) {
         apply({ type: 'receipt-unknown', hash, message: `The receipt could not be read: ${(e as Error).message}` });
         return;
@@ -183,20 +211,22 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
       }
       apply({ type: 'measured', hash: mined.hash, outcome: summarize(legs, Date.now()) });
     },
-    [apply, config, text, format],
+    [apply, config, text, format, store, key],
   );
 
   const run = useCallback(
     async (frozen: Frozen) => {
-      apply({ type: 'sign' });
-      store.update(key, (e) => ({ ...e, frozen, note: null }));
-      let hash: `0x${string}`;
-      try {
-        hash = await opts.send();
-      } catch (e) {
-        apply({ type: 'failed', message: refusalFromError(e).reason });
-        return;
-      }
+      const hash = await sendReviewed({
+        frozen,
+        liveIdentity: () => liveIdentity(config),
+        apply,
+        save: (f) => store.update(key, (e) => ({ ...e, frozen: f, note: null })),
+        send: opts.send,
+        precheck: () => requireAccountCode(config, opts.chainId, opts.account),
+        failure: (e) =>
+          e instanceof WalletMoved ? text('flow.walletMoved') : e instanceof AccountWithoutCode ? text('flow.accountNoCode') : refusalFromError(e).reason,
+      });
+      if (hash === null) return;
       const ctx: Submission = {
         chainId: opts.chainId,
         account: opts.account,
@@ -209,10 +239,12 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
       };
       // The send's own steps are over; a clean-up after the hash names its own.
       store.update(key, (e) => ({ ...e, submission: ctx, note: null }));
-      apply({ type: 'submitted', hash, at: Date.now() });
-      await track(hash, ctx);
+      // A Safe returns its own id, not a chain hash (#3770).
+      const viaAccount = (await accountTxReader(config).catch(() => null)) !== null;
+      apply({ type: 'submitted', hash, at: Date.now(), viaAccount });
+      await track(hash, ctx, viaAccount);
     },
-    [apply, opts, store, key, track],
+    [apply, opts, store, key, track, config, text],
   );
 
   const resume = useCallback(async () => {
@@ -221,9 +253,15 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
     // second resume or a reset during it is refused by the transition rule.
     const ctx = current.submission;
     if (current.phase.kind !== 'receipt-unknown' || ctx === null) throw new IllegalTransition(current.phase.kind, 'resume');
+    // #1691 on resume (#3770): follow only for the wallet and network the
+    // step was reviewed and sent from; otherwise say so and show nothing new.
+    if (current.frozen !== null && liveIdentity(config) !== current.frozen.identity.toLowerCase()) {
+      store.update(key, (e) => ({ ...e, note: text('flow.resumeWalletMoved') }));
+      return;
+    }
     apply({ type: 'resume', hash: current.phase.hash });
-    await track(current.phase.hash, ctx);
-  }, [apply, store, key, track]);
+    await track(current.phase.hash, ctx, current.phase.viaAccount === true);
+  }, [apply, store, key, track, config, text]);
 
   return { key, phase: entry.phase, frozen: entry.frozen, note: entry.note, held: entry.submission?.held ?? null, review, run, resume, reset };
 }

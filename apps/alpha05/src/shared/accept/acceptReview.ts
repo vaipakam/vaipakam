@@ -49,7 +49,7 @@ import type { ReceiptRow } from '../receipt/types';
 import { assetName, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { allowanceSteps } from '../tx/approval';
 import { formatAge, shortAddress } from '../ui/format';
-import { readPriceRisk, type PriceRisk } from '../whatIf/whatIf';
+import { readLateFeeSchedule, readPriceRisk, type LateFeeSchedule, type PriceRisk } from '../whatIf/whatIf';
 
 type Hex = `0x${string}`;
 
@@ -128,6 +128,9 @@ export interface AcceptReview {
   /** #1208 — what a collateral price fall does to this loan, for its
    *  "what happens if" section. Shown, never compared in a re-check. */
   priceRisk: PriceRisk;
+  /** The protocol's late-fee schedule, for the same section; null when
+   *  unread. */
+  lateFee: LateFeeSchedule | null;
   readAt: number;
 }
 
@@ -193,13 +196,14 @@ export async function readAcceptReview(
     ]);
   const value = (asset: Hex, amount: bigint, leg: ValueLeg, cls: AssetClass) =>
     r<NumeraireEquivalent>((c) => readEquivalentFor(c, diamond, asset, amount, leg, cls)).catch(() => null);
-  const [principalValue, collateralValue, unit, priceRisk] = await Promise.all([
+  const [principalValue, collateralValue, unit, priceRisk, lateFee] = await Promise.all([
     value(offer.lendingAsset, preview.effectivePrincipal, 'debt', lendingClass),
     value(offer.collateralAsset, preview.collateralAmount, 'collateral', collateralClass),
     r<string | null>((c) => readNumeraireSymbol(c, diamond)).catch(() => null),
     r<PriceRisk>((c) =>
       readPriceRisk(c, diamond, offer.lendingAsset, preview.effectivePrincipal, offer.collateralAsset, preview.collateralAmount, [lendingClass, collateralClass]),
     ).catch((): PriceRisk => ({ kind: 'unread' })),
+    r<LateFeeSchedule | null>((c) => readLateFeeSchedule(c, diamond)).catch(() => null),
   ]);
   const termsAge = preview.error === 'TermsTooFresh' && stored ? await r<TermsAge>((c) => readTermsAge(c, diamond, id)).catch(() => null) : null;
   const pay = payLeg(role, offer, preview).amount;
@@ -233,6 +237,7 @@ export async function readAcceptReview(
     values: { principal: principalValue, collateral: collateralValue, unit },
     termsAge,
     priceRisk,
+    lateFee,
     readAt: Date.now(),
   };
 }

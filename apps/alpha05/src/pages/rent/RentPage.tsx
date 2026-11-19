@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useAccount } from 'wagmi';
+import { KitNotice } from '../../shared/kit/KitNotice';
 import { getSupportedChain } from '../../chain/chains';
 import { useOwnStateClient } from '../../chain/ownRail';
 import { useCopy } from '../../shared/copy/useCopy';
@@ -39,6 +40,7 @@ export function RentPage() {
     <main className="page rent" aria-labelledby="rent-title">
       <h1 id="rent-title">{text('rentPage.title')}</h1>
       <p className="tier-b">{text('rentPage.lead')}</p>
+      <KitNotice action="rent" chain={connected ? chain : null} />
       {!connected && (
         <p className="tier-b" data-testid="rent-connect">
           {text('rentPage.connect')}

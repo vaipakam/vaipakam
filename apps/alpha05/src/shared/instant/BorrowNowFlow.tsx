@@ -4,7 +4,7 @@ import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useMode } from '../../app/ModeContext';
 import { useCopy } from '../copy/useCopy';
-import { refusalFromError, StatedRefusal } from '../eligibility/refusal';
+import { refusalFromData, refusalFromError, StatedRefusal } from '../eligibility/refusal';
 import { GUIDE_ORIGIN, guideUrl } from '../help/guide';
 import { assetName, exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { erc20Pair, type RiskNeed } from '../risk/riskAccess';
@@ -140,7 +140,7 @@ export function BorrowNowFlow({ terms, chain, own, meta, termsState, onEdit, onR
       let call: ReturnType<typeof borrowNowCall>;
       let dry: Awaited<ReturnType<typeof askAfter>>;
       try {
-        const deadline = await readValidUntil(own);
+        const deadline = await readValidUntil(own, 'borrowInstant');
         call = borrowNowCall(instantRequest(t, plan.total, deadline), r.sources);
         dry = await askAfter(own, approvedAt, (c, blockNumber) => c.simulateContract({ address: diamond, ...call, account, blockNumber }));
       } catch (e) {
@@ -360,6 +360,22 @@ export function BorrowNowFlow({ terms, chain, own, meta, termsState, onEdit, onR
               <Notice tone={review.state.kind === 'needs-approval' ? 'warn' : 'danger'} tier="A">
                 {blocker}
               </Notice>
+            )}
+            {review.state.kind === 'needs-approval' && review.state.preview !== null && (
+              <div data-testid="borrownow-preview" data-total={review.state.preview.plan.total.toString()}>
+                <p className="tier-a">
+                  {format('borrowNow.previewGives', {
+                    amount: tokenAmount(review.state.preview.plan.total, terms.lending, meta, format),
+                    count: String(review.state.preview.plan.fills.length),
+                  })}
+                </p>
+                {review.state.preview.skipped.map((k, n) => (
+                  <p key={n} className="tier-b">
+                    {format('borrowNow.previewSkipped', { reason: refusalFromData(k.reason, 0n).reason })}
+                  </p>
+                ))}
+                <p className="tier-b">{text('borrowNow.previewNotBinding')}</p>
+              </div>
             )}
             {review.state.kind === 'needs-approval' && onReviewPhase && (
               <p>

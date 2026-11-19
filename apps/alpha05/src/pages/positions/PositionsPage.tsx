@@ -6,6 +6,8 @@ import { useCopy } from '../../shared/copy/useCopy';
 import { ASSET_ERC20, positionKey } from '../../shared/positions/model';
 import { EndedSection, LoansSection, PayoutsSection } from '../../shared/positions/PositionSections';
 import { PositionsSummary } from '../../shared/positions/PositionsSummary';
+import { LadderSection } from '../../shared/positions/LadderSection';
+import { GoalsSection } from '../../shared/goals/GoalsSection';
 import { part, usePositionBook } from '../../shared/positions/usePositionBook';
 import { useTokenMeta } from '../../shared/reads/tokens';
 import { OwnStamp } from '../../shared/ui/OwnStamp';
@@ -29,7 +31,7 @@ type Side = 'all' | 'lent' | 'borrowed';
  */
 export function PositionsPage() {
   const { text, format } = useCopy();
-  const { status, chainId } = useAccount();
+  const { status, chainId, address } = useAccount();
   const connected = status === 'connected';
   const served = connected && getSupportedChain(chainId) !== null;
   const book = usePositionBook();
@@ -84,6 +86,8 @@ export function PositionsPage() {
               </div>
               {emptyFiltered && <p className="tier-b">{format('positions.emptyFiltered', { chain: book.chain.name })}</p>}
               <PositionsSummary read={loans} meta={meta} />
+              {side !== 'borrowed' && <LadderSection read={book.loans} meta={meta} />}
+              {side !== 'borrowed' && address && <GoalsSection read={book.loans} meta={meta} chainId={book.chain.chainId} wallet={address} />}
               <PayoutsSection read={payouts} />
               <LoansSection read={loans} meta={meta} unit={book.numeraire.data ?? text('home.exposureUnit')} />
               <EndedSection read={ended} meta={meta} payoutKeys={payoutKeys} />

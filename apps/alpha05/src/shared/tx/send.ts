@@ -25,6 +25,8 @@ import type { Config } from 'wagmi';
 import { getConnectorClient, writeContract, type WriteContractParameters, type WriteContractReturnType } from 'wagmi/actions';
 import { gasLimitFromEstimate } from '@vaipakam/lib/gasLimit';
 import { isRevert } from './simulate';
+import { assertLiveWallet } from './walletGuard';
+import { requireAccountCode } from './accountWallet';
 
 /** One way of asking for the estimate, tried in order. */
 export type GasEstimator = () => Promise<bigint>;
@@ -72,6 +74,11 @@ export async function sendWrite<
     account?: `0x${string}`;
     chainId?: number;
   };
+  // #1691: never prompt for a wallet or network other than the one named.
+  if (p.account !== undefined && p.chainId !== undefined) {
+    assertLiveWallet(config, p.chainId, p.account);
+    await requireAccountCode(config, p.chainId, p.account);
+  }
   if (p.gas !== undefined) return writeContract(config, parameters);
   type Estimate = Parameters<typeof estimateContractGas>[1];
   const request = { address: p.address, abi: p.abi, functionName: p.functionName, args: p.args, value: p.value };
