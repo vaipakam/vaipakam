@@ -1184,6 +1184,158 @@ export const READ_METHODS = new Set([
   'wallet_getPermissions',
 ]);
 
+/** How the injected wallet presents itself to the page (EIP-6963). */
+const WALLET_INFO = Object.freeze({
+  signing: {
+    uuid: '7a3f4b1e-9d2c-4f6a-8e5b-vaipakamtest0',
+    name: 'Vaipakam Test Wallet',
+    icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiBmaWxsPSIjMDA1NUZGIi8+PC9zdmc+',
+    rdns: 'com.vaipakam.testwallet',
+  },
+  watch: {
+    uuid: '7a3f4b1e-9d2c-4f6a-8e5b-vaipakamwatch0',
+    name: 'Vaipakam Watch-Only',
+    icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiBmaWxsPSIjNzc3Ii8+PC9zdmc+',
+    rdns: 'com.vaipakam.watchonly',
+  },
+});
+
+/**
+ * Inject the drive's EIP-1193 wallet into every page of `ctx` (#2447: the
+ * one copy, shared by `launch` and by `live-position-observe.mjs`, which
+ * builds its own context).
+ *
+ * `request({ method, params })` answers each call, returning the result or
+ * throwing an error carrying an EIP-1193 `code`. The wallet answers the
+ * site under test and nothing else (#2765): a binding is exposed to EVERY
+ * frame of every page in the context, so without the origin check a
+ * redirect, a third-party iframe or a compromised preview could call it
+ * directly. The caller's frame is the one fact Playwright gives about who is
+ * asking, so the check is on its origin, exactly as a real wallet scopes
+ * approval to an origin; `onForeignFrame({ method, origin })` records each
+ * refusal. The provider object is installed only in frames on the site's
+ * origin, so a third-party frame is not offered a wallet at all.
+ *
+ * `watchOnly` changes only how the wallet names itself, so a screenshot or
+ * a page's wallet list shows that no key is behind it.
+ */
+export async function installInjectedWallet(
+  ctx,
+  { siteOrigin, request, onForeignFrame = () => {}, watchOnly = false, setup = (_label, fn) => fn() },
+) {
+  const callerOrigin = (source) => {
+    try {
+      return new URL(source?.frame?.url() ?? '').origin;
+    } catch {
+      return '';
+    }
+  };
+  await setup('exposing the wallet binding', () =>
+    ctx.exposeBinding('__walletRequest', async (source, payload) => {
+      const origin = callerOrigin(source);
+      if (origin !== siteOrigin) {
+        onForeignFrame({ method: payload?.method ?? '(unknown)', origin });
+        // EIP-1193 4100: the requested method is not authorized for this origin.
+        return { error: { code: 4100, message: 'test wallet answers only the site under test' } };
+      }
+      try {
+        const result = await request(payload ?? {});
+        return { result: jsonSafe(result) };
+      } catch (e) {
+        return {
+          error: {
+            code: e.code ?? -32603,
+            message: e.shortMessage ?? e.message ?? 'error',
+          },
+        };
+      }
+    }),
+  );
+  await setup('installing the wallet init script', () =>
+    ctx.addInitScript(
+      ({ allowedOrigin, info }) => {
+        if (window.location.origin !== allowedOrigin) return;
+        if (window.ethereum?.__vaipakamTest) return;
+        const listeners = {};
+        const provider = {
+          __vaipakamTest: true,
+          isMetaMask: true,
+          request: async (payload) => {
+            const r = await window.__walletRequest(payload);
+            if (r.error) {
+              const err = new Error(r.error.message);
+              err.code = r.error.code;
+              throw err;
+            }
+            return r.result;
+          },
+          on: (ev, fn) => {
+            (listeners[ev] ??= []).push(fn);
+            return provider;
+          },
+          removeListener: (ev, fn) => {
+            listeners[ev] = (listeners[ev] ?? []).filter((f) => f !== fn);
+            return provider;
+          },
+          emit: (ev, arg) => (listeners[ev] ?? []).forEach((f) => f(arg)),
+        };
+        window.ethereum = provider;
+        // EIP-6963 announce so ConnectKit/wagmi discovers it reliably.
+        const announce = () =>
+          window.dispatchEvent(
+            new CustomEvent('eip6963:announceProvider', {
+              detail: Object.freeze({ info: Object.freeze({ ...info }), provider }),
+            }),
+          );
+        window.addEventListener('eip6963:requestProvider', announce);
+        announce();
+      },
+      { allowedOrigin: siteOrigin, info: watchOnly ? WALLET_INFO.watch : WALLET_INFO.signing },
+    ),
+  );
+}
+
+/**
+ * The answer a single-chain WATCH-ONLY wallet gives (#2447): `address` is
+ * connected and reported for every account read, the chain is `chainId`
+ * alone, and no key exists to sign with. A method `isPermitted` refuses is
+ * thrown as EIP-1193 4100 (unauthorized — what a watch-only account
+ * produces, not 4001, which would read as the user declining), marked
+ * `refused: true` so the caller can record the attempt. Every other call is
+ * handed to `forward` (the chain).
+ */
+export async function answerWatchOnly({ method, params = [] }, { address, chainId, isPermitted, forward }) {
+  if (!isPermitted(method)) {
+    const err = new Error(`watch-only session: ${method} unavailable`);
+    err.code = 4100;
+    err.refused = true;
+    throw err;
+  }
+  switch (method) {
+    case 'eth_requestAccounts':
+    case 'eth_accounts':
+      return [address];
+    case 'eth_chainId':
+      return numberToHex(chainId);
+    case 'net_version':
+      return String(chainId);
+    case 'wallet_switchEthereumChain': {
+      // Single-chain session: accept the chain it is on, refuse others
+      // rather than pretend to switch.
+      if (Number(params[0]?.chainId) === chainId) return null;
+      const err = new Error('watch-only session: single chain');
+      err.code = 4902;
+      throw err;
+    }
+    case 'wallet_requestPermissions':
+      return [{ parentCapability: 'eth_accounts' }];
+    default: {
+      const result = await forward({ method, params });
+      return result === undefined ? null : result;
+    }
+  }
+}
+
 export async function launch({
   role,
   startChainId = 84532,
@@ -1260,8 +1412,9 @@ export async function launch({
   // that observes a page as some wallet on the live chain, a wallet it has
   // found in public data rather than one of ours: the page sees that wallet
   // connected, and nothing can move its funds because no key exists here.
-  // `live-position-observe.mjs` carries its own provider of the same shape
-  // from before this option; this is the shared one.
+  // `live-position-observe.mjs` installs the same provider itself
+  // (`installInjectedWallet` + `answerWatchOnly`) because it adds its own
+  // RPC allow-list and failure records; there is one provider either way.
   watchAddress = null,
   // onSetupFailure: what a browser/context SETUP failure does.
   //
@@ -1930,97 +2083,18 @@ export async function launch({
   // public-page probe should present no provider at all, so an app
   // regression that asks for accounts on load has nothing to answer it.
   if (!keyless) {
-    // The wallet answers the site under test and nothing else (#2765).
-    // A binding is exposed to EVERY frame of every page in the context,
-    // so without this a redirect, a third-party iframe or a compromised
-    // preview could call `window.__walletRequest` directly and get
-    // signatures and transactions from the test key. The caller's frame
-    // is the one fact Playwright gives us about who is asking, so the
-    // check is on its origin, exactly as a real wallet scopes approval
-    // to an origin. A refusal is recorded in `blockedRequests` so the
-    // drive's report shows the attempt.
-    const siteOrigin = new URL(SITE).origin;
-    const callerOrigin = (source) => {
-      try {
-        return new URL(source?.frame?.url() ?? '').origin;
-      } catch {
-        return '';
-      }
-    };
-    await setup('exposing the wallet binding', () =>
-      ctx.exposeBinding('__walletRequest', async (source, payload) => {
-      const origin = callerOrigin(source);
-      if (origin !== siteOrigin) {
+    await installInjectedWallet(ctx, {
+      siteOrigin: new URL(SITE).origin,
+      request: handle,
+      onForeignFrame: ({ method, origin }) =>
         blockedRequests.push({
-          reason: `wallet rpc ${payload?.method ?? '(unknown)'} from a frame outside the site under test`,
+          reason: `wallet rpc ${method} from a frame outside the site under test`,
           url: origin || '(unknown origin)',
           initiator: '(injected wallet)',
-        });
-        // EIP-1193 4100: the requested method is not authorized for this origin.
-        return { error: { code: 4100, message: 'test wallet answers only the site under test' } };
-      }
-      try {
-        const result = await handle(payload);
-        return { result: jsonSafe(result) };
-      } catch (e) {
-        return {
-          error: {
-            code: e.code ?? -32603,
-            message: e.shortMessage ?? e.message ?? 'error',
-          },
-        };
-      }
-      }),
-    );
-
-    // Installed only in frames on the site's origin, so a third-party
-    // frame is not offered a provider at all. The binding check above is
-    // what enforces it; this keeps such a frame from seeing a wallet.
-    await setup('installing the wallet init script', () =>
-      ctx.addInitScript((allowedOrigin) => {
-      if (window.location.origin !== allowedOrigin) return;
-      if (window.ethereum?.__vaipakamTest) return;
-      const listeners = {};
-      const provider = {
-        __vaipakamTest: true,
-        isMetaMask: true,
-        request: async (payload) => {
-          const r = await window.__walletRequest(payload);
-          if (r.error) {
-            const err = new Error(r.error.message);
-            err.code = r.error.code;
-            throw err;
-          }
-          return r.result;
-        },
-        on: (ev, fn) => {
-          (listeners[ev] ??= []).push(fn);
-          return provider;
-        },
-        removeListener: (ev, fn) => {
-          listeners[ev] = (listeners[ev] ?? []).filter((f) => f !== fn);
-          return provider;
-        },
-        emit: (ev, arg) => (listeners[ev] ?? []).forEach((f) => f(arg)),
-      };
-      window.ethereum = provider;
-      // EIP-6963 announce so ConnectKit/wagmi discovers it reliably.
-      const info = {
-        uuid: '7a3f4b1e-9d2c-4f6a-8e5b-vaipakamtest0',
-        name: 'Vaipakam Test Wallet',
-        icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiBmaWxsPSIjMDA1NUZGIi8+PC9zdmc+',
-        rdns: 'com.vaipakam.testwallet',
-      };
-      const announce = () =>
-        window.dispatchEvent(
-          new CustomEvent('eip6963:announceProvider', {
-            detail: Object.freeze({ info, provider }),
-          }),
-        );
-      window.addEventListener('eip6963:requestProvider', announce);
-      announce();
-      }, siteOrigin),
-    );
+        }),
+      watchOnly: watching,
+      setup,
+    });
   }
 
   const page = await setup('opening the first page', async () => ctx.pages()[0] ?? ctx.newPage());

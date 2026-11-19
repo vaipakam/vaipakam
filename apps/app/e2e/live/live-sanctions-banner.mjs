@@ -17,7 +17,11 @@
 //                        refresh cycles.
 //
 //   SITE_URL=https://<deployment> EXPECT=flagged-then-clear \
-//     SANCTIONS_ROLE=newBorrower node live-sanctions-banner.mjs
+//     SANCTIONS_ADDRESS=0x… node live-sanctions-banner.mjs
+//
+// The wallet is SANCTIONS_ADDRESS. Without it, SANCTIONS_ROLE (default
+// newBorrower) names a role in the wallet file, which is then read for
+// that role's ADDRESS only.
 //
 // Every banner verdict is judged against what the PAGE was told, through
 // one rule (`check` below): the page's own flag reads of this wallet,
@@ -29,8 +33,9 @@
 // says it could not read why is BLOCKED. A request the read-only session
 // refused is a FAIL and outranks every BLOCKED.
 //
-// Not keyless yet: it launches through the signing harness, so it needs the
-// role's key in the wallet file although it never signs (#2447).
+// Watch-only (#2447): it launches with `launch({ watchAddress })`, so the
+// page sees the wallet connected while no key exists in this process. Every
+// signing or sending request the page makes is refused and recorded.
 //
 // Exit codes follow the batch contract: 0 PASS, 1 FAIL, 2 BLOCKED.
 import fs from 'node:fs';
@@ -46,7 +51,6 @@ import {
   launch,
   READ_METHODS,
   requireSiteUrl,
-  requireSigningRole,
   visit,
 } from './driver.mjs';
 import { attachLedger, createReadLedger, watchedRead } from './pageSanctionsReads.mjs';
@@ -59,11 +63,14 @@ const EXPECT = process.env.EXPECT ?? '';
 if (!MODES.includes(EXPECT)) {
   blockedSync(`EXPECT must be one of ${MODES.join(', ')} (got ${JSON.stringify(EXPECT)})`);
 }
-const ROLE = process.env.SANCTIONS_ROLE ?? 'newBorrower';
-// The wallet file is the only source of the address; no key is used to
-// sign (the launch below is read-only).
-requireSigningRole(ROLE);
-const WALLET = addressOf(ROLE);
+// The wallet to observe: an address given outright, or a role whose address
+// the wallet file names. Either way only the address is used.
+const GIVEN = process.env.SANCTIONS_ADDRESS ?? '';
+if (GIVEN && !/^0x[0-9a-fA-F]{40}$/.test(GIVEN)) {
+  blockedSync(`SANCTIONS_ADDRESS is not an address: ${JSON.stringify(GIVEN)}`);
+}
+const ROLE = GIVEN ? 'address' : (process.env.SANCTIONS_ROLE ?? 'newBorrower');
+const WALLET = GIVEN || addressOf(ROLE);
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CHAIN_ID = 84532;
@@ -188,7 +195,7 @@ if (state.oracle.toLowerCase() !== OVERLAY.toLowerCase()) {
 if (sender !== null) {
   await blocked(
     `the wallet has a recovery sender on record (${sender}); that record is permanent and can ` +
-      'add a second cause to the banner, so this drive needs a wallet with none — pick another SANCTIONS_ROLE',
+      'add a second cause to the banner, so this drive needs a wallet with none — pick another SANCTIONS_ADDRESS or SANCTIONS_ROLE',
   );
 }
 if (upstream !== zeroAddress) {
@@ -209,7 +216,11 @@ if (state.flagged !== wantFlagged || state.onTestList !== wantFlagged) {
   );
 }
 
-const { page, ctx, done, blockedRequests } = await launch({ role: ROLE, readOnly: true, freshProfile: true });
+const { page, ctx, done, blockedRequests } = await launch({
+  role: `watch-${ROLE}`,
+  watchAddress: WALLET,
+  freshProfile: true,
+});
 // English before the first paint: the expected lines come from the English
 // catalogue, and a fresh profile would otherwise follow the machine's
 // locale (the shared i18n factory's key, as live-refinance.mjs seeds it).

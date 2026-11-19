@@ -102,7 +102,13 @@ import {
   forcedCloseVerdict,
   reconcileEligibility,
 } from './forcedCloseCard.mjs';
-import { livePublicClient, requireSiteUrl, watchCspViolations } from './driver.mjs';
+import {
+  answerWatchOnly,
+  installInjectedWallet,
+  livePublicClient,
+  requireSiteUrl,
+  watchCspViolations,
+} from './driver.mjs';
 import {
   expectedPostureFrom,
   postureCopyFrom,
@@ -1925,6 +1931,8 @@ await discovery('watching for content-policy violations', () => watchCspViolatio
 
 /** Every refusal, with why — a too-narrow allowlist must be visible. */
 const refusedRpc = [];
+/** Wallet calls from a frame outside the site under test, refused (#2765). */
+const foreignFrameRpc = [];
 const blockedHttp = [];
 
 /**
@@ -2405,35 +2413,27 @@ const routeHandler = async (route) => {
   }
 };
 
-const watchRequestHandler = async (_src, { method, params = [] }) => {
+// The watch-only wallet (#2447): the provider and the method answers are
+// driver.mjs's shared ones (`installInjectedWallet`, `answerWatchOnly`), so
+// this drive and `launch({ watchAddress })` present one wallet. What stays
+// here is this drive's own judgement of each call: a refused method is
+// recorded for the read-only verdict, and a failed forward is classified.
+const watchRequest = async ({ method, params = [] }) => {
   try {
-    if (!ALLOWED_RPC.has(method)) {
-      refusedRpc.push(method);
-      // 4100 "unauthorized" is what a watch-only account produces —
-      // not 4001, which would read as the user simply declining.
-      return { error: { code: 4100, message: `watch-only session: ${method} unavailable` } };
-    }
-    switch (method) {
-      case 'eth_requestAccounts':
-      case 'eth_accounts':
-        return { result: [observed] };
-      case 'eth_chainId':
-        return { result: numberToHex(CHAIN_ID) };
-      case 'net_version':
-        return { result: String(CHAIN_ID) };
-      case 'wallet_switchEthereumChain':
-        // Single-chain session: accept the chain we are on, refuse others
-        // rather than pretend to switch.
-        if (Number(params[0].chainId) === CHAIN_ID) return { result: null };
-        return { error: { code: 4902, message: 'watch-only session: single chain' } };
-      case 'wallet_requestPermissions':
-        return { result: [{ parentCapability: 'eth_accounts' }] };
-      default: {
-        const result = await pub.request({ method, params });
-        return { result: result === undefined ? null : result };
-      }
-    }
+    return await answerWatchOnly(
+      { method, params },
+      {
+        address: observed,
+        chainId: CHAIN_ID,
+        isPermitted: (m) => ALLOWED_RPC.has(m),
+        forward: (req) => pub.request(req),
+      },
+    );
   } catch (e) {
+    if (e.refused) {
+      refusedRpc.push(method);
+      throw e;
+    }
     // The page's OWN reads come through here, and they do not travel the
     // routed-fetch path — `pub.request` goes straight out on node fetch.
     // So the round-16 rule (an egress failure must never be reported as a
@@ -2485,57 +2485,26 @@ const watchRequestHandler = async (_src, { method, params = [] }) => {
     } else if (verdict === 'client-fault') {
       malformedRpc.push({ url: where, why });
     }
-    return { error: { code: e.code ?? -32603, message: e.shortMessage ?? e.message ?? 'error' } };
+    throw e;
   }
 };
 
-const initScript = () => {
-  if (window.ethereum?.__vaipakamWatch) return;
-  const listeners = {};
-  const provider = {
-    __vaipakamWatch: true,
-    isMetaMask: true,
-    request: async (payload) => {
-      const r = await window.__watchRequest(payload);
-      if (r.error) {
-        const err = new Error(r.error.message);
-        err.code = r.error.code;
-        throw err;
-      }
-      return r.result;
-    },
-    on: (ev, fn) => ((listeners[ev] ??= []).push(fn), provider),
-    removeListener: (ev, fn) => ((listeners[ev] = (listeners[ev] ?? []).filter((f) => f !== fn)), provider),
-    emit: (ev, arg) => (listeners[ev] ?? []).forEach((f) => f(arg)),
-  };
-  window.ethereum = provider;
-  const info = {
-    uuid: '7a3f4b1e-9d2c-4f6a-8e5b-vaipakamwatch0',
-    name: 'Vaipakam Watch-Only',
-    icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiBmaWxsPSIjNzc3Ii8+PC9zdmc+',
-    rdns: 'com.vaipakam.watchonly',
-  };
-  const announce = () =>
-    window.dispatchEvent(
-      new CustomEvent('eip6963:announceProvider', { detail: Object.freeze({ info, provider }) }),
-    );
-  window.addEventListener('eip6963:requestProvider', announce);
-  announce();
-};
-
-// The three registrations, each through the same BLOCKED wrapper as the
+// The registrations, each through the same BLOCKED wrapper as the
 // context creation above. They are hoisted to named handlers purely so
 // the wrapping is a one-line change per site rather than a re-indent of
 // three large bodies — the behaviour of each handler is untouched.
 await discovery('installing the request router', () =>
   ctx.route('**/*', trackedRouteHandler),
 );
-await discovery('exposing the wallet binding', () =>
-  ctx.exposeBinding('__watchRequest', watchRequestHandler),
-);
-await discovery('installing the provider init script', () =>
-  ctx.addInitScript(initScript),
-);
+await installInjectedWallet(ctx, {
+  siteOrigin: new URL(SITE).origin,
+  request: watchRequest,
+  // A frame outside the site asking the wallet is a finding about the page,
+  // reported with the read-only verdict below.
+  onForeignFrame: ({ method, origin }) => foreignFrameRpc.push(`${method} from ${origin || '(unknown origin)'}`),
+  watchOnly: true,
+  setup: discovery,
+});
 // #1672 — the app reports its reads through this (each RPC request's
 // final outcome, and each query that settled in error or is waiting to
 // retry), and announces itself on every load. Installed before any page
@@ -8365,6 +8334,13 @@ if (pageTriedToWrite.length) {
       ` never have asked. This is a finding, not a harness gap.`,
   );
 }
+if (foreignFrameRpc.length) {
+  console.log(
+    `\nREAD-ONLY VIOLATION — a frame outside the site asked the wallet:` +
+      ` ${[...new Set(foreignFrameRpc)].join(', ')}` +
+      `\n  → refused; the wallet answers only the site under test.`,
+  );
+}
 if (allowlistTooNarrow.length) {
   console.log(
     `\nALLOWLIST TOO NARROW — refused non-write method(s):` +
@@ -8441,7 +8417,7 @@ console.log(
 // chooser — is only meaningful if the page actually received what it
 // asked for, so unreachable page traffic downgrades those to BLOCKED
 // rather than reporting a flaky egress as a broken product.
-if (pageTriedToWrite.length || httpWrites.length || httpMalformed.length) process.exit(1);
+if (pageTriedToWrite.length || foreignFrameRpc.length || httpWrites.length || httpMalformed.length) process.exit(1);
 // Judged with the write attempts, and ahead of `routeFailures`, for the
 // same reason they are: this is a finding about the APP that a reachable
 // provider positively established. Ordering it after the BLOCKED check
