@@ -192,6 +192,6 @@ The page promises no result and names no rate.
 ## 13. Open items for the builder to raise, not decide silently
 
 1. What a payer who is not the holder must have done before the full repayment accepts them (Terms accepted, not flagged). #3779 carries the same question for the part payment.
-2. Whether a token sent to an address with no vault can be collected on first connection without any step by the giver.
+2. Whether a token sent to an address with no vault can be collected on first connection without any step by the giver. Settled with the builder on 2026-11-19: it can. A payout to a position's holder resolves the holder from the token and creates the holder's vault if there is none, so the receiver's vault is made at their first collect, in their own transaction. The review says so, and says to send only to a wallet the receiver controls.
 3. Which wallet connection the app uses inside a contract wallet, and how a step that waits for approvals resumes. And any signature-taking entry besides adoption (#3780) that refuses a contract wallet.
 4. The rate limits of the public feed and of alerts per wallet.
