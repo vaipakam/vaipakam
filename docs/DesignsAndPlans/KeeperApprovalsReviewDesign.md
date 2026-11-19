@@ -54,7 +54,7 @@ A ninth, automatic refinance, was removed earlier (#3042): a refinance now compl
 
 **Fill a restricted slot: kept.** It is the one action that exists to name someone.
 
-**Re-lend what came back: opened to anyone, on the slot's own consent.** A slot gains a setting, "lend again what comes back", which the owner switches on or off with the slot's other terms. With it on, anyone may run the roll and the re-commit. With it off, the money stays free in the owner's vault. A slot with no end date (`#3763`) has it on by default, since that is what no end date means.
+**Re-lend what came back: opened to anyone, on the slot's own consent.** A slot gains a setting, "lend again what comes back", which the owner switches on or off with the slot's other terms. With it on, anyone may run the roll and the re-commit. With it off, the money stays free in the owner's vault. A slot with no end date (`#3763`) has it on by default, since that is what no end date means. Amended 2026-11-19 (#3811, `LendingBalanceDesign.md` 3.5): the money returns to the owner's lending balance for that asset, which every slot of that owner lends from, and the setting read is the origin slot's.
 
 **Lock a protected account: kept.** It must act within seconds of the owner's message, for one owner, and it can only stop movement.
 
