@@ -1544,6 +1544,25 @@ jobs:
       - name: A launched, unfunded canonical chain fails verify
         run: bash contracts/script/lib/reward-funding.test.sh
 
+  # The shared `.env` reader (#1938 / #1939): both modes, the refusals that
+  # hold in either, and the runbooks' in-shell form. Every deploy wrapper and
+  # the in-place redeploy read `.env` through it, and the deploy jobs that would
+  # exercise them never run in CI. Bash only.
+  load-env:
+    name: .env data loader (unconditional)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: .env is read as data, in both modes
+        run: bash contracts/script/lib/load-env.test.sh
+
   offchain-data-warm:
     name: ops/offchain-data-warm (typecheck + tests)
     needs: detect-changes

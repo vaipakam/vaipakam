@@ -231,14 +231,19 @@ under `.timelock`, which the handover reads.
 
 ```bash
 cd contracts
-set -a; source .env; set +a
+bash script/with-env.sh   # a shell holding .env, read as data (#1939)
 forge script script/DeployTimelock.s.sol \
     --rpc-url $ETHEREUM_RPC_URL \
     --broadcast \
     --slow
 ```
 
-Verify the resulting Timelock on-chain:
+`with-env.sh` opens a bash that holds the settings, read from `.env` as data
+rather than executed (#1939); run this section's commands in it, and type
+`exit` when the section is done. Never `source .env` instead: that executes
+the file in a shell that holds the deploy keys.
+
+Verify the resulting Timelock on-chain, in the same shell:
 
 ```bash
 TIMELOCK=$(jq -r .timelock deployments/ethereum/addresses.json)
@@ -276,7 +281,7 @@ canceller.
 
 ```bash
 cd contracts
-set -a; source .env; set +a
+bash script/with-env.sh   # a shell holding .env, read as data (#1939)
 CHAIN_SLUG=ethereum forge script script/Handover.s.sol \
     --rpc-url $ETHEREUM_RPC_URL \
     --broadcast \
@@ -284,7 +289,8 @@ CHAIN_SLUG=ethereum forge script script/Handover.s.sol \
 ```
 
 After the script completes, the admin EOA cannot make any admin-gated
-call. Test it explicitly — this must revert with a missing-role error:
+call. Test it explicitly, in the same shell — this must revert with a
+missing-role error:
 
 ```bash
 DIAMOND=$(jq -r .diamond deployments/ethereum/addresses.json)
