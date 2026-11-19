@@ -268,18 +268,6 @@ evidence that the migration has completed.
   and is said in the run log; it is never treated as either low or
   recovered. The check sends no transaction and is switched on separately,
   shipping off.
-- A terminal forced sale (a health-factor liquidation or a past-grace
-  default) whose every route fails may hand the collateral to the in-kind
-  fallback only when an earlier failed sale of the same loan is at least ten
-  minutes old; before that the failed sale changes nothing but the loan's
-  record of failures (#3538). The keeper sends such a failing sale for the
-  first failure and once more with a fresh quote, then holds it back,
-  naming when the fallback opens, rather than paying to record failures the
-  protocol already holds. From that time, a sale that still fails is sent
-  and opens the fallback, so a market that is really dead delays the
-  lender by about ten minutes. A sale that works is sent whatever the
-  record says. A deployment that cannot report the record gets no fallback
-  send from the past-grace pass.
 - Illiquid loans and rentals with no collateral have no price-based health
   factor. That is an expected result, not a zero health factor or an RPC
   outage. It does not remove time-based default handling.
@@ -329,14 +317,6 @@ evidence that the migration has completed.
   Standing-intent sizing searches upward after a minimum-size refusal and
   downward after a capacity, collateral, or risk refusal; a dust refusal is
   not proof that every larger fill would fail.
-- Matching, collection matching and standing-intent fills send nothing the
-  Terms rule refuses: a wallet that has not accepted the Terms in force gets
-  no new position (#3734). The first pair a wallet's refusal stops is
-  followed by a read of which party is not current, and the run log names
-  that wallet once with the reason. Its later pairs are passed over for the
-  rest of the run. The keeper records no acceptance for anyone. A party
-  whose standing cannot be read is not passed over, and the log says it was
-  not read.
 - Offers created or re-priced in the last few minutes are looked at first
   each run, once their terms are old enough for the protocol's terms-age
   rule, so a new offer with a resting counterparty is matched on the next
@@ -347,24 +327,6 @@ evidence that the migration has completed.
   priority once for its creation; re-pricing it earns it again only after an
   hour, so repeated re-pricing buys no standing priority. One wallet's burst
   of new offers counts as one counterparty, as in the walk.
-- A lender's NFT collection offer (one offer funding several loans, one per
-  token in a stated set: a whole collection, a range of ids, or a listed set
-  proven against a root) is matched with posted borrower offers whose token
-  is in the set. A borrower offer qualifies only when it names the same
-  assets and token quantity, comes from another wallet, admits the offer's
-  term and rate, and wants exactly one loan of the offer's amount. An
-  excluded token never qualifies. A listed set is matched only from a list
-  the keeper holds and has checked against the offer: the canonical file
-  form, its hash, no id twice, the number of ids the offer states, and the
-  offer's root. The list comes from the offer's creation or, for a longer
-  one, from the file the indexer serves by its hash, which the keeper checks
-  the same way rather than trusting. An offer whose list is not held, or
-  does not check out, is left alone and the run log says why. Each
-  pair is simulated before it is sent. Offers take turns, one borrower each,
-  with a cap per offer per run, so one offer cannot use the budget the others
-  need. It runs after ordinary matching and before standing-intent fills, on
-  what is left of the run's limits, and ships disabled behind its own
-  activation.
 - Auto-roll is reserved for proceeds worth at least one hundred times the
   complete transaction fee, using protocol prices and every fee component
   the chain charges. An unreadable fee component is not zero. VPFI-principal
@@ -428,12 +390,6 @@ evidence that the migration has completed.
   principal asset must cover what the extension would charge now. A loan
   that falls short is skipped with the three figures named, and a loan whose
   funding cannot be read waits for the next run.
-- An extension adds initiation fee for the term it adds, and the borrower
-  sets the most one extension may add. The keeper never sends an extension
-  whose added fee is above that limit. It shortens the term to the longest
-  one whose fee the limit admits, and says so; when even a one-day
-  extension's fee is above the limit, the loan is skipped with both figures
-  named. A fee that cannot be read holds the loan for the next run.
 
 ### Required deployment capabilities
 
@@ -899,22 +855,6 @@ evidence that the migration has completed.
   against a repeated warning; the alert service does not filter them.
   Without a way to reach the alert service the keeper sends no Telegram
   warning, still sends Push, and says so once per run.
-- A borrower who leaves standing instructions on a loan (#3681) can be told
-  three things about them, through the same alert service and in the owner's
-  language: that the reserve an instruction spends is too low for what it
-  will next pay, that a collateral top-up ran, and that an instruction was
-  tried and skipped. Each message states only what the chain showed. A too-low
-  payment reserve names how much it is short of the amount due and when that
-  is due, or says the reserve is empty; it says what the instruction will then
-  do (a repayment runs only when the reserve covers all of it, an interest
-  payment pays what the reserve holds and the rest stays owed), never that the
-  loan will default. A collateral reserve is only ever reported empty, since a
-  top-up spends no fixed amount at no fixed time. A top-up names the amount
-  moved, the health factor before and after (or that the after figure could
-  not be read) and what is left in the reserve. A skip says nothing moved and
-  why, in the contract's own terms, and names the shortfall only when the
-  reason is a short reserve. The alert service refuses any of these whose
-  figures do not fit those rules rather than send a message that claims more.
 
 ## Protocol upkeep outside the reward system
 
@@ -1023,28 +963,6 @@ evidence that the migration has completed.
   exactly that, never as lanes left owed. A record
   of a deferral is passed for good only once the finalized chain shows that
   push delivered, superseded, or no longer owed.
-
-## Keeping mirrors on Base's tier table
-
-- Every governance change to the discount tier thresholds or discounts
-  raises Base's tier-table version. Each mirror chain keeps the version it
-  last received and judges pushed tiers against that table, so a mirror
-  behind Base applies a table Base no longer uses. Anyone may send Base's
-  current version to a mirror; without a caller nothing does. The keeper is
-  the caller.
-- It checks every hour, as a step of protocol upkeep armed on its own, and
-  only on Base. It reads Base's version and each mirror's version from that
-  mirror's own chain. A mirror that cannot be read is reported as unread,
-  never as behind or current. A mirror holding a newer version than Base is
-  reported as such. While Base has no version set, nothing is sent and the
-  report says so.
-- For a mirror behind Base it sends the version, paying the quoted
-  cross-chain fee from the keeper's own funds. That fee is held to a
-  ceiling the operator sets; a quote above it is not paid and the mirror
-  stays behind, reported with the quote and the ceiling. Once a send has
-  gone out for a version, the keeper allows the message time to arrive
-  before paying for the same version again, so a slow lane is not paid
-  twice. A newer version on Base is sent at once.
 
 ## Keeping each loan's fee-tier exclusion derived
 
@@ -1314,29 +1232,6 @@ serves. Each ships switched off behind its own flag.
   estimate finds the batch's real cost and "landed" means "written" for
   every asset whose price reads.
 - The duty ships switched off behind its own flag and pays only gas.
-
-## Recording the rates of rate-priced tokens
-
-- A rate-priced token (a wrapped or yield-bearing token valued as an
-  exchange rate against what it wraps) is priced from the rate the price
-  guard has accepted, not from what its source reports now. The accepted
-  rate follows the source down at once but rises only by the binding's daily
-  bound for the time since the last record. A rate nobody records stops
-  following honest growth, so the collateral is valued low, never high.
-- Anyone may record a rate, and nobody chooses it: the guard reads the
-  source itself and applies its own bounds. The keeper records each binding
-  about once an hour.
-- A loan keeps the binding it opened under, so the keeper records every
-  binding a token has ever had, not only its current one. It learns them
-  from the guard's own registration records, up to the chain's finalized
-  block, and never drops one.
-- A binding the guard holds no state for is named, not sent. A record that
-  finds a fall past the binding's bound (the guard distrusts the rate and
-  observes it before it can be confirmed) is named as distrusted, or as
-  under observation, from the guard's own events, so an operator sees it.
-- A Diamond with no price guard is named and skipped. The step is bounded
-  per run, says what it deferred, pays only gas, and ships switched off
-  behind its own flag inside the price checkpoint duty.
 
 ## Refreshing the market-cap rankings behind asset trust tiers
 
@@ -1717,9 +1612,9 @@ The master keeper switch and each duty's own arming choice are separate.
 The periodic-interest settler and grace auto-list each have their own
 disabled-by-default activation.
 Late acknowledgements, sanctions observation, reward-day
-automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, protocol upkeep, its prepay-sale sanctions sync, its tier-push retry, its tier-version sync, its tier-exclusion refresh, its reward-entry index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, collection-offer matching, vault-beacon upkeep, the hourly price checkpoints and their rate record, and the daily asset rankings must each
+automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, protocol upkeep, its prepay-sale sanctions sync, its tier-push retry, its tier-exclusion refresh, its reward-entry index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, vault-beacon upkeep, the hourly price checkpoints and the daily asset rankings must each
 disclose whether they are armed on the selected deployment. Reward-day
-automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, protocol upkeep, its sanctions sync, its tier-push retry, its tier-version sync, its tier-exclusion refresh, its index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, collection-offer matching, vault-beacon upkeep, the hourly price checkpoints and their rate record, and the daily asset rankings ship disabled and require
+automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, protocol upkeep, its sanctions sync, its tier-push retry, its tier-exclusion refresh, its index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, vault-beacon upkeep, the hourly price checkpoints and the daily asset rankings ship disabled and require
 deliberate activation. Deploying their software does not prove they run, that rewards have launched, or that custody or the
 expiry horizon has been activated. The mirror's day-delivery protection is
 required by its reward role, as stated in the current tokenomics spec; it is
