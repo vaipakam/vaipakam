@@ -167,4 +167,26 @@ library LibTestProtection {
         vaultOf(diamond, account).protect(abi.encodeCall(VaultProtection.finalizeReplacement, ()));
         apply_(diamond, account);
     }
+
+    /// @dev #3246 part 2 — the wallet that replaced `account` asks to move
+    ///      the account's position tokens to itself.
+    function requestPositionMove(address diamond, address account, address key) public {
+        call(diamond, account, key, abi.encodeCall(VaultRecovery.requestPositionMove, (direct(key))));
+    }
+
+    function cancelPositionMove(address diamond, address account, address key) public {
+        call(diamond, account, key, abi.encodeCall(VaultRecovery.cancelPositionMove, (direct(key))));
+    }
+
+    /// @dev The replacing wallet (the owner record) waits out the account's
+    ///      cool-down, asks for the move, and waits the delay: the tokens may
+    ///      then move by `PositionNFT.recover`.
+    function openPositionMove(address diamond, address account) public {
+        VaipakamVaultImplementation v = vaultOf(diamond, account);
+        (, , , uint64 cooldownUntil,,,) = v.protectionState();
+        if (vm.getBlockTimestamp() < cooldownUntil) vm.warp(cooldownUntil);
+        (,, uint32 delay, address owner,) = v.protectionCore();
+        requestPositionMove(diamond, account, owner);
+        vm.warp(vm.getBlockTimestamp() + delay);
+    }
 }

@@ -37,6 +37,7 @@ interface IPositionHolderVault {
         external
         view
         returns (bool enabled, bool locked, uint32 delay, address owner, bool retired);
+    function positionMoveState() external view returns (bool open, uint64 readyAt);
 }
 
 /// @notice The vault beacon's own record of the Diamond it serves.
@@ -243,6 +244,11 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
     error VaultBeaconNotForDiamond(address beacon);
     error HolderRetired(address holder);
     error HolderNotRetired(address holder);
+    /// @notice #3246 part 2 — a replaced account's positions move only under
+    ///         the replacing wallet's request, matured and not expired, while
+    ///         the account is not locked. `readyAt` is the pending request's
+    ///         maturity (0 = none alive).
+    error PositionMoveNotOpen(address holder, uint256 readyAt);
 
     // ─── Construction ────────────────────────────────────────────────────
 
@@ -493,13 +499,22 @@ contract PositionNFT is ERC721Enumerable, IERC2981, Ownable2Step {
     ///         locks the old wallet's tokens), and shown to the transfer check
     ///         like any move, which may refuse it (a token cooling down after
     ///         value left its position, a sanctioned wallet). Reverts
-    ///         {HolderNotRetired} for a token whose holder is not retired.
+    ///         {HolderNotRetired} for a token whose holder is not retired, and
+    ///         {PositionMoveNotOpen} unless the replacing wallet asked for the
+    ///         move, it has waited the account's delay and not expired, and
+    ///         the account is not locked (#3246 part 2, owner decision
+    ///         2026-11-18). A keeper pass backs it, disarmed.
     function recover(uint256[] calldata tokenIds) external {
         for (uint256 i; i < tokenIds.length; ++i) {
             uint256 tokenId = tokenIds[i];
             address holder = _requireOwned(tokenId);
             (bool retired, address replacement) = retiredRecordOf(holder);
             if (!retired) revert HolderNotRetired(holder);
+            // #3246 part 2 — only under the replacing wallet's request, once
+            // it has waited the account's delay, while the account is not
+            // locked (owner decision 2026-11-18).
+            (bool open, uint64 readyAt) = IPositionHolderVault(vaultOf(holder)).positionMoveState();
+            if (!open) revert PositionMoveNotOpen(holder, readyAt);
             _recovering = true;
             _update(replacement, tokenId, address(0));
             _recovering = false;

@@ -93,7 +93,7 @@ Execution, callable by anyone from that moment until the grace period ends:
 - Repays the loan in full from the payment reserve through the existing repayment path, as if the borrower had paid by hand: same amounts, same late fee if run after the due date, same collateral release to the borrower.
 - A lender or treasury leg the token refuses (a frozen lender vault or treasury) parks as in a hand repayment: it stays in the holder's vault under a lien for that payee, the reserve is still reduced by the full amount (so its depositor cannot withdraw the parked part), the loan closes, and the lender's later claim pays the parked amount. The event names which legs parked.
 - All or nothing. If the reserve is short of the full amount it does nothing and says how much is missing. A partial repayment at maturity would leave the loan to default anyway.
-- **One plan for the due date.** A loan may carry this instruction or the borrower's automatic-extension or automatic-refinance limits, not both. Whichever is set second is refused until the first is cleared.
+- **One plan for the due date, with ordered steps.** As first built, a loan may carry this instruction or the borrower's automatic-extension or automatic-refinance limits, not both, and whichever is set second is refused until the first is cleared. `DueDatePlanDesign.md` (#3785) replaces that refusal with a fixed order: stay with my lender, continue with another lender, repay from my reserve, repay from my collateral. A loan may then carry any of them, each runs only when the steps before it could not, and this instruction is the third step.
 
 ### 4.4 When an instruction does not run
 

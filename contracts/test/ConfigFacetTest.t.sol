@@ -794,4 +794,20 @@ contract ConfigFacetTest is Test {
         emit ConfigFacet.TierLiqDiscountBpsSet(770, 600, 500);
         ConfigFacet(address(diamond)).setTierLiqDiscountBps(770, 600, 500);
     }
+
+    /// @dev #3761 — the reported late-fee schedule is the one the fee is
+    ///      charged by: the first day, a later day and the cap all agree with
+    ///      {LibVaipakam.lateFeeBpsAt}.
+    function testLateFeeScheduleMatchesTheFeeCharged() public view {
+        (uint256 firstDayBps, uint256 perDayBps, uint256 capBps) =
+            ConfigFacet(address(diamond)).getLateFeeSchedule();
+        assertEq(firstDayBps, 100, "1% on the first day");
+        assertEq(perDayBps, 50, "0.5% more each day");
+        assertEq(capBps, 500, "capped at 5%");
+        uint256 due = 1_000_000;
+        assertEq(LibVaipakam.lateFeeBpsAt(due, due), 0, "nothing on the due date");
+        assertEq(LibVaipakam.lateFeeBpsAt(due, due + 1), firstDayBps, "first day");
+        assertEq(LibVaipakam.lateFeeBpsAt(due, due + 3 days), firstDayBps + 3 * perDayBps, "fourth day");
+        assertEq(LibVaipakam.lateFeeBpsAt(due, due + 365 days), capBps, "capped");
+    }
 }

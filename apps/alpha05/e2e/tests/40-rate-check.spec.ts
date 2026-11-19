@@ -22,6 +22,8 @@ async function openForm(page: Page, side: 'lend' | 'borrow', collateral: Hex): P
   await connectWallet(page);
   await page.getByTestId('pick-lending').locator('select').selectOption(WETH);
   await page.getByTestId('pick-collateral').locator('select').selectOption(collateral);
+  // #3761: the Lend form opens on Auto-lend; this flow posts a one-time offer.
+  if (side === 'lend') await page.getByTestId('lend-choice-once').check();
   await page.getByTestId(side === 'lend' ? 'lend-offer-open' : 'request-open').click();
   await expect(page.getByTestId('request-duration')).toContainText('30 days', { timeout: 60_000 });
 }

@@ -12094,6 +12094,13 @@ library LibVaipakam {
         return (loan.principal * lateFeeBpsAt(LibLoanClock.lateFeeStart(loan, asOfTimestamp), asOfTimestamp)) / 10000; // Basis points
     }
 
+    /// @dev The late-fee schedule, in BPS of the principal the fee is based
+    ///      on: 1% on the first day past due, 0.5% more each further day,
+    ///      capped at 5%. Constants, not settings: no role can change them.
+    uint256 internal constant LATE_FEE_FIRST_DAY_BPS = 100;
+    uint256 internal constant LATE_FEE_PER_DAY_BPS = 50;
+    uint256 internal constant LATE_FEE_CAP_BPS = 500;
+
     /// @dev #2427 — the late-fee rate {calculateLateFee} applies, in BPS of
     ///      principal: 0 within `endTime`, then 1% on the first day past due,
     ///      +0.5% each subsequent day, capped at 5%. Split out so a caller can
@@ -12103,13 +12110,17 @@ library LibVaipakam {
     }
 
     /// @dev #2740 — {lateFeeBps} at `asOfTimestamp` instead of now.
+    ///      The one late-fee schedule: {LATE_FEE_FIRST_DAY_BPS} on the first
+    ///      day past due, {LATE_FEE_PER_DAY_BPS} more each further day, never
+    ///      above {LATE_FEE_CAP_BPS}. The ERC-20 and the rental late fees both
+    ///      read it, and `ConfigFacet.getLateFeeSchedule` reports it.
     function lateFeeBpsAt(uint256 endTime, uint256 asOfTimestamp) internal pure returns (uint256) {
         if (asOfTimestamp <= endTime) return 0;
 
         uint256 daysLate = (asOfTimestamp - endTime) / 1 days;
-        uint256 feePercent = 100 + (daysLate * 50); // 1% + 0.5% per day (in basis points)
-        if (feePercent > 500) feePercent = 500; // Cap 5%
-        return feePercent;
+        uint256 feeBps = LATE_FEE_FIRST_DAY_BPS + (daysLate * LATE_FEE_PER_DAY_BPS);
+        if (feeBps > LATE_FEE_CAP_BPS) feeBps = LATE_FEE_CAP_BPS;
+        return feeBps;
     }
 
     /// @dev NFT-rental late fee (#998 S8 / #1004). The shared
@@ -12146,11 +12157,9 @@ library LibVaipakam {
         LibVaipakam.Loan storage loan = s.loans[loanId];
         uint256 endTime = LibLoanClock.lateFeeStart(loan, block.timestamp);
 
-        if (block.timestamp <= endTime) return 0;
-
-        uint256 daysLate = (block.timestamp - endTime) / 1 days;
-        uint256 feePercent = 100 + (daysLate * 50); // 1% + 0.5% per day
-        if (feePercent > 500) feePercent = 500; // historical 5% penalty ceiling
+        // The same schedule as the ERC-20 late fee ({lateFeeBpsAt}).
+        uint256 feePercent = lateFeeBpsAt(endTime, block.timestamp);
+        if (feePercent == 0) return 0;
 
         // #3170 (owner decision 2026-11-05) — base the fee on the WHOLE agreed
         // rent (daily fee × the immutable `durationDays` term). The fee prices

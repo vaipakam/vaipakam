@@ -1062,7 +1062,7 @@ contract HelperTest {
 
     /// @dev #3656 — mirrors `DeployDiamond._getInstantMarketSelectors`.
     function getInstantMarketFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](9);
         selectors[0] = InstantMarketFacet.setInstantMarketEnabled.selector;
         selectors[1] = InstantMarketFacet.setInstantMaxFills.selector;
         selectors[2] = InstantMarketFacet.getInstantMarketConfig.selector;
@@ -1070,18 +1070,23 @@ contract HelperTest {
         selectors[4] = InstantMarketFacet.getInstantSlot.selector;
         selectors[5] = InstantMarketFacet.borrowInstant.selector;
         selectors[6] = InstantMarketFacet.getInstantGroup.selector;
+        selectors[7] = InstantMarketFacet.instantPairEligible.selector;
+        selectors[8] = InstantMarketFacet.previewBorrowInstant.selector;
     }
 
     /// @dev #3656 — mirrors `DeployDiamond._getInstantFillSelectors`.
     function getInstantFillFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](1);
+        selectors = new bytes4[](2);
         selectors[0] = InstantFillFacet.fillInstant.selector;
+        selectors[1] = InstantFillFacet.quoteFill.selector;
     }
 
     /// @dev #3656 §7 — mirrors `DeployDiamond._getInstantTakeoverSelectors`.
     function getInstantTakeoverFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](1);
+        selectors = new bytes4[](3);
         selectors[0] = InstantTakeoverFacet.takeoverInstant.selector;
+        selectors[1] = InstantTakeoverFacet.previewTakeover.selector;
+        selectors[2] = InstantTakeoverFacet.requireTakeoverAdmissible.selector;
     }
 
     function getLoanClockFacetSelectors() public pure returns (bytes4[] memory selectors) {
@@ -1920,9 +1925,12 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](1);
+        selectors = new bytes4[](3);
         // #1922 / #3412 — the one bound direct-sale entry.
         selectors[0] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer.selector;
+        // #3761 — its admission as a preview and its revert form.
+        selectors[1] = EarlyWithdrawalDirectFacet.previewDirectSale.selector;
+        selectors[2] = EarlyWithdrawalDirectFacet.requireDirectSaleAdmissible.selector;
         return selectors;
     }
 
@@ -2239,7 +2247,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](86);
+        selectors = new bytes4[](87);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -2390,6 +2398,7 @@ contract HelperTest {
         selectors[84] = ConfigFacet.getMaxOpenOffersPerWallet.selector;
         // #3443 — the minimum age of an offer's terms at fill.
         selectors[85] = ConfigFacet.setMinTermsAgeSec.selector;
+        selectors[86] = ConfigFacet.getLateFeeSchedule.selector;
         // #1222 (M3 B1) — cross-chain recycled ledger transparency reads.
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` MOVED to RewardAggregatorFacet

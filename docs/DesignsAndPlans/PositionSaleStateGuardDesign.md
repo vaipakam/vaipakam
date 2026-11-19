@@ -268,6 +268,28 @@ token. A per-token approval emits the standard approval event (owner,
 approved address, token), and that event is what the alert reads; no
 separate event was added for it.
 
+**No delay on an approval (owner decision 2026-11-19).** The card first asked
+for a per-token approval above the protection threshold to wait protected
+mode's delay. That is not built, for three reasons. There is no on-chain
+threshold to read, so the token would have to price a position inside the
+approval, and a price outage would then either block every approval or let
+it through. A plain transfer by the holder is not delayed, so a slower
+approval protects little. And the strict form already exists: under the
+holder lock an approval is refused, earlier approvals read as none, a
+transfer is refused and unlocking waits the account's delay. So the choice
+offered to a holder is the lock: when protected mode is switched on, the app
+pre-selects "Lock my position tokens", with a clear way to switch it off for
+a holder who wants to list a position. The contracts do not change.
+Switching protected mode on does not by itself lock the tokens; a vault lock,
+a handover and the manager's own lock do.
+
+What the app and the alert are to show (none of it is built yet): every
+approval of a position token alerts its holder (#3719); each position shows
+"Approved for transfer to" with the address and a one-tap removal; and the
+token's details carry an "Approved for transfer" trait, refreshed when an
+approval is given or cleared, if the metadata facet has room for it in the
+refactor.
+
 ### 3.10 An open offer's escrow follows its token (#3744)
 
 An open offer has its own position token, and a fill already gives the

@@ -125,6 +125,114 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "quoteFill",
+    "inputs": [
+      {
+        "name": "r",
+        "type": "tuple",
+        "internalType": "struct InstantFillFacet.FillRequest",
+        "components": [
+          {
+            "name": "borrower",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "lendingAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "collateralAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "termDays",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "maxRateBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "allowsPartialRepay",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "source",
+            "type": "tuple",
+            "internalType": "struct InstantFillFacet.InstantSource",
+            "components": [
+              {
+                "name": "kind",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "owner",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "slot",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "offerId",
+                "type": "uint256",
+                "internalType": "uint256"
+              }
+            ]
+          },
+          {
+            "name": "remaining",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collRemaining",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "amountWanted",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralOffered",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "rateBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "collateral",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
     "type": "event",
     "name": "OfferClosed",
     "inputs": [

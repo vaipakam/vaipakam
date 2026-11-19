@@ -5,19 +5,20 @@
  * the signature binds and every consequence, including what is not known.
  */
 import type { OwnStateClient } from '../../chain/ownRail';
-import type { CopyAccess } from '../copy/useCopy';
+import type { CopyAccess, CopyKey } from '../copy/useCopy';
+import { actionsIn, type KeeperGrant } from '../keepers/keepers';
+import { actionsLine } from '../keepers/keeperReceipt';
 import { judgeDryRun, type CreateVerdict } from '../post/postReview';
 import { tokenAcceptsApproval } from '../offers/reads';
 import { bpsPercent } from '../offers/priceGuard';
 import { assetName, tokenAmount, type TokenMetaMap } from '../reads/tokens';
-import { erc20Pair, readRiskStatus, riskPlan, type RiskNeed } from '../risk/riskAccess';
-import type { Receipt, ReceiptRow, ReceiptText } from '../receipt/types';
+import type { RiskNeed } from '../risk/riskAccess';
+import { readRiskNeed } from '../risk/riskNeed';
+import type { Receipt, ReceiptRow, ReceiptText, ReceiptValue } from '../receipt/types';
 import { allowanceSteps } from '../tx/approval';
 import { chainValidUntil } from '../tx/deadline';
 import { askThrough } from '../tx/simulate';
-import { networkKeeper, readKeeperSettings } from '../keepers/keepers';
-import { VPFITokenFacetABI } from '@vaipakam/contracts/abis';
-import type { Abi } from 'viem';
+import { readCalmStatus, type CalmStatus } from './calmCheck';
 import type { Posture } from '../capability/types';
 import {
   exposureOf,
@@ -37,6 +38,25 @@ import {
   type SetupBlock,
   type SetupFacts,
 } from './autoLend';
+import {
+  anyInstant,
+  changeEffective,
+  effectivePreset,
+  instantOff,
+  presetFactsKey,
+  readInstantSlotForChange,
+  readPresetFacts,
+  type EffectivePreset,
+  type InstantSlotRecord,
+  type PresetFacts,
+  type PresetLogs,
+  AUTO_ROLL,
+  RENEWAL_BUILT,
+  readRollRunner,
+} from './preset';
+import type { LegOutcome } from '../tx/outcome';
+import type { IndexerClient } from '../reads/world/indexerClient';
+import { takeoverRouted } from '../capability/routes';
 
 type Hex = `0x${string}`;
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
@@ -46,6 +66,9 @@ export interface AutoLendReview {
   /** The wallet and network the review was read under (`reviewIdentity`). */
   identity: string;
   readAt: number;
+  /** #3763: whether the takeover at face value is deployed here, so the
+   *  review names a handover as a way to get funds back. */
+  handover: boolean;
   facts: SetupFacts;
   /** For a change, the record it replaces, as read with the facts: the most
    *  at once and smallest loan kept when none is typed, and the fill
@@ -70,59 +93,51 @@ export interface AutoLendReview {
    *  review's prices; null when it could not be read. Checked at each fill,
    *  not when the setup is sent, so the dry run cannot show it. */
   ltvCap: LtvCap | null;
+  /** Where a fill from the slot stands against the pause for a moving price,
+   *  read at the facts' block: 'off' only for an active slot whose owner
+   *  switched it off (a new or restarted Auto-lend starts with it on). null
+   *  when it could not be read. */
+  calm: CalmStatus | null;
+  /** #3761 — what the lender's choices stand on (keeper settings, the
+   *  instant market's reach for the pair), and what the batch carries. */
+  preset: PresetFacts;
+  effective: EffectivePreset;
+  /** For a change, the slot's instant-market consents as recorded (setting
+   *  the terms clears them, so the batch sends them again); null for a new
+   *  setup, or when they could not be read (`instantUnread` then blocks). */
+  instantRecord: InstantSlotRecord | null;
+  /** A change whose recorded consents cannot be sent again (interest by time
+   *  switched off, or the market no longer takes the pair): they are cleared. */
+  instantCleared: boolean;
   verdict: CreateVerdict;
 }
 
 /** `vpfi`: the protocol never rolls a VPFI loan
  *  (`LenderIntentVpfiRollUnsupported`), whatever the keeper settings. */
-export type RollPermission = 'allowed' | 'not-allowed' | 'vpfi' | 'unknown';
+export type RollPermission = 'allowed' | 'not-allowed' | 'vpfi' | 'unknown' | 'no-keeper';
 
-const VPFI_TOKEN = VPFITokenFacetABI as Abi;
-
-/** The protocol's `KEEPER_ACTION_AUTO_ROLL` bit. */
-const AUTO_ROLL = 1 << 7;
-
-/** Whether this network's keeper may roll repaid loans for the wallet:
- *  keeper access on, and the keeper approved with the auto-roll action. */
-async function readRollPermission(own: OwnStateClient, diamond: Hex, lending: Hex): Promise<RollPermission> {
-  try {
-    const vpfi = (await own.read((c) => c.readContract({ address: diamond, abi: VPFI_TOKEN, functionName: 'getVPFIToken' }) as Promise<Hex>)).value;
-    if (vpfi.toLowerCase() === lending.toLowerCase()) return 'vpfi';
-  } catch {
-    return 'unknown';
-  }
-  const keeper = networkKeeper(own.chainId);
-  if (keeper === null) return 'unknown';
-  try {
-    const s = (await own.read((c) => readKeeperSettings(c, diamond, own.account))).value;
-    const grant = s.keepers.find((k) => k.keeper.toLowerCase() === keeper.toLowerCase());
-    return s.access && grant !== undefined && (grant.actions & AUTO_ROLL) !== 0 ? 'allowed' : 'not-allowed';
-  } catch {
-    return 'unknown';
+/** The roll permission the setup leaves: what is given now, or what the
+ *  batch gives. */
+export function rollAfter(e: EffectivePreset): RollPermission {
+  switch (e.relend) {
+    case 'given':
+    case 'granted':
+      return 'allowed';
+    case 'vpfi':
+      return 'vpfi';
+    case 'unknown':
+      return 'unknown';
+    case 'no-keeper':
+      return 'no-keeper';
+    default:
+      return 'not-allowed';
   }
 }
 
-/** The protocol's `RiskAccessLevel.IlliquidCustom`. */
-const ILLIQUID_LEVEL = 2;
 
-/** The first risk-access step this wallet lacks for the pair, in the order
- *  the protocol checks them at a fill (level, illiquid pair consent, strict
- *  acknowledgement), read through the same rule the risk step applies; null
- *  when none is needed. */
-async function readRiskNeed(own: OwnStateClient, diamond: Hex, lending: Hex, collateral: Hex): Promise<RiskNeed | null> {
-  const pair = erc20Pair(lending, collateral);
-  const status = (need: RiskNeed) => own.read((c) => readRiskStatus(c, diamond, own.account, need, { kind: 'pair', pair })).then((x) => x.value);
-  const tier = await status('tier');
-  if (riskPlan(tier).kind !== 'met') return 'tier';
-  // Only the illiquid boundary carries a per-pair consent, checked at every
-  // fill like the level.
-  if (tier.gateOn && tier.required === ILLIQUID_LEVEL && riskPlan(await status('pair-consent')).kind !== 'met') return 'pair-consent';
-  if (riskPlan(await status('mid-tier-ack')).kind !== 'met') return 'mid-tier-ack';
-  return null;
-}
-
-export async function readAutoLendReview(own: OwnStateClient, diamond: Hex, draft: AutoLendDraft, identity: string): Promise<AutoLendReview> {
+export async function readAutoLendReview(own: OwnStateClient, diamond: Hex, draft: AutoLendDraft, identity: string, indexer: IndexerClient): Promise<AutoLendReview> {
   const account = own.account;
+  const rollRunner = await readRollRunner(indexer, own.chainId, diamond);
   const facts = (await own.read((c) => readSetupFacts(c, diamond, account, draft.lending, draft.collateral, draft.slot))).value;
   const fund = draft.parsed.fund;
   const approvalSteps =
@@ -137,18 +152,46 @@ export async function readAutoLendReview(own: OwnStateClient, diamond: Hex, draf
         ).length;
   const base = draft.change ? facts.record : null;
   const minFill = resolvedMinFill(draft.parsed, facts.floor, base);
-  const [risk, roll, ltvCap] = await Promise.all([
+  const [risk, preset, instantRecord, ltvCap, handover, calm] = await Promise.all([
     readRiskNeed(own, diamond, draft.lending, draft.collateral),
-    readRollPermission(own, diamond, draft.lending),
+    own.read((c) => readPresetFacts(c, diamond, account, own.chainId, draft.lending, draft.collateral, draft.slot, rollRunner)).then((x) => x.value),
+    draft.change
+      ? own
+          .read((c) => readInstantSlotForChange(c, diamond, account, draft.lending, draft.collateral, draft.slot, facts.blockNumber))
+          .then((x) => x.value)
+          .catch(() => null)
+      : Promise.resolve(null),
     minFill === null || minFill === 0n
       ? Promise.resolve(null)
       : own
           .read((c) => readLtvCap(c, diamond, draft.lending, draft.collateral, minFill, draft.parsed.maxInitLtvBps, facts.blockNumber))
           .then((x) => x.value)
           .catch(() => null),
+    own
+      .read((c) => takeoverRouted(c, diamond))
+      .then((x) => x.value)
+      .catch(() => false),
+    own
+      .read((c) => readCalmStatus(c, diamond, account, draft.lending, draft.collateral, draft.slot, facts.blockNumber))
+      .then((x) => x.value)
+      .catch(() => null),
   ]);
   const capBlock = ltvCapBlock(ltvCap);
   const blocks = capBlock === null ? setupBlocks(draft, facts) : [...setupBlocks(draft, facts), capBlock];
+  // A new setup carries the lender's choices; a change sends again the
+  // consents the slot had, where they can still be sent.
+  let effective: EffectivePreset;
+  let instantCleared = false;
+  if (draft.preset !== null) {
+    effective = effectivePreset({ ...draft.preset, proRata: draft.parsed.acceptsProRata }, preset.relend, preset.instant, draft.relendConfirmed);
+    if (effective.relend === 'unconfirmed') blocks.push({ kind: 'keeperList' });
+  } else {
+    const c = changeEffective(instantRecord, draft.parsed.acceptsProRata, preset.instant, preset.relend);
+    effective = c.effective;
+    instantCleared = c.cleared;
+    if (draft.change && instantRecord === null) blocks.push({ kind: 'instantUnread' });
+  }
+  const roll = rollAfter(effective);
   let verdict: CreateVerdict;
   if (minFill === null) {
     verdict = { kind: 'unreadable', reason: 'minimum loan unread' };
@@ -157,11 +200,33 @@ export async function readAutoLendReview(own: OwnStateClient, diamond: Hex, draf
     // alone: their verdict is known before any prompt, and the whole batch
     // is dry-run again with the approval in place before it is sent.
     const covers = approvalSteps === 0;
-    const dry = await askThrough(own, async (c) => c.simulateContract({ address: diamond, ...setupCall(draft, minFill, await chainValidUntil(c), base, !covers), account }));
+    const dry = await askThrough(own, async (c) =>
+      c.simulateContract({ address: diamond, ...setupCall(draft, minFill, await chainValidUntil(c), base, !covers, effective), account }),
+    );
     const v = judgeDryRun(dry, true);
     verdict = v.kind === 'ok' && !covers ? { kind: 'needs-approval' } : v;
   }
-  return { draft, identity, readAt: Date.now(), facts, base, minFill, blocks, approvalSteps, posture: fillPosture(facts.gates), risk, roll, ltvCap, verdict };
+  return {
+    draft,
+    identity,
+    readAt: Date.now(),
+    handover,
+    facts,
+    base,
+    minFill,
+    blocks,
+    approvalSteps,
+    posture: fillPosture(facts.gates),
+    risk,
+    roll,
+    ltvCap,
+    calm,
+    preset,
+    effective,
+    instantRecord,
+    instantCleared,
+    verdict,
+  };
 }
 
 /** What moved between a review and a re-read of it, as a key: a change in
@@ -175,6 +240,8 @@ export function reviewKey(r: AutoLendReview): string {
     r.posture,
     r.risk ?? '',
     r.roll,
+    r.handover,
+    r.calm ?? 'x',
     r.ltvCap === null ? 'x' : r.ltvCap.kind === 'cap' ? `${r.ltvCap.fits}:${r.ltvCap.approxBps}` : r.ltvCap.kind,
     r.blocks.map((b) => b.kind).join(','),
     r.facts.minTermsAgeSec,
@@ -189,6 +256,10 @@ export function reviewKey(r: AutoLendReview): string {
     r.facts.unlent,
     r.facts.lent,
     String(r.facts.priority),
+    presetFactsKey(r.preset),
+    JSON.stringify({ ...r.effective, keeper: r.effective.keeper.map((k) => JSON.stringify(k)) }),
+    r.instantRecord === null ? 'x' : `${r.instantRecord.fills}${r.instantRecord.renewal}${r.instantRecord.takeover}`,
+    String(r.instantCleared),
   ].join('|');
 }
 
@@ -217,6 +288,10 @@ export function blockText(b: SetupBlock, r: AutoLendReview, meta: TokenMetaMap |
       return format('autoLend.blockLtvCap', { ltv: bpsPercent(r.draft.parsed.maxInitLtvBps), cap: bpsPercent(b.capBps) });
     case 'ltvClosed':
       return text('autoLend.blockLtvClosed');
+    case 'keeperList':
+      return text('autoLend.blockKeeperList');
+    case 'instantUnread':
+      return text('autoLend.blockInstantUnread');
   }
 }
 
@@ -273,6 +348,8 @@ export function autoLendReceipt(r: AutoLendReview, meta: TokenMetaMap | null, co
       binding: true,
     },
     { label: text('autoLend.rowInterest'), value: { kind: 'text', text: text(p.acceptsProRata ? 'autoLend.interestBoth' : 'autoLend.interestFull') }, binding: true },
+    ...presetRows(r, copy),
+    { label: text('autoLend.calmTitle'), value: calmRowValue(r.calm, base !== null, copy), binding: false },
     { label: text('autoLend.rowFiller'), value: { kind: 'text', text: text(base?.requiresKeeperAuth === true ? 'autoLend.fillerAllowed' : 'autoLend.fillerAny') }, binding: true },
     { label: text('autoLend.rowFirstFill'), value: { kind: 'time', unixSeconds: Number(r.facts.chainNow + r.facts.minTermsAgeSec) }, binding: false },
   ];
@@ -288,10 +365,14 @@ export function autoLendReceipt(r: AutoLendReview, meta: TokenMetaMap | null, co
           ? 'autoLend.loseRelendOff'
           : r.roll === 'vpfi'
             ? 'autoLend.loseRelendVpfi'
-            : 'autoLend.loseRelendUnknown',
+            : r.roll === 'no-keeper'
+              ? 'autoLend.loseRelendNoKeeper'
+              : 'autoLend.loseRelendUnknown',
     ),
     text('autoLend.loseVault'),
   ];
+  consequences.push(...presetConsequences(r, copy));
+  consequences.push(...calmConsequences(r.calm, copy));
   if (r.ltvCap === null) consequences.push(text('autoLend.loseLtvCapUnread'));
   else if (r.ltvCap.kind === 'cap' && r.ltvCap.fits) consequences.push(text('autoLend.loseLtvCap'));
   if (d.lendUntil !== 0n) consequences.push(format('autoLend.loseUntil', { date: new Date(Number(d.lendUntil) * 1000).toLocaleString() }));
@@ -313,5 +394,161 @@ export function autoLendReceipt(r: AutoLendReview, meta: TokenMetaMap | null, co
   else if (matcher === 'absent') consequences.push(text('autoLend.loseServiceOff'));
   else if (matcher === 'unknown') consequences.push(text('autoLend.loseServiceUnknown'));
   const title = base === null ? 'autoLend.receiptTitle' : base.active ? 'autoLend.changeTitle' : 'autoLend.startTitle';
-  return { title: text(title), rows, consequences, prompts: r.approvalSteps + 1, readAt: r.readAt };
+  // #3763: what open-ended means here, for a new Auto-lend and a change alike.
+  const sections = openEndedSections(d, r.handover, copy);
+  return { title: text(title), rows, consequences, sections, prompts: r.approvalSteps + 1, readAt: r.readAt };
+}
+
+/** #3761 — the receipt rows for the lender's choices: each stated as the
+ *  batch carries it, with the reason where it is off whatever was chosen. */
+export function presetRows(r: AutoLendReview, copy: Copy): ReceiptRow[] {
+  const { text, format } = copy;
+  const e = r.effective;
+  const chosen = r.draft.preset;
+  const row = (labelKey: CopyKey, value: string, binding: boolean): ReceiptRow => ({ label: text(labelKey), value: { kind: 'text', text: value }, binding });
+  const rows: ReceiptRow[] = [];
+  const relend = (): string => {
+    switch (e.relend) {
+      case 'given':
+        return text(chosen !== null && !chosen.relend ? 'autoLend.relendGivenKept' : 'autoLend.relendGiven');
+      case 'granted': {
+        const s = r.preset.relend;
+        const regain = s.kind === 'grant' && s.regain.length > 0;
+        if (regain) return text('autoLend.relendGrantedRegain');
+        if (s.kind === 'grant' && s.kept !== 0) return format('autoLend.relendGrantedAdd', { keeper: r.preset.keeper ?? '', actions: actionsLine(s.kept, copy) });
+        return format('autoLend.relendGranted', { keeper: r.preset.keeper ?? '' });
+      }
+      case 'off':
+        return text('autoLend.relendOff');
+      case 'vpfi':
+        return text('autoLend.relendVpfi');
+      case 'full':
+        return text('autoLend.relendFull');
+      case 'unconfirmed':
+        return text('autoLend.relendUnconfirmed');
+      case 'unknown':
+        return text('autoLend.relendUnknown');
+      case 'no-keeper':
+        return text('autoLend.relendNoKeeper');
+    }
+  };
+  rows.push(row('autoLend.rowRelend', relend(), e.relend === 'granted'));
+  if (chosen !== null) {
+    const off = instantOff(e.proRata, r.preset.instant);
+    const instant = (on: boolean, picked: boolean): string => {
+      if (on) return text('autoLend.instantOn');
+      switch (off) {
+        case 'market-off':
+          return text('autoLend.instantOffMarket');
+        case 'pair-not-eligible':
+          return text('autoLend.instantOffPair');
+        case 'unknown':
+          return text('autoLend.instantOffUnknown');
+        case 'needs-pro-rata':
+          return text('autoLend.instantOffProRata');
+        default:
+          return text(picked ? 'autoLend.instantOffUnknown' : 'autoLend.instantSwitchedOff');
+      }
+    };
+    rows.push(row('autoLend.rowFills', instant(e.fills, chosen.fills), true));
+    rows.push(row('autoLend.rowRenewal', RENEWAL_BUILT ? instant(e.renewal, chosen.renewal) : text('autoLend.renewalNotYetRow'), true));
+    rows.push(row('autoLend.rowTakeover', instant(e.takeover, chosen.takeover), true));
+  } else if (r.instantRecord !== null) {
+    rows.push(row('autoLend.rowInstantChange', text(anyInstant(e) ? 'autoLend.instantResent' : r.instantCleared ? 'autoLend.instantCleared' : 'autoLend.instantNone'), true));
+  }
+  return rows;
+}
+
+/** #3761 — what the lender's choices mean, stated before signing. */
+export function presetConsequences(r: AutoLendReview, copy: Copy): ReceiptText[] {
+  const { text, format } = copy;
+  const e = r.effective;
+  const out: ReceiptText[] = [];
+  const s = r.preset.relend;
+  if (e.relend === 'granted' && s.kind === 'grant' && s.regain.length > 0) {
+    out.push(format('autoLend.loseRelendRegain', { list: s.regain.map((g) => regainLine(g, copy)).join('; ') }));
+  }
+  // #3763 rule 7: a permission given or held is not a runner.
+  if ((e.relend === 'granted' || e.relend === 'given') && r.preset.roll !== 'running') {
+    out.push(text(r.preset.roll === 'unknown' ? 'autoLend.loseRelendRunUnknown' : 'autoLend.loseRelendNoRun'));
+  }
+  if (anyInstant(e)) {
+    out.push(text('autoLend.loseInstantWhat'));
+    if (e.takeover) out.push(text('autoLend.loseTakeover'));
+    if (RENEWAL_BUILT && !e.renewal) out.push(text('autoLend.loseRenewalOff'));
+    out.push(text('autoLend.loseInstantReady'));
+  }
+  if (r.instantCleared) out.push(text('autoLend.loseInstantCleared'));
+  return out;
+}
+
+/** #3763 — what open-ended means here, under its two headings (§3.6),
+ *  stated on the review before signing. `handover` where the takeover at
+ *  face value is deployed on this network. */
+export function openEndedSections(draft: AutoLendDraft, handover: boolean, copy: Copy): { title: string; body: string[] }[] {
+  const { text, format } = copy;
+  const length =
+    draft.parsed.lendUntilDate === null
+      ? { title: text('autoLend.openEndedTitle'), body: [text('autoLend.openEndedBody')] }
+      : { title: format('autoLend.setPeriodTitle', { date: draft.parsed.lendUntilDate }), body: [format('autoLend.setPeriodBody', { date: draft.parsed.lendUntilDate })] };
+  return [
+    length,
+    {
+      title: text('autoLend.fundsBackTitle'),
+      body: [text('autoLend.fundsBackBody'), text(handover ? 'autoLend.fundsBackSooner' : 'autoLend.fundsBackSoonerSale'), text('autoLend.fundsBackNoPromise')],
+    },
+  ];
+}
+
+/** One keeper approval switching access back on restores, in plain words. */
+export function regainLine(g: KeeperGrant, copy: Copy): string {
+  const acts = actionsIn(g.actions).map((a) => copy.text(a.key));
+  return copy.format('autoLend.regainLine', { keeper: g.keeper, actions: acts.length > 0 ? acts.join(', ') : copy.text('autoLend.regainNone') });
+}
+
+/** #3761 — the outcome of each choice the batch carried, measured from its
+ *  own logs: the instant-market consents as recorded, and the keeper's roll
+ *  permission (and keeper access, where the batch switched it on). */
+export function presetLegs(logs: PresetLogs, e: EffectivePreset, copy: Copy): LegOutcome[] {
+  const { text } = copy;
+  const legs: LegOutcome[] = [];
+  if (anyInstant(e)) {
+    const label = text('autoLend.legInstant');
+    const got = logs.instant;
+    if (got !== null && got.fills === e.fills && got.renewal === e.renewal && got.takeover === e.takeover) legs.push({ status: 'done', label });
+    else legs.push({ status: 'not-done', label, reason: text('autoLend.legInstantMissing') });
+  }
+  if (e.keeper.length > 0) {
+    const label = text('autoLend.legRelend');
+    const wantsAccess = e.keeper.some((c) => c.kind === 'access');
+    const wantsActions = e.keeper.some((c) => c.kind === 'approve' || c.kind === 'actions');
+    const actionsOk = !wantsActions || (logs.keeperActions !== null && (logs.keeperActions & AUTO_ROLL) !== 0);
+    const accessOk = !wantsAccess || logs.access === true;
+    if (actionsOk && accessOk) legs.push({ status: 'done', label });
+    else legs.push({ status: 'not-done', label, reason: text('autoLend.legRelendMissing') });
+  }
+  return legs;
+}
+
+/** What the pause for a moving price means for this setup: on for a new or
+ *  restarted Auto-lend, kept as it is for a change, and why fills would wait
+ *  now when the pair's price checks or price say so. */
+/** The pause row of the receipt. A change keeps whatever the slot already
+ *  has, so an unread setting there is unknown, never "On"; a new Auto-lend
+ *  starts with it on. */
+export function calmRowValue(calm: CalmStatus | null, change: boolean, copy: Copy): ReceiptValue {
+  const { text } = copy;
+  if (calm === null && change) return { kind: 'unknown', why: text('autoLend.calmRowUnread') };
+  return { kind: 'text', text: text(calm === 'off' ? 'autoLend.calmRowOff' : 'autoLend.calmRowOn') };
+}
+
+export function calmConsequences(calm: CalmStatus | null, copy: Copy): ReceiptText[] {
+  const { text, format } = copy;
+  if (calm === null) return [text('autoLend.calmSetupUnread')];
+  if (calm === 'off') return [format('autoLend.calmSetupKept', { state: text('autoLend.calmRowOff') }), text('autoLend.calmLoseOff')];
+  const out: ReceiptText[] = [text('autoLend.calmSetupOn')];
+  if (calm === 'no-checkpoint') out.push(text('autoLend.calmSetupNoCheckpoint'));
+  else if (calm === 'moving') out.push(text('autoLend.calmSetupMoving'));
+  else if (calm === 'unpriced') out.push(text('autoLend.calmSetupUnpriced'));
+  return out;
 }

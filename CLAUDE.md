@@ -2868,6 +2868,11 @@ work and never lag behind a merge.
   the PR closes an issue (owner decision 2026-10-28, #1799). Copy
   `docs/ReleaseNotes/unreleased/_TEMPLATE.md` as the starting point.
   This is part of the PR — not a post-merge step.
+- **Every PR names each issue it finishes with a `Closes #<n>` line in
+  its body, batch PRs included** (owner decision 2026-11-19). A batch
+  that writes "n/a" leaves its finished cards open: #3743 left about 30.
+  An issue only partly delivered gets "Advances #<n>" plus a comment on
+  the issue stating what remains and which area owns it.
 - **After the day's PRs merge**, fold the fragments into the dated file:
   `bash docs/ReleaseNotes/assemble.sh` (defaults to today UTC; pass a
   `YYYY-MM-DD` to override). It concatenates every pending fragment into

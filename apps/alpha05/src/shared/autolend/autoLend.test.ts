@@ -97,10 +97,14 @@ describe('the Auto-lend form', () => {
   });
 
   it('refuses an end date that is not after today, and keeps an empty one as none', () => {
-    const past = parse({ lendUntil: '2027-01-10' });
+    const past = parse({ setPeriod: true, lendUntil: '2027-01-10' });
     expect(!past.ok && past.errors.lendUntil).toBe('past');
     expect(parsed({ lendUntil: '' }).lendUntilDate).toBeNull();
-    expect(parsed({ lendUntil: '2027-02-01' }).lendUntilDate).toBe('2027-02-01');
+    expect(parsed({ setPeriod: true, lendUntil: '2027-02-01' }).lendUntilDate).toBe('2027-02-01');
+    // #3763: open-ended unless the lender chooses a set period.
+    expect(parsed({ setPeriod: false, lendUntil: '2027-02-01' }).lendUntilDate).toBeNull();
+    const empty = parse({ setPeriod: true, lendUntil: '' });
+    expect(!empty.ok && empty.errors.lendUntil).toBe('date');
   });
 
   it('ignores the Advanced limits outside Advanced, so a hidden figure never reaches the protocol', () => {
@@ -183,7 +187,7 @@ describe('what stops a setup before any dry run', () => {
 
 describe('the setup call', () => {
   it('sends the terms and the funding as one batch, every step required, terms first', () => {
-    const d = autoLendDraft(USDC, WETH, parsed({ proRata: true, lendUntil: '2027-03-01' }));
+    const d = autoLendDraft(USDC, WETH, parsed({ proRata: true, setPeriod: true, lendUntil: '2027-03-01' }));
     const call = setupCall(d, 100n * E6, 99n, null);
     expect(call.functionName).toBe('multicall');
     const steps = call.args[0] as readonly { callData: Hex; allowFailure: boolean }[];
@@ -256,7 +260,7 @@ describe('a change of an Auto-lend', () => {
 
   it('opens the form on the recorded limits, exactly', () => {
     const i = inputFromIntent({ ...RECORD, lendUntil: 0n }, 6);
-    expect(i).toMatchObject({ amount: '', rate: '5.5', ltv: '60', days: '60', lendUntil: '', exposure: '2000', minFill: '200' });
+    expect(i).toMatchObject({ amount: '', rate: '5.5', ltv: '60', days: '60', setPeriod: false, lendUntil: '', exposure: '2000', minFill: '200' });
     expect(bpsText(725n)).toBe('7.25');
     expect(bpsText(800n)).toBe('8');
   });

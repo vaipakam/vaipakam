@@ -112,6 +112,8 @@ contract RetiredAccountAuthorityTest is SetupTest {
     }
 
     function _recover(uint256 tokenId) internal {
+        address holder = _core().ownerOf(tokenId);
+        LibTestProtection.openPositionMove(address(diamond), holder);
         uint256[] memory ids = new uint256[](1);
         ids[0] = tokenId;
         LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
@@ -260,6 +262,7 @@ contract RetiredAccountAuthorityTest is SetupTest {
 
         uint256[] memory ids = new uint256[](1);
         ids[0] = l.borrowerTokenId;
+        LibTestProtection.openPositionMove(address(diamond), borrower);
         LibTestPositionNFT.waitOutCooldown(address(diamond), l.borrowerTokenId);
         address anyone = makeAddr("anyone");
         vm.expectEmit(true, true, true, true, address(_core()));

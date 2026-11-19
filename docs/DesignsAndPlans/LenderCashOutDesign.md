@@ -120,7 +120,7 @@ What a lender side receives rests in two stores. While the loan is open, arrival
 - Moving what was set aside to the slot owner's vault happens in the same step where that step can move it, and otherwise in a step anyone may call, which also runs inside the holder's own claim. A keeper pass backs it. Its timing changes nothing for the holder, and the slot owner's money is already theirs.
 - **The payment is its own kind of vault movement.** It goes from the vault that holds the lender side's money to the slot owner's vault, with the payee read from the advance's record. It is not a payout to the holder, so the holder's protection delay does not hold it. Where the money sits in a former holder's vault, the usual consolidation to the current holder runs first.
 - **A flagged holder does not stop it.** The step that pays the advance has its own path, which pays the advance and leaves the holder's frozen claim frozen.
-- What goes to the advance returns to the slot as any repayment does.
+- What goes to the advance, from the loan or from the holder, lands in the slot owner's vault as free balance, and the slot's exposure falls by the principal part. It does not re-enter the slot's capital by itself; the owner funds the slot again. (Settled with the builder, 2026-11-19, under the payout rule.)
 
 ### 6.5 While the advance is open
 
@@ -239,7 +239,11 @@ The security thread reviewed this design before it merged. All of it is folded i
 
 ## 14. Open items for the builder to raise, not decide silently
 
-1. Every step that takes from the two stores today, listed and moved onto the one library; any the security review did not name is reported.
-2. How the in-kind split fits the fallback's existing claim steps.
-3. What an advance record does when the slot owner's account is replaced or clawed back.
-4. Whether `cashOptions` fits on the verdict's facet.
+Settled with the builder on 2026-11-19:
+
+1. Every taker and adder is on the one library. The pre-deploy check found two writers the security review had not named, the matched liquidation's rescale of the lender row in a fallback and the seller-claim host's helper, and both now go through it. A keeper's claim for the holder runs inside the order.
+2. Nothing is split before the one retry. After a failed retry the split uses the rate stored on the fallback's snapshot, never a price read at the split. With no price the advance takes all, which is also the answer should the in-kind path of an illiquid asset ever be reached.
+3. The advance record names the slot owner's address, as a slot does. A payment that lands in a replaced or clawed-back account's vault is reached by that account's later-arrival sweep. A flagged slot owner's part is held aside and never stands in the borrower's way. On the holder's side the rule of 6.4 has no exception: there is no state in which interest runs on money that has arrived, or on a holder willing to pay. An arrival is booked for the advance wherever the lender side's money sits, and a holder's own repayment to a flagged slot owner is held aside for that owner.
+4. `cashOptions` and `sellNow` are on their own facet, which asks the exit verdict by self-call and copies none of its checks.
+
+The step that pays a set-aside to the slot owner has a keeper pass of its own, shipped disarmed. The lock stops the same-lender renewal and the extension; continuing with another lender (`InstantMarketDesign.md` 6.1) stays open, because it pays the lender side whole through the one order.

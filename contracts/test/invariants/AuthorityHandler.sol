@@ -241,6 +241,13 @@ contract AuthorityHandler is Test {
         uint256 n = core.balanceOf(r);
         if (n == 0) return;
         uint256 t = core.tokenOfOwnerByIndex(r, tokenSeed % n);
+        // #3246 part 2 — the replacing wallet asks first and waits the
+        // delay, unless the account is locked (then the move stays refused).
+        (,, bool locked) = _vaultLockState(r);
+        if (!locked) {
+            (bool open,) = LibTestProtection.vaultOf(diamond, r).positionMoveState();
+            if (!open) LibTestProtection.openPositionMove(diamond, r);
+        }
         LibTestPositionNFT.waitOutCooldown(diamond, t);
         uint256[] memory ids = new uint256[](1);
         ids[0] = t;
@@ -248,6 +255,10 @@ contract AuthorityHandler is Test {
         try core.recover(ids) {
             expectedHolder[t] = replacementOf[r];
         } catch {}
+    }
+
+    function _vaultLockState(address account) internal returns (bool enabled, bool retired, bool locked) {
+        (enabled, locked,,, retired) = LibTestProtection.vaultOf(diamond, account).protectionCore();
     }
 
     /// @notice A side's manager sets that side's auto-extend caps.

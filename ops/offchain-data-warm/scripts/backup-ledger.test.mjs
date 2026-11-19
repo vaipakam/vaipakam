@@ -13,7 +13,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 
-import { isBackblazeHost, requireScope } from './lib/b2-native.mjs';
+import { authorize, isBackblazeHost, isMasterKey, keyScopeDrift, requireScope } from './lib/b2-native.mjs';
 import { fakeB2 as makeFakeB2 } from './test-helpers/fake-b2.mjs';
 import {
   ENTRY_RETENTION_DAYS,
@@ -312,21 +312,62 @@ test('a key carries only the characters the alert issue can record', () => {
 // ── Key scope ───────────────────────────────────────────────────────────
 
 test('a key with more authority than the job, or less, or a wider scope, is refused', () => {
-  const ok = { capabilities: ['listFiles', 'readFiles'], bucketId: 'B', bucketName: 'warm', namePrefix: null };
+  const ok = { capabilities: ['listFiles', 'readFiles'], buckets: [{ id: 'B', name: 'warm' }], namePrefix: null };
   assert.equal(requireScope(ok, { ...ARCHIVE_KEY_SCOPE, bucket: 'warm' }), 'B');
   assert.throws(() => requireScope({ ...ok, capabilities: [...ok.capabilities, 'deleteFiles'] }, { ...ARCHIVE_KEY_SCOPE, bucket: 'warm' }), /must not have: deleteFiles/);
   assert.throws(() => requireScope({ ...ok, capabilities: ['listFiles'] }, { ...ARCHIVE_KEY_SCOPE, bucket: 'warm' }), /missing required/);
-  assert.throws(() => requireScope({ ...ok, bucketId: null }, { ...ARCHIVE_KEY_SCOPE, bucket: 'warm' }), /not confined/);
+  assert.throws(() => requireScope({ ...ok, buckets: null }, { ...ARCHIVE_KEY_SCOPE, bucket: 'warm' }), /not confined to one bucket \(it may reach every bucket/);
+  assert.throws(() => requireScope({ ...ok, buckets: [] }, { ...ARCHIVE_KEY_SCOPE, bucket: 'warm' }), /confined to 0 buckets/);
+  const two = { ...ok, buckets: [{ id: 'B', name: 'warm' }, { id: 'L', name: 'ledger' }] };
+  assert.throws(() => requireScope(two, { ...ARCHIVE_KEY_SCOPE, bucket: 'warm' }), /confined to 2 buckets, not one/);
   assert.throws(() => requireScope(ok, { ...ARCHIVE_KEY_SCOPE, bucket: 'other' }), /scoped to warm/);
   assert.throws(() => requireScope({ ...ok, namePrefix: 'archives/' }, { ...ARCHIVE_KEY_SCOPE, bucket: 'warm' }), /name prefix/);
   const ledger = { ...ok, capabilities: [...LEDGER_KEY_SCOPE.required, 'bypassGovernance'] };
   assert.throws(() => requireScope(ledger, { ...LEDGER_KEY_SCOPE, bucket: 'warm' }), /bypassGovernance/);
 });
 
+test('a key made by the current B2 command line signs in on API version 4', async () => {
+  const b2 = fakeB2({ now: NOW })
+    .bucket('warm')
+    .bucket('ledger', { lock: true })
+    .key('one', { bucket: 'warm', capabilities: ['listFiles', 'readFiles'] })
+    .key('two', { buckets: ['warm', 'ledger'], capabilities: ['listFiles'] })
+    .key('master', { bucket: null, capabilities: ['listFiles', 'writeKeys'] });
+  const one = await authorize('one', 'k', { fetchImpl: b2.fetch });
+  assert.deepEqual(one.buckets, [{ id: 'bkt-warm', name: 'warm' }]);
+  assert.equal(requireScope(one, { label: 't', bucket: 'warm', allowed: ['listFiles', 'readFiles'], required: ['listFiles'] }), 'bkt-warm');
+  const two = await authorize('two', 'k', { fetchImpl: b2.fetch });
+  assert.throws(() => requireScope(two, { label: 't', bucket: 'warm', allowed: ['listFiles'], required: [] }), /confined to 2 buckets/);
+  const master = await authorize('master', 'k', { fetchImpl: b2.fetch });
+  assert.equal(master.buckets, null);
+  assert.equal(isMasterKey(master), true);
+  assert.equal(isMasterKey(one), false);
+  // The fake answers any other version the way B2 answers a version 3
+  // sign-in with such a key, so a call that drifted off version 4 fails here.
+  const v3 = await b2.fetch('https://api.backblazeb2.com/b2api/v3/b2_authorize_account', { headers: { Authorization: 'Basic eDp5' } });
+  assert.equal(v3.status, 400);
+});
+
+test('a sign-in answer without the version 4 shape is refused, not read as unrestricted', async () => {
+  const answer = (storageApi) => async () => new Response(JSON.stringify({ accountId: 'a', authorizationToken: 't', apiInfo: { storageApi } }), { status: 200 });
+  const base = { apiUrl: 'https://api005.backblazeb2.com', downloadUrl: 'https://f005.backblazeb2.com' };
+  await assert.rejects(authorize('k', 's', { fetchImpl: answer({ ...base, capabilities: ['listFiles'], bucketId: 'B', bucketName: 'warm' }) }), /without apiInfo.storageApi.allowed/);
+  await assert.rejects(authorize('k', 's', { fetchImpl: answer({ ...base, allowed: { capabilities: ['listFiles'], buckets: { id: 'B' } } }) }), /not a list/);
+});
+
+test('an existing key is reused only at exactly the scope it would be made with', () => {
+  const want = { bucketId: 'B', capabilities: ['listFiles', 'readFiles'] };
+  assert.deepEqual(keyScopeDrift({ bucketIds: ['B'], capabilities: ['readFiles', 'listFiles'], namePrefix: null }, want), []);
+  assert.match(keyScopeDrift({ bucketIds: null, capabilities: want.capabilities }, want)[0], /buckets all/);
+  assert.match(keyScopeDrift({ bucketIds: ['B', 'L'], capabilities: want.capabilities }, want)[0], /\[B, L\]/);
+  assert.match(keyScopeDrift({ bucketIds: ['B'], capabilities: ['listFiles'] }, want)[0], /capabilities/);
+  assert.match(keyScopeDrift({ bucketIds: ['B'], capabilities: want.capabilities, namePrefix: 'x/' }, want)[0], /name prefix/);
+});
+
 test('only Backblaze hosts over https are called', () => {
   assert.equal(isBackblazeHost('https://api005.backblazeb2.com'), true);
   assert.equal(isBackblazeHost('https://f005.backblazeb2.com/file'), true);
-  assert.equal(isBackblazeHost('https://pod-000-1005-03.backblaze.com/b2api/v3/b2_upload_file/x'), true);
+  assert.equal(isBackblazeHost('https://pod-000-1005-03.backblaze.com/b2api/v4/b2_upload_file/x'), true);
   assert.equal(isBackblazeHost('https://evilbackblaze.com'), false);
   assert.equal(isBackblazeHost('https://pod.backblaze.com:8443'), false);
   assert.equal(isBackblazeHost('http://api005.backblazeb2.com'), false);
@@ -385,7 +426,7 @@ test('a run records every archive once, locked in compliance mode, and a second 
   assert.equal(entries[0].fileRetention.retainUntilTimestamp, NOW + ENTRY_RETENTION_DAYS * DAY);
   assert.equal(entries[0].fileInfo.sha256, sha('night'));
   assert.equal(entries[0].fileInfo.check, 'match');
-  const body = JSON.parse(Buffer.from(await (await b2.fetch(`https://f005.backblazeb2.com/b2api/v3/b2_download_file_by_id?fileId=${entries[0].fileId}`, { headers: { Authorization: 'ledger' } })).arrayBuffer()).toString());
+  const body = JSON.parse(Buffer.from(await (await b2.fetch(`https://f005.backblazeb2.com/b2api/v4/b2_download_file_by_id?fileId=${entries[0].fileId}`, { headers: { Authorization: 'ledger' } })).arrayBuffer()).toString());
   assert.equal(body.discovery, 'before-ledger');
   assert.equal(body.archive.sha256, sha('night'));
 
@@ -526,7 +567,7 @@ test('a manifest too large to be one is a bad manifest, and the run goes on', as
   assert.deepEqual(entries.map((e) => e.fileName).sort(), [`entries/daily/2026-10-26/${ok}.json`, `entries/daily/2026-10-27/${id}.json`]);
   const entry = entries.find((e) => e.fileName.endsWith(`/${id}.json`));
   assert.equal(entry.fileInfo.check, 'bad-manifest');
-  const body = JSON.parse(Buffer.from(await (await b2.fetch(`https://f005.backblazeb2.com/b2api/v3/b2_download_file_by_id?fileId=${entry.fileId}`, { headers: { Authorization: 'ledger' } })).arrayBuffer()).toString());
+  const body = JSON.parse(Buffer.from(await (await b2.fetch(`https://f005.backblazeb2.com/b2api/v4/b2_download_file_by_id?fileId=${entry.fileId}`, { headers: { Authorization: 'ledger' } })).arrayBuffer()).toString());
   assert.equal(body.manifest.versions[0].sha256, null);
   assert.match(body.manifest.versions[0].unread, /larger than/);
 });
@@ -582,7 +623,7 @@ test('a manifest name piled with versions is ambiguous, read from the listing al
   const entry = dailyEntries(b2).find((e) => e.fileName.endsWith(`/${id}.json`));
   assert.equal(entry.fileInfo.check, 'ambiguous-manifest');
   assert.match(entry.fileInfo.manifests, /^[0-9a-f]{64}$/);
-  const body = JSON.parse(Buffer.from(await (await b2.fetch(`https://f005.backblazeb2.com/b2api/v3/b2_download_file_by_id?fileId=${entry.fileId}`, { headers: { Authorization: 'ledger' } })).arrayBuffer()).toString());
+  const body = JSON.parse(Buffer.from(await (await b2.fetch(`https://f005.backblazeb2.com/b2api/v4/b2_download_file_by_id?fileId=${entry.fileId}`, { headers: { Authorization: 'ledger' } })).arrayBuffer()).toString());
   assert.equal(body.manifest.versions.length, 201);
   // Unchanged set: no re-check, nothing new. One more version: re-checked, same verdict.
   assert.deepEqual((await run(b2)).live.flatMap((p) => p.keys).sort(), expected);

@@ -85,6 +85,8 @@ test('a lender is offered a borrow request that fits; a request outside its limi
   await page.getByTestId('pick-lending').locator('select').selectOption(WETH);
   await page.getByTestId('pick-collateral').locator('select').selectOption(tliq);
   await expect(page.locator(`[data-offer-id="${fitting}"]`)).toBeVisible({ timeout: 60_000 });
+  // #3761: the Lend form opens on Auto-lend; this flow posts a one-time offer.
+  await page.getByTestId('lend-choice-once').check();
   await page.getByTestId('lend-offer-open').click();
   await expect(page.getByTestId('request-duration')).toContainText('30 days', { timeout: 60_000 });
 

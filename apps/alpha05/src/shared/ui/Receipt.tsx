@@ -96,6 +96,14 @@ export function Receipt({ receipt, describeAsset, nowMs }: ReceiptProps) {
           </a>
         </p>
       )}
+      {receipt.sections?.map((sec) => (
+        <div className="receipt-section tier-a" key={sec.title} data-testid="receipt-section">
+          <h4>{sec.title}</h4>
+          {sec.body.map((b) => (
+            <p key={b}>{b}</p>
+          ))}
+        </div>
+      ))}
       {receipt.consequences.length > 0 && (
         <ul className="consequences tier-a" aria-label={text('receipt.consequences')}>
           {receipt.consequences.map((c) => {

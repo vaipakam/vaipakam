@@ -120,6 +120,60 @@ contract VaultRecovery is VaultProtectionBase {
         _settleRecovery(P.layout());
     }
 
+    // ─── #3246 part 2 — a replaced account's positions ──────────────────
+
+    /**
+     * @notice Ask to move this replaced account's position tokens to the
+     *         wallet that replaced it (owner decision 2026-11-18: the move
+     *         waits the delay and a lock stops it). Only that wallet, the
+     *         account's owner record, asks (a direct call or its signature),
+     *         and only once the replacement is complete. The tokens may move
+     *         from one delay later until one further delay after that, by
+     *         `PositionNFT.recover`, which anyone may call; the destination is
+     *         always the owner record at that moment. A new request replaces a
+     *         pending one.
+     * @dev    A loosening change like the others: refused while the account
+     *         is locked or in its cool-down, and dropped by a lock, a further
+     *         replacement or a clawback (the epoch). A recovered account's
+     *         positions never leave it, so it is refused there for good.
+     *         Until the move applies nothing changes: the replacing wallet
+     *         manages the account and its payouts follow the account's rules.
+     */
+    function requestPositionMove(Auth calldata auth) external onlyDelegateCall {
+        P.Layout storage l = P.layout();
+        if (!l.retired) revert NotReplaced();
+        if (l.recovered) revert RecoveredAccount();
+        _loosenable(l);
+        address to = _asOwner(
+            auth,
+            PURPOSE_POSITION_MOVE,
+            keccak256(
+                abi.encode(POSITION_MOVE_TYPEHASH, _owner(), _nonce(auth.key, PURPOSE_POSITION_MOVE), auth.expiry)
+            )
+        );
+        uint64 at = _later(l);
+        l.positionMoveAt = at;
+        l.positionMoveEpoch = l.epoch;
+        emit PositionMoveRequested(_account(), to, at, auth.key);
+    }
+
+    /// @notice Cancel the pending position move (the owner or any signer, on
+    ///         the cancel lane), matured or not.
+    function cancelPositionMove(Auth calldata auth) external onlyDelegateCall {
+        P.Layout storage l = P.layout();
+        uint64 at = P.positionMovePending(l);
+        _asOwnerOrSigner(
+            auth,
+            PURPOSE_ALLOWLIST_CANCEL,
+            keccak256(
+                abi.encode(POSITION_MOVE_CANCEL_TYPEHASH, at, _nonce(auth.key, PURPOSE_ALLOWLIST_CANCEL), auth.expiry)
+            )
+        );
+        if (at == 0) revert NotRequested();
+        l.positionMoveAt = 0;
+        emit PositionMoveCancelled(_account(), at, auth.key);
+    }
+
     // ─── #3246 part 2 — the clawback ────────────────────────────────────
 
     /**

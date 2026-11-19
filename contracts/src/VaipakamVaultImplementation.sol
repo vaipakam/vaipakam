@@ -979,6 +979,16 @@ contract VaipakamVaultImplementation is
         return (l.enabled, l.locked, l.delay, ownerWallet, l.retired);
     }
 
+    /// @notice #3246 part 2 — whether this replaced account's position tokens
+    ///         may move to the wallet that replaced it now
+    ///         ({LibVaultProtectionStorage.positionMoveOpen}), and the pending
+    ///         request's maturity (0 = none alive). `PositionNFT.recover`
+    ///         reads it.
+    function positionMoveState() external view returns (bool open, uint64 readyAt) {
+        LibVaultProtectionStorage.Layout storage l = LibVaultProtectionStorage.layout();
+        return (LibVaultProtectionStorage.positionMoveOpen(l), LibVaultProtectionStorage.positionMovePending(l));
+    }
+
     /// @notice Codex #3489 r5 — how many locks the protection record has taken
     ///         (every lock call counts). The Diamond applies a lock's platform
     ///         effects once per count.

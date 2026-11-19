@@ -23,7 +23,8 @@
  * declines (see `_runLoanReconcilePass`), and the scan holds its cursor and
  * reads nothing that tick (#2201, see `runChainPass`). The one consumer
  * that still captures on a guess is the recycling backing snapshot, which
- * says so in its own log and is tracked on #2210.
+ * says so in its own log, records it on the stored row and publishes it
+ * beside the block number as `blockSettled: false` (#2210).
  *
  * **When the fallback engages is wider than "an old node".** The `catch` is
  * unconditional, so a timeout or a momentary error from a provider that
