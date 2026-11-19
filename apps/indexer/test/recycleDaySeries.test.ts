@@ -20,6 +20,8 @@ import { describe, expect, it } from 'vitest';
 import type { Env } from '../src/env';
 import {
   applyRecycleDaySeries,
+  ensureRecycleSeriesBackfill,
+  ensureReportedCumulativeProjection,
   type RecycleSeriesLog,
 } from '../src/recycleDaySeries';
 import { handleRecyclingSeries } from '../src/recycleRoutes';
@@ -40,6 +42,22 @@ function makeHarness() {
   // the route refuses it as unserved (#2654).
   const env = { DB: h.d1, RPC_BASE_SEPOLIA: 'http://127.0.0.1:9' } as unknown as Env;
   return { h, env };
+}
+
+/**
+ * One scan pass as `runChainPass` drives it (#2835): the per-pass one-time
+ * checks run once in the prologue, then the per-block writer. The writer no
+ * longer runs those checks itself, so a test that called it bare would skip
+ * the backfill the real pass always runs first.
+ */
+async function scanPass(
+  logs: RecycleSeriesLog[],
+  env: Env,
+  chainId: number,
+): Promise<number> {
+  await ensureRecycleSeriesBackfill(env, chainId);
+  await ensureReportedCumulativeProjection(env, chainId);
+  return applyRecycleDaySeries(logs, env, chainId);
 }
 
 let logCounter = 0;
@@ -115,7 +133,7 @@ describe('applyRecycleDaySeries — absorption attribution', () => {
     // ONLY when `sourceChainId != block.chainid` — its own credit already
     // lives in the local series that VpfiRecycled feeds. Counting the
     // self-report here would add the canonical chain twice.
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         log('VpfiRecycled', { source: 1, refId: 1n, amount: 700n, dayId: 4n }),
         // Base reporting ITSELF — must not reach absorbed_mirror.
@@ -152,7 +170,7 @@ describe('applyRecycleDaySeries — absorption attribution', () => {
 
   it('accumulates several mirrors and several credits into one day', async () => {
     const { env } = makeHarness();
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         log('VpfiRecycled', { source: 1, refId: 1n, amount: 100n, dayId: 9n }),
         log('VpfiRecycled', { source: 2, refId: 2n, amount: 250n, dayId: 9n }),
@@ -184,7 +202,7 @@ describe('applyRecycleDaySeries — absorption attribution', () => {
     // Two credits in the SAME block carrying DIFFERENT reward days. A
     // block-derived key would collapse them into one bucket; the reward
     // day is stated by the event and must be honoured.
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         log(
           'VpfiRecycled',
@@ -213,8 +231,8 @@ describe('applyRecycleDaySeries — absorption attribution', () => {
       amount: 500n,
       dayId: 6n,
     });
-    const first = await applyRecycleDaySeries([credit], env, CHAIN);
-    const replay = await applyRecycleDaySeries([credit], env, CHAIN);
+    const first = await scanPass([credit], env, CHAIN);
+    const replay = await scanPass([credit], env, CHAIN);
     expect(first).toBe(1);
     expect(replay).toBe(0); // dedup, not a second credit
     expect(day(await readSeries(env), 6).absorbedLocal).toBe('500');
@@ -229,7 +247,7 @@ describe('applyRecycleDaySeries — absorption attribution', () => {
       forDayReported: 900n,
       dayCreditAccepted: 900n,
     });
-    await applyRecycleDaySeries([selfReport], env, CHAIN);
+    await scanPass([selfReport], env, CHAIN);
     const seen = h.db
       .prepare(
         `SELECT kind FROM recycle_series_events
@@ -244,7 +262,7 @@ describe('applyRecycleDaySeries — absorption attribution', () => {
 describe('applyRecycleDaySeries — pool stamps', () => {
   it('does not reset absorption already credited to the day', async () => {
     const { env } = makeHarness();
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         log('VpfiRecycled', { source: 1, refId: 1n, amount: 80n, dayId: 3n }),
         stamped(3n),
@@ -260,7 +278,7 @@ describe('applyRecycleDaySeries — pool stamps', () => {
 
   it('carries every stamped field through to the read surface', async () => {
     const { env } = makeHarness();
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         stamped(1n, {
           scheduleFloor: 111n,
@@ -289,7 +307,7 @@ describe('applyRecycleDaySeries — pool stamps', () => {
 describe('handleRecyclingSeries — refusing to publish a wrong number', () => {
   it('serves NULL, not 0, for a day that has absorption but no stamp', async () => {
     const { env } = makeHarness();
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         log('VpfiRecycled', { source: 1, refId: 1n, amount: 42n, dayId: 8n }),
         stamped(9n),
@@ -313,7 +331,7 @@ describe('handleRecyclingSeries — refusing to publish a wrong number', () => {
 
   it('withholds netEmission on an UNARMED day and marks it an estimate', async () => {
     const { env } = makeHarness();
-    await applyRecycleDaySeries(
+    await scanPass(
       [stamped(5n, { freshDrawdown: 900n, armed: false })],
       env,
       CHAIN,
@@ -331,7 +349,7 @@ describe('handleRecyclingSeries — refusing to publish a wrong number', () => {
 
   it('keeps unarmed days OUT of the lifetime emission cumulative', async () => {
     const { env } = makeHarness();
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         stamped(1n, {
           freshDrawdown: 700n,
@@ -352,7 +370,7 @@ describe('handleRecyclingSeries — refusing to publish a wrong number', () => {
 
   it('computes selfFundingRatio as recycledBudget / dailyPool', async () => {
     const { env } = makeHarness();
-    await applyRecycleDaySeries(
+    await scanPass(
       [stamped(1n, { scheduleFloor: 750n, recycledBudget: 250n })],
       env,
       CHAIN,
@@ -363,7 +381,7 @@ describe('handleRecyclingSeries — refusing to publish a wrong number', () => {
 
   it('reports selfFunded (never a division by the zeroed floor)', async () => {
     const { env } = makeHarness();
-    await applyRecycleDaySeries(
+    await scanPass(
       [stamped(1n, { scheduleFloor: 0n, recycledBudget: 400n })],
       env,
       CHAIN,
@@ -376,7 +394,7 @@ describe('handleRecyclingSeries — refusing to publish a wrong number', () => {
 
   it('emits a DENSE window so a quiet day differs from a missing one', async () => {
     const { env } = makeHarness();
-    await applyRecycleDaySeries([stamped(10n), stamped(14n)], env, CHAIN);
+    await scanPass([stamped(10n), stamped(14n)], env, CHAIN);
     const body = await readSeries(env, 5);
     expect(body.fromDay).toBe(10);
     expect(body.toDay).toBe(14);
@@ -395,7 +413,7 @@ describe('handleRecyclingSeries — refusing to publish a wrong number', () => {
   it('handles wei magnitudes that overflow int64', async () => {
     const { env } = makeHarness();
     const huge = 9_000_000n * 10n ** 18n; // ≫ 2^63
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         stamped(1n, { freshDrawdown: huge, recycledBudget: huge }),
         log('VpfiRecycled', { source: 1, refId: 1n, amount: huge, dayId: 1n }),
@@ -415,7 +433,7 @@ describe('handleRecyclingSeries — scope, coverage and partial globals', () => 
     const { env } = makeHarness();
     // One mirror has reported; others may not have. The components are
     // real, the sum is not yet global.
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         log('VpfiRecycled', { source: 1, refId: 1n, amount: 10n, dayId: 3n }),
         log('ChainRecycledReported', {
@@ -445,7 +463,7 @@ describe('handleRecyclingSeries — scope, coverage and partial globals', () => 
   it('reports local-only scope for a deployment that never finalizes a day', async () => {
     const { env } = makeHarness();
     // A mirror: it observes its own credits and never stamps a day.
-    await applyRecycleDaySeries(
+    await scanPass(
       [log('VpfiRecycled', { source: 1, refId: 1n, amount: 60n, dayId: 2n })],
       env,
       CHAIN,
@@ -460,7 +478,7 @@ describe('handleRecyclingSeries — scope, coverage and partial globals', () => 
     const { env } = makeHarness();
     // Consumer deployed mid-programme: the first thing it ever saw is
     // day 300. A 30-day default window must not invent 271..299.
-    await applyRecycleDaySeries([stamped(300n), stamped(301n)], env, CHAIN);
+    await scanPass([stamped(300n), stamped(301n)], env, CHAIN);
     const body = await readSeries(env, 30);
     expect(body.coverageFromDay).toBe(300);
     expect(body.fromDay).toBe(300);
@@ -473,7 +491,7 @@ describe('handleRecyclingSeries — scope, coverage and partial globals', () => 
     // identical days, which made the trailing mean the same at any window
     // size — so it passed while the window was still coupled to `days`,
     // and a mutation re-coupling them survived it.
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         stamped(1n, { scheduleFloor: 4000n, recycledBudget: 0n }),
         stamped(2n, { scheduleFloor: 1000n, recycledBudget: 0n }),
@@ -494,7 +512,7 @@ describe('handleRecyclingSeries — scope, coverage and partial globals', () => 
 
   it('files pre-launch absorption apart from the day series', async () => {
     const { env } = makeHarness();
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         // No dayId at all — the contracts stopped naming one (#1504).
         log('VpfiRecycledPreLaunch', { source: 1, refId: 1n, amount: 900n }),
@@ -514,7 +532,7 @@ describe('handleRecyclingSeries — scope, coverage and partial globals', () => 
 
   it('never lets a pre-launch credit reach a day bucket', async () => {
     const { h, env } = makeHarness();
-    await applyRecycleDaySeries(
+    await scanPass(
       [log('VpfiRecycledPreLaunch', { source: 1, refId: 1n, amount: 5n })],
       env,
       CHAIN,
@@ -569,7 +587,7 @@ describe('handleRecyclingSeries — scope, coverage and partial globals', () => 
     }
 
     // A completely quiet scan — no logs at all. The backfill must still run.
-    await applyRecycleDaySeries([], env, CHAIN);
+    await scanPass([], env, CHAIN);
 
     const d7 = day(await readSeries(env), 7);
     expect(d7.stamped).toBe(true);
@@ -597,7 +615,7 @@ describe('handleRecyclingSeries — scope, coverage and partial globals', () => 
         );
 
     insert(10, '77', '4');
-    await applyRecycleDaySeries([], env, CHAIN);
+    await scanPass([], env, CHAIN);
     expect(day(await readSeries(env), 4).absorbedLocal).toBe('77');
 
     // A row appearing in the feed AFTER the replay has completed belongs
@@ -607,7 +625,7 @@ describe('handleRecyclingSeries — scope, coverage and partial globals', () => 
     // harmless either way, which is exactly why the earlier version of
     // this test survived a mutation that removed the one-time guard.
     insert(11, '5', '4');
-    await applyRecycleDaySeries([], env, CHAIN);
+    await scanPass([], env, CHAIN);
     expect(day(await readSeries(env), 4).absorbedLocal).toBe('77');
   });
 
@@ -640,7 +658,7 @@ describe('handleRecyclingSeries — the ratified window, and what anchors it', (
     // excluded; inside a 30-day one it dominates the mean. The days must
     // therefore differ — a flat fixture would report the same mean at
     // every window size and prove nothing.
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         ...floors(1, (d) => (d > 10 ? -1n : d === 1 ? 10_000n : 100n)),
         log('VpfiRecycled', { source: 1, refId: 1n, amount: 700n, dayId: 5n }),
@@ -655,7 +673,7 @@ describe('handleRecyclingSeries — the ratified window, and what anchors it', (
 
   it('anchors the window on the latest FINALIZED day, not the latest row', async () => {
     const { env } = makeHarness();
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         ...floors(3, (d) => (d > 9 ? -1n : d === 3 ? 700n : 100n)),
         log('VpfiRecycled', { source: 1, refId: 1n, amount: 700n, dayId: 5n }),
@@ -671,7 +689,7 @@ describe('handleRecyclingSeries — the ratified window, and what anchors it', (
     // finalized. Anchoring on the highest row of any kind would slide the
     // window to 4..10 and drop day 3, changing a lifetime figure because
     // a day started.
-    await applyRecycleDaySeries(
+    await scanPass(
       [log('VpfiRecycled', { source: 1, refId: 2n, amount: 1n, dayId: 10n })],
       env,
       CHAIN,
@@ -699,7 +717,7 @@ describe('handleRecyclingSeries — the ratified window, and what anchors it', (
 describe('applyRecycleDaySeries — the pre-cutover event shape', () => {
   it('REFUSES a legacy five-field stamp instead of coercing it', async () => {
     const { env } = makeHarness();
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         // Emitted before the event was widened: no freshDrawdown, no armed.
         log('GovernorDayPoolStamped', {
@@ -731,7 +749,7 @@ describe('applyRecycleDaySeries — the pre-cutover event shape', () => {
 
   it('records the refused stamp so a replay cannot re-decide it', async () => {
     const { h, env } = makeHarness();
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         log('GovernorDayPoolStamped', {
           dayId: 2n,
@@ -754,7 +772,7 @@ describe('applyRecycleDaySeries — the pre-cutover event shape', () => {
 
   it('still accepts the widened stamp for the same day', async () => {
     const { env } = makeHarness();
-    await applyRecycleDaySeries(
+    await scanPass(
       [stamped(2n, { freshDrawdown: 42n, armed: true })],
       env,
       CHAIN,
@@ -769,7 +787,7 @@ describe('handleRecyclingSeries — pre-launch stock, honestly scoped', () => {
     // The normal state before the schedule starts: credits exist, days do
     // not. Reading the total after the empty-series branch would report
     // zero for exactly the period the figure describes.
-    await applyRecycleDaySeries(
+    await scanPass(
       [log('VpfiRecycledPreLaunch', { source: 1, refId: 1n, amount: 640n })],
       env,
       CHAIN,
@@ -785,7 +803,7 @@ describe('handleRecyclingSeries — pre-launch stock, honestly scoped', () => {
     // for "does this chain have the split" — it marks the clean case as
     // legacy. No provenance flag is published in either direction.
     const { env } = makeHarness();
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         log('VpfiRecycled', { source: 1, refId: 1n, amount: 30n, dayId: 0n }),
         stamped(0n),
@@ -800,7 +818,7 @@ describe('handleRecyclingSeries — pre-launch stock, honestly scoped', () => {
 
   it('counts the pre-launch stock in the runway numerator', async () => {
     const { env } = makeHarness();
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
         log('VpfiRecycled', { source: 1, refId: 1n, amount: 300n, dayId: 1n }),
@@ -815,7 +833,7 @@ describe('handleRecyclingSeries — pre-launch stock, honestly scoped', () => {
     // The pre-launch stock is real recycled value in the bucket, so the
     // LIFETIME numerator includes it. Keeping it out of the trailing rate
     // says nothing about this total.
-    await applyRecycleDaySeries(
+    await scanPass(
       [log('VpfiRecycledPreLaunch', { source: 1, refId: 2n, amount: 200n })],
       env,
       CHAIN,
@@ -828,7 +846,7 @@ describe('handleRecyclingSeries — pre-launch stock, honestly scoped', () => {
 describe('handleRecyclingSeries — a mesh runway counts every chain in full', () => {
   it("includes a mirror's LIFETIME reported cumulative, not just its accepted days", async () => {
     const { env } = makeHarness();
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
         // The mirror reports a lifetime total of 500 but only 100 is
@@ -852,7 +870,7 @@ describe('handleRecyclingSeries — a mesh runway counts every chain in full', (
 
   it('does not count a mirror twice when its day credit is also attributed', async () => {
     const { env } = makeHarness();
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
         log('ChainRecycledReported', {
@@ -875,7 +893,7 @@ describe('handleRecyclingSeries — a mesh runway counts every chain in full', (
 
   it('never walks a reported cumulative backwards on a replayed report', async () => {
     const { env } = makeHarness();
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
         log('ChainRecycledReported', {
@@ -905,7 +923,7 @@ describe('handleRecyclingSeries — a mesh runway counts every chain in full', (
 describe('handleRecyclingSeries — coverage-bounded folds vs self-healing reports', () => {
   it("uses this chain's own self-report when it exceeds the observed fold", async () => {
     const { env } = makeHarness();
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
         log('VpfiRecycled', { source: 1, refId: 1n, amount: 50n, dayId: 1n }),
@@ -928,7 +946,7 @@ describe('handleRecyclingSeries — coverage-bounded folds vs self-healing repor
 
   it('never goes backwards when the self-report lags observed credits', async () => {
     const { env } = makeHarness();
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
         log('ChainRecycledReported', {
@@ -989,7 +1007,7 @@ describe('handleRecyclingSeries — coverage-bounded folds vs self-healing repor
 
     // The ingest replay is gated by the dedup row, so ONLY a projection
     // rebuild can populate the new table here.
-    await applyRecycleDaySeries(
+    await scanPass(
       [stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n })],
       env,
       CHAIN,
@@ -1007,7 +1025,7 @@ describe('handleRecyclingSeries — mirror attribution and rollout windows', () 
     // holds both before and after that migration lands.
     const { h, env } = makeHarness();
     h.db.prepare(`DROP TABLE IF EXISTS recycle_day_backfill`).run();
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n, freshDrawdown: 12n }),
         log('ChainRecycledReported', {
@@ -1033,7 +1051,7 @@ describe('handleRecyclingSeries — mirror attribution and rollout windows', () 
 
   it('keeps a stored absorption-only row distinguishable from a dense-series gap', async () => {
     const { env } = makeHarness();
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         log('VpfiRecycled', { source: 1, refId: 1n, amount: 60n, dayId: 1n }),
         stamped(3n),
@@ -1054,7 +1072,7 @@ describe('handleRecyclingSeries — mirror attribution and rollout windows', () 
     const { env } = makeHarness();
     // Every day is event-sourced, so the mirror stock IS decomposable: each
     // source contributes its own reported cumulative.
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         stamped(5n, { scheduleFloor: 100n, recycledBudget: 0n }),
         log('ChainRecycledReported', {
@@ -1100,7 +1118,7 @@ describe('handleRecyclingSeries — mirror attribution and rollout windows', () 
     // Mirror absorption is what makes attribution matter — without it the
     // rollout window is served exactly (see the sibling test). This fixture
     // deliberately has some, so the missing column DOES withhold.
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
         log('ChainRecycledReported', {
@@ -1145,7 +1163,7 @@ describe('handleRecyclingSeries — mirror attribution and rollout windows', () 
            PRIMARY KEY (chain_id, source_chain_id))`,
       )
       .run();
-    const applied = await applyRecycleDaySeries(
+    const applied = await scanPass(
       [
         stamped(1n),
         log('ChainRecycledReported', {
@@ -1171,7 +1189,7 @@ describe('handleRecyclingSeries — mirror attribution and rollout windows', () 
 
   it('WITHHOLDS the runway when the reported table is gone (not a rollout)', async () => {
     const { h, env } = makeHarness();
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
         log('VpfiRecycled', { source: 1, refId: 1n, amount: 300n, dayId: 1n }),
@@ -1192,7 +1210,7 @@ describe('handleRecyclingSeries — mirror attribution and rollout windows', () 
 
   it('WITHHOLDS the runway until the attribution rebuild has actually run', async () => {
     const { h, env } = makeHarness();
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
         log('ChainRecycledReported', {
@@ -1226,7 +1244,7 @@ describe('handleRecyclingSeries — mirror attribution and rollout windows', () 
     // report that accepted zero both leave `mirrorUnreported` at zero, so
     // the numerator is already exact. Withholding there is pure loss —
     // my r8 gate tripped on "a report row exists" rather than on risk.
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
         log('VpfiRecycled', { source: 1, refId: 1n, amount: 500n, dayId: 1n }),
@@ -1267,7 +1285,7 @@ describe('handleRecyclingSeries — mirror attribution and rollout windows', () 
            PRIMARY KEY (chain_id, source_chain_id))`,
       )
       .run();
-    await applyRecycleDaySeries(
+    await scanPass(
       [
         stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
         log('VpfiRecycled', { source: 1, refId: 1n, amount: 400n, dayId: 1n }),
@@ -1284,7 +1302,40 @@ describe('handleRecyclingSeries — mirror attribution and rollout windows', () 
 
   it('marks a stored day as event-sourced', async () => {
     const { env } = makeHarness();
-    await applyRecycleDaySeries([stamped(2n)], env, CHAIN);
+    await scanPass([stamped(2n)], env, CHAIN);
     expect(day(await readSeries(env), 2).origin).toBe('event');
+  });
+});
+
+describe('per-block writer reads no one-time flag (#2835)', () => {
+  it('applyRecycleDaySeries does not re-check the backfill or projection flag per block', async () => {
+    const { env } = makeHarness();
+    // The pass prologue's checks, done once.
+    await ensureRecycleSeriesBackfill(env, CHAIN);
+    await ensureReportedCumulativeProjection(env, CHAIN);
+    const seen: string[] = [];
+    const db = env.DB;
+    const spied = {
+      ...env,
+      DB: new Proxy(db, {
+        get(target, prop, receiver) {
+          if (prop === 'prepare') {
+            return (sql: string) => {
+              seen.push(sql);
+              return target.prepare(sql);
+            };
+          }
+          const v = Reflect.get(target, prop, receiver);
+          return typeof v === 'function' ? v.bind(target) : v;
+        },
+      }),
+    } as Env;
+    for (const b of [100n, 101n, 102n]) {
+      await applyRecycleDaySeries([stamped(10n + b)], spied, CHAIN);
+    }
+    expect(seen.filter((q) => /backfill_done|projection_version/.test(q))).toEqual([]);
+    seen.length = 0;
+    await applyRecycleDaySeries([log('LoanRepaid', {}, 103n)], spied, CHAIN);
+    expect(seen).toEqual([]);
   });
 });
