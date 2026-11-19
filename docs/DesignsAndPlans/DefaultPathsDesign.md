@@ -37,7 +37,7 @@ Pre-selected, each shown on the review screen in plain words with its own switch
 | Choice | What it sets | Where it applies |
 | --- | --- | --- |
 | Keep lending when repaid | An Auto-lend slot instead of a one-time offer | Every pair an Auto-lend slot may serve |
-| Re-lend repayments for me | The keeper permission for the roll action alone, for the platform's keeper (3.2) | Same, where the wallet has not given it already |
+| Re-lend repayments for me | The keeper permission for the roll action alone, for the platform's keeper (3.2) | Same, where the wallet has not given it already. Never where the platform token is the lending asset |
 | Interest by time | `acceptsProRata` on the slot | Same |
 | Fill instant borrows | The instant market's fills consent | Top-tier pairs, instant market on |
 | Renew loans this slot made | The instant market's renewal consent | Same |
@@ -66,7 +66,8 @@ A repayment is lent again by the roll step, which only the slot's owner or a kee
 
 - The preset includes one more line, **Re-lend repayments for me**, with its own switch. It names the platform's keeper by address and gives it the roll action only: it may return what a slot's loan has repaid, in full or in part, to the slot it came from, inside that slot's limits. It cannot withdraw, change the slot's terms or act on anything else. The batch carries that authorization when the wallet has not given it already.
 - With the switch off, "Keep lending when repaid" reads as it then is: each repayment waits as a claim until the lender re-lends it with one tap or collects it. The slot still fills new requests from its un-lent capital.
-- The review screen states which of the two the lender has, using the app's existing reading of the roll permission (allowed, not authorized, not known), and any cost of a keeper action that the existing roll review states.
+- **Where the platform token is the lending asset, repayments are never lent again.** The roll step refuses that asset by rule, whoever calls it. The line is shown off and greyed with that reason, the batch carries no authorization for it, and the slot is described as it then is: it lends its capital once, and each repayment returns to the lender by the ordinary claim.
+- The review screen states which case the lender is in, using the app's existing reading of the roll permission (allowed, not authorized, not available for this asset, not known), and any cost of a keeper action that the existing roll review states.
 - The permission is a wallet's, not a slot's. Where the wallet already gave it, the line shows it as given and the batch carries no call for it. Switching it off on this form leaves an existing permission as it is and says where to remove it.
 
 ### 3.3 Two forms of the same consent
@@ -148,8 +149,9 @@ The app says **pre-selected**, **switch off** and **one-time offer**. It never s
 11. An existing slot gains no consent until its owner signs the review.
 12. With "Re-lend repayments for me" on and no earlier permission, the batch authorizes the platform's keeper for the roll action alone, and a repayment of the slot's loan is lent again by the keeper. With it off, no authorization is sent, the review screen says each repayment waits for the lender, and the keeper's roll is refused.
 13. Renewal on with takeover off sets exactly that, and the slot takes over no loan.
-14. A request that allows a prepay listing or carries a cadence is not shown as fillable by a slot, on the Lend review or in the Borrow form's count.
-15. With the form set to "choose one", nothing is selected on opening, the form cannot be submitted until an option is tapped, and the batch sent equals the pre-selected form's for the same choices.
+14. A slot that lends the platform token shows "Re-lend repayments for me" off and greyed, sends no authorization, and its review screen says repayments return by the ordinary claim.
+15. A request that allows a prepay listing or carries a cadence is not shown as fillable by a slot, on the Lend review or in the Borrow form's count.
+16. With the form set to "choose one", nothing is selected on opening, the form cannot be submitted until an option is tapped, and the batch sent equals the pre-selected form's for the same choices.
 
 ## 10. Alternatives considered
 
