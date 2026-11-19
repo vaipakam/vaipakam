@@ -17,7 +17,7 @@ import { refusalFromError, StatedRefusal } from '../eligibility/refusal';
 import type { Receipt } from '../receipt/types';
 import { sendWrite } from '../tx/send';
 import { askThrough } from '../tx/simulate';
-import { useStoredValue } from '../tx/txStore';
+import { holdsFlow, useStoredValue, useTxEntry } from '../tx/txStore';
 import { useTrackedTx } from '../tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
@@ -45,6 +45,23 @@ export function approvalCleared(logs: readonly Log[], nft: Hex, tokenId: bigint)
   );
 }
 
+/** The store key one token's approval-removal flow keeps its state under. */
+export function approvalKey(chainId: number, tokenId: bigint): string {
+  return `position.approval.${chainId}.${tokenId.toString()}`;
+}
+
+/** The address an approval-removal flow already opened for this token was
+ *  reviewed against, while that flow is open or holds a transaction; null
+ *  otherwise. The page keeps such a flow mounted through its outcome even
+ *  once the approval it removed reads as gone, until the reader closes it. */
+export function useApprovalFlowHeld(chainId: number, tokenId: bigint): Hex | null {
+  const key = approvalKey(chainId, tokenId);
+  const [reviewing] = useStoredValue<boolean>(`${key}:open`);
+  const [openedTo] = useStoredValue<Hex>(`${key}:to`);
+  const entry = useTxEntry(key);
+  return (reviewing === true || holdsFlow(entry.phase)) && openedTo !== null ? openedTo : null;
+}
+
 export function TokenApprovalCard({
   side,
   tokenId,
@@ -64,8 +81,9 @@ export function TokenApprovalCard({
   const diamond = chain.diamondAddress;
   const account = own.account;
   const nft = positionNftForDiamond(diamond).nft;
-  const key = `position.approval.${chain.chainId}.${tokenId.toString()}`;
+  const key = approvalKey(chain.chainId, tokenId);
   const [reviewing, setReviewing] = useStoredValue<boolean>(`${key}:open`);
+  const [, setOpenedTo] = useStoredValue<Hex>(`${key}:to`);
   const [openedFor, setOpenedFor] = useStoredValue<string>(`${key}:openedFor`);
   const [readAt, setReadAt] = useState(() => Date.now());
   const identity = reviewIdentity(own);
@@ -96,6 +114,7 @@ export function TokenApprovalCard({
   const close = () => {
     setReviewing(null);
     setOpenedFor(null);
+    setOpenedTo(null);
     tx.reset();
   };
 
@@ -148,6 +167,7 @@ export function TokenApprovalCard({
         onClick={() => {
           setReadAt(Date.now());
           setOpenedFor(identity);
+          setOpenedTo(to);
           setReviewing(true);
           tx.review();
         }}

@@ -31,7 +31,7 @@ import { LoanClaims } from './LoanClaims';
 import { Fact, Facts } from './Facts';
 import { InterestSchedule } from './InterestSchedule';
 import { LenderDiscount } from './LenderDiscount';
-import { TokenApprovalCard } from '../../shared/positions/TokenApprovalCard';
+import { TokenApprovalCard, useApprovalFlowHeld } from '../../shared/positions/TokenApprovalCard';
 
 /** What the page says when the timing allows a default but another gate
  *  of `triggerDefault` refuses it. */
@@ -154,6 +154,12 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
   // is the only place that outcome is shown, and it closes on the reader's
   // own act (which clears this record).
   const [giving] = useStoredValue<Hex>(`${giveKey(loanId)}:receiver`);
+  // The same for an approval removal: once it lands the approval reads as
+  // gone, which must not take its finish card away.
+  const approvalHeld = {
+    lender: useApprovalFlowHeld(chain.chainId, l.lenderTokenId),
+    borrower: useApprovalFlowHeld(chain.chainId, l.borrowerTokenId),
+  };
   const canCashOut = erc20 && role?.lender === true && l.status === LOAN_STATUS_ACTIVE;
   const obligations = live ? loanObligations({ loan: l, borrowerSide, healthFactor: v.healthFactor ?? 0n }, v.deadlines, nowSec) : null;
   const unknown = text('receipt.unknown');
@@ -181,12 +187,12 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
       <RoleLine role={role} />
       {holder && <FrozenNotice state={frozen} />}
       {(['lender', 'borrower'] as const).map((side) => {
-        const to = v.approved[side];
-        // Said to the side's holder, the one wallet that can remove it.
+        const current = v.approved[side];
+        // Said to the side's holder, the one wallet that can remove it; a
+        // removal already under way stays through its outcome (approvalHeld).
         const mine = v.holders[side]?.toLowerCase() === account.toLowerCase();
-        return to !== null && to !== 'none' && mine ? (
-          <TokenApprovalCard key={side} side={side} tokenId={side === 'lender' ? l.lenderTokenId : l.borrowerTokenId} to={to} chain={chain} own={own} />
-        ) : null;
+        const to = approvalHeld[side] ?? (current !== null && current !== 'none' && mine ? current : null);
+        return to !== null ? <TokenApprovalCard key={side} side={side} tokenId={side === 'lender' ? l.lenderTokenId : l.borrowerTokenId} to={to} chain={chain} own={own} /> : null;
       })}
       {obligations && (
         <div className="position-now">
