@@ -22,7 +22,7 @@ Related designs: `VaultOutflowPolicyDesign.md`, `PayoutDestinationRuleDesign.md`
 
 - The guarantor borrows as any borrower does. The collateral stays in the guarantor's own vault under the loan's lien, and returns to the guarantor when the loan is repaid.
 - Anyone who is not on the lender's side may repay a loan **in full**. So the other person can close the loan from their own wallet.
-- A part payment is different. Today only the holder of the borrower position may make one, and only where the loan allows part repayment. There is no entry by which another person pays one interest period. So everything short of the full repayment is paid by the guarantor.
+- A part payment is different today. Only the holder of the borrower position may make one, and only where the loan allows part repayment, and there is no entry by which anyone pays one interest period from a wallet. Card #3779 (`RepaymentByOthersDesign.md`) opens both to anyone who is not on the lender's side. That is a contract change and is not part of this document. Until it is built, everything short of the full repayment is paid by the guarantor.
 - The borrowed funds arrive in the guarantor's vault as free balance. Sending them on is the guarantor's own Withdraw, under that account's own policy, and then an ordinary transfer.
 
 **The flow.**
@@ -30,13 +30,15 @@ Related designs: `VaultOutflowPolicyDesign.md`, `PayoutDestinationRuleDesign.md`
 1. On the Borrow form the guarantor chooses **Borrow for someone** and enters that person's address.
 2. The review states: "Your collateral secures this loan. If it is not repaid, your collateral is sold or passes to the lender. {address} is not bound to repay by anything on chain."
 3. After the loan opens, the app offers the two steps that send the funds: Withdraw, then send. For a protected account the app says that the address must be an approved destination and that the account's delay applies. It never routes around either.
-4. The app gives a link to the loan. The other person opens it, sees the loan with the amount that closes it today, and has one action, **Repay**, which repays the loan in full. Their page states: "Repaying returns the collateral to {guarantor}, not to you." and "Only {guarantor} can pay part of this loan or one interest period. To pay part, send them the amount." The guarantor's own page shows each amount as it falls due, so they can ask for it.
+4. The app gives a link to the loan. The other person opens it and sees the loan with the amount that closes it today. Their page states: "Repaying returns the collateral to {guarantor}, not to you."
+   - **Before #3779 is built:** one action, **Repay**, which repays the loan in full, and the line "Only {guarantor} can pay part of this loan or one interest period. To pay part, send them the amount." The guarantor's own page shows each amount as it falls due, so they can ask for it.
+   - **Once #3779 is built:** the loan's page offers what that design gives any wallet that is not on the lender's side: **Repay**, **Pay part** where the loan allows it, and **Pay this period's interest** where one is due. The flow adds nothing of its own. The app reads which entries the deployment routes and shows only those.
 5. Either person may switch on alerts for the loan (section 9).
 
 **Not offered.**
 
 - Sending the borrowed funds straight to the other person's vault when the loan opens. It would let a stolen key borrow against an account's collateral and send the proceeds away without passing the account's Withdraw policy.
-- A part payment or an interest payment by the other person. It needs contract work: the part-repayment entry accepts the holder only. The limit has a reason. A part payment changes the loan's principal, and the holder may have a refinance request, a listing or an offset open on the loan that a stranger's payment would disturb. Whether to open it, for example to an address the holder names, is a decision for the owner (section 13). Until then the flow is as above.
+- A rule of its own for the guarantor's borrower, such as an address the guarantor names as allowed to pay part. The owner's direction of 2026-11-19 is one rule for everyone (#3779), so this flow has none.
 
 **Builder to verify.** The full-repayment route accepts a payer who is not the holder of the borrower position on every loan this flow offers, and what that payer needs first (Terms accepted, not flagged). The flow is offered for loans of an ERC-20 only: a rental is settled by its renter alone. The reserve of a loan stays the holder's alone.
 
@@ -64,7 +66,7 @@ Build the flow in the app. No contract work.
 - A **team view**: the account's lending by term as a ladder (amount lent per due month), loans out, borrowings, and the recent activity with the approving wallet's own transaction link.
 - A guide on the site: how to set up a shared account with a contract wallet, what its limits can and cannot stop, and that a protected account's delay and signers still apply on top.
 
-**Builder to verify, as a test matrix with a contract wallet as owner:** vault creation, Terms acceptance, posting and accepting an offer (including the signed terms), setting a slot with its consents, the refinance payoff permit, a protected account's settings, Withdraw, Collect, the transfer of a position, and a standing instruction. Any step that refuses a contract wallet is reported with its reason, not worked around.
+**Builder to verify, as a test matrix with a contract wallet as owner:** vault creation, Terms acceptance, posting and accepting an offer (including the signed terms), receiving a position token (it is minted by the safe route, so the wallet must accept an ERC-721), setting a slot with its consents, the refinance payoff permit, a protected account's settings, Withdraw, Collect, the transfer of a position, and a standing instruction. No check in the contracts refuses a caller for being a contract. One more row is not about signatures: a contract wallet's address on one network need not be the same wallet, or exist at all, on another, so every step that names the same address on another network (a reward claim, the per-network Terms) is in the matrix, and the guide says it. Any step that refuses a contract wallet is reported with its reason, not worked around.
 
 ### Alternatives considered
 
@@ -89,7 +91,7 @@ Support a contract wallet as owner end to end, and add the team view and the gui
 - The review states what the receiver gets: the holder's remaining entitlement on the loan, paid to the receiver's own vault. That is the later repayments and the claim at the end, **after anything the loan still owes to an earlier seller**. It states what stays with the giver (anything already collected), and that the transfer cannot be undone by the platform.
 - **Seller claims.** Where an earlier sale of the position left a seller claim on the loan, interest is paid to that seller first, and a transfer does not remove the claim. The review reads the loan's open seller claims and shows the amount still owed ahead of the holder. Where the app cannot read it, the review says so and does not state what the receiver will get.
 - **The fee discount.** The lender's fee discount on a transferred loan is the lower of the figure the loan carries and the receiver's own standing. The review shows the figure that will apply to the receiver.
-- The existing transfer checks apply unchanged: the account's delay and lock, the wait after a claim, a flagged receiver. The app reads the transfer check first and shows a refusal with its reason and the time it lifts.
+- The existing transfer checks apply unchanged. A transfer is refused while the giver's positions are locked, in the block in which value last left the position and for a short wait after it (a payout, a release of collateral, a repayment), where the giver or the receiver is flagged, where the receiver is a vault and not a wallet, and from an account that has been replaced or recovered. The app tries the transfer as a simulated call first and shows a refusal with its reason and, for the wait, the time it lifts.
 - The receiver sees the loan on their own page with the note "given by {address}", and collects as any holder does.
 - A gift to a person who has not used the platform: the token arrives at their address, and they accept the Terms and collect when they first connect. The builder confirms that no step by the giver is needed for it (section 13) before the app offers it.
 
@@ -117,7 +119,7 @@ It states that each draw is its own loan with its own lender, rate and due date,
 
 ## 6. Renting access
 
-Memberships, licences, passes and tickets that exist as tokens can be rented by the day through the rental path as it is, where the token is one the rental path accepts: a token that carries a user role for a period, or a multi-unit token the vault holds for the renter. A pass whose issuer reads plain ownership and not the user role gives a renter nothing, and the listing says which kind the token is. The app gains a category for them in the rental listing and wording that fits ("access until {date}" in place of "rental"). The listing states what the platform enforces (the renter's right for the period, the return at its end) and what the token's own issuer controls (whether the pass is honoured). No contract change.
+Memberships, licences, passes and tickets that exist as tokens can be rented by the day through the rental path as it is. That path keeps the token in its owner's vault and records the renter for the period: in the vault's own record in every case, and on the token itself where the token carries a user role for a period. A pass is of use to a renter only where its issuer reads one of those. An issuer that reads plain ownership sees the vault and not the renter. So each listing says which the token is: "carries a user role", or "recorded by the vault only: check that the issuer honours it". The app gains a category for them in the rental listing and wording that fits ("access until {date}" in place of "rental"). The listing states what the platform enforces (the renter's right for the period, the return at its end) and what the token's own issuer controls (whether the pass is honoured). No contract change.
 
 ## 7. The embedded lending kit
 
@@ -174,8 +176,8 @@ The page promises no result and names no rate.
 
 ## 12. Tests
 
-1. Borrow for someone: the loan's collateral, lien and borrower position are the guarantor's; a full repayment from the other address closes the loan and the collateral is claimable by the guarantor only; a part payment from the other address is refused; a protected guarantor's send waits the account's delay and is refused to an address that is not approved.
-2. The other person's page offers no action except repaying in full and alerts, and shows both statements of section 2.
+1. Borrow for someone: the loan's collateral, lien and borrower position are the guarantor's; a full repayment from the other address closes the loan and the collateral is claimable by the guarantor only; a protected guarantor's send waits the account's delay and is refused to an address that is not approved.
+2. The other person's page offers repayment and alerts and nothing else. On a deployment without #3779 it offers the full repayment only and shows both statements of section 2; with it, the part payment and the period's interest appear where the loan allows them.
 3. A contract wallet as owner completes every row of the matrix in section 3, or the row is listed as refused with its reason.
 4. A goal changes nothing on chain except, when the user asks, the slot's "lend until".
 5. Give this loan: the receiver collects later payments into their own vault; the giver keeps what was collected before; on a loan with an open seller claim the review shows the amount owed ahead of the holder, and the receiver's first interest payment is reduced by it; each refusal of the transfer check is shown with its reason.
@@ -183,11 +185,11 @@ The page promises no result and names no rate.
 7. The public feed never returns a privately kept record, and each figure carries its block.
 8. An alert for a loan the wallet does not hold says so in every message.
 9. The kit: an id carried through **lend this** pays no share, and the review and the kit's documentation say so.
-10. The access category lists a token only where the rental path accepts it, and each listing says whether the token carries a user role.
+10. Each listing in the access category says whether the token carries a user role or is recorded by the vault only, read from the token.
 
 ## 13. Open items for the builder to raise, not decide silently
 
-1. What a payer who is not the holder must have done before the full repayment accepts them. And, as a decision for the owner and not the builder: whether a part payment should be opened to an address the holder names. It is contract work on the repayment facet, and it is not part of this design.
+1. What a payer who is not the holder must have done before the full repayment accepts them (Terms accepted, not flagged). #3779 carries the same question for the part payment.
 2. Whether a token sent to an address with no vault can be collected on first connection without any step by the giver.
 3. Which wallet connection the app uses inside a contract wallet, and how a step that waits for approvals resumes.
 4. The rate limits of the public feed and of alerts per wallet.
