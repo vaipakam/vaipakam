@@ -66,7 +66,8 @@ Already decided and not reopened here: the opening fee and the yield fee are the
 
 - The registry keeps, per owner and lending asset, the list of that owner's active slots. It is written when a slot is set or switched off.
 - **The keeper feed lists funded balances, not slots.** A balance is listed while its owner has an active slot on the asset and the balance is at least the smallest fill of any of those slots. That floor is recomputed from the owner's list when a slot is set or switched off, so a balance change costs one comparison. A listing therefore still needs real money, as today.
-- The feed's reader pages balances and returns each owner's slots with the amount each could fill now. A fill writes its own slot and its owner's balance, and never walks the owner's other slots.
+- **A lender who is fully lent stays listed where room could be made.** Section 4 exists for the lender whose balance is out at the floating rate, and that lender's balance is below the floor. So where the owner has an active slot with the make-room consent, the test counts the balance **plus the principal the owner's floating slots have out from it**. The ledger's host already keeps each slot's live principal on every principal move; it keeps this one sum beside it, in the lender's record for the asset, so the test is still one comparison and the money behind a listing is still real: it is lent, not absent. Without the consent the sum is not counted and the lender leaves the feed as before. The listing is discovery only. Whether room can be made is decided by the fill.
+- The feed's reader pages balances and returns each owner's slots with the amount each could fill now. For a slot with the make-room consent it also returns what the slot could fill once room is made, marked as needing a handover, so the matcher knows to look for one. A fill writes its own slot and its owner's balance, and never walks the owner's other slots.
 
 ### 3.7 The ledger
 
@@ -145,7 +146,7 @@ Not proposed now: a request that survives a renewal. It would change what a requ
 
 ### 6.1 The rule
 
-1. **Only a floating loan carries it, and the loan record says so.** A floating loan opened through the instant market, or continued into it at a floating rate, is stamped with a notice period of 3 days. A fixed-rate loan never is, and neither is a floating loan opened outside the instant market for a stated term. Both sides agree to it at opening: the slot's instant-market setting states it to the lender, and the borrower's own call for a floating instant borrow carries the acknowledgement, as it carries the others. The borrower's setting "accept a floating rate" in the plan for the due date states it too.
+1. **Only a floating loan carries it, and the loan record says so.** A floating loan opened through the instant market, or continued into it at a floating rate, is marked as carrying notice. The period is a fixed 3 days, held in one place beside the extension window's own constant (settled 2026-11-19, section 16). A fixed-rate loan never is, and neither is a floating loan opened outside the instant market for a stated term. Both sides agree to it at opening: the slot's instant-market setting states it to the lender, and the borrower's own call for a floating instant borrow carries the acknowledgement, as it carries the others. The borrower's setting "accept a floating rate" in the plan for the due date states it too.
 2. **The lender gives notice once.** The loan then falls due 3 days later, and never earlier than 4 days after it started. Where the loan is already due sooner than that, the date does not move and the notice still stands as the lender's decision not to renew.
 3. **Notice moves the due date and nothing else.** Not the rate, not the interest owed, not the grace period, not the collateral.
 4. **A lender who gave notice has left.** It does not renew the loan and its slots do not take the loan back.
@@ -187,7 +188,7 @@ App and indexer work, built with the instant market. No contract change beyond 3
 
 - **Per pair, three facts and one sentence:** the amount available to this pair; the lowest rate at which any of it is offered; the rate at or below which half of it sits; and "rates are set by lenders". Never one figure alone.
 - **How the amount is counted.** For each lender, the lesser of the lending balance and the room left on that lender's slots for this pair, each lender once. Standing offers that can serve as sources are added and labelled an estimate, as today.
-- **How the rates are counted.** A lender's balance is placed on that lender's cheapest slots for the pair first, as a borrower would fill them. A floating slot is shown as the reference now plus the slot's margin, labelled as today's rate.
+- **How the rates are counted.** A lender's balance is placed on that lender's cheapest slots for the pair first, as a borrower would fill them, each slot at the rate it would charge today. A fixed slot's rate is its own. A floating loan's rate is the reference held between the loan's floor and cap, plus the margin (`FloatingRateLoansDesign.md` section 2), so a floating slot is counted at **the reference now, raised to the floor the slot requires where that is higher, plus the slot's minimum margin**. That is what the slot would charge today on a request with no cap, and it is labelled so: "today's rate, for a loan with no cap". A slot is never shown below a rate at which it can lend. A request with a cap is priced by the borrower's own quote, below, since a cap is the borrower's choice and each slot answers it in the margin it accepts. The order of slots, the lowest rate and the halfway rate all use these same figures.
 - **Never summed across pairs.** The per-asset total shown anywhere is the on-chain Available.
 - **Beside it, the borrower's own quote** for the amount they type, from the borrow preview, which is the binding figure.
 - **When the indexer is behind,** the line says the figures are not known now. It does not show an old figure as current.
@@ -208,7 +209,7 @@ Not built now (#3816). Recorded so the later card starts from the right facts.
 
 | Part | Change |
 | --- | --- |
-| Storage | The per-slot capital mapping is removed. Added: the lending balance per owner and asset; the per-balance ledger record (open room, closing days, floor); the per-owner slot list per asset; the flash consent and fee on the balance; the make-room consent on a slot; the notice period and notice due date on a loan. The golden layout file is rewritten, and the break is acknowledged as fresh-deploy only. |
+| Storage | The per-slot capital mapping is removed. Added: the lending balance per owner and asset; the per-balance ledger record (open room, closing days, floor, and the principal the owner's floating slots have out); the per-owner slot list per asset; the flash consent and fee on the balance; the make-room consent on a slot; the notice mark and the notice due date on a loan. The golden layout file is rewritten, and the break is acknowledged as fresh-deploy only. |
 | `LibEncumbrance` | The two capital writers become two balance writers. |
 | `LenderIntentFacet` | Fund and withdraw act on the balance. Roll and re-commit return to it. Setting a slot enforces the two new limits and keeps the owner's list and floor. |
 | `LibIntentFill`, `InstantFillFacet`, `OfferMatchIntentFacet`, `LibOfferMatch` | A fill draws from the balance; sizing and both previews read it with a running draw per lender; the optional handover list. |
@@ -217,14 +218,14 @@ Not built now (#3816). Recorded so the later card starts from the right facts.
 | `LenderIntentViewFacet`, registry | The balance views; the feed of funded balances; the per-slot "could fill now" figure. The per-slot capital view is removed. |
 | `BackstopFacet` | The seed adds to the backstop's balance. |
 | `LibLoanClock`, the loan record | The notice field, its writer and clearer, and the due date as the earlier of two dates. |
-| The lender's exit facet | `giveNotice`. Where it lives is the builder's choice by size; a split along a seam, never a trim. |
-| The renewal and continuation entry | Notice as a lender-side reason; the lender who gave notice is not a candidate; a continuation clears the notice and stamps the notice period on a loan that becomes floating. |
+| A small facet of its own | `giveNotice` and the read of a loan's notice. Settled 2026-11-19: not on the sale-exit verdict's facet, which is a rule host that writes nothing. |
+| The renewal and continuation entry | Notice as a lender-side reason; the lender who gave notice is not a candidate; a continuation clears the notice and marks a loan that becomes floating as carrying notice. |
 | Pre-deploy checks | The walker of step 1d4 also holds the notice field to the clock as its only writer. `giveNotice` is caller-gated and needs no row in the open-steps ledger. The fill entries keep their rows. |
 | ABIs | Re-exported for the apps and the public keeper bot. Removed selectors are swept by the all-facets refresh; this reaches a chain by fresh deploy in any case. |
 
 ## 11. Off-chain changes
 
-- **Keeper.** The matcher reads the feed of funded balances and sizes a fill from the balance. For a term slot with the make-room consent it finds the handovers: the lender's eligible floating loans, smallest sufficient set first, each with the cheapest ready slot. The renewal pass already covers a noticed loan, whose window is open. One alert to the borrower at notice. No new pass and no new arming flag.
+- **Keeper.** The matcher reads the feed of funded balances and sizes a fill from the balance. The feed also lists a lender whose balance is short while floating loans from it could make room (3.6). For a term slot with the make-room consent it finds the handovers: the lender's eligible floating loans, smallest sufficient set first, each with the cheapest ready slot. The renewal pass already covers a noticed loan, whose window is open. One alert to the borrower at notice. No new pass and no new arming flag.
 - **Indexer.** A table of lending balances and the changes to the slot tables (next free migration number, additive). The per-pair available figure and its split by rate. The notice event. The balance events replace the per-slot funding events; the event-coverage check is updated. A loan's due date and grace end are read from the clock's view or from the notice event, never computed from the start and term.
 - **App.** The lender's balance and slots (3.10), the make-room switch on a term slot, the notice action and its statements, the "Available now" line (section 8), the borrower's mirror (section 5).
 - **Public keeper bot.** ABI sync in its own PR.
@@ -240,7 +241,7 @@ Not built now (#3816). Recorded so the later card starts from the right facts.
 7. Ledger: set aside equals the sum of balances after random sequences; available equals, for each lender, the lesser of balance and open room, summed, recomputed from scratch after random sequences of adds, withdrawals, fills, repayments, defaults, takeovers and slot changes; a lender with five slots and one balance is counted once.
 8. Ledger days: a slot whose window closes today counts until the UTC day ends and leaves without a transaction; with four closing days the figure is right after each; a lender untouched for longer than the roll bound is right at its next touch.
 9. The call from inside a repayment or a default never reverts for a ledger reason.
-10. The feed lists a balance only at or above the floor and with an active slot; a dust balance with active slots is not listed.
+10. The feed lists a balance only at or above the floor and with an active slot; a dust balance with active slots is not listed. A lender whose whole balance is out at the floating rate stays listed while a slot of theirs carries the make-room consent, the reader marks that slot as needing a handover, and the lender leaves the feed when the consent is switched off. Once the floating loans are repaid the listing rests on the balance alone.
 11. Flash: a lender named twice is refused; a draw is never above the balance; the consent with no active slot lends; a second slot's terms change does not clear it.
 12. Make room: a term fill with the balance short hands over one floating loan, the principal lands in the balance, the term loan opens, the outgoing lender's interest is a seller claim, the incoming slot's balance and exposure move, and the floating borrower's loan is unchanged.
 13. Make room refused: outside a fill; with the balance already sufficient; without the consent; for a fixed loan; for a loan of another lender, a sold position, a loan with an amount held, a token inside its wait; an incoming slot that fails the as-new test; a fifth handover. A fill whose room is not made reverts whole, and in an instant borrow that source is skipped with nothing moved.
@@ -296,3 +297,10 @@ The borrower's mirror (section 5, #3815) is app work that needs floating loans a
 4. Whether setting the make-room consent or the flash consent on a protected account should wait the account's delay.
 5. Whether the notice period is best stamped as a duration or as a mark with the fixed three days, given that the extension window is a fixed constant too.
 6. Each reader of a loan's due date that does not go through the one clock, if any is found.
+
+**Settled with the builder of #3811 on 2026-11-19.**
+
+- **Item 3.** The balance's add, its withdraw, the self-called draw and the balance views live on a facet of their own. The ledger's facet keeps set aside, available and the schedule. `giveNotice` gets a small facet of its own. The fill, match and backstop facets have no room, and the sale-exit verdict's facet stays a rule host that writes nothing.
+- **Item 4.** The make-room consent follows the slot's terms. The flash consent needs no delay of its own on a protected account (`FlashLendingDesign.md` 4.8): protected mode delays a commitment whose terms sit outside a guardrail, an in-band lending commitment is live at once although the money is out for the whole term, and the consent cannot cost the owner anything while the flash path is correct. This is changed only if the secured-vault or the security builder shows a way the consent alone causes a loss.
+- **Item 5.** A mark, with the fixed three days. The notice date is stored when notice is given, so a later change to the constant moves no notice already given.
+- **Items 1, 2 and 6 stay open until measured.** The builder measures a fill, a repayment of a slot-held loan and an instant borrow of eight fills against main, and comes back before alternative 5 if any costs about 50,000 gas more. The 16 slots and 4 closing days stand, with the walk measured at 16. Every due-date reader in the contracts goes through the one clock; the indexer and the app are checked again before the notice build merges.
