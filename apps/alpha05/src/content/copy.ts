@@ -4472,7 +4472,7 @@ export const copy = {
     rowTo: B('Taken over by'),
     toValue: B('An Auto-lend of {{owner}}'),
     rowOffer: B('Buyer’s offer'),
-    offerValue: B('#{{id}}, at {{rate}} a year'),
+    offerValue: B('#{{id}}, at {{rate}}% a year'),
     rowReceive: B('You receive now'),
     rowReceiveListed: B('You receive if it fills, at least'),
     rowWhere: B('Paid into'),

@@ -11,11 +11,13 @@
  * they cover part, the borrower borrows that part and then posts a request
  * for exactly the rest. Runs on the desktop and the phone project.
  */
-import { type Hex } from 'viem';
+import { parseAbi, parseEther, type Hex } from 'viem';
 import { WETH, postLenderOffer } from '@vaipakam/anvil-harness/lending';
 import type { Page } from '@playwright/test';
 import { scenario } from '../lib/chain';
 import { connectWallet, expect, test } from '../lib/wallet';
+
+const MINT_ABI = parseAbi(['function mint(address to, uint256 amount)']);
 
 async function fitsWidth(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -69,6 +71,9 @@ test('with lenders covering part, the review shows what this block gives, borrow
     fullTermInterest: false,
     allowsPartialRepay: true,
   });
+
+  // The borrower's collateral: tLIQ is the fixture's freely mintable faucet.
+  await sc.write('borrower', tliq, MINT_ABI, 'mint', [sc.address('borrower'), parseEther('1500')]);
 
   const { page } = await launchWallet('borrower');
   await openPair(page, tliq);

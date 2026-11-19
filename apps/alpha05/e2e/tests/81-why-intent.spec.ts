@@ -46,7 +46,7 @@ async function autoLend(sc: Scenario, tliq: Hex): Promise<void> {
   await sc.diamondWrite('admin', 'setLenderIntentEnabled', [true]);
   await sc.write('lender', WETH, WETH_ABI, 'deposit', [], parseEther('1'));
   await sc.write('lender', WETH, erc20Abi, 'approve', [sc.diamond, parseEther('0.5')]);
-  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, 0, parseEther('1'), 500n, 5000, 30, parseEther('0.01'), false, 0n, false, true, await txDeadline(sc)]);
+  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, 0, parseEther('1'), 500n, 5000, 30, parseEther('0.04'), false, 0n, false, true, await txDeadline(sc)]);
   await sc.diamondWrite('lender', 'fundLenderIntent', [WETH, tliq, 0, parseEther('0.5')]);
 }
 
