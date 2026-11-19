@@ -321,7 +321,10 @@ has the exact calls.
 
 ### F.2 Verify final role distribution
 
+From `contracts/`:
+
 ```bash
+bash script/with-env.sh '
 DIAMOND=$(jq -r .diamond deployments/ethereum/addresses.json)
 TIMELOCK=$(jq -r .timelock deployments/ethereum/addresses.json)
 GOV_SAFE=$EMERGENCY_REVOKER_ADDRESS
@@ -338,7 +341,9 @@ for role in DEFAULT_ADMIN_ROLE ADMIN_ROLE UNPAUSER_ROLE KYC_ADMIN_ROLE \
     echo "  $who: $(cast call $DIAMOND "hasRole(bytes32,address)(bool)" $HASH ${!who} --rpc-url $ETHEREUM_RPC_URL)"
   done
 done
-cast call $DIAMOND "owner()(address)" --rpc-url $ETHEREUM_RPC_URL   # must be $TIMELOCK
+cast call $DIAMOND "owner()(address)" --rpc-url $ETHEREUM_RPC_URL   # must be the Timelock
+echo "  Timelock: $TIMELOCK"
+'
 ```
 
 Expected end-state:
