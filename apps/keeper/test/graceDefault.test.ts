@@ -23,6 +23,7 @@ import {
   LOAN_DEFAULTED_TOPIC,
   SWAP_ADAPTER_SUCCEEDED_TOPIC,
   SWAP_ALL_ADAPTERS_FAILED_TOPIC,
+  FORCED_SALE_FALLBACK_DEFERRED_TOPIC,
 } from '@vaipakam/lib/routeBuilder';
 import { attemptCloseOut, READS_PAST_CUTOFF } from '../src/closeOut';
 import { PastRunDeadline } from '../src/batchRead';
@@ -82,7 +83,9 @@ interface Scene {
   teardown?: () => void;
   boundedListing?: boolean;
   /** The preview's ending; null makes the node fail the simulation. */
-  ending?: 'sale' | 'fallback' | 'other' | null;
+  ending?: 'sale' | 'fallback' | 'other' | 'deferred' | null;
+  /** #3538 `getFallbackGate` [failedSales, firstFailAt, opensAt]; null reverts (a Diamond without it). */
+  gate?: readonly [bigint, bigint, bigint] | null;
   calls?: number;
   /** Unmined keeper transactions on the chain (pending − latest nonce). */
   unmined?: number;
@@ -164,6 +167,9 @@ function harness(scene: Scene) {
           return scene.hf ?? 2n * 10n ** 18n;
         case 'facetAddress':
           return scene.boundedListing === false ? A(0) : A(0xfa);
+        case 'getFallbackGate':
+          if (!scene.gate) throw new Error('FunctionDoesNotExist');
+          return scene.gate;
         case 'isLoanDefaultable':
           if (scene.defaultable === null) throw new Error('rpc down');
           return scene.defaultable ?? true;
@@ -183,7 +189,9 @@ function harness(scene: Scene) {
           ? [SWAP_ADAPTER_SUCCEEDED_TOPIC]
           : scene.ending === 'fallback'
             ? [SWAP_ALL_ADAPTERS_FAILED_TOPIC]
-            : [];
+            : scene.ending === 'deferred'
+              ? [FORCED_SALE_FALLBACK_DEFERRED_TOPIC]
+              : [];
       const logs = topics.map((t) => ({ address: DIAMOND, topics: [t, LOAN_TOPIC] }));
       if (scene.defaulted) logs.push({ address: DIAMOND, topics: [LOAN_DEFAULTED_TOPIC, LOAN_TOPIC] });
       if (scene.internalMatch) {
@@ -373,6 +381,41 @@ describe('attemptGraceDefault', () => {
     expect(out.kind).toBe('skipped');
     expect((out as { reason: string }).reason).toMatch(/^preview=fallback/);
     expect(h.writes).toHaveLength(0);
+  });
+
+  describe('the fallback gate (#3538)', () => {
+    it('sends a deferred ending for the first failure, and once more with a fresh quote', async () => {
+      for (const failed of [0n, 1n]) {
+        const h = harness({ ending: 'deferred', gate: [failed, failed === 0n ? 0n : 1_000n, failed === 0n ? 0n : 1_600n] });
+        expect((await attemptGraceDefault(h.deps, LOAN_ID)).kind).toBe('submitted');
+      }
+    });
+
+    it('holds a deferred ending back past the retry, naming when the fallback opens', async () => {
+      const h = harness({ ending: 'deferred', gate: [2n, 1_000n, 1_600n] });
+      const out = await attemptGraceDefault(h.deps, LOAN_ID);
+      expect((out as { reason: string }).reason).toMatch(/^preview=deferred \(2 failed sales recorded; the fallback opens at 1600/);
+      expect(h.writes).toHaveLength(0);
+    });
+
+    it('sends the falling-back ending once the gate records an earlier failure', async () => {
+      const h = harness({ ending: 'fallback', gate: [2n, 1_000n, 1_600n] });
+      expect((await attemptGraceDefault(h.deps, LOAN_ID)).kind).toBe('submitted');
+    });
+
+    it('keeps refusing a falling-back ending with no recorded failure, or without the gate', async () => {
+      for (const gate of [[0n, 0n, 0n] as const, null]) {
+        const h = harness({ ending: 'fallback', gate });
+        const out = await attemptGraceDefault(h.deps, LOAN_ID);
+        expect((out as { reason: string }).reason).toMatch(/^preview=fallback/);
+        expect(h.writes).toHaveLength(0);
+      }
+    });
+
+    it('does not send a deferred ending when the gate cannot be read', async () => {
+      const h = harness({ ending: 'deferred', gate: null });
+      expect((await attemptGraceDefault(h.deps, LOAN_ID)).kind).toBe('skipped');
+    });
   });
 
   it('does not send when the node cannot preview (or the call reverts)', async () => {

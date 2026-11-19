@@ -268,6 +268,18 @@ evidence that the migration has completed.
   and is said in the run log; it is never treated as either low or
   recovered. The check sends no transaction and is switched on separately,
   shipping off.
+- A terminal forced sale (a health-factor liquidation or a past-grace
+  default) whose every route fails may hand the collateral to the in-kind
+  fallback only when an earlier failed sale of the same loan is at least ten
+  minutes old; before that the failed sale changes nothing but the loan's
+  record of failures (#3538). The keeper sends such a failing sale for the
+  first failure and once more with a fresh quote, then holds it back,
+  naming when the fallback opens, rather than paying to record failures the
+  protocol already holds. From that time, a sale that still fails is sent
+  and opens the fallback, so a market that is really dead delays the
+  lender by about ten minutes. A sale that works is sent whatever the
+  record says. A deployment that cannot report the record gets no fallback
+  send from the past-grace pass.
 - Illiquid loans and rentals with no collateral have no price-based health
   factor. That is an expected result, not a zero health factor or an RPC
   outage. It does not remove time-based default handling.

@@ -23,6 +23,7 @@ import {
   INTERNAL_MATCH_EXECUTED_TOPIC,
   LOAN_DEFAULTED_TOPIC,
   previewCloseOutDetail,
+  FORCED_SALE_FALLBACK_DEFERRED_TOPIC,
 } from '@vaipakam/lib/routeBuilder';
 
 const A = (n: number) => `0x${n.toString(16).padStart(40, '0')}` as Address;
@@ -502,6 +503,7 @@ describe('previewCloseOutDetail (#2487)', () => {
       preview: 'other',
       defaulted: true,
       internalMatch: false,
+      deferred: false,
     });
     expect((await run([{ address: diamond, topics: [LOAN_DEFAULTED_TOPIC, otherLoan] }])).defaulted).toBe(false);
     expect((await run([{ address: A(0xbad), topics: [LOAN_DEFAULTED_TOPIC, loanTopic] }])).defaulted).toBe(false);
@@ -512,8 +514,15 @@ describe('previewCloseOutDetail (#2487)', () => {
       { address: diamond, topics: [INTERNAL_MATCH_EXECUTED_TOPIC, otherLoan] },
       { address: diamond, topics: [LOAN_DEFAULTED_TOPIC, loanTopic] },
     ]);
-    expect(out).toEqual({ preview: 'other', defaulted: true, internalMatch: true });
+    expect(out).toEqual({ preview: 'other', defaulted: true, internalMatch: true, deferred: false });
     expect((await run([{ address: A(0xbad), topics: [INTERNAL_MATCH_EXECUTED_TOPIC, loanTopic] }])).internalMatch).toBe(false);
+  });
+
+  it('marks a deferred fallback only for THIS loan, from the Diamond (#3538)', async () => {
+    const out = await run([{ address: diamond, topics: [FORCED_SALE_FALLBACK_DEFERRED_TOPIC, loanTopic] }]);
+    expect(out).toEqual({ preview: 'other', defaulted: false, internalMatch: false, deferred: true });
+    expect((await run([{ address: diamond, topics: [FORCED_SALE_FALLBACK_DEFERRED_TOPIC, otherLoan] }])).deferred).toBe(false);
+    expect((await run([{ address: A(0xbad), topics: [FORCED_SALE_FALLBACK_DEFERRED_TOPIC, loanTopic] }])).deferred).toBe(false);
   });
 
   it('claims neither fact when the preview is unknown', async () => {
@@ -525,7 +534,7 @@ describe('previewCloseOutDetail (#2487)', () => {
       sellAmount: 0n,
       calls: [],
     });
-    expect(out).toEqual({ preview: 'unknown', defaulted: false, internalMatch: false });
+    expect(out).toEqual({ preview: 'unknown', defaulted: false, internalMatch: false, deferred: false });
   });
 });
 

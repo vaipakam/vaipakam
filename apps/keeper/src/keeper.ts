@@ -31,6 +31,7 @@ import {
   type Abi,
   type Address,
   createWalletClient,
+  encodeFunctionData,
   http,
   type PublicClient,
   type WalletClient,
@@ -45,6 +46,7 @@ import {
   RiskSplitLiquidationFacetABI,
 } from '@vaipakam/contracts/abis';
 import { attemptCloseOut } from './closeOut';
+import { liquidationDeferredRefusal } from './fallbackGate';
 import { readCutoffMs } from './runWindow';
 import { parseLiquidationLoan } from './liquidationLoan';
 import { tryMatchLiquidation } from './matchLiquidation';
@@ -818,7 +820,21 @@ export async function maybeAutonomousLiquidate(
       }
     }
 
-    // Default path: failover via `triggerLiquidation` — unchanged.
+    // Default path: failover via `triggerLiquidation`. #3538 — once the
+    // loan's fallback gate records the first failed sale and its fresh-quote
+    // retry, a call that would only be deferred again waits for the gate's
+    // span instead of paying to record another failure (`fallbackGate.ts`).
+    const held = await liquidationDeferredRefusal({
+      client: publicClient,
+      diamond: ctx.diamond,
+      account: account.address,
+      loanId: loanIdBig,
+      data: encodeFunctionData({ abi: TRIGGER_ABI, functionName: 'triggerLiquidation', args: [loanIdBig, fullAmount, quotes.calls] }),
+    });
+    if (held !== null) {
+      console.log(`[keeper] loan=${loanId} chain=${chain.name} skip: ${held}`);
+      return false;
+    }
     const hash = await ctx.wallet.writeContract({
       address: ctx.diamond,
       abi: TRIGGER_ABI,

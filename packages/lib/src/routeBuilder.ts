@@ -684,13 +684,27 @@ export const INTERNAL_MATCH_EXECUTED_TOPIC = toEventSelector(
   'InternalMatchExecuted(uint256,uint256,uint256,address,uint256,uint256,uint256,uint256,uint256,uint256)',
 );
 
-/** The preview, with the two facts an `'other'` ending leaves open. */
+/** `ForcedSaleFacet.ForcedSaleFallbackDeferred(uint256 indexed loanId,
+ *  uint8 indexed kind, uint256 failedSales, uint256 fallbackOpensAt,
+ *  address indexed caller)` (#3538): every route of a terminal forced sale
+ *  failed before the loan's fallback opened, so the sale was undone and only
+ *  the failure recorded. */
+export const FORCED_SALE_FALLBACK_DEFERRED_TOPIC = toEventSelector(
+  'ForcedSaleFallbackDeferred(uint256,uint8,uint256,uint256,address)',
+);
+
+/** The preview, with the facts an `'other'` ending leaves open. */
 export interface CloseOutPreviewDetail {
   preview: CloseOutPreview;
   /** `LoanDefaulted` was emitted for this loan: the close-out ends it. */
   defaulted: boolean;
   /** The Diamond emitted an internal match during the call. */
   internalMatch: boolean;
+  /** #3538 — `ForcedSaleFallbackDeferred` was emitted for this loan: every
+   *  route failed, the fallback is not open yet, and the call would change
+   *  nothing but the loan's failed-sale record. Its `preview` is `'other'`,
+   *  since the failed sale's own events are undone with it. */
+  deferred: boolean;
 }
 
 export async function previewCloseOut(deps: PreviewCloseOutDeps): Promise<CloseOutPreview> {
@@ -706,22 +720,41 @@ export async function previewCloseOut(deps: PreviewCloseOutDeps): Promise<CloseO
 export async function previewCloseOutDetail(
   deps: PreviewCloseOutDeps,
 ): Promise<CloseOutPreviewDetail> {
-  const unknown: CloseOutPreviewDetail = { preview: 'unknown', defaulted: false, internalMatch: false };
   const { client, diamond, account, loanId, sellAmount, calls, blockNumber } = deps;
+  return previewForcedSaleEnding({
+    client,
+    diamond,
+    account,
+    loanId,
+    data: encodeFunctionData({
+      abi: TRIGGER_DEFAULT_ABI,
+      functionName: 'triggerDefault',
+      args: [loanId, sellAmount, calls],
+    }),
+    blockNumber,
+  });
+}
+
+/**
+ * The ending of ANY close-out call of `loanId` (the default above, or the
+ * keeper's `triggerLiquidation`), read from the logs of an `eth_simulateV1`
+ * run of `data` exactly as {@link previewCloseOutDetail} reads them.
+ */
+export async function previewForcedSaleEnding(deps: {
+  client: Pick<PublicClient, 'simulateCalls'>;
+  diamond: Address;
+  account: Address;
+  loanId: bigint;
+  data: Hex;
+  blockNumber?: bigint;
+}): Promise<CloseOutPreviewDetail> {
+  const unknown: CloseOutPreviewDetail = { preview: 'unknown', defaulted: false, internalMatch: false, deferred: false };
+  const { client, diamond, account, loanId, data, blockNumber } = deps;
   let results;
   try {
     ({ results } = await client.simulateCalls({
       account,
-      calls: [
-        {
-          to: diamond,
-          data: encodeFunctionData({
-            abi: TRIGGER_DEFAULT_ABI,
-            functionName: 'triggerDefault',
-            args: [loanId, sellAmount, calls],
-          }),
-        },
-      ],
+      calls: [{ to: diamond, data }],
       ...(blockNumber !== undefined ? { blockNumber } : {}),
     }));
   } catch {
@@ -753,7 +786,8 @@ export async function previewCloseOutDetail(
     : emitted(SWAP_ALL_ADAPTERS_FAILED_TOPIC)
       ? 'fallback'
       : 'other';
-  return { preview, defaulted, internalMatch };
+  const deferred = emitted(FORCED_SALE_FALLBACK_DEFERRED_TOPIC);
+  return { preview, defaulted, internalMatch, deferred };
 }
 
 // ─── The forced-sale plan (#2796) ─────────────────────────────────────────

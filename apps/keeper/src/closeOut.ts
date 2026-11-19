@@ -12,7 +12,10 @@
  *    line: quote a sale of only the collateral its debt needs (#2796, the
  *    contract's `previewForcedSale(loanId, TimeBasedDefault)` range) and
  *    send a `sale`, or an `other` ending (an illiquid or rental in-kind
- *    close, an internal match).
+ *    close, an internal match). A sale whose routes all fail is judged
+ *    against the loan's fallback gate (#3538, `fallbackGate.ts`): a deferred
+ *    ending is sent for the first failure and one fresh-quote retry, and a
+ *    falling-back ending once the gate's span has passed.
  *  - `in-kind` — the HF liquidator's no-route fallback (#2487). A past-grace
  *    loan BELOW the line, for which no venue quoted at any size. Sent with
  *    an empty try-list, and only when the preview shows a terminal no-swap
@@ -86,6 +89,7 @@ import type { AdapterCall } from '@vaipakam/lib/swapRoutes';
 import { HF_LIQUIDATION_THRESHOLD } from './hfLine';
 import type { ServerOrchestrationResult } from './serverQuotes';
 import { keeperTxPending, sendInSubmissionSlot } from './keeperSend';
+import { deferredSendRefusal, fallbackSendRefusal, readFallbackGate, type FallbackGate } from './fallbackGate';
 import { PastRunDeadline, readPhaseClient } from './batchRead';
 import { boundedCall } from './passReader';
 import { positionNftForDiamond } from './positionNft';
@@ -328,7 +332,13 @@ async function judgeCloseOut(
     };
   }
 
-  const refusal = previewVerdict(role, detail, calls.length, routeNote);
+  // #3538 — a failing sale is judged against the loan's fallback gate, read
+  // at the same block, and only then (a sale that works never needs it).
+  const gate =
+    role === 'grace' && (detail.deferred || detail.preview === 'fallback')
+      ? await readFallbackGate(client, diamond, loanId, gateBlock)
+      : null;
+  const refusal = previewVerdict(role, detail, calls.length, routeNote, gate);
   if (refusal !== null) return { kind: 'skipped', reason: refusal };
   return {
     kind: 'send',
@@ -352,9 +362,20 @@ function previewVerdict(
   detail: CloseOutPreviewDetail,
   calls: number,
   routeNote: string,
+  gate: FallbackGate | null,
 ): string | null {
   const { preview } = detail;
-  if (preview === 'fallback') return `preview=fallback calls=${calls}${routeNote}`;
+  if (preview === 'fallback') {
+    // #3538 — a grace close-out whose routes fail opens the fallback only
+    // once the gate's span has passed since an earlier failed sale; that is
+    // the market attempt over time, so it is sent then (`fallbackGate.ts`).
+    const closed = role === 'grace' ? fallbackSendRefusal(gate) : 'in-kind sends no route';
+    return closed === null ? null : `preview=fallback calls=${calls}${routeNote} (${closed})`;
+  }
+  if (role === 'grace' && detail.deferred) {
+    const wait = deferredSendRefusal(gate);
+    return wait === null ? null : `${wait} calls=${calls}${routeNote}`;
+  }
   // eth_simulateV1 unsupported, or the call reverts — e.g. a liquid loan
   // with no quotable venue (`NoEnabledSwapRoute`).
   if (preview === 'unknown') return `preview=unknown calls=${calls}${routeNote}`;
