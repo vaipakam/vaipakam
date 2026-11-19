@@ -1,6 +1,6 @@
 # Cash from a loan you made: one door, and an advance the loan repays (design)
 
-**Status:** owner asked for this design on 2026-11-19 ("there are so many options for lender to exit loan early together with borrowing against a loan you made, we need to make it simple for user"). Card #3760. Design first, no code yet. Built before the pre-audit refactor and audited in phases. Reaches a chain by fresh deploy.
+**Status:** owner asked for this design on 2026-11-19; reviewed by the security thread the same day, with the changes recorded in section 13 ("there are so many options for lender to exit loan early together with borrowing against a loan you made, we need to make it simple for user"). Card #3760. Design first, no code yet. Built before the pre-audit refactor and audited in phases. Reaches a chain by fresh deploy.
 **Related:** `SecondaryDebtMarketDesign.md` (#3667: the sale to Auto-lend, the price language, `positionWorth`, and section 8, which this design replaces), `LenderPositionPartSaleDesign.md` (#3674), `InstantMarketDesign.md` (#3656: takeover at face value), `LenderPayoutsThroughClaimDesign.md` (#3629), `LenderSaleSellerInterestClaimDesign.md`, `PositionSaleStateGuardDesign.md` (#3710), `PayoutDestinationRuleDesign.md`, the functional spec's lender early-withdrawal section.
 **Base:** the code named below was read on the batch branch of #3743 (`claude/project-thread-ijafuu` at `a067c7bae`): the sale-exit verdict (`SaleExitVerdictFacet`), the two sale entries, the takeover (`InstantTakeoverFacet`), the interest ledger and seller claims (`LibInterestLedger`, `SellerClaimFacet`), and the amounts held for a lender position (#3629). The sale to Auto-lend, the part sale and `positionWorth` are approved designs that are not built yet.
 
@@ -88,6 +88,7 @@ An advance is refused, by name, unless all of these hold:
 - the loan passes, at that moment, the health test a new loan must pass;
 - its lender side is whole (not divided under #3674) and the caller holds its token;
 - nothing is held unclaimed for the position, the token is outside its transfer wait, and no other route is open on it;
+- no seller claim of an earlier sale is open on the loan. Such a claim is paid ahead of everything, from principal too at the loan's end, so it would sit in front of the advance without being counted in its limit. The holder waits until it is paid;
 - renewal and extension are off for the loan, so its due date is firm;
 - the loan's due date and grace period end inside the slot's lend-until time;
 - the slot's owner is not the loan's borrower or its holder;
@@ -105,21 +106,28 @@ The advance moves from the slot's capital, in its owner's vault, to the holder's
 
 ### 6.4 Repayment from the loan
 
-Everything a lender side receives is already held for the position and claimed by its holder (#3629). The advance is paid at that one place.
+What a lender side receives rests in two stores. While the loan is open, arrivals are held for the position (interest, a part repayment, an early-close top-up, the proceeds of a matched liquidation). When the loan ends, they are the lender's final claim (the final repayment, a refinance payoff, the proceeds of a default, a liquidation or a fallback). Several steps take from those stores today: the holder's two claims, the Auto-lend roll and re-commit, a keeper pass, the backstop's buyout and absorb, and the fallback's in-kind steps.
 
-- While an advance is open, the held balance pays, in order: the seller claims of earlier sales, as today; the advance's interest; the advance itself; then the holder.
-- This applies to everything that arrives: interest, a part repayment, the final repayment, a refinance payoff, an early close, and the proceeds of a liquidation or a default.
-- Paying the advance from a held balance is a step anyone may call, and it runs inside the holder's own claim. A keeper pass backs it. Interest on the advance stops on each amount the moment it is paid.
-- What goes to the advance lands in the slot owner's vault and returns to the slot as any repayment does.
+- **One order of payment, in one library, for both stores.** While an advance is open, anything taken from either store pays the advance's interest, then the advance, and only then the holder. Every step that takes from either store calls that library. None reads or writes the two stores any other way, and a pre-deploy check refuses code that does, as one already does for the loan's principal and rate.
+- No seller claim can stand ahead of the advance: none is open when it is taken (6.2), and none can arise while the position is locked.
+- It applies to everything that arrives, whoever starts the step: interest, a part repayment, the final repayment, a refinance payoff, an early close, the proceeds of a liquidation or a default, and what the backstop pays when it buys out or absorbs a position, which the holder does not start and cannot refuse.
+- **Interest stops when the money arrives, not when someone moves it.** Every step that adds to either store calls the library in the same transaction. It books the advance's part of the arrival as paid at that moment, so interest stops on that amount then, and sets it aside for the slot owner where neither the holder nor a roll can take it. So an on-time payment by the borrower costs the holder nothing more, whether or not anyone acts afterwards.
+- Moving what was set aside to the slot owner's vault happens in the same step where that step can move it, and otherwise in a step anyone may call, which also runs inside the holder's own claim. A keeper pass backs it. Its timing changes nothing for the holder, and the slot owner's money is already theirs.
+- **The payment is its own kind of vault movement.** It goes from the vault that holds the lender side's money to the slot owner's vault, with the payee read from the advance's record. It is not a payout to the holder, so the holder's protection delay does not hold it. Where the money sits in a former holder's vault, the usual consolidation to the current holder runs first.
+- **A flagged holder does not stop it.** The step that pays the advance has its own path, which pays the advance and leaves the holder's frozen claim frozen.
+- What goes to the advance returns to the slot as any repayment does.
 
 ### 6.5 While the advance is open
 
 The position is locked, by the record itself, where the token stands:
 
-- no transfer, sale, listing, takeover or part sale; the read of section 3 says why and what lifts it;
+- no transfer, sale, listing, takeover or part sale, and the position is not a source for a takeover or for a purchase by the backstop; the read of section 3 says why and what lifts it;
 - renewal and extension stay off;
+- **nothing re-lends the position's money ahead of the advance:** the Auto-lend roll and the re-commit of held funds are stopped for this loan, and so is any keeper permission to claim for the holder outside the order of 6.4;
 - the holder claims only what is left after the advance;
-- a move that follows the person (a recovery clawback, an account replacement) carries the token with its advance attached.
+- a move that follows the person (a recovery clawback, a recovery claim, an account replacement) carries the position with its advance attached.
+
+The advance's record is kept by loan, not by token, because the final claim retires the lender token while the advance may still be owed from it.
 
 The borrower of the loan sees no change and none of their routes is touched: repay, repay in part, close early, refinance, hand over. Each of those pays the lender side, and the advance is paid from it.
 
@@ -130,7 +138,7 @@ The borrower of the loan sees no change and none of their routes is touched: rep
 | The loan's payments cover it | The advance closes when the last of it is paid. The lock lifts. |
 | The holder repays it | Any amount, at any time, from their vault. Paid in full, the lock lifts. |
 | The loan ends and its lender side has received less than is owed | The advance receives all of it and closes with a shortfall, which is stated. Nothing more is owed by the holder. |
-| The loan ends in a fallback and the lender side receives collateral in kind | The holder has 7 days to repay the advance and keep the collateral. After that the advance takes collateral worth what it is owed at the rate the fallback itself used, and the holder keeps the rest. Where the fallback had no price, the advance takes all of it. |
+| The loan ends in a fallback and the lender side receives collateral in kind | After the one retry of the failed sale. If the retry sells, the cash follows the order of 6.4. If not, the collateral is split at once, at the rate the fallback itself used between lender and borrower: the advance takes collateral worth what it is owed, and the holder the rest. Where the fallback had no price, the advance takes all of it. The holder is given no time to choose, because a choice made after seeing the price would be made at the slot owner's cost. |
 
 An advance is outside the shortfall reserve, earns no usage reward on either side, and counts for no fee discount.
 
@@ -148,9 +156,9 @@ An advance is outside the shortfall reserve, earns no usage reward on either sid
 - **Lending to yourself through two wallets and borrowing against it:** it draws on the advance lender less than the collateral that stands behind the loan, at a worse ratio than borrowing directly, and pays every fee. No reward is earned on an advance.
 - **Moving the due date after the advance:** renewal and extension stay off.
 - **Selling the position out from under the advance:** locked.
-- **A caller choosing when to pay the advance:** paying sooner only stops interest sooner. The order of payment is fixed.
+- **A caller choosing when to pay the advance:** it changes nothing. Interest stops when the money arrives, and the order of payment is fixed.
 - **Sell now steering to a poor source:** the seller's least binds the call, and the preview and the fill use one computation.
-- **Stated to the holder:** interest on the advance runs until the loan repays it, so a loan that pays late costs more. If the loan ends short, the advance is paid before them. They cannot sell or move the position until the advance is repaid.
+- **Stated to the holder:** interest on the advance runs until the loan's payments reach the position, so a loan that pays late costs more. If the loan ends short, the advance is paid before them. They cannot sell or move the position until the advance is repaid.
 - **Stated to the slot's owner:** the funds return when the loan pays, not on a date of their choosing, and no later than the loan's close-out. If the loan ends short of the advance, the loss is theirs.
 
 ## 8. Wording rules
@@ -165,8 +173,9 @@ The door is **Get cash from this loan**. The choices are **Sell now**, **Sell at
 | New entry `sellNow` and `previewSellNow` | Fills across sources through the existing sale host; reverts under the seller's least. A new facet. |
 | New facet for the advance | Take, repay, pay from the held balance, the fallback case, the views and `previewAdvance`. |
 | Lender intent | The "advances on loans" consent and its share limit; advances count toward exposure. |
-| Held-for-lender payout | One added step in the order of payment while an advance is open, at the place seller claims are already paid first. |
-| Position record | The advance lock, read by every transfer and every route's opening check; carried by a move that follows the person. |
+| Lender-side payouts | One library for the order of payment, called by every step that takes from the amounts held for a position or from the lender's final claim; a pre-deploy check that nothing else touches those two stores. Kept beside the seller-claim host, not in it: seller claims draw on interest, the advance on principal too. |
+| Vault outflow policy | A new kind of movement for the advance's repayment, with the payee from the advance's record, outside the holder's protection delay. |
+| Position record | The advance lock, read by every transfer, every route's opening check, the roll, the re-commit and the keeper claim permissions; carried by a move that follows the person. The advance's record is kept by loan. |
 | `positionWorth` and metadata | State an open advance and what is owed on it, ahead of the holder. |
 | Events | Advance taken, paid from the position, repaid by the holder, closed (with any shortfall), the fallback case; sell-now's summary with each fill and each skipped source. |
 | Keeper | A pass that pays advances from held balances, shipped disarmed; the existing sale pass may call `sellNow`. |
@@ -180,14 +189,14 @@ Append storage at the tail and run the storage-layout guard's `write`. Check fac
 2. `sellNow`: fills in list order through each route's own rules; a refusing source is skipped and reported; reverts only under the seller's least; the fill limit; equals the same single-route calls made one by one; before the part sale, sells whole to the first source that takes all.
 3. `previewSellNow` and the fill agree to the unit.
 4. Advance taken: every refusal of 6.2; the amount rule of 6.3 at its edge; the fee equals a loan's of the same amount and time; funds land in the holder's vault; the slot's exposure rises.
-5. Order of payment: seller claims, advance interest, advance, holder, for each kind of arrival (interest, part repayment, final repayment, refinance, early close, liquidation, default).
-6. Interest on the advance is by time on what is owed and stops on each amount when paid.
+5. Order of payment: advance interest, advance, holder, for each kind of arrival (interest, part repayment, final repayment, refinance, early close, liquidation, default, a backstop buyout and absorb) and through every step that takes from either store (the holder's two claims, the roll, the re-commit, the keeper pass). An advance is refused while a seller claim is open.
+6. Interest on the advance is by time on what is owed, and stops on each amount at the moment that amount arrives for the position, whenever it is later moved to the slot owner's vault. With no keeper and no claim, the holder's cost after an arrival does not grow.
 7. The holder repays in part and in full; the lock lifts only when nothing is owed.
-8. While open: transfer, sale, listing, takeover, part sale, renewal and extension are refused; the borrower's routes all work; a clawback and a replacement carry the advance.
+8. While open: transfer, sale, listing, takeover, part sale, renewal, extension, the roll, the re-commit and a keeper's claim for the holder are refused or follow the order; the position is not a source for a takeover or a backstop purchase; the borrower's routes all work; a clawback, a recovery claim and a replacement carry the advance; the advance outlives the retiring of the lender token.
 9. The loan ends short: the advance receives everything, closes with the stated shortfall, and the holder owes nothing.
-10. The fallback case: the 7 days, the split at the fallback's own rate, and the no-price case.
-11. Paying from the held balance by any caller gives the same result as the holder's claim.
-12. A flagged holder does not stop the advance being paid; a flagged advance lender's payments are held.
+10. The fallback case: nothing is split before the one retry; a retry that sells follows the order of payment; otherwise the split at the fallback's own rate, at once, and the no-price case.
+11. Moving what was set aside, by any caller at any time, gives the same amounts as the holder's claim. What is set aside for the slot owner cannot be claimed, rolled or re-committed by the holder.
+12. A flagged holder does not stop the advance being paid and stays frozen; a flagged advance lender's payments are held. The repayment is not delayed by the holder's protection delay.
 13. After any sequence of advance, arrivals, repayments and close, the position's held balance, the advance owed and each vault's balance add up, and nothing rests in the Diamond.
 14. With the advance switch off, taking one refuses and an open one still runs to its end.
 
@@ -197,11 +206,12 @@ Append storage at the tail and run the storage-layout guard's `write`. Check fac
 2. **Remove routes.** Each serves a real case. Behind one action they cost the user nothing. Rejected.
 3. **The position as collateral of a second loan** (the earlier section 8 of the sale design). Rejected: see section 5.
 4. **A sale with a right to buy back.** Two moves of the position, the buyer holds the token meanwhile, and the outcome is the same as an advance. Rejected.
-5. **Let the advance's lender take the token when the loan runs late.** It adds a default to manage and nothing the order of payment does not already give. Rejected.
-6. **Advances from standing offers by hand.** Useful, later. Slots are instant and priced by rule.
-7. **Several advances on one position.** Needs a rank among them. Later, if wanted.
-8. **A transferable advance.** It would need its own token and its own exit rules. Left out of this version.
-9. **Leave borrowing out and rely on selling a part.** Covers the need for cash, but the lender gives up the interest on the part sold. The owner asked for it now.
+5. **Give the holder time to repay before an in-kind split.** The holder would repay when the collateral had risen and walk away when it had fallen. Rejected on the security review.
+6. **Let the advance's lender take the token when the loan runs late.** It adds a default to manage and nothing the order of payment does not already give. Rejected.
+7. **Advances from standing offers by hand.** Useful, later. Slots are instant and priced by rule.
+8. **Several advances on one position.** Needs a rank among them. Later, if wanted.
+9. **A transferable advance.** It would need its own token and its own exit rules. Left out of this version.
+10. **Leave borrowing out and rely on selling a part.** Covers the need for cash, but the lender gives up the interest on the part sold. The owner asked for it now.
 
 ## 12. Recommendation and order of work
 
@@ -210,9 +220,20 @@ Append storage at the tail and run the storage-layout guard's `write`. Check fac
 3. The advance from Auto-lend slots, top-tier pairs, behind its own switch.
 4. Later: advances from standing offers, and a floating rate.
 
-## 13. Open items for the builder to raise, not decide silently
+## 13. Settled with the security review (2026-11-19)
 
-1. Whether the advance's place in the order of payment is best kept in the seller-claim host or beside it.
-2. How the 7 days and the in-kind split fit the fallback's existing claim steps, including the one retry of a failed collateral sale.
+The security thread reviewed this design before it merged. All of it is folded in above.
+
+- The lender side's money rests in two stores with several takers, so the order of payment is one library every taker calls, with a pre-deploy check (6.4). It sits beside the seller-claim host.
+- No advance while a seller claim is open (6.2).
+- No time for the holder to choose before an in-kind split; the split is at once, at the fallback's own rate, after the one retry (6.6).
+- A flagged holder cannot block the advance's payment, which has its own path and its own kind of vault movement, outside the holder's protection delay (6.4).
+- The lock also stops the roll, the re-commit, keeper claims for the holder, and the position's use as a source for a takeover or a backstop purchase. The backstop's own buyout and absorb follow the order. The record is kept by loan. Every move that follows the person carries it (6.5).
+- With those, neither the holder nor the borrower can reduce what the position receives: every borrower route pays the principal in full, and an early close or a refinance shortens only the interest. What remains is the stated risk that the collateral falls short.
+
+## 14. Open items for the builder to raise, not decide silently
+
+1. Every step that takes from the two stores today, listed and moved onto the one library; any the security review did not name is reported.
+2. How the in-kind split fits the fallback's existing claim steps.
 3. What an advance record does when the slot owner's account is replaced or clawed back.
 4. Whether `cashOptions` fits on the verdict's facet.
