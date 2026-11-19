@@ -158,14 +158,9 @@ contract InstantFillFacet {
             s.instantSlot[owner][r.lendingAsset][r.collateralAsset][slot];
         if (!consent.fills) revert InstantSlotNotOffered();
         LibTiming.requireIntentAged(owner, consent.setAt);
-        rateBps = intent.minRateBps;
-        // #3635 A — a linked slot's price is its effective floor for this
-        // fill's term: the higher of its typed floor and its linked rate.
-        if (intent.linkKind != 0) {
-            rateBps = RateLinkFacet(address(this)).linkedFloor(
-                r.lendingAsset, r.termDays, intent.linkKind, intent.linkMarginBps, rateBps
-            );
-        }
+        // #3635 A — a slot's price is its effective floor for this fill's
+        // term (the linked rate when it is higher).
+        rateBps = LibIntentFill.slotFloor(intent, r.lendingAsset, r.termDays);
         if (rateBps > r.maxRateBps) revert InstantRateAboveLimit(rateBps, r.maxRateBps);
         amount = _slotRoom(s, intent, owner, r);
         uint256 reqColl = LibIntentFill.admitFill(
