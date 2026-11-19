@@ -10,6 +10,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
@@ -556,6 +557,50 @@ contract ExitInstructionTest is SetupTest {
         vm.prank(runner);
         _x().runReduce(LOAN, _routes(1), type(uint64).max);
         assertEq(uint256(_loan().status), uint256(LibVaipakam.LoanStatus.Repaid), "closed");
+    }
+
+    /// @dev Whole units, a 95% threshold, a 0.01 margin and a 10% tolerance:
+    ///      the target sits close to what a sale can lift, so the gap between
+    ///      the necessary and the safe sale is wide. Setting holds it within
+    ///      the checks a run makes, so the least sale is still found.
+    function _fineGovernance(uint256 collateral) internal {
+        _unitLoanOf(0, 0, 10_000, 1_000, collateral);
+        LibVaipakam.Loan memory l = _loan();
+        l.liquidationLtvBpsAtInit = 9500;
+        TestMutatorFacet(address(diamond)).setLoan(LOAN, l);
+        StandingInstructionFacet(address(diamond)).setStandingInstructionConfig(
+            LibVaipakam.StandingInstructionConfig(0, 0, 0, 0.01e18, 0)
+        );
+        ConfigFacet(address(diamond)).setMaxSwapToRepaySlippageBps(1000);
+    }
+
+    function test_7_reduceFindsTheLeastSaleUnderFineSettings() public {
+        _fineGovernance(11_210);
+        _price(address(collateralAsset), 0.2e8);
+        _set(REDUCE, 1.07e18, 1.08e18, 1000, false);
+        _price(address(collateralAsset), 0.1e8);
+        LibTestCalmPair.checkpoint(address(diamond), address(collateralAsset), address(principalAsset));
+        ExitInstructionFacet.ExitPreview memory pv = _x().previewExit(LOAN);
+        assertEq(pv.skip, 0, "due");
+        assertEq(pv.form, REDUCE);
+        assertLe(pv.collateralToSell, 6_900, "not the conservative bound");
+        adapter1.setTokenPrice(address(collateralAsset), 10);
+        adapter1.setTokenPrice(address(principalAsset), 100);
+        adapter1.setOutputMultiplierBps(9000);
+        vm.prank(runner);
+        _x().runReduce(LOAN, _routes(1), type(uint64).max);
+        assertGe(_hf(), 1.08e18, "target reached");
+    }
+
+    function test_7_reduceTooFineToSizeIsRefused() public {
+        _fineGovernance(11_210);
+        _price(address(collateralAsset), 0.2e8);
+        vm.prank(borrowerEoa);
+        vm.expectPartialRevert(ExitInstructionFacet.ExitReductionTooFine.selector);
+        _x().setExitInstruction(LOAN, ExitInstructionFacet.ExitInput(REDUCE, false, 1000, 1.06e18, 1.07e18));
+        // The close form, a lower tolerance or a higher target is accepted.
+        _set(CLOSE, 1.06e18, 0, 1000, false);
+        _set(REDUCE, 1.06e18, 1.07e18, 300, false);
     }
 
     function test_7_reduceHoldsTheCapInWholeUnits() public {

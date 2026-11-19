@@ -288,11 +288,14 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
         uint256 L;
         uint256 h;
         uint256 capBps;
+        uint256 checks;
     }
 
-    /// @dev The most candidate sales a reduction's sizing checks on the
-    ///      route's rounded figures before keeping its conservative bound.
-    uint256 private constant LEAST_SALE_CHECKS = 64;
+    /// @dev The most candidate sales a reduction's sizing may check on the
+    ///      route's rounded figures. The checks a reduction needs follow from
+    ///      its own bounds (`_leastSaleChecks`), and a reduction needing more
+    ///      is refused when it is set, so the sizing always finds the least.
+    uint256 private constant LEAST_SALE_CHECKS_MAX = 256;
     /// @dev The health factor the risk read reports values each leg in the
     ///      numeraire with its own rounding, which can sit a few wei of the
     ///      1e18 scale under this plan's principal-unit figure. The plan asks
@@ -315,6 +318,11 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
     error ExitWindowClosed(uint256 loanId);
     error ExitReduceTooSoon(uint256 loanId, uint256 nextAt);
     error ExitInstructionConfigInvalid();
+    /// @notice The reduction's health factor sits so close to what a sale at
+    ///         this tolerance can lift that its least sale needs more checks
+    ///         than a run may make. A lower target or tolerance, or the close
+    ///         form, is accepted.
+    error ExitReductionTooFine(uint256 checks, uint256 maxChecks);
 
     // ─── Settings ────────────────────────────────────────────────────
 
@@ -697,15 +705,8 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
         LibFallback.Rate memory rate,
         Plan memory p
     ) private view {
-        uint256 L = uint256(loan.liquidationLtvBpsAtInit) * BPS_TO_WAD;
-        uint256 capBps = LibVaipakam.effectiveLoanInitLtvCapBps(
-            loan.initLtvCapBpsAtInit, LibVaipakam.assetInitLtvCeilingBps(loan.collateralAsset)
-        );
-        uint256 h = st.targetHf;
-        if (capBps != 0) {
-            uint256 hAtCap = Math.mulDiv(L, LibVaipakam.BASIS_POINTS, capBps, Math.Rounding.Ceil);
-            if (hAtCap > h) (h, p.targetIsLtvCap) = (hAtCap, true);
-        }
+        (uint256 L, uint256 capBps, uint256 h, bool isCap) = _reduceBounds(loan, st.targetHf);
+        p.targetIsLtvCap = isCap;
         p.targetUsed = h > type(uint64).max ? type(uint64).max : uint64(h);
         h += HF_READ_SLACK;
 
@@ -754,7 +755,9 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
         // The conservative bound may ask for the whole debt where a smaller
         // sale on the route's own figures would still reach both bounds, so
         // a close is chosen only when no partial candidate below it does.
-        Reach memory b = Reach(p.tolerance, interest, minPartial, L, h, capBps);
+        Reach memory b = Reach(
+            p.tolerance, interest, minPartial, L, h, capBps, Math.min(_leastSaleChecks(L, h, keep), LEAST_SALE_CHECKS_MAX)
+        );
         bool closeBound = repay >= owed;
         uint256 safe;
         if (closeBound) {
@@ -799,6 +802,42 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
         _sizeClose(loan.id, loan, rate, p);
     }
 
+    /// @dev A reduction's bounds: the liquidation threshold `L` (WAD), the
+    ///      opening limit (bps, 0 = none) and the health factor `h` it brings
+    ///      the loan to, the higher of the holder's target and the limit's
+    ///      own (`L / c`), and whether the limit's is the higher.
+    function _reduceBounds(LibVaipakam.Loan storage loan, uint256 target)
+        private
+        view
+        returns (uint256 L, uint256 capBps, uint256 h, bool isCap)
+    {
+        L = uint256(loan.liquidationLtvBpsAtInit) * BPS_TO_WAD;
+        capBps = LibVaipakam.effectiveLoanInitLtvCapBps(
+            loan.initLtvCapBpsAtInit, LibVaipakam.assetInitLtvCeilingBps(loan.collateralAsset)
+        );
+        h = target;
+        if (capBps != 0) {
+            uint256 hAtCap = Math.mulDiv(L, LibVaipakam.BASIS_POINTS, capBps, Math.Rounding.Ceil);
+            if (hAtCap > h) (h, isCap) = (hAtCap, true);
+        }
+    }
+
+    /// @dev The checks that always find a reduction's least sale. The gap
+    ///      between the necessary and the safe sale is, in repayment levels,
+    ///      `k·L·(u+2) / (h·k - L)` (`k` the keep as a fraction, `u` a
+    ///      collateral unit's value rounded up) and, in collateral units, that
+    ///      over `k·price` plus two. Where a unit is worth under one principal
+    ///      unit (`u = 1`) the first is at most `3L / (h·k - L)`; otherwise
+    ///      the second is at most `4L / (h·k - L) + 2`. So whatever the price,
+    ///      the smaller gap fits `4L / (h·k - L) + 2` checks. Unbounded (max)
+    ///      where `h·k <= L`, which no partial sale can reach.
+    function _leastSaleChecks(uint256 L, uint256 h, uint256 keep) private pure returns (uint256) {
+        uint256 hk = h * keep;
+        uint256 l = LibVaipakam.BASIS_POINTS * L;
+        if (hk <= l) return type(uint256).max;
+        return Math.ceilDiv(4 * l, hk - l) + 2;
+    }
+
     /// @dev The least sale at or below `safe` that reaches both bounds on the
     ///      route's own rounded figures. `safe` (from the conservative closed
     ///      form) always does. The rounded figures are not monotone in the
@@ -809,8 +848,9 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
     ///      a principal unit it checks, per repayment level, the least sale
     ///      reaching that level (any other sale at the same level only leaves
     ///      less collateral). Either way the first that reaches is the least.
-    ///      A gap too wide for `LEAST_SALE_CHECKS` checks keeps `safe`, which
-    ///      exceeds the least by at most the closed form's rounding slack.
+    ///      The smaller gap always fits `b.checks` (`_leastSaleChecks`, which
+    ///      setting holds within `LEAST_SALE_CHECKS_MAX`), so the least is
+    ///      found; `safe` is kept only as a guard if neither gap fits.
     function _leastReach(LibVaipakam.Loan storage loan, LibFallback.Rate memory rate, Reach memory b, uint256 safe)
         private
         view
@@ -819,7 +859,7 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
         uint256 sLo = _necessarySale(loan, rate, b);
         if (sLo >= safe) return safe;
 
-        if (safe - sLo <= LEAST_SALE_CHECKS) {
+        if (safe - sLo <= b.checks) {
             for (uint256 sale = sLo; sale < safe; ++sale) {
                 if (_reduceReaches(loan, rate, sale, b)) return sale;
             }
@@ -829,7 +869,7 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
         uint256 rLo = LibSaleSizing.floorAtRate(rate, sLo, b.tolerance);
         uint256 rHi = LibSaleSizing.floorAtRate(rate, safe, b.tolerance);
         if (rLo < b.interest + b.minPartial) rLo = b.interest + b.minPartial;
-        if (rHi <= rLo || rHi - rLo > LEAST_SALE_CHECKS) return safe;
+        if (rHi <= rLo || rHi - rLo > b.checks) return safe;
         for (uint256 r = rLo; r < rHi; ++r) {
             (bool ok, uint256 sale,) = LibSaleSizing.sizeSaleAtRate(rate, r, loan.collateralAmount, b.tolerance);
             if (ok && sale < safe && _reduceReaches(loan, rate, sale, b)) return sale;
@@ -952,6 +992,14 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
             uint64 tMax = LibStandingInstructions.cfgTargetMax(s);
             if (cfg.targetHf < tMin || cfg.targetHf > tMax) revert ExitTargetOutOfBounds(cfg.targetHf, tMin, tMax);
             n.targetHf = cfg.targetHf;
+            // A reduction whose least sale needs more checks than a run may
+            // make is refused; one no partial sale can reach (unbounded)
+            // runs as a close and is accepted.
+            (uint256 L,, uint256 h,) = _reduceBounds(loan, cfg.targetHf);
+            uint256 checks = _leastSaleChecks(L, h + HF_READ_SLACK, LibVaipakam.BASIS_POINTS - tol);
+            if (checks != type(uint256).max && checks > LEAST_SALE_CHECKS_MAX) {
+                revert ExitReductionTooFine(checks, LEAST_SALE_CHECKS_MAX);
+            }
         }
     }
 
