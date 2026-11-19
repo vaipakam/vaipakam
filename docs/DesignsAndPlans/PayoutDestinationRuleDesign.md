@@ -142,6 +142,8 @@ The Ready balance is unchanged. A release goes to free balance, not to Ready, in
 | A caller's own unspent native fee | A refund of what the caller sent with the call |
 | An admin's treasury claim and broadcast-budget withdrawal | Protocol funds, to an address the admin names |
 
+One outflow is neither a payout nor a settlement: a flash loan out of an Auto-lend slot that opted in (`FlashLendingDesign.md`, #3748). Nothing is owed to anyone, the amount returns inside the same transaction, and the lending vault itself refuses any outcome in which it holds less than it started with plus its fee. It is outside this rule and is listed in the build check as the vault's one unbooked outflow.
+
 A payment in this table to an address that has protected mode on is credited to that account's vault instead, by the policy's existing redirect. That is unchanged.
 
 ### 4.7 Open offers (#3744)
