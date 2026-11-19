@@ -14,6 +14,13 @@ library RegistryKeys {
     ///         through, on the Diamond and in every vault (#3272).
     bytes32 internal constant PRICE_GUARD = keccak256("vaipakam.registry.priceGuard");
 
+    /// @notice Pointer: the standalone rate reference, the per-asset market
+    ///         borrowing rate, its index, the averaged reads and the term
+    ///         average (#3337 part 1, #3713). Unset on a chain that has none:
+    ///         a market-linked limit is then refused and no rate is checked
+    ///         against a band.
+    bytes32 internal constant RATE_REFERENCE = keccak256("vaipakam.registry.rateReference");
+
     // #3569 — the TREASURY pointer is retired. The treasury is written in
     // one place only, the vault code's immutable `TREASURY` (#3431), which
     // the Diamond reads through `LibTreasury`; a registry copy could only
