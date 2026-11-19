@@ -436,6 +436,11 @@ interface IVaipakamErrors {
     ///         delivered the same message twice, or two sources collided on
     ///         one id. The second landing is refused whole.
     error IngressPacketReplayed(bytes32 packetHash);
+    /// @notice #2204 — a packet-ledger write or read met a kind outside the
+    ///         ledger's known set (1 budget, 2 compensation, 3 stranded
+    ///         return, 4 ceremony inflow, 5 repatriation return). Refused
+    ///         rather than read as any default kind.
+    error IngressPacketKindUnknown(uint8 kind);
     /// @notice #1566 closure 2 cutover PR 1 (Codex #2198 r1) — a delivery or
     ///         a compensation arrived for a receipt that has already been
     ///         delivered: a distinct transport message, past the stamp
@@ -460,6 +465,10 @@ interface IVaipakamErrors {
     ///         record: its value is reserved for the R4 return and is not
     ///         classifiable.
     error ReconciliationPacketReserved(bytes32 packetHash, uint256 reserved);
+    /// @notice #2204 — the packet is of a kind typed in full when it landed
+    ///         (a ceremony inflow or a repatriation return): it never holds
+    ///         an untyped remainder, so there is nothing to classify.
+    error ReconciliationPacketTyped(bytes32 packetHash, uint8 kind);
     /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r3) — the evidence
     ///         rule: an entry's fresh side would exceed its authenticated
     ///         fresh figure (the packet's transport-attested remainder
@@ -1855,7 +1864,6 @@ interface IVaipakamErrors {
     ///         `matchCollectionOffer`), one token at a time; it cannot be
     ///         accepted, matched, edited or sold into directly.
     error CollectionParentNotFillable(uint256 offerId);
-}
     /// @notice #903 — a Base-to-mirror reward message (a tier push, a tier
     ///         table version bump or a day broadcast) arrived from a chain
     ///         that is not the Base this deployment takes reward facts
@@ -1864,3 +1872,4 @@ interface IVaipakamErrors {
     ///         recorded origin), so every such message is refused there.
     ///         Raised only by `LibVaipakam.requireRewardBaseSource`.
     error WrongSourceChain(uint256 got, uint32 expected);
+}

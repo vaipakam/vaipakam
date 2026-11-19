@@ -1528,6 +1528,32 @@ library LibRewardCustody {
         if (era != RECONCILIATION_QUEUE_ERA) revert IVaipakamErrors.ReconciliationUnknownEra(era);
     }
     uint8 internal constant PACKET_KIND_STRANDED_RETURN = 3;
+    /// @dev #2204 — a recovery-ceremony inflow (fresh, recycled or both).
+    ///      No transport packet carries it, so it is keyed by the per-source
+    ///      sequence under source 0, and its ceremony reference is the
+    ///      record's `remitId`.
+    uint8 internal constant PACKET_KIND_CEREMONY_INFLOW = 4;
+    /// @dev #2204 — a planned-surplus repatriation return (Mode A), keyed
+    ///      by its transport identity; the authorization id is the record's
+    ///      `remitId`.
+    uint8 internal constant PACKET_KIND_REPATRIATION_RETURN = 5;
+
+    /// @notice #2204 — the ONE kind rule every packet-ledger reader asks:
+    ///         whether a packet of `kind` writes a remit receipt (kinds 1
+    ///         and 2, a delivery onto a mirror) and whether it may hold an
+    ///         untyped `Unclassified` remainder (kinds 1 to 3). Kinds 4 and 5
+    ///         are typed in full at landing and do neither. Any other kind
+    ///         (0 included) is refused, never read as a default.
+    /// @return receipt  The kind writes a remit receipt.
+    /// @return untyped  The kind may hold an untyped remainder.
+    function packetKindTraits(uint8 kind) internal pure returns (bool receipt, bool untyped) {
+        if (kind == PACKET_KIND_BUDGET || kind == PACKET_KIND_COMPENSATION) return (true, true);
+        if (kind == PACKET_KIND_STRANDED_RETURN) return (false, true);
+        if (kind == PACKET_KIND_CEREMONY_INFLOW || kind == PACKET_KIND_REPATRIATION_RETURN) {
+            return (false, false);
+        }
+        revert IVaipakamErrors.IngressPacketKindUnknown(kind);
+    }
 
     /// @notice A value-bearing reward packet was recorded under its ingress stamp.
     /// @custom:event-category state-change/reward-custody
@@ -4519,6 +4545,7 @@ library LibRewardCustody {
         address remitter,
         uint256 remitId
     ) internal returns (bytes32 h) {
+        (bool writesReceipt,) = packetKindTraits(kind); // refuses an unknown kind
         h = allocatePacketHash(s, sourceChainId, transportMessageId);
         LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
         if (p.arrivedAt != 0) revert IVaipakamErrors.IngressPacketReplayed(h);
@@ -4549,8 +4576,11 @@ library LibRewardCustody {
         // the FIRST receipt silently before this PR, on the reasoning that
         // CCIP executes a message once; the stamp guard now covers that
         // case and this guard covers the remitter.) A stranded return
-        // (kind 3) lands on the canonical chain and creates no receipt.
-        if (remitId != 0 && remitter != address(0) && kind <= PACKET_KIND_COMPENSATION) {
+        // (kind 3) lands on the canonical chain and creates no receipt; a
+        // ceremony inflow (kind 4) and a repatriation return (kind 5) create
+        // none either (#2204: their `remitId` is a ceremony reference or an
+        // authorization id, not a reservation).
+        if (writesReceipt && remitId != 0 && remitter != address(0)) {
             bytes32 key = remitReceiptKey(remitter, remitId);
             LibVaipakam.ReceivedRemit storage rec = s.receivedRemits[key];
             if (rec.receivedAt != 0) revert IVaipakamErrors.IngressReceiptAlreadyDelivered(key);

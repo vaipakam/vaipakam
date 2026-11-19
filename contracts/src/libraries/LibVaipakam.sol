@@ -9624,7 +9624,9 @@ library LibVaipakam {
         uint32 sourceChainId;
         /// @dev 1 = budget delivery, 2 = compensation, 3 = stranded return,
         ///      4 = recovery-ceremony inflow (no transport packet: keyed by
-        ///      its ceremony reference).
+        ///      the per-source sequence under source 0, its ceremony
+        ///      reference in `remitId`), 5 = planned-surplus repatriation
+        ///      return (Mode A, #2204; its authorization id in `remitId`).
         uint8 kind;
         uint64 arrivedAt;
         address remitter;
