@@ -427,21 +427,68 @@ contract ExitInstructionTest is SetupTest {
     ///      tolerance in token units, so the sale must be sized against those
     ///      rounded figures, not the continuous ones. A route that delivers
     ///      just its floor still ends back inside the opening cap.
-    function test_7_reduceHoldsTheCapInWholeUnits() public {
-        principalAsset = new ERC20Mock("Principal0", "PRIN0", 0);
-        collateralAsset = new ERC20Mock("Collateral0", "COLL0", 0);
-        collateralAsset.mint(borrowerVault, 2_000);
+    /// @dev A loan of 1,000 principal against 2,000 collateral, opening limit
+    ///      `cap`, in tokens with `pDec` and `cDec` decimals.
+    function _unitLoan(uint8 pDec, uint8 cDec, uint16 cap) internal {
+        principalAsset = new ERC20Mock("PrincipalU", "PRINU", pDec);
+        collateralAsset = new ERC20Mock("CollateralU", "COLLU", cDec);
+        uint256 coll = 2_000 * 10 ** cDec;
+        collateralAsset.mint(borrowerVault, coll);
         TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(
-            borrowerEoa, address(collateralAsset), 2_000
+            borrowerEoa, address(collateralAsset), coll
         );
         _price(address(principalAsset), 1e8);
         _price(address(collateralAsset), 1e8);
-        principalAsset.mint(address(adapter1), 10_000);
+        principalAsset.mint(address(adapter1), 10_000 * 10 ** pDec);
         _scaffold(true);
-        LibVaipakam.Loan memory l = _withCap(7000);
-        l.principal = 1_000;
-        l.collateralAmount = 2_000;
+        LibVaipakam.Loan memory l = _withCap(cap);
+        l.principal = 1_000 * 10 ** pDec;
+        l.collateralAmount = coll;
         TestMutatorFacet(address(diamond)).setLoan(LOAN, l);
+    }
+
+    function _wholeUnitLoan(uint16 cap) internal {
+        _unitLoan(0, 0, cap);
+    }
+
+    /// @dev Collateral with 18 decimals against principal with none: the
+    ///      least sale is found however far the closed form falls short in
+    ///      collateral units.
+    function test_7_reduceSizesAcrossDecimals() public {
+        _unitLoan(0, 18, 7000);
+        _set(REDUCE, 1.1e18, 1.15e18, 100, false);
+        _price(address(collateralAsset), 0.64e8);
+        LibTestCalmPair.checkpoint(address(diamond), address(collateralAsset), address(principalAsset));
+        ExitInstructionFacet.ExitPreview memory pv = _x().previewExit(LOAN);
+        assertEq(pv.skip, 0, "due");
+        assertEq(pv.form, REDUCE);
+        // Pay 0.64 principal units per whole collateral token, less 1%.
+        adapter1.setTokenPrice(address(collateralAsset), 64);
+        adapter1.setTokenPrice(address(principalAsset), 100e18);
+        adapter1.setOutputMultiplierBps(9900);
+        vm.prank(runner);
+        _x().runReduce(LOAN, _routes(1), type(uint64).max);
+        assertLe(RiskFacet(address(diamond)).calculateLTV(LOAN), 7000, "back inside the opening cap");
+    }
+
+    /// @dev Whole units again, with the holder's target above the opening
+    ///      limit's health factor: a route delivering about its floor still
+    ///      reaches the target.
+    function test_7_reduceReachesTheTargetInWholeUnits() public {
+        _wholeUnitLoan(8000);
+        _set(REDUCE, LEVEL, 1.25e18, 100, false);
+        _fall();
+        ExitInstructionFacet.ExitPreview memory pv = _x().previewExit(LOAN);
+        assertEq(pv.skip, 0, "due");
+        assertEq(pv.form, REDUCE);
+        adapter1.setOutputMultiplierBps(6732);
+        vm.prank(runner);
+        _x().runReduce(LOAN, _routes(1), type(uint64).max);
+        assertGe(_hf(), 1.25e18, "target reached");
+    }
+
+    function test_7_reduceHoldsTheCapInWholeUnits() public {
+        _wholeUnitLoan(7000);
         _set(REDUCE, 1.1e18, 1.15e18, 100, false);
         _price(address(collateralAsset), 0.64e8);
         LibTestCalmPair.checkpoint(address(diamond), address(collateralAsset), address(principalAsset));
