@@ -21,7 +21,7 @@ So the test applied to each action: *what can the holder of this key choose, and
 | Complete a loan sale | the lender's `completeLoanSale` | Nothing. | None. But the entry has no work: a buyer's accept completes the sale in the same transaction and reverts if completion fails. The entry is a recovery hook for sales made before that was so, and a fresh deploy has none. |
 | Complete an offset | the borrower's `completeOffset` | Nothing. | None, and no work, for the same reason. |
 | Start a lender exit | the lender's sale listing; the takeover at face value | For a listing: its terms, bounded only by "not above the loan's own rate". For a takeover: which consenting slot takes the loan. | A listing on poor terms sells the position at a discount to whoever is waiting for it. A takeover cannot lose: the holder is paid the principal outstanding into its vault whichever slot takes it. |
-| Start an early close | `precloseDirect`, the handover to another borrower, the offset | Direct close: nothing, and the caller pays from its own wallet. Handover and offset: the offer used, so the terms. | Direct close: none (it is a repayment by someone else, which #3779 opens to anyone). Handover and offset: a shortfall charged to the borrower on terms it did not choose. |
+| Start an early close | `precloseDirect`, the handover to another borrower, the offset | Direct close: nothing, and the caller pays from its own wallet. Handover and offset: the offer used, so the terms. | Direct close: none (it is a repayment by someone else, which #3779 opens to anyone through the ordinary repayment). Handover and offset: a shortfall charged to the borrower on terms it did not choose. |
 | Extend | `extendLoanInPlace` | The new rate, anywhere inside both sides' limits, and the new term inside both sides' latest dates. | The borrower pays its own highest rate for the longest term it allowed, where a fair run would have kept the loan's rate. Bounded by the borrower's limits, but chosen against it. |
 | Fill a restricted slot | the slot match, where the slot's owner asked for named solvers only | Which borrower request fills the slot, inside the slot's terms. | None beyond what any caller may do on an unrestricted slot. This action narrows who may fill; it grants nothing. |
 | Re-lend what came back | the roll of a repaid slot loan; re-committing held payments | Nothing: the money goes back behind the owner's own slot, on the slot's terms. | The owner's returned money is committed to lending again when the owner may have wanted it free. Bounded: the slot must still be active and inside its lend-until time. |
@@ -44,7 +44,7 @@ A ninth, automatic refinance, was removed earlier (#3042): a refinance now compl
 - The takeover at face value pays the holder the same whichever slot takes the loan, so it fits rule 1 once the holder has said so on-chain: a per-loan instruction, "hand this loan to a consenting slot at face value", with an optional earliest time. Anyone may then run it. It replaces the key-held mandate of `InstantMarketDesign.md` section 7.
 
 **Start an early close: removed as a keeper action.**
-- The direct close needs no approval at all once #3779 lets anyone repay: the caller pays, the collateral is released to the borrower position.
+- The direct close needs no keeper action once #3779 lets anyone repay. Someone other than the holder who wants to pay a loan off uses the ordinary repayment, which #3779 opens to any payer: the caller pays, and the collateral is released to the borrower position. The direct close entry itself stays the holder's own, so there is one route for a repayment by someone else and not two.
 - The handover and the offset are the borrower's own decisions on chosen terms. What a borrower wants automated at the end of a loan is already an instruction: repay at due, repay from collateral, exit before liquidation, the due-date plan.
 
 **Extend: opened to anyone, with the terms set by rule.**
@@ -78,7 +78,7 @@ A ninth, automatic refinance, was removed earlier (#3042): a refinance now compl
 | --- | --- |
 | The action constants and the approval setter | Six actions removed; the setter refuses them by name. The storage is fresh at the next deploy. |
 | The authority library | The loan-keyed check and the per-loan switch go; the owner-keyed check stays for the two kept actions. |
-| Sale, close-out and offset facets | The keeper branches and the two recovery entries removed; the listing and the three close-out entries take the holder only. |
+| Sale, close-out and offset facets | The keeper branches and the two recovery entries removed; the listing and the three close-out entries (direct close, handover, offset) take the holder only. A repayment by anyone else goes through the ordinary repayment of #3779, never through the direct close. |
 | Extension | The entry takes the loan id alone; rate and term by the rule of section 4; one preview returning both and why it would refuse. |
 | Slots | The "lend again what comes back" setting; the roll and the re-commit read it and take any caller. |
 | Takeover | The per-loan instruction, its setter and clearer; the executor takes any caller and reads it. |
@@ -88,7 +88,7 @@ A ninth, automatic refinance, was removed earlier (#3042): a refinance now compl
 ## 7. Tests
 
 1. An accept that completes a sale or an offset leaves nothing for a later completion; no state exists with the accept done and the completion not.
-2. Listing, handover and offset refuse every caller but the holder.
+2. Listing, direct close, handover and offset refuse every caller but the holder; a third party repays the same loan through the ordinary repayment.
 3. Extension by any caller: the loan's rate where it is inside both limits; the midpoint where it is not; refused with no range in common; the term cut to the earlier latest date; nothing the caller passes changes the outcome; the holder may still extend while the platform switch is off.
 4. Roll and re-commit by any caller with the slot setting on; refused with it off; never for a position that was sold.
 5. Takeover by any caller under the instruction: the holder receives the principal outstanding whichever slot takes it; refused before the earliest time and after the instruction is cleared.
