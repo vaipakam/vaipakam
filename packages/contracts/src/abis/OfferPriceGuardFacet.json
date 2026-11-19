@@ -2127,7 +2127,7 @@
   },
   {
     "type": "error",
-    "name": "NotOfferCreator",
+    "name": "NotOfferHolder",
     "inputs": []
   },
   {
@@ -2405,6 +2405,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "PositionNFTNotSet",
+    "inputs": []
   },
   {
     "type": "error",

@@ -2055,7 +2055,7 @@
   },
   {
     "type": "error",
-    "name": "NotOfferCreator",
+    "name": "NotOfferHolder",
     "inputs": []
   },
   {

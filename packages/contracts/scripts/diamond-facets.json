@@ -68,6 +68,7 @@
     "IntegratorFacet",
     "StandingOfferCheckFacet",
     "ReferralFacet",
+    "BackstopAbsorbFacet",
     "ClaimFacet",
     "ClaimViewFacet",
     "LenderIntentViewFacet",

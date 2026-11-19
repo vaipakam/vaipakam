@@ -2209,11 +2209,6 @@
   },
   {
     "type": "error",
-    "name": "NotOfferCreator",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "NotOfferExecutor",
     "inputs": [
       {
@@ -2227,6 +2222,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "NotOfferHolder",
+    "inputs": []
   },
   {
     "type": "error",

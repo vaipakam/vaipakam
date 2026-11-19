@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibTestCalmPair} from "./helpers/LibTestCalmPair.sol";
 import {SetupTest} from "./SetupTest.t.sol";
+import {LibTestPayout} from "./helpers/LibTestPayout.sol";
 import {LenderIntentViewFacet} from "../src/facets/LenderIntentViewFacet.sol";
 import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
@@ -419,7 +420,11 @@ contract LenderIntentCapitalTest is SetupTest {
             lender, mockERC20, mockCollateralERC20, 0, PRINCIPAL
         );
         assertEq(_capital(), 0, "VPFI capital withdrawn");
-        assertEq(_tierDayClose(lender), 0, "tier record follows the withdrawal");
+        // The payout rule: the released capital is free balance in the same
+        // vault, so it still counts for the tier until the owner's Withdraw.
+        assertEq(_tierDayClose(lender), PRINCIPAL, "free VPFI in the vault still counts");
+        LibTestPayout.withdrawAllFree(address(diamond), lender);
+        assertEq(_tierDayClose(lender), 0, "tier record follows the owner's Withdraw");
     }
 
     /// @dev #2860 — a funded intent whose lending asset becomes VPFI after

@@ -72,7 +72,7 @@ export const ALLOWED = [
   { site: 'src/facets/SwapToRepayPartialFacet.sol:SwapToRepayPartialFacet.swapToRepayPartial', count: 1, reason: `${INTO_VAULT} A swap's unused collateral back to the borrower's vault.` },
   { site: 'src/facets/PrepayListingFacet.sol:PrepayListingFacet.recordOfferSaleProceeds', count: 1, reason: `${INTO_VAULT} A collateral sale's proceeds.` },
   { site: 'src/facets/BackstopFacet.sol:BackstopFacet.seedBackstopOrigination', count: 1, reason: 'Treasury capital into the backstop vault (a protocol vault).' },
-  { site: 'src/facets/BackstopFacet.sol:BackstopFacet.seedBackstopAbsorb', count: 1, reason: 'Treasury capital into the backstop vault (a protocol vault).' },
+  { site: 'src/facets/BackstopAbsorbFacet.sol:BackstopAbsorbFacet.seedBackstopAbsorb', count: 1, reason: 'Treasury capital into the backstop vault (a protocol vault).' },
   { site: 'src/facets/AutoLifecycleFacet.sol:AutoLifecycleFacet._routeInterest', count: 1, reason: `${INTO_VAULT} The lender's share of an extension.` },
   { site: 'src/facets/EarlyWithdrawalDirectFacet.sol:EarlyWithdrawalDirectFacet._sellLoanViaBuyOfferImpl', count: 1, reason: `${INTO_VAULT} The held-for-lender amount into the buyer's vault.` },
   { site: 'src/BackstopVaultImplementation.sol:BackstopVaultImplementation.executeClaim', count: 2, reason: 'The backstop vault returning recovered value to the Diamond.' },

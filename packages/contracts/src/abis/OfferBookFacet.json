@@ -72,6 +72,24 @@
   },
   {
     "type": "function",
+    "name": "requireOfferHolder",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "requireOfferValueAdmitted",
     "inputs": [
       {
@@ -2049,7 +2067,7 @@
   },
   {
     "type": "error",
-    "name": "NotOfferCreator",
+    "name": "NotOfferHolder",
     "inputs": []
   },
   {
@@ -2284,6 +2302,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "PositionNFTNotSet",
+    "inputs": []
   },
   {
     "type": "error",

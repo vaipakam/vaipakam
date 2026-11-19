@@ -45,6 +45,7 @@ import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFactoryFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
+import {BackstopAbsorbFacet} from "../src/facets/BackstopAbsorbFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
@@ -630,6 +631,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
             StandingOfferCheckFacet(ArtifactDeploy.deploy(type(StandingOfferCheckFacet).name));
         // #3722 — the referral binding, settings, quote and payment.
         ReferralFacet referralFacet = ReferralFacet(ArtifactDeploy.deploy(type(ReferralFacet).name));
+        // Role B (absorb) governance, split off BackstopFacet for EIP-170.
+        BackstopAbsorbFacet backstopAbsorbFacet =
+            BackstopAbsorbFacet(ArtifactDeploy.deploy(type(BackstopAbsorbFacet).name));
         // #1841 - the one sale-exit verdict: the lender exit chooser's view and
         // the guard both sale entries self-call.
         SaleExitVerdictFacet saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
@@ -676,7 +680,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](136);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](137);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -820,6 +824,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[133] = _buildCut(address(integratorFacet), _getIntegratorSelectors());
         cuts[134] = _buildCut(address(standingOfferCheckFacet), _getStandingOfferCheckSelectors());
         cuts[135] = _buildCut(address(referralFacet), _getReferralSelectors());
+        cuts[136] = _buildCut(address(backstopAbsorbFacet), _getBackstopAbsorbFacetSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1602,6 +1607,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("integratorFacet", address(integratorFacet));
         Deployments.writeFacet("standingOfferCheckFacet", address(standingOfferCheckFacet));
         Deployments.writeFacet("referralFacet", address(referralFacet));
+        Deployments.writeFacet("backstopAbsorbFacet", address(backstopAbsorbFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
         Deployments.writeFacet("refinancePayoffFacet", address(refinancePayoffFacet));
@@ -2862,7 +2868,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](25);
+        s = new bytes4[](18);
         s[0] = BackstopFacet.initializeBackstopVaultImplementation.selector;
         s[1] = BackstopFacet.provisionBackstopVault.selector;
         s[2] = BackstopFacet.upgradeBackstopVault.selector;
@@ -2879,17 +2885,26 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[13] = BackstopFacet.setBackstopFillEnabled.selector;
         s[14] = BackstopFacet.setMinBackstopDelay.selector;
         s[15] = BackstopFacet.getBackstopVault.selector;
-        // #399 backstop v0 Role B — absorb governance.
-        s[16] = BackstopFacet.setBackstopAbsorbEnabled.selector;
-        s[17] = BackstopFacet.setBackstopAbsorbCap.selector;
-        s[18] = BackstopFacet.seedBackstopAbsorb.selector;
-        s[19] = BackstopFacet.sweepBackstopAbsorbCollateral.selector;
-        s[20] = BackstopFacet.releaseBackstopAbsorbExposure.selector;
-        s[21] = BackstopFacet.getBackstopAbsorbInfo.selector;
-        s[22] = BackstopFacet.withdrawBackstopAbsorbToTreasury.selector;
         // #638 — backstop-only min-secondary-oracle-coverage knob.
-        s[23] = BackstopFacet.setBackstopMinSecondaryOracleCoverage.selector;
-        s[24] = BackstopFacet.getBackstopMinSecondaryOracleCoverage.selector;
+        s[16] = BackstopFacet.setBackstopMinSecondaryOracleCoverage.selector;
+        s[17] = BackstopFacet.getBackstopMinSecondaryOracleCoverage.selector;
+    }
+
+    /// @dev Selectors for `BackstopAbsorbFacet` — the backstop's Role B
+    ///      (absorb) governance, split off BackstopFacet for EIP-170.
+    function _getBackstopAbsorbFacetSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](7);
+        s[0] = BackstopAbsorbFacet.setBackstopAbsorbEnabled.selector;
+        s[1] = BackstopAbsorbFacet.setBackstopAbsorbCap.selector;
+        s[2] = BackstopAbsorbFacet.seedBackstopAbsorb.selector;
+        s[3] = BackstopAbsorbFacet.sweepBackstopAbsorbCollateral.selector;
+        s[4] = BackstopAbsorbFacet.releaseBackstopAbsorbExposure.selector;
+        s[5] = BackstopAbsorbFacet.getBackstopAbsorbInfo.selector;
+        s[6] = BackstopAbsorbFacet.withdrawBackstopAbsorbToTreasury.selector;
     }
 
     /// #594 — Diamond NFT receiver hooks (gated+pinned, D-6).

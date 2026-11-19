@@ -138,6 +138,7 @@ import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.s
 import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
 import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
 import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
+import {BackstopAbsorbFacet} from "../src/facets/BackstopAbsorbFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -1551,7 +1552,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](25);
+        selectors = new bytes4[](18);
         selectors[0] = BackstopFacet.initializeBackstopVaultImplementation.selector;
         selectors[1] = BackstopFacet.provisionBackstopVault.selector;
         selectors[2] = BackstopFacet.upgradeBackstopVault.selector;
@@ -1568,17 +1569,25 @@ contract HelperTest {
         selectors[13] = BackstopFacet.setBackstopFillEnabled.selector;
         selectors[14] = BackstopFacet.setMinBackstopDelay.selector;
         selectors[15] = BackstopFacet.getBackstopVault.selector;
-        // #399 backstop v0 Role B — absorb governance.
-        selectors[16] = BackstopFacet.setBackstopAbsorbEnabled.selector;
-        selectors[17] = BackstopFacet.setBackstopAbsorbCap.selector;
-        selectors[18] = BackstopFacet.seedBackstopAbsorb.selector;
-        selectors[19] = BackstopFacet.sweepBackstopAbsorbCollateral.selector;
-        selectors[20] = BackstopFacet.releaseBackstopAbsorbExposure.selector;
-        selectors[21] = BackstopFacet.getBackstopAbsorbInfo.selector;
-        selectors[22] = BackstopFacet.withdrawBackstopAbsorbToTreasury.selector;
         // #638 — backstop-only min-secondary-oracle-coverage knob.
-        selectors[23] = BackstopFacet.setBackstopMinSecondaryOracleCoverage.selector;
-        selectors[24] = BackstopFacet.getBackstopMinSecondaryOracleCoverage.selector;
+        selectors[16] = BackstopFacet.setBackstopMinSecondaryOracleCoverage.selector;
+        selectors[17] = BackstopFacet.getBackstopMinSecondaryOracleCoverage.selector;
+    }
+
+    /// @dev The backstop's Role B (absorb) governance, split off BackstopFacet.
+    function getBackstopAbsorbFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](7);
+        selectors[0] = BackstopAbsorbFacet.setBackstopAbsorbEnabled.selector;
+        selectors[1] = BackstopAbsorbFacet.setBackstopAbsorbCap.selector;
+        selectors[2] = BackstopAbsorbFacet.seedBackstopAbsorb.selector;
+        selectors[3] = BackstopAbsorbFacet.sweepBackstopAbsorbCollateral.selector;
+        selectors[4] = BackstopAbsorbFacet.releaseBackstopAbsorbExposure.selector;
+        selectors[5] = BackstopAbsorbFacet.getBackstopAbsorbInfo.selector;
+        selectors[6] = BackstopAbsorbFacet.withdrawBackstopAbsorbToTreasury.selector;
     }
 
     /// #594 — Diamond NFT receiver hooks (gated+pinned, D-6).

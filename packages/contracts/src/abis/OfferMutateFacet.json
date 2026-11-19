@@ -2103,7 +2103,7 @@
   },
   {
     "type": "error",
-    "name": "NotOfferCreator",
+    "name": "NotOfferHolder",
     "inputs": []
   },
   {
@@ -2124,6 +2124,11 @@
   {
     "type": "error",
     "name": "OfferCreationFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OfferEscrowRaiseByCreatorOnly",
     "inputs": []
   },
   {

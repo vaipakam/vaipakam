@@ -2332,7 +2332,7 @@
   },
   {
     "type": "error",
-    "name": "NotOfferCreator",
+    "name": "NotOfferHolder",
     "inputs": []
   },
   {
@@ -4114,6 +4114,17 @@
   },
   {
     "type": "error",
+    "name": "SanctionedAddress",
+    "inputs": [
+      {
+        "name": "who",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SanctionsOracleUnavailable",
     "inputs": []
   },
@@ -4121,6 +4132,17 @@
     "type": "error",
     "name": "SelfCollateralizedOffer",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SelfTradeForbidden",
+    "inputs": [
+      {
+        "name": "party",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",

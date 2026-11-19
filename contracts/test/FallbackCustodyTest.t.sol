@@ -30,6 +30,7 @@ import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
+import {BackstopAbsorbFacet} from "../src/facets/BackstopAbsorbFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
@@ -604,10 +605,10 @@ contract FallbackCustodyTest is CustodyInvariantBase {
         assertEq(_fcTracked(fcBorrower, vpfi), u + b, "the vault keeps the free deposit and the slice");
 
         // #3205 part 2 — the sweep pays only the treasury (no free `to`).
-        vm.expectRevert(BackstopFacet.BackstopAbsorbCollateralInsufficient.selector);
-        BackstopFacet(address(diamond)).sweepBackstopAbsorbCollateral(vpfi, l + 1);
+        vm.expectRevert(BackstopAbsorbFacet.BackstopAbsorbCollateralInsufficient.selector);
+        BackstopAbsorbFacet(address(diamond)).sweepBackstopAbsorbCollateral(vpfi, l + 1);
         uint256 treasuryBeforeSweep = IERC20(vpfi).balanceOf(treasuryEOA);
-        BackstopFacet(address(diamond)).sweepBackstopAbsorbCollateral(vpfi, l);
+        BackstopAbsorbFacet(address(diamond)).sweepBackstopAbsorbCollateral(vpfi, l);
         assertEq(IERC20(vpfi).balanceOf(treasuryEOA) - treasuryBeforeSweep, l, "warehoused exactly the lender slice, swept to the treasury");
     }
 

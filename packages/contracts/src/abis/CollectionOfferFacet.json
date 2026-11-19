@@ -3415,11 +3415,6 @@
   },
   {
     "type": "error",
-    "name": "NotCollectionOfferLender",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "NotLender",
     "inputs": []
   },
@@ -3430,7 +3425,7 @@
   },
   {
     "type": "error",
-    "name": "NotOfferCreator",
+    "name": "NotOfferHolder",
     "inputs": []
   },
   {
@@ -3638,6 +3633,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "PositionNFTNotSet",
+    "inputs": []
   },
   {
     "type": "error",

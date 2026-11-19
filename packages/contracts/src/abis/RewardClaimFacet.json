@@ -1942,7 +1942,7 @@
   },
   {
     "type": "error",
-    "name": "NotOfferCreator",
+    "name": "NotOfferHolder",
     "inputs": []
   },
   {
@@ -3625,17 +3625,6 @@
     "type": "error",
     "name": "RiskAndTermsConsentRequired",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SafeERC20FailedOperation",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",

@@ -2665,7 +2665,7 @@
   },
   {
     "type": "error",
-    "name": "NotOfferCreator",
+    "name": "NotOfferHolder",
     "inputs": []
   },
   {
@@ -4357,17 +4357,6 @@
         "name": "value",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SafeERC20FailedOperation",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
       }
     ]
   },

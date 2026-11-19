@@ -44,6 +44,11 @@
   },
   {
     "type": "error",
+    "name": "BatchAlreadyOpen",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "CrossFacetCallFailed",
     "inputs": [
       {

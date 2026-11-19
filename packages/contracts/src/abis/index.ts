@@ -100,6 +100,7 @@ import StandingInstructionFacetABI from './StandingInstructionFacet.json';
 import IntegratorFacetABI from './IntegratorFacet.json';
 import StandingOfferCheckFacetABI from './StandingOfferCheckFacet.json';
 import ReferralFacetABI from './ReferralFacet.json';
+import BackstopAbsorbFacetABI from './BackstopAbsorbFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import ClaimViewFacetABI from './ClaimViewFacet.json';
 import LenderIntentViewFacetABI from './LenderIntentViewFacet.json';
@@ -313,6 +314,7 @@ export {
   IntegratorFacetABI,
   StandingOfferCheckFacetABI,
   ReferralFacetABI,
+  BackstopAbsorbFacetABI,
   ClaimFacetABI,
   ClaimViewFacetABI,
   LenderIntentViewFacetABI,

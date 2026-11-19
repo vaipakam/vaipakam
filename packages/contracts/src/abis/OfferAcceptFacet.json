@@ -1595,6 +1595,17 @@
   },
   {
     "type": "error",
+    "name": "CrossFacetCallFailed",
+    "inputs": [
+      {
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "CustodyEraAlreadyFinalized",
     "inputs": [
       {
@@ -2580,7 +2591,7 @@
   },
   {
     "type": "error",
-    "name": "NotOfferCreator",
+    "name": "NotOfferHolder",
     "inputs": []
   },
   {

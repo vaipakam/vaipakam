@@ -338,6 +338,8 @@ FACETS=(
   "IntegratorFacet"
   "StandingOfferCheckFacet"
   "ReferralFacet"
+  # The backstop's Role B (absorb) governance, split off BackstopFacet (EIP-170).
+  "BackstopAbsorbFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"
