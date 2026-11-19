@@ -18,6 +18,7 @@ import {LibSaleListing} from "../libraries/LibSaleListing.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibRefinancePayoff} from "../libraries/LibRefinancePayoff.sol";
+import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -180,14 +181,24 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             // once moved, carries nothing to its holder): the escrow is
             // already in the creator's vault and only becomes free there.
             LibVaultOutflow.releaseOwn(creator, kind, asset, tokenId, amount, offerId, OutflowReason.OFFER_REFUND);
-        } else if (holder == creator || byHolder) {
-            LibVaultOutflow.toOfferHolder(creator, kind, asset, tokenId, amount, offerId, token);
-        } else if (
-            LibVaipakam.isSanctionedAddress(holder)
-                || !LibVaultOutflow.tryToOfferHolder(creator, kind, asset, tokenId, amount, offerId, token)
-        ) {
-            LibEncumbrance.holdForOfferToken(creator, token, asset, tokenId, amount);
-            held = true;
+        } else {
+            // The creator is only the funding anchor once the token has moved:
+            // a flag on it after the transfer must not strand the clean
+            // holder's escrow. Open the move-out window pinned to the creator
+            // (the one `LibConsolidation` uses); the holder's own vault is
+            // still screened.
+            LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+            if (holder != creator) LibSanctionedLock.beginMoveOut(s, creator);
+            if (holder == creator || byHolder) {
+                LibVaultOutflow.toOfferHolder(creator, kind, asset, tokenId, amount, offerId, token);
+            } else if (
+                LibVaipakam.isSanctionedAddress(holder)
+                    || !LibVaultOutflow.tryToOfferHolder(creator, kind, asset, tokenId, amount, offerId, token)
+            ) {
+                LibEncumbrance.holdForOfferToken(creator, token, asset, tokenId, amount);
+                held = true;
+            }
+            if (holder != creator) LibSanctionedLock.endMoveOut(s);
         }
         emit OfferEscrowReturned(offerId, token, holder, asset, tokenId, amount, held);
     }
@@ -213,7 +224,12 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         if (kind == LibVaultOutflow.ERC20) tokenId = 0;
         (address creator, uint256 amount) = LibEncumbrance.releaseOfferTokenHold(positionToken, asset, tokenId);
         if (amount == 0) revert NothingHeldForOfferToken(positionToken, asset, tokenId);
+        // The creator is only the funding anchor: a flag on it must not
+        // strand the holder's escrow (see `refundOfferEscrow`).
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (holder != creator) LibSanctionedLock.beginMoveOut(s, creator);
         LibVaultOutflow.toOfferHolder(creator, kind, asset, tokenId, amount, 0, positionToken);
+        if (holder != creator) LibSanctionedLock.endMoveOut(s);
         emit OfferRefundCollected(positionToken, holder, asset, tokenId, amount);
     }
 

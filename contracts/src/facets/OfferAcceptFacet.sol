@@ -1086,7 +1086,12 @@ contract OfferAcceptFacet is
         uint256 valueNumeraire = _calculateTransactionValueNumeraire(offer, effectivePrincipal);
         if (
             !ProfileFacet(address(this)).meetsKYCRequirement(offer.creator, valueNumeraire) ||
-            !ProfileFacet(address(this)).meetsKYCRequirement(acceptor, valueNumeraire)
+            !ProfileFacet(address(this)).meetsKYCRequirement(acceptor, valueNumeraire) ||
+            // #3744 — and the owners of the two loan sides when they differ:
+            // the holder of the offer's token, and in a match the holder of
+            // the lender offer's token.
+            !ProfileFacet(address(this)).meetsKYCRequirement(LibOfferRefund.holder(offer), valueNumeraire) ||
+            !ProfileFacet(address(this)).meetsKYCRequirement(LibOfferRefund.acceptorSideOwner(acceptor), valueNumeraire)
         ) {
             revert KYCRequired();
         }

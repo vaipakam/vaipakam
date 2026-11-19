@@ -134,6 +134,16 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   // ── Offers and their sale routes.
   ['OfferCreatedDetails', ['creator']],
   ['OfferCanceledDetails', ['creator']],
+  // #3744 — an open offer's rights follow its position token, so the wallet
+  // that cancelled or edited it (`by`: the token's holder, or anyone clearing
+  // an expired or dead offer) is a party beside the creator (the actor). The
+  // escrow returned to the token's holder, the holder collecting a held
+  // refund, and the holder's Full-tariff consent each name that holder.
+  ['OfferCanceled', ['by']],
+  ['OfferModified', ['by']],
+  ['OfferEscrowReturned', ['holder']],
+  ['OfferRefundCollected', ['holder']],
+  ['OfferFullTariffConsentBy', ['by']],
   // #3358 — the maker's price-move guard set, changed or cleared on their offer.
   ['OfferPriceGuardSet', ['creator']],
   ['OfferSaleProceedsCredited', ['borrower']],

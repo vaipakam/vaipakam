@@ -9,7 +9,7 @@
  *     of the two chains' own figures, as each emitted them (PF-260);
  *   - Base broadcasts each finalized pair and the mirror then knows the same
  *     pair Base finalized (PF-260);
- *   - lender and borrower claim on Base into their wallets: the VPFI they
+ *   - lender and borrower claim on Base into their vaults: the VPFI they
  *     receive is exactly what running the claim in a reverting frame said it
  *     would pay, the static preview never quoted more, and nothing is left to
  *     claim afterwards (PF-120);
@@ -38,8 +38,11 @@ import { broadcastDays, closeDays, finalizeDays, indexDelivery, remitDays, remit
 
 const DAY = 86_400;
 const HOUR = 3_600;
-/** `LibVaipakam.RewardDelivery.Wallet`: pay the claim to the caller's wallet. */
-const TO_WALLET = 1;
+/**
+ * `LibVaipakam.RewardDelivery.Vault`: pay the claim into the caller's vault.
+ * The payout rule retired the wallet venue (`RewardDeliveryNotSelectable`).
+ */
+const TO_VAULT = 2;
 /**
  * The days reported and finalized. The loans are accepted on day 0 and repaid
  * on day 4, so they earn days 1-3: the opening day and the closing day earn
@@ -89,7 +92,7 @@ async function staticPreview(sc: MeshChain, who: Party): Promise<bigint> {
 }
 
 /**
- * What `who`'s claim on `sc` would pay to the wallet, by running the claim
+ * What `who`'s claim on `sc` would pay into the vault, by running the claim
  * itself in a frame that always reverts (`simulateClaimInteractionRewards`),
  * or null when the claim would revert for a reason of its own (nothing to
  * claim, among them).
@@ -104,7 +107,7 @@ async function simulatedClaim(sc: MeshChain, who: Party): Promise<bigint | null>
       address: sc.diamond,
       abi: DIAMOND_ABI_VIEM,
       functionName: 'simulateClaimInteractionRewards',
-      args: [sc.address(who), TO_WALLET],
+      args: [sc.address(who), TO_VAULT],
     } as never);
   } catch (err) {
     const reverted = err instanceof BaseError ? err.walk((e) => e instanceof ContractFunctionRevertedError) : null;
@@ -118,26 +121,32 @@ async function simulatedClaim(sc: MeshChain, who: Party): Promise<bigint | null>
 }
 
 /**
- * Claim `who`'s rewards on `sc` into the wallet and check the claim against
+ * Claim `who`'s rewards on `sc` into their vault and check the claim against
  * the simulation taken just before it. Returns the amount paid.
  */
-async function claimToWallet(sc: MeshChain, token: Address, who: Party): Promise<bigint> {
+async function claimToVault(sc: MeshChain, token: Address, who: Party): Promise<bigint> {
   const simulated = await simulatedClaim(sc, who);
   expect(simulated, `${who}'s claim on chain ${sc.chain.id} is refused: ${lastRefusal.get(`${sc.chain.id}:${who}`)}`).not.toBeNull();
   expect(simulated!).toBeGreaterThan(0n);
   // The static preview never promises more than the claim pays.
   expect(await staticPreview(sc, who)).toBeLessThanOrEqual(simulated!);
-  const before = await balanceOf(sc, token, sc.address(who));
+  const vault = await sc.read<Address>('getUserVaultAddress', [sc.address(who)]);
+  const walletBefore = await balanceOf(sc, token, sc.address(who));
+  const before = await balanceOf(sc, token, vault);
   const from = await sc.blockNumber();
-  await sc.diamondWrite(who, 'claimInteractionRewardsTo', [TO_WALLET]);
+  await sc.diamondWrite(who, 'claimInteractionRewardsTo', [TO_VAULT]);
   const claimed = (await sc.diamondEvents('InteractionRewardsClaimed', from + 1n)).filter(
     (e) => String(e.args.user).toLowerCase() === sc.address(who).toLowerCase(),
   );
   expect(claimed.length).toBe(1);
   expect(BigInt(claimed[0].args.amount as bigint)).toBe(simulated);
-  // Wallet delivery: the payout lands in the wallet, never the vault.
-  expect((await sc.diamondEvents('RewardDeliveredToVault', from + 1n)).length).toBe(0);
-  expect((await balanceOf(sc, token, sc.address(who))) - before).toBe(simulated);
+  // Vault delivery: the payout lands in the vault, never the wallet.
+  const delivered = (await sc.diamondEvents('RewardDeliveredToVault', from + 1n)).filter(
+    (e) => String(e.args.user).toLowerCase() === sc.address(who).toLowerCase(),
+  );
+  expect(delivered.map((e) => BigInt(e.args.amount as bigint))).toEqual([simulated]);
+  expect((await balanceOf(sc, token, vault)) - before).toBe(simulated);
+  expect(await balanceOf(sc, token, sc.address(who))).toBe(walletBefore);
   // Nothing is left to claim.
   expect(await simulatedClaim(sc, who)).toBeNull();
   expect(await staticPreview(sc, who)).toBe(0n);
@@ -154,7 +163,7 @@ async function claimToWallet(sc: MeshChain, token: Address, who: Party): Promise
  */
 async function driveDeferredClaim(sc: MeshChain, who: Party): Promise<bigint[]> {
   const from = await sc.blockNumber();
-  await sc.diamondWrite(who, 'claimInteractionRewardsTo', [TO_WALLET]);
+  await sc.diamondWrite(who, 'claimInteractionRewardsTo', [TO_VAULT]);
   const claimed = (await sc.diamondEvents('InteractionRewardsClaimed', from + 1n)).filter(
     (e) => String(e.args.user).toLowerCase() === sc.address(who).toLowerCase(),
   );
@@ -239,8 +248,8 @@ describe('interaction rewards on a canonical chain and a mirror', () => {
     }
   });
 
-  it('pays lender and borrower on Base into their wallets, exactly what the claim simulation said', async () => {
-    for (const who of PARTIES) await claimToWallet(m.base, m.fixture.vpfiToken, who);
+  it('pays lender and borrower on Base into their vaults, exactly what the claim simulation said', async () => {
+    for (const who of PARTIES) await claimToVault(m.base, m.fixture.vpfiToken, who);
   });
 
   it('refuses to fund all three owed days in one remittance (#2821)', async () => {
@@ -280,7 +289,7 @@ describe('interaction rewards on a canonical chain and a mirror', () => {
     let paid = 0n;
     for (const who of PARTIES) {
       await driveDeferredClaim(m.mirror, who);
-      paid += await claimToWallet(m.mirror, m.fixture.vpfiMirror, who);
+      paid += await claimToVault(m.mirror, m.fixture.vpfiMirror, who);
     }
     // The claims are paid out of the remitted budget, never beyond it.
     expect(paid).toBeLessThanOrEqual(remitted);

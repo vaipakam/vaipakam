@@ -21,6 +21,8 @@ import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
+import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
@@ -440,5 +442,37 @@ contract OfferFillHolderTest is SetupTest {
             uint8(OfferPreviewFacet(address(diamond)).previewAccept(id, buyer).errorCode),
             uint8(OfferAcceptFacet.AcceptError.SelfTrade)
         );
+    }
+
+    // ─── Codex round 2 ───────────────────────────────────────────────────
+
+    /// With KYC enforcement on, the holder who takes the borrower side must
+    /// meet the tier for the loan's value, as the creator and acceptor must.
+    function test_kyc_appliesToTheBorrowerHolder() public {
+        uint256 id = _borrowerOffer();
+        _soldTo(id, buyer);
+        AdminFacet(address(diamond)).setKYCEnforcement(true);
+        ProfileFacet(address(diamond)).updateKYCTier(borrower, LibVaipakam.KYCTier.Tier2);
+        ProfileFacet(address(diamond)).updateKYCTier(lender, LibVaipakam.KYCTier.Tier2);
+        _acceptExpecting(id, abi.encodeWithSelector(IVaipakamErrors.KYCRequired.selector));
+
+        ProfileFacet(address(diamond)).updateKYCTier(buyer, LibVaipakam.KYCTier.Tier2);
+        _acceptRaw(id);
+    }
+
+    /// A flag on the creator after the token moved does not strand the clean
+    /// holder's escrow: the holder cancels, and the escrow reaches the
+    /// holder's vault.
+    function test_flaggedCreator_holderStillRecoversTheEscrow() public {
+        uint256 id = _borrowerOffer();
+        _soldTo(id, buyer);
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(borrower, true);
+
+        vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY + 1);
+        vm.prank(buyer);
+        OfferCancelFacet(address(diamond)).cancelOffer(id);
+        assertEq(_free(buyer, mockCollateralERC20), 5000 ether, "the escrow is in the holder's vault");
     }
 }
