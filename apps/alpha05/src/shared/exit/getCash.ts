@@ -90,9 +90,14 @@ export function routeState(rows: readonly { reason: Hex; reopensAt: bigint }[]):
  *  interest by time. Also what the loan's statement says about the route. */
 export type HandoverReach = 'yes' | 'unrouted' | 'not-instant' | 'full-term';
 
-export type Handover = { kind: 'ready'; owner: Hex; slot: number; receives: bigint } | { kind: 'none' } | { kind: 'out-of-reach'; why: Exclude<HandoverReach, 'yes'> };
+/** `none` carries whether the search saw every candidate: false when the
+ *  network's Auto-lend list or the probe cap was longer than what was read,
+ *  so a slot that would take the loan may exist beyond it. */
+export type Handover = { kind: 'ready'; owner: Hex; slot: number; receives: bigint } | { kind: 'none'; complete: boolean } | { kind: 'out-of-reach'; why: Exclude<HandoverReach, 'yes'> };
 
-export type DirectSale = { kind: 'ready'; offerId: bigint; rateBps: bigint; net: bigint } | { kind: 'none' };
+/** As for the handover, `none` says whether every buy offer on the pair was
+ *  read. */
+export type DirectSale = { kind: 'ready'; offerId: bigint; rateBps: bigint; net: bigint } | { kind: 'none'; complete: boolean };
 
 export interface GetCash {
   direct: RouteState;
@@ -105,7 +110,8 @@ export interface GetCash {
   readAt: number;
 }
 
-/** The pair's slots that could take the loan over, by their own terms. */
+/** The pair's slots that could take the loan over, by their own terms (all
+ *  of them: the caller probes the first `SLOT_PROBES` and states the rest). */
 export function handoverCandidates(intents: readonly IntentSummary[], loan: CashLoan, me: Hex): IntentSummary[] {
   const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
   return intents
@@ -117,8 +123,7 @@ export function handoverCandidates(intents: readonly IntentSummary[], loan: Cash
         (loan.borrower === null || !same(i.owner, loan.borrower)) &&
         i.minRateBps <= loan.rateBps &&
         i.availableCapital >= loan.principal,
-    )
-    .slice(0, SLOT_PROBES);
+    );
 }
 
 /** The standing buy offers a direct sale could fill: a single-valued
@@ -179,7 +184,11 @@ export async function readHandoverReach(c: PublicClient, diamond: Hex, loan: Cas
 /** The first slot whose dry run takes the loan over. */
 async function readHandover(own: OwnStateClient, diamond: Hex, loan: CashLoan): Promise<Handover> {
   const intents = (await own.read((c) => readLenderIntents(c, diamond))).value;
-  const cands = handoverCandidates(intents.intents, loan, own.account);
+  const all = handoverCandidates(intents.intents, loan, own.account);
+  const cands = all.slice(0, SLOT_PROBES);
+  // The search saw every slot only when the list was read to its end and
+  // every candidate was probed.
+  const complete = BigInt(intents.scanned) >= intents.total && all.length <= SLOT_PROBES;
   // A candidate that could not be read is not a candidate that refused: with
   // none ready, an unread one makes the answer unknown, never "none".
   let unread: string | null = null;
@@ -201,12 +210,13 @@ async function readHandover(own: OwnStateClient, diamond: Hex, loan: CashLoan): 
     if (asked.kind === 'unreadable') unread = asked.reason;
   }
   if (unread !== null) throw new Error(unread);
-  return { kind: 'none' };
+  return { kind: 'none', complete };
 }
 
 /** The standing buy offer that pays the lender most now. */
 async function readDirectSale(own: OwnStateClient, diamond: Hex, loan: CashLoan): Promise<DirectSale> {
-  const { ids } = (await own.read((c) => readPairOfferIds(c, diamond, loan.lending, loan.collateral, OFFER_PAGE))).value;
+  const { ids, total } = (await own.read((c) => readPairOfferIds(c, diamond, loan.lending, loan.collateral, OFFER_PAGE))).value;
+  const complete = BigInt(ids.length) >= total;
   const offers = await Promise.all(
     ids.map((id) =>
       own
@@ -248,7 +258,7 @@ async function readDirectSale(own: OwnStateClient, diamond: Hex, loan: CashLoan)
     if (asked.kind === 'unreadable') unread = asked.reason;
   }
   if (unread !== null) throw new Error(unread);
-  return { kind: 'none' };
+  return { kind: 'none', complete };
 }
 
 /** The principal outstanding now. The handover pays exactly this, so it is
@@ -277,8 +287,8 @@ export async function readGetCash(own: OwnStateClient, diamond: Hex, page: CashL
   const listing = routeState(verdict[1]);
   const open = direct.kind === 'open';
   const [handover, sale] = await Promise.all([
-    reach !== 'yes' ? Promise.resolve<Handover>({ kind: 'out-of-reach', why: reach }) : open ? readHandover(own, diamond, loan) : Promise.resolve<Handover>({ kind: 'none' }),
-    open ? readDirectSale(own, diamond, loan) : Promise.resolve<DirectSale>({ kind: 'none' }),
+    reach !== 'yes' ? Promise.resolve<Handover>({ kind: 'out-of-reach', why: reach }) : open ? readHandover(own, diamond, loan) : Promise.resolve<Handover>({ kind: 'none', complete: true }),
+    open ? readDirectSale(own, diamond, loan) : Promise.resolve<DirectSale>({ kind: 'none', complete: true }),
   ]);
   return { direct, listing, reach, handover, sale, principal, readAt: Date.now() };
 }
@@ -294,11 +304,18 @@ export async function quoteListing(c: PublicClient, diamond: Hex, loanId: bigint
   return { minNet, maxHeld };
 }
 
+/** Whether "no lender is taking a loan like this" is known: both searches
+ *  that found nothing saw every candidate. A route out of reach, or one that
+ *  found a taker, does not make the answer partial. */
+export function searchedAll(g: Pick<GetCash, 'handover' | 'sale'>): boolean {
+  return (g.handover.kind !== 'none' || g.handover.complete) && (g.sale.kind !== 'none' || g.sale.complete);
+}
+
 /** A key for the read: a re-read that differs is a change. */
 export function getCashKey(g: GetCash): string {
   const r = (s: RouteState) => (s.kind === 'open' ? 'open' : `closed:${s.reopensAt}:${s.refusals.map((x) => x.code).join(',')}`);
-  const h = g.handover.kind === 'ready' ? `${g.handover.owner}:${g.handover.slot}:${g.handover.receives}` : g.handover.kind;
-  const s = g.sale.kind === 'ready' ? `${g.sale.offerId}:${g.sale.net}` : 'none';
+  const h = g.handover.kind === 'ready' ? `${g.handover.owner}:${g.handover.slot}:${g.handover.receives}` : g.handover.kind === 'none' ? `none:${g.handover.complete}` : g.handover.kind;
+  const s = g.sale.kind === 'ready' ? `${g.sale.offerId}:${g.sale.net}` : `none:${g.sale.complete}`;
   return [r(g.direct), r(g.listing), g.reach, h, s, g.principal].join('|');
 }
 

@@ -10,6 +10,7 @@ import {
   listingCall,
   quoteListing,
   readGetCash,
+  searchedAll,
   takeoverCall,
   type CashLoan,
   type GetCash as GetCashRead,
@@ -194,8 +195,8 @@ export function GetCash(props: GetCashProps) {
             </div>
           )}
           {read !== null && read.direct.kind === 'open' && read.handover.kind !== 'ready' && read.sale.kind !== 'ready' && (
-            <p className="tier-a" data-testid="get-cash-now-none">
-              {text('getCash.nowNone')}
+            <p className="tier-a" data-testid="get-cash-now-none" data-searched={searchedAll(read) ? 'all' : 'some'}>
+              {text(searchedAll(read) ? 'getCash.nowNone' : 'getCash.nowNoneFound')}
             </p>
           )}
         </li>
@@ -397,10 +398,10 @@ function CashFlow(props: GetCashProps & { route: Route; read: GetCashRead | null
     const g = await readGetCash(own, diamond, loan);
     if (g.direct.kind === 'closed') throw new StatedRefusal({ ...g.direct.refusals[0]!, reason: format('getCash.refused', { reason: g.direct.refusals[0]!.reason }) });
     if (route === 'handover') {
-      if (g.handover.kind !== 'ready') throw new StatedRefusal({ code: 'NoHandover', reason: text('getCash.nowNone'), reopensAt: null, remedy: null });
+      if (g.handover.kind !== 'ready') throw new StatedRefusal({ code: 'NoHandover', reason: text(searchedAll(g) ? 'getCash.nowNone' : 'getCash.nowNoneFound'), reopensAt: null, remedy: null });
       return { route: 'handover', owner: g.handover.owner, slot: g.handover.slot, receives: g.handover.receives };
     }
-    if (g.sale.kind !== 'ready') throw new StatedRefusal({ code: 'NoBuyOffer', reason: text('getCash.nowNone'), reopensAt: null, remedy: null });
+    if (g.sale.kind !== 'ready') throw new StatedRefusal({ code: 'NoBuyOffer', reason: text(searchedAll(g) ? 'getCash.nowNone' : 'getCash.nowNoneFound'), reopensAt: null, remedy: null });
     const held = v.heldForLender;
     if (held === null) throw new StatedRefusal({ code: 'HeldUnread', reason: text('frozen.reservedUnread'), reopensAt: null, remedy: null });
     return { route: 'sale', offerId: g.sale.offerId, rateBps: g.sale.rateBps, net: g.sale.net, maxHeld: held, principal: g.principal };

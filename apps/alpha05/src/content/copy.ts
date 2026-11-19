@@ -4448,6 +4448,7 @@ export const copy = {
     saleCost: A('That is the principal less {{cost}}: the extra interest this buyer earns for the rest of the term, which you pay.'),
     interestStays: A('Interest earned and not yet paid stays yours. It is paid to you first from the borrower’s later interest, so it can be late or short too.'),
     nowNone: A('No lender is taking a loan like this now. You can list it at your price, or leave it.'),
+    nowNoneFound: A('None of the lenders this page read is taking a loan like this now, and more exist than it reads, so one may still be. You can list it at your price, or leave it.'),
     handoverGo: B('Review the handover'),
     saleGo: B('Review the sale'),
     listTitle: B('Sell at my price'),
