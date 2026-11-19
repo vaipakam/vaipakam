@@ -422,6 +422,8 @@
         "generic": "Es gibt ein Update zu Ihrem Kredit.",
         "reward_final_notice": "Eine deiner Interaktionsbelohnungen ist in ihre letzte Hinweisfrist eingetreten – fordere sie im Claim Center an, bevor sie an das Belohnungsprogramm zurückgeht.",
         "reward_expired": "Eine nicht angeforderte Interaktionsbelohnung von dir hat das Ende ihres Anforderungszeitraums erreicht; ihre Rückführung ins Belohnungsprogramm hat begonnen, und sie kann nicht mehr angefordert werden.",
+        "position_approved": "Eines deiner Positions-Tokens wurde zur Übertragung an eine andere Adresse freigegeben. Diese Adresse kann die Position bewegen, und die Auszahlungen der Position folgen ihr.",
+        "position_approved_all": "Alle deine Positions-Tokens wurden für eine andere Adresse freigegeben. Diese Adresse kann jedes davon bewegen, und die Auszahlungen jeder Position folgen ihr.",
         "grace_ended": "Die Nachfrist eines Kredits ist abgelaufen — öffnen Sie ihn, um den Stand zu sehen."
       },
       "loanRef": "Kredit #{{loanId}} · antippen zum Anzeigen",
@@ -431,7 +433,9 @@
       "unreadBadgeTitle_few": "{{count}} ungelesene Benachrichtigungen",
       "unreadBadgeTitle_many": "{{count}} ungelesene Benachrichtigungen",
       "unreadBadgeTitle_other": "{{count}} ungelesene Benachrichtigungen",
-      "rewardRef": "Belohnung Nr. {{entryId}} · tippen, um das Claim Center zu öffnen"
+      "rewardRef": "Belohnung Nr. {{entryId}} · tippen, um das Claim Center zu öffnen",
+      "approvalRef": "Positions-Token #{{tokenId}} · freigegeben für {{address}}",
+      "approvalAllRef": "Alle Positions-Tokens · freigegeben für {{address}}"
     },
     "errorBoundary": {
       "detailAria": "Fehlerdetails",

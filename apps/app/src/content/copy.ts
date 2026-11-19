@@ -998,6 +998,13 @@ const copySource = {
       // return has BEGUN, never that it completed (Codex #2489 r14).
       reward_expired:
         'An unclaimed interaction reward of yours reached the end of its claim window; its return to the rewards programme has begun and it can no longer be claimed.',
+      // #3721 — the position token's own approvals, to the token's owner.
+      // Said as of the event: whoever holds the approval can move the
+      // position, and its payouts follow the position.
+      position_approved:
+        'One of your position tokens was approved for transfer to another address. That address can move the position, and the position’s payouts follow it.',
+      position_approved_all:
+        'All of your position tokens were opened to another address. That address can move any of them, and each position’s payouts follow it.',
       // Fallback for any future kind the client doesn't know yet.
       generic: 'There’s an update on your loan.',
     } as Record<string, string>,
@@ -1005,6 +1012,9 @@ const copySource = {
     loanRef: tmpl(`Loan #{{loanId}} · tap to view`, ['loanId']),
     // Secondary line for a reward-entry row (RL-3) — it opens the Claim Center.
     rewardRef: tmpl(`Reward #{{entryId}} · tap to open the Claim Center`, ['entryId']),
+    // Secondary lines for a position-token approval row (#3721).
+    approvalRef: tmpl(`Position token #{{tokenId}} · approved to {{address}}`, ['tokenId', 'address']),
+    approvalAllRef: tmpl(`Every position token · opened to {{address}}`, ['address']),
     unreadBadgeTitle: tmpl('{{count}} unread notifications', ['count'], {
       one: '1 unread notification',
     }),

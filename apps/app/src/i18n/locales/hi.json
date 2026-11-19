@@ -422,6 +422,8 @@
         "generic": "आपके loan पर update है।",
         "reward_final_notice": "आपका एक इंटरैक्शन रिवॉर्ड अपनी अंतिम सूचना अवधि में प्रवेश कर चुका है — रिवॉर्ड कार्यक्रम में लौटने से पहले क्लेम सेंटर में इसे क्लेम करें।",
         "reward_expired": "आपकी एक बिना क्लेम की गई इंटरैक्शन रिवॉर्ड अपनी क्लेम अवधि के अंत तक पहुँच गई; रिवॉर्ड प्रोग्राम में उसकी वापसी शुरू हो गई है और अब उसे क्लेम नहीं किया जा सकता।",
+        "position_approved": "आपके एक पोज़िशन टोकन को किसी दूसरे पते पर ट्रांसफ़र के लिए स्वीकृत किया गया। वह पता पोज़िशन को स्थानांतरित कर सकता है, और पोज़िशन के भुगतान पोज़िशन के साथ जाते हैं।",
+        "position_approved_all": "आपके सभी पोज़िशन टोकन किसी दूसरे पते के लिए खोल दिए गए। वह पता इनमें से किसी को भी स्थानांतरित कर सकता है, और हर पोज़िशन के भुगतान पोज़िशन के साथ जाते हैं।",
         "grace_ended": "एक loan की grace period ख़त्म हो गई — उसकी स्थिति देखने के लिए खोलें।"
       },
       "loanRef": "Loan #{{loanId}} · देखने के लिए tap करें",
@@ -431,7 +433,9 @@
       "unreadBadgeTitle_few": "{{count}} unread notifications",
       "unreadBadgeTitle_many": "{{count}} unread notifications",
       "unreadBadgeTitle_other": "{{count}} unread notifications",
-      "rewardRef": "रिवॉर्ड #{{entryId}} · क्लेम सेंटर खोलने के लिए टैप करें"
+      "rewardRef": "रिवॉर्ड #{{entryId}} · क्लेम सेंटर खोलने के लिए टैप करें",
+      "approvalRef": "पोज़िशन टोकन #{{tokenId}} · {{address}} के लिए स्वीकृत",
+      "approvalAllRef": "सभी पोज़िशन टोकन · {{address}} के लिए खुले"
     },
     "errorBoundary": {
       "detailAria": "Error detail",

@@ -422,6 +422,8 @@
         "generic": "대출에 업데이트가 있습니다.",
         "reward_final_notice": "상호작용 보상 중 하나가 최종 안내 기간에 들어갔습니다. 보상 프로그램으로 돌아가기 전에 청구 센터에서 청구하세요.",
         "reward_expired": "청구하지 않은 상호작용 보상 하나가 청구 기간 종료에 도달했습니다. 보상 프로그램으로의 반환이 시작되었으며 더 이상 청구할 수 없습니다.",
+        "position_approved": "포지션 토큰 하나가 다른 주소로의 전송을 승인받았습니다. 그 주소는 포지션을 옮길 수 있으며, 포지션의 지급금은 포지션을 따라갑니다.",
+        "position_approved_all": "모든 포지션 토큰이 다른 주소에 열렸습니다. 그 주소는 어느 것이든 옮길 수 있으며, 각 포지션의 지급금은 포지션을 따라갑니다.",
         "grace_ended": "대출의 유예 기간이 끝났습니다 — 열어서 상태를 확인하세요."
       },
       "loanRef": "Loan #{{loanId}} · 탭하여 보기",
@@ -431,7 +433,9 @@
       "unreadBadgeTitle_few": "{{count}}개의 unread notifications",
       "unreadBadgeTitle_many": "{{count}}개의 unread notifications",
       "unreadBadgeTitle_other": "{{count}}개의 unread notifications",
-      "rewardRef": "보상 #{{entryId}} · 탭하여 청구 센터 열기"
+      "rewardRef": "보상 #{{entryId}} · 탭하여 청구 센터 열기",
+      "approvalRef": "포지션 토큰 #{{tokenId}} · {{address}}에 승인",
+      "approvalAllRef": "모든 포지션 토큰 · {{address}}에 열림"
     },
     "errorBoundary": {
       "detailAria": "오류 세부 정보",

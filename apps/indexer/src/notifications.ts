@@ -71,6 +71,13 @@ export const NOTIF_KINDS = [
   // at which an unclaimed one returned to the programme.
   'reward_final_notice',
   'reward_expired',
+  // #3721 — the position token's own approvals, addressed to the token's
+  // OWNER as the event names it: one token approved for transfer to an
+  // address, or every token of the owner opened to an operator. No loan
+  // lookup: the event names its owner, and a token's loan can be several
+  // positions away from what the owner recognises.
+  'position_approved',
+  'position_approved_all',
 ] as const;
 export type NotifKind = (typeof NOTIF_KINDS)[number];
 
@@ -167,6 +174,14 @@ export const EVENT_NOTIF_MAP: Readonly<Record<string, NotifMapping>> = {
  * `@vaipakam/lib/rewardOwnerNotifications`, with the planner below (#3207).
  */
 export const EVENT_OWNER_NOTIF_MAP: Readonly<Record<string, NotifKind>> = REWARD_OWNER_NOTIF_MAP;
+
+/** #3721 — the position token's approval events and the inbox kind each
+ *  produces. Read from the PositionNFT's own `Approval` / `ApprovalForAll`
+ *  (the ingest scans the token's address beside the Diamond's, #3205). */
+export const POSITION_APPROVAL_NOTIF_MAP: Readonly<Record<string, NotifKind>> = {
+  Approval: 'position_approved',
+  ApprovalForAll: 'position_approved_all',
+};
 
 /**
  * Loan/offer state-change events that deliberately produce NO inbox row
@@ -537,6 +552,8 @@ export async function materializeNotifications(
   // never depend on the loan path below — a failed party lookup must not cost
   // a reward owner their pre-expiry notice.
   const rows = planOwnerNotifications(chainId, logs, blockTimestamps, nowSec);
+  // #3721 — the position token's approvals name their owner too.
+  rows.push(...planPositionApprovalNotifications(chainId, logs, blockTimestamps, nowSec));
 
   const worthy = logs.filter((l) => l.eventName in EVENT_NOTIF_MAP);
   const loanIds = [
@@ -635,7 +652,11 @@ export function planNotifiedWatermark(
 }
 
 /** The kinds the planners act on — the only archive rows a replay re-plans. */
-const REPLAYED_KINDS: ReadonlySet<string> = new Set([...Object.keys(EVENT_NOTIF_MAP), ...Object.keys(EVENT_OWNER_NOTIF_MAP)]);
+const REPLAYED_KINDS: ReadonlySet<string> = new Set([
+  ...Object.keys(EVENT_NOTIF_MAP),
+  ...Object.keys(EVENT_OWNER_NOTIF_MAP),
+  ...Object.keys(POSITION_APPROVAL_NOTIF_MAP),
+]);
 
 /**
  * `activity_events.args_json` back to the shape the planners read. The
@@ -692,6 +713,72 @@ export async function replayNotificationsFromArchive(
   }
   if (logs.length === 0) return 0;
   return materializeNotifications(db, chainId, logs, blockTimestamps, nowSec);
+}
+
+const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+
+/**
+ * Pure planner for the position-token approval rows (#3721, exported for the
+ * unit test). One row per GRANT, to the lowercased `owner` the event names:
+ *
+ *   - `Approval(owner, approved, tokenId)` with a non-zero `approved` —
+ *     "your position token <id> was approved for transfer to <address>".
+ *     A zero `approved` is the owner clearing an approval, which needs no
+ *     warning.
+ *   - `ApprovalForAll(owner, operator, true)` — every position token of the
+ *     owner opened to `operator`. Revoking (`false`) needs no warning.
+ *
+ * `data_json` carries the token id and the approved address (or the
+ * operator), so the reader can name both. The dedup key carries the event
+ * position: approving the same address twice is two grants, and each says so.
+ */
+export function planPositionApprovalNotifications(
+  chainId: number,
+  logs: NotifSourceLog[],
+  blockTimestamps: Map<bigint, number>,
+  nowSec: number,
+): NotifRow[] {
+  const rows: NotifRow[] = [];
+  const seen = new Set<string>();
+  for (const log of logs) {
+    const kind = Object.hasOwn(POSITION_APPROVAL_NOTIF_MAP, log.eventName)
+      ? POSITION_APPROVAL_NOTIF_MAP[log.eventName]!
+      : undefined;
+    if (!kind) continue;
+    const owner = log.args.owner;
+    if (typeof owner !== 'string' || !ADDRESS_RE.test(owner) || owner.toLowerCase() === ZERO_ADDR) continue;
+    let data: Record<string, string>;
+    if (kind === 'position_approved') {
+      const approved = log.args.approved;
+      const tokenId = log.args.tokenId;
+      if (typeof approved !== 'string' || !ADDRESS_RE.test(approved) || approved.toLowerCase() === ZERO_ADDR) continue;
+      if (typeof tokenId !== 'bigint' && !(typeof tokenId === 'string' && /^[0-9]+$/.test(tokenId))) continue;
+      data = { tokenId: String(tokenId), approved: approved.toLowerCase() };
+    } else {
+      const operator = log.args.operator;
+      if (log.args.approved !== true) continue;
+      if (typeof operator !== 'string' || !ADDRESS_RE.test(operator) || operator.toLowerCase() === ZERO_ADDR) continue;
+      data = { operator: operator.toLowerCase() };
+    }
+    const recipient = owner.toLowerCase();
+    const blockNumber = Number(log.blockNumber);
+    const dedupKey = `${chainId}:${recipient}:${kind}:${blockNumber}:${log.logIndex}`;
+    if (seen.has(dedupKey)) continue;
+    seen.add(dedupKey);
+    rows.push({
+      chainId,
+      recipient,
+      kind,
+      loanId: null,
+      eventKind: log.eventName,
+      blockNumber,
+      logIndex: log.logIndex,
+      createdAt: blockTimestamps.get(log.blockNumber) ?? nowSec,
+      dedupKey,
+      dataJson: JSON.stringify(data),
+    });
+  }
+  return rows;
 }
 
 /**

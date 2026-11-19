@@ -3351,6 +3351,12 @@ by the extension card even though the contract permits it.
   in, a loan was repaid or defaulted, a loan closed by matching) and links to
   the affected position, where the exact state is re-confirmed on chain. The
   inbox is a convenience view, never the authority for an action.
+- The owner of a position token is told in the inbox whenever someone is
+  approved to transfer it: one token approved to an address (naming the token
+  and the whole address), or every one of the owner's position tokens opened
+  to an operator. Each grant is its own notice, and clearing or revoking an
+  approval sends none. The notice says what the approval means: that address
+  can move the position, and the position's payouts follow it (#3721).
 - The inbox also carries time-based reminders that no on-chain event produces:
   the borrower is reminded when a loan is due within a week and again within a
   day, and both parties are told when a loan goes past due while its grace

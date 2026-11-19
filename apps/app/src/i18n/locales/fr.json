@@ -422,6 +422,8 @@
         "generic": "Il y a une mise à jour sur votre prêt.",
         "reward_final_notice": "L’une de vos récompenses d’interaction est entrée dans sa période de dernier avis : réclamez-la dans le Centre de réclamation avant qu’elle ne retourne au programme de récompenses.",
         "reward_expired": "L’une de vos récompenses d’interaction non réclamées a atteint la fin de sa période de réclamation ; son retour au programme de récompenses a commencé et elle ne peut plus être réclamée.",
+        "position_approved": "L'un de vos jetons de position a été approuvé pour un transfert vers une autre adresse. Cette adresse peut déplacer la position, et les paiements de la position la suivent.",
+        "position_approved_all": "Tous vos jetons de position ont été ouverts à une autre adresse. Cette adresse peut déplacer n'importe lequel d'entre eux, et les paiements de chaque position la suivent.",
         "grace_ended": "Le délai de grâce d’un prêt a pris fin — ouvrez-le pour voir où il en est."
       },
       "loanRef": "Prêt n°{{loanId}} · toucher pour voir",
@@ -431,7 +433,9 @@
       "unreadBadgeTitle_few": "{{count}} notifications non lues",
       "unreadBadgeTitle_many": "{{count}} notifications non lues",
       "unreadBadgeTitle_other": "{{count}} notifications non lues",
-      "rewardRef": "Récompense n° {{entryId}} · touchez pour ouvrir le Centre de réclamation"
+      "rewardRef": "Récompense n° {{entryId}} · touchez pour ouvrir le Centre de réclamation",
+      "approvalRef": "Jeton de position n°{{tokenId}} · approuvé pour {{address}}",
+      "approvalAllRef": "Tous les jetons de position · ouverts à {{address}}"
     },
     "errorBoundary": {
       "detailAria": "Détail de l’erreur",

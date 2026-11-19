@@ -422,6 +422,8 @@
         "generic": "ローンに更新があります。",
         "reward_final_notice": "インタラクション報酬の1つが最終通知期間に入りました。報酬プログラムに戻る前に、請求センターで請求してください。",
         "reward_expired": "未請求のインタラクション報酬が請求期間の終わりに達しました。報酬プログラムへの返還が始まり、もう請求できません。",
+        "position_approved": "あなたのポジショントークンの1つが、別のアドレスへの移転を承認されました。そのアドレスはポジションを移動でき、ポジションの支払いはポジションに従います。",
+        "position_approved_all": "あなたのすべてのポジショントークンが別のアドレスに開放されました。そのアドレスはどれでも移動でき、各ポジションの支払いはポジションに従います。",
         "grace_ended": "ローンの猶予期間が終了しました — 開いて状況を確認してください。"
       },
       "loanRef": "ローン #{{loanId}} · タップして表示",
@@ -431,7 +433,9 @@
       "unreadBadgeTitle_few": "未読通知 {{count}} 件",
       "unreadBadgeTitle_many": "未読通知 {{count}} 件",
       "unreadBadgeTitle_other": "未読通知 {{count}} 件",
-      "rewardRef": "報酬 #{{entryId}} · タップして請求センターを開く"
+      "rewardRef": "報酬 #{{entryId}} · タップして請求センターを開く",
+      "approvalRef": "ポジショントークン #{{tokenId}} · {{address}} に承認",
+      "approvalAllRef": "すべてのポジショントークン · {{address}} に開放"
     },
     "errorBoundary": {
       "detailAria": "エラー詳細",

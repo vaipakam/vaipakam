@@ -26,12 +26,14 @@ import {
   Gift,
   Handshake,
   Hourglass,
+  KeyRound,
   Recycle,
   TimerOff,
   Repeat,
   ShieldAlert,
   Siren,
   TrendingDown,
+  Users,
   type LucideIcon,
 } from 'lucide-react';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -45,6 +47,7 @@ import {
   type SeenCursor,
 } from '../lib/notifSeen';
 import { copy } from '../content/copy';
+import { approvalRefOf } from '../data/positionApprovalNotice';
 import { isReconciledNotification } from '@vaipakam/lib/notificationProvenance';
 
 /** Cap the badge so a first-connect backlog reads "9+", not "237". */
@@ -73,6 +76,9 @@ const KIND_ICON: Record<string, LucideIcon> = {
   // RL-3 (#1956) — the reward-entry rows, addressed to the reward's owner.
   reward_final_notice: Gift,
   reward_expired: Recycle,
+  // #3721 — the position token's own approvals, addressed to its owner.
+  position_approved: KeyRound,
+  position_approved_all: Users,
 };
 
 /** RL-3 — a reward-entry row names no loan; it opens the Claim Center, where
@@ -290,7 +296,7 @@ function NotificationRow({
       ? copy.notifications.loanRef(row.loanId)
       : isReward && entryId !== null
         ? copy.notifications.rewardRef(entryId)
-        : null;
+        : approvalRefOf(row);
   // #2101 — a row the indexer DERIVED by checking its records against the
   // chain, not one it built from an announcement. The headline stays the
   // outcome, which is right; this says how it was learned and admits the

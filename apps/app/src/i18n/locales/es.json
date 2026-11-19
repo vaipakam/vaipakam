@@ -422,6 +422,8 @@
         "generic": "Hay una novedad sobre tu préstamo.",
         "reward_final_notice": "Una de tus recompensas de interacción ha entrado en su período de aviso final: reclámala en el Centro de Reclamaciones antes de que vuelva al programa de recompensas.",
         "reward_expired": "Una recompensa de interacción tuya sin reclamar llegó al final de su plazo de reclamación; su devolución al programa de recompensas ha comenzado y ya no se puede reclamar.",
+        "position_approved": "Uno de tus tokens de posición fue aprobado para transferirse a otra dirección. Esa dirección puede mover la posición, y los pagos de la posición la siguen.",
+        "position_approved_all": "Todos tus tokens de posición quedaron abiertos a otra dirección. Esa dirección puede mover cualquiera de ellos, y los pagos de cada posición la siguen.",
         "grace_ended": "El periodo de gracia de un préstamo terminó — ábrelo para ver cómo está."
       },
       "loanRef": "Préstamo #{{loanId}} · toca para ver",
@@ -431,7 +433,9 @@
       "unreadBadgeTitle_few": "{{count}} notificaciones sin leer",
       "unreadBadgeTitle_many": "{{count}} notificaciones sin leer",
       "unreadBadgeTitle_other": "{{count}} notificaciones sin leer",
-      "rewardRef": "Recompensa n.º {{entryId}} · toca para abrir el Centro de Reclamaciones"
+      "rewardRef": "Recompensa n.º {{entryId}} · toca para abrir el Centro de Reclamaciones",
+      "approvalRef": "Token de posición #{{tokenId}} · aprobado para {{address}}",
+      "approvalAllRef": "Todos los tokens de posición · abiertos a {{address}}"
     },
     "errorBoundary": {
       "detailAria": "Detalle del error",

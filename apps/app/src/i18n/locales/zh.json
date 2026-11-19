@@ -422,6 +422,8 @@
         "generic": "您的贷款有更新。",
         "reward_final_notice": "你的一项互动奖励已进入最终通知期——请在它返回奖励计划之前，到领取中心领取。",
         "reward_expired": "您的一笔未领取的交互奖励已到达领取期限的终点；它向奖励计划的返还已经开始，且无法再领取。",
+        "position_approved": "你的一个仓位代币已被批准转移给另一个地址。该地址可以转移该仓位，而仓位的付款随仓位转移。",
+        "position_approved_all": "你的所有仓位代币都已向另一个地址开放。该地址可以转移其中任何一个，而每个仓位的付款随仓位转移。",
         "grace_ended": "一笔贷款的宽限期已结束 — 打开查看当前状态。"
       },
       "loanRef": "贷款 #{{loanId}} · 点击查看",
@@ -431,7 +433,9 @@
       "unreadBadgeTitle_few": "{{count}} 条未读通知",
       "unreadBadgeTitle_many": "{{count}} 条未读通知",
       "unreadBadgeTitle_other": "{{count}} 条未读通知",
-      "rewardRef": "奖励 #{{entryId}} · 点按以打开领取中心"
+      "rewardRef": "奖励 #{{entryId}} · 点按以打开领取中心",
+      "approvalRef": "仓位代币 #{{tokenId}} · 已批准给 {{address}}",
+      "approvalAllRef": "全部仓位代币 · 已开放给 {{address}}"
     },
     "errorBoundary": {
       "detailAria": "错误详情",

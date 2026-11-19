@@ -2687,8 +2687,7 @@ async function runChainPass(
       // window forever → Cloudflare backs the cron off entirely. An
       // unfiltered address query has no such limit; we decode + filter
       // client-side instead. Logs whose topic0 isn't in EVENT_ABI
-      // (config-facet events, ERC-721 Approval, etc.) throw on decode
-      // and are skipped.
+      // (config-facet events, etc.) throw on decode and are skipped.
       const rawLogs = await client.getLogs({
         // #3205: plus the chain's PositionNFT, whose `Transfer` events
         // keep the holder columns current.
@@ -8115,8 +8114,9 @@ export function refinanceTargetFromDetail(v: bigint | undefined): number | null 
 
 /**
  * Decode an address-filtered `eth_getLogs` answer against EVENT_ABI. A log
- * whose topic0 is not in EVENT_ABI (config-facet events, ERC-721 Approval,
- * and so on) throws on decode and is skipped: it is not one of ours. Shared by
+ * whose topic0 is not in EVENT_ABI (config-facet events and so on; the
+ * PositionNFT's ERC-721 events are in it since #3205) throws on decode and
+ * is skipped: it is not one of ours. Shared by
  * the scan and the pending lane (#3411), so the two can never decode the same
  * log differently.
  */

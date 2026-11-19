@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import {
   planNotifications,
   planOwnerNotifications,
+  planPositionApprovalNotifications,
   materializeNotifications,
   EVENT_NOTIF_MAP,
   EVENT_OWNER_NOTIF_MAP,
@@ -696,5 +697,77 @@ describe('planNotifiedWatermark — what one tick replays and where it stamps (s
       replayThrough: 20_000n,
       stampTo: 30_000n,
     });
+  });
+});
+
+// ─── #3721 — the position token's approvals, to the token's owner ───────────
+
+describe('planPositionApprovalNotifications (#3721)', () => {
+  const OWNER_A = '0x00000000000000000000000000000000000000Ab';
+  const SPENDER = '0x00000000000000000000000000000000000000Cd';
+  const approval = (approved: string, tokenId: bigint, logIndex = 0): NotifSourceLog => ({
+    eventName: 'Approval',
+    args: { owner: OWNER_A, approved, tokenId },
+    blockNumber: 300n,
+    logIndex,
+  });
+  const forAll = (approved: boolean, operator = SPENDER): NotifSourceLog => ({
+    eventName: 'ApprovalForAll',
+    args: { owner: OWNER_A, operator, approved },
+    blockNumber: 301n,
+    logIndex: 4,
+  });
+
+  it('a per-token grant goes to the owner and names the token and the address', () => {
+    const rows = planPositionApprovalNotifications(84532, [approval(SPENDER, 12n)], new Map([[300n, 1_700_000_000]]), 9);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      recipient: OWNER_A.toLowerCase(),
+      kind: 'position_approved',
+      loanId: null,
+      eventKind: 'Approval',
+      createdAt: 1_700_000_000,
+    });
+    expect(JSON.parse(rows[0]!.dataJson!)).toEqual({ tokenId: '12', approved: SPENDER.toLowerCase() });
+  });
+
+  it('a cleared approval and a revoked operator say nothing', () => {
+    expect(planPositionApprovalNotifications(84532, [approval(ZERO, 12n), forAll(false)], new Map(), 9)).toEqual([]);
+  });
+
+  it('an operator over every token is its own kind', () => {
+    const rows = planPositionApprovalNotifications(84532, [forAll(true)], new Map(), 9);
+    expect(rows.map((r) => r.kind)).toEqual(['position_approved_all']);
+    expect(JSON.parse(rows[0]!.dataJson!)).toEqual({ operator: SPENDER.toLowerCase() });
+  });
+
+  it('two grants are two rows; a malformed log is none', () => {
+    const rows = planPositionApprovalNotifications(
+      84532,
+      [approval(SPENDER, 1n, 0), approval(SPENDER, 1n, 1), { ...approval(SPENDER, 1n, 2), args: { owner: 'nope', approved: SPENDER, tokenId: 1n } }],
+      new Map(),
+      9,
+    );
+    expect(rows).toHaveLength(2);
+  });
+
+  it('materializes over the migrated schema, idempotently, and replays from the archive', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    await materializeNotifications(h.d1 as never, 84532, [approval(SPENDER, 5n)], new Map(), 999);
+    await materializeNotifications(h.d1 as never, 84532, [approval(SPENDER, 5n)], new Map(), 999);
+    expect(h.db.prepare('SELECT kind FROM notifications').all()).toEqual([{ kind: 'position_approved' }]);
+    // The archive replay re-plans the same row from activity_events (args as
+    // the scan's serializer writes them: the token id as a decimal string).
+    h.db.exec('DELETE FROM notifications');
+    h.db
+      .prepare(
+        `INSERT INTO activity_events (chain_id, block_number, log_index, tx_hash, kind, args_json, block_at)
+         VALUES (84532, 300, 0, '0xaa', 'Approval', ?, 1700000000)`,
+      )
+      .run(JSON.stringify({ owner: OWNER_A, approved: SPENDER, tokenId: '5' }));
+    await replayNotificationsFromArchive(h.d1 as never, 84532, 299n, 300n, 999);
+    const rows = h.db.prepare('SELECT kind, data_json FROM notifications').all() as Array<{ kind: string; data_json: string }>;
+    expect(rows.map((r) => r.kind)).toEqual(['position_approved']);
+    expect(JSON.parse(rows[0]!.data_json)).toEqual({ tokenId: '5', approved: SPENDER.toLowerCase() });
   });
 });

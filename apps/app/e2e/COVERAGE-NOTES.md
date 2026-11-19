@@ -2004,3 +2004,12 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 
 **Gap.** No Anvil spec announces a change yet. It needs the admin to publish v1 and announce v2 on the fork; the spec should assert the notice, accept v2 from it, and see the notice go quiet.
 
+<a id="cov-3721-position-token-approval-inbox-rows"></a>
+### #3721 position-token approval inbox rows
+
+**Journey.** The indexer already scans the PositionNFT beside the Diamond and decodes its ERC-721 events (#3205). `planPositionApprovalNotifications` files one `position_approved` row per `Approval` with a non-zero approved address, and one `position_approved_all` row per `ApprovalForAll(…, true)`, to the lowercased owner the event names, with the token id and the address (or the operator) in `data_json`. A cleared approval or a revoked operator files nothing. The archive replay re-plans them like the other owner rows. The bell shows the kind's line and, as its secondary line, the token and the whole address (`approvalRefOf`); the row links nowhere, since it names no loan.
+
+**Tier.** Unit: the planner (grant, clear, operator, malformed, two grants), the migrated-schema insert (idempotent) and the archive replay in `apps/indexer/test/notifications.test.ts`; the bell's secondary line in `src/data/positionApprovalNotice.test.ts`.
+
+**Gap.** No Anvil spec: the e2e indexer stub does not serve these rows. The Telegram and push delivery of the same alert is the agent's (#3721 / #3434) and is live-only.
+
