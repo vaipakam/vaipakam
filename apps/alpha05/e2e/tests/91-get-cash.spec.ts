@@ -86,3 +86,16 @@ test('sell at my price: the quote follows the typed rate, the listing goes throu
   await expect(closed).toBeVisible({ timeout: 90_000 });
   await expect(closed.locator('li').first()).toHaveAttribute('data-code', 'SaleOfferAlreadyExists');
 });
+
+test('the vault keeps lent funds apart: the loan’s principal shows as in loans, not withdrawable', async ({ launchWallet }) => {
+  const sc = scenario();
+  await openLoan(sc, { lender: 'lender', borrower: 'borrower', ...terms });
+  const { page } = await launchWallet('lender');
+  await page.goto('/vault');
+  await connectWallet(page);
+  const balances = page.getByTestId('vault-balances');
+  await expect(balances).toBeVisible({ timeout: 90_000 });
+  await expect(balances).toContainText('In loans, not withdrawable');
+  await expect(balances.locator('[data-testid^="vault-in-loans-"]').filter({ hasText: '0.5 WETH' })).toHaveCount(1);
+  await fitsWidth(page);
+});

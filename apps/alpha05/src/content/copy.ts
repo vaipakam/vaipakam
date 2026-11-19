@@ -1450,6 +1450,13 @@ export const copy = {
     ownNote: A(
       'This vault is a contract the protocol keeps for your wallet alone. Nothing in it is pooled with anyone else’s, and it leaves only by the protocol’s rules: a withdrawal you make, a claim, or a position you agreed to.',
     ),
+    balancesTitle: B('Your balances'),
+    balancesLead: B('Only the free balance can be withdrawn. Funds waiting in Auto-lend or lent in loans cannot.'),
+    rowFree: B('Free balance'),
+    rowWaiting: B('Waiting in Auto-lend'),
+    rowInLoans: B('In loans, not withdrawable'),
+    waitingNote: B('Capital waiting in Auto-lend comes out by taking it out of the Auto-lend first.'),
+    balancesSlotsFailed: A('Your Auto-lend capital could not be read ({{reason}}), so nothing is shown as waiting in it.'),
     holdingsTitle: B('What it holds'),
     empty: B('Nothing this page can find is in your vault.'),
     colCounted: B('In your vault'),

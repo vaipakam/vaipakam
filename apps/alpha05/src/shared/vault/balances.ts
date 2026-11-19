@@ -1,0 +1,83 @@
+/**
+ * #3761 §4.3 — the account's balances on three lines per token, so lent
+ * funds and free funds are never read as one figure:
+ *
+ *   - free balance: what the protocol says may be withdrawn now
+ *     (`withdrawableNow`, the vault page's own figure; Withdraw offers this
+ *     and nothing else);
+ *   - waiting in Auto-lend: capital in the wallet's Auto-lend slots not yet
+ *     lent (`availableCapital`), which sits in the vault under the slot and
+ *     comes out by taking it out of the slot, its own step;
+ *   - in loans, not withdrawable: the principal of the live loans whose
+ *     lender position the wallet holds; it is with the borrowers, not in
+ *     the vault.
+ *
+ * Each figure is one the protocol reports; none is derived from another.
+ */
+import type { Abi, PublicClient } from 'viem';
+import { LenderIntentViewFacetABI } from '@vaipakam/contracts/abis';
+import { ASSET_ERC20 } from '../positions/model';
+import { readPagedList, type HoldingRow } from './holdings';
+
+type Hex = `0x${string}`;
+
+const INTENT = LenderIntentViewFacetABI as Abi;
+
+/** One of the wallet's Auto-lend slots, as far as its waiting capital goes. */
+export interface SlotCapital {
+  lendingAsset: Hex;
+  availableCapital: bigint;
+  active: boolean;
+}
+
+/** A live loan, as far as the lender side's principal goes. */
+export interface LentLoan {
+  principalAsset: Hex;
+  principal: bigint;
+  assetType: number;
+}
+
+export interface BalanceLine {
+  asset: Hex;
+  /** Null when the protocol's figure could not be read. */
+  free: bigint | null;
+  waiting: bigint;
+  inLoans: bigint;
+}
+
+/** The wallet's Auto-lend slots, every one it owns. */
+export async function readSlotCapital(c: PublicClient, diamond: Hex, account: Hex): Promise<{ slots: SlotCapital[]; complete: boolean }> {
+  const rows = await readPagedList<{ intent: { lendingAsset: Hex; availableCapital: bigint }; active: boolean }>(
+    (offset, limit) =>
+      c.readContract({ address: diamond, abi: INTENT, functionName: 'getLenderIntentsByOwner', args: [account, offset, limit] }) as Promise<
+        readonly [readonly { intent: { lendingAsset: Hex; availableCapital: bigint }; active: boolean }[], bigint]
+      >,
+  );
+  return { slots: rows.assets.map((r) => ({ lendingAsset: r.intent.lendingAsset, availableCapital: r.intent.availableCapital, active: r.active })), complete: rows.complete };
+}
+
+/**
+ * The three lines, one per ERC-20 token any of them names, in the order the
+ * tokens first appear (the vault's rows first). A token with all three at
+ * zero is left out.
+ */
+export function balanceLines(rows: readonly Pick<HoldingRow, 'standard' | 'asset' | 'withdrawable'>[], slots: readonly SlotCapital[], lent: readonly LentLoan[]): BalanceLine[] {
+  const lines: BalanceLine[] = [];
+  const at = (asset: Hex): BalanceLine => {
+    const key = asset.toLowerCase();
+    let hit = lines.find((l) => l.asset.toLowerCase() === key);
+    if (!hit) {
+      hit = { asset, free: 0n, waiting: 0n, inLoans: 0n };
+      lines.push(hit);
+    }
+    return hit;
+  };
+  for (const r of rows) {
+    if (r.standard !== 'erc20') continue;
+    const l = at(r.asset);
+    l.free = r.withdrawable === null || l.free === null ? null : l.free + r.withdrawable;
+  }
+  for (const s of slots) if (s.availableCapital > 0n) at(s.lendingAsset).waiting += s.availableCapital;
+  for (const loan of lent) if (loan.assetType === ASSET_ERC20 && loan.principal > 0n) at(loan.principalAsset).inLoans += loan.principal;
+  return lines.filter((l) => l.free === null || l.free > 0n || l.waiting > 0n || l.inLoans > 0n);
+}

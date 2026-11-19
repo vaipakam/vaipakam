@@ -262,6 +262,10 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   it, and that interest earned and not yet paid stays theirs. A route that is
   not open names each reason in the protocol's words and when it can open,
   or that no time is set.
+- The Vault page shows each token on three lines kept apart: the free
+  balance (the only figure Withdraw offers), capital waiting in Auto-lend
+  (taken out of the Auto-lend as its own step), and principal in loans,
+  labelled "in loans, not withdrawable".
 - A newly posted or edited offer waits the protocol's minimum terms age
   before fill. The review shows the configured wait and remaining chain time,
   offers no signing step while blocked, and refreshes each block. An unread
