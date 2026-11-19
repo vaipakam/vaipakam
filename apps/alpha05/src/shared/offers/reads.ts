@@ -10,6 +10,7 @@
 import { erc20Abi, type Abi, type PublicClient } from 'viem';
 import {
   MetricsFacetABI,
+  ReadyBalanceFacetABI,
   OfferCancelFacetABI,
   OfferPreviewFacetABI,
   OracleFacetABI,
@@ -25,6 +26,7 @@ import type { StoredOffer } from './acceptTerms';
 type Hex = `0x${string}`;
 
 export const METRICS = MetricsFacetABI as Abi;
+export const READY_BALANCE = ReadyBalanceFacetABI as Abi;
 export const OFFER_CANCEL = OfferCancelFacetABI as Abi;
 export const OFFER_PREVIEW = OfferPreviewFacetABI as Abi;
 export const ORACLE = OracleFacetABI as Abi;

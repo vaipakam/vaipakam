@@ -56,6 +56,8 @@ test('a lender posts an offer and a borrower takes it: a live loan opens', async
   await fund(['lender', 'borrower']);
   const l = await launchWallet('lender');
   await pickPair(l.page, '/lend');
+  // #3761: the Lend form opens on Auto-lend; this flow posts a one-time offer.
+  await l.page.getByTestId('lend-choice-once').check();
   await l.page.getByTestId('lend-offer-open').click();
   await fillAndReview(l.page, '100', '0.2', '6');
   const offerId = await post(l.page);
@@ -120,6 +122,8 @@ test('a lender posts an offer and cancels it on Offers', async ({ launchWallet }
   await fund(['newLender']);
   const l = await launchWallet('newLender');
   await pickPair(l.page, '/lend');
+  // #3761: the Lend form opens on Auto-lend; this flow posts a one-time offer.
+  await l.page.getByTestId('lend-choice-once').check();
   await l.page.getByTestId('lend-offer-open').click();
   await fillAndReview(l.page, '50', '0.1', '7');
   const id = await post(l.page);

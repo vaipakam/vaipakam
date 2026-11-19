@@ -134,10 +134,19 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     ///      route on its position is dead ({LibPositionNFT.routeIsDead}), or
     ///      (#3336) a refinance request whose position moved since it was
     ///      recorded. False for every other offer.
+    ///      #3753 — an offset vehicle or a refinance request is also dead once
+    ///      its loan has closed (any status but Active or FallbackPending): completion
+    ///      refuses a loan that is not Active (`LoanNotActive`,
+    ///      `RefinanceTargetNotActive`), and a closed loan never returns to
+    ///      Active. FallbackPending is NOT closed, since a cure returns it to
+    ///      Active. A lender-sale listing on a closed loan keeps its own
+    ///      teardown (`teardownStaleSaleListing`), which clears more than a
+    ///      cancel does.
     function _vehicleRouteDead(LibVaipakam.Storage storage s, uint256 offerId) private view returns (bool) {
         uint256 loanId = s.offsetOfferToLoanId[offerId];
         if (loanId != 0) {
-            return LibPositionNFT.routeIsDead(s.loans[loanId].borrowerTokenId, LibPositionNFT.RouteReason.PrecloseOffset);
+            return _loanClosed(s, loanId)
+                || LibPositionNFT.routeIsDead(s.loans[loanId].borrowerTokenId, LibPositionNFT.RouteReason.PrecloseOffset);
         }
         loanId = s.saleOfferToLoanId[offerId];
         if (loanId != 0) {
@@ -148,14 +157,24 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // since it was recorded, or a later request displaced it. Either way
         // it can never be taken ({LibRefinanceRequest.assertTakeable}).
         loanId = s.offers[offerId].refinanceTargetLoanId;
-        if (loanId != 0) return !LibRefinanceRequest.unmoved(s, loanId, offerId);
+        if (loanId != 0) return _loanClosed(s, loanId) || !LibRefinanceRequest.unmoved(s, loanId, offerId);
         return false;
+    }
+
+    /// @dev #3753 — whether `loanId` has closed for good: any status other
+    ///      than Active and FallbackPending (a FallbackPending loan can be
+    ///      cured back to Active). Written as "not open" so a terminal status
+    ///      added later is closed by default.
+    function _loanClosed(LibVaipakam.Storage storage s, uint256 loanId) private view returns (bool) {
+        LibVaipakam.LoanStatus st = s.loans[loanId].status;
+        return st != LibVaipakam.LoanStatus.Active && st != LibVaipakam.LoanStatus.FallbackPending;
     }
 
     /// @notice #3336 — whether anyone may cancel `offerId` because the route it
     ///         is bound to is dead: an offset or lender-sale vehicle whose
-    ///         position moved (or whose route was closed), or a refinance
-    ///         request that moved or was displaced. The same rule
+    ///         position moved (or whose route was closed), a refinance
+    ///         request that moved or was displaced, or (#3753) an offset or
+    ///         refinance request whose loan has closed. The same rule
     ///         {cancelOffer} applies, served so a keeper finds such offers
     ///         without a simulation per offer. False for every other offer.
     ///         Says nothing about the offer's other refusals (accepted,
