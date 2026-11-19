@@ -12,6 +12,8 @@ import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {InstantTakeoverFacet} from "../src/facets/InstantTakeoverFacet.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibAdvance} from "../src/libraries/LibAdvance.sol";
@@ -22,6 +24,40 @@ import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
+import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
+import {LibLenderSide} from "../src/libraries/LibLenderSide.sol";
+import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+
+/// @dev Test-only: drives the fallback's two final-claim steps through the one
+///      writer library, as ClaimFacet does before and after the one retry.
+contract LenderSideHarnessFacet {
+    function harnessRowInKind(uint256 loanId, address asset, uint256 amount) external {
+        LibVaipakam.ClaimInfo storage row = LibVaipakam.storageSlot().lenderClaims[loanId];
+        row.asset = asset;
+        row.assetType = LibVaipakam.AssetType.ERC20;
+        row.amount = amount;
+    }
+
+    function harnessSetFinalAmount(uint256 loanId, uint256 amount) external returns (uint256) {
+        return LibLenderSide.setFinalAmount(LibVaipakam.storageSlot(), loanId, amount);
+    }
+
+    function harnessSettleInKind(uint256 loanId, uint256 amount) external returns (uint256) {
+        return LibLenderSide.settleFinalInKind(LibVaipakam.storageSlot(), loanId, amount);
+    }
+
+    /// @dev A lender leg parked in `payer`'s vault (0 clears it).
+    function harnessParkLeg(uint256 loanId, address payer) external {
+        LibVaipakam.storageSlot().parkedLenderLeg[loanId].payer = payer;
+    }
+
+    /// @dev The loan's terms allow a part repayment.
+    function harnessAllowPartial(uint256 loanId) external {
+        LibVaipakam.storageSlot().loans[loanId].allowsPartialRepay = true;
+    }
+}
 
 /**
  * @title  LenderAdvanceTest
@@ -331,5 +367,284 @@ contract LenderAdvanceTest is InstantMarketBase {
             "nothing but treasury fees rests in the Diamond"
         );
         received; // the advance's proceeds were in the holder's vault before the repayment
+    }
+
+    // ─── §6.4 / §6.6 A moved holder, and a flagged slot owner ───────────
+
+    function _moveHolder() internal returns (address moved) {
+        moved = _newParty("movedHolder");
+        // The replacement move of a retired account carries the position to
+        // its new wallet with the advance attached; the stored lender (the
+        // advance's custody) stays where it was.
+        LibTestPositionNFT.mockHolder(address(diamond), tokenId, moved);
+    }
+
+    /// @dev A holder who is not the stored lender repays while the slot owner
+    ///      is flagged: the payment is set aside in the holder's own vault,
+    ///      interest stops on it, and it is paid from there once the flag
+    ///      clears. No refusal.
+    function test_flaggedSlotOwnerHolderElsewhereRepays() public {
+        _open();
+        uint256 amount = 300 ether;
+        _take(amount);
+        address moved = _moveHolder();
+        vm.prank(moved);
+        VaultDepositoryFacet(address(diamond)).depositToVault(uint8(LibVaipakam.AssetType.ERC20), mockERC20, 0, 400 ether);
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(lender2, true);
+        vm.warp(vm.getBlockTimestamp() + 5 days);
+
+        vm.prank(moved);
+        uint256 paid = LenderSideFacet(address(diamond)).repayAdvance(loanId, type(uint256).max);
+        (LibVaipakam.Advance memory a, uint256 interest) = _advance();
+        assertFalse(a.open, "paid in full");
+        assertEq(a.heldElsewhere, paid, "held in the paying holder's vault");
+        assertEq(a.setAside, 0, "nothing in the stored lender's vault");
+        vm.warp(vm.getBlockTimestamp() + 30 days);
+        (, interest) = _advance();
+        assertEq(interest, 0, "no interest on money that has arrived");
+
+        vm.expectRevert(abi.encodeWithSelector(LenderSideFacet.AdvancePayeeFlagged.selector, loanId, lender2));
+        LenderSideFacet(address(diamond)).payAdvance(loanId);
+        m.setFlagged(lender2, false);
+        uint256 movedBefore = _vaultBal(moved, mockERC20);
+        uint256 slotBefore = _vaultBal(lender2, mockERC20);
+        LenderSideFacet(address(diamond)).payAdvance(loanId);
+        (a,) = _advance();
+        assertEq(a.heldElsewhere, 0, "paid out");
+        assertEq(movedBefore - _vaultBal(moved, mockERC20), paid, "from the holder's vault");
+        assertGe(_vaultBal(lender2, mockERC20) - slotBefore, amount, "the slot owner got the advance back");
+    }
+
+    /// @dev A holder moved by a recovery move still claims what is left after
+    ///      the advance.
+    function test_movedHolderClaimsWhatIsLeft() public {
+        _open();
+        _take(200 ether);
+        address moved = _moveHolder();
+        vm.warp(vm.getBlockTimestamp() + 5 days);
+        vm.prank(taker);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+        LenderSideFacet(address(diamond)).payAdvance(loanId);
+
+        uint256 movedBefore = _vaultBal(moved, mockERC20);
+        uint256 storedBefore = _vaultBal(lender, mockERC20);
+        vm.prank(moved);
+        ClaimFacet(address(diamond)).claimAsLender(loanId);
+        uint256 got = _vaultBal(moved, mockERC20) - movedBefore;
+        assertGt(got, PRINCIPAL - 200 ether, "the rest of the repayment");
+        assertEq(storedBefore - _vaultBal(lender, mockERC20), got, "paid out of the stored lender's vault");
+        (LibVaipakam.Advance memory a,) = _advance();
+        assertFalse(a.open, "closed");
+    }
+
+    // ─── §6.6 / §10.10 The fallback's in-kind split (design ruling 2) ───
+
+    function _harness() internal {
+        LenderSideHarnessFacet h = new LenderSideHarnessFacet();
+        bytes4[] memory sel = new bytes4[](5);
+        sel[0] = h.harnessRowInKind.selector;
+        sel[1] = h.harnessSetFinalAmount.selector;
+        sel[2] = h.harnessSettleInKind.selector;
+        sel[3] = h.harnessParkLeg.selector;
+        sel[4] = h.harnessAllowPartial.selector;
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
+        cuts[0] = IDiamondCut.FacetCut({facetAddress: address(h), action: IDiamondCut.FacetCutAction.Add, functionSelectors: sel});
+        IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
+    }
+
+    function _fallback(uint256 rateNum, uint256 rateDen, uint256 slice) internal {
+        _harness();
+        TestMutatorFacet(address(diamond)).setFallbackSnapshotRaw(
+            loanId,
+            LibVaipakam.FallbackSnapshot({
+                lenderCollateral: slice,
+                treasuryCollateral: 0,
+                borrowerCollateral: 0,
+                lenderPrincipalDue: 0,
+                treasuryPrincipalDue: 0,
+                active: true,
+                retryAttempted: false,
+                rateNum: rateNum,
+                rateDen: rateDen
+            })
+        );
+        LenderSideHarnessFacet(address(diamond)).harnessRowInKind(loanId, mockCollateralERC20, slice);
+    }
+
+    /// @dev Before the one retry nothing is split: the row is recorded and
+    ///      the advance stays open.
+    function test_inKindNothingSplitBeforeTheRetry() public {
+        _open();
+        _take(300 ether);
+        _fallback(2, 1, 2000 ether);
+        LenderSideHarnessFacet(address(diamond)).harnessSetFinalAmount(loanId, 1900 ether);
+        (LibVaipakam.Advance memory a,) = _advance();
+        assertTrue(a.open, "still open");
+        assertEq(a.inKindSetAside, 0, "nothing split");
+    }
+
+    /// @dev After a failed retry the split is at the fallback's own stored
+    ///      rate: the advance takes collateral worth what it is owed.
+    function test_inKindSplitAtTheStoredRate() public {
+        _open();
+        _take(300 ether);
+        vm.warp(vm.getBlockTimestamp() + 3 days);
+        (LibVaipakam.Advance memory before, uint256 interest) = _advance();
+        uint256 owed = before.principalOwed + interest;
+        _fallback(2, 1, 2000 ether);
+        uint256 kept = LenderSideHarnessFacet(address(diamond)).harnessSettleInKind(loanId, 2000 ether);
+        (LibVaipakam.Advance memory a,) = _advance();
+        assertFalse(a.open, "closed by the split");
+        assertEq(a.inKindSetAside, owed * 2, "collateral worth what is owed, at 2 per 1");
+        assertEq(kept, 2000 ether - owed * 2, "the holder keeps the rest");
+        assertEq(a.shortfall, 0, "nothing short");
+    }
+
+    /// @dev With no price the advance takes the whole slice.
+    function test_inKindNoPriceTakesAll() public {
+        _open();
+        _take(300 ether);
+        _fallback(0, 0, 2000 ether);
+        uint256 kept = LenderSideHarnessFacet(address(diamond)).harnessSettleInKind(loanId, 2000 ether);
+        (LibVaipakam.Advance memory a,) = _advance();
+        assertFalse(a.open, "closed");
+        assertEq(a.inKindSetAside, 2000 ether, "the whole slice");
+        assertEq(kept, 0, "nothing for the holder");
+    }
+
+    // ─── The stored lender cannot change while locked ───────────────────
+
+    /// @dev The advance's custody is the stored lender for its whole life:
+    ///      no route may migrate the lender position while it is locked.
+    function test_takeoverRefusedWhileLocked() public {
+        _open();
+        _take(200 ether);
+        vm.prank(lender);
+        vm.expectRevert();
+        InstantTakeoverFacet(address(diamond)).takeoverInstant(
+            loanId, lender2, 0, uint64(vm.getBlockTimestamp() + 1 hours)
+        );
+        assertEq(_loan(loanId).lender, lender, "stored lender unchanged");
+    }
+
+    // ─── Review round 1 ─────────────────────────────────────────────────
+
+    /// @dev An emergency pause of either asset refuses a new advance.
+    function test_refusedWhileAssetPaused() public {
+        _open();
+        AdminFacet(address(diamond)).pauseAsset(mockCollateralERC20);
+        vm.prank(lender);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.AssetPaused.selector, mockCollateralERC20));
+        LenderAdvanceFacet(address(diamond)).takeAdvance(
+            tokenId, lender2, 0, 200 ether, ADVANCE_RATE, 0, uint64(vm.getBlockTimestamp() + 1 hours)
+        );
+    }
+
+    /// @dev A slot owner seen flagged when its money was set aside stays
+    ///      unpaid through a later oracle outage.
+    function test_flagHeldThroughAnOracleOutage() public {
+        _open();
+        _take(300 ether);
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(lender2, true);
+        vm.warp(vm.getBlockTimestamp() + 5 days);
+        vm.prank(taker);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+
+        m.setRevertOnRead(true); // the oracle goes dark
+        vm.expectRevert(abi.encodeWithSelector(LenderSideFacet.AdvancePayeeFlagged.selector, loanId, lender2));
+        LenderSideFacet(address(diamond)).payAdvance(loanId);
+
+        m.setRevertOnRead(false);
+        m.setFlagged(lender2, false);
+        LenderSideFacet(address(diamond)).payAdvance(loanId);
+        (LibVaipakam.Advance memory a,) = _advance();
+        assertEq(a.setAside, 0, "paid once it reads clean");
+    }
+
+    /// @dev The holder's own repayment spends free balance: it leaves their
+    ///      depository holding.
+    function test_holderRepayDebitsTheDepository() public {
+        _open();
+        _take(300 ether);
+        uint256 before = VaultDepositoryFacet(address(diamond)).getDepositoryHolding(lender, mockERC20, 0);
+        ERC20Mock(mockERC20).mint(lender, 100 ether);
+        vm.prank(lender);
+        ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        vm.prank(lender);
+        VaultDepositoryFacet(address(diamond)).depositToVault(uint8(LibVaipakam.AssetType.ERC20), mockERC20, 0, 100 ether);
+        vm.prank(lender);
+        uint256 paid = LenderSideFacet(address(diamond)).repayAdvance(loanId, 100 ether);
+        assertEq(paid, 100 ether);
+        assertEq(
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(lender, mockERC20, 0),
+            before,
+            "the deposit was spent on the advance"
+        );
+    }
+
+    /// @dev Interest the advance took from a part repayment paid the holder's
+    ///      own advance: the interest ledger counts it paid, not parked.
+    function test_divertedInterestCountsAsPaid() public {
+        _open();
+        _take(300 ether);
+        vm.warp(vm.getBlockTimestamp() + 20 days);
+        (uint256 earnedBefore,,,) = SellerClaimFacet(address(diamond)).getInterestLedger(loanId);
+        assertGt(earnedBefore, 0, "the holder earned interest");
+        _harness();
+        LenderSideHarnessFacet(address(diamond)).harnessAllowPartial(loanId);
+        vm.prank(taker);
+        RepayFacet(address(diamond)).repayPartial(loanId, 10 ether);
+        (LibVaipakam.Advance memory a,) = _advance();
+        assertGt(a.setAside, 0, "the advance took the arrival");
+        (uint256 earnedAfter,,,) = SellerClaimFacet(address(diamond)).getInterestLedger(loanId);
+        assertEq(earnedAfter, 0, "paid through the advance, nothing left parked");
+    }
+
+    /// @dev A default's in-kind leg parked in the payer's vault is not split
+    ///      until it arrives; then it is split once.
+    function test_parkedInKindLegSplitOnArrival() public {
+        _open();
+        _take(300 ether);
+        _harness();
+        LenderSideHarnessFacet(address(diamond)).harnessRowInKind(loanId, mockCollateralERC20, 2000 ether);
+        LenderSideHarnessFacet(address(diamond)).harnessParkLeg(loanId, taker);
+        uint256 kept = LenderSideHarnessFacet(address(diamond)).harnessSetFinalAmount(loanId, 2000 ether);
+        (LibVaipakam.Advance memory a,) = _advance();
+        assertTrue(a.open, "still open while the leg is parked");
+        assertEq(a.inKindSetAside, 0, "nothing split before it arrives");
+        assertEq(kept, 2000 ether);
+
+        LenderSideHarnessFacet(address(diamond)).harnessParkLeg(loanId, address(0)); // released
+        kept = LenderSideHarnessFacet(address(diamond)).harnessSetFinalAmount(loanId, 2000 ether);
+        (a,) = _advance();
+        assertFalse(a.open, "split on arrival");
+        assertEq(a.inKindSetAside + kept, 2000 ether, "split once");
+    }
+
+    /// @dev A keeper under the holder's early-withdrawal mandate is answered
+    ///      as the takeover answers it: "sell now" judged as the holder, and
+    ///      the takeover slot the only source it may name.
+    function test_cashOptionsForAMandatedKeeper() public {
+        _open();
+        address keeper = makeAddr("cashout-keeper");
+        LenderCashOutFacet.CashOptions memory o =
+            LenderCashOutFacet(address(diamond)).cashOptions(tokenId, keeper, 0);
+        assertFalse(o.sellNow.open, "no mandate: closed");
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setKeeperAccess(true);
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).approveKeeper(keeper, LibVaipakam.KEEPER_ACTION_INIT_EARLY_WITHDRAW);
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setLoanKeeperEnabled(loanId, keeper, true);
+        o = LenderCashOutFacet(address(diamond)).cashOptions(tokenId, keeper, 0);
+        LenderCashOutFacet.CashOptions memory h =
+            LenderCashOutFacet(address(diamond)).cashOptions(tokenId, lender, 0);
+        assertEq(o.sellNow.open, h.sellNow.open, "judged as the holder");
+        assertEq(o.sourceKinds.length, 1, "one kind");
+        assertEq(uint8(o.sourceKinds[0]), uint8(LenderCashOutFacet.SourceKind.TakeoverSlot), "the takeover slot");
     }
 }

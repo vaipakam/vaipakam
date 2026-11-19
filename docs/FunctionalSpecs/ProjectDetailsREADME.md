@@ -3362,7 +3362,8 @@ choices, after stating first that leaving the loan alone gives nothing up.
 - **Borrow against it.** An advance (below).
 
 One read answers, for a given lender position token and the wallet that would
-act, whether each choice is open now, with every reason it is not, as the routes
+act (a keeper acting under the holder's early-exit permission is answered as
+the holder would be, and may use only a takeover slot), whether each choice is open now, with every reason it is not, as the routes
 themselves would raise it; which route already stands on the position, if any;
 the largest part that may be sold; and the largest advance the rules allow. A
 position has at most one open route at a time: a listing, a borrower's offset
@@ -3389,8 +3390,8 @@ position token is never collateral.
   no seller claim of an earlier sale is open; renewal and extension are off; the
   loan's grace end is inside the slot's lend-until time; the slot owner is
   neither the loan's borrower nor its holder; neither party is flagged, locked
-  or without the current Terms; and the platform's switch for advances is on.
-  Each refusal is named.
+  or without the current Terms; neither asset is under an emergency pause; and
+  the platform's switch for advances is on. Each refusal is named.
 - **How much and at what cost:** at least the slot's smallest fill, and the
   advance plus its interest to the end of the loan's grace period may not exceed
   the slot's share of the outstanding principal, so repayment of the principal
@@ -3421,7 +3422,17 @@ position token is never collateral.
   and where the fallback had no price the advance takes all of it.
 - **Payments to the slot owner** are their own kind of vault movement, outside
   the holder's protection delay. A flagged holder does not stop them; a flagged
-  slot owner's payments are held for them.
+  slot owner's payments are held for them, and stay held through a later
+  outage of the sanctions list once the flag has been seen.
+- **A holder repaying the advance** spends free money from their vault, and it
+  counts against what they deposited. When the slot owner is flagged, the
+  payment is set aside for them where it is, in the holder's vault, and
+  interest stops on it: no holder willing to pay is left paying interest.
+- **Interest the advance took** from a payment on the loan counts as paid to the
+  holder, since it repaid the holder's own advance; a later sale of the position
+  cannot turn it into an earlier seller's claim.
+- **A payment that has not yet arrived** (a leg the token refused, held in the
+  payer's vault) is booked, or split in kind, only when it arrives.
 - An advance is outside the shortfall reserve, earns no usage reward and counts
   for no fee discount.
 

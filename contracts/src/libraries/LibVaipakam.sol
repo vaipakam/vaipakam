@@ -1742,6 +1742,10 @@ library LibVaipakam {
     /// @param inKindInterest  The part of `inKindSetAside` that stands for
     ///                        interest, so its payout takes the treasury's cut
     ///                        from the interest only.
+    /// @param heldElsewhere   Cash set aside for the slot owner in vaults
+    ///                        other than `custody` (a holder's own repayment
+    ///                        while the slot owner is flagged), listed by
+    ///                        vault in `advanceHolds`; their sum.
     struct Advance {
         address slotOwner;
         address collateralAsset;
@@ -1764,6 +1768,20 @@ library LibVaipakam {
         uint256 finalToAdvance;
         uint256 inKindSetAside;
         uint256 inKindInterest;
+        uint256 heldElsewhere;
+    }
+
+    /// @notice #3760 — cash set aside for an advance's slot owner in one
+    ///         vault other than the advance's `custody`, under the advance's
+    ///         lien there (LenderCashOutDesign §6.4: money is booked where it
+    ///         arrived, and interest stops on it then).
+    /// @param vault    Whose vault holds it.
+    /// @param amount   How much (in the loan's principal asset).
+    /// @param interest The interest part of `amount`.
+    struct AdvanceHold {
+        address vault;
+        uint256 amount;
+        uint256 interest;
     }
 
     /// @dev #3328 — the kind of collateral set a collection offer names.
@@ -9074,7 +9092,8 @@ library LibVaipakam {
         ///      initialize, so the two cannot drift). Appended — append-only.
         mapping(address => address) adapterPrincipal;
         /// @dev #3760 — the advance against each loan's lender position, by
-        ///      loan. Written only by `LibAdvance`. Appended — append-only.
+        ///      loan. Opened by `LenderAdvanceFacet`, then written only by
+        ///      `LenderSideFacet`. Appended — append-only.
         mapping(uint256 => Advance) advances;
         /// @dev #3760 — each Auto-lend slot's consent to advance on loans,
         ///      keyed like `lenderIntent`. Written only by
@@ -9084,6 +9103,10 @@ library LibVaipakam {
         /// @dev #3760 — the advance feature's own switch (off at deploy).
         ///      Off refuses new advances; an open one still runs to its end.
         bool advancesEnabled;
+        /// @dev #3760 — per loan, the advance's cash set aside in vaults other
+        ///      than its custody, by vault ({AdvanceHold}). Written only by
+        ///      `LenderSideFacet`. Appended — append-only.
+        mapping(uint256 => AdvanceHold[]) advanceHolds;
     }
 
     /// @notice #3344 — a protected account's Ready settings. See

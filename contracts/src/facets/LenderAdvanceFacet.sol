@@ -371,6 +371,16 @@ contract LenderAdvanceFacet is DiamondReentrancyGuard, DiamondPausable, DiamondA
             _add(r, abi.encodeWithSelector(IVaipakamErrors.NotNFTOwner.selector));
             if (_full(r)) return;
         }
+        // An emergency pause of either asset stops new exposure in it, as it
+        // stops a takeover drawing the same kind of slot capital.
+        if (LibFacet.isAssetPaused(loan.principalAsset)) {
+            _add(r, abi.encodeWithSelector(IVaipakamErrors.AssetPaused.selector, loan.principalAsset));
+            if (_full(r)) return;
+        }
+        if (LibFacet.isAssetPaused(loan.collateralAsset)) {
+            _add(r, abi.encodeWithSelector(IVaipakamErrors.AssetPaused.selector, loan.collateralAsset));
+            if (_full(r)) return;
+        }
         if (LibVaipakam.positionMovePartyBlocked(holder) && holder != caller) {
             _add(r, abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, holder));
             if (_full(r)) return;

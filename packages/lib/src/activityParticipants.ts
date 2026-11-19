@@ -68,6 +68,15 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   // own vault under a lien until it can be delivered; the payer sees it held
   // and released.
   ['SettlementLegParked', ['payer']],
+  // #3760 — lender cash-out: the seller sees its sale; the advance's holder
+  // and slot owner each see the advance taken, repaid, paid out and closed,
+  // and the slot owner sees its own advance consent.
+  ['SellNowFilled', ['seller']],
+  ['AdvanceTaken', ['holder', 'slotOwner']],
+  ['AdvanceRepaidByHolder', ['holder']],
+  ['AdvancePaidOut', ['slotOwner']],
+  ['AdvanceClosed', ['slotOwner']],
+  ['AdvanceSlotSet', ['owner']],
   ['SettlementLegReleased', ['payer']],
   ['TreasuryShareParked', ['owner']],
   ['TreasuryShareReleased', ['owner']],

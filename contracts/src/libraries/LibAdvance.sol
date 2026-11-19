@@ -33,7 +33,7 @@ library LibAdvance {
     ///         the lender side's vault for the slot owner.
     function hasSetAside(LibVaipakam.Storage storage s, uint256 loanId) internal view returns (bool) {
         LibVaipakam.Advance storage a = s.advances[loanId];
-        return a.setAside != 0 || a.inKindSetAside != 0;
+        return a.setAside != 0 || a.inKindSetAside != 0 || a.heldElsewhere != 0;
     }
 
     /// @notice Reverts {AdvanceLocksPosition} while an advance is open on

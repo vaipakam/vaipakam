@@ -462,13 +462,13 @@ library LibCloseoutFreeze {
         LibVaipakam.Loan storage loan,
         address asset,
         uint256 amount
-    ) private {
-        if (amount == 0) return;
+    ) private returns (uint256 kept) {
+        if (amount == 0) return 0;
         // #3760 — the one order of payment: an open advance on the position
         // takes its part first (set aside under its own lien); the held store
         // and its reservation carry the holder's part.
-        uint256 kept = LibLenderSide.addHeld(s, loanId, asset, amount);
-        if (kept == 0) return;
+        kept = LibLenderSide.addHeld(s, loanId, asset, amount);
+        if (kept == 0) return 0;
         LibSanctionedLock.recordFrozenClaimant(s, loanId, true, LibPositionNFT.ownerOf(loan.lenderTokenId));
         LibEncumbrance.encumberActiveHeld(loanId, loan.lender, asset, kept);
         emit LenderPaymentHeld(loanId, loan.lender, asset, kept);
@@ -510,9 +510,9 @@ library LibCloseoutFreeze {
         uint256 holderAmount = amount - sellersNet;
         if (holderAmount == 0) return sellersNet;
         uint256 held = LibSanctionedLock.depositLocked(s, loan.lender, loanId, asset, holderAmount);
-        _holdActiveLenderShare(s, loanId, loan, asset, held);
+        uint256 kept = _holdActiveLenderShare(s, loanId, loan, asset, held);
         LibInterestLedger.holderParked(
-            s, loan, interestGross - sellersGross, interestNet - sellersNet, held, true
+            s, loan, interestGross - sellersGross, interestNet - sellersNet, held, kept, true
         );
         delivered = sellersNet + held;
     }
@@ -540,9 +540,9 @@ library LibCloseoutFreeze {
         uint256 holderAmount = amount - sellersNet;
         if (holderAmount == 0) return;
         LibSanctionedLock.depositLockedFrom(s, payer, loan.lender, loanId, asset, holderAmount);
-        _holdActiveLenderShare(s, loanId, loan, asset, holderAmount);
+        uint256 kept = _holdActiveLenderShare(s, loanId, loan, asset, holderAmount);
         LibInterestLedger.holderParked(
-            s, loan, interestGross - sellersGross, interestNet - sellersNet, holderAmount, true
+            s, loan, interestGross - sellersGross, interestNet - sellersNet, holderAmount, kept, true
         );
     }
 

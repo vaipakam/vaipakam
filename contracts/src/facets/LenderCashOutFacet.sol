@@ -104,7 +104,9 @@ contract LenderCashOutFacet is DiamondReentrancyGuard, DiamondPausable {
     /// @param sellAtMyPrice   The "Sell at my price" choice (the listing).
     /// @param borrowAgainstIt The "Borrow against it" choice (the advance).
     /// @param openRoute       The route already standing on the position.
-    /// @param sourceKinds     The source kinds this deployment has.
+    /// @param sourceKinds     The source kinds `caller` may name here: a
+    ///                        standing buy offer for the holder alone, a
+    ///                        takeover slot where the instant market runs.
     /// @param maxSellPrincipal The largest part that may be sold: the whole
     ///                        outstanding principal until the part sale exists.
     /// @param advanceCeiling  The largest advance the rules allow before any
@@ -183,6 +185,17 @@ contract LenderCashOutFacet is DiamondReentrancyGuard, DiamondPausable {
 
         (SaleExitVerdictFacet.SaleRefusal[] memory direct, SaleExitVerdictFacet.SaleRefusal[] memory listing) =
             SaleExitVerdictFacet(address(this)).saleExitVerdict(loanId, caller);
+        // A keeper acting under the holder's early-withdrawal mandate sells
+        // through a takeover slot only, and the takeover judges the sale as
+        // the holder: so is "sell now" here.
+        bool keeperFor = o.holder != address(0) && caller != o.holder
+            && LibAuth.keeperMayActFor(caller, LibVaipakam.KEEPER_ACTION_INIT_EARLY_WITHDRAW, loanId, o.holder);
+        if (keeperFor) {
+            (direct,) = SaleExitVerdictFacet(address(this)).saleExitVerdict(loanId, o.holder);
+            if (!s.instantCfg.enabled) {
+                direct = _append(direct, abi.encodeWithSelector(SourceNeedsHolder.selector, SourceKind.BuyOffer));
+            }
+        }
         if (amount != 0 && amount != loan.principal) {
             bytes memory part = abi.encodeWithSelector(PartSaleNotAvailable.selector, amount, loan.principal);
             direct = _append(direct, part);
@@ -198,10 +211,12 @@ contract LenderCashOutFacet is DiamondReentrancyGuard, DiamondPausable {
         else if (s.loanToSaleOfferId[loanId] != 0) o.openRoute = OpenRoute.Listing;
         else if (s.loanToOffsetOfferId[loanId] != 0) o.openRoute = OpenRoute.Offset;
 
-        uint256 kinds = s.instantCfg.enabled ? 2 : 1;
+        // The kinds of source this caller may name: a standing buy offer for
+        // the holder alone, a takeover slot where the instant market runs.
+        uint256 kinds = (keeperFor ? 0 : 1) + (s.instantCfg.enabled ? 1 : 0);
         o.sourceKinds = new SourceKind[](kinds);
-        o.sourceKinds[0] = SourceKind.BuyOffer;
-        if (kinds == 2) o.sourceKinds[1] = SourceKind.TakeoverSlot;
+        if (!keeperFor) o.sourceKinds[0] = SourceKind.BuyOffer;
+        if (s.instantCfg.enabled) o.sourceKinds[kinds - 1] = SourceKind.TakeoverSlot;
         o.maxSellPrincipal = loan.principal;
         o.advanceCeiling = (loan.principal * LenderAdvanceFacet(address(this)).ADVANCE_MAX_SHARE_BPS()) / 10_000;
     }

@@ -856,20 +856,19 @@ contract PrecloseFacet is
         // holder's part of it is recorded as held for the lender side, so a
         // later sale pays it to that seller ({LibInterestLedger.holderParked}).
         // The shortfall is the holder's top-up, never a seller's interest.
+        // The holder's gross and net interest, parked below once the held
+        // store has kept its part (#3760: an open advance takes its part
+        // first, and that part counts as paid to the holder).
+        uint256[3] memory parkedInterest; // [gross, net, what arrived]
         if (isErc20) {
             (uint256 sellersGross, uint256 sellersNet) = LibInterestLedger.paySellersFirst(
                 s, loan, msg.sender, payAsset, accruedInterest, accruedInterest - treasuryFee
             );
             lenderShare -= sellersNet;
-            LibInterestLedger.holderParked(
-                s,
-                loan,
-                accruedInterest - sellersGross,
-                accruedInterest - treasuryFee - sellersNet,
-                lenderShare,
-                false
-            );
+            parkedInterest[0] = accruedInterest - sellersGross;
+            parkedInterest[1] = accruedInterest - treasuryFee - sellersNet;
         }
+        parkedInterest[2] = lenderShare;
         if (lenderShare > 0) {
             // T-037 — direct borrower → lender's vault via the cross-payer
             // chokepoint. Counter ticks up under the lender even though the
@@ -913,6 +912,11 @@ contract PrecloseFacet is
                     loanId, loan.lender, payAsset, lenderShare
                 );
             }
+        }
+        if (isErc20) {
+            LibInterestLedger.holderParked(
+                s, loan, parkedInterest[0], parkedInterest[1], parkedInterest[2], lenderShare, false
+            );
         }
 
         // ── 1b. NFT rental: settle rent accrued since the last deduction ─────

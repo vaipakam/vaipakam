@@ -9,7 +9,9 @@ import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibAdvancePayAuth} from "../libraries/LibAdvancePayAuth.sol";
+import {LibAdvance} from "../libraries/LibAdvance.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
+import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -138,15 +140,15 @@ contract LenderSideFacet is DiamondReentrancyGuard, DiamondPausable, ILenderSide
     function bookArrival(uint256 loanId, address asset, uint256 amount) external returns (uint256 part) {
         _onlySelf();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        return _book(s, loanId, s.loans[loanId], asset, amount);
+        return _book(s, loanId, s.loans[loanId], s.loans[loanId].lender, asset, amount);
     }
 
     /// @inheritdoc ILenderSideHost
     /// @dev The row's asset says what it is. A cash row in the principal
     ///      asset is booked (only its difference from what was booked before)
     ///      and ends the advance, short if need be, unless the money has not
-    ///      reached the lender side's vault yet (a lender leg parked in the
-    ///      payer's vault: booked when it is released). An in-kind row is
+    ///      reached the lender side's vault yet (a lender leg, cash or in
+    ///      kind, parked in the payer's vault: booked when it is released). An in-kind row is
     ///      only recorded while the fallback still waits for its retry, and
     ///      split when `inKind` says the retry is over (or when no fallback
     ///      stands behind it).
@@ -157,6 +159,13 @@ contract LenderSideFacet is DiamondReentrancyGuard, DiamondPausable, ILenderSide
         LibVaipakam.Advance storage a = s.advances[loanId];
         LibVaipakam.ClaimInfo storage row = s.lenderClaims[loanId];
 
+        if (s.parkedLenderLeg[loanId].payer != address(0)) {
+            // Not arrived (a leg parked in the payer's vault, cash or in
+            // kind): booked, or split, when the leg is released into the
+            // lender side's vault.
+            row.amount = amount;
+            return amount;
+        }
         if (row.asset != loan.principalAsset || row.assetType != LibVaipakam.AssetType.ERC20) {
             if (!inKind && s.fallbackSnapshot[loanId].active) {
                 row.amount = amount; // the retry has not run yet
@@ -166,13 +175,9 @@ contract LenderSideFacet is DiamondReentrancyGuard, DiamondPausable, ILenderSide
             row.amount = kept;
             return kept;
         }
-        if (s.parkedLenderLeg[loanId].payer != address(0)) {
-            row.amount = amount; // not arrived: booked when the leg is released
-            return amount;
-        }
         uint256 booked = a.finalBooked;
         if (amount >= booked) {
-            a.finalToAdvance += _book(s, loanId, loan, loan.principalAsset, amount - booked);
+            a.finalToAdvance += _book(s, loanId, loan, loan.lender, loan.principalAsset, amount - booked);
         } else {
             _unbook(loanId, a, booked - amount);
         }
@@ -190,8 +195,8 @@ contract LenderSideFacet is DiamondReentrancyGuard, DiamondPausable, ILenderSide
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Advance storage a = s.advances[loanId];
         if (loanEnded && a.open) _close(s, loanId, a, true);
-        if (a.setAside == 0 && a.inKindSetAside == 0) return;
-        if (LibVaipakam.isSanctionedAddress(a.slotOwner)) return;
+        if (!LibAdvance.hasSetAside(s, loanId)) return;
+        if (LibSanctionedLock.mustFreezeParty(s, a.slotOwner)) return;
         _payOut(loanId, a);
     }
 
@@ -218,7 +223,7 @@ contract LenderSideFacet is DiamondReentrancyGuard, DiamondPausable, ILenderSide
                 fromOwner, LibVaultOutflow.ERC20, asset, 0, move, loanId, loan.lenderTokenId, OutflowReason.BACKSTOP
             );
             LibDelivery.requireFull(asset, move, arrived);
-            part = _book(s, loanId, loan, asset, move);
+            part = _book(s, loanId, loan, loan.lender, asset, move);
         }
         if (a.open) _close(s, loanId, a, true);
     }
@@ -241,8 +246,10 @@ contract LenderSideFacet is DiamondReentrancyGuard, DiamondPausable, ILenderSide
     function payAdvance(uint256 loanId) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Advance storage a = s.advances[loanId];
-        if (a.setAside == 0 && a.inKindSetAside == 0) revert NothingSetAside(loanId);
-        if (LibVaipakam.isSanctionedAddress(a.slotOwner)) revert AdvancePayeeFlagged(loanId, a.slotOwner);
+        if (!LibAdvance.hasSetAside(s, loanId)) revert NothingSetAside(loanId);
+        // Fail-closed on a confirmed flag: a slot owner once seen flagged
+        // stays unpaid through an oracle outage until it reads clean.
+        if (LibSanctionedLock.mustFreezeParty(s, a.slotOwner)) revert AdvancePayeeFlagged(loanId, a.slotOwner);
         _payOut(loanId, a);
     }
 
@@ -254,9 +261,9 @@ contract LenderSideFacet is DiamondReentrancyGuard, DiamondPausable, ILenderSide
      * @dev    The money must be free in the holder's vault. It goes straight
      *         to the slot owner's vault (the treasury's cut of the interest in
      *         it first), under the advance's own vault class. Where the slot
-     *         owner is flagged, it is set aside for them in the vault the
-     *         advance was opened in, which must then be the holder's
-     *         ({AdvancePayeeFlagged} otherwise).
+     *         owner is flagged, it is set aside for them where it is, in the
+     *         paying holder's vault, under the advance's lien, and interest
+     *         stops on it: a willing holder is never left paying interest.
      * @return paid What the advance received.
      */
     function repayAdvance(uint256 loanId, uint256 amount) external nonReentrant whenNotPaused returns (uint256 paid) {
@@ -276,10 +283,14 @@ contract LenderSideFacet is DiamondReentrancyGuard, DiamondPausable, ILenderSide
             );
             if (free < amount) revert AdvanceRepayShort(free, amount);
         }
-        if (LibVaipakam.isSanctionedAddress(a.slotOwner)) {
-            // Held for the flagged slot owner, as any flagged lender's are.
-            if (loan.lender != msg.sender) revert AdvancePayeeFlagged(loanId, a.slotOwner);
-            paid = _book(s, loanId, loan, asset, amount);
+        // The holder spent free vault balance: it leaves their depository
+        // holding first, as every other spend of free balance does.
+        LibDepositoryLedger.spend(msg.sender, asset, 0, amount);
+        if (LibSanctionedLock.mustFreezeParty(s, a.slotOwner)) {
+            // Held for the flagged slot owner, as any flagged lender's are:
+            // set aside in the paying holder's own vault, where it is, and
+            // interest stops on it now.
+            paid = _book(s, loanId, loan, msg.sender, asset, amount);
         } else {
             uint256 ip = amount < a.interestOwed ? amount : a.interestOwed;
             uint256 pp = amount - ip;
@@ -338,16 +349,12 @@ contract LenderSideFacet is DiamondReentrancyGuard, DiamondPausable, ILenderSide
         LibVaipakam.Storage storage s,
         uint256 loanId,
         LibVaipakam.Loan storage loan,
+        address vault,
         address asset,
         uint256 amount
     ) private returns (uint256 part) {
         LibVaipakam.Advance storage a = s.advances[loanId];
         if (!a.open || amount == 0 || asset != loan.principalAsset) return 0;
-        address custody = loan.lender;
-        // One custody at a time: a set-aside still in an earlier holder's
-        // vault (a consolidation that has not run) keeps this arrival in the
-        // store, and the advance's interest keeps running on it (stated).
-        if (a.setAside != 0 && a.custody != custody) return 0;
         _accrue(a);
         uint256 ip = amount < a.interestOwed ? amount : a.interestOwed;
         uint256 left = amount - ip;
@@ -357,14 +364,47 @@ contract LenderSideFacet is DiamondReentrancyGuard, DiamondPausable, ILenderSide
         a.interestOwed -= ip;
         a.principalOwed -= pp;
         a.interestPaid += ip;
-        a.setAside += part;
-        a.setAsideInterest += ip;
-        a.setAsideAsset = asset;
-        a.custody = custody;
-        LibEncumbrance.lienAdvanceSetAside(custody, asset, part);
+        // Set aside where the money is. An arrival for the position is in the
+        // stored lender's vault, which is the advance's custody for its whole
+        // life (the stored lender cannot change while the position is locked:
+        // no sale or takeover migrates it and consolidation leaves it); only
+        // a holder's own repayment can sit elsewhere, listed by vault.
+        if (vault == a.custody) {
+            a.setAside += part;
+            a.setAsideInterest += ip;
+            a.setAsideAsset = asset;
+        } else {
+            _holdElsewhere(s, loanId, a, vault, part, ip);
+        }
+        LibEncumbrance.lienAdvanceSetAside(vault, asset, part);
+        // Record a flag seen now, so the set-aside stays held for a flagged
+        // slot owner through a later oracle outage (never reverts).
+        LibSanctionedLock.mustFreezeParty(s, a.slotOwner);
         emit AdvancePaidFromPosition(loanId, asset, ip, pp, a.principalOwed, a.interestOwed);
         if (pp != 0) _slot(loan, a, pp, 0);
         if (a.principalOwed == 0 && a.interestOwed == 0) _close(s, loanId, a, false);
+    }
+
+    /// @dev Add `part` (of which `ip` interest) to `vault`'s entry in the
+    ///      advance's list of set-asides held outside its custody.
+    function _holdElsewhere(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        LibVaipakam.Advance storage a,
+        address vault,
+        uint256 part,
+        uint256 ip
+    ) private {
+        LibVaipakam.AdvanceHold[] storage holds = s.advanceHolds[loanId];
+        a.heldElsewhere += part;
+        for (uint256 i; i < holds.length; ++i) {
+            if (holds[i].vault == vault) {
+                holds[i].amount += part;
+                holds[i].interest += ip;
+                return;
+            }
+        }
+        holds.push(LibVaipakam.AdvanceHold({vault: vault, amount: part, interest: ip}));
     }
 
     /// @dev The final claim fell by `drop` after it was booked (what was
@@ -462,6 +502,7 @@ contract LenderSideFacet is DiamondReentrancyGuard, DiamondPausable, ILenderSide
         a.inKindSetAside += toAdvance;
         if (a.setAside == 0 && a.inKindSetAside == toAdvance) a.custody = loan.lender;
         LibEncumbrance.lienAdvanceSetAside(loan.lender, asset, toAdvance);
+        LibSanctionedLock.mustFreezeParty(LibVaipakam.storageSlot(), a.slotOwner);
     }
 
     /// @dev Priced: the collateral counts for what it is worth at the
@@ -506,6 +547,19 @@ contract LenderSideFacet is DiamondReentrancyGuard, DiamondPausable, ILenderSide
             a.inKindInterest = 0;
             LibEncumbrance.unlienAdvanceSetAside(custody, a.collateralAsset, amount);
             _payOne(loanId, a, custody, a.collateralAsset, amount, interest);
+        }
+        if (a.heldElsewhere != 0) {
+            LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+            LibVaipakam.AdvanceHold[] memory holds = s.advanceHolds[loanId];
+            delete s.advanceHolds[loanId];
+            a.heldElsewhere = 0;
+            address asset = s.loans[loanId].principalAsset;
+            for (uint256 i; i < holds.length; ++i) {
+                LibEncumbrance.unlienAdvanceSetAside(holds[i].vault, asset, holds[i].amount);
+            }
+            for (uint256 i; i < holds.length; ++i) {
+                _payOne(loanId, a, holds[i].vault, asset, holds[i].amount, holds[i].interest);
+            }
         }
     }
 
