@@ -50,6 +50,9 @@ export function CalmCheckCard({ intent, chain, own, meta }: CalmCheckCardProps) 
   );
   /** The setting under review (true = switch on), kept with the flow. */
   const [target, setTarget] = useStoredValue<boolean>(`${key}:target`);
+  /** The wallet and network the review was opened for, kept with it: a
+   *  review opened for one wallet is never sent for another. */
+  const [openedFor, setOpenedFor] = useStoredValue<string>(`${key}:openedFor`);
   const [readAt, setReadAt] = useState(() => Date.now());
   const identity = reviewIdentity(own);
   const on = target ?? true;
@@ -83,6 +86,7 @@ export function CalmCheckCard({ intent, chain, own, meta }: CalmCheckCardProps) 
 
   const close = () => {
     setTarget(null);
+    setOpenedFor(null);
     tx.reset();
     status.refetch();
   };
@@ -113,7 +117,7 @@ export function CalmCheckCard({ intent, chain, own, meta }: CalmCheckCardProps) 
         <ActionFlow
           tx={tx}
           identity={identity}
-          reviewedFor={tx.frozen?.identity ?? identity}
+          reviewedFor={openedFor ?? tx.frozen?.identity ?? identity}
           receipt={receipt}
           recheck={recheck}
           describeAsset={() => null}
@@ -128,6 +132,7 @@ export function CalmCheckCard({ intent, chain, own, meta }: CalmCheckCardProps) 
   const s = status.data;
   const open = (want: boolean) => {
     setReadAt(Date.now());
+    setOpenedFor(identity);
     setTarget(want);
     tx.review();
   };

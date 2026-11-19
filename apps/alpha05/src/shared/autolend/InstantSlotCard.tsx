@@ -46,6 +46,8 @@ export function InstantSlotCard({ intent, active, chain, own, meta }: InstantSlo
   );
   const [open, setOpen] = useStoredValue<boolean>(`${key}:open`);
   const [choice, setChoice] = useStoredValue<InstantChoice>(`${key}:choice`);
+  /** The wallet and network the review was opened for, kept with it. */
+  const [openedFor, setOpenedFor] = useStoredValue<string>(`${key}:openedFor`);
   const [readAt, setReadAt] = useState(() => Date.now());
   const picked = choice ?? INSTANT_CHOICE_PRESELECTED;
   const identity = reviewIdentity(own);
@@ -120,6 +122,7 @@ export function InstantSlotCard({ intent, active, chain, own, meta }: InstantSlo
   const close = () => {
     setOpen(null);
     setChoice(null);
+    setOpenedFor(null);
     tx.reset();
     facts.refetch();
   };
@@ -133,6 +136,7 @@ export function InstantSlotCard({ intent, active, chain, own, meta }: InstantSlo
           className="btn"
           onClick={() => {
             setReadAt(Date.now());
+            setOpenedFor(identity);
             setOpen(true);
             tx.review();
           }}
@@ -168,7 +172,7 @@ export function InstantSlotCard({ intent, active, chain, own, meta }: InstantSlo
       <ActionFlow
         tx={tx}
         identity={identity}
-        reviewedFor={tx.frozen?.identity ?? identity}
+        reviewedFor={openedFor ?? tx.frozen?.identity ?? identity}
         receipt={receipt}
         recheck={recheck}
         describeAsset={() => null}

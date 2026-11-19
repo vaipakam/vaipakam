@@ -44,6 +44,22 @@ interface GetCashProps {
   own: OwnStateClient;
   chain: SupportedChain;
   meta: TokenMetaMap | null;
+  /** Whether this wallet may open a new cash-out now (it holds the lender
+   *  position of a live loan). A flow already under way stays on screen to
+   *  its finish card either way. */
+  canOpen?: boolean;
+}
+
+/**
+ * Whether a cash-out flow for this loan is under way or awaiting its finish
+ * card. A sale or handover moves the lender position away, so the page keeps
+ * the flow on screen by this, not by who holds the position now.
+ */
+export function useCashFlowHeld(loanId: bigint): boolean {
+  const key = getCashKey(loanId);
+  const [route] = useStoredValue<Route>(`${key}:route`);
+  const entry = useTxEntry(key);
+  return route !== null || holdsFlow(entry.phase);
 }
 
 /** The loan facts the door's reads stand on. */
@@ -115,6 +131,8 @@ export function GetCash(props: GetCashProps) {
       </section>
     );
   }
+
+  if (props.canOpen === false) return null;
 
   if (open !== true)
     return (
@@ -317,7 +335,7 @@ interface ListChoice {
 }
 
 /** The figures a route's review was built from, read again before signing. */
-type Plan =
+export type Plan =
   | { route: 'handover'; owner: Hex; slot: number; receives: bigint }
   | { route: 'sale'; offerId: bigint; rateBps: bigint; net: bigint; maxHeld: bigint }
   | { route: 'list'; rateBps: bigint; days: number; minNet: bigint; maxHeld: bigint };
@@ -326,6 +344,22 @@ function planKey(p: Plan): string {
   if (p.route === 'handover') return `h:${p.owner}:${p.slot}:${p.receives}`;
   if (p.route === 'sale') return `s:${p.offerId}:${p.net}:${p.maxHeld}`;
   return `l:${p.rateBps}:${p.days}:${p.minNet}:${p.maxHeld}`;
+}
+
+/**
+ * Whether a fresh read of the plan still honours the one under review: the
+ * same route and counterparty, at least as much for the lender, and no more
+ * of the held payments swept. A listing's floor and a sale's net move with
+ * every block when the rate differs from the loan's, so an improvement keeps
+ * the reviewed figures (the transaction is sent with them) and only an
+ * adverse change asks for a fresh review.
+ */
+export function planHolds(reviewed: Plan, next: Plan): boolean {
+  if (reviewed.route === 'handover')
+    return next.route === 'handover' && next.owner.toLowerCase() === reviewed.owner.toLowerCase() && next.slot === reviewed.slot && next.receives >= reviewed.receives;
+  if (reviewed.route === 'sale')
+    return next.route === 'sale' && next.offerId === reviewed.offerId && next.rateBps === reviewed.rateBps && next.net >= reviewed.net && next.maxHeld <= reviewed.maxHeld;
+  return next.route === 'list' && next.rateBps === reviewed.rateBps && next.days === reviewed.days && next.minNet >= reviewed.minNet && next.maxHeld <= reviewed.maxHeld;
 }
 
 /** One route's review and transaction. */
@@ -342,6 +376,9 @@ function CashFlow(props: GetCashProps & { route: Route; read: GetCashRead | null
   const [list, setList] = useStoredValue<ListChoice>(`${key}:list`);
   const [plan, setPlan] = useStoredValue<Plan>(`${key}:plan`);
   const [planFor, setPlanFor] = useStoredValue<string>(`${key}:planFor`);
+  /** The wallet and network the review was opened for, kept with it: a
+   *  review opened for one wallet is never sent for another. */
+  const [openedFor, setOpenedFor] = useStoredValue<string>(`${key}:openedFor`);
   const [error, setError] = useState<string | null>(null);
   const entry = useTxEntry(key);
 
@@ -422,6 +459,7 @@ function CashFlow(props: GetCashProps & { route: Route; read: GetCashRead | null
         setError(null);
         setPlan(p);
         setPlanFor(subject);
+        if (openedFor === null) setOpenedFor(identity);
         if (tx.phase.kind === 'idle') tx.review();
       },
       (e: unknown) => live && setError(refusalFromError(e).reason),
@@ -436,6 +474,7 @@ function CashFlow(props: GetCashProps & { route: Route; read: GetCashRead | null
     tx.reset();
     setPlan(null);
     setPlanFor(null);
+    setOpenedFor(null);
     setList(null);
     onClose();
   };
@@ -451,11 +490,12 @@ function CashFlow(props: GetCashProps & { route: Route; read: GetCashRead | null
       const r = refusalFromError(e);
       return e instanceof StatedRefusal ? { kind: 'refused', refusal: r } : { kind: 'unreadable', reason: r.reason };
     }
-    if (planKey(next) !== planKey(plan)) {
+    if (planKey(next) !== planKey(plan) && !planHolds(plan, next)) {
       if (current()) setPlan(next);
       return { kind: 'changed', what: text('getCash.changed') };
     }
-    const asked = await askThrough(own, async (c) => c.simulateContract({ address: diamond, ...callOf(next, await chainValidUntil(c)), account }));
+    // The reviewed figures are the ones sent, so they are the ones asked.
+    const asked = await askThrough(own, async (c) => c.simulateContract({ address: diamond, ...callOf(plan, await chainValidUntil(c)), account }));
     if (asked.kind === 'reverted') return { kind: 'refused', refusal: refusalFromError(asked.error) };
     if (asked.kind === 'unreadable') return { kind: 'unreadable', reason: asked.reason };
     return { kind: 'ok' };
@@ -481,7 +521,7 @@ function CashFlow(props: GetCashProps & { route: Route; read: GetCashRead | null
       <ActionFlow
         tx={tx}
         identity={identity}
-        reviewedFor={tx.frozen?.identity ?? identity}
+        reviewedFor={openedFor ?? tx.frozen?.identity ?? identity}
         receipt={receipt}
         recheck={recheck}
         describeAsset={describeAsset}

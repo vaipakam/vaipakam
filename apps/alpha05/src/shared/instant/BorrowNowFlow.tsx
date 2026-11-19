@@ -81,6 +81,9 @@ export function BorrowNowFlow({ terms, chain, own, meta, termsState, onEdit, onR
   const [approving, setApproving] = useState<string | null>(null);
   const setStep = useTxNote(flowKey);
   const approvalLeft = useRef<{ token: Hex; prior: bigint; amount: bigint; since: bigint | null } | null>(null);
+  /** After a borrow that took effect: the approval it did not use (a
+   *  partial borrow pulls only the collateral of its fills), to put back. */
+  const leftover = useRef<{ token: Hex; prior: bigint; expect: bigint; since: bigint } | null>(null);
   const counter = useRef<{ n: number; total: number }>({ n: 0, total: 0 });
 
   const exact = (asset: Hex, v: bigint) => exactTokenAmount(v, asset, meta, format);
@@ -157,12 +160,17 @@ export function BorrowNowFlow({ terms, chain, own, meta, termsState, onEdit, onR
       const after = await putBack(left.token, left.prior, left.amount, left.since);
       return cleanUpLeg(after, format('approval.legBack', { amount: exact(left.token, left.prior) }));
     },
-    measure: async (receipt) => {
+    measure: async (receipt, at) => {
       if (!review) return [];
       const t = review.terms;
       const plan = planOf(review);
       const legs: LegOutcome[] = [];
       const logs = borrowNowLogs(receipt.logs, diamond, account);
+      // The approval covered the whole wallet part; what the fills drew from
+      // the wallet is the transaction's own figure, and the rest is put back.
+      const left = approvalLeft.current;
+      approvalLeft.current = null;
+      if (left && logs !== null && logs.fromWallet <= left.amount) leftover.current = { token: left.token, prior: left.prior, expect: left.amount - logs.fromWallet, since: at.blockNumber };
       if (logs === null) {
         legs.push({ status: 'unknown', label: text('borrowNow.legNotBorrowed'), reason: text('borrowNow.legUnread') });
         return legs;
@@ -179,6 +187,13 @@ export function BorrowNowFlow({ terms, chain, own, meta, termsState, onEdit, onR
         setRest({ terms: t, amount: left.amount, collateral: left.collateral });
       }
       return legs;
+    },
+    release: async () => {
+      const left = leftover.current;
+      leftover.current = null;
+      if (!left) return null;
+      const after = await putBack(left.token, left.prior, left.expect, left.since);
+      return cleanUpLeg(after, format('approval.legBack', { amount: exact(left.token, left.prior) }));
     },
   });
 

@@ -16,7 +16,7 @@ import { useNow } from '../../shared/ui/useNow';
 import { WhyLink } from '../../shared/help/WhyLink';
 import { Notice } from '../../shared/ui/Notice';
 import { FrozenNotice, useFrozenState } from '../../shared/sanctions/FrozenNotice';
-import { GetCash, cashLoanOf } from './GetCash';
+import { GetCash, cashLoanOf, useCashFlowHeld } from './GetCash';
 import { LoanActions } from './LoanActions';
 import { LoanStatement } from './LoanStatement';
 import { LoanClaims } from './LoanClaims';
@@ -116,6 +116,8 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
   // Deadline wording follows the side the reader holds; a viewer who holds
   // neither reads the lender's (no "you must repay").
   const borrowerSide = role?.borrower === true && role.lender !== true;
+  const cashHeld = useCashFlowHeld(loanId);
+  const canCashOut = erc20 && role?.lender === true && l.status === LOAN_STATUS_ACTIVE;
   const obligations = live ? loanObligations({ loan: l, borrowerSide, healthFactor: v.healthFactor ?? 0n }, v.deadlines, nowSec) : null;
   const unknown = text('receipt.unknown');
   // RB-FROZEN — the reader's own standing, said only to a holder of a side.
@@ -199,7 +201,7 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
       {live && erc20 && role !== null && (role.lender || role.borrower) && (
         <LoanStatement role={role} durationDays={l.durationDays} fullTermInterest={l.useFullTermInterest} chain={chain} loan={cashLoanOf(loanId, v)} />
       )}
-      {erc20 && role?.lender === true && l.status === LOAN_STATUS_ACTIVE && <GetCash loanId={loanId} view={v} own={own} chain={chain} meta={meta} />}
+      {(canCashOut || (erc20 && cashHeld)) && <GetCash loanId={loanId} view={v} own={own} chain={chain} meta={meta} canOpen={canCashOut} />}
 
       {live && (
         <Facts title={text('position.datesTitle')} id="position-dates" lead={v.deadlines === null ? <p className="tier-a">{text('position.datesUnknown')}</p> : null}>
