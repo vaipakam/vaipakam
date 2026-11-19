@@ -45,7 +45,7 @@ export function giveReceipt(r: GiveReview, meta: TokenMetaMap | null, copy: Pick
   ];
   if (r.owed !== null && r.owed.gross > 0n) rows.push(row(text('give.rowOwed'), amt(r.owed.gross), false));
 
-  const consequences: ReceiptText[] = [text('give.loseFinal'), text('give.loseRights'), text('give.receiverCollects'), ...(r.owed !== null && r.owed.gross > 0n ? [text('give.sellersFirst')] : [])];
+  const consequences: ReceiptText[] = [text('give.loseFinal'), text('give.loseRights'), text('give.receiverVault'), text('give.receiverControls'), ...(r.owed !== null && r.owed.gross > 0n ? [text('give.sellersFirst')] : [])];
 
   return { title: format('give.title', { id: r.loanId.toString() }), rows, consequences, prompts: 1, readAt: r.readAt };
 }
