@@ -224,6 +224,27 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   sends its instant consents again in the same transaction, or states them
   cleared when the new terms cannot carry them. Free vault balance is never
   lent by any of this.
+- Auto-lend has no end date unless the lender states one: "Lend for a set
+  period" is a choice, off at the start. Re-lending a repayment is
+  pre-selected only where the platform's keeper reports that step running on
+  the network, and the form says when it is not running or not known. Until
+  loan renewal is built, renewal is shown as not available yet and no renewal
+  consent is sent. The review says what "no end date" means here, and that
+  funds in a loan come back when it is repaid, sooner only by a handover at
+  face value (where deployed) or a sale available at that moment; no date of
+  return is promised.
+- Borrow opens on "Borrow now": the borrower states the amount, the most
+  collateral, the term and the highest rate (no rate is suggested). The
+  review is the protocol's own answer for the borrower's wallet in that
+  block, labelled as what this block gives, listing each loan with its
+  lender, rate and collateral. Signing asks again just before the prompt and
+  never borrows less than the figure shown. Collateral comes from the vault's
+  free balance first, then the wallet, approved for exactly the wallet's part
+  and naming the contract it is given to. Where the lenders ready cover part,
+  the borrower may borrow that part and then post a request for exactly the
+  rest; where they cover none, or the market is off on the network, the
+  review says nothing is borrowed now and offers a request. Every loan ends
+  on its due date; it does not renew.
 - A newly posted or edited offer waits the protocol's minimum terms age
   before fill. The review shows the configured wait and remaining chain time,
   offers no signing step while blocked, and refreshes each block. An unread

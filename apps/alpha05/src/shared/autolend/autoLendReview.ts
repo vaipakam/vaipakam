@@ -11,7 +11,8 @@ import { judgeDryRun, type CreateVerdict } from '../post/postReview';
 import { tokenAcceptsApproval } from '../offers/reads';
 import { bpsPercent } from '../offers/priceGuard';
 import { assetName, tokenAmount, type TokenMetaMap } from '../reads/tokens';
-import { erc20Pair, readRiskStatus, riskPlan, type RiskNeed } from '../risk/riskAccess';
+import type { RiskNeed } from '../risk/riskAccess';
+import { readRiskNeed } from '../risk/riskNeed';
 import type { Receipt, ReceiptRow, ReceiptText } from '../receipt/types';
 import { allowanceSteps } from '../tx/approval';
 import { chainValidUntil } from '../tx/deadline';
@@ -126,24 +127,6 @@ export function rollAfter(e: EffectivePreset): RollPermission {
   }
 }
 
-/** The protocol's `RiskAccessLevel.IlliquidCustom`. */
-const ILLIQUID_LEVEL = 2;
-
-/** The first risk-access step this wallet lacks for the pair, in the order
- *  the protocol checks them at a fill (level, illiquid pair consent, strict
- *  acknowledgement), read through the same rule the risk step applies; null
- *  when none is needed. */
-async function readRiskNeed(own: OwnStateClient, diamond: Hex, lending: Hex, collateral: Hex): Promise<RiskNeed | null> {
-  const pair = erc20Pair(lending, collateral);
-  const status = (need: RiskNeed) => own.read((c) => readRiskStatus(c, diamond, own.account, need, { kind: 'pair', pair })).then((x) => x.value);
-  const tier = await status('tier');
-  if (riskPlan(tier).kind !== 'met') return 'tier';
-  // Only the illiquid boundary carries a per-pair consent, checked at every
-  // fill like the level.
-  if (tier.gateOn && tier.required === ILLIQUID_LEVEL && riskPlan(await status('pair-consent')).kind !== 'met') return 'pair-consent';
-  if (riskPlan(await status('mid-tier-ack')).kind !== 'met') return 'mid-tier-ack';
-  return null;
-}
 
 export async function readAutoLendReview(own: OwnStateClient, diamond: Hex, draft: AutoLendDraft, identity: string, indexer: IndexerClient): Promise<AutoLendReview> {
   const account = own.account;

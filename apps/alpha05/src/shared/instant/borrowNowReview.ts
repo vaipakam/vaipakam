@@ -1,0 +1,135 @@
+/**
+ * #3761 — the "Borrow now" review's read: the standing sources on the pair,
+ * the collateral the wallet supplies, and what `borrowInstant` gives in this
+ * block, asked of the protocol itself from the borrower's wallet.
+ */
+import { erc20Abi, type PublicClient, type StateOverride } from 'viem';
+import type { OwnStateClient } from '../../chain/ownRail';
+import { refusalFromError } from '../eligibility/refusal';
+import { readLenderIntents } from '../offers/intents';
+import { METRICS, readOffer, readPairOfferIds, readVault, tokenAcceptsApproval } from '../offers/reads';
+import { readInstantSlot } from '../autolend/preset';
+import { readRiskNeed } from '../risk/riskNeed';
+import { allowanceSteps } from '../tx/approval';
+import { findAllowanceOverride } from '../tx/allowanceOverride';
+import { chainValidUntil } from '../tx/deadline';
+import { askThrough } from '../tx/simulate';
+import {
+  borrowNowCall,
+  instantRequest,
+  offerCandidate,
+  orderSources,
+  planFrom,
+  readInstantConfig,
+  slotCandidates,
+  type BorrowNowReview,
+  type BorrowNowState,
+  type BorrowNowTerms,
+  type Candidate,
+  type InstantSource,
+} from './borrowNow';
+
+type Hex = `0x${string}`;
+const ZERO = '0x0000000000000000000000000000000000000000';
+
+/** How many of the pair's offers are looked at as sources. */
+const OFFER_PAGE = 20;
+
+/** The standing sources for this borrow, cheapest first. A source the read
+ *  cannot place is left out; the protocol judges every source it is given. */
+export async function readSources(c: PublicClient, diamond: Hex, t: BorrowNowTerms, borrower: Hex): Promise<InstantSource[]> {
+  const [intents, offers] = await Promise.all([readLenderIntents(c, diamond), readPairOfferIds(c, diamond, t.lending, t.collateral, OFFER_PAGE)]);
+  const slots = slotCandidates(intents.intents, t.lending, t.collateral, intents.at, borrower, t.termDays, t.maxRateBps);
+  const consented = await Promise.all(
+    slots.map((s) =>
+      readInstantSlot(c, diamond, s.source.owner, t.lending, t.collateral, s.source.slot).then(
+        (r) => (r.fills ? s : null),
+        () => null,
+      ),
+    ),
+  );
+  const fromOffers = await Promise.all(
+    offers.ids.map((id) =>
+      readOffer(c, diamond, id).then(
+        (o) => offerCandidate(id, o, t.lending, t.collateral, borrower, t.maxRateBps),
+        () => null,
+      ),
+    ),
+  );
+  return orderSources([...consented, ...fromOffers].filter((x): x is Candidate => x !== null)).map((x) => x.source);
+}
+
+/** The collateral the vault can supply now: its free balance of the asset. */
+export async function readFreeCollateral(c: PublicClient, diamond: Hex, account: Hex, asset: Hex): Promise<bigint> {
+  const vault = (await readVault(c, diamond, account)) as Hex;
+  if (vault.toLowerCase() === ZERO) return 0n;
+  const held = (await c.readContract({ address: asset, abi: erc20Abi, functionName: 'balanceOf', args: [vault] })) as bigint;
+  if (held === 0n) return 0n;
+  return (await c.readContract({ address: diamond, abi: METRICS, functionName: 'getFreeBalance', args: [account, asset, 0n, held] })) as bigint;
+}
+
+/** What `borrowInstant` gives in this block, asked with `minTotal` 0 so the
+ *  answer is the fills themselves. `override` puts the wallet's approval in
+ *  place for the question only. */
+export async function askPlan(
+  own: Pick<OwnStateClient, 'sources' | 'account'>,
+  diamond: Hex,
+  t: BorrowNowTerms,
+  sources: readonly InstantSource[],
+  override: StateOverride | undefined,
+  blockNumber?: bigint,
+): Promise<BorrowNowState> {
+  const asked = await askThrough(own, async (c) => {
+    const req = instantRequest(t, 0n, await chainValidUntil(c));
+    return c.simulateContract({ address: diamond, ...borrowNowCall(req, sources), account: own.account, stateOverride: override, blockNumber });
+  });
+  if (asked.kind === 'answered') {
+    const plan = planFrom(asked.value.result, sources);
+    return plan.total === 0n ? { kind: 'no-source' } : { kind: 'plan', plan };
+  }
+  if (asked.kind === 'reverted') {
+    const r = refusalFromError(asked.error);
+    if (r.code === 'InstantMarketDisabled') return { kind: 'market-off' };
+    return { kind: 'refused', code: r.code, reason: r.reason };
+  }
+  throw new Error(asked.reason);
+}
+
+export async function readBorrowNowReview(own: OwnStateClient, diamond: Hex, t: BorrowNowTerms, identity: string): Promise<BorrowNowReview> {
+  const account = own.account;
+  const [config, sources, free, allowance, walletHas, risk] = await Promise.all([
+    own.read((c) => readInstantConfig(c, diamond)).then((x) => x.value),
+    own.read((c) => readSources(c, diamond, t, account)).then((x) => x.value),
+    own.read((c) => readFreeCollateral(c, diamond, account, t.collateral)).then((x) => x.value),
+    own.read((c) => c.readContract({ address: t.collateral, abi: erc20Abi, functionName: 'allowance', args: [account, diamond] }) as Promise<bigint>).then((x) => x.value),
+    own.read((c) => c.readContract({ address: t.collateral, abi: erc20Abi, functionName: 'balanceOf', args: [account] }) as Promise<bigint>).then((x) => x.value),
+    readRiskNeed(own, diamond, t.lending, t.collateral),
+  ]);
+  const fromVault = free < t.collateralOffered ? free : t.collateralOffered;
+  const walletPart = t.collateralOffered - fromVault;
+  const approvalNeeded = walletPart > 0n && allowance < walletPart;
+  // The prompts the approval takes: one, or two where the token must be set
+  // to zero first.
+  const approvalSteps = approvalNeeded
+    ? (await allowanceSteps({ accepts: (amount) => own.read((c) => tokenAcceptsApproval(c, t.collateral, account, diamond, amount)).then((x) => x.value) }, allowance, walletPart))
+        .length
+    : 0;
+  const base = { terms: t, sources, walletPart, allowance, approvalNeeded, approvalSteps, identity, risk, readAt: Date.now() };
+  if (!config.enabled) return { ...base, state: { kind: 'market-off' } };
+  if (sources.length === 0) return { ...base, state: { kind: 'no-source' } };
+  if (walletHas < walletPart) return { ...base, state: { kind: 'short-collateral', have: walletHas, need: walletPart } };
+  let override: StateOverride | undefined;
+  if (approvalNeeded) {
+    const found = await own.read((c) => findAllowanceOverride(c, t.collateral, account, diamond, walletPart)).then((x) => x.value);
+    if (found === null) return { ...base, state: { kind: 'needs-approval' } };
+    override = found;
+  }
+  return { ...base, state: await askPlan(own, diamond, t, sources, override) };
+}
+
+/** What a review shows, as one key: a re-read that differs is a change. */
+export function borrowNowKey(r: BorrowNowReview): string {
+  const s = r.state;
+  const state = s.kind === 'plan' ? `plan:${s.plan.total}:${s.plan.collateralLocked}:${s.plan.fills.map((f) => `${f.amount}@${f.rateBps}`).join(',')}` : s.kind;
+  return [state, r.walletPart, r.approvalSteps, r.sources.length, r.risk ?? ''].join('|');
+}
