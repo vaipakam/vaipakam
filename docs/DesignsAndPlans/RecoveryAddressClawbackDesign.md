@@ -231,10 +231,34 @@ account itself, so it answers the same whichever wallet acts, and neither the
 retired wallet nor the current one receives a payout. The app offers no "Move
 positions to your new wallet" on a recovered account and says why.
 
-**Open (2026-11-18).** A token already moved to the replacement wallet BEFORE
-the clawback is that wallet's own position from then on: the clawback of the
-replaced account does not reach it, and its payouts go to the replacement
-wallet. Raised with the design thread.
+**Owner decision (2026-11-18): the move waits the delay, and a lock stops
+it.** Moving a replaced account's position tokens to the wallet that replaced
+it is one more loosening change in that account's protected record, with every
+rule that kind already has:
+
+1. Only the account's current manager (the replacing wallet) requests it, by
+   a direct call or its signature, and only once the replacement is complete
+   (and its cool-down over, like every loosening change).
+2. It waits the account's delay. The manager or any signer may cancel it.
+3. A lock drops the request, and refuses the move while the account is
+   locked, matured or not: the token contract reads the vault's own lock.
+4. A clawback refuses it for good (the Default above).
+5. A matured request may be applied by anyone, from its maturity until one
+   further delay later, like the account's other matured changes; then it
+   expires. The destination is the account's owner record at that moment,
+   never chosen by the caller. A keeper pass backs it, shipped disarmed.
+6. The request lives in the account's own vault record, beside the retired
+   flag.
+7. Until it applies nothing changes: the replacing wallet acts as the
+   account's manager, and payouts stay under the account's rules.
+8. Events for the request, its cancellation, its drop and each move. A
+   requested move alerts the owner and the signers as a proposed replacement
+   does.
+
+**Residual.** Tokens that completed the delayed move are the new wallet's own
+from then on, covered only by that wallet's own protection; a later clawback
+of the replaced account does not reach them. The app says so before the
+request: the positions leave this protected account.
 
 ## 5. Events and the record
 
@@ -309,10 +333,19 @@ every amount that went to the recovery address.
     claims, repays, adds collateral and cancels the account's offers; every
     payout reaches the recovery address and neither wallet.
 13. **(added, the code split)** The vault's protection code forwards to its
-    recovery code only that code's five endpoints and refuses any other
-    selector by name; none of the five collides with the protection code or
+    recovery code only that code's seven endpoints and refuses any other
+    selector by name; none of the seven collides with the protection code or
     the vault; both code contracts refuse a direct call; both are under
     EIP-170.
+14. **(added, 4.5 owner decision)** The replaced account's position move: with
+    no request the move is refused, also in the replacement's own block; a
+    request by anyone but the replacing wallet is refused; the move is
+    refused before maturity and after expiry; a signer's cancel; a lock after
+    the request drops it and refuses a matured one; a request never opens in
+    a later epoch, also after an unlock; after a signer-majority replacement
+    and a request, a lock and a clawback keep the positions with the account
+    and every payout reaches the recovery address; after the full wait with
+    no lock the tokens move and pay the new wallet.
 
 ## 8. Residuals
 

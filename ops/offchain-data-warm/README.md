@@ -205,25 +205,20 @@ period (#1476). Since slice 2 they live in ONE place, the backup watcher's
 workflow (`.github/workflows/backup-ledger.yml`); the Worker no longer reads
 them. A malformed value fails only its own tier.
 
-The monthly floor is higher than the daily one, and **#1476 did not change
-that** — deliberately, after trying to.
+Both tiers share one recovery-window floor, `MIN_RECOVERY_DAYS` = 8 days
+(re-derived in #3158). It is measured against the daily backup watcher, which
+lists every version of every tier and pages on a second version, a mismatch, or
+an early hide or delete: three days to detect (one skipped run plus the
+scheduler's delay), four for a human to save the superseded version, one of
+slack. It buys time to act on a page; it is not a guarantee (#1469).
 
-(The rest of this subsection is the reasoning as it stood before slice 2, when
-the Worker's weekly healthcheck was the routine inspection; the floors it
-derives are unchanged.) Before #1476, `healthcheck.ts` examined only
-`manifests/<recent dates>/`, so a monthly overwrite was detected by nothing at
-all and the window could not be
-justified by detection in any form; it simply had to outlast the monthly write
-cadence. #1476 closed that gap: the weekly run now reads every prefix family.
-
-It did not earn a shorter window. The run verifies the NEWEST period of each
-family in full — hash, size, decryption — while every older period still inside
-retention gets a presence-and-pairing check, which an archive corrupted or
-overwritten in place passes unchanged. The floor's derivation is "the window
-outlives one full cycle of the routine inspection", and that only holds for the
-periods actually inspected in full. Rotating the full check across the retained
-months implies a floor near 78 days, not a shorter one. See the note above
-`MIN_RECOVERY_DAYS_MONTHLY` in `lifecycle-policy.mjs`.
+Until #3158 the monthly floor was 31 days, because the weekly healthcheck it was
+derived against fully verified only the newest period of each family, so an
+overwrite of an older retained month went unseen. The watcher closes that gap,
+so the monthly tier no longer needs its own number. The declaration is
+unchanged: the monthly rule still keeps 31 days, now above the floor rather
+than at it. A watcher run that never starts pages nothing; that is tracked
+separately.
 
 Raising the daily ceiling at all means excluding support tickets from that tier,
 which means tickets have no backup — a product decision, tracked as **#1474**.

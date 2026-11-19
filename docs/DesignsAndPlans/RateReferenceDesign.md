@@ -159,5 +159,5 @@ Build the rate reference as a standalone contract with readers, the median quoru
 
 - For the owner: no on-chain reward for the update in part 1 (the card asked for one), and the platform's own rate left out of part 1.
 - The starting step limit and agreement tolerance, once real readings for the first assets can be collected off-chain.
-- The exact fixed-point scale of the index, chosen so that part 2's interest formula loses nothing against per-second fixed interest.
-- Whether the rate reference fits one contract with part 2's level totals added, or needs the reader split the price guard took.
+- Settled 2026-11-19 (`FloatingRateLoansDesign.md` section 2): the index is the 1e18-scaled annual rate times seconds, and a floating loan at a constant reference equals a fixed loan at that rate to the last unit.
+- Settled 2026-11-19: part 2's level totals stay in the rate reference; if it does not fit, the read side (term average, band, linked rate) moves to a companion view contract.

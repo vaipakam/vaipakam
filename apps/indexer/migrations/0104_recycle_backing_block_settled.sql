@@ -1,0 +1,24 @@
+-- #2210 — the backing reading records whether its block was SETTLED.
+--
+-- WHY. The backing snapshot is pinned to one block and publishes that block
+-- number so a reader can check the amounts against the chain there. The
+-- capture asks the chain for its `safe` block; when that read does not
+-- answer (an RPC without the tag, or a timeout on one that has it), the
+-- block is `latest - 32` instead — a fixed finality margin chosen by the
+-- indexer, not the chain's own statement that the block is settled. A
+-- reorganisation deeper than that margin leaves the published amounts
+-- describing a block that is no longer part of the chain. Until now only the
+-- operator log said which kind of block a reading was pinned to; the
+-- published figure did not.
+--
+--   block_settled  1 = the chain answered the `safe` tag and the reading is
+--                  pinned to that block;
+--                  0 = no settled block could be read, and the reading is
+--                  pinned to the fallback estimate.
+--
+-- NULL MEANS NOT RECORDED, NEVER "SETTLED". Every row captured before this
+-- migration stays NULL, and the read surface publishes that as unknown
+-- rather than as either answer. Nullable with no default, so the addition is
+-- additive and the previous Worker, which never names the column, keeps
+-- writing and reading the table unchanged.
+ALTER TABLE recycle_backing_snapshot ADD COLUMN block_settled INTEGER;

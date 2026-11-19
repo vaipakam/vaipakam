@@ -110,14 +110,16 @@ contract InstantFillFacet {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         bool isSlot = r.source.kind == 0;
         uint256 lenderOfferId;
+        uint256 reqColl;
+        (res.amount, res.rateBps, res.collateral, reqColl) = _size(s, r);
         if (isSlot) {
-            (lenderOfferId, res.amount, res.rateBps) = _drawSlot(s, r);
+            lenderOfferId = LibIntentFill.drawAndMaterialize(
+                r.source.owner, r.lendingAsset, r.collateralAsset, r.source.slot, res.amount, reqColl,
+                res.rateBps, r.termDays, false, r.allowsPartialRepay
+            );
         } else {
-            (lenderOfferId, res.amount, res.rateBps) = _sizeOffer(s, r);
+            lenderOfferId = r.source.offerId;
         }
-        res.collateral = res.amount == r.remaining
-            ? r.collRemaining
-            : (res.amount * r.collateralOffered) / r.amountWanted;
         res.fromWallet = _fundCollateral(r.borrower, r.collateralAsset, res.collateral);
         uint256 borrowerSlice = LibIntentFill.materialize(_borrowerSlice(r, res), r.borrower);
         // The borrower slice's collateral is the floor for this match, so the
@@ -143,11 +145,50 @@ contract InstantFillFacet {
         LibMarketLedger.markInstant(s, s.loans[res.loanId]);
     }
 
-    /// @dev A slot source: the instant-market consent (aged like the slot's
-    ///      terms), the price limit, then the one slot rule and the draw.
-    function _drawSlot(LibVaipakam.Storage storage s, FillRequest calldata r)
+    /// @notice #3761 — what one source would give this request now: the
+    ///         principal, the source's price and the collateral share, sized
+    ///         by the same rule {fillInstant} sizes by. Reverts with the
+    ///         source-level refusal {fillInstant} would raise.
+    /// @dev    Covers the source only. The loan checks the match core runs
+    ///         when the fill opens the loan (health factor, loan-to-value,
+    ///         risk access, sanctions, the ageing and price-move rules) and
+    ///         the collateral funding are not in it; `borrowInstant` reports
+    ///         a fill they refuse as a skipped source.
+    function quoteFill(FillRequest calldata r)
+        external
+        view
+        returns (uint256 amount, uint256 rateBps, uint256 collateral)
+    {
+        (amount, rateBps, collateral, ) = _size(LibVaipakam.storageSlot(), r);
+    }
+
+    /// @dev The one sizing rule for a fill: the source's amount and price,
+    ///      then the fill's share of the borrower's collateral, in proportion
+    ///      to principal, the fill that completes the request taking the
+    ///      remainder. `reqColl` is a slot's collateral requirement (zero for
+    ///      an offer source).
+    function _size(LibVaipakam.Storage storage s, FillRequest calldata r)
         private
-        returns (uint256 sliceOfferId, uint256 amount, uint256 rateBps)
+        view
+        returns (uint256 amount, uint256 rateBps, uint256 collateral, uint256 reqColl)
+    {
+        if (r.source.kind == 0) {
+            (amount, rateBps, reqColl) = _sizeSlot(s, r);
+        } else {
+            (amount, rateBps) = _sizeOffer(s, r);
+        }
+        collateral = amount == r.remaining
+            ? r.collRemaining
+            : (amount * r.collateralOffered) / r.amountWanted;
+    }
+
+    /// @dev A slot source: the instant-market consent (aged like the slot's
+    ///      terms), the price limit, then the one slot rule. The draw is the
+    ///      fill's.
+    function _sizeSlot(LibVaipakam.Storage storage s, FillRequest calldata r)
+        private
+        view
+        returns (uint256 amount, uint256 rateBps, uint256 reqColl)
     {
         address owner = r.source.owner;
         uint8 slot = r.source.slot;
@@ -163,13 +204,9 @@ contract InstantFillFacet {
         rateBps = LibIntentFill.slotFloor(intent, r.lendingAsset, r.termDays);
         if (rateBps > r.maxRateBps) revert InstantRateAboveLimit(rateBps, r.maxRateBps);
         amount = _slotRoom(s, intent, owner, r);
-        uint256 reqColl = LibIntentFill.admitFill(
+        reqColl = LibIntentFill.admitFill(
             s, intent, owner, r.lendingAsset, r.collateralAsset, slot,
             r.termDays, false, r.allowsPartialRepay, amount
-        );
-        sliceOfferId = LibIntentFill.drawAndMaterialize(
-            owner, r.lendingAsset, r.collateralAsset, slot, amount, reqColl,
-            rateBps, r.termDays, false, r.allowsPartialRepay
         );
     }
 
@@ -201,9 +238,9 @@ contract InstantFillFacet {
     function _sizeOffer(LibVaipakam.Storage storage s, FillRequest calldata r)
         private
         view
-        returns (uint256 offerId, uint256 amount, uint256 rateBps)
+        returns (uint256 amount, uint256 rateBps)
     {
-        offerId = r.source.offerId;
+        uint256 offerId = r.source.offerId;
         LibVaipakam.Offer storage o = s.offers[offerId];
         if (
             o.offerType != LibVaipakam.OfferType.Lender

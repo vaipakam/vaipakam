@@ -57,3 +57,21 @@ Alternative 2, with the rule in one library and one writer.
   is the honest sellers' chance, not a guarantee.
 - If every venue is genuinely down, the fallback opens 10 minutes later than
   before.
+
+## A collateral that is no longer liquid (settled 2026-11-19)
+
+The card asked whether the fallback should open at once when the pair is no
+longer liquid. It should not, because that case never reaches this rule. A
+Health-Factor liquidation refuses a collateral the live market check finds
+not liquid before any sale is tried, and a time-based default reads its
+route first: a pair with no usable price enters the fallback at once, and a
+collateral found not liquid moves in kind or is refused, with no sale. So
+the wait applies only to a collateral that reads liquid while every listed
+route failed, which is the case the rule was written for. An exception
+inside it would have to take the caller's failed routes as proof.
+
+What follows for the keeper and the app: after `ForcedSaleFallbackDeferred`
+the liquidation and default passes try again with a fresh quote, and again
+at the time `getFallbackGate` reports, so a market that is really down costs
+the lender ten minutes and no more; the loan page states "A sale did not
+complete. Settlement in kind can open at" with that time.

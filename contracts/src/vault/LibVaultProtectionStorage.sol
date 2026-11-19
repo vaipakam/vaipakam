@@ -126,6 +126,14 @@ library LibVaultProtectionStorage {
         ///      Appended.
         bool recovered;
         uint64 recoveredAt;
+        // ─── #3246 part 2 — a replaced account's positions to the new wallet
+        /// @dev The pending move of this replaced account's position tokens
+        ///      to the wallet that replaced it (the owner record): when it
+        ///      matures, and the epoch it was asked in. A lock, a further
+        ///      replacement and a clawback advance the epoch, which drops it.
+        ///      0 = none. Appended.
+        uint64 positionMoveAt;
+        uint64 positionMoveEpoch;
     }
 
     /// @notice #3246 part 2 — THE rule for the recovery address in force:
@@ -151,6 +159,26 @@ library LibVaultProtectionStorage {
             return p;
         }
         return address(0);
+    }
+
+    /// @notice #3246 part 2 — THE rule for moving a replaced account's
+    ///         position tokens to the wallet that replaced it: open only on a
+    ///         replaced account that is neither recovered nor locked, under a
+    ///         request still alive in the current epoch, from its maturity
+    ///         until one further delay later (then it expired, like every
+    ///         other matured change). The protection code and the vault's
+    ///         view that `PositionNFT` reads use this one function.
+    function positionMoveOpen(Layout storage l) internal view returns (bool) {
+        uint64 at = l.positionMoveAt;
+        return at != 0 && l.retired && !l.recovered && !l.locked && l.positionMoveEpoch == l.epoch
+            && block.timestamp >= at && block.timestamp <= uint256(at) + l.delay;
+    }
+
+    /// @notice The move request still alive in the current epoch (matured or
+    ///         not, expired or not), or 0.
+    function positionMovePending(Layout storage l) internal view returns (uint64) {
+        uint64 at = l.positionMoveAt;
+        return at != 0 && l.positionMoveEpoch == l.epoch ? at : 0;
     }
 
     function layout() internal pure returns (Layout storage l) {

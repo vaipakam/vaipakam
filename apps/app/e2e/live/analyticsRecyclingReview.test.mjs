@@ -32,6 +32,7 @@ const recBody = () => ({
     },
     pendingMigration: null,
     blockNumber: '49484775',
+    blockSettled: true,
     diamond: DIAMOND,
     unavailableReason: null,
     asOf: '2026-10-24T05:13:43.000Z',
@@ -70,6 +71,15 @@ function pageFor(rec, loop) {
     snap['recycling-asof'] = {
       text: fill(c.asOfValue, { block: b.blockNumber, at: b.asOf, contract: b.diamond }),
     };
+    const settled = b.blockSettled;
+    snap['recycling-block-finality'] = {
+      text:
+        settled === null
+          ? c.blockFinalityUnknown
+          : settled
+            ? c.blockFinalitySettled
+            : c.blockFinalityEstimated,
+    };
   }
   for (const d of rec.daily) {
     snap[`recycling-day-${d.dayId}`] = { text: `Day ${d.dayId}` };
@@ -107,6 +117,25 @@ describe('reviewAnalytics', () => {
     const checks = run(recBody(), loopBody());
     expect(failed(checks)).toEqual([]);
     expect(checks.length).toBeGreaterThan(10);
+  });
+
+  it('fails an indexer body that omits blockSettled (#2210)', () => {
+    const rec = recBody();
+    delete rec.backing.blockSettled;
+    expect(failed(run(rec, loopBody()))).toContain(
+      'the indexer states whether the block was settled (true, false or null)',
+    );
+  });
+
+  it('fails a page that presents an estimated block as settled (#2210)', () => {
+    const rec = recBody();
+    rec.backing.blockSettled = false;
+    const snap = pageFor(rec, loopBody());
+    expect(failed(run(rec, loopBody(), snap))).toEqual([]);
+    snap['recycling-block-finality'].text = c.blockFinalitySettled;
+    expect(failed(run(rec, loopBody(), snap))).toEqual([
+      "whether the block was confirmed as settled is the reading's own",
+    ]);
   });
 
   it('fails a verdict cell whose posture is not the indexer’s', () => {

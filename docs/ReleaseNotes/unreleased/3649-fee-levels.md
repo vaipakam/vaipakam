@@ -1,4 +1,4 @@
-## Fee levels: 5% of interest, initiation fee by term (#3649)
+## Fee levels: 10% of interest, initiation fee by term (#3649)
 
 The treasury's share of the interest lenders earn is now 10% by default, up from 2%. It is fixed on each loan when the loan opens, as before, so a later change never reprices an open loan.
 

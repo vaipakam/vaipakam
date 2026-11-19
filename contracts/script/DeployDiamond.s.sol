@@ -2741,7 +2741,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev Selectors for `InstantMarketFacet` — the instant market (#3656):
     ///      settings, the slot consents, the instant borrow and its views.
     function _getInstantMarketSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](9);
         s[0] = InstantMarketFacet.setInstantMarketEnabled.selector;
         s[1] = InstantMarketFacet.setInstantMaxFills.selector;
         s[2] = InstantMarketFacet.getInstantMarketConfig.selector;
@@ -2749,20 +2749,28 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[4] = InstantMarketFacet.getInstantSlot.selector;
         s[5] = InstantMarketFacet.borrowInstant.selector;
         s[6] = InstantMarketFacet.getInstantGroup.selector;
+        s[7] = InstantMarketFacet.instantPairEligible.selector;
+        // #3761 — the borrow sized source by source, before any approval.
+        s[8] = InstantMarketFacet.previewBorrowInstant.selector;
     }
 
     /// @dev Selectors for `InstantFillFacet` — one instant-borrow fill
     ///      (Diamond-internal).
     function _getInstantFillSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
+        s = new bytes4[](2);
         s[0] = InstantFillFacet.fillInstant.selector;
+        // #3761 — one source sized by the fill's own rule.
+        s[1] = InstantFillFacet.quoteFill.selector;
     }
 
     /// @dev Selectors for `InstantTakeoverFacet` — a lender's takeover at
     ///      face value into another lender's slot.
     function _getInstantTakeoverSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
+        s = new bytes4[](3);
         s[0] = InstantTakeoverFacet.takeoverInstant.selector;
+        // #3761 — the takeover's admission as a preview and its revert form.
+        s[1] = InstantTakeoverFacet.previewTakeover.selector;
+        s[2] = InstantTakeoverFacet.requireTakeoverAdmissible.selector;
     }
 
     function _getLenderIntentFacetSelectors() internal pure returns (bytes4[] memory s) {
@@ -3263,8 +3271,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      its EIP-170 headroom back. #1922 (#1503 item 6) bound the sale to
     ///      the seller's reviewed quote; #3412 made that the only entry.
     function _getEarlyWithdrawalDirectSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
+        s = new bytes4[](3);
         s[0] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer.selector;
+        // #3761 — the sale's admission as a preview and its revert form.
+        s[1] = EarlyWithdrawalDirectFacet.previewDirectSale.selector;
+        s[2] = EarlyWithdrawalDirectFacet.requireDirectSaleAdmissible.selector;
     }
 
     function _getPartialWithdrawalSelectors() internal pure returns (bytes4[] memory s) {
@@ -3800,7 +3811,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](86);
+        s = new bytes4[](87);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -3980,6 +3991,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[84] = ConfigFacet.getMaxOpenOffersPerWallet.selector;
         // #3443 — the minimum age of an offer's terms at fill.
         s[85] = ConfigFacet.setMinTermsAgeSec.selector;
+        // The late-fee schedule the fee is charged by.
+        s[86] = ConfigFacet.getLateFeeSchedule.selector;
         // #1222 (M3 B1) — cross-chain recycled ledger transparency reads.
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` MOVED to RewardAggregatorFacet

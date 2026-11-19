@@ -131,7 +131,8 @@ A slot with a large declared exposure and no reserved capital therefore adds not
 
 A standing rule, written into the functional spec when the first such figure is built, for the app's recent-rates band, any ranking, and the own-rate source if it is ever added:
 
-- each loan is weighted by the interest paid on it so far, never by principal;
+- each loan is weighted by the interest paid on it so far, never by principal; an open loan counts by what it has paid, and a loan's status is not a filter: a loan that later defaulted or was liquidated keeps the weight of the interest that reached its lender side;
+- a loan whose agreed rate the indexer has not confirmed from the ledger is left out, since it has no rate to place, and the figure states how many loans were left out for that reason;
 - left out: loans whose rate came from a link, loans between addresses the self-trade rule would refuse, loans younger than a minimum age;
 - one wallet's share of the weight is capped, and the figure is not shown below a minimum number of distinct lenders and of distinct borrowers;
 - the figure is a trimmed median or a quartile band, never a mean.
