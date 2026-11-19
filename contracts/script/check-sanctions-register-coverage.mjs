@@ -63,6 +63,12 @@ const CONTRACTS_SRC = join(__dirname, '..', 'src');
  * it is for genuine exceptions, not for punching a hole around a real payout.
  */
 const ALLOWLIST = {
+  'LibLenderSide.sol::addHeld': 'the one writer of lenderClaims / heldForLender (#3760); every call to it counts as a lender-lane write in its CALLER, which this scan holds to the register rule (LENDER_SIDE_WRITE_RE)',
+  'LibLenderSide.sol::setFinal': 'the one writer of lenderClaims / heldForLender (#3760); every call to it counts as a lender-lane write in its CALLER, which this scan holds to the register rule (LENDER_SIDE_WRITE_RE)',
+  'LibLenderSide.sol::setFinalAmount': 'the one writer of lenderClaims / heldForLender (#3760); every call to it counts as a lender-lane write in its CALLER, which this scan holds to the register rule (LENDER_SIDE_WRITE_RE)',
+  'LibLenderSide.sol::settleFinalInKind': 'the one writer of lenderClaims / heldForLender (#3760); every call to it counts as a lender-lane write in its CALLER, which this scan holds to the register rule (LENDER_SIDE_WRITE_RE)',
+  'LenderSideFacet.sol::bookFinal':
+    'the runtime host LibLenderSide.setFinal / setFinalAmount self-call while an advance is open (#3760); it applies the advance\'s order of payment to the row its caller decided, and that caller is scanned as the writer',
   'EarlyWithdrawalFacet.sol::_completeLoanSaleImpl':
     'temp-loan-sale close writes only ZERO / claimed:true artifact rows to avoid a stuck record; BOTH temp-loan position NFTs are burned first, so there is no live-NFT deferred payout to freeze (design §2 Invariant A, r5 R5-2)',
   'LibFacet.sol::depositForNewLender':
@@ -84,6 +90,19 @@ const ALLOWLIST = {
 };
 
 const CLAIM_LANES = ['lenderClaims', 'borrowerClaims', 'borrowerSurplusClaims'];
+
+/**
+ * #3760: `LibLenderSide` is the one writer of `lenderClaims` and
+ * `heldForLender` (held by `check-lender-side-writer.mjs`), so the lane write
+ * itself now sits inside that library, away from the close-out that decides
+ * it. A call to one of its writers therefore counts as a lender-lane write IN
+ * THE CALLER, and the caller must carry the register, exactly as when it
+ * wrote the row itself. The library's own bodies are allowlisted for that
+ * reason. `setFinalAmount(s, id, 0)` lowers a row to nothing and is an
+ * artifact write, like a direct zero write.
+ */
+const LENDER_SIDE_WRITE_RE =
+  /\bLibLenderSide\s*\.\s*(addHeld|setFinal|setFinalAmount|settleFinalInKind)\s*\(([^;]*)/g;
 const HELD_LANE = 'heldForLender';
 
 // A write statement to `.lane[...]` optionally with `.field`, then `=` (not `==`).
@@ -507,7 +526,9 @@ const payingHelpers = buildPayingHelpers(parsed.flatMap((f) => f.fns));
 
 for (const { rel, base, src, fns } of parsed) {
   const hasClaimSurface =
-    CLAIM_LANES.some((l) => src.includes(l)) || src.includes(HELD_LANE);
+    CLAIM_LANES.some((l) => src.includes(l)) ||
+    src.includes(HELD_LANE) ||
+    src.includes('LibLenderSide');
   for (const { name, params, body } of fns) {
     // ---- Invariant B (#1144): inline holder-payout call-graph ----
     if (
@@ -562,6 +583,18 @@ for (const { rel, base, src, fns } of parsed) {
         if (isZeroOrClaimedFieldWrite(wm[1], wm[2] || '')) continue;
         violations.push(
           `${rel}  ::${name}  writes ${lane} via alias '${aliasVar}' but has no co-located ${need}-lane register`,
+        );
+        break;
+      }
+    }
+
+    // Calls to the one lender-side writer (#3760) — the lane write is the caller's.
+    if (!covered.has('lender')) {
+      for (const lm of body.matchAll(LENDER_SIDE_WRITE_RE)) {
+        const args = splitTopLevel(lm[2].replace(/\)\s*$/, ''));
+        if (lm[1] === 'setFinalAmount' && /^\s*0\s*\)?\s*$/.test(args[2] ?? '')) continue;
+        violations.push(
+          `${rel}  ::${name}  writes the lender side through LibLenderSide.${lm[1]} but has no co-located lender-lane register`,
         );
         break;
       }

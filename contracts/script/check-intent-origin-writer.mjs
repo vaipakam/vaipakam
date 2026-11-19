@@ -55,7 +55,7 @@ export const CALLERS = [
     reason: 'An instant-market fill from a slot: _drawSlot runs the consent, the price limit and the slot rule first.',
   },
   {
-    site: 'src/facets/InstantTakeoverFacet.sol:InstantTakeoverFacet.takeoverInstant',
+    site: 'src/facets/InstantTakeoverFacet.sol:InstantTakeoverFacet._takeover',
     calls: 1,
     reason: 'The instant takeover: the incoming slot\'s terms, exposure, calm-price check and the new-loan risk check run first.',
   },
