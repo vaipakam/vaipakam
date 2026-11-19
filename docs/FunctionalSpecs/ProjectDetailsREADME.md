@@ -4014,26 +4014,6 @@ These helpers support data-freshness checks, exportable transparency views, and 
 
 All functions are pure `view` functions (zero gas for callers when invoked via RPC) and multicall-friendly, so dashboards can batch reads in a single round-trip.
 
-### Public Rate Curve (#3751)
-
-The platform publishes, for each lending asset, a rate curve at five points (7, 30, 90, 180 and 365 days) that anyone can read without an account. It exists so a user can see what fixed rates have looked like before choosing one.
-
-- **Two halves, labelled apart, never blended.** One half is the outside-source term average the rate reference reports for each term. The other is a figure built from the platform's own loans. Each is labelled with its source wherever it appears; neither is presented as the other, and no single number is made from both.
-- **Observed averages, never advice.** Every figure on the curve is an observed average of what happened. It is never presented as advice, a forecast, a quote or an offer, and the page says so beside the curve.
-- **What is not known is stated.** Until the rate reference publishes its term average on a deployment, that half says it is not published there and shows no figure. A point the platform's own loans cannot support says "not enough loans yet" rather than showing a thin figure. A point whose history could not be read in full is withheld and says so.
-- **The rule for figures built from the platform's own loans** (also governs any later ranking or recent-rates band built from them):
-  - every loan counts whatever its status, open or closed, repaid, defaulted or liquidated: a status filter would move the figure for a reason that is not a rate and lean it toward loans that ended well;
-  - each loan is weighted by the interest that actually reached the lender side up to that day, never by principal, so weight is only gained by paying interest (and the yield fee on it); every route that pays interest counts the same way, interest a close-out delivered counts once delivered, interest a payment left undelivered does not count, and a loan that has paid none weighs nothing;
-  - left out: loans whose rate came from a link, loans between addresses the self-trade rule would refuse, loans whose agreed terms are not confirmed, and loans younger than a minimum age (3 days); each point states how many loans in its look-back were left out because their agreed terms are not confirmed (zero included), so a gap in the platform's record never reads as a quiet market;
-  - each point counts loans of a stated range of durations (up to 14 days, 15 to 60, 61 to 135, 136 to 270, over 270), and is labelled by that range, not as one exact term;
-  - each point looks back over the larger of 90 days and twice its term;
-  - no one wallet carries more than a fifth of a point's weight, on the lender side and on the borrower side separately;
-  - a point is shown only with at least five distinct lenders and five distinct borrowers;
-  - the figure is a band (the 25th percentile, the median and the 75th percentile of the weighted rates), never a mean.
-  These settings are provisional; each response and the page's "how this is computed" note state the values in force.
-- **History.** The curve keeps one figure per asset, point and day for both halves, readable as a series. A day not yet filled is absent, never shown as zero.
-- **Bounded public access.** The curve is read through a public interface with a per-caller request limit, so heavy use by one caller cannot deny it to others.
-
 ### Off-Chain Data Services
 
 - **A Service That Cannot Reach Its Data Says So:** The platform's off-chain data services — the ones that record alert preferences, signed offers, support requests, diagnostics records and legal holds — must never answer from a database they are not certain of. When such a service is deliberately held off its database, every entry point refuses: a caller receives a temporary-unavailable answer that states plainly that nothing they sent was recorded and that nothing read back would be current, and background work declines to start rather than half-running. A refusal a user can act on is better product than an error that leaves them unable to tell a rejected write from a half-applied one.
