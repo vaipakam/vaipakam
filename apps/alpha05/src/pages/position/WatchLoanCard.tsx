@@ -33,8 +33,13 @@ const ROUTE: SignedRoute<WatchAction, WatchAnswer> = { message: watchMessage, pa
  */
 export function WatchLoanCard({ loanId, chainId, wallet, client = AGENT }: { loanId: bigint; chainId: number; wallet: Hex; client?: AgentClient }) {
   const { text, format } = useCopy();
-  const [known, setKnown] = useState<KnownWatch | null>(() => readKnownWatch(chainId, wallet, loanId));
-  const { run, busy, send: sendSigned, off } = useSignedRequest(ROUTE, chainId, wallet, client);
+  const { run, busy, send: sendSigned, off, who } = useSignedRequest(ROUTE, chainId, wallet, client);
+  // What this browser recorded for this wallet and loan: re-read whenever
+  // the wallet, network or loan changes, never carried over from another.
+  const scope = `${who}:${loanId}`;
+  const [record, setRecord] = useState<{ scope: string; known: KnownWatch | null }>(() => ({ scope, known: readKnownWatch(chainId, wallet, loanId) }));
+  const known = record.scope === scope ? record.known : readKnownWatch(chainId, wallet, loanId);
+  const setKnown = (k: KnownWatch) => setRecord({ scope, known: k });
 
   const send = async (action: WatchAction) => {
     if (busy) return;

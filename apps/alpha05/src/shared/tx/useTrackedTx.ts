@@ -24,7 +24,7 @@ import { useConfig } from 'wagmi';
 import { getPublicClient } from 'wagmi/actions';
 import type { ReplacementReason, TransactionReceipt } from 'viem';
 import { announceOwnChange } from '../reads/signals';
-import { AccountWithoutCode, accountTxReader, awaitAccountTx, requireAccountCode } from './accountWallet';
+import { AccountWithoutCode, accountExecution, accountTxReader, awaitAccountTx, requireAccountCode } from './accountWallet';
 import { useCopy } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
 import { cleanUpAfterEffect, cleanUpAfterNoEffect } from './cleanUp';
@@ -182,17 +182,26 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
         apply({ type: 'superseded', submittedHash: hash, minedHash: receipt.transactionHash, reason, blockNumber: receipt.blockNumber, unwound, landed });
         return;
       }
+      // #3770 — a contract wallet's outer transaction can mine while the
+      // call it carries failed: the wallet's own execution log in it is the
+      // call's result. A logged failure changed nothing and takes the
+      // no-effect clean-up; no log for the call is stated as unknown.
+      const execution = viaAccount && receipt.status !== 'reverted' ? accountExecution(receipt.logs, ctx.account, hash) : null;
+      const innerFailed = execution === 'failed';
       const mined = apply({
         type: 'mined',
         submittedHash: hash,
         hash: receipt.transactionHash,
         repriced: reason === 'repriced',
         blockNumber: receipt.blockNumber,
-        reverted: receipt.status === 'reverted',
+        reverted: receipt.status === 'reverted' || innerFailed,
       });
       if (mined.kind !== 'mined') return;
       let legs: readonly LegOutcome[];
-      if (receipt.status === 'reverted') {
+      if (innerFailed) {
+        legs = [{ status: 'not-done', label: text('flow.revertedLabel'), reason: text('flow.accountCallFailed') }];
+        legs = [...(await readLandedBefore(ctx)), ...legs, ...(await cleanUpAfterNoEffect(ctx))];
+      } else if (receipt.status === 'reverted') {
         // Reverted: one leg saying it changed nothing, whatever the chain
         // now shows, plus what the flow's clean-up put back.
         // Why, where the chain lets it be read (#3482): the gas spent, or a
@@ -207,6 +216,7 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
         } catch (e) {
           legs = [{ status: 'unknown', label: 'outcome', reason: `The read-back failed: ${(e as Error).message}` }];
         }
+        if (execution === 'unrecorded') legs = [{ status: 'unknown', label: text('flow.revertedLabel'), reason: text('flow.accountCallUnrecorded') }, ...legs];
         legs = [...legs, ...(await cleanUpAfterEffect(ctx))];
       }
       apply({ type: 'measured', hash: mined.hash, outcome: summarize(legs, Date.now()) });

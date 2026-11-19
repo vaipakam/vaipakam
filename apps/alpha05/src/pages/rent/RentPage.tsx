@@ -1,6 +1,7 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAccount } from 'wagmi';
-import { KitNotice } from '../../shared/kit/KitNotice';
+import { KitNotice, useKitUse } from '../../shared/kit/KitNotice';
 import { getSupportedChain } from '../../chain/chains';
 import { useOwnStateClient } from '../../chain/ownRail';
 import { useCopy } from '../../shared/copy/useCopy';
@@ -33,6 +34,12 @@ export function RentPage() {
 
   const terms = useTerms();
   const termsUnknown = served !== null && terms.state === 'failed';
+  // A kit "rent this token" link opens the book on that token's rentals
+  // (FeaturesOverExistingPartsDesign.md §7), until the reader shows all.
+  const kit = useKitUse('rent', connected ? chain : null, served?.own.account ?? null);
+  const [allTokens, setAllTokens] = useState(false);
+  const kitRequest = kit.handoff?.request;
+  const token = !allTokens && kitRequest?.action === 'rent' ? { asset: kitRequest.asset, tokenId: kitRequest.tokenId } : null;
   const listing = useRentPostOpen('list');
   const requesting = useRentPostOpen('request');
 
@@ -59,6 +66,8 @@ export function RentPage() {
         <OfferBook
           viewer={served.own.account}
           rentals
+          token={token}
+          onShowAll={() => setAllTokens(true)}
           empty={
             <div className="card" data-testid="rent-empty">
               <p className="tier-b">{format('rentPage.empty', { chain: served.chain.name })}</p>

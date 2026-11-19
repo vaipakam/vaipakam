@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { awaitAccountTx, safeStatus, queuedTo, walletKindFromCode, type AccountTxStatus } from './accountWallet';
+import { SAFE_EXECUTION_FAILURE, SAFE_EXECUTION_SUCCESS, accountExecution, awaitAccountTx, safeStatus, queuedTo, walletKindFromCode, type AccountTxStatus } from './accountWallet';
 
 const CHAIN = ('0x' + 'c'.repeat(64)) as `0x${string}`;
 const ID = ('0x' + 'd'.repeat(64)) as `0x${string}`;
@@ -82,5 +82,26 @@ describe('queuedTo', () => {
   });
   it('refuses a shape it does not know rather than reading it as empty', () => {
     expect(() => queuedTo({}, D)).toThrow();
+  });
+});
+
+describe('accountExecution (the call inside a mined wallet transaction)', () => {
+  const SAFE = ('0x' + '5a'.repeat(20)) as `0x${string}`;
+  const OTHER = ('0x' + '0b'.repeat(20)) as `0x${string}`;
+  const pay = '0'.repeat(64);
+  const unindexed = (topic: string, id: string, address: string = SAFE) => ({ address, topics: [topic], data: id + pay });
+  it('reads a logged success as ran and a logged failure as failed, from the data word', () => {
+    expect(accountExecution([unindexed(SAFE_EXECUTION_SUCCESS, ID)], SAFE, ID)).toBe('ran');
+    expect(accountExecution([unindexed(SAFE_EXECUTION_FAILURE, ID)], SAFE, ID)).toBe('failed');
+  });
+  it('reads the id from the topic where a wallet indexes it', () => {
+    expect(accountExecution([{ address: SAFE, topics: [SAFE_EXECUTION_FAILURE, ID], data: '0x' + pay }], SAFE, ID)).toBe('failed');
+  });
+  it('ignores another call, another emitter and other events; none of them is the call’s record', () => {
+    const other = ('0x' + 'e'.repeat(64)) as `0x${string}`;
+    expect(accountExecution([unindexed(SAFE_EXECUTION_SUCCESS, other)], SAFE, ID)).toBe('unrecorded');
+    expect(accountExecution([unindexed(SAFE_EXECUTION_SUCCESS, ID, OTHER)], SAFE, ID)).toBe('unrecorded');
+    expect(accountExecution([{ address: SAFE, topics: ['0x' + '1'.repeat(64)], data: ID }], SAFE, ID)).toBe('unrecorded');
+    expect(accountExecution([], SAFE, ID)).toBe('unrecorded');
   });
 });

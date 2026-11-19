@@ -8,6 +8,7 @@ import { type KnownAlerts } from '../../shared/alerts/known';
 import { useKnown } from '../../shared/alerts/useKnown';
 import { useAlertAction, type AlertRun } from '../../shared/alerts/useAlertAction';
 import { usePushStatus } from '../../shared/alerts/usePushStatus';
+import { useSettingsFields } from '../../shared/alerts/useSettingsFields';
 import { useCopy, type CopyAccess, type CopyKey } from '../../shared/copy/useCopy';
 import { WhyLink } from '../../shared/help/WhyLink';
 import { TermsPrompt } from '../../shared/terms/TermsPrompt';
@@ -71,6 +72,9 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
 
   const push = usePushStatus();
   const pushNow = push.current;
+  // #3434 — the outflow choice is offered only where the service keeps it.
+  const fields = useSettingsFields();
+  const outflowKept = fields.current?.includes('vault-outflow') === true;
 
   const run = async (a: AlertAction) => {
     await action.start(a);
@@ -257,6 +261,17 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
         <p className="tier-b" data-testid="alert-outflow-state">
           {known.outflow ? format(OUTFLOW_SAVED[known.outflow.choice], { time: formatUtc(known.outflow.at) }) : text('alertChannels.outflowUnknown')}
         </p>
+        {fields.state === 'error' && (
+          <p className="tier-a" data-testid="alert-outflow-unread">
+            {format('alertChannels.outflowServiceUnread', { reason: fields.error ?? '' })}
+          </p>
+        )}
+        {fields.current !== null && !outflowKept && (
+          <p className="tier-a" data-testid="alert-outflow-not-kept">
+            {text('alertChannels.outflowNotKept')}
+          </p>
+        )}
+        {outflowKept && (
         <div className="row-actions">
           {OUTFLOW_CHOICES.map((c) => (
             <button
@@ -272,6 +287,7 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
             </button>
           ))}
         </div>
+        )}
       </div>
       <WhyLink summaryKey="alertChannels.whySummary" detailKey="alertChannels.why" />
     </section>

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useConfig } from 'wagmi';
 import type { LegOutcome } from '../tx/outcome';
-import { waitForTransactionReceipt } from 'wagmi/actions';
+import { waitForSentReceipt } from '../tx/accountWallet';
 import { VaultFactoryFacetABI } from '@vaipakam/contracts/abis';
 import type { Abi } from 'viem';
 import { sendWrite } from '../tx/send';
@@ -120,7 +120,7 @@ export function SafetyActionFlow({ chain, own, choice, onClose }: SafetyActionPr
           return sendWrite(config, { ...call, chainId: chain.chainId, account } as never);
         },
         async (hash) => {
-          const landed = await waitForTransactionReceipt(config, { hash, chainId: chain.chainId });
+          const landed = await waitForSentReceipt(config, hash, chain.chainId);
           return { ok: landed.status === 'success', logs: landed.logs };
         },
         what,

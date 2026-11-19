@@ -13,7 +13,8 @@
  * so nothing is read from a third party the wallet does not already use.
  */
 import type { Config } from 'wagmi';
-import { getAccount, getPublicClient } from 'wagmi/actions';
+import { getAccount, getPublicClient, waitForTransactionReceipt } from 'wagmi/actions';
+import type { TransactionReceipt } from 'viem';
 
 type Hex = `0x${string}`;
 
@@ -43,8 +44,9 @@ export interface SafeTxDetails {
 const HASH = /^0x[0-9a-fA-F]{64}$/;
 
 /** Safe's details as a status. A transaction with a chain hash is executed
- *  even when Safe marks it failed: it reached the chain, and the receipt and
- *  the read-back say what it did. */
+ *  even when Safe marks it failed: it reached the chain, and whether the
+ *  call inside it ran is read from the wallet's own execution log in that
+ *  transaction (`accountExecution`), never from the outer receipt alone. */
 export function safeStatus(d: SafeTxDetails): AccountTxStatus {
   if (typeof d.txHash === 'string' && HASH.test(d.txHash)) return { kind: 'executed', hash: d.txHash as Hex };
   if (d.txStatus === 'CANCELLED') return { kind: 'ended', reason: 'cancelled' };
@@ -56,6 +58,44 @@ export function safeStatus(d: SafeTxDetails): AccountTxStatus {
     confirmed: multisig && Array.isArray(info?.confirmations) ? info!.confirmations!.length : null,
     required: multisig && typeof info?.confirmationsRequired === 'number' ? info!.confirmationsRequired! : null,
   };
+}
+
+/** `keccak256("ExecutionSuccess(bytes32,uint256)")`, the Safe's own event
+ *  for a call that ran. */
+export const SAFE_EXECUTION_SUCCESS = '0x442e715f626346e8c54381002da614f62bee8d27386535b2521ec8540898556e';
+/** `keccak256("ExecutionFailure(bytes32,uint256)")`, the Safe's own event
+ *  for a call that failed inside a transaction that still mined. */
+export const SAFE_EXECUTION_FAILURE = '0x23428b18acfb3ea64b08dc0c1d296ea9c09702c09083ca5272e64d115b687d23';
+
+/** A log as this module reads it. */
+export interface LogLike {
+  address: string;
+  topics: readonly string[];
+  data: string;
+}
+
+/**
+ * What the wallet's own execution log in a mined transaction says about
+ * its call `id`. A Safe's outer transaction can succeed while the call it
+ * carries failed (a nonzero `safeTxGas` or gas price lets it), so the
+ * outer receipt is not the call's result. `ran`: the wallet logged the call
+ * as executed. `failed`: it logged the call as failed, so it changed
+ * nothing. `unrecorded`: no execution log for this call from this wallet
+ * is in the transaction, so whether the call ran is not known from it.
+ * The id is read from the second topic where a wallet version indexes it,
+ * else from the first data word.
+ */
+export function accountExecution(logs: readonly LogLike[], wallet: Hex, id: Hex): 'ran' | 'failed' | 'unrecorded' {
+  const want = id.toLowerCase();
+  for (const l of logs) {
+    if (l.address.toLowerCase() !== wallet.toLowerCase()) continue;
+    const t0 = l.topics[0]?.toLowerCase();
+    if (t0 !== SAFE_EXECUTION_SUCCESS && t0 !== SAFE_EXECUTION_FAILURE) continue;
+    const logged = (l.topics.length > 1 ? l.topics[1] : l.data.length >= 66 ? l.data.slice(0, 66) : '').toLowerCase();
+    if (logged !== want) continue;
+    return t0 === SAFE_EXECUTION_SUCCESS ? 'ran' : 'failed';
+  }
+  return 'unrecorded';
 }
 
 interface SafeSdkLike {
@@ -182,4 +222,35 @@ export async function readQueuedTo(chainId: number, safe: Hex, to: Hex, fetcher:
   const res = await fetcher(`${SAFE_GATEWAY}/v1/chains/${chainId}/safes/${safe}/transactions/queued`);
   if (!res.ok) throw new Error(`queue read ${res.status}`);
   return queuedTo(await res.json(), to);
+}
+
+/** A contract wallet ended a step before it reached the network. */
+export class AccountTxEnded extends Error {
+  readonly reason: 'cancelled' | 'failed';
+  constructor(reason: 'cancelled' | 'failed') {
+    super(reason === 'cancelled' ? 'The account wallet’s owners rejected this step, so it never ran.' : 'The account wallet ended this step before it reached the network, so it never ran.');
+    this.name = 'AccountTxEnded';
+    this.reason = reason;
+  }
+}
+
+/**
+ * #3770 — the receipt of a step this app sent, whatever wallet sent it.
+ * Every intermediate write (an approval, a reset, a protection step) waits
+ * here, not on the bare hash: a Safe opened as a Safe App returns its own
+ * transaction id, so the wait follows the wallet until it executes the step
+ * and reads the receipt of the chain hash it ran under. A call the wallet
+ * logged as failed inside a mined transaction is returned as `reverted`,
+ * since it changed nothing; the callers read the state back either way.
+ * Throws `AccountTxEnded` when the wallet ends the step unexecuted.
+ */
+export async function waitForSentReceipt(config: Config, hash: Hex, chainId: number): Promise<TransactionReceipt> {
+  const reader = await accountTxReader(config).catch(() => null);
+  if (!reader) return waitForTransactionReceipt(config, { hash, chainId });
+  const end = await awaitAccountTx(reader, hash, () => {}, () => {});
+  if (end.kind === 'ended') throw new AccountTxEnded(end.reason);
+  const receipt = await waitForTransactionReceipt(config, { hash: end.hash, chainId });
+  const wallet = getAccount(config).address;
+  if (receipt.status === 'success' && wallet && accountExecution(receipt.logs, wallet, hash) === 'failed') return { ...receipt, status: 'reverted' };
+  return receipt;
 }

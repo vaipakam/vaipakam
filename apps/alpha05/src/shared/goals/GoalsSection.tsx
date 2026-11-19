@@ -55,8 +55,13 @@ export function endOfUtcDay(value: string): number | null {
  */
 export function GoalsSection({ read, meta, chainId, wallet, client = AGENT }: { read: OwnRead<LiveLoans>; meta: TokenMetaMap | null; chainId: number; wallet: Hex; client?: AgentClient }) {
   const { text, format } = useCopy();
-  const { run, busy, send, off } = useSignedRequest(ROUTE, chainId, wallet, client);
-  const [listed, setListed] = useState<{ goals: Goal[]; max: number | null } | null>(null);
+  const { run, busy, send, off, who } = useSignedRequest(ROUTE, chainId, wallet, client);
+  // The list belongs to the wallet that signed for it: kept with its
+  // identity and hidden at once under any other (the hook drops a late
+  // answer for a previous identity).
+  const [held, setHeld] = useState<{ who: string; goals: Goal[]; max: number | null } | null>(null);
+  const listed = held !== null && held.who === who ? held : null;
+  const setListed = (l: { goals: Goal[]; max: number | null }) => setHeld({ who, ...l });
   const live = read.data;
   const own = useOwnStateClient();
   const chain = own ? getSupportedChain(own.chainId) : null;

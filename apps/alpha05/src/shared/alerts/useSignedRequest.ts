@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useConfig } from 'wagmi';
 import { signMessageFor } from '../tx/walletGuard';
 import { AGENT, AgentUnavailable, type AgentClient } from './agentClient';
@@ -45,14 +45,31 @@ export interface SignedRoute<Action, Answer> {
  * signs the route's message, the request is POSTed, and the answer is read
  * by the route's own reader. The `issuedAt` is the one the Alerts page uses,
  * so a request never repeats a second another request already signed.
+ *
+ * Everything is scoped to the identity it was asked for, the network and
+ * the wallet (`signedIdentity`): a run started under one wallet is not shown
+ * under another, and an answer that arrives after the wallet or network
+ * changed is dropped (the caller gets null), so one wallet's private list
+ * can never be shown, or counted, under the next.
  */
 export function useSignedRequest<Action, Answer>(route: SignedRoute<Action, Answer>, chainId: number, wallet: Hex, client: AgentClient = AGENT) {
   const config = useConfig();
-  const [run, setRun] = useState<SignedRun<Answer>>({ phase: 'idle' });
+  const who = signedIdentity(chainId, wallet);
+  const live = useRef(who);
+  useEffect(() => {
+    live.current = who;
+  }, [who]);
+  const [state, setState] = useState<{ who: string; run: SignedRun<Answer> }>({ who, run: { phase: 'idle' } });
+  const run: SignedRun<Answer> = state.who === who ? state.run : { phase: 'idle' };
   const busy = run.phase === 'checking' || run.phase === 'signing' || run.phase === 'sending';
 
   const send = useCallback(
     async (action: Action): Promise<Answer | null> => {
+      const asked = signedIdentity(chainId, wallet);
+      // A step after the identity moved is not shown under the new one.
+      const setRun = (r: SignedRun<Answer>) => {
+        if (live.current === asked) setState({ who: asked, run: r });
+      };
       setRun({ phase: 'checking' });
       try {
         if (!(await routeOffered(client, route.path(action)))) {
@@ -76,6 +93,7 @@ export function useSignedRequest<Action, Answer>(route: SignedRoute<Action, Answ
       try {
         const res = await client.request('POST', route.path(action), route.body(action, wallet, chainId, issuedAt, signature));
         const answer = route.read(action, res.status, res.data);
+        if (live.current !== asked) return null;
         setRun({ phase: 'answered', answer });
         return answer;
       } catch (e) {
@@ -86,5 +104,10 @@ export function useSignedRequest<Action, Answer>(route: SignedRoute<Action, Answ
     [config, client, route, wallet, chainId],
   );
 
-  return { run, busy, send, off: client.origin === null };
+  return { run, busy, send, off: client.origin === null, who };
+}
+
+/** The identity a signed request belongs to: the network and the wallet. */
+export function signedIdentity(chainId: number, wallet: string): string {
+  return `${chainId}:${wallet.toLowerCase()}`;
 }
