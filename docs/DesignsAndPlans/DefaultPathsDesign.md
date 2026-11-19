@@ -41,13 +41,31 @@ Pre-selected, each shown on the review screen in plain words with its own switch
 | Either, for the lifecycle options | The slot accepts a request with or without each option (#3621) | Same |
 | Fill instant borrows | The instant market's fills consent | Top-tier pairs, instant market on |
 | Renew, and take over at face value | The instant market's renewal and takeover consents | Same |
-| Also lend for a single transaction | The flash consent, at the fee shown | Flash-eligible assets, flash lending on |
+| Also lend for a single transaction | The flash consent, at the fee shown | A flash-eligible lending asset, flash lending on. The pair's collateral asset plays no part (`FlashLendingDesign.md` 4.1) |
 
 Visible and **off**, under "More ways to lend": bids in rate auctions (`RateAuctionDesign.md` 4.7), advances on loans (`LenderCashOutDesign.md` 6.1) and buying existing loans. Each holds funds for a close, or ties them to another lender's loan with no date of its own, so each stays a choice the lender makes on purpose.
 
 The review screen also carries one link, **Make a one-time offer instead**, which creates an offer and no slot. Unpriced or NFT collateral, NFT rentals, exact deals and loan-purchase offers stay offers as before, and the form opens on the offer for them.
 
-### 3.1 One transaction
+### 3.1 Choices that depend on others
+
+The switches follow the conditions the contracts already set, so the form can never build a batch the contracts would refuse.
+
+- **The instant market's consents need interest by time.** Switching "Interest by time" off switches "Fill instant borrows" and "Renew, and take over at face value" off with it, greyed, with the line "needs interest by time". Switching it back on restores them to what the lender had.
+- **The instant market's consents need a slot that any caller may fill.** A slot limited to authorized solvers shows them off for the same reason.
+- **Lending for a single transaction depends on neither.** It needs only a flash-eligible lending asset and the feature being on, so it stays as the lender set it when interest by time is off or the pair is outside the top tier.
+- **All slot consents need the slot.** Choosing the one-time offer removes them from the review screen. An offer that takes interest by time is still a source for the instant market by that market's own rule, and the review screen says so.
+
+### 3.2 Two forms of the same consent
+
+The app carries one setting per deployment that decides how the Lend form asks:
+
+- **Pre-selected** (the setting as shipped). The form opens as described above, with the switches on.
+- **Choose one.** The form shows two options side by side, "Lend continuously (recommended)" and "Lend once", and neither is selected until the lender taps one. The switches then sit under the option chosen, set as above for "Lend continuously". The lender's own tap carries the choice, at the cost of one more tap.
+
+Both forms end in the same review screen and the same signed batch. The second exists so that the way consent is asked can be changed for a place that requires it without rebuilding the form.
+
+### 3.3 One transaction
 
 The slot's terms, its funding, the instant-market consents and the flash consent are sent as one batch through the existing batch entry, which keeps the caller as the user for every step. Every step is marked as required, so a step that fails undoes the whole batch and nothing is left set.
 
@@ -55,7 +73,7 @@ A slot's consents are cleared when its terms are set again. So an edit of a slot
 
 A consent is usable only after the minimum age the contracts already require (#3443). The form says "ready in a few seconds", not "live".
 
-### 3.2 Slots that exist already
+### 3.4 Slots that exist already
 
 Nothing is set for a slot that exists. Its owner sees one card, "This slot can also fill instant borrows and lend for a single transaction", which opens the same review screen and needs the same signature.
 
@@ -105,16 +123,17 @@ The app says **pre-selected**, **switch off** and **one-time offer**. It never s
 ## 9. Tests
 
 1. The Lend form as it opens sends one batch, and the slot's terms, funding and consents on chain equal the review screen line for line.
-2. Switching any one choice off leaves that consent unset and the rest set.
+2. Switching one independent choice off leaves that consent unset and the rest set. Switching interest by time off also clears the instant market's consents on the review screen and in the batch, leaves the flash consent as set, and the batch is accepted.
 3. "Make a one-time offer instead" creates an offer and no slot.
 4. On a network where a feature's switch is off, the choice is not selected, the line says so, and the batch carries no call for it.
-5. On a pair outside the top tier the slot is created with no instant-market or flash consent.
+5. On a pair outside the top tier the slot is created with no instant-market consent. The flash consent follows the lending asset alone: set when that asset is flash-eligible and flash lending is on, whatever the collateral, and absent otherwise.
 6. A required step that fails leaves no slot, no funding and no consent.
 7. Editing a slot's terms sends its consents again in the same batch, and they stand afterwards.
 8. A payout that lands in the vault of a lender who holds a slot leaves the slot's capital unchanged. Only a repayment of that slot's own loan returns to the slot.
 9. A lender who opted out is shown the opted-out form on the next visit on that device.
 10. The Borrow form's "now" figure equals what the instant borrow delivers in the same block, and a part fill posts a request for exactly the rest.
 11. An existing slot gains no consent until its owner signs the review.
+12. With the form set to "choose one", nothing is selected on opening, the form cannot be submitted until an option is tapped, and the batch sent equals the pre-selected form's for the same choices.
 
 ## 10. Alternatives considered
 
@@ -122,7 +141,7 @@ The app says **pre-selected**, **switch off** and **one-time offer**. It never s
 2. **Lend free vault balance by default, with an opt-out.** Rejected, as it was in `FlashLendingDesign.md` section 7. The owner never chose it, payouts land as free balance by rule, and Withdraw must always find them.
 3. **Keep everything opt-in.** Rejected. It is the state this design replaces: fills stay slow and the instant market starts empty.
 4. **Pre-select every slot consent, with bids, advances and purchases.** Rejected. Those change what a lender holds or for how long, beyond "a loan within my limits".
-5. **A first-visit question, answered once.** Not chosen. It adds a step before the first loan, and the preset with a remembered choice gives the same result.
+5. **Always ask, with nothing selected.** Not the setting as shipped: it adds a tap before the first loan. Kept as the second form of 3.2, one setting away.
 6. **A reward for standing in a slot.** Rejected. The usage rebate already follows a user's own lending, and a reward for holding funds ready is a different promise.
 7. **Turn the switches on later, in stages.** Not chosen for the instant market, since the request is to have it from the first loan. It remains the rule for every feature whose audit phase has not finished.
 
