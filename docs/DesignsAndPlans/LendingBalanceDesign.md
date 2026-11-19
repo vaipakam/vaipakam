@@ -133,12 +133,13 @@ A slot that makes fixed-rate loans may carry one more consent: **make room**. In
 
 ## 5. The borrower's mirror (app only)
 
-A borrower borrows now at the floating rate and also posts a refinance request for the same loan on fixed terms ("fix my rate", #3637, kept standing). When a term lender takes the request, the existing refinance settles the floating loan and opens the fixed one. No contract changes.
+A borrower borrows now at the floating rate and also posts a refinance request for the same loan on fixed terms ("fix my rate", #3637, kept standing). When a term lender takes the request, the existing refinance settles the floating loan and opens the fixed one. The mirror itself needs no contract change.
 
-Two facts from the code shape the app flow:
+Three facts shape the app flow:
 
 - **A live request holds back the loan's renewal** (section 2). So the app sets the request's expiry no later than the opening of the loan's renewal window, and offers to post it again after the loan has renewed. The card says: "Your request stays open until D. After your loan renews, post it again to keep looking for a fixed rate."
 - **The request carries a payment permit signed by the wallet**, which lapses. Posting again is one signature.
+- **A notice to leave opens the window early** (section 6). The request's expiry was set against the term's end, so the request may still be live inside the three days. The plan does not wait for it then: the continuation that runs ends the unfilled request first (section 6.2). The card adds: "If your lender gives notice, your plan runs first, and this request is cancelled when the loan continues or is repaid. Post it again afterwards."
 
 Not proposed now: a request that survives a renewal. It would change what a request is priced against, which is a contract change with its own review (section 13).
 
@@ -162,7 +163,7 @@ Not proposed now: a request that survives a renewal. It would change what a requ
 - **Interest and fees.** Interest is by time, so nothing is owed for the days cut off. The opening fee is not refunded, and none is added. The review says both.
 - **What the borrower's plan does.** The window is open from the notice. "Stay with my lender" is refused: notice is a reason on the lender's side, read by the one own-lender check. "Continue with another lender" runs under its rising ceiling, from the loan's own margin at the notice to the borrower's highest margin one day before the due date. "Repay from my reserve" and "Repay from my collateral" keep their lead times. Where nothing runs, the loan is due, then in grace, then closed out, as any loan.
 - **What ends a notice.** A continuation with another lender and a takeover both clear it: the incoming lender accepted the loan as new and gave no notice. A takeover puts the due date back to the term's end, so the takeover's as-new test, and a handover's under section 4, read the term's end for a noticed loan: that is the date the incoming lender takes on. A plain transfer of the lender token does not clear it. The lender cannot withdraw it (section 13).
-- **A live refinance request** neither stops a notice nor is cancelled by it. It is one of the borrower's ways to replace the loan.
+- **A live refinance request** neither stops a notice nor is cancelled by it: a lender who takes it inside the three days refinances the loan, which is one of the borrower's ways to replace it. It does not hold the plan back either. Without a notice, the two continuation steps wait while a request is live (`DueDatePlanDesign.md` 4.6), and the borrower's mirror keeps the two apart by ending the request before the window opens (section 5). A notice opens the window while that expiry is still ahead, and the request would then block the one continuation step left for the whole three days. So **on a loan with a notice open, a continuation with another lender that could otherwise run ends the holder's unfilled request in the same transaction and then continues the loan**. It uses the one cancel path an offer has, with the holder as the party cancelling, as a due repayment step already does on any loan: the holder set both the request and the plan. A run that skips for any other reason leaves the request untouched, and a lender who took the request first has already refinanced the loan. The request's stored expiry is never rewritten.
 - **Not a candidate.** While a notice stands on a loan, no slot of the lender who gave it may take that loan in a continuation. Without this a lender could give notice to re-price its own loan up to the borrower's limit.
 - **Events and alerts.** One event: the loan, the lender, the moment of notice and the new due date. The borrower is alerted at once, with what the plan will try and when.
 
@@ -170,6 +171,7 @@ Not proposed now: a request that survives a renewal. It would change what a requ
 
 - **To the borrower, before borrowing at a floating rate:** "Your lender may give 3 days' notice. The loan is then due. Your plan for the due date can move it to another lender or repay it. The opening fee is not refunded."
 - **To the lender, on giving notice:** "Notice does not return your money in 3 days by itself. The loan falls due then. The borrower's plan may move it to another lender or repay it. If not, the grace period and the ordinary close-out follow."
+- **To a borrower with a refinance request on the loan, in the notice alert:** "Your plan runs first. An unfilled request on this loan is cancelled when the loan continues or is repaid."
 - The due date is never shown to the lender as the date funds come back.
 
 ## 7. The base term
@@ -219,7 +221,7 @@ Not built now (#3816). Recorded so the later card starts from the right facts.
 | `BackstopFacet` | The seed adds to the backstop's balance. |
 | `LibLoanClock`, the loan record | The notice field, its writer and clearer, and the due date as the earlier of two dates. |
 | A small facet of its own | `giveNotice` and the read of a loan's notice. Settled 2026-11-19: not on the sale-exit verdict's facet, which is a rule host that writes nothing. |
-| The renewal and continuation entry | Notice as a lender-side reason; the lender who gave notice is not a candidate; a continuation clears the notice and marks a loan that becomes floating as carrying notice. |
+| The renewal and continuation entry | Notice as a lender-side reason; the lender who gave notice is not a candidate; a continuation clears the notice and marks a loan that becomes floating as carrying notice. On a loan with a notice open, a continuation ends the holder's unfilled refinance request through the offer's one cancel path before it runs (section 6.2). |
 | Pre-deploy checks | The walker of step 1d4 also holds the notice field to the clock as its only writer. `giveNotice` is caller-gated and needs no row in the open-steps ledger. The fill entries keep their rows. |
 | ABIs | Re-exported for the apps and the public keeper bot. Removed selectors are swept by the all-facets refresh; this reaches a chain by fresh deploy in any case. |
 
@@ -247,7 +249,7 @@ Not built now (#3816). Recorded so the later card starts from the right facts.
 13. Make room refused: outside a fill; with the balance already sufficient; without the consent; for a fixed loan; for a loan of another lender, a sold position, a loan with an amount held, a token inside its wait; an incoming slot that fails the as-new test; a fifth handover. A fill whose room is not made reverts whole, and in an instant borrow that source is skipped with nothing moved.
 14. Notice: given by the holder on a floating instant loan, the due date becomes three days later; in the loan's first day it becomes four days after the start; the grace period equals the loan's own before and after; the late fee starts at the new date; a pause after the notice moves the date.
 15. Notice refused: a fixed loan; a loan without the period; a second notice; a caller who is not the holder; a flagged holder; past due. A notice given when the term's end is sooner moves no date and still stops the renewal with that lender.
-16. After notice: the own-lender renewal is refused; a continuation with another lender runs from the first moment at the loan's own margin and later up to the borrower's limit, and clears the notice; no slot of the lender who gave notice is accepted; a takeover clears the notice back to the term's end and is tested against that date; a plain transfer keeps it; a live refinance request stays live and can still replace the loan.
+16. After notice: the own-lender renewal is refused; a continuation with another lender runs from the first moment at the loan's own margin and later up to the borrower's limit, and clears the notice; no slot of the lender who gave notice is accepted; a takeover clears the notice back to the term's end and is tested against that date; a plain transfer keeps it; a live refinance request stays live and can still replace the loan until a continuation runs. With a request whose expiry is after the notice's due date and a slot ready, the continuation cancels the request and continues the loan in one transaction; a continuation that skips leaves the request live; on a loan with no notice the continuation still waits for a live request.
 17. With nothing able to run, the noticed loan is due, then in grace for its own period, then defaultable, and never earlier.
 18. The step 1d4 check fails on a write to the notice field outside the clock.
 
