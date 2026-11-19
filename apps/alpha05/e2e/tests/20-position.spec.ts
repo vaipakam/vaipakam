@@ -43,6 +43,21 @@ test('a live loan states its status, the reader’s role, its dates, terms, heal
     await expect(fact(dates, 'Due date of this term, before pause credit')).toHaveText(/UTC/);
     await expect(fact(dates, 'Pause credit')).toHaveText('None');
     await expect(fact(dates, 'Grace period ends')).toHaveText(/UTC/);
+    await expect(fact(dates, 'Date the loan falls due')).toHaveText(/UTC/);
+
+    // #3763 §6.1 — what the loan is, said to the side the reader holds, in
+    // the variant every loan takes today; a viewer is told neither.
+    if (expected === 'none') await expect(page.getByTestId('position-statement')).toHaveCount(0);
+    else await expect(page.getByTestId(`position-statement-${expected}`)).toContainText('for 30 days. It does not renew.');
+    // The cash-out door is the lender holder's alone, and Leave it comes first.
+    if (expected === 'lender') {
+      await page.getByTestId('get-cash-open').click();
+      await expect(page.getByTestId('get-cash').locator('li').first()).toHaveAttribute('data-testid', 'get-cash-leave');
+      await expect(page.getByTestId('get-cash-leave')).toContainText('The loan runs to the date it falls due');
+      await expect(page.getByTestId('get-cash-now-none')).toBeVisible({ timeout: 60_000 });
+      await expect(page.getByTestId('get-cash-list-go')).toBeVisible();
+      await page.getByTestId('get-cash-hide').click();
+    } else await expect(page.getByTestId('get-cash')).toHaveCount(0);
 
     const terms = page.getByRole('region', { name: 'Terms' });
     await expect(fact(terms, 'Principal still owed')).toHaveText('0.6 WETH');
