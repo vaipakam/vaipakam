@@ -371,6 +371,19 @@ contract RecoveryClaimTest is SetupTest {
         }
     }
 
+    function test_07_anOwnerNonceBurnDrops_aSignerBurnDoesNot() public {
+        _allow(WAIT);
+        _ask();
+        uint8 purpose = code.PURPOSE_ALLOWLIST_ADD();
+        _protect(signerA, abi.encodeCall(VaultProtection.burnNonce, (purpose)));
+        assertTrue(_open() != 0, "a signer's burn drops nothing");
+        uint64 at = _open();
+        vm.expectEmit(address(vault));
+        emit RecoveryClaimEnded(acct, at, acct, 1, uint64(vm.getBlockTimestamp() + 30 days));
+        _protect(acct, abi.encodeCall(VaultProtection.burnNonce, (purpose)));
+        assertEq(_open(), 0, "the owner's burn dropped it");
+    }
+
     function test_07_aChangeOfAddressByDirectCallDrops() public {
         _allow(WAIT);
         _ask();

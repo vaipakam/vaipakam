@@ -601,9 +601,15 @@ contract VaultProtection is VaultProtectionBase {
     // ─── Nonces ─────────────────────────────────────────────────────────
 
     /// @notice Burn the caller's next nonce for `purpose`, voiding any
-    ///         signature it gave out with it. Direct call only.
+    ///         signature it gave out with it. Direct call only. A burn the
+    ///         owner's key sends itself is a direct write to the protected
+    ///         record, so it ends an open recovery claim (#3756 4.4), as
+    ///         `_authorize` does for every other direct owner write; another
+    ///         key's burn ends nothing.
     function burnNonce(uint8 purpose) external onlyDelegateCall {
-        uint256 n = P.layout().nonces[msg.sender][purpose]++;
+        P.Layout storage l = P.layout();
+        uint256 n = l.nonces[msg.sender][purpose]++;
         emit NonceBurned(_account(), msg.sender, purpose, n);
+        if (l.claimRequestedAt != 0 && msg.sender == _owner()) _endClaim(l, msg.sender, CLAIM_END_OWNER_CALL);
     }
 }
