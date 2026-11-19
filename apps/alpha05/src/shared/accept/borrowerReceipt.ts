@@ -9,11 +9,12 @@ import { ASSET_ERC20 } from '../offers/acceptTerms';
 import { lifRateText } from '../offers/initiationFee';
 import { acceptFigures, listFee } from '../offers/model';
 import type { Receipt } from '../receipt/types';
-import { exactTokenAmount, type TokenMetaMap } from '../reads/tokens';
+import { exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatBps, formatSpan } from '../ui/format';
 import { cadenceText, needsApproval, promptCount, valueRows, ZERO, ZERO_HASH, type AcceptReview } from './acceptReview';
 import { sourceLabel } from './acceptSource';
 import { loanRiskKey, settlementOf } from '../risk/keyRisks';
+import { whatIfSection } from '../whatIf/whatIf';
 
 type Hex = `0x${string}`;
 
@@ -219,6 +220,19 @@ export function borrowerReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy
     rows,
     consequences,
     ifWrong: text(loanRiskKey('borrower', settlementOf(r.lendingClass, r.collateralClass))),
+    sections: [
+      whatIfSection(
+        {
+          side: 'borrower',
+          price: r.priceRisk,
+          interest: f.interest,
+          interestText: (a) => tokenAmount(a, lending, meta, format),
+          fullTermInterest: o.useFullTermInterest,
+          graceSeconds: r.graceSeconds,
+        },
+        copy,
+      ),
+    ],
     prompts: promptCount(r),
     readAt: r.readAt,
   };

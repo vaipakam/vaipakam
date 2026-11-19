@@ -45,8 +45,13 @@ pnpm --filter @vaipakam/alpha05 deploy     # build + stamped wrangler deploy
 
 Environment (`.env.local`, never committed): `VITE_INDEXER_ORIGIN`,
 `VITE_AGENT_ORIGIN`, `VITE_RPC_PROXY_ORIGIN`, `VITE_WALLETCONNECT_PROJECT_ID`,
-`VITE_DEFAULT_CHAIN_ID`. A per-chain RPC URL is refused by the build: it
-would ship a provider key (#1724).
+`VITE_DEFAULT_CHAIN_ID`, `VITE_LEND_CONSENT_FORM`. A per-chain RPC URL is
+refused by the build: it would ship a provider key (#1724).
+
+`VITE_LEND_CONSENT_FORM=choose` (#3761, `DefaultPathsDesign.md` §3.3) makes
+the Lend form show "Lend continuously (recommended)" and "Lend once" with
+neither selected, for a place that requires the lender's own tap. Unset, the
+form opens on Auto-lend pre-selected. Both end in the same review and batch.
 
 ## Indexing and the deploy-lag check
 

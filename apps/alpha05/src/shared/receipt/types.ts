@@ -58,6 +58,12 @@ export interface ReceiptRow {
   movesOut?: boolean;
 }
 
+/** A titled statement on a review. */
+export interface ReceiptSection {
+  title: string;
+  body: readonly string[];
+}
+
 export interface Receipt {
   title: string;
   rows: readonly ReceiptRow[];
@@ -67,6 +73,10 @@ export interface Receipt {
    *  says what happens to this side if things go wrong, shown first among
    *  the consequences with a link to the full key-risk list. */
   ifWrong?: ReceiptText;
+  /** #3763 — plain statements the review carries under their own headings
+   *  (what "no end date" means here, how funds come back), tier A, shown
+   *  after the "if things go wrong" line and before the consequences. */
+  sections?: readonly ReceiptSection[];
   /** The wallet prompts this flow needs (RB-CLICKS: one where possible). */
   prompts: number;
   /** Prompts that may follow once the flow took effect, to put back what it

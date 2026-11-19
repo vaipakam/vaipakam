@@ -6,7 +6,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../src/env';
-import { handleOfferNearest } from '../src/offerRoutes';
+import { handleIntentNearest, handleOfferNearest } from '../src/offerRoutes';
 import { createSqliteD1 } from './helpers/sqliteD1';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
@@ -119,5 +119,39 @@ describe('/offers/:id/nearest (#3623)', () => {
     expect((await nearest(env, 3)).body).toMatchObject({ eligible: false, reason: 'not-erc20' });
     expect((await nearest(env, 4)).body).toMatchObject({ eligible: false, reason: 'loan-bound' });
     expect((await nearest(env, 99)).status).toBe(404);
+  });
+});
+
+describe('/intents/nearest (#3660)', () => {
+  const OWNER = '0x' + 'd1'.repeat(20);
+  async function forSlot(env: Env, minRate: number, maxDays: number, extra = '') {
+    const q = `chainId=${CHAIN}&owner=${OWNER}&lending=${LEND.toUpperCase().replace('0X', '0x')}&collateral=${COLL}&minRateBps=${minRate}&maxDurationDays=${maxDays}${extra}`;
+    const res = await handleIntentNearest(new Request(`https://x/intents/nearest?${q}`), env);
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  }
+
+  it('ranks borrow requests by how far their rate sits below the lowest rate, then by term past the longest', async () => {
+    const env = setup([
+      { id: 2, type: 1, rate: 400, rateMax: 450 }, // 0.5% below a 5% floor
+      { id: 3, type: 1, rate: 500, rateMax: 700, days: 60 }, // meets, term 30 days past
+      { id: 4, type: 1, rate: 300, rateMax: 900, days: 10 }, // meets, term within
+      { id: 5, type: 1, rate: 800, days: 30 }, // meets, term within
+      { id: 6, type: 0, rate: 600 }, // a lender offer
+      { id: 7, type: 1, rate: 600, creator: OWNER }, // the slot's own wallet
+      { id: 8, type: 1, rate: 600, sale: 1 }, // loan-bound
+    ]);
+    const { status, body } = await forSlot(env, 500, 30);
+    expect(status).toBe(200);
+    const c = body.candidates as { offerId: number; rateGapBps: number }[];
+    expect(c.map((x) => x.offerId)).toEqual([5, 4, 3, 2]);
+    expect(c.map((x) => x.rateGapBps)).toEqual([0, 0, 0, 50]);
+    expect(body.oppositeOpen).toBe(4);
+  });
+
+  it('refuses a malformed address or term', async () => {
+    const env = setup([]);
+    const bad = await handleIntentNearest(new Request(`https://x/intents/nearest?chainId=${CHAIN}&owner=0x1&lending=${LEND}&collateral=${COLL}&minRateBps=1&maxDurationDays=1`), env);
+    expect(bad.status).toBe(400);
+    expect((await forSlot(env, -1, 30)).status).toBe(400);
   });
 });

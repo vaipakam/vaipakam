@@ -55,6 +55,7 @@ export const PAGES: readonly PageEntry[] = [
   { path: '/governance', name: 'Governance', tier: 'public', rows: 'queued governance changes (#3237)', order: 21, built: true, nav: false, currentApp: null },
   { path: '/risks', name: 'Key risks', tier: 'public', rows: 'key risks (#3661)', order: 22, built: true, nav: false, currentApp: null },
   { path: '/wallet-keys', name: 'Your wallet and its keys', tier: 'public', rows: 'self-custody wallet notice (#3671)', order: 23, built: true, nav: false, currentApp: null },
+  { path: '/rates', name: 'Observed rates', tier: 'public', rows: 'observed loan rates by term (#3751)', order: 24, built: true, nav: false, currentApp: null },
 ];
 
 /** The current app's address for the same job, with this route's params

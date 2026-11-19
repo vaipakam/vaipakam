@@ -17,7 +17,7 @@ export const RISKS_PATH = '/risks';
 export const KEY_RISKS: readonly CopyKey[] = ['keyRisks.lose', 'keyRisks.lend', 'keyRisks.borrow', 'keyRisks.software', 'keyRisks.wallet', 'keyRisks.advice'];
 
 /** What the risk page adds below the short list. */
-export const MORE_RISKS: readonly CopyKey[] = ['keyRisks.peg', 'keyRisks.feed', 'keyRisks.tax', 'keyRisks.thirdParty'];
+export const MORE_RISKS: readonly CopyKey[] = ['keyRisks.peg', 'keyRisks.feed', 'keyRisks.lentFunds', 'keyRisks.tax', 'keyRisks.thirdParty'];
 
 /** How a loan that goes wrong is settled: by a sale of the collateral
  *  (both legs liquid), in kind (either leg illiquid: the protocol values it

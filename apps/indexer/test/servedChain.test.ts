@@ -72,6 +72,8 @@ describe('an unserved chain is refused on every chain-keyed route (#1140)', () =
     ['/offers/:id', () => offerRoutes.handleOfferById(new Request(`https://x/offers/1?${q}`), env(), '1')],
     ['/offers/by-creator', () => offerRoutes.handleOffersByCreator(new Request(`https://x/o?${q}`), env(), ADDR)],
     ['/offers/by-current-holder', () => offerRoutes.handleOffersByCurrentHolder(new Request(`https://x/o?${q}`), env(), ADDR)],
+    ['/intents/nearest', () =>
+      offerRoutes.handleIntentNearest(new Request(`https://x/intents/nearest?${q}&owner=${ADDR}&lending=${ADDR}&collateral=${ADDR}&minRateBps=1&maxDurationDays=1`), env())],
     ['/offers/recent', () => offerRoutes.handleOffersRecent(new Request(`https://x/offers/recent?${q}`), env())],
     ['/signed-offers', () => handleSignedOffersGet(new Request(`https://x/signed-offers?${q}`), env())],
     ['/config/:chainId', () => handleConfigSnapshot(SERVED, env())],

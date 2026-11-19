@@ -30,6 +30,9 @@ import { lifecycleTerms, type PostAssets } from '../../shared/post/postModel';
 import { useAssetStandard } from '../../shared/nft/useStandard';
 import { indexerPositionFlowReader } from '../../shared/offers/positionFlow';
 import { useWorldRail } from '../../shared/reads/world/WorldRailContext';
+import { BorrowNowForm, BORROW_NOW_KEY } from '../../shared/instant/BorrowNowForm';
+import { BorrowNowFlow, type BorrowNowRest } from '../../shared/instant/BorrowNowFlow';
+import { restRequestInput, type BorrowNowTerms } from '../../shared/instant/borrowNow';
 
 type Hex = `0x${string}`;
 
@@ -82,6 +85,11 @@ export function BorrowPage() {
    *  waiting on the reader's choice between taking that offer and posting. */
   const [choice, setChoice] = useStoredValue<PostDraft>(`${REQUEST_KEY}:choice`);
   const [, setTyped] = useStoredValue<unknown>(`${REQUEST_KEY}:input`);
+  /** #3761 — "Borrow now": the terms under review, and those a Terms
+   *  acceptance was asked for. */
+  const [nowTerms, setNowTerms] = useStoredValue<BorrowNowTerms>(`${BORROW_NOW_KEY}:terms`);
+  const [pendingNow, setPendingNow] = useStoredValue<BorrowNowTerms>(`${BORROW_NOW_KEY}:pending`);
+  const [, setNowTyped] = useStoredValue<unknown>(`${BORROW_NOW_KEY}:input`);
   /** OFF-22: the Full tariff step for a request just posted, kept apart from
    *  the request's review so it outlives that card. */
   const [armContext, setArmContext] = useStoredValue<ArmContext>(TARIFF_CONTEXT_KEY);
@@ -121,7 +129,7 @@ export function BorrowPage() {
   const meta = useTokenMeta(assets).data;
 
   const requesting = composing === true || draft !== null || choice !== null;
-  const flowOpen = taking !== null || requesting;
+  const flowOpen = taking !== null || requesting || nowTerms !== null;
   const termsOpen = termsGate.session !== null;
 
   // OFF-35: taking an offer is new exposure, so an unaccepted Terms version
@@ -145,13 +153,31 @@ export function BorrowPage() {
     }
     openReview(next);
   };
+  // OFF-35 holds for "Borrow now": each fill is new exposure.
+  const reviewNow = (next: BorrowNowTerms) => {
+    if (terms.data?.kind === 'needed') {
+      setPendingNow(next);
+      termsGate.start(terms.data);
+      return;
+    }
+    setNowTerms(next);
+  };
+  // #3761: a request for all of it, or for exactly what was not borrowed,
+  // opens the request form filled in with that amount and the same limits.
+  const requestRest = (rest: BorrowNowRest) => {
+    const ld = meta?.[rest.terms.lending.toLowerCase()]?.decimals;
+    const cd = meta?.[rest.terms.collateral.toLowerCase()]?.decimals;
+    setNowTerms(null);
+    if (ld !== null && ld !== undefined && cd !== null && cd !== undefined) setTyped(restRequestInput(rest.terms, rest, { lending: ld, collateral: cd }));
+    setComposing(true);
+  };
   // #3622 B1: an open offer that already fits the request is offered first.
   const openReview = (next: PostDraft) => (takeNowPicks(next, view.data).length > 0 ? setChoice(next) : setDraft(next));
 
   const termsUnknown = connected && walletChain !== null && terms.state === 'failed';
   const takeDisabled = !connected || walletChain === null || terms.state !== 'ready' || termsOpen;
 
-  const step = taking !== null || draft !== null || choice !== null ? 2 : ready ? 1 : 0;
+  const step = taking !== null || draft !== null || choice !== null || nowTerms !== null ? 2 : ready ? 1 : 0;
   // NFT-13: what each leg's contract claims decides the request's shape. A
   // request borrows an ERC-20 (borrowing an NFT is a rental), and locks an
   // ERC-20, one ERC-721 token or a quantity of one ERC-1155 token; an
@@ -190,9 +216,11 @@ export function BorrowPage() {
           <h2 id="borrow-ways">{text('borrow.waysTitle')}</h2>
           <div className="ways">
             <div className="way" data-way="now">
-              <h3>{text('borrow.wayNow')}</h3>
               <p className="tier-b">{text('borrow.wayNowLead')}</p>
-              <button type="button" className="btn btn-primary" onClick={() => document.getElementById('borrow-matches')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+              {own && walletChain && requestPair?.standard === 'erc20' && (
+                <BorrowNowForm chain={walletChain} lending={pair.lending!} collateral={pair.collateral!} meta={meta} disabled={takeDisabled} onReview={reviewNow} />
+              )}
+              <button type="button" className="btn btn-link" onClick={() => document.getElementById('borrow-matches')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
                 {text('borrow.wayNowGo')}
               </button>
             </div>
@@ -254,12 +282,15 @@ export function BorrowPage() {
             termsGate.end();
             if (pendingTake !== null) setTaking(pendingTake);
             if (pendingDraft !== null) openReview(pendingDraft);
+            if (pendingNow !== null) setNowTerms(pendingNow);
             setPendingTake(null);
             setPendingDraft(null);
+            setPendingNow(null);
           }}
           onClose={() => {
             setPendingTake(null);
             setPendingDraft(null);
+            setPendingNow(null);
             termsGate.end();
           }}
         />
@@ -292,6 +323,26 @@ export function BorrowPage() {
             {text('borrow.stepSign')}
           </h2>
           <AcceptOffer flowKey={ACCEPT_KEY} source={storedSource(taking)} chain={walletChain} own={own} meta={meta} terms={terms.data} onClose={() => setTaking(null)} />
+        </section>
+      )}
+      {nowTerms !== null && walletChain && own && (
+        <section className="borrow-section" aria-labelledby="borrow-now-review">
+          <h2 id="borrow-now-review" className="sr-only">
+            {text('borrow.stepSign')}
+          </h2>
+          <BorrowNowFlow
+            terms={nowTerms}
+            chain={walletChain}
+            own={own}
+            meta={meta}
+            termsState={terms.data}
+            onEdit={() => setNowTerms(null)}
+            onRequest={requestRest}
+            onClose={(done) => {
+              setNowTerms(null);
+              if (done) setNowTyped(null);
+            }}
+          />
         </section>
       )}
       {draft !== null && walletChain && own && (

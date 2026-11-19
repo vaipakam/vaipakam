@@ -18,6 +18,7 @@ import { FrozenNotice, useFrozenState } from '../../shared/sanctions/FrozenNotic
 import { OwnStamp } from '../../shared/ui/OwnStamp';
 import { SafetyCard } from '../../shared/protection/SafetyCard';
 import { EscapeNotice } from '../../shared/vault/EscapeNotice';
+import { balanceLines, readSlotCapital } from '../../shared/vault/balances';
 import { holdingFigures, positionAssets, readVaultHoldings, shownRows, type HoldingRow, type HoldingSource } from '../../shared/vault/holdings';
 import { CreateVault, useCreateVaultHeld } from '../../shared/vault/CreateVault';
 import { DEPOSIT_KEY, DepositVault, useDepositHeld } from '../../shared/vault/DepositVault';
@@ -74,6 +75,8 @@ export function VaultPage() {
   const holdings = useOwnRead(['vault', 'holdings', diamond, sig], (c) => readVaultHoldings(c, diamond, account, sources), {
     enabled: chain !== null && bookSettled && offersSettled,
   });
+  const slots = useOwnRead(['vault', 'slotCapital', diamond], (c) => readSlotCapital(c, diamond, account), { enabled: chain !== null });
+  const lent = (book.loans.data?.rows ?? []).filter((r) => !r.borrowerSide).map((r) => r.loan);
   const vpfi = useChainRead(['vpfiToken', diamond], (c) => readVpfiToken(c, diamond), { enabled: chain !== null, immutable: true });
   const data = holdings.data;
   const meta = useTokenMeta(data ? [...data.rows.map((r) => r.asset), ...data.collections.map((c) => c.asset)] : []).data;
@@ -228,6 +231,9 @@ export function VaultPage() {
                     onClose={() => withdraw.open(null)}
                   />
                 </section>
+              )}
+              {book.loans.data !== null && (slots.data !== null || slots.state === 'failed') && (
+                <BalanceLines lines={balanceLines(data.rows, slots.data, { loans: lent, complete: book.loans.data.complete })} meta={meta} slotsError={slots.data === null ? (slots.error ?? '') : null} slotsPartial={slots.data !== null && !slots.data.complete} />
               )}
               <section className="home-section" aria-labelledby="vault-holdings">
                 <h2 id="vault-holdings">{text('vault.holdingsTitle')}</h2>
@@ -389,4 +395,58 @@ function HandoffLink({ to, label }: { to: ReturnType<typeof pageHandoff>; label:
       </a>
     );
   return null;
+}
+
+/** #3761 §4.3 — the three lines per token: free, waiting in Auto-lend, and
+ *  in loans (not withdrawable). Withdraw offers the free balance only. */
+function BalanceLines({
+  lines,
+  meta,
+  slotsError,
+  slotsPartial,
+}: {
+  lines: ReturnType<typeof balanceLines>;
+  meta: TokenMetaMap | null;
+  slotsError: string | null;
+  slotsPartial: boolean;
+}) {
+  const { text, format } = useCopy();
+  if (lines.length === 0 && slotsError === null) return null;
+  return (
+    <section className="home-section" aria-labelledby="vault-balances" data-testid="vault-balances">
+      <h2 id="vault-balances">{text('vault.balancesTitle')}</h2>
+      <p className="tier-b">{text('vault.balancesLead')}</p>
+      {slotsError !== null && <p className="tier-a">{format('vault.balancesSlotsFailed', { reason: slotsError })}</p>}
+      {slotsPartial && <p className="tier-a">{text('vault.balancesSlotsPartial')}</p>}
+      {lines.some((l) => l.inLoansPartial) && <p className="tier-a">{text('vault.balancesLoansPartial')}</p>}
+      <ul className="rows">
+        {lines.map((l) => {
+          const key = l.asset.toLowerCase();
+          const amount = (v: bigint) => tokenAmount(v, l.asset, meta, format);
+          return (
+            <li key={key} className="card" data-balance={key}>
+              <p className="row-head">{assetName(l.asset, meta)}</p>
+              <dl className="facts">
+                <dt className="tier-b">{text('vault.rowFree')}</dt>
+                <dd data-testid={`vault-free-${key}`}>{l.free === null ? <span className="tier-a">{text('vault.unreadFigure')}</span> : amount(l.free)}</dd>
+                <dt className="tier-b">{text('vault.rowWaiting')}</dt>
+                <dd data-testid={`vault-waiting-${key}`}>
+                  {l.waiting === null ? (
+                    <span className="tier-a">{text('vault.unreadFigure')}</span>
+                  ) : l.waitingPartial ? (
+                    format('vault.waitingAtLeast', { amount: amount(l.waiting) })
+                  ) : (
+                    amount(l.waiting)
+                  )}
+                </dd>
+                <dt className="tier-b">{text('vault.rowInLoans')}</dt>
+                <dd data-testid={`vault-in-loans-${key}`}>{l.inLoansPartial ? format('vault.waitingAtLeast', { amount: amount(l.inLoans) }) : amount(l.inLoans)}</dd>
+              </dl>
+              {l.waiting !== null && l.waiting > 0n && <p className="tier-b">{text('vault.waitingNote')}</p>}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
 }
