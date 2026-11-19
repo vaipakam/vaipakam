@@ -20,7 +20,7 @@ import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { FormField } from '../ui/FormField';
 import { Notice } from '../ui/Notice';
 import { formatBps, formatScaled, shortAddress } from '../ui/format';
-import { payoutOutcomes } from '../protection/payout';
+import { claimOutcomes } from '../claims/claimOutcome';
 import { payoutLegs } from '../protection/payoutCopy';
 import { collateralWithdrawn } from './collateralLog';
 import { takeBackReceipt } from './takeBackReceipt';
@@ -53,7 +53,7 @@ interface TakeBackProps {
  * asked: nothing leaves the wallet. The withdrawal is sent only after the
  * protocol's dry run passes, and its outcome is measured from the
  * transaction's own logs: the collateral it left, the protocol's health
- * factor and loan-to-value after, and what arrived in the wallet.
+ * factor and loan-to-value after, and what was credited to the vault.
  */
 export function TakeBack(props: TakeBackProps) {
   const key = takeBackKey(props.loanId);
@@ -186,8 +186,8 @@ function TakeBackFlow({ loanId, chain, own, meta, amount, onChangeAmount, onClos
     release: async () => null,
   });
 
-  /** What the withdrawal left, from its own logs, and what reached the
-   *  wallet. */
+  /** What the withdrawal left, from its own logs, and what it credited to
+   *  the holder's vault. */
   const measure = (r: TakeBackReview, logs: readonly Log[]): LegOutcome[] => {
     const asset = r.loan.collateralAsset;
     const legs: LegOutcome[] = [];
@@ -207,10 +207,16 @@ function TakeBackFlow({ loanId, chain, own, meta, amount, onChangeAmount, onClos
           : { status: 'done', label: format('addColl.legHf', { hf: formatScaled(taken.newHf), ltv: formatBps(taken.newLtv) }) },
       );
     }
+    // The collateral is credited to the holder's own vault as free balance
+    // (#3710); without the vault's address the credit cannot be measured.
+    if (r.vault === null) {
+      legs.push({ status: 'unknown', label: format('payout.legCredit', { what: tokenAmount(r.amount, asset, meta, format) }), reason: text('payout.vaultUnread') });
+      return legs;
+    }
     legs.push(
       ...payoutLegs(
         {
-          outcomes: payoutOutcomes(logs, diamond, account, asset),
+          outcomes: claimOutcomes(logs, diamond, account, r.vault, asset, [loanId]),
           wallet: moved(logs, asset, null, account),
           expected: r.amount,
           protection: r.protection,
@@ -218,6 +224,7 @@ function TakeBackFlow({ loanId, chain, own, meta, amount, onChangeAmount, onClos
           exact: (v) => exact(asset, v),
           walletLeg: (what) => format('takeBack.legReceived', { amount: what }),
           walletOther: (got, want) => format('takeBack.receivedOther', { amount: got, expected: want }),
+          none: (what) => format('payout.legCredit', { what }),
         },
         copy,
       ),
