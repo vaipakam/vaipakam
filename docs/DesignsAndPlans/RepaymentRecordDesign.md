@@ -1,6 +1,6 @@
 # The repayment record (design)
 
-**Status:** owner approved the feature for design and build on 2026-11-19 (second review of the platform survey). Card #3778. No contract change.
+**Status:** owner approved the feature for design and build on 2026-11-19 (second review of the platform survey). Card #3778. Indexer and app work, with one small addition to a contract event (4.4): the full repayment's event states the loan's due date as the chain measured it.
 **Base:** the events and views named below were read on the batch branch of #3743 (`claude/project-thread-ijafuu`), and the design was checked against that code again after it was written. Two things it names are designed and not yet built there: the exit instruction (#3752) and the payer on a part repayment and a wallet interest payment (#3779). The record counts them once they exist.
 **Related:** `FeaturesOverExistingPartsDesign.md` (the public data feed, section 8), `PayoutDestinationRuleDesign.md`, `ExitBeforeLiquidationDesign.md`, `RateReferenceSeriesDesign.md`.
 
@@ -34,8 +34,8 @@ For an address, on each network, and as a total with the per-network lines benea
 | Figure | Counted how |
 | --- | --- |
 | Loans held to the end as borrower | loans whose borrower position this address held when the loan closed |
-| Of those: repaid on or before the due date | closed as repaid, with no late fee |
-| Repaid after the due date, inside the grace period | closed as repaid, with a late fee above zero in the repayment's event |
+| Of those: repaid on or before the due date | closed as repaid, at a time not after the loan's due date as the chain measured it (4.4) |
+| Repaid after the due date, inside the grace period | closed as repaid, at a time after that due date |
 | Repaid by a sale of collateral on the holder's own route or instruction | repay-with-collateral, and the exit instruction once it is built |
 | Refinanced | the old loan closed by a refinance; counted once, here, and not also as repaid |
 | Closed by liquidation | a health-factor liquidation |
@@ -75,6 +75,7 @@ The words credit, score, rating, trust, reputation, grade and worthiness are not
 ### 4.4 The derivation
 
 - The indexer builds the record from events it already handles: the loan's opening, the terminal events (repaid, defaulted, liquidated, the refinance and preclose closings, the exit run), the periodic settlement events, the per-loan interest-paid and interest-undelivered events, the fee events and the position transfers.
+- **Timing is read from time, never from the late fee.** A late fee is a share of the principal still open, so on a loan paid down to a very small remainder it rounds to zero, and a late repayment would then count as on time. The loan's due date also moves with a platform pause and with a sequencer outage, by the chain's own clock, so the indexer does not rebuild it from the loan's start and length. The full repayment's event therefore states the due date the chain measured the late fee from, and the record compares the repayment's time with it. Which event carries it is the builder's choice, raised and not decided silently, and it is built with #3779, which already changes the repayment events. On a deployment whose event does not state it, a repayment with a late fee is counted as late, one made no later than the loan's original due date is counted as on time, and any other is left unclassified and counted as such.
 - A figure that cannot be derived for a loan is left out of the count and the record says how many loans it could not classify. It never guesses a class.
 - A fresh Diamond on a network starts a new record on that network, as every indexed figure does. The record states the date its history begins.
 - The derivation's document lists each figure, the events it reads, and the cases it leaves out. A change to the derivation raises its version.
@@ -89,7 +90,7 @@ The words credit, score, rating, trust, reputation, grade and worthiness are not
 ## 6. Tests
 
 1. Each figure of 4.1 equals a recount from the raw events for a set of addresses that covers every closing route.
-2. A refinanced loan is counted once, as refinanced.
+2. A refinanced loan is counted once, as refinanced. A loan paid down to a remainder too small to carry a late fee and then repaid after its due date is counted as repaid after the due date; one repaid after its original due date but inside a due date moved by a pause is counted as on time.
 3. A sale's vehicle loan is not counted.
 4. A loan taken over and then repaid is counted for the address that closed it, under "took over later".
 5. A loan paid by another address counts for the holder.
@@ -108,7 +109,7 @@ The words credit, score, rating, trust, reputation, grade and worthiness are not
 
 ## 8. Recommendation
 
-Build the record in the indexer and the app, as a count of facts with its limits stated, served through the public data feed. No contract change.
+Build the record in the indexer and the app, as a count of facts with its limits stated, served through the public data feed. The one contract addition is the due date on the full repayment's event (4.4), built with #3779.
 
 ## 9. Open items for the builder to raise, not decide silently
 
