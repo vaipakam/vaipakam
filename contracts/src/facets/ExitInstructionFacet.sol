@@ -307,8 +307,17 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
     /// @dev The most candidate sales a reduction's sizing may check on the
     ///      route's rounded figures. The checks a reduction needs follow from
     ///      its own bounds (`_leastSaleChecks`), and a reduction needing more
-    ///      is refused when it is set, so the sizing always finds the least.
+    ///      is refused when it is set. A run checks up to this many, never
+    ///      only the estimate, so the estimate's own rounding cannot cut the
+    ///      search short of the least.
     uint256 private constant LEAST_SALE_CHECKS_MAX = 256;
+    /// @dev What the rounded endpoints can add to the gap the estimate in
+    ///      `_leastSaleChecks` gives: the necessary sale and its value are
+    ///      each rounded down (up to a unit each), and the safe sale is sized
+    ///      from a repayment rounded up and rounded up again into collateral
+    ///      (up to a unit each, and a little over one where a unit is worth
+    ///      under a principal unit after the tolerance).
+    uint256 private constant ENDPOINT_CHECKS = 6;
     /// @dev The risk read values each leg in the numeraire with its own
     ///      rounding, which can sit a few wei of the 1e18 scale under the
     ///      closed form's principal-unit figure. The closed form sizes its safe
@@ -773,7 +782,7 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
         // sale on the route's own figures would still reach both bounds, so
         // a close is chosen only when no partial candidate below it does.
         Reach memory b = _reach(loan, p, interest, minPartial, L, capBps);
-        b.checks = Math.min(_leastSaleChecks(L, h, keep), LEAST_SALE_CHECKS_MAX);
+        b.checks = LEAST_SALE_CHECKS_MAX;
         bool closeBound = repay >= owed;
         uint256 safe;
         if (closeBound) {
@@ -863,13 +872,14 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
     ///      over `k·price` plus two. Where a unit is worth under one principal
     ///      unit (`u = 1`) the first is at most `3L / (h·k - L)`; otherwise
     ///      the second is at most `4L / (h·k - L) + 2`. So whatever the price,
-    ///      the smaller gap fits `4L / (h·k - L) + 2` checks. Unbounded (max)
-    ///      where `h·k <= L`, which no partial sale can reach.
+    ///      the smaller gap fits `4L / (h·k - L) + 2` checks before the
+    ///      endpoints are rounded, and `ENDPOINT_CHECKS` more after. Unbounded
+    ///      (max) where `h·k <= L`, which no partial sale can reach.
     function _leastSaleChecks(uint256 L, uint256 h, uint256 keep) private pure returns (uint256) {
         uint256 hk = h * keep;
         uint256 l = LibVaipakam.BASIS_POINTS * L;
         if (hk <= l) return type(uint256).max;
-        return Math.ceilDiv(4 * l, hk - l) + 2;
+        return Math.ceilDiv(4 * l, hk - l) + 2 + ENDPOINT_CHECKS;
     }
 
     /// @dev The least sale at or below `safe` that reaches both bounds on the
@@ -882,9 +892,10 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
     ///      a principal unit it checks, per repayment level, the least sale
     ///      reaching that level (any other sale at the same level only leaves
     ///      less collateral). Either way the first that reaches is the least.
-    ///      The smaller gap always fits `b.checks` (`_leastSaleChecks`, which
-    ///      setting holds within `LEAST_SALE_CHECKS_MAX`), so the least is
-    ///      found; `safe` is kept only as a guard if neither gap fits.
+    ///      `b.checks` is `LEAST_SALE_CHECKS_MAX`, and setting refuses a
+    ///      reduction whose smaller gap may need more (`_leastSaleChecks`), so
+    ///      the least is found; `safe` is kept only as a guard if neither gap
+    ///      fits.
     function _leastReach(LibVaipakam.Loan storage loan, LibFallback.Rate memory rate, Reach memory b, uint256 safe)
         private
         view

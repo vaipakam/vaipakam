@@ -592,6 +592,26 @@ contract ExitInstructionTest is SetupTest {
         assertGe(_hf(), 1.08e18, "target reached");
     }
 
+    /// @dev Whole units, 155 principal against 215 collateral at 1.05, a 75%
+    ///      threshold, no opening limit, target 1.96 and 1% tolerance: the
+    ///      gap between the necessary and the safe sale is wider than the
+    ///      bound's own estimate by its rounded endpoints, and the least sale
+    ///      (at most 110, where the closed form asks for 112) is still found.
+    function test_7_reduceFindsTheLeastSaleAcrossRoundedEndpoints() public {
+        _unitLoanOf(0, 0, 10_000, 155, 215);
+        LibVaipakam.Loan memory l = _loan();
+        l.liquidationLtvBpsAtInit = 7500;
+        TestMutatorFacet(address(diamond)).setLoan(LOAN, l);
+        _price(address(collateralAsset), 1.2e8);
+        _set(REDUCE, 1.1e18, 1.96e18, 100, false);
+        _price(address(collateralAsset), 1.05e8);
+        LibTestCalmPair.checkpoint(address(diamond), address(collateralAsset), address(principalAsset));
+        ExitInstructionFacet.ExitPreview memory pv = _x().previewExit(LOAN);
+        assertEq(pv.skip, 0, "due");
+        assertEq(pv.form, REDUCE);
+        assertLe(pv.collateralToSell, 110, "the least sale, not the closed form's 112");
+    }
+
     function test_7_reduceTooFineToSizeIsRefused() public {
         _fineGovernance(11_210);
         _price(address(collateralAsset), 0.2e8);
