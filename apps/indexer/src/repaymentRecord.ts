@@ -30,8 +30,8 @@
  *    (`HFLiquidationTriggered`, `LiquidationDiscounted`), a default
  *    (`LoanDefaulted`, `LoanFallbackPending`), or a `LiquidationFallback`
  *    with no default event in its transaction (the HF route's fallback). A
- *    fully matched internal liquidation (status `internal_matched`) is a
- *    liquidation. A closed loan none of this classifies is counted as
+ *    fully matched internal liquidation (status `internal_matched`, timed by
+ *    its `LoanStatusChanged` edge) is a liquidation. A closed loan none of this classifies is counted as
  *    unclassified; no class is guessed.
  *  - ON TIME OR AFTER THE DUE DATE, read from time and never from the late
  *    fee alone (design §4.4). A full `LoanRepaid` carrying `lateFeeFrom` is
@@ -102,6 +102,7 @@ const FORCED_KINDS = [
   'LiquidationFallback',
 ] as const;
 const OTHER_KINDS = [
+  'LoanStatusChanged',
   'LoanInitiatedDetails',
   'LoanInterestPaid',
   'LoanInterestUndelivered',
@@ -205,8 +206,11 @@ export function classifyClose(
   const isClosingRepay = (e: RecordEvent) =>
     (REPAY_ROUTE_KINDS as readonly string[]).includes(e.kind) &&
     (e.kind !== 'LoanRepaid' || CLOSING_REPAID_STATUSES.has(num(e.args.newStatus) ?? -1));
+  // A fully matched internal liquidation states its close only as a
+  // status edge to InternalMatched (5).
+  const matchedEdge = (e: RecordEvent) => e.kind === 'LoanStatusChanged' && num(e.args.to) === 5;
   const closing = sorted.filter(
-    (e) => isClosingRepay(e) || (FORCED_KINDS as readonly string[]).includes(e.kind),
+    (e) => isClosingRepay(e) || (FORCED_KINDS as readonly string[]).includes(e.kind) || matchedEdge(e),
   );
   const at = closing.length > 0 ? closing[closing.length - 1].at : null;
 
@@ -242,7 +246,7 @@ export function classifyClose(
     );
     return { cls: defaultInTx ? 'defaulted' : 'liquidated', at };
   }
-  if (loan.status === 'internal_matched') return { cls: 'liquidated', at };
+  if (loan.status === 'internal_matched' || sorted.some(matchedEdge)) return { cls: 'liquidated', at };
   return { cls: 'unclassified', at };
 }
 
