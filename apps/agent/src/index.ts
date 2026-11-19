@@ -66,6 +66,7 @@
  *   POST /diag/erasure/status               — frontend → erasure status check
  *   POST /diag/legal-hold                   — protocol admin → place/lift hold
  *   PUT  /thresholds                        — frontend → upsert HF bands
+ *   GET  /thresholds/fields                 — frontend → optional fields the save signs (#3434)
  *   PUT  /alerts/phrase                     — frontend → set the anti-phishing phrase (#3346)
  *   POST /link/telegram                     — frontend → issue handshake code
  *                                             (EIP-191 wallet signature
@@ -175,7 +176,7 @@ import {
   parseSignedLinkRequest,
   type LinkVerifyResult,
 } from './linkAuth';
-import type { AlertSettingsChange } from '@vaipakam/lib/alertsMessage';
+import { ALERT_SETTINGS_OPTIONAL_FIELDS, type AlertSettingsChange } from '@vaipakam/lib/alertsMessage';
 import { isTickDue } from '@vaipakam/lib/cronCadence';
 import { AGENT_TICK_CADENCE_MINUTES } from './tickCadence';
 import { readJsonBody } from '@vaipakam/lib/requestBody';
@@ -511,6 +512,11 @@ export default {
     if (url.pathname === '/thresholds' && req.method === 'PUT') {
       return handlePutThresholds(req, resolved);
     }
+    // #3434 — which optional settings fields this agent signs and stores,
+    // so the app offers a choice only once a save of it can succeed.
+    if (url.pathname === '/thresholds/fields' && req.method === 'GET') {
+      return handleThresholdFields(resolveAllowedOrigin(req, resolved));
+    }
     // #3346 — the owner's anti-phishing phrase for Telegram alerts.
     if (url.pathname === '/alerts/phrase' && req.method === 'PUT') {
       return handlePutAlertPhrase(req, resolved);
@@ -730,6 +736,23 @@ export function settingsChangeOf(parsed: PutThresholdsBody): AlertSettingsChange
     ...(parsed.push_channel ? { pushAlerts: true as const } : {}),
     ...(parsed.notify_vault_outflow !== undefined ? { vaultOutflowAlerts: parsed.notify_vault_outflow } : {}),
   };
+}
+
+/**
+ * `GET /thresholds/fields` (#3434): the optional fields `PUT /thresholds`
+ * parses, signs and stores in this build. A read of a constant: no wallet,
+ * no state, nothing spent. An agent that predates the route answers 404,
+ * which the app reads as "not kept yet".
+ */
+export function handleThresholdFields(corsOrigin: string): Response {
+  return new Response(JSON.stringify({ fields: [...ALERT_SETTINGS_OPTIONAL_FIELDS] }), {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': corsOrigin,
+      'Cache-Control': 'no-store',
+    },
+  });
 }
 
 async function handlePutThresholds(req: Request, env: Env): Promise<Response> {

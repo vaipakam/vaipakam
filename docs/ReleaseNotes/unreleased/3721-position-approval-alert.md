@@ -30,5 +30,10 @@ that contract. The alert service also reads the wallet code of every owner who
 linked a channel, in turns, and tells them when a delegation appears, moves to
 another contract or is removed. Both only warn; nothing is blocked.
 
+The agent also says which optional settings its signed save carries
+(`GET /thresholds/fields`, today the vault outflow choice), so the app offers
+that choice only once a save of it can succeed. An agent that predates the
+route answers 404, which the app reads as not kept yet.
+
 Part of #3721 (the alert; the contract's per-token-only rule is separate).
 Closes #3434.

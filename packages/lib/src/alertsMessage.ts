@@ -106,6 +106,17 @@ export interface AlertSettingsChange {
 }
 
 /**
+ * The optional alert-settings fields this build signs and stores, named
+ * for the app (#3434). The agent serves this list at `GET /thresholds/fields`
+ * so the app offers a choice only once the agent it talks to rebuilds the
+ * signed message with that field's line: an agent that predates a field
+ * would rebuild the message without it and refuse the save. Add a name here
+ * in the same change that teaches {@link buildAlertSettingsMessage} and the
+ * agent's `PUT /thresholds` the field.
+ */
+export const ALERT_SETTINGS_OPTIONAL_FIELDS = ['vault-outflow'] as const;
+
+/**
  * Save alert settings (#2754): signed for EVERY settings write, not
  * only an opt-out. The message names exactly what the save changes,
  * so the signature authorises those values and no others, and the
