@@ -162,9 +162,16 @@ test('another wallet may repay but is told it gains no right to the collateral; 
   await v.page.getByTestId('payer-confirm').locator('input').check();
   await v.page.getByTestId('repay-open').click({ timeout: 60_000 });
   const receipt = v.page.getByTestId('repay-panel').locator('.receipt');
-  await expect(receipt).toContainText(`Paying gives you no right to the collateral: only the holder of borrower position #${borrowerTokenId} can collect it.`, {
-    timeout: 60_000,
-  });
+  // The receipt names the holder when it could read one, and says only that
+  // the holder collects when it could not; either line states the payer
+  // gets no collateral.
+  await expect(receipt).toContainText(
+    new RegExp(
+      `Paying gives you no right to the collateral: only the holder of borrower position #${borrowerTokenId} can collect it\\.` +
+        `|Repaying returns the collateral to 0x[0-9a-fA-F]{40}, the holder of borrower position #${borrowerTokenId} when this was read, not to you\\.`,
+    ),
+    { timeout: 60_000 },
+  );
   await v.page.getByTestId('repay-panel').getByRole('button', { name: 'Cancel' }).click();
   await expect(v.page.getByTestId('repay-open')).toBeVisible();
   await v.ctx.close();
