@@ -5,7 +5,7 @@ pragma solidity ^0.8.29;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
-import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibProtectedAccount, IVaultProtectionRead} from "../libraries/LibProtectedAccount.sol";
@@ -259,7 +259,10 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
      * @param declaredSource Where the caller says the asset came from.
      * @param deadline       Signature deadline.
      * @param signature      EIP-712 signature by the caller over the
-     *                       acknowledgement (see {adoptionDigest}).
+     *                       acknowledgement (see {adoptionDigest}): a key's
+     *                       65-byte signature, or for a contract wallet
+     *                       whatever its ERC-1271 `isValidSignature`
+     *                       accepts for that digest.
      */
     function adoptUntracked(
         uint8 kind,
@@ -283,7 +286,13 @@ contract VaultDepositoryFacet is DiamondReentrancyGuard, DiamondPausable {
 
         uint256 nonce = s.recoveryNonce[msg.sender];
         bytes32 digest = adoptionDigest(msg.sender, kind, asset, tokenId, declaredSource, amount, nonce, deadline);
-        if (ECDSA.recover(digest, signature) != msg.sender) revert IVaipakamErrors.RecoverySignatureInvalid();
+        // #3780 — the caller's own signature, by key or by contract: a
+        // contract wallet (a group or team account) answers through
+        // ERC-1271, the same checker every other signature entry uses. A
+        // malformed signature is refused here rather than by the library.
+        if (!SignatureChecker.isValidSignatureNow(msg.sender, digest, signature)) {
+            revert IVaipakamErrors.RecoverySignatureInvalid();
+        }
 
         if (s.userVaipakamVaults[msg.sender] == address(0)) revert IVaipakamErrors.RecoveryUserHasNoVault();
         if (amount > untrackedHolding(msg.sender, kind, asset, tokenId)) {
