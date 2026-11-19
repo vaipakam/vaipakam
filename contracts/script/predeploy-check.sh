@@ -273,7 +273,7 @@ if [ "$BUILD_OK" -ne 1 ] || [ ! -d "$SCRIPT_DIR/../out-measured-delivery" ]; the
 elif node "$SCRIPT_DIR/check-intent-origin-writer.mjs"; then
   :
 else
-  echo "  ✗ intent-origin writer guard failed — open intent loans through matchIntent" >&2
+  echo "  ✗ intent-origin writer guard failed — record slot loans only through LibIntentFill.recordSlotLoan from a listed fill step" >&2
   FAIL=1
 fi
 
