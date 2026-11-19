@@ -94,6 +94,14 @@ A rate is **outside the band** when the term average is available and the rate i
 - A rate inside the band when signed and outside when the transaction lands is refused; the app re-quotes. The app sets the flag only after the second confirmation of #3715.
 - When the term average is unavailable there is no band and no flag is asked for.
 - **What the prompt says (#3715).** The second confirmation shows three plain figures and the user's own rate, not a formula: "Floating rate for <asset>: 8.2% today, 6.1% over 30 days, 5.4% over 90 days. Your fixed rate of 15% for 1 year is well above these. Continue?" The three figures are `averaged(asset, window)` for 24 hours, 30 days and 90 days; one that is unavailable is shown as "not available", never as a number. Where the blended figure itself is shown it has one label, "average for this term".
+- **Which rate is checked (design thread ruling, 2026-11-19, #3635 A build).** A maker is checked on the typed bound that is the worst rate they can end up with; a taker on the rate actually taken.
+  - A lender offer or intent slot is checked on its floor, a borrower offer on its ceiling, a direct accept on the loan's actual rate.
+  - Never checked: a lender's open-ended maximum (an intent slice's protocol maximum), a lender offer's typed maximum, a borrower offer's typed lowest rate.
+  - An instant borrow is a taker step: each fill's actual rate is checked, not the borrower's stated maximum. One flag on the call covers its fills and is needed if any fill is outside the band. A fill inside when signed but outside when it lands is refused.
+  - A rate-linked offer is checked on its typed bound at the write. A third-party match asks for no flag.
+  - Both directions (far above and far below) are tested on the one checked rate. One shared check gives one answer in every preview, and the direction never depends on the side.
+  - The warnings mask follows the same rate: the checked bound on the offer-created, offer-modified and intent-set events, the actual rate on the loan-opened event. Bit 1 is far above, bit 2 far below; bit 0 is reserved for the collateral-concentration warning (#3685, loan-opened only).
+  - An edit that leaves the checked bound unchanged asks for no new flag; changing it is a write of the rate.
 - **The event states it (#3719).** The loan-opened, offer-created, offer-modified and intent-set events carry a `warnings` mask that the contract derives from this check (one bit for a fixed rate far above the term average, one for far below). It is never a caller input, so a website cannot send it empty, and the platform's own alert can say that a loan opened at a rate far from the average.
 
 This is a prompt, not a price rule. A manipulated average can at most ask a user for one more confirmation, or fail to ask.
