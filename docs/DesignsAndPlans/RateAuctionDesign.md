@@ -1,6 +1,6 @@
 # Rate auction: design
 
-**Status:** owner asked for this design on 2026-11-19. Card #3758. Design first, no code yet. Built before the pre-audit refactor and audited in phases, as the owner decided for every feature that touches the loan paths. Reaches a chain by fresh deploy.
+**Status:** owner asked for this design on 2026-11-19. Card #3758. Reviewed by the security thread on 2026-11-19: build it, with the changes recorded in section 12. Design first, no code yet. Built before the pre-audit refactor and audited in phases, as the owner decided for every feature that touches the loan paths. Reaches a chain by fresh deploy.
 **Related:** `InstantMarketDesign.md` (#3656, whose single-fill step and group label this reuses), `IdleLiquidityMatchingDesign.md` and `AutoLendLendUntilDesign.md` (Auto-lend slots), `TermAverageAndLinkGuardsDesign.md` (the warning band, #3713), `VaultOutflowPolicyDesign.md`, `PayoutDestinationRuleDesign.md`, `FeeLevelsDesign.md`, `IntegratorFeeShareDesign.md`, `ReferralFeeShareDesign.md`.
 **Base:** the code named below was read on the batch branch of #3743 (`claude/project-thread-ijafuu` at `a067c7bae`), where the instant market is built (`InstantMarketFacet`, `InstantFillFacet`, `LibIntentFill`, `LibOfferMatchExecute`, `LibEncumbrance`, `LibTiming`). Main does not have that code yet.
 
@@ -55,10 +55,11 @@ The borrower's call states:
 What the open does:
 
 - **Locks the collateral at once**, in the borrower's own vault under a lien for the auction, taken from free vault balance first and then from the wallet, as an instant borrow takes it. Lenders bid against collateral that is already there.
-- **Asks for a cushion.** The collateral must satisfy the loan-opening rule for the whole amount at the price of that moment, and exceed it by the opening cushion (a setting, default 10%, bounded 0 to 25%). Without it, any small fall in the collateral's price before the loans open would leave the borrower free to choose whether to go on by adding collateral or not. The cushion keeps the borrower's commitment real through ordinary price movement.
+- **Asks for a cushion.** The collateral must satisfy the loan-opening rule for the whole amount at the price of that moment, read the way the loan-opening step reads it, and exceed it by the opening cushion (a setting, default 10%, bounded 0 to 25%). Without it, any small fall in the collateral's price before the loans open would leave the borrower free to choose whether to go on by adding collateral or not. The cushion keeps the borrower's commitment real through ordinary price movement.
 - **Fixes the collateral for each unit borrowed**: the collateral posted divided by the amount wanted. A later addition raises it for every loan not yet opened. It never falls.
 - **Fixes the rate ladder** (4.2).
 - Refuses a pair the ordinary request path would refuse, a sanctioned or locked account, a wallet that has not accepted the Terms, a paused asset, and a wallet that already has two auctions open (a setting, bounded 1 to 8).
+- **Records the settle window and the Terms version** in force at that moment. A later change of either setting does not reach an auction already open.
 
 An auction is its own record. It is not an offer: it cannot be accepted or matched, it does not count toward the open-offer cap, and it is listed only as an auction. It carries no position token and cannot be transferred.
 
@@ -78,7 +79,7 @@ A lender's call states the auction, an **amount** (at least the smallest bid), a
 - **Firm.** The bidder may lower the rate step or raise the amount. They cannot withdraw the bid, raise its rate or lower its amount. The review states the latest time the funds can be held to (4.6) before the bidder confirms.
 - **Public.** Every bid's amount, rate and bidder are on chain and shown.
 - **Several bids** per wallet are allowed, at different steps, at most 8 standing per wallet in one auction.
-- **The maker's price-move guard** may be armed on a bid as on any offer. A bid whose guard is not clear when its loan would open waits, and is tried again until the settle deadline.
+- **No price-move guard on a bid.** An offer's maker may arm that guard; a bidder may not. On a firm bid it would be a way out: bid low, and when the price moves the guard fails and the loan never opens. The lender is protected by the loan-opening rule, tested when the loan opens, and by the cushion.
 - **Refused:** the borrower's own address (the self-trade rule), a sanctioned or locked account, a wallet that has not accepted the Terms, a paused asset, and any bid at or after the closing time.
 - A bid carries no position token and cannot be transferred.
 
@@ -98,9 +99,12 @@ The close records the rate, the amount to fill and the share at the clearing ste
 
 ### 4.5 Settling
 
-After the close anyone may settle bids, a few at a time, until the **settle deadline**, 6 hours after the close (a setting, bounded 1 to 48 hours). The keeper does it at once. The window exists for the cases that must wait: a price that is not fresh, a guard that is not clear, a short pause.
+After the close anyone may settle bids, a few at a time, until the **settle deadline**, 6 hours after the close (a setting, bounded 1 to 48 hours). The keeper does it at once. The window exists for the cases that must wait: a price that is not fresh, a sequencer outage and its grace period, a short pause.
 
-- **Each filled bid becomes one loan**, opened through the shared loan-opening step from a lender part made from the bid and a borrower part made from the auction, both at the one rate. This is the path an instant fill takes, with a bid as the source. Every check runs at that moment: health factor, loan-to-value, risk access, sanctions, self-trade, the level rules, the price guards, the timing rule.
+- **Each filled bid becomes one loan**, opened through the shared loan-opening step from a lender part made from the bid and a borrower part made from the auction, both at the one rate. This is the path an instant fill takes, with a bid as the source. Every check runs at that moment: health factor, loan-to-value, risk access, sanctions, self-trade, the level rules, the refusal of a stale or distrusted price, the timing rule.
+- **The Terms test is the one exception.** Settle asks whether the borrower had accepted the Terms in force when the auction opened, and the bidder those in force when the bid was placed. A new Terms version published in between does not stop the loan. Otherwise declining the new version would be a way out of a firm bid or a bound auction.
+- **Refused while the L2 sequencer is down and through its grace period**, as a forced step is, so no loan opens on a price that could not move. The bid is tried again afterwards.
+- **Refused from the end time on** (4.6). Settle and release meet at that one moment and never overlap.
 - **Principal** moves from the bidder's vault to the borrower's vault as free balance, less the fee, as every loan's principal does. Taking it to a wallet is the separate withdrawal, under the account's own policy.
 - **Collateral** for the loan is its amount times the collateral for each unit borrowed, rounded down, moved from the auction's lien to the loan's own lien in the borrower's vault.
 - **The term** runs from the moment each loan opens. The loans of one auction can therefore fall due minutes apart.
@@ -114,8 +118,10 @@ The fee on each loan is the ordinary one, split as for a direct accept: no match
 
 The auction has a fixed **end time**: the final closing time plus the settle window. It is known when the auction opens, as a latest value: the closing time, plus at most one hour, plus the settle window.
 
-- From the end time every bid that has not become a loan, and all collateral not moved to a loan, can be released by anyone. This holds while the platform is paused, and whether or not the close was ever called, because a release only removes a lien inside the owner's own vault.
-- A lapsed auction, and a bid above the clearing step, can be released as soon as the close has run.
+- From the end time every bid that has not become a loan, and all collateral not moved to a loan, can be released by anyone. This holds while the platform is paused, and whether or not the close was ever called.
+- **A release only removes a lien inside the owner's own vault.** It moves nothing out of a vault, and it refuses any amount that has already moved to a loan. That is what makes it safe during a pause.
+- The settle window is the one recorded at the open, so the latest end time stated to a bidder cannot be lengthened afterwards.
+- A lapsed auction, and a bid above the clearing step, can be released as soon as the close has run. The keeper releases bids above the clearing step at the close, and releases a lapsed auction's slot bids first, so Auto-lend funds return to their slots soonest.
 - Released funds are free balance in their owner's vault. Nothing is sent to a wallet.
 
 **What the borrower may end with.** Less than the amount wanted, in three stated cases: the bids did not cover it (but reached the least amount), a share at the clearing step was too small to open, or a filled bid's loan could not open before the deadline. The least amount is tested at the close, on the bids standing then. A loan that fails to open afterwards is not made up from the bids above the clearing step, because that would bring in a second rate.
@@ -145,9 +151,11 @@ Idle Auto-lend funds are the deepest source of lenders. A slot gains one consent
 - **The borrower fishing for rates with no wish to borrow:** bound from the first bid, with the collateral and its cushion already locked.
 - **The borrower bidding in their own auction:** their own address is refused. From a second wallet it gains nothing: the bid takes part of the amount at the same one rate, which is the same as asking for less, and both sides pay the usual fees on it.
 - **A lender holding funds back to lift the rate:** possible in any auction with one rate. It is bounded by the borrower's highest rate and by every other bidder, and a held-back bid may simply not fill.
+- **Lenders agreeing among themselves to bid high:** the platform cannot see it or stop it. The borrower's highest rate is the limit of what it can cost, and any lender outside the agreement undercuts it. Stated to the borrower.
 - **Dust:** the smallest bid, and the smallest loan at the clearing step.
 - **Steering the close or the settle:** the close takes no input, and the shares are fixed by it, so the order of settling changes nothing.
-- **Making your own winning bid fail:** the funds are held, so they cannot be moved away. A bidder who locks their protected account stops their loan, at the price of a lock that only a clawback ends. Stated, not prevented.
+- **Making your own loan fail after the close.** The funds and the collateral are held, so they cannot be moved away. The cheap ways out are closed: a bid carries no price-move guard, and a new Terms version does not stop a loan (4.3, 4.5). What remains is costly or outside the party's control, and is stated, not prevented: locking a protected account (a lock that only a clawback ends), replacing or retiring a protected account, and being flagged by the sanctions list. Each stops that party's loans only; the funds are released at the end time.
+- **A caller timing the settle to a dip in the price:** the most it does is make a loan fail the health test at that moment. The bid is tried again until the deadline, and the cushion absorbs ordinary movement.
 - **Tying up Auto-lend funds with an auction that cannot fill:** costs the borrower more locked collateral than the funds they tie up. It is bounded by each slot owner's hold limit and share, and slot bids arrive only near the end.
 - **Trading with yourself across two wallets:** as everywhere, the platform cannot see it. It pays the usual fees and moves no figure the platform relies on.
 - **Stated to the lender:** the funds are held for up to the stated time and may come back unused. The loan can open at any moment before the settle deadline. Its rate may be above their bid and is never below it.
@@ -189,12 +197,14 @@ Append storage at the tail and run the storage-layout guard's `write`. Check fac
 12. Every loan-opening refusal applies to each loan; a refused bid is skipped and reported, the rest open, and it can be tried again.
 13. A fall in the collateral's price inside the cushion does not stop the loans; a fall beyond it stops them until collateral is added; an addition raises the collateral of loans not yet opened only.
 14. A share at the clearing step below the smallest loan is not filled and is released.
-15. From the end time every bid and all unused collateral can be released by anyone, while paused, and when the close was never called; nothing can be released earlier except a bid above the clearing step and a lapsed auction.
+15. From the end time every bid and all unused collateral can be released by anyone, while paused, and when the close was never called; nothing can be released earlier except a bid above the clearing step and a lapsed auction. A release refuses an amount already moved to a loan, and settle is refused from the end time on. A change of the settle-window setting does not move the end time of an open auction.
 16. After any sequence of open, bid, improve, close, settle and release, each vault's held amounts equal the sum of its standing liens, and nothing rests in the Diamond.
 17. The warning band: the acknowledgement is asked for the borrower's highest rate and for a bid's rate outside the band, and never inside it.
 18. Slot bids: the consent and both limits; every slot refusal; the rate rounded up to a step and never below the slot's lowest; placed only within the hold limit; capital returns to the slot on release; funds held count toward exposure.
 19. With the master switch off, every new entry refuses, and an auction already open can still close, settle and release.
 20. The fee on each loan equals the fee of a direct accept of the same loan, with no match share.
+21. A bid cannot arm a price-move guard. A new Terms version published after the open, or after a bid, does not stop that party's loan; a party who had not accepted the version in force at that moment could not have opened or bid.
+22. Settle is refused while the sequencer is down and through its grace period, and succeeds afterwards within the deadline.
 
 ## 9. Alternatives considered
 
@@ -227,9 +237,20 @@ Build it as designed, behind the master switch:
 3. Auto-lend slots bid on the consent (4.7).
 4. Later, with floating loans: the same rule for a margin.
 
-## 12. Open items for the builder to raise, not decide silently
+## 12. Settled with the security review (2026-11-19)
+
+The security thread reviewed this design before it merged. Its verdict: build it, with these changes, all folded in above.
+
+- Firm public bids at one rate are accepted. That lenders may agree among themselves is stated (section 5).
+- No price-move guard on a bid, and settle tests the Terms acceptance in force at the open or at the bid (4.3, 4.5). Both were ways out of a firm commitment.
+- The other ways a party can stop their own loan are named in section 5.
+- Slot bids are bounded enough by the owner's two limits and the borrower's locked collateral. A lapsed auction's slot bids are released first.
+- Release during a pause is safe on four conditions, all in 4.5 and 4.6: it refuses anything already moved to a loan, settle stops at the same moment release begins, the settle window is recorded at the open, and a release frees funds only inside the vault.
+- The close has no input and nothing to front-run. Settle is refused while the sequencer is down and through its grace period. The cushion test at the open reads the price the way the loan-opening step does.
+
+## 13. Open items for the builder to raise, not decide silently
 
 1. Whether a bidder may name a registered integrator, and which one a loan carries when both sides name one.
 2. The exact construction of the ladder for a highest rate that is not a multiple of the step size.
 3. Whether the group label's storage and helpers, named for the instant market, are renamed for both uses or kept.
-4. Which of the origination checks a party can trip by their own later act, beyond the account lock named in section 5. Each one found is either taken when the auction opens or the bid is placed, or reported to the design thread.
+4. Which of the origination checks a party can trip by their own later act, beyond those named in section 5. Each one found is either taken when the auction opens or the bid is placed, or reported to the design thread.
