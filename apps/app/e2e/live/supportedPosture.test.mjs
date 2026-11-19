@@ -28,7 +28,6 @@ const LOAN22 = {
   useFullTermInterest: true,
   periodicInterestCadence: 0,
   interestSettled: 0n,
-  interestPaidSinceLastPeriod: 0n,
   // Stamped with the start time at origination, for every loan.
   lastPeriodicInterestSettledAt: 1_790_964_520n,
   collateralLiquidity: 1,

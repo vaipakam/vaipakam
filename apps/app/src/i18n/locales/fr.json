@@ -2741,6 +2741,7 @@
         "LoanReserveWithdrawn": "Réserve du prêt retirée",
         "ExtendChargeDrawn": "Frais de prolongation payés",
         "InterestPaidFromReserve": "Intérêts payés depuis la réserve du prêt",
+        "InterestPaidFromWallet": "Intérêts payés",
         "DueRepaymentRun": "Remboursé depuis la réserve du prêt",
         "CollateralTopUpRun": "Garantie complétée depuis la réserve du prêt",
         "StandingInstructionsSet": "Instructions permanentes définies",

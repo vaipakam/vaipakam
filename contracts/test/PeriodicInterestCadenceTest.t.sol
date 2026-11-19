@@ -312,7 +312,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
             LoanFacet(address(diamond)).getLoanDetails(1);
         assertEq(uint8(l.periodicInterestCadence), uint8(MONTHLY));
         assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs));
-        assertEq(l.interestPaidSinceLastPeriod, 0);
+        assertEq(l.interestAccrualStart, SafeCast.toUint64(startTs), "the accrual starts at origination");
         // startTime downsize sanity — should equal block.timestamp at init.
         assertEq(uint256(l.startTime), startTs);
     }

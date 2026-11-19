@@ -624,6 +624,33 @@ contract InternalMatchExecutionTest is SetupTest {
         assertEq(uint8(bAfter.status), uint8(LibVaipakam.LoanStatus.InternalMatched), "B InternalMatched");
     }
 
+    /// @notice #3779 — a partial match pays principal only, so the interest
+    ///         already settled on the residual is scaled by the share of
+    ///         principal left (rounded down). Otherwise credit for periods
+    ///         paid at the old principal would cover the residual's unpaid
+    ///         accrual, read at the new principal. The fully cleared leg's
+    ///         settled interest is left for its terminal split.
+    function test_3779_partialMatch_scalesTheSettledInterestWithThePrincipal() public {
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 10_000, mockCollateralERC20, 5);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 4, mockERC20, 8_000);
+        LibVaipakam.Loan memory a = _getLoan(LOAN_A);
+        a.interestSettled = 301;
+        TestMutatorFacet(address(diamond)).setLoan(LOAN_A, a);
+        LibVaipakam.Loan memory b = _getLoan(LOAN_B);
+        b.interestSettled = 7;
+        TestMutatorFacet(address(diamond)).setLoan(LOAN_B, b);
+        _mockLtv(LOAN_A, 9_000);
+        _mockLtv(LOAN_B, 9_000);
+
+        vm.prank(matcher);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+
+        LibVaipakam.Loan memory aAfter = _getLoan(LOAN_A);
+        assertEq(aAfter.principal, 2_000, "A residual debt");
+        assertEq(aAfter.interestSettled, 60, "301 x 2000 / 10000, rounded down");
+        assertEq(_getLoan(LOAN_B).interestSettled, 7, "a full match leaves the credit for the terminal split");
+    }
+
     function test_botIncentive_atCap_3pct() public {
         // Verifies the per-leg incentive matches the tuned config.
         _seedLoan(LOAN_A, lender, borrower, mockERC20, 10_000, mockCollateralERC20, 10_000);

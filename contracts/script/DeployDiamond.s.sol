@@ -2504,13 +2504,15 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](5);
+        s = new bytes4[](6);
         s[0] = RepayPeriodicFacet.autoDeductDaily.selector;
         s[1] = RepayPeriodicFacet.previewPeriodicSettle.selector;
         s[2] = RepayPeriodicFacet.nextPeriodCheckpoint.selector;
         s[3] = RepayPeriodicFacet.settlePeriodicInterest.selector;
         // #3681 — the one interest booking (sale and standing instruction).
         s[4] = RepayPeriodicFacet.bookInterestPayment.selector;
+        // #3779 — the interest so far, from a wallet.
+        s[5] = RepayPeriodicFacet.payInterest.selector;
     }
 
     /// T-090 — Borrower-initiated swap-to-repay facet selectors.
@@ -3243,13 +3245,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// @dev #3410 — the offset route, split out of PrecloseFacet.
     function _getPrecloseOffsetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](2);
         s[0] = PrecloseOffsetFacet.offsetWithNewOffer.selector;
-        s[1] = PrecloseOffsetFacet.completeOffset.selector;
         // Cross-facet entry consumed by `OfferFacet._acceptOffer`'s
         // auto-link block when a third party accepts an offset offer.
-        // Same `address(this)`-only gate as `acceptOfferInternal`.
-        s[2] = PrecloseOffsetFacet.completeOffsetInternal.selector;
+        // Same `address(this)`-only gate as `acceptOfferInternal`. The
+        // external `completeOffset` recovery entry was retired (K1).
+        s[1] = PrecloseOffsetFacet.completeOffsetInternal.selector;
     }
 
     /// @dev T-086 step 5 — `PrepayListingFacet` selectors. Hosts the

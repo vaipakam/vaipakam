@@ -7,7 +7,6 @@ import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../../src/facets/RepayFacet.sol";
 import {ProfileFacet} from "../../src/facets/ProfileFacet.sol";
-import {PrecloseFacet} from "../../src/facets/PrecloseFacet.sol";
 
 /**
  * @title PositiveFlowsKeeperAutomation
@@ -18,8 +17,10 @@ import {PrecloseFacet} from "../../src/facets/PrecloseFacet.sol";
  *         The scenario takes three steps (#3574): the first posts the
  *         lender's offer; the second, once its terms have stood the minimum
  *         age, opens the loan and grants the keeper; the third lets the
- *         keeper preclose and revokes it. The preclose runs a stage after the
- *         loan opened, as a real keeper action would, with interest accrued.
+ *         keeper pay the loan off and revokes it. Since K1 an early close is
+ *         the holder's own, so the keeper pays through the ordinary
+ *         repayment, which takes any payer; the payoff runs a stage after
+ *         the loan opened, with interest accrued.
  *         The keeper approval is recorded as a setting to put back, so a
  *         run that stops after the grant can be unwound (`unwind()`) and
  *         does not leave a live delegation on the borrower.
@@ -89,8 +90,8 @@ contract PositiveFlowsKeeperAutomation is PositiveFlowsStaged {
     ///      gate needs three switches on: the borrower's master switch
     ///      (`setKeeperAccess`), the per-loan opt-in (`setLoanKeeperEnabled`)
     ///      and the per-action approval (`approveKeeper`). The keeper then
-    ///      precloses, paying from its own wallet, and the borrower revokes
-    ///      it. The refusal of a keeper without the bit is negative-flow
+    ///      pays the loan off from its own wallet (a repayment, which needs
+    ///      no approval), and the borrower revokes it. The refusal of a keeper without the bit is negative-flow
     ///      coverage (NEG-23).
     function _grantKeeper(uint256 loanId) internal {
         console.log("Loan initiated for keeper-auth scenario:", loanId);
@@ -111,23 +112,23 @@ contract PositiveFlowsKeeperAutomation is PositiveFlowsStaged {
         console.log("Borrower approved the keeper to start a preclose on loan:", loanId);
     }
 
-    /// @dev The keeper precloses the loan, then the borrower revokes it.
+    /// @dev The keeper repays the loan, then the borrower revokes it.
     function _keeperPrecloses(uint256 loanId) internal {
         address keeper = newBorrower;
 
-        // The keeper pays the preclose from its own wallet; the fixture funds
-        // `newBorrower` with USDC. precloseDirect sizes its own payment, and
-        // the repay quote plus a margin covers it.
+        // K1 took keepers out of the early close: the keeper pays the loan
+        // off through the ordinary repayment, which takes any payer, from its
+        // own wallet (the fixture funds `newBorrower` with USDC).
         uint256 owed = RepayFacet(diamond).calculateRepaymentAmount(loanId);
         vm.startBroadcast(newBorrowerKey);
         usdc.approve(diamond, owed + 100e6);
-        PrecloseFacet(diamond).precloseDirect(loanId);
+        RepayFacet(diamond).repayLoan(loanId);
         vm.stopBroadcast();
 
         LibVaipakam.Loan memory loanAfter = LoanFacet(diamond).getLoanDetails(loanId);
         require(loanAfter.status != LibVaipakam.LoanStatus.Active,
-            "PF-300: precloseDirect via keeper should have settled the loan");
-        console.log("Keeper precloses on the borrower's behalf; loan status:", uint8(loanAfter.status));
+            "PF-300: the keeper's repayment should have settled the loan");
+        console.log("Keeper repays on the borrower's behalf; loan status:", uint8(loanAfter.status));
 
         vm.startBroadcast(borrowerKey);
         ProfileFacet(diamond).revokeKeeper(keeper);

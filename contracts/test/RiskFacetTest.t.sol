@@ -4306,22 +4306,19 @@ contract RiskFacetTest is Test {
         return (principal * 500 * 10 days) / (365 days * 10_000);
     }
 
-    /// @dev #2731 — the interest a partial liquidation pays the lender is
-    ///      credited to the loan's current period, the same as a partial
-    ///      repay's, so the next periodic settlement does not sell collateral
-    ///      for it again. The period is not over, so the checkpoint stays.
-    ///      Kills: a partial liquidation that pays interest and leaves the
-    ///      period counter at zero.
+    /// @dev #2731 / #3779 — the interest a partial liquidation pays the
+    ///      lender leaves nothing of the period short: the accrual restarts now
+    ///      through the one restart writer, so the period's shortfall reads
+    ///      only the restarted segment, and the next periodic settlement does
+    ///      not sell collateral for the slice's interest again. The period is
+    ///      not over, so the checkpoint stays. Kills: a partial liquidation
+    ///      that pays interest and leaves the old segment's accrual standing.
     function testPartialLiq_CreditsInterestToCurrentPeriod() public {
         uint256 loanId = _partialOnCadence(0);
         LibVaipakam.Loan memory before_ = LoanFacet(address(diamond)).getLoanDetails(loanId);
         RiskFacet(address(diamond)).triggerPartialLiquidation(loanId, 5_000, defaultAdapterCalls());
         LibVaipakam.Loan memory after_ = LoanFacet(address(diamond)).getLoanDetails(loanId);
-        assertEq(
-            uint256(after_.interestPaidSinceLastPeriod),
-            _tenDayInterest(),
-            "the interest the slice paid is credited to the period"
-        );
+        assertEq(after_.interestAccrualStart, block.timestamp, "the accrual restarts at the slice");
         assertEq(
             after_.lastPeriodicInterestSettledAt,
             before_.lastPeriodicInterestSettledAt,
@@ -4344,11 +4341,6 @@ contract RiskFacetTest is Test {
             after_.interestSettled,
             50 ether - _tenDayInterest(),
             "the excess over the accrual carries forward"
-        );
-        assertEq(
-            uint256(after_.interestPaidSinceLastPeriod),
-            0,
-            "no interest was charged, so none is credited"
         );
         vm.clearMockedCalls();
     }

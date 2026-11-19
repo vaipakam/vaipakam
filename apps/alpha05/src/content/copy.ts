@@ -2704,6 +2704,7 @@ export const copy = {
       IntentPriorityFill: B('An auto-lend standing order was filled first, by priority.'),
       InteractionRewardsClaimed: B('Rewards were claimed.'),
       InterestPaidFromReserve: B('Interest on a loan was paid from the borrower’s reserve, as their standing instruction asked.'),
+      InterestPaidFromWallet: B('Interest on a loan was paid from a wallet.'),
       InterestPaymentAttemptFailed: B('A standing instruction to pay a loan’s interest was tried and did not go through.'),
       InterestPaymentBooked: B('An interest payment on a loan was recorded.'),
       InternalMatchExecuted: B('Loans were closed against each other by an internal match.'),

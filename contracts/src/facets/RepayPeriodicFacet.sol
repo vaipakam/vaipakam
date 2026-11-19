@@ -24,6 +24,8 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
+import {LibAuth} from "../libraries/LibAuth.sol";
+import {LibDelivery} from "../libraries/LibDelivery.sol";
 
 /**
  * @title RepayPeriodicFacet
@@ -68,11 +70,10 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     /// @param loanId The loan whose checkpoint advanced.
     /// @param periodEndAt Timestamp of the period boundary that closed
     ///        (`lastPeriodicInterestSettledAt` BEFORE the advance).
-    /// @param expected The period's expected interest, snapshotted at
-    ///        the moment of the advance.
-    /// @param paidByBorrower Cumulative interest the borrower paid
-    ///        during the period, drawn from `interestPaidSinceLastPeriod`
-    ///        before reset.
+    /// @param expected The interest owed through the boundary
+    ///        ({LibPeriodicInterest.periodOwed}).
+    /// @param paidByBorrower The settled interest toward it: all of it, as a
+    ///        period closes here only when nothing is short (#3779).
     /// @param settler `msg.sender` of the call that triggered the
     ///        advance — borrower (via `repayPartial` fold), permissionless
     ///        bot (via `settlePeriodicInterest`), or anyone else.
@@ -137,6 +138,33 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     ///         behind its start. Consumed days read 0 on such a record, so a
     ///         deduction would charge a day without counting it.
     error RentalClockBehindStart(uint256 loanId, uint256 lastDeductTime, uint256 startTime);
+    /// @notice #3779 — {payInterest} is for a loan of an ERC-20. A rental's
+    ///         fees come from the renter's own prepaid amount.
+    error InterestPaymentNotErc20Loan();
+    /// @notice #3779 — the loan has no interest accrued and unsettled now.
+    error NothingOwed(uint256 loanId);
+    /// @notice #3779 — the loan is past its repayment window.
+    error RepaymentPastGracePeriod();
+    /// @notice #3779 — a payment of less than the whole interest so far must
+    ///         be at least the asset's smallest part payment.
+    error InterestPaymentBelowFloor(uint256 amount, uint256 floor);
+
+    /// @notice #3779 — `amount` of the interest accrued on `loanId` was paid
+    ///         from `payer`'s wallet, without touching principal. The lender,
+    ///         seller and treasury split is in
+    ///         `LibInterestPayment.InterestPaymentBooked` in the same
+    ///         transaction.
+    /// @param owedBefore   The interest accrued and unsettled just before.
+    /// @param periodClosed True when the payment closed the loan's interest
+    ///                     period.
+    /// @custom:event-category state-change/loan-mutation
+    event InterestPaidFromWallet(
+        uint256 indexed loanId,
+        address indexed payer,
+        uint256 amount,
+        uint256 owedBefore,
+        bool periodClosed
+    );
 
     /**
      * @notice Permissionless auto deduct for NFT rental daily fee.
@@ -395,11 +423,16 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     /// @return graceEndsAt `periodEndAt + gracePeriod(intervalDays)` —
     ///         the earliest moment a permissionless settler call is
     ///         allowed. Zero when cadence is None.
-    /// @return expected Interest expected for the FULL period at the
-    ///         current `loan.principal` and `loan.interestRateBps`.
-    /// @return paidByBorrower Cumulative interest paid this period
-    ///         (drawn from `loan.interestPaidSinceLastPeriod`).
-    /// @return shortfall Saturating-non-negative `expected - paid`.
+    /// @return expected The interest this period itself accrues
+    ///         ({LibPeriodicInterest.periodFigures}, #3779): not what earlier
+    ///         periods accrued.
+    /// @return paidByBorrower What has been paid toward this period, at most
+    ///         `expected`: payments that covered earlier periods are not
+    ///         counted here.
+    /// @return shortfall What is owed by the boundary
+    ///         ({LibPeriodicInterest.periodShortfall}): `expected -
+    ///         paidByBorrower`, plus any earlier period of the segment still
+    ///         short.
     /// @return canSettleNow True iff `block.timestamp >= graceEndsAt`
     ///         AND the loan is `Active` AND cadence is non-None — i.e.
     ///         a permissionless settler call would clear the
@@ -424,9 +457,11 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         }
         periodEndAt = LibPeriodicInterest.periodEndAt(loan);
         graceEndsAt = LibPeriodicInterest.settleAllowedFromAt(loan);
-        expected = LibPeriodicInterest.expectedInterestForPeriod(loan);
-        paidByBorrower = uint256(loan.interestPaidSinceLastPeriod);
-        shortfall = LibPeriodicInterest.currentShortfall(loan);
+        (expected, paidByBorrower, shortfall) = LibPeriodicInterest.periodFigures(
+            loan,
+            LibPeriodicInterest.periodStartAt(loan),
+            periodEndAt
+        );
         canSettleNow =
             loan.status == LibVaipakam.LoanStatus.Active &&
             block.timestamp >= graceEndsAt;
@@ -441,6 +476,68 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     {
         return LibPeriodicInterest.periodEndAt(
             LibVaipakam.storageSlot().loans[loanId]
+        );
+    }
+
+    // ─── #3779 — the interest so far, from a wallet ───────────────────────
+
+    /// @notice Pay interest accrued on an open ERC-20 loan, at any time inside
+    ///         its repayment window, from the caller's wallet. Pays
+    ///         `min(maxAmount, interest accrued and not yet settled)`, never
+    ///         more, so interest that has not accrued is never taken in
+    ///         advance; the wallet approves exactly `maxAmount`.
+    /// @dev    Anyone who is not on the lender's side may pay. The holder of
+    ///         the borrower position (or its manager) is never refused; any
+    ///         other payer is screened like a new deposit. No agreement to
+    ///         part repayment is needed: interest is not principal, so the
+    ///         principal, term, rate, due date and collateral are untouched.
+    ///         The payment is booked by the one interest booking the periodic
+    ///         sale and the reserve instruction share ({LibInterestPayment}),
+    ///         so it counts as settled on the loan once, and every interest
+    ///         period that is over and now has nothing short closes inline
+    ///         ({LibPeriodicInterest.closeCoveredPeriods}). Refused while a swap order commit is live on the
+    ///         loan; a live refinance request does not refuse it, since the
+    ///         refinance settlement sizes its payoff at settlement time. Open
+    ///         during a global pause, as a part repayment is.
+    /// @param  maxAmount The most the caller will pay.
+    /// @return paid      What was paid.
+    function payInterest(uint256 loanId, uint256 maxAmount)
+        external
+        nonReentrant
+        returns (uint256 paid)
+    {
+        LibVaipakam.assertNoLiveIntentCommit(loanId);
+        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
+        if (loan.status != LibVaipakam.LoanStatus.Active) revert LoanNotActive();
+        if (loan.assetType != LibVaipakam.AssetType.ERC20) revert InterestPaymentNotErc20Loan();
+        LibAuth.requireRepaymentPayer(loan, msg.sender);
+        if (block.timestamp > LibLoanClock.graceEnd(loan)) revert RepaymentPastGracePeriod();
+
+        (uint256 owed, ) = LibEntitlement.splitSettledInterest(
+            loan, LibEntitlement.accruedInterestToTime(loan, block.timestamp)
+        );
+        if (owed == 0) revert NothingOwed(loanId);
+        paid = maxAmount < owed ? maxAmount : owed;
+        if (paid < owed) {
+            // Less than the whole interest so far: at least the asset's
+            // smallest part payment, the floor a part repayment uses.
+            uint256 floor = (loan.principal *
+                LibVaipakam.storageSlot().assetRiskParams[loan.principalAsset].minPartialBps) /
+                LibVaipakam.BASIS_POINTS;
+            if (paid == 0 || paid < floor) revert InterestPaymentBelowFloor(paid, floor);
+        }
+
+        address asset = loan.principalAsset;
+        LibDelivery.pullExact(asset, msg.sender, address(this), paid);
+        (, uint256 settled) = LibInterestPayment.book(
+            loanId, paid, paid, LibInterestPayment.SOURCE_WALLET
+        );
+        // Credited only with interest that arrived: a lender delivery that
+        // arrives short undoes the payment.
+        if (settled != paid) revert TokenDeliveryShort(asset, paid, settled);
+        // Every period that is over and now has nothing short closes.
+        emit InterestPaidFromWallet(
+            loanId, msg.sender, paid, owed, LibPeriodicInterest.closeCoveredPeriods(loan, loanId, true) != 0
         );
     }
 
@@ -523,21 +620,14 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // policy.
         LibVaipakam._assertNotSanctioned(msg.sender);
 
-        uint256 expected = LibPeriodicInterest.expectedInterestForPeriod(loan);
-        uint256 paid = uint256(loan.interestPaidSinceLastPeriod);
-        uint256 shortfall = paid >= expected ? 0 : expected - paid;
         uint256 boundary = LibPeriodicInterest.periodEndAt(loan);
+        uint256 shortfall = LibPeriodicInterest.periodShortfall(loan, boundary);
 
         if (shortfall == 0) {
             // ── Just-stamp path ────────────────────────────────────────────
-            LibPeriodicInterest.advanceCheckpoint(loan);
-            emit PeriodicInterestSettled(
-                loanId,
-                boundary,
-                expected,
-                paid,
-                msg.sender
-            );
+            // #3779 — the one close rule: this period and every later one
+            // that is over and has nothing short.
+            LibPeriodicInterest.closeCoveredPeriods(loan, loanId, false);
             return;
         }
 

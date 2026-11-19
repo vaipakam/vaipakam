@@ -961,8 +961,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // guard above. The segment's interest is the gross accrual less the
         // periodic credit already forwarded to the lender (`interestSettled`);
         // credit beyond the accrual carries to the residual loan (#2731).
-        (uint256 interestPortion, uint256 settledCarried) =
-            LibEntitlement.splitSettledInterest(loan, LibEntitlement.grossBorrowInterest(loan));
+        // #3779 — the segment's gross, kept for the one restart writer below.
+        uint256 segmentGross = LibEntitlement.grossBorrowInterest(loan);
+        (uint256 interestPortion, ) = LibEntitlement.splitSettledInterest(loan, segmentGross);
 
         // #2796 — the charges are on what the slice REPAYS, not on the
         // proceeds beside it: `repaid = ⌊P·BPS / (BPS + b + f)⌋`, bonus
@@ -1086,23 +1087,15 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // from the swap proceeds above.
         LibLoanCollateral.reduce(loan, swappedCollateral);
         LibInterestLedger.reducePrincipal(s, loan, principalRepaid, principalRepaid);
-        // #3169 — only the clock's start moves; the residual's full-term
-        // minimum runs to the term's end to the second
-        // ({LibLoanClock.minimumInterestSeconds}). A whole-day counter here
-        // dropped the part day before maturity.
-        loan.interestAccrualStart = uint64(block.timestamp);
-        // #915 / #2731 — the residual loan restarts its accrual clock at
-        // `now`, so the periodic credit this slice's interest was netted
-        // against is consumed: only the gross interest it covered is taken off,
-        // and any excess (a periodic settlement can deliver more than has
-        // accrued by now) carries to the residual loan, as `repayPartial`
-        // keeps it (#1191). Clearing it outright would forfeit interest the
-        // borrower already paid; keeping it whole would net it a second time.
-        loan.interestSettled = settledCarried;
-        // #2731 — the interest this slice paid the lender counts toward the
-        // current period, as every other mid-period payment does; otherwise the
-        // periodic settlement would sell collateral for it again.
-        LibPeriodicInterest.creditInterestPaid(loan, loanId, interestPortion);
+        // #3779 — the one accrual restart: the residual accrues from now
+        // (its full-term minimum runs to the term's end to the second, #3169),
+        // and the settled interest beyond this slice's gross is carried into
+        // it, never forfeited and never netted twice (#915, #2731).
+        LibInterestLedger.restartAccrual(loan, segmentGross);
+        // #3779 — every period that is over and now has nothing short closes
+        // inline (the one close rule), so the periodic settlement does not
+        // sell collateral for interest this slice paid.
+        LibPeriodicInterest.closeCoveredPeriods(loan, loanId, true);
 
         // Post-mutation HF check. Strictly improves AND must reach >= 1.
         // `currentBorrow` re-derives from the now-reduced principal, so this

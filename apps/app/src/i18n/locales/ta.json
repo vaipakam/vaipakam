@@ -2741,6 +2741,7 @@
         "LoanReserveWithdrawn": "கடன் இருப்பு திரும்பப் பெறப்பட்டது",
         "ExtendChargeDrawn": "நீட்டிப்புக் கட்டணம் செலுத்தப்பட்டது",
         "InterestPaidFromReserve": "கடன் இருப்பிலிருந்து வட்டி செலுத்தப்பட்டது",
+        "InterestPaidFromWallet": "வட்டி செலுத்தப்பட்டது",
         "DueRepaymentRun": "கடன் இருப்பிலிருந்து திருப்பிச் செலுத்தப்பட்டது",
         "CollateralTopUpRun": "கடன் இருப்பிலிருந்து பிணையம் அதிகரிக்கப்பட்டது",
         "StandingInstructionsSet": "நிலையான அறிவுறுத்தல்கள் அமைக்கப்பட்டன",

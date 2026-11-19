@@ -6857,6 +6857,7 @@ const copySource = {
       LoanReserveWithdrawn: 'Loan reserve withdrawn',
       ExtendChargeDrawn: 'Extension charge paid',
       InterestPaidFromReserve: 'Interest paid from loan reserve',
+      InterestPaidFromWallet: 'Interest paid',
       DueRepaymentRun: 'Repaid from loan reserve',
       CollateralTopUpRun: 'Collateral topped up from loan reserve',
       StandingInstructionsSet: 'Standing instructions set',

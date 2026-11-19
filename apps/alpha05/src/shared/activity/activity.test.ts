@@ -108,6 +108,7 @@ const NEUTRAL_FLAGS: Readonly<Record<string, string>> = {
   InstantSlotSet: 'says the slot’s settings changed; the flags are its three consents, not one switch',
   IntegratorShareSettled: 'the flag is whether the share reached the integrator, a detail of the settlement',
   InterestPaidFromReserve: 'the flag is whether the payment closed the period, a detail of the payment',
+  InterestPaidFromWallet: 'the flag is whether the payment closed the period, a detail of the payment',
   LenderFundsClaimed: 'the flag is whether both sides have now claimed',
   LenderIntentSet: 'the flags are order terms',
   LoanDefaulted: 'the flag is a consent record, not the outcome',

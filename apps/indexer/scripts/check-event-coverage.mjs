@@ -54,6 +54,8 @@ const DELIBERATELY_NOT_HANDLED = {
     "#3681 — as StandingInstructionsSet: settings only, no loans-row field changes",
   InterestPaidFromReserve:
     '#3681 — interest paid from the payment reserve; a payment that closes the period emits PeriodicInterestSettled in the same transaction, which advances last_period_settled_at',
+  InterestPaidFromWallet:
+    '#3779 — the interest so far, paid from a wallet; a payment that closes the period emits PeriodicInterestSettled in the same transaction, which advances last_period_settled_at',
   InterestPaymentBooked:
     'the one interest booking shared by the periodic sale and the reserve payment; the period advance it can cause is PeriodicInterestSettled, which the indexer handles',
   RepaymentLegsFromReserve:

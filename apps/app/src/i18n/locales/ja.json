@@ -2741,6 +2741,7 @@
         "LoanReserveWithdrawn": "ローン用リザーブを出金",
         "ExtendChargeDrawn": "延長費用を支払い",
         "InterestPaidFromReserve": "ローン用リザーブから利息を支払い",
+        "InterestPaidFromWallet": "利息を支払い",
         "DueRepaymentRun": "ローン用リザーブから返済",
         "CollateralTopUpRun": "ローン用リザーブから担保を追加",
         "StandingInstructionsSet": "継続指示を設定",

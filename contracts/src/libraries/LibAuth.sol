@@ -24,15 +24,17 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
  *      ── Keeper-accessible surface (Phase 6) ────────────────────────────────
  *      Keeper authority is gated per-action via
  *      {requireKeeperFor(action, loan, lenderSide)} against the relevant
- *      NFT holder's `approvedKeeperActions` bitmask. Four actions are
- *      accepted at these six entry points:
+ *      NFT holder's `approvedKeeperActions` bitmask. Two actions are
+ *      accepted at these two entry points:
  *
  *        EarlyWithdrawalFacet.createLoanSaleOffer    → INIT_EARLY_WITHDRAW
  *        EarlyWithdrawalFacet.completeLoanSale       → COMPLETE_LOAN_SALE
- *        PrecloseFacet.precloseDirect                → initPreclose
- *        PrecloseFacet.transferObligationViaOffer    → initPreclose
- *        PrecloseOffsetFacet.offsetWithNewOffer            → initPreclose
- *        PrecloseOffsetFacet.completeOffset                → COMPLETE_OFFSET
+ *
+ *      (K1, KeeperApprovalsReviewDesign section 4, took the early close
+ *      out of automation: `precloseDirect`, `transferObligationViaOffer`
+ *      and `offsetWithNewOffer` take the borrower position's holder only,
+ *      and the external `completeOffset` is gone. INIT_PRECLOSE and
+ *      COMPLETE_OFFSET grant nothing until the setter refuses them.)
  *
  *      (#3042 retired `RefinanceFacet.refinanceLoan` → REFINANCE: a
  *      refinance now completes only inside the accept of its tagged offer.)
@@ -127,6 +129,20 @@ library LibAuth {
         if (payer == loan.lender || payer == LibProtectedAccount.manager(loan.lender)) revert IVaipakamErrors.LenderCannotRepayOwnLoan();
         address holder = LibPositionNFT.ownerOf(loan.lenderTokenId);
         if (payer == holder || payer == LibProtectedAccount.manager(holder)) revert IVaipakamErrors.LenderCannotRepayOwnLoan();
+    }
+
+    /// @dev #3779 — who may pay a wallet repayment of an ERC-20 loan (in
+    ///      full, in part, or the interest so far): anyone not on the lender's
+    ///      side ({requireNotLenderSide}). The borrower position's current
+    ///      holder, or its manager, is never refused, so the lender can always
+    ///      be made whole; any other payer has no duty to the lender and is
+    ///      screened like a new deposit.
+    function requireRepaymentPayer(LibVaipakam.Loan storage loan, address payer) internal view {
+        requireNotLenderSide(loan, payer);
+        address holder = LibPositionNFT.ownerOf(loan.borrowerTokenId);
+        if (payer != holder && payer != LibProtectedAccount.manager(holder)) {
+            LibVaipakam._assertNotSanctioned(payer);
+        }
     }
 
     /// @dev Canonical keeper-authorization helper (Phase 6).

@@ -194,6 +194,7 @@ export const NOTIF_DELIBERATELY_NOT_HANDLED: Readonly<Record<string, string>> = 
   StandingInstructionsSet: "#3681 — the owner's own settings change; the app shows them, no inbox row",
   StandingInstructionsCleared: "#3681 — the owner's own settings change; the app shows them, no inbox row",
   CollateralTopUpRun: "PR2 — a top-up from the collateral reserve → borrower; the keeper's #3681 owner alerts carry it meanwhile",
+  InterestPaidFromWallet: "#3779 — interest paid from a wallet; the holder's alert for a payment by another address follows with the app work",
   InterestPaidFromReserve: "PR2 — interest paid from the payment reserve → borrower; the keeper's #3681 owner alerts carry it meanwhile",
   DueRepaymentRun: '#3681 — companion of LoanRepaid in the same transaction, which carries the loan_repaid row',
   RepaymentLegsFromReserve: "#3681 — companion of the reserve repayment's LoanRepaid, which carries the row",

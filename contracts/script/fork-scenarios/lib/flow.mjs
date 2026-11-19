@@ -660,7 +660,7 @@ export async function creationFields(receipt, offerId, durationDays, acceptor, {
     // `lastDeductTime` is an NFT rental's daily-deduction clock; an ERC-20
     // loan has no daily deduction, so it stays unset.
     lastPeriodicInterestSettledAt: at, lastDeductTime: rental ? at : 0n,
-    interestPaidSinceLastPeriod: 0n, interestSettled: 0n,
+    interestSettled: 0n,
     lenderDiscountAccAtInit: 0n, borrowerDiscountAccAtInit: 0n,
     matcher: acceptor, lenderNotifBilled: false, borrowerNotifBilled: false, riskAndTermsConsentFromBoth: true,
     // Both position NFTs: "Loan Initiated" from the fill, unlocked, and each

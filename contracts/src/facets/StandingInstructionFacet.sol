@@ -599,7 +599,7 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
     }
 
     /// @notice The payment itself: drawn from `holder`'s payment reserve,
-    ///         booked once, and credited to the period. Self-only, run by
+    ///         booked once, and the periods it covers closed. Self-only, run by
     ///         {runInterestPayment} as one attempt, so a delivery the token
     ///         refuses (a frozen lender vault or treasury) undoes the whole
     ///         payment and the instruction is skipped by name, never a bare
@@ -625,9 +625,10 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
         // undoes the whole attempt, which is then skipped by name, so the
         // period's shortfall keeps its own settlement.
         if (settled != amount) revert IVaipakamErrors.TokenDeliveryShort(loan.principalAsset, amount, settled);
-        // The period's credit, through its one crediting function, which
-        // closes the period inline once it is paid and over.
-        LibPeriodicInterest.creditInterestPaid(loan, loanId, amount);
+        // #3779 — the settled interest is the period's record: every period
+        // that is over and now has nothing short closes inline, through the
+        // one close rule.
+        LibPeriodicInterest.closeCoveredPeriods(loan, loanId, true);
     }
 
     /// @dev The instruction's own refusals (not set, not active, not due,

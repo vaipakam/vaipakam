@@ -231,6 +231,7 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   // #3681 — the loan reserves' runs and the standing instructions; the
   // interest booking and extension fee ride inside their parent rows.
   InterestPaidFromReserve: { label: 'Interest paid from loan reserve', category: 'loan-repay', priority: 30 },
+  InterestPaidFromWallet: { label: 'Interest paid', category: 'loan-repay', priority: 30 },
   DueRepaymentRun: { label: 'Repaid from loan reserve', category: 'loan-repay', priority: 30 },
   CollateralTopUpRun: { label: 'Collateral topped up from loan reserve', category: 'collateral', priority: 30 },
   StandingInstructionsSet: { label: 'Standing instructions set', category: 'loan-modify', priority: 40 },

@@ -28,6 +28,7 @@ import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
+import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
@@ -497,13 +498,9 @@ contract PrecloseFacetTest is Test {
     // ─── precloseDirect reverts ───────────────────────────────────────────────
 
     function testPreclosedDirectRevertsNotNFTOwner() public {
-        // Phase 6: precloseDirect is a borrower-entitled strategic flow.
-        // A caller who isn't the borrower-NFT owner AND doesn't pass the
-        // three keeper gates falls out of `requireKeeperFor` with
-        // `KeeperAccessRequired()` (not `NotNFTOwner()` — those two
-        // used to be distinct helpers; Phase 6 merged them).
+        // K1: the borrower position's holder only.
         vm.prank(lender);
-        vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
+        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
         PrecloseFacet(address(diamond)).precloseDirect(activeLoanId);
     }
 
@@ -636,11 +633,10 @@ contract PrecloseFacetTest is Test {
     // ─── transferObligationViaOffer reverts ──────────────────────────────────
 
     function testTransferObligationRevertsNotNFTOwner() public {
-        // Phase 6: borrower-entitled strategic flow. Non-owner callers fall
-        // through requireKeeperFor and revert with KeeperAccessRequired.
+        // K1: the borrower position's holder only.
         LibTestTiming.backdateTerms(address(diamond), 1); // #3443
         vm.prank(lender);
-        vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
+        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, 1, type(uint64).max);
     }
 
@@ -650,48 +646,6 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.LoanNotActive.selector);
-        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, 1, type(uint64).max);
-    }
-
-    /// @notice #819 — a CLEAN keeper acting for a SANCTIONED borrower-position
-    ///         holder cannot transfer the obligation. The position is
-    ///         TRANSFERRED to a fresh flagged holder while the stored
-    ///         `loan.borrower` stays clean, so the later inline
-    ///         `vaultWithdrawERC20(loan.borrower → exitingHolder)` would NOT
-    ///         revert on its own (it sends to the flagged holder without a
-    ///         recipient-vault screen) — only the new entry holder-screen
-    ///         catches it. This isolates the #819 keeper gap: drop the screen
-    ///         and the collateral would route to the flagged holder.
-    function test_transferObligationViaOffer_RevertsWhenTransferredHolderSanctioned_viaKeeper() public {
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        address flaggedHolder = makeAddr("preclose-flagged-holder");
-
-        // Simulate the position sitting with a different (flagged) holder; the
-        // stored loan.borrower stays clean. Both `requireKeeperFor` and the #819
-        // screen resolve the holder via this same `IERC721.ownerOf` call.
-        // #3205 — the Diamond is not the ERC-721: move the real token.
-        LibTestPositionNFT.move(address(diamond), loan.borrowerTokenId, flaggedHolder);
-
-        // The (current) holder approves a clean keeper for the preclose action.
-        address keeper = makeAddr("preclose-keeper-transferred");
-        vm.prank(flaggedHolder);
-        ProfileFacet(address(diamond)).setKeeperAccess(true);
-        vm.prank(flaggedHolder);
-        ProfileFacet(address(diamond)).approveKeeper(
-            keeper, LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE
-        );
-        vm.prank(flaggedHolder);
-        ProfileFacet(address(diamond)).setLoanKeeperEnabled(activeLoanId, keeper, true);
-
-        MockSanctionsList m = new MockSanctionsList();
-        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
-        m.setFlagged(flaggedHolder, true); // current holder, NOT stored borrower, NOT keeper
-
-        LibTestTiming.backdateTerms(address(diamond), 1); // #3443
-        vm.prank(keeper); // clean caller
-        vm.expectRevert(
-            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, flaggedHolder)
-        );
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, 1, type(uint64).max);
     }
 
@@ -1714,10 +1668,9 @@ contract PrecloseFacetTest is Test {
     // ─── offsetWithNewOffer reverts ──────────────────────────────────────────
 
     function testOffsetRevertsNotNFTOwner() public {
-        // Phase 6: borrower-entitled strategic flow. Non-owner callers
-        // without keeper auth revert with KeeperAccessRequired.
+        // K1: the borrower position's holder only.
         vm.prank(lender);
-        vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
+        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
         PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
     }
 
@@ -1796,6 +1749,107 @@ contract PrecloseFacetTest is Test {
 
     function _offsetExpiry(uint256 offerId) internal view returns (uint256) {
         return uint256(OfferCancelFacet(address(diamond)).getOffer(offerId).expiresAt);
+    }
+
+    /// @dev K1 test 2 — a keeper the borrower fully approved (the master
+    ///      switch, the start-a-preclose action and the per-loan switch) is
+    ///      refused by the direct close, the handover and the offset alike, as
+    ///      any non-holder is; the same caller then pays the loan off through
+    ///      the ordinary repayment, which takes any payer.
+    function test_K1_earlyCloseIsTheHoldersOwnAndAThirdPartyRepays() public {
+        address keeper = makeAddr("k1-keeper");
+        vm.startPrank(borrower);
+        ProfileFacet(address(diamond)).setKeeperAccess(true);
+        ProfileFacet(address(diamond)).approveKeeper(keeper, LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE);
+        ProfileFacet(address(diamond)).setLoanKeeperEnabled(activeLoanId, keeper, true);
+        vm.stopPrank();
+
+        vm.prank(keeper);
+        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
+        PrecloseFacet(address(diamond)).precloseDirect(activeLoanId);
+
+        LibTestTiming.backdateTerms(address(diamond), 1); // #3443
+        vm.prank(keeper);
+        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, 1, type(uint64).max);
+
+        vm.prank(keeper);
+        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
+        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(
+            activeLoanId, 500, 25, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max
+        );
+
+        uint256 due = RepayFacet(address(diamond)).calculateRepaymentAmount(activeLoanId);
+        ERC20Mock(mockERC20).mint(keeper, due);
+        vm.prank(keeper);
+        ERC20(mockERC20).approve(address(diamond), due);
+        vm.prank(keeper);
+        RepayFacet(address(diamond)).repayLoan(activeLoanId);
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "a third party paid the loan off through the ordinary repayment"
+        );
+    }
+
+    /// @dev K1 test 1 (offset half) — a third party's accept of the offset
+    ///      offer completes the offset in the same transaction, so nothing is
+    ///      left for a later completion, and the retired external entry is not
+    ///      routed.
+    function test_K1_offsetAcceptCompletesTheOffsetInOneTransaction() public {
+        uint256 newOfferId = _postRealOffset(25);
+        (address charlie, uint256 charliePk) = makeAddrAndKey("offset-acceptor");
+        ERC20Mock(mockCollateralERC20).mint(charlie, 100000 ether);
+        vm.prank(charlie);
+        ERC20(mockCollateralERC20).approve(address(diamond), type(uint256).max);
+        LibTestTiming.backdateTerms(address(diamond), newOfferId);
+        LibAcceptTestSigner.signAndAccept(address(diamond), charlie, charliePk, newOfferId, true, activeLoanId);
+
+        assertTrue(OfferCancelFacet(address(diamond)).getOffer(newOfferId).accepted, "offset offer accepted");
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "the accept closed the original loan"
+        );
+        // Nothing is left to complete.
+        vm.prank(address(diamond));
+        vm.expectRevert(IVaipakamErrors.LoanNotActive.selector);
+        PrecloseOffsetFacet(address(diamond)).completeOffsetInternal(activeLoanId);
+        // The external recovery entry is gone.
+        (bool ok, ) = address(diamond).call(abi.encodeWithSignature("completeOffset(uint256)", activeLoanId));
+        assertFalse(ok, "completeOffset is not routed");
+    }
+
+    /// @dev K1 test 1 (offset half) — when the completion fails, the accept
+    ///      reverts whole: the offset offer stays unaccepted and the original
+    ///      loan stays active, so no state has the accept done and the
+    ///      completion not.
+    function test_K1_offsetAcceptRevertsWholeWhenCompletionFails() public {
+        uint256 newOfferId = _postRealOffset(25);
+        (address charlie, uint256 charliePk) = makeAddrAndKey("offset-acceptor");
+        ERC20Mock(mockCollateralERC20).mint(charlie, 100000 ether);
+        vm.prank(charlie);
+        ERC20(mockCollateralERC20).approve(address(diamond), type(uint256).max);
+        LibTestTiming.backdateTerms(address(diamond), newOfferId);
+        LibAcceptTerms.AcceptTerms memory t =
+            LibAcceptTestSigner.buildTerms(address(diamond), charlie, newOfferId, true, activeLoanId);
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, charliePk);
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(PrecloseOffsetFacet.completeOffsetInternal.selector, activeLoanId),
+            "completion fails"
+        );
+        // The accept fails with the completion's own reason.
+        vm.prank(charlie);
+        vm.expectRevert(bytes("completion fails"));
+        OfferAcceptFacet(address(diamond)).acceptOffer(newOfferId, t, sig);
+
+        assertFalse(OfferCancelFacet(address(diamond)).getOffer(newOfferId).accepted, "offset offer not accepted");
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "the original loan stays active"
+        );
     }
 
     /// @dev #1814 — the vehicle is stamped with a real deadline (not the GTC
@@ -1913,52 +1967,14 @@ contract PrecloseFacetTest is Test {
         _setLoanStatus(activeLoanId, LibVaipakam.LoanStatus.Repaid);
 
         vm.expectRevert(IVaipakamErrors.LoanNotActive.selector);
-        vm.prank(borrower);
-        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
-    }
-
-    /// @dev Third-party caller blocked when keeperAccessEnabled is false (default)
-    function testCompleteOffsetRevertsKeeperAccessRequired() public {
-        // Set up a linked, accepted offset so the link/accepted checks pass
-        // and the keeper auth check is the one under test. Without setup
-        // OffsetNotLinked would fire first and mask the auth rejection.
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
-        vm.prank(borrower);
-        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
-        vm.clearMockedCalls();
-        _setOfferAccepted(99);
-
-        address thirdParty = makeAddr("thirdParty");
-        vm.prank(thirdParty);
-        vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
-        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
-    }
-
-    /// @dev Lender is rejected from completeOffset — this is a borrower-
-    ///      entitled action (Option 3 offset completion), so the lender has
-    ///      no authority here regardless of the loan's keeper flag. README
-    ///      §3 lines 176–179: keeper policy is role-scoped to the entitled
-    ///      party, and the opposite party is never a substitute for that
-    ///      party or their keeper.
-    function testCompleteOffsetLenderRejected() public {
-        // Set up an accepted offset so the link and accepted checks pass,
-        // isolating the auth check. Without this setup, OffsetNotLinked
-        // would fire first and mask the auth rejection under test.
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
-        vm.prank(borrower);
-        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
-        vm.clearMockedCalls();
-        _setOfferAccepted(99);
-
-        vm.prank(lender);
-        vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
-        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
+        vm.prank(address(diamond));
+        PrecloseOffsetFacet(address(diamond)).completeOffsetInternal(activeLoanId);
     }
 
     function testCompleteOffsetRevertsOffsetNotLinked() public {
         vm.expectRevert(PrecloseOffsetFacet.OffsetNotLinked.selector);
-        vm.prank(borrower);
-        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
+        vm.prank(address(diamond));
+        PrecloseOffsetFacet(address(diamond)).completeOffsetInternal(activeLoanId);
     }
 
     function testCompleteOffsetRevertsOfferNotAccepted() public {
@@ -1971,8 +1987,8 @@ contract PrecloseFacetTest is Test {
 
         // Offer 99 is not actually accepted
         vm.expectRevert(PrecloseOffsetFacet.OffsetOfferNotAccepted.selector);
-        vm.prank(borrower);
-        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
+        vm.prank(address(diamond));
+        PrecloseOffsetFacet(address(diamond)).completeOffsetInternal(activeLoanId);
     }
 
     function testCompleteOffsetSuccess() public {
@@ -1987,8 +2003,8 @@ contract PrecloseFacetTest is Test {
         // Mock cross-facet calls
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
-        vm.prank(borrower);
-        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
+        vm.prank(address(diamond));
+        PrecloseOffsetFacet(address(diamond)).completeOffsetInternal(activeLoanId);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
@@ -2015,8 +2031,8 @@ contract PrecloseFacetTest is Test {
         // past the original maturity → drift → revert.
         vm.warp(block.timestamp + 2 days);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
-        vm.prank(borrower);
-        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
+        vm.prank(address(diamond));
+        PrecloseOffsetFacet(address(diamond)).completeOffsetInternal(activeLoanId);
     }
 
     /// @dev Companion to the drift guard: a SHORTER replacement term that still
@@ -2033,8 +2049,8 @@ contract PrecloseFacetTest is Test {
 
         vm.warp(block.timestamp + 5 days);
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
-        vm.prank(borrower);
-        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
+        vm.prank(address(diamond));
+        PrecloseOffsetFacet(address(diamond)).completeOffsetInternal(activeLoanId);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
@@ -2227,7 +2243,7 @@ contract PrecloseFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev #574 — when a NON-borrower (here a keeper) precloses an NFT
+    /// @dev #574 — when a NON-borrower (here the position's new holder) precloses an NFT
     ///      rental, the rental prepay (treasury fee + lender share) must be
     ///      deducted from the BORROWER's prepay vault, not the caller's. The
     ///      prepay was deposited by `loan.borrower` at loan init and lives in
@@ -2240,15 +2256,12 @@ contract PrecloseFacetTest is Test {
         uint256 fullRental = PRINCIPAL * 30;
         _setLoanAsNftRental(activeLoanId, fullRental, (fullRental * 500) / 10000);
 
-        // Authorize a keeper for the preclose action on this loan (so the
-        // caller is provably NOT loan.borrower).
-        address keeper = makeAddr("preclose-keeper");
-        vm.prank(borrower);
-        ProfileFacet(address(diamond)).setKeeperAccess(true);
-        vm.prank(borrower);
-        ProfileFacet(address(diamond)).approveKeeper(keeper, LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE);
-        vm.prank(borrower);
-        ProfileFacet(address(diamond)).setLoanKeeperEnabled(activeLoanId, keeper, true);
+        // Move the borrower position to a new holder (so the caller is
+        // provably NOT loan.borrower). K1 took keepers out of the early close.
+        address keeper = makeAddr("preclose-new-holder");
+        LibTestPositionNFT.move(
+            address(diamond), LoanFacet(address(diamond)).getLoanDetails(activeLoanId).borrowerTokenId, keeper
+        );
 
         // Mock the vault / NFT cross-facet calls so the flow completes without
         // real balances; expectCall still records the calldata that was sent.
@@ -2271,7 +2284,7 @@ contract PrecloseFacetTest is Test {
         assertEq(
             uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
             uint8(LibVaipakam.LoanStatus.Repaid),
-            "keeper-triggered NFT-rental preclose completes"
+            "a new holder's NFT-rental preclose completes"
         );
         vm.clearMockedCalls();
     }
@@ -3195,8 +3208,8 @@ contract PrecloseFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), abi.encode(true));
 
-        vm.prank(borrower);
-        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
+        vm.prank(address(diamond));
+        PrecloseOffsetFacet(address(diamond)).completeOffsetInternal(activeLoanId);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
@@ -3465,45 +3478,9 @@ contract PrecloseFacetTest is Test {
         // Mock updateNFTStatus to revert
         vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "nft update fail");
 
-        vm.prank(borrower);
+        vm.prank(address(diamond));
         vm.expectRevert(bytes("nft update fail"));
-        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
-        vm.clearMockedCalls();
-    }
-
-    // ─── Test F: completeOffset keeper allowed ──────────────────────────────
-
-    /// @dev Covers completeOffset called by third-party when keeperAccessEnabled=true.
-    function testCompleteOffsetKeeperAllowed() public {
-        // Create offset offer
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
-        vm.prank(borrower);
-        PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20, type(uint64).max);
-        vm.clearMockedCalls();
-
-        _setOfferAccepted(99);
-
-        // Mock cross-facet calls
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
-
-        address keeper = makeAddr("keeper");
-        // Phase 6: completeOffset is a borrower-entitled action requiring
-        // the CompleteOffset action bit on the borrower's approved-keeper
-        // bitmask AND the keeper enabled for this specific loan.
-        vm.prank(borrower);
-        ProfileFacet(address(diamond)).setKeeperAccess(true);
-        vm.prank(borrower);
-        ProfileFacet(address(diamond)).approveKeeper(
-            keeper,
-            LibVaipakam.KEEPER_ACTION_COMPLETE_OFFSET
-        );
-        vm.prank(borrower);
-        ProfileFacet(address(diamond)).setLoanKeeperEnabled(activeLoanId, keeper, true);
-        vm.prank(keeper);
-        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
-
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
+        PrecloseOffsetFacet(address(diamond)).completeOffsetInternal(activeLoanId);
         vm.clearMockedCalls();
     }
 
@@ -3568,8 +3545,8 @@ contract PrecloseFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), abi.encode(true));
 
-        vm.prank(borrower);
-        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
+        vm.prank(address(diamond));
+        PrecloseOffsetFacet(address(diamond)).completeOffsetInternal(activeLoanId);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
@@ -3798,103 +3775,6 @@ contract PrecloseFacetTest is Test {
             activeLoanId, 500, 30, mockCollateralERC20, COLLATERAL, true, mockERC20,
             type(uint64).max
         );
-    }
-
-    // ─── Phase 6 — per-action isolation across entry points ─────────────────
-
-    /// @dev Keeper with only the initPreclose action bit can drive
-    ///      precloseDirect (positive path through the new requireKeeperFor
-    ///      gate) even though they don't have every other bit.
-    function testPrecloseDirectAllowsKeeperWithInitPrecloseBit() public {
-        address keeper = makeAddr("keeperIP");
-        vm.prank(borrower);
-        ProfileFacet(address(diamond)).setKeeperAccess(true);
-        vm.prank(borrower);
-        ProfileFacet(address(diamond)).approveKeeper(
-            keeper,
-            LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE
-        );
-        vm.prank(borrower);
-        ProfileFacet(address(diamond)).setLoanKeeperEnabled(activeLoanId, keeper, true);
-
-        // precloseDirect proceeds past the auth gate and subsequently
-        // reverts somewhere deeper (vault / balance math) because this
-        // test harness doesn't wire the full settlement path. The auth
-        // check passing is what we care about here — any non-
-        // KeeperAccessRequired revert confirms we got past the gate.
-        vm.prank(keeper);
-        try PrecloseFacet(address(diamond)).precloseDirect(activeLoanId) {
-            // Settlement may or may not finish depending on mocks; either
-            // outcome here means the keeper auth gate passed.
-        } catch (bytes memory reason) {
-            bytes4 sel;
-            assembly {
-                sel := mload(add(reason, 0x20))
-            }
-            assertTrue(
-                sel != IVaipakamErrors.KeeperAccessRequired.selector,
-                "keeper with INIT_PRECLOSE bit must pass auth"
-            );
-        }
-    }
-
-    /// @dev Keeper with only EXTEND (wrong action bit) is rejected at
-    ///      precloseDirect — demonstrates per-action isolation. Also
-    ///      validates the new canonical requireKeeperFor gate treats
-    ///      action mismatch as KeeperAccessRequired (not a generic auth
-    ///      error).
-    function testPrecloseDirectRejectsKeeperWithWrongActionBit() public {
-        address keeper = makeAddr("keeperRefOnly");
-        vm.prank(borrower);
-        ProfileFacet(address(diamond)).setKeeperAccess(true);
-        vm.prank(borrower);
-        ProfileFacet(address(diamond)).approveKeeper(
-            keeper,
-            LibVaipakam.KEEPER_ACTION_EXTEND
-        );
-        vm.prank(borrower);
-        ProfileFacet(address(diamond)).setLoanKeeperEnabled(activeLoanId, keeper, true);
-
-        vm.prank(keeper);
-        vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
-        PrecloseFacet(address(diamond)).precloseDirect(activeLoanId);
-    }
-
-    /// @dev Keeper with the right action bit but NOT enabled for this
-    ///      specific loan is rejected. Per-loan enable is a separate
-    ///      gate from the per-action bitmask.
-    function testPrecloseDirectRejectsKeeperWithoutLoanEnable() public {
-        address keeper = makeAddr("keeperNoLoanEn");
-        vm.prank(borrower);
-        ProfileFacet(address(diamond)).setKeeperAccess(true);
-        vm.prank(borrower);
-        ProfileFacet(address(diamond)).approveKeeper(
-            keeper,
-            LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE
-        );
-        // Deliberately skip setLoanKeeperEnabled(activeLoanId, keeper, true).
-
-        vm.prank(keeper);
-        vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
-        PrecloseFacet(address(diamond)).precloseDirect(activeLoanId);
-    }
-
-    /// @dev Keeper properly enabled but master switch off → rejected.
-    ///      Master switch is the emergency-brake gate.
-    function testPrecloseDirectRejectsKeeperWithMasterSwitchOff() public {
-        address keeper = makeAddr("keeperMasterOff");
-        // Skip setKeeperAccess — master switch defaults off.
-        vm.prank(borrower);
-        ProfileFacet(address(diamond)).approveKeeper(
-            keeper,
-            LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE
-        );
-        vm.prank(borrower);
-        ProfileFacet(address(diamond)).setLoanKeeperEnabled(activeLoanId, keeper, true);
-
-        vm.prank(keeper);
-        vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
-        PrecloseFacet(address(diamond)).precloseDirect(activeLoanId);
     }
 
     /// @dev `setLoanKeeperEnabled` rejects a caller who owns neither the

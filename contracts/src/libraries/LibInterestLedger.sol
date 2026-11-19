@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibEntitlement} from "./LibEntitlement.sol";
@@ -14,8 +15,10 @@ import {SellerClaimFacet} from "../facets/SellerClaimFacet.sol";
  * @title LibInterestLedger
  * @author Vaipakam Developer Team
  * @notice #1808 + #1209 — the ONE book of the interest an ERC-20 loan's lender
- *         side has earned and not yet been paid, and the ONE writer of the two
- *         fields that price it: `loan.principal` and `loan.interestRateBps`.
+ *         side has earned and not yet been paid, the ONE writer of the two
+ *         fields that price it: `loan.principal` and `loan.interestRateBps`,
+ *         and the ONE writer of an interest-accrual restart
+ *         ({restartAccrual}, #3779).
  *
  * @dev    Per loan there is one record for the CURRENT lender-position holder
  *         ({LibVaipakam.InterestLedger}) and a short list of seller claims
@@ -247,6 +250,36 @@ library LibInterestLedger {
         l.principalOwed = l.principalOwed > delivered ? l.principalOwed - delivered : 0;
     }
 
+    /// @notice #3779 — clears a slice of principal that pays NO interest (a
+    ///         partial internal match) without letting interest already
+    ///         settled on the loan cover interest the residual has not paid.
+    /// @dev    The accrual clock is not restarted here: nothing pays the
+    ///         interest accrued so far, so there is no segment to close. Read
+    ///         from one clock, the residual's accrual
+    ///         (`principal × rate × elapsed`) already treats the cleared slice
+    ///         as taking its share of the interest accrued so far; the settled
+    ///         credit is scaled by the same share
+    ///         (`interestSettled × residual / principal`, rounded down, so the
+    ///         credit never grows). What the residual owes at any later moment
+    ///         is then exactly its share of the unpaid interest at the match
+    ///         plus its own accrual since. Without the scaling the whole
+    ///         credit stayed against the residual's re-priced accrual, so
+    ///         interest paid for earlier periods could cover periods nothing
+    ///         paid (`LibPeriodicInterest.periodShortfall`). The cleared
+    ///         slice's own unpaid interest is not collected by the match.
+    function reducePrincipalUnpaidSlice(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.Loan storage loan,
+        uint256 cleared,
+        uint256 delivered
+    ) internal {
+        uint256 before = loan.principal;
+        if (loan.interestSettled != 0 && cleared < before) {
+            loan.interestSettled = Math.mulDiv(loan.interestSettled, before - cleared, before);
+        }
+        reducePrincipal(s, loan, cleared, delivered);
+    }
+
     /// @notice Zeroes `loan.principal` for a shortfall written off at a
     ///         terminal. The owed principal is KEPT: it was not repaid, and the
     ///         holder's claim on what the loan recovers ranks it first.
@@ -270,6 +303,41 @@ library LibInterestLedger {
         // an extension or a handover) can raise what the borrower owes or
         // lower what the lender is owed: marked whatever its direction.
         LibPositionNFT.markLoanValueOut(loan.id);
+    }
+
+    // ─── Accrual restart ───────────────────────────────────────────────────
+
+    /// @notice #3779 — the ONE writer of a loan's interest-accrual restart:
+    ///         close the segment whose gross interest is `grossInterest`,
+    ///         return what of it is still due, and start a new segment now.
+    /// @dev    The segment's settled interest (`interestSettled`) is netted
+    ///         against the gross ({LibEntitlement.splitSettledInterest}): what
+    ///         the gross exceeds it by is `due`, which the caller charges; what
+    ///         it exceeds the gross by was paid ahead and is carried into the
+    ///         new segment as its settled interest. The new segment's accrual
+    ///         starts at `block.timestamp`. The term (`startTime`,
+    ///         `durationDays`) is not touched here.
+    ///
+    ///         Every path that restarts the accrual goes through here: a part
+    ///         repayment, a part swap-to-repay, a part liquidation, an
+    ///         obligation handover, an in-place extension and origination
+    ///         (gross zero). A restart written anywhere else would let the
+    ///         period close rule ({LibPeriodicInterest.periodShortfall}) read a
+    ///         segment that was never charged, so the writer guard
+    ///         (`check-loan-accrual-writer.mjs`) refuses one. The caller passes
+    ///         the gross computed on the principal and rate the segment ran at,
+    ///         so it calls here before it changes either, or passes the gross
+    ///         it computed before; the ledger checkpoint ({touch}) keeps its own
+    ///         clock and is not affected by the order.
+    /// @return due The gross less the settled interest, saturating at zero.
+    function restartAccrual(LibVaipakam.Loan storage loan, uint256 grossInterest)
+        internal
+        returns (uint256 due)
+    {
+        uint256 carried;
+        (due, carried) = LibEntitlement.splitSettledInterest(loan, grossInterest);
+        loan.interestAccrualStart = uint64(block.timestamp);
+        loan.interestSettled = carried;
     }
 
     // ─── Sale ──────────────────────────────────────────────────────────────

@@ -529,19 +529,18 @@ contract Scenario8_BorrowerPreclose is Test {
 
         // Step 2: Verify completeOffset requires the offer to be accepted
         // First, it should revert with OffsetOfferNotAccepted
+        // (the accept reaches the completion through its self-call)
         vm.expectRevert(PrecloseOffsetFacet.OffsetOfferNotAccepted.selector);
-        vm.prank(borrower);
-        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
+        vm.prank(address(diamond));
+        PrecloseOffsetFacet(address(diamond)).completeOffsetInternal(activeLoanId);
 
         // Step 3: Simulate offer acceptance by writing offer.accepted = true
         // and creator = borrower via the layout-resilient mutator (the
         // pre-T-048 path used hand-packed vm.store on a slot offset that
         // shifted under the PAD storage extension; routing through the
         // named-field setter on TestMutatorFacet keeps this stable).
-        // With native NFT locking, completeOffset authorizes via
-        // requireBorrowerNFTOwnerOrKeeper — the NFT stays with the
-        // borrower, so prank(borrower) is sufficient even though
-        // offer.creator is set here.
+        // The completion runs inside the accept, as the Diamond (K1
+        // retired the external completeOffset).
         LibVaipakam.Offer memory acceptedOffer;
         acceptedOffer.creator = borrower;
         acceptedOffer.accepted = true;
@@ -555,13 +554,13 @@ contract Scenario8_BorrowerPreclose is Test {
         vm.expectEmit(true, true, true, false);
         emit PrecloseOffsetFacet.OffsetCompleted(activeLoanId, expectedNewOfferId, borrower, 0);
 
-        // Complete the offset (permissionless)
+        // Complete the offset as the accept's self-call does
         address lenderVault = VaultFactoryFacet(address(diamond)).getUserVaultAddress(lender);
         uint256 lenderVaultBeforeComplete = ERC20(mockERC20).balanceOf(lenderVault);
         uint256 borrowerBalBeforeComplete = ERC20(mockERC20).balanceOf(borrower);
 
-        vm.prank(borrower);
-        PrecloseOffsetFacet(address(diamond)).completeOffset(activeLoanId);
+        vm.prank(address(diamond));
+        PrecloseOffsetFacet(address(diamond)).completeOffsetInternal(activeLoanId);
 
         // Verify: original loan is now Repaid
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);

@@ -109,6 +109,7 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   // keeper) is a party, as is whoever set or cleared the instructions for
   // the position holder they name.
   ['InterestPaidFromReserve', ['caller']],
+  ['PartialRepaid', ['payer']],
   ['DueRepaymentRun', ['caller']],
   ['CollateralTopUpRun', ['caller']],
   ['StandingInstructionSkipped', ['caller']],

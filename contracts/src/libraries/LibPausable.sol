@@ -600,6 +600,31 @@ library LibPausable {
         return pausedSecondsAt(to) - pausedSecondsAt(from);
     }
 
+    /// @notice The earliest time whose unpaused time, `t - pausedSecondsAt(t)`,
+    ///         reaches `active`: the inverse of the pause-adjusted clock.
+    /// @dev    Exact, in one binary search over the log (#3779 review): the
+    ///         unpaused time at each interval's start rises with the log, so
+    ///         the last interval that starts before `active` is reached is the
+    ///         one whose whole length the answer carries. A pause still in
+    ///         force counts as ending now, the same horizon the loan clock's
+    ///         pause credit uses ({LibLoanClock.pauseCredit}).
+    function timeAtActiveSeconds(uint256 active) internal view returns (uint256) {
+        uint256 lo;
+        uint256 hi = pauseIntervalCount();
+        // Count the intervals that start while the unpaused time is below `active`.
+        while (lo < hi) {
+            uint256 mid = (lo + hi) / 2;
+            PauseInterval memory m = pauseIntervalAt(mid);
+            if (uint256(m.start) - uint256(m.pausedBefore) < active) lo = mid + 1;
+            else hi = mid;
+        }
+        if (lo == 0) return active;
+        PauseInterval memory iv = pauseIntervalAt(lo - 1);
+        uint256 end = iv.end == OPEN_END ? block.timestamp : uint256(iv.end);
+        if (end < iv.start) end = iv.start;
+        return active + uint256(iv.pausedBefore) + (end - uint256(iv.start));
+    }
+
     /// @notice Number of intervals on the log, counting a pause in force the
     ///         log has not yet recorded ({_unlogged}) as its last entry.
     function pauseIntervalCount() internal view returns (uint256) {

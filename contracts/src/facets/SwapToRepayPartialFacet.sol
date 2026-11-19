@@ -279,9 +279,9 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         // periodic auto-liquidation's already-settled days — the audit's M1 /
         // its SwapToRepay twin). Netted here; the stale `interestSettled` is
         // zeroed at the accrual-clock reset below (the #915 credit+zero pattern).
-        (uint256 accrued, uint256 settledCarried) = LibEntitlement.splitSettledInterest(
-            loan, LibEntitlement.accruedInterestToTime(loan, block.timestamp)
-        );
+        // #3779 — the segment's gross, kept for the one restart writer below.
+        uint256 segmentGross = LibEntitlement.accruedInterestToTime(loan, block.timestamp);
+        (uint256 accrued, ) = LibEntitlement.splitSettledInterest(loan, segmentGross);
         (uint256 treasuryShare, uint256 lenderShare) = LibEntitlement.splitTreasury(loan, accrued);
 
         // Must at least cover the accrued interest.
@@ -369,38 +369,16 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
             // remaining backing for HF / default math.
             LibLoanCollateral.reduce(loan, actualCollateralConsumed);
         }
-        // #408 / #410 / #413 (2026-06-12), Codex PR #559 round-1
-        // P1: mirror `RepayFacet.repayPartial`'s Option A remaining-
-        // committed-term tracking on this partial-repay entry point
-        // too. Without it, a full-term loan partially repaid via
-        // collateral swap would compute the floor on the reduced
-        // principal but over the ORIGINAL term, drifting out of sync
-        // with the formula `RepayFacet.repayPartial` uses on the same
-        // loan state shape.
-        //
-        // #641 — the re-stamp lands on the dedicated INTEREST clock
-        // (`interestAccrualStart`); the term tuple
-        // (`startTime` + `durationDays` → maturity + grace) is LEFT UNTOUCHED,
-        // mirroring `RepayFacet.repayPartial`. Seed the clock from the term for
-        // any loan that predates the fields before reading elapsed.
-        LibVaipakam.seedInterestClockIfUnset(loan);
-        // #3169 — only the clock's start moves; the new segment's full-term
-        // minimum is derived from the term ({LibLoanClock.minimumInterestSeconds}).
-        loan.interestAccrualStart = uint64(block.timestamp); // reset accrual clock
-        // Pass-2 A3 (#1191) — consume ONLY the settled portion this partial's
-        // charge just netted (the gross accrual) and PRESERVE any excess: a periodic
-        // auto-liquidation can OVERDELIVER (credits slippage-buffered proceeds >
-        // interest accrued so far), so zeroing all of it would forfeit the
-        // borrower's already-paid excess and later overstate the debt (Codex
-        // #1229). The clock is reset above, so the surviving excess
-        // ({LibEntitlement.splitSettledInterest}) credits future accrual.
-        loan.interestSettled = settledCarried;
+        // #3779 — the one accrual restart, as `RepayFacet.repayPartial` makes
+        // it: the new segment starts now on the reduced principal (the term
+        // tuple is untouched, #641), and the settled interest beyond this
+        // segment's gross is carried into it (#1191, #1229).
+        LibInterestLedger.restartAccrual(loan, segmentGross);
 
-        // ── T-034 §4.5 / #2731 — the interest this partial charged counts
-        //    toward the current period (the NETTED `accrued`, never
-        //    the gross accrual; Pass-2 A3, #1191). Same rule as `repayPartial`
-        //    ({LibPeriodicInterest.creditInterestPaid}).
-        LibPeriodicInterest.creditInterestPaid(loan, loanId, accrued);
+        // ── T-034 §4.5 / #3779 — every period that is over and now has
+        //    nothing short closes inline (the one close rule,
+        //    {LibPeriodicInterest.closeCoveredPeriods}).
+        LibPeriodicInterest.closeCoveredPeriods(loan, loanId, true);
 
         // ── Post-repay HF guard ──────────────────────────────────────
         // Pass-2 A2 (#1190, Codex #1229) — MONOTONICITY, not the old inverted

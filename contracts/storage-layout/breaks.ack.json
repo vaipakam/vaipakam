@@ -37,6 +37,13 @@
         "W|vaipakam@707[address]@0[]|32"
       ],
       "reason": "Batch PR 1 against main: #3626 gives the four per-pair lender-intent mappings an innermost slot key (up to eight intents per pair), and fields added to Storage ahead of protectedManagedAccounts move it from slot 707 to 721. Prelive; every chain takes the next fresh deploy, none is upgraded in place across this."
+    },
+    {
+      "baseSha256": "b68bb05114ab216329fb19ac8637bc165994503a01fc2903e4c034ca6993dd71",
+      "lines": [
+        "L|vaipakam@20[uint256]|9|8|uint128|loans[].interestPaidSinceLastPeriod"
+      ],
+      "reason": "#3779: the per-period interest counter is retired; whether a period is covered is read from the one interest ledger. Prelive; every chain takes the next fresh deploy, none is upgraded in place across this."
     }
   ]
 }

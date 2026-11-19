@@ -602,6 +602,23 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         assertEq(uint256(_borrowerLock()), uint256(LibPositionNFT.RouteReason.None), "released on cancel");
     }
 
+    /// @dev #3779 — every wallet repayment, the interest-only payment
+    ///      included, is refused while a swap order commit is live: the
+    ///      commit sized its lot to the debt it read.
+    function test_WalletRepaymentsRefusedWhileCommitted() public {
+        SwapToRepayIntentFacet.FusionOrderParams memory params = _armHappyCommit();
+        vm.prank(borrowerEoa);
+        SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
+        vm.startPrank(borrowerEoa);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.IntentPending.selector, LOAN_ID));
+        RepayPeriodicFacet(address(diamond)).payInterest(LOAN_ID, 1 ether);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.IntentPending.selector, LOAN_ID));
+        RepayFacet(address(diamond)).repayPartial(LOAN_ID, 1 ether);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.IntentPending.selector, LOAN_ID));
+        RepayFacet(address(diamond)).repayLoan(LOAN_ID);
+        vm.stopPrank();
+    }
+
     /// @dev Codex #2341 r3 — with coarse collateral the smallest lot that
     ///      covers the debt can be worth far more than the debt. Here one unit
     ///      of a 0-decimal, $2,000 collateral is the least lot covering a

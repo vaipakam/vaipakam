@@ -757,6 +757,63 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
     ///         since #3360, so it carries its loan-side reward cap; the reprice
     ///         on extension leaves that record exactly as it was (no Full stamp
     ///         to downgrade, and the cap fields are never reset).
+    /// @dev #3779 — interest already settled on the segment (a forced sale
+    ///      or the reserve instruction) is charged once: the extension draws
+    ///      the accrued interest less it, and the new segment starts with no
+    ///      old credit, so its first period is not covered by interest that
+    ///      paid the old one. Kills: the extension charging the gross accrual,
+    ///      which took the settled interest a second time and then left it
+    ///      standing against the new segment.
+    function test_3779_ExtendChargesSettledInterestOnce() public {
+        uint256 loanId = _setupExtendableLoan();
+        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        uint256 settledMidTerm = 1e15;
+
+        uint256 snap = vm.snapshotState();
+        uint256 before = ERC20(mockERC20).balanceOf(vault);
+        vm.prank(borrower);
+        _f().extendLoanInPlace(loanId, 500, 45);
+        uint256 drawnPlain = before - ERC20(mockERC20).balanceOf(vault);
+        vm.revertToState(snap);
+
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        l.interestSettled = settledMidTerm;
+        TestMutatorFacet(address(diamond)).setLoan(loanId, l);
+        before = ERC20(mockERC20).balanceOf(vault);
+        vm.prank(borrower);
+        _f().extendLoanInPlace(loanId, 500, 45);
+        uint256 drawnSettled = before - ERC20(mockERC20).balanceOf(vault);
+
+        assertEq(drawnPlain - drawnSettled, settledMidTerm, "the settled interest is not charged again");
+        LibVaipakam.Loan memory after_ = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(after_.interestSettled, 0, "no old credit stands against the new segment");
+        assertEq(after_.interestAccrualStart, block.timestamp, "the accrual restarts with the new term");
+    }
+
+    /// @dev #3779 — settled interest beyond the closing segment's accrual was
+    ///      paid ahead: the extension charges no interest and carries the rest
+    ///      into the new segment.
+    function test_3779_ExtendCarriesInterestPaidAhead() public {
+        uint256 loanId = _setupExtendableLoan();
+        uint256 paidAhead = 1_000 ether;
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        l.interestSettled = paidAhead;
+        TestMutatorFacet(address(diamond)).setLoan(loanId, l);
+        (,,, uint256 chargeSettled, ) = _f().getExtendFunding(loanId, borrower);
+        l.interestSettled = 0;
+        TestMutatorFacet(address(diamond)).setLoan(loanId, l);
+        (,,, uint256 chargePlain, ) = _f().getExtendFunding(loanId, borrower);
+        uint256 accrued = chargePlain - chargeSettled; // the closing segment's interest
+        assertGt(accrued, 0);
+        l.interestSettled = paidAhead;
+        TestMutatorFacet(address(diamond)).setLoan(loanId, l);
+
+        vm.prank(borrower);
+        _f().extendLoanInPlace(loanId, 500, 45);
+        LibVaipakam.Loan memory after_ = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(after_.interestSettled, paidAhead - accrued, "the rest is carried into the new segment");
+    }
+
     function test_1384_ExtendReprice_PlainLoanStampUnchanged() public {
         uint256 loanId = _setupExtendableLoan();
 

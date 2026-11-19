@@ -42,12 +42,12 @@ interface IInterestPaymentHost {
  *            leaves the remaining debt, the health factor and the amount
  *            due at repayment.
  *
- *         The PERIOD is not credited here. Each caller closes the period
- *         its own way, once: the forced sale advances the checkpoint after
- *         its booking, and the standing instruction credits the payment
- *         through `LibPeriodicInterest.creditInterestPaid`, which closes the
- *         period inline at its end. Crediting here as well would advance a
- *         sale's period twice.
+ *         The PERIOD is not closed here. Each caller closes it its own way,
+ *         once: the forced sale advances the checkpoint after its booking
+ *         (short or not), and the standing instruction and a wallet payment
+ *         run `LibPeriodicInterest.closeCoveredPeriods`, which closes every
+ *         period that is over and has nothing short. Closing here as well
+ *         would advance a sale's period twice.
  *
  * @dev    The interest must already sit in the Diamond. Hosted once, on
  *         `RepayPeriodicFacet.bookInterestPayment`, which the forced sale
@@ -57,9 +57,12 @@ library LibInterestPayment {
     /// @notice Where the interest came from.
     uint8 internal constant SOURCE_PERIODIC_SALE = 0;
     uint8 internal constant SOURCE_PAYMENT_RESERVE = 1;
+    /// @notice #3779 — paid from a wallet by `RepayPeriodicFacet.payInterest`.
+    uint8 internal constant SOURCE_WALLET = 2;
 
     /// @notice Interest was paid on an open loan, without touching principal.
-    /// @param source     {SOURCE_PERIODIC_SALE} or {SOURCE_PAYMENT_RESERVE}.
+    /// @param source     {SOURCE_PERIODIC_SALE}, {SOURCE_PAYMENT_RESERVE} or
+    ///                   {SOURCE_WALLET}.
     /// @param gross      The interest the payment was for.
     /// @param recovered  What reached the Diamond toward it (`<= gross`).
     /// @param lenderPaid What the lender side received (sellers' claims and

@@ -2741,6 +2741,7 @@
         "LoanReserveWithdrawn": "Reserva del préstamo retirada",
         "ExtendChargeDrawn": "Cargo de extensión pagado",
         "InterestPaidFromReserve": "Intereses pagados desde la reserva del préstamo",
+        "InterestPaidFromWallet": "Intereses pagados",
         "DueRepaymentRun": "Reembolsado desde la reserva del préstamo",
         "CollateralTopUpRun": "Garantía reforzada desde la reserva del préstamo",
         "StandingInstructionsSet": "Instrucciones permanentes establecidas",

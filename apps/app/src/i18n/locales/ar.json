@@ -2741,6 +2741,7 @@
         "LoanReserveWithdrawn": "تم سحب احتياطي القرض",
         "ExtendChargeDrawn": "تم دفع رسوم التمديد",
         "InterestPaidFromReserve": "دُفعت الفائدة من احتياطي القرض",
+        "InterestPaidFromWallet": "تم دفع الفائدة",
         "DueRepaymentRun": "سُدّد من احتياطي القرض",
         "CollateralTopUpRun": "زِيدت الضمانة من احتياطي القرض",
         "StandingInstructionsSet": "تم ضبط التعليمات الدائمة",

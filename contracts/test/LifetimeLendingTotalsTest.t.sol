@@ -78,8 +78,8 @@ contract LifetimeLendingTotalsTest is SetupTest {
     function _repaidInterest(Vm.Log[] memory logs) internal pure returns (uint256) {
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].topics[0] != RepayFacet.LoanRepaid.selector) continue;
-            (uint256 interest, uint256 lateFee,,,) =
-                abi.decode(logs[i].data, (uint256, uint256, uint256, uint256, LibVaipakam.LoanStatus));
+            (uint256 interest, uint256 lateFee,,,,) =
+                abi.decode(logs[i].data, (uint256, uint256, uint256, uint256, LibVaipakam.LoanStatus, uint256));
             return interest + lateFee;
         }
         revert("no LoanRepaid");

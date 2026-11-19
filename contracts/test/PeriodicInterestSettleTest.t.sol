@@ -7,6 +7,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
@@ -109,7 +110,7 @@ contract PeriodicInterestSettleTest is SetupTest {
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(l.periodicInterestCadence), uint8(MONTHLY));
         assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs));
-        assertEq(l.interestPaidSinceLastPeriod, 0);
+        assertEq(l.interestAccrualStart, SafeCast.toUint64(startTs), "the accrual starts with the loan");
     }
 
     // ─── previewPeriodicSettle ───────────────────────────────────────────────
@@ -298,64 +299,191 @@ contract PeriodicInterestSettleTest is SetupTest {
 
     // ─── settlePeriodicInterest just-stamp path (shortfall == 0) ─────────────
 
-    function testSettle_JustStamp_AfterRepayPartialFold() public {
-        // Borrower partial-repays MORE than the period's expected interest
-        // before the period boundary, then waits for grace, then anyone
-        // calls settle → shortfall is zero → just-stamp path → no revert.
-        // Actually the inline fold should already advance the checkpoint
-        // when block.timestamp crosses the boundary AND interest paid >=
-        // expected. Test the inline-advance path here.
-
-        // Travel to just before the boundary, repay enough to cover the
-        // period's interest.
-        vm.warp(startTs + 29 days);
-        ERC20Mock(mockERC20).mint(borrower, 100 ether);
-        vm.prank(borrower);
-        ERC20Mock(mockERC20).approve(address(diamond), 100 ether);
-        // Partial-repay 50 ether of principal (minimum allowed by
-        // assetRiskParams.minPartialBps which defaults to 100bps = 1%
-        // of 1000 ether = 10 ether minimum). 50 ether is well above.
-        // The contract pulls partialAmount + accrued from the borrower —
-        // the accrued portion accumulates into interestPaidSinceLastPeriod.
-        vm.prank(borrower);
-        RepayFacet(address(diamond)).repayPartial(loanId, 50 ether);
-
-        // Now warp past the period boundary AND grace.
-        vm.warp(startTs + 30 days + 1 days + 1);
-
-        // Has the inline advance already fired during the prior repay?
-        // No — at that point block.timestamp was still 29 days, BEFORE
-        // the boundary, so the advance condition `block.timestamp >=
-        // boundary` was false. We need to trigger the advance via a
-        // post-boundary repay OR a settle call.
-
-        // Repay another small chunk after the boundary to trigger the
-        // inline advance through the fold.
-        ERC20Mock(mockERC20).mint(borrower, 100 ether);
-        vm.prank(borrower);
-        ERC20Mock(mockERC20).approve(address(diamond), 100 ether);
-        vm.prank(borrower);
-        RepayFacet(address(diamond)).repayPartial(loanId, 20 ether);
-
-        // Verify checkpoint advanced.
-        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
-        assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs + 30 days));
-        assertEq(l.interestPaidSinceLastPeriod, 0); // reset after advance
+    /// @dev The 12% APR fixture's interest on `principal` over `secs`.
+    function _interest(uint256 principal, uint256 secs) internal pure returns (uint256) {
+        return (principal * 1200 * secs) / (365 days * 10_000);
     }
 
-    function testSettle_JustStamp_DirectSettlerCall() public {
-        // Seed interestPaidSinceLastPeriod high enough that the period
-        // shortfall is exactly zero — exercises the just-stamp branch
-        // without depending on the floating-point quirks of the
-        // accrual math (every partial repay resets `startTime` so a
-        // single call can't capture a full 30-day period's interest;
-        // simulating this end-to-end would require multiple repays
-        // and brittle fixture timing).
+    function _repayPartial(uint256 amount) internal {
+        ERC20Mock(mockERC20).mint(borrower, 100 ether);
+        vm.startPrank(borrower);
+        ERC20Mock(mockERC20).approve(address(diamond), 100 ether);
+        RepayFacet(address(diamond)).repayPartial(loanId, amount);
+        vm.stopPrank();
+    }
+
+    function _preview() internal view returns (uint256 expected, uint256 paid, uint256 shortfall) {
+        (,,, expected, paid, shortfall,) = RepayPeriodicFacet(address(diamond)).previewPeriodicSettle(loanId);
+    }
+
+    /// @dev #3779 — a part repayment pays all the interest so far and
+    ///      restarts the accrual on the reduced principal, so a period that
+    ///      straddles it owes only what the reduced principal accrued from the
+    ///      repayment to the boundary. A part repayment after the boundary pays
+    ///      that too, and the period closes inline. Kills: a per-period figure
+    ///      priced on the whole period at the current principal, which read the
+    ///      period short by 29 days of interest the repayment already paid.
+    function testSettle_JustStamp_AfterRepayPartialFold() public {
+        vm.warp(startTs + 29 days);
+        _repayPartial(50 ether);
+
+        vm.warp(startTs + 30 days + 1 days + 1);
+        (uint256 expected, uint256 paid, uint256 shortfall) = _preview();
+        assertEq(expected, _interest(950 ether, 1 days), "only the day after the repayment is owed");
+        assertEq(paid, 0);
+        assertEq(shortfall, expected);
+
+        // A second part repayment after the boundary pays that day too, and
+        // the period closes inline.
+        _repayPartial(20 ether);
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
-        // Expected for the period at the current principal and rate.
-        uint256 expected = (uint256(l.principal) *
-            uint256(l.interestRateBps) * 30) / (10_000 * 365);
-        l.interestPaidSinceLastPeriod = SafeCast.toUint128(expected);
+        assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs + 30 days));
+        assertEq(l.interestAccrualStart, block.timestamp, "the accrual restarted at the repayment");
+    }
+
+    /// @dev #3779 — the interest so far, paid from a wallet in two parts,
+    ///      counts toward the period, and the part at the period's end closes
+    ///      it inline with no sale; the settlement then has nothing to sell.
+    function testPayInterest_FromWalletClosesThePeriodWithoutASale() public {
+        vm.warp(startTs + 20 days);
+        uint256 first = _friendPays(100 ether);
+        assertEq(first, _interest(1000 ether, 20 days), "the interest so far, no more");
+        LibVaipakam.Loan memory mid = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(mid.interestSettled, first, "settled on the loan");
+        assertEq(mid.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs), "period still open");
+        assertEq(mid.principal, 1000 ether, "principal untouched");
+        assertEq(mid.interestAccrualStart, SafeCast.toUint64(startTs), "the accrual is not restarted");
+
+        vm.warp(startTs + 30 days);
+        _friendPays(100 ether);
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs + 30 days), "closed inline");
+        assertEq(l.interestSettled, _interest(1000 ether, 30 days), "the period's interest, settled once");
+    }
+
+    function _friendPays(uint256 maxAmount) internal returns (uint256) {
+        address friend = makeAddr("friend");
+        ERC20Mock(mockERC20).mint(friend, maxAmount);
+        vm.startPrank(friend);
+        ERC20Mock(mockERC20).approve(address(diamond), maxAmount);
+        uint256 paid = RepayPeriodicFacet(address(diamond)).payInterest(loanId, maxAmount);
+        vm.stopPrank();
+        return paid;
+    }
+
+    /// @dev #3779 — a payment after a period's end pays the part day past it
+    ///      too; nothing is carried, yet the next period reads only the 29.5
+    ///      days still unpaid, because a period's shortfall is the accrual
+    ///      through its boundary less everything settled.
+    function testPayInterest_PartDayPaidAheadCountsTowardTheNextBoundary() public {
+        vm.warp(startTs + 30 days + 12 hours);
+        uint256 first = _friendPays(100 ether);
+        assertEq(first, _interest(1000 ether, 30 days + 12 hours), "30.5 days");
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs + 30 days), "first period closed");
+
+        vm.warp(startTs + 61 days + 1);
+        (uint256 expected, uint256 paid, uint256 shortfall) = _preview();
+        // The preview shows the second period's own figures: its 30 days of
+        // interest, and the half day paid ahead toward it. The 30 days paid
+        // for the first period are not shown as paid toward this one.
+        uint256 throughFirst = _interest(1000 ether, 30 days);
+        assertEq(expected, _interest(1000 ether, 60 days) - throughFirst, "the second period's own interest");
+        assertEq(paid, first - throughFirst, "the half day paid ahead");
+        assertEq(shortfall, expected - paid, "29.5 days short, not 30");
+        assertEq(shortfall, _interest(1000 ether, 60 days) - first, "the same as the segment's accrual less all settled");
+
+        _friendPays(100 ether);
+        l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs + 60 days), "second period closed");
+    }
+
+    function _pauseFor(uint256 secs) internal {
+        AdminFacet(address(diamond)).pause();
+        vm.warp(block.timestamp + secs);
+        AdminFacet(address(diamond)).unpause();
+    }
+
+    /// @dev #3779 — a pause inside the current period moves its end but not
+    ///      its opening: the preview shows the whole period's interest and
+    ///      every payment made toward it.
+    function testPreview_PauseInsideThePeriodKeepsItsOpening() public {
+        vm.warp(startTs + 10 days);
+        uint256 first = _friendPays(100 ether);
+        vm.warp(startTs + 15 days);
+        _pauseFor(5 days);
+        (, uint256 end_,,,,,) = RepayPeriodicFacet(address(diamond)).previewPeriodicSettle(loanId);
+        assertEq(end_, startTs + 35 days, "the end moves by the pause");
+        (uint256 expected, uint256 paid, uint256 shortfall) = _preview();
+        assertEq(expected, _interest(1000 ether, 35 days), "the period accrues for its real length");
+        assertEq(paid, first, "the whole payment counts toward it");
+        assertEq(shortfall, expected - paid);
+    }
+
+    /// @dev #3779 — a pause in an earlier period moves the current period's
+    ///      opening with it, so the earlier period's days are not read as
+    ///      this period's.
+    function testPreview_PauseInAnEarlierPeriodMovesTheOpening() public {
+        vm.warp(startTs + 10 days);
+        _pauseFor(5 days);
+        vm.warp(startTs + 35 days);
+        _friendPays(100 ether); // closes the first period (ends at 35 days)
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs + 30 days), "first period closed");
+        (uint256 expected, uint256 paid, uint256 shortfall) = _preview();
+        assertEq(expected, _interest(1000 ether, 65 days) - _interest(1000 ether, 35 days), "30 days, from 35 to 65");
+        assertEq(paid, 0, "nothing paid toward the second period yet");
+        assertEq(shortfall, expected);
+    }
+
+    /// @dev #3779 review — a long pause that ends just before the boundary
+    ///      moves the opening by its whole length: found exactly, not by a
+    ///      fixed number of steps (stepping crossed this pause one day at a
+    ///      time and stopped two days short).
+    function testPreview_LongPauseBeforeTheBoundaryMovesTheOpeningExactly() public {
+        vm.warp(startTs + 29 days);
+        _pauseFor(10 days);
+        vm.warp(startTs + 40 days);
+        _friendPays(100 ether); // closes the first period (ends at 40 days)
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs + 30 days), "first period closed");
+        (uint256 expected, uint256 paid, uint256 shortfall) = _preview();
+        assertEq(expected, _interest(1000 ether, 70 days) - _interest(1000 ether, 40 days), "30 days, from 40 to 70");
+        assertEq(paid, 0, "nothing paid toward the second period yet");
+        assertEq(shortfall, expected);
+    }
+
+    /// @dev #3779 review — several pauses before the opening all move it.
+    function testPreview_SeveralEarlierPausesMoveTheOpening() public {
+        for (uint256 i; i < 12; ++i) {
+            // Absolute times: viaIR may read block.timestamp once per call.
+            vm.warp(startTs + (2 * i + 1) * 1 days);
+            AdminFacet(address(diamond)).pause();
+            vm.warp(startTs + (2 * i + 2) * 1 days);
+            AdminFacet(address(diamond)).unpause();
+        }
+        vm.warp(startTs + 42 days);
+        _friendPays(100 ether); // the first period ends at 42 days
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs + 30 days), "first period closed");
+        (uint256 expected, uint256 paid,) = _preview();
+        assertEq(expected, _interest(1000 ether, 72 days) - _interest(1000 ether, 42 days), "30 days, from 42 to 72");
+        assertEq(paid, 0, "nothing paid toward the second period yet");
+    }
+
+    /// @dev #3779 — one payment covering two whole periods closes both.
+    function testPayInterest_OnePaymentClosesTwoPeriods() public {
+        vm.warp(startTs + 60 days);
+        _friendPays(100 ether);
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs + 60 days), "both closed");
+    }
+
+    /// @dev Interest already settled on the segment (seeded as a forced sale
+    ///      would leave it) covers the period, so the settlement just stamps.
+    function testSettle_JustStamp_DirectSettlerCall() public {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        l.interestSettled = _interest(1000 ether, 30 days);
         TestMutatorFacet(address(diamond)).setLoan(loanId, l);
 
         // Past the boundary + grace.
@@ -368,67 +496,48 @@ contract PeriodicInterestSettleTest is SetupTest {
 
         LibVaipakam.Loan memory after_ = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(after_.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs + 30 days));
-        assertEq(after_.interestPaidSinceLastPeriod, 0);
+        assertEq(after_.interestSettled, l.interestSettled, "a just-stamp moves nothing");
     }
 
-    // ─── repayPartial fold accounting ────────────────────────────────────────
+    // ─── repayPartial and the period ─────────────────────────────────────────
 
-    function testRepayPartial_AccrualAccumulatesIntoInterestPaidSinceLastPeriod() public {
-        // Travel partway into the period, partial-repay, verify
-        // interestPaidSinceLastPeriod tracks the accrued amount the
-        // contract just settled.
+    /// @dev #3779 — a part repayment inside a period restarts the accrual
+    ///      through the one restart writer and leaves the period open; the
+    ///      period then owes the reduced principal's accrual to its boundary.
+    function testRepayPartial_RestartsTheAccrualAndLeavesThePeriodOpen() public {
         vm.warp(startTs + 10 days);
-        ERC20Mock(mockERC20).mint(borrower, 100 ether);
-        vm.prank(borrower);
-        ERC20Mock(mockERC20).approve(address(diamond), 100 ether);
-        vm.prank(borrower);
-        RepayFacet(address(diamond)).repayPartial(loanId, 50 ether);
+        _repayPartial(50 ether);
 
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
-        // Should be non-zero. Exact value depends on the existing
-        // accrual math but must be > 0 at 10 days into the loan.
-        assertGt(l.interestPaidSinceLastPeriod, 0);
-        // Checkpoint NOT yet advanced (we're still within the period).
+        assertEq(l.interestAccrualStart, block.timestamp);
+        assertEq(l.interestSettled, 0);
         assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs));
+        (uint256 expected,, uint256 shortfall) = _preview();
+        assertEq(expected, _interest(950 ether, 20 days));
+        assertEq(shortfall, expected);
     }
 
-    /// @dev Pass-2 A3 (#1191, Codex #1229 round 3, P1) — the period accumulator
-    ///      must receive the NETTED cash interest (`accrued`), never the gross.
-    ///      `grossAccrued` accrues from `interestAccrualStart`, which a periodic
-    ///      auto-liquidation does NOT reset when it advances a checkpoint — only
-    ///      `interestPaidSinceLastPeriod` is zeroed — so `grossAccrued` still
-    ///      spans the already-settled period(s). Crediting it here would let a
-    ///      post-auto-settle partial mark the NEW period paid with OLD interest,
-    ///      skip a required auto-liquidation, and underpay the lender. We model a
-    ///      prior over-settled period by seeding `interestSettled` well above the
-    ///      10-day accrual so the netted cash charge is zero, and assert the
-    ///      accumulator is NOT inflated by that already-settled span. (Exact
-    ///      current-period attribution — which would carry a prior over-delivery
-    ///      excess forward — is deferred to #1230.)
-    function testRepayPartial_periodAccumulatorExcludesPreSettledSpan() public {
-        uint256 seededCredit = 100 ether; // >> 10-day accrual → netted cash = 0
+    /// @dev Pass-2 A3 (#1191, #1229) / #3779 — settled interest beyond what
+    ///      the segment accrued (a forced sale can deliver more than has
+    ///      accrued) is the borrower's, paid ahead: a part repayment charges no
+    ///      interest out of it, carries the rest into the restarted segment,
+    ///      and the carried interest counts toward the period once.
+    function testRepayPartial_SettledAheadIsCarriedAndCountedOnce() public {
+        uint256 seededCredit = 100 ether; // >> 10-day accrual → no interest charged
         LibVaipakam.Loan memory l0 = LoanFacet(address(diamond)).getLoanDetails(loanId);
-        l0.interestSettled = SafeCast.toUint128(seededCredit);
+        l0.interestSettled = seededCredit;
         TestMutatorFacet(address(diamond)).setLoan(loanId, l0);
 
         vm.warp(startTs + 10 days);
-        ERC20Mock(mockERC20).mint(borrower, 100 ether);
-        vm.prank(borrower);
-        ERC20Mock(mockERC20).approve(address(diamond), 100 ether);
-        vm.prank(borrower);
-        RepayFacet(address(diamond)).repayPartial(loanId, 50 ether);
+        _repayPartial(50 ether);
 
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
-        // The pre-settled span is NOT credited into the current period: the
-        // netted cash charge is zero, so the accumulator stays zero. Pre-revert
-        // (the reverted `+= grossAccrued`) this over-credited ~10 days of
-        // already-settled interest and could skip a required auto-liquidation.
-        assertEq(
-            l.interestPaidSinceLastPeriod,
-            0,
-            "already-settled span must not inflate the current-period accumulator (#1229 P1)"
-        );
-        // Checkpoint NOT advanced (nothing paid toward this period).
-        assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs));
+        uint256 carried = seededCredit - _interest(1000 ether, 10 days);
+        assertEq(l.interestSettled, carried, "the excess is carried into the restarted segment");
+        assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs), "the boundary has not passed");
+        (uint256 expected, uint256 paid, uint256 shortfall) = _preview();
+        assertEq(expected, _interest(950 ether, 20 days));
+        assertEq(paid, expected, "the carried interest covers the period");
+        assertEq(shortfall, 0);
     }
 }
