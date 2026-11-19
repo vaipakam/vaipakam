@@ -833,7 +833,7 @@ merge_carry_forward_records() {
   local tmp
   tmp=$(mktemp)
   if ! jq --slurpfile saved "$saved" \
-      'reduce ($saved[0] | to_entries[]) as $e (.; if (.[$e.key] // "") == "" then .[$e.key] = $e.value else . end)' \
+      '. as $d | $d + ($saved[0] | with_entries(select(($d[.key] // "") == "")))' \
       "$dst" > "$tmp"; then
     rm -f "$tmp"
     echo "ERROR: could not merge the saved records into $dst (kept at $saved)" >&2
