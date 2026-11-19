@@ -384,6 +384,15 @@ export type IndexedLoanDeadlines =
       graceEnd: number;
       /** A pause was in force at `asOf`: every deadline is still moving. */
       pauseInForce: boolean;
+      /** #3525 — a sequencer outage moved `graceEnd` to its window's end.
+       *  Absent from an older Worker. */
+      graceEndMovedByOutage?: boolean;
+      /** #3525 — the outage window `graceEnd` was judged against; `null`
+       *  when it is not known (`sequencerOutageUnknown` says why), in which
+       *  case the real grace end may be later than `graceEnd`. Absent from
+       *  an older Worker, which is unknown too. */
+      sequencerOutage?: { downAt: number; windowEnd: number; readAt: number } | null;
+      sequencerOutageUnknown?: string;
       asOf: number;
     }
   | {

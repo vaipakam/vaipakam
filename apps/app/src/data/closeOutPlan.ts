@@ -29,6 +29,7 @@ import { AssetType, LoanStatus } from '../lib/types';
 import {
   LOAN_STATUS_ACTIVE,
   loanEndTimeOf,
+  verifiablyPastGrace,
   readLoanLive,
   readRepaymentDueLive,
 } from '../contracts/loanLive';
@@ -244,7 +245,7 @@ export async function planRepay(
         })
       : Promise.resolve(0n),
   ]);
-  if (erc20 && chainNow > loanEndTimeOf(live, chainNow) + graceSec) {
+  if (erc20 && verifiablyPastGrace(live, graceSec, chainNow)) {
     return refused(loan, 'repay', copy.errors.pastGrace);
   }
   let due = calcDue;
@@ -314,7 +315,7 @@ export async function planPreclose(
     diamondAddress: diamond,
     durationDays: Number(live.durationDays),
   });
-  if (latestBlock.timestamp > loanEndTimeOf(live, latestBlock.timestamp) + graceSec) {
+  if (verifiablyPastGrace(live, graceSec, latestBlock.timestamp)) {
     return refused(loan, 'preclose', copy.errors.preclosePastGrace);
   }
   // calculateRepaymentAmount IS the preclose figure, and reads 0 for any

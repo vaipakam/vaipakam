@@ -38,7 +38,9 @@ import { AssetType, LoanStatus } from '../lib/types';
 import { toRefinanceOfferPayload, type CreateOfferPayload } from '../lib/offerSchema';
 import {
   LOAN_STATUS_ACTIVE,
+  graceEndOf,
   loanEndTimeOf,
+  verifiablyPastGrace,
   readLoanLive,
   type LoanLive,
 } from '../contracts/loanLive';
@@ -247,8 +249,7 @@ export async function checkRefinanceRequest(
     durationDays: Number(liveLoan.durationDays),
   });
   const chainNow = latestBlock.timestamp;
-  const endTime = loanEndTimeOf(liveLoan, chainNow);
-  if (chainNow > endTime + graceSeconds) {
+  if (verifiablyPastGrace(liveLoan, graceSeconds, chainNow)) {
     return refusal(loan.loanId, copy.errors.refinancePastGrace);
   }
   // The review quoted a fee config — a governance retune inside its
@@ -305,7 +306,8 @@ export async function checkRefinanceRequest(
   // OfferCreateFacet clamps a refinance request's expiry to the grace
   // boundary (graceEnd + 1); when that binds, the request lives until
   // the grace end, not for the full window.
-  const graceEnd = endTime + graceSeconds;
+  // #3525 — the chain's grace end, moved by a sequencer outage window.
+  const graceEnd = graceEndOf(liveLoan, graceSeconds, chainNow).graceEnd;
   return {
     kind: 'ready',
     loanId: loan.loanId,
@@ -319,7 +321,7 @@ export async function checkRefinanceRequest(
     requestExpiry,
     graceEnd,
     expiryGraceClamped: graceEnd + 1n < requestExpiry,
-    pastDue: chainNow > endTime,
+    pastDue: chainNow > loanEndTimeOf(liveLoan, chainNow),
     caps: capsCover ? null : { rateBps: terms.rateBps, maxNewExpiry: neededExpiry },
     payload: toRefinanceOfferPayload(liveLoan, loan.loanId, {
       rateBpsMax: terms.rateBps,

@@ -8,10 +8,13 @@ import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
   interestTermEnd,
+  outageMoved,
   pausedSecondsBetween,
   proRataInterestSeconds,
   readPauseLog,
+  readSequencerOutageWindow,
   type PauseLog,
+  type SequencerOutageWindow,
 } from '@vaipakam/lib/loanClock';
 
 /** LibVaipakam.LoanStatus.Active — first enum member. */
@@ -77,6 +80,13 @@ export interface LoanLive {
    *  moved by the paused time since the loan's start. Empty on a Diamond
    *  without the loan clock, which never moves a deadline. */
   pauseLog: PauseLog;
+  /** #3525 — the Diamond's latest L2 sequencer outage window, read at the
+   *  same block (`getSequencerOutageWindow`). A grace end inside it moves to
+   *  its end on-chain (#3410); the due date does not. Absent when the read
+   *  FAILED: the window is then unknown, and no surface may say the grace
+   *  period has ended from this snapshot ({@link graceEndOf}). A Diamond that
+   *  predates #3410 reads as no outage, definitively. */
+  outage?: SequencerOutageWindow;
   // Collateral identity — a refinance-tagged offer must repeat these
   // EXACTLY for the collateral to carry over instead of re-pledging.
   collateralAsset: `0x${string}`;
@@ -118,6 +128,36 @@ export function pauseCreditOf(live: LoanLive, at: bigint = live.readAtTimestamp)
  *  in force up to it, and cannot know about a pause that has not begun. */
 export function loanEndTimeOf(live: LoanLive, at: bigint = live.readAtTimestamp): bigint {
   return originalLoanEndTimeOf(live) + pauseCreditOf(live, at);
+}
+
+/**
+ * The loan's EFFECTIVE grace end as of `at` — `LibLoanClock.graceEnd`: the
+ * effective maturity plus the grace period, moved to the end of the latest
+ * sequencer outage window when it falls inside it (#3410, #3525).
+ *
+ * `outageKnown: false` means the snapshot could not read the window, so the
+ * grace end shown is the unmoved one and the real one may be later: a
+ * surface may count down to it, but must not say the grace period is over
+ * or refuse a repayment on it. The chain decides then.
+ */
+export function graceEndOf(
+  live: LoanLive,
+  graceSeconds: bigint,
+  at: bigint = live.readAtTimestamp,
+): { graceEnd: bigint; movedByOutage: boolean; outageKnown: boolean } {
+  const unmoved = loanEndTimeOf(live, at) + graceSeconds;
+  if (live.outage === undefined) return { graceEnd: unmoved, movedByOutage: false, outageKnown: false };
+  const graceEnd = outageMoved(unmoved, live.outage);
+  return { graceEnd, movedByOutage: graceEnd !== unmoved, outageKnown: true };
+}
+
+/** Whether the loan is VERIFIABLY past its grace end at `at` (#3525): the
+ *  chain's moved grace end has passed and the outage window was read. With
+ *  the window unread this is false, so a client gate never refuses what the
+ *  chain may still accept; the chain decides. */
+export function verifiablyPastGrace(live: LoanLive, graceSeconds: bigint, at: bigint): boolean {
+  const g = graceEndOf(live, graceSeconds, at);
+  return g.outageKnown && at > g.graceEnd;
 }
 
 /** Seconds of the interest term left at `at` — `LibLoanClock
@@ -328,7 +368,7 @@ export async function readLoanLive(
     blockNumber !== undefined ? { blockNumber } : { blockTag: 'latest' },
   );
   const at = atBlock.number;
-  const [rawResult, ledgerResult, pauseLogResult] = await Promise.allSettled([
+  const [rawResult, ledgerResult, pauseLogResult, outageResult] = await Promise.allSettled([
     publicClient.readContract({
       address: diamondAddress,
       abi: DIAMOND_ABI_VIEM,
@@ -348,6 +388,9 @@ export async function readLoanLive(
     // paused" — treating it so would show an early deadline as current. A
     // Diamond without the loan clock answers an empty log, definitively.
     readPauseLog({ client: publicClient, diamond: diamondAddress, blockNumber: at }),
+    // #3525 — SOFT: a failed read is an unknown window (`outage` absent),
+    // which only stops a surface from declaring the grace period over.
+    readSequencerOutageWindow({ client: publicClient, diamond: diamondAddress, blockNumber: at }),
   ]);
   if (rawResult.status === 'rejected') throw rawResult.reason;
   if (pauseLogResult.status === 'rejected') throw pauseLogResult.reason;
@@ -355,6 +398,7 @@ export async function readLoanLive(
   return {
     readAtTimestamp: atBlock.timestamp,
     pauseLog: pauseLogResult.value,
+    ...(outageResult.status === 'fulfilled' ? { outage: outageResult.value } : {}),
     // A FAILED read is "unknown", never zero (Codex #1801 r8 P2): a seller
     // quote built on it is unavailable, not free.
     sellerClaimOnSale:

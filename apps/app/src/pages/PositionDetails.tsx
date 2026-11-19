@@ -43,6 +43,7 @@ import {
 } from '../contracts/preflights';
 import {
   LOAN_STATUS_ACTIVE,
+  graceEndOf,
   loanEndTimeOf,
   originalLoanEndTimeOf,
   pauseCreditOf,
@@ -1491,10 +1492,28 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     : rowDue.kind === 'known'
       ? rowDue.maturity
       : null;
-  const graceDeadline =
-    grace.data !== undefined && termsEndSec !== null
-      ? termsEndSec + Number(grace.data)
+  // #3525 — from live terms the grace end is the chain's: moved to the end
+  // of a sequencer outage window it falls in. `graceOutageKnown` false means
+  // that window did not read, so the real grace end may be later; the row
+  // fallback carries the indexer's own moved figure and its own flag.
+  const liveGrace =
+    bannerTermsData && grace.data !== undefined
+      ? graceEndOf(bannerTermsData.live, grace.data, BigInt(bannerNowSec))
       : null;
+  const graceOutageKnown = liveGrace
+    ? liveGrace.outageKnown
+    : row.deadlines?.available === true && row.deadlines.sequencerOutage != null;
+  const graceMovedByOutage = liveGrace
+    ? liveGrace.movedByOutage
+    : row.deadlines?.available === true && row.deadlines.graceEndMovedByOutage === true;
+  const graceDeadline =
+    liveGrace
+      ? Number(liveGrace.graceEnd)
+      : grace.data !== undefined && termsEndSec !== null
+        ? row.deadlines?.available === true && rowDue.kind === 'known'
+          ? row.deadlines.graceEnd
+          : termsEndSec + Number(grace.data)
+        : null;
   const graceRemaining = graceDeadline !== null ? graceDeadline - bannerNowSec : null;
   // Codex #1166 r4 — the LIVE status can be ahead of both the row and
   // the separate liveStatus query: a loan that already entered
@@ -2017,6 +2036,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // only the LIVE read knows the loan is FallbackPending (r4).
   const graceVerifiablyOver =
     bannerTermsData !== undefined &&
+    // #3525 — an unread outage window may have moved the grace end later.
+    graceOutageKnown &&
     !liveSaysFallbackPending &&
     graceRemaining !== null &&
     graceRemaining < 0;
@@ -2029,7 +2050,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       ? 'unknown'
       : graceRemaining >= 0
         ? 'countdown'
-        : bannerTermsData
+        : bannerTermsData && graceOutageKnown
           ? 'over'
           : 'unknown';
   // Codex #1166 r2 — fallback_pending is the OTHER post-grace danger
@@ -2600,10 +2621,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         diamondAddress: walletChain.diamondAddress,
         durationDays: Number(live.durationDays),
       });
-      if (
-        latestBlock.timestamp >
-        loanEndTimeOf(live, latestBlock.timestamp) + graceSec
-      ) {
+      // #3525 — the chain's grace end, moved by a sequencer outage window it
+      // falls in. With the window unread the chain decides instead.
+      const liveGraceEnd = graceEndOf(live, graceSec, latestBlock.timestamp);
+      if (liveGraceEnd.outageKnown && latestBlock.timestamp > liveGraceEnd.graceEnd) {
         setError(copy.errors.pastGrace);
         return;
       }
@@ -2892,9 +2913,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     : null;
   const livePastDue =
     liveEndTime !== null && loanLive.data!.chainNow > liveEndTime;
+  // #3525 — the grace end the chain enforces, moved by a sequencer outage
+  // window it falls in (unmoved, and so conservative, while that window is
+  // unread or the bucket is loading).
   const liveWithinGraceWindow =
     liveEndTime !== null &&
-    loanLive.data!.chainNow <= liveEndTime + (grace.data ?? 0n);
+    loanLive.data!.chainNow <=
+      graceEndOf(loanLive.data!.live, grace.data ?? 0n, loanLive.data!.chainNow).graceEnd;
 
   const actionLabel =
     action === 'repay'
@@ -3116,6 +3141,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   : role === 'borrower'
                     ? copy.positions.graceOverBorrower
                     : copy.positions.graceOverViewer}
+            {gracePhase !== 'over' && graceMovedByOutage ? ` ${copy.positions.graceMovedByOutage}` : null}
+            {gracePhase !== 'over' && !graceOutageKnown ? ` ${copy.positions.graceOutageUnknown}` : null}
           </span>
         </div>
       ) : showFallbackCureBanner ? (

@@ -44,6 +44,18 @@ vi.mock('../contracts/loanLive', () => ({
   LOAN_STATUS_ACTIVE: 0,
   readLoanLive: vi.fn(async () => reads.live),
   loanEndTimeOf: (live: { endTime: bigint }) => live.endTime,
+  // #3525 — the stub's grace end: the due date plus the grace, with the
+  // outage window read and empty unless a test sets `outageEnd` / `outageUnknown`.
+  graceEndOf: (live: { endTime: bigint; outageEnd?: bigint; outageUnknown?: boolean }, g: bigint) => {
+    const unmoved = live.endTime + g;
+    const graceEnd = live.outageEnd !== undefined && live.outageEnd > unmoved ? live.outageEnd : unmoved;
+    return { graceEnd, movedByOutage: graceEnd !== unmoved, outageKnown: !live.outageUnknown };
+  },
+  verifiablyPastGrace: (live: { endTime: bigint; outageEnd?: bigint; outageUnknown?: boolean }, g: bigint, at: bigint) => {
+    const unmoved = live.endTime + g;
+    const graceEnd = live.outageEnd !== undefined && live.outageEnd > unmoved ? live.outageEnd : unmoved;
+    return !live.outageUnknown && at > graceEnd;
+  },
 }));
 // #1558 — the payoff figures come from the contract; the quote reader is
 // stubbed so the plan's use of them is what is pinned.

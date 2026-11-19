@@ -2004,3 +2004,12 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 
 **Gap.** No Anvil spec announces a change yet. It needs the admin to publish v1 and announce v2 on the fork; the spec should assert the notice, accept v2 from it, and see the notice go quiet.
 
+## Grace ends moved by a sequencer outage (#3525)
+<a id="cov-grace-ends-moved-by-a-sequencer-outage-3525"></a>
+
+**Journey.** Since #3410 a grace end inside the latest L2 sequencer outage or its recovery window moves to the window's end on-chain. The app reads the Diamond's own window (`getSequencerOutageWindow`) with every live loan snapshot, softly: a failed read leaves the window unknown. `graceEndOf` gives the moved grace end and says whether the window was read; `verifiablyPastGrace` is true only when it was read and the moved end has passed. The loan page's countdown, its "no longer accepts repayment" phase and the hidden repay button, the partial-repay check, the close-out and preclose plans, the refinance form, plan and pending card, and the payoff permit's last fillable moment all use them. The banner adds a sentence when an outage moved the deadline, and another when the window could not be read. Rows dated from the chain (`withChainDeadlines`) carry the indexer's fields: `graceEndMovedByOutage`, `sequencerOutage` and `sequencerOutageUnknown`.
+
+**Tier.** Unit: `src/contracts/loanLive.test.ts` pins the move, the window edges and the unread case; `src/data/liveLoanRow.test.ts` pins a moved row and an unread window; the plan tests' loan-mirror stubs carry the same two helpers.
+
+**Gap.** No Anvil spec: the local chain has no sequencer uptime feed, so the window is always empty and nothing moves. A live drive needs a real outage on an L2 testnet.
+

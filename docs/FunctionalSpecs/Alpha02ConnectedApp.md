@@ -1897,6 +1897,19 @@ Thin-market honesty rules apply.
   can act either: it points to this page's close-out card, when shown, for
   whether the lender can close the loan out now and what stands in the way
   if not, and says anyone may close it first.
+- A grace end that falls inside a layer-2 sequencer outage, or the
+  recovery window after it, moves to the end of that window, as the
+  protocol moves it: a borrower who could not send a repayment while the
+  network was down can still repay in the recovery window. The due date
+  does not move. Every surface that shows a grace end, counts down to it,
+  or refuses an action because grace has ended uses that moved end. When
+  the move applies, the loan page says the deadline is later because the
+  network was recently down. When the app could not read the outage
+  window, it never says the grace period is over and never refuses a
+  repayment, early close or refinance for that reason; it says the
+  deadline may be later than shown, and the protocol decides. The
+  indexer serves the same moved figure, says whether an outage moved it,
+  and says when its outage reading is missing or out of date.
 - A position row whose loan is past its grace period says so ("Past grace"),
   distinct from a loan that is past due but still inside grace. Whether grace
   has ended is the protocol's own answer, judged by chain time against the

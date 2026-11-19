@@ -14,6 +14,8 @@ import { DIAMOND_ABI_VIEM } from "@vaipakam/contracts/abis";
 import {
   graceSecondsFromBuckets,
   loanDeadlines,
+  NO_SEQUENCER_OUTAGE,
+  readSequencerOutageWindow,
   pauseInForceAt,
   readPauseLog,
   type GraceBucket,
@@ -162,6 +164,13 @@ export async function withChainDeadlines<T extends IndexedLoan>(
         blockNumber: block.number,
       }) as Promise<readonly GraceBucket[]>,
     ]);
+    // #3525 — soft: a failed read leaves the window unknown, said on each
+    // row, rather than failing the whole dating.
+    const outage = await readSequencerOutageWindow({
+      client: publicClient,
+      diamond,
+      blockNumber: block.number,
+    }).catch(() => null);
     const at = block.timestamp;
     const pauseInForce = pauseInForceAt(pauseLog, at);
     dateRow = (r) => {
@@ -171,6 +180,7 @@ export async function withChainDeadlines<T extends IndexedLoan>(
         graceSecondsFromBuckets(buckets, durationDays),
         pauseLog,
         at,
+        outage ?? NO_SEQUENCER_OUTAGE,
       );
       return {
         available: true,
@@ -179,6 +189,15 @@ export async function withChainDeadlines<T extends IndexedLoan>(
         maturity: Number(d.maturity),
         graceEnd: Number(d.graceEnd),
         pauseInForce,
+        graceEndMovedByOutage: d.graceEndMovedByOutage,
+        sequencerOutage: outage
+          ? {
+              downAt: Number(outage.downAt),
+              windowEnd: Number(outage.windowEnd),
+              readAt: Number(at),
+            }
+          : null,
+        ...(outage ? {} : { sequencerOutageUnknown: "unread" }),
         asOf: Number(at),
       };
     };

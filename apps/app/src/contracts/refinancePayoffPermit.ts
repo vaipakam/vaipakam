@@ -35,7 +35,7 @@ import { zeroAddress, type PublicClient, type WalletClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from './diamond';
 import { ensureAllowance, restoreAllowance } from './erc20';
 import { settleFailedSend } from './ownReceipt';
-import { loanEndTimeOf, type LoanLive } from './loanLive';
+import { graceEndOf, type LoanLive } from './loanLive';
 import { PERMIT2_ADDRESS, randomNonce } from './usePermit2Signing';
 import type { DiamondWriteResult } from './diamond';
 
@@ -147,7 +147,8 @@ export async function readPayoffQuote(a: {
   expiresAt: bigint;
   graceSeconds: bigint;
 }): Promise<PayoffQuote> {
-  const graceEnd = loanEndTimeOf(a.live, a.chainNow) + a.graceSeconds;
+  // #3525 — the chain's grace end, moved by a sequencer outage window.
+  const graceEnd = graceEndOf(a.live, a.graceSeconds, a.chainNow).graceEnd;
   const lastFillable = lastFillableMoment(a.expiresAt, graceEnd);
   const p = await readRefinancePayoff(a.publicClient, a.diamond, a.loanId, a.offerId, lastFillable);
   return {

@@ -36,7 +36,7 @@ import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
 import {
   CANCEL_COOLDOWN_SECONDS,
   LOAN_STATUS_ACTIVE,
-  loanEndTimeOf,
+  verifiablyPastGrace,
   readLoanLive,
 } from '../contracts/loanLive';
 import {
@@ -401,8 +401,7 @@ export function useRefinancePending(
       const { payoff, bound, lastFillable, topUp } = quote;
       // Strictly past grace the contract's admission gate rejects any
       // accept — the request behaves like an expired one from here.
-      const pastGrace =
-        latestBlock.timestamp > loanEndTimeOf(live, latestBlock.timestamp) + graceSec;
+      const pastGrace = verifiablyPastGrace(live, graceSec, latestBlock.timestamp);
       // Disconnected wallet (address undefined) must not paint the
       // funding warnings red off zero placeholders.
       const fundingKnown = Boolean(address);

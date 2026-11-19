@@ -54,7 +54,7 @@ import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '.
 import { TxNotSettledError } from '../contracts/ownReceipt';
 import { assertErc20BalanceLive } from '../contracts/preflights';
 import { readTxValidUntil } from '../contracts/txDeadline';
-import { loanEndTimeOf, type LoanLive } from '../contracts/loanLive';
+import { graceEndOf, loanEndTimeOf, verifiablyPastGrace, type LoanLive } from '../contracts/loanLive';
 import type { PermitAttachProgress } from '../data/refinancePending';
 import {
   attachRefinancePayoffPermit,
@@ -223,7 +223,8 @@ export function RefinanceFlow({
   // the grace boundary (graceEnd + 1) — when that clamp binds, the
   // honest reviewed lifetime is the grace end, not "30 days after this
   // review" (Codex #1256 r3; the window counts from the review, #3311).
-  const graceEndTs = loanEndTimeOf(live, chainNow) + graceSec;
+  // #3525 — the chain's grace end, moved by a sequencer outage window.
+  const graceEndTs = graceEndOf(live, graceSec, chainNow).graceEnd;
   // The expiry of the request the figures on screen describe (#3311).
   const reviewedExpiry = quote?.requestExpiry ?? chainNow + REQUEST_WINDOW_DAYS * 86_400n;
   const expiryGraceClamped = graceReady && graceEndTs + 1n < reviewedExpiry;
@@ -277,7 +278,7 @@ export function RefinanceFlow({
   // degrade to the pre-grace boundary (conservative — the form
   // appears once the bucket lands; submit re-reads it live).
   const pastDue = chainNow > loanEndTimeOf(live, chainNow);
-  const pastGrace = chainNow > loanEndTimeOf(live, chainNow) + graceSec;
+  const pastGrace = verifiablyPastGrace(live, graceSec, chainNow);
   // The loan-dependent statements, from the one source the batch review
   // reads too.
   const statements = refinanceStatements({

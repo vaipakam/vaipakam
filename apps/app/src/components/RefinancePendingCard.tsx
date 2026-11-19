@@ -28,7 +28,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamond';
 import type { TokenMeta } from '../contracts/erc20';
 import {
-  loanEndTimeOf,
+  verifiablyPastGrace,
   LOAN_STATUS_ACTIVE,
   readLoanLive,
 } from '../contracts/loanLive';
@@ -217,7 +217,7 @@ export function RefinancePendingCard({
         // An expired request is unacceptable on-chain — re-granting a
         // payoff-sized authorization for it is a pure dangling one.
         (offer.expiresAt !== 0n && latestBlock.timestamp >= offer.expiresAt) ||
-        latestBlock.timestamp > loanEndTimeOf(liveLoan, latestBlock.timestamp) + graceSec ||
+        verifiablyPastGrace(liveLoan, graceSec, latestBlock.timestamp) ||
         liveLoan.status !== LOAN_STATUS_ACTIVE
       ) {
         setError(copy.refinance.permit.signAborted);

@@ -5,7 +5,9 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  graceEndOf,
   loanEndTimeOf,
+  verifiablyPastGrace,
   offsetCompletionBoundOf,
   originalLoanEndTimeOf,
   pauseCreditOf,
@@ -125,5 +127,27 @@ describe('the loan clock (#2808, D2 #668 / #935)', () => {
     expect(offsetCompletionBoundOf({ ...paused, pauseLog: [] } as LoanLive)).toBe(
       paused.principal + rate(30n * DAY),
     );
+  });
+});
+
+describe('graceEndOf / verifiablyPastGrace (#3410, #3525)', () => {
+  const end = 1_000n + 30n * DAY;
+  const GRACE = 3n * DAY;
+  it('moves a grace end inside the outage window to its end, never the due date', () => {
+    const w = { downAt: end + GRACE - 10n, windowEnd: end + GRACE + 3_600n };
+    const g = graceEndOf({ ...live, outage: w }, GRACE, end + GRACE);
+    expect(g).toEqual({ graceEnd: end + GRACE + 3_600n, movedByOutage: true, outageKnown: true });
+    expect(loanEndTimeOf({ ...live, outage: w }, end + GRACE)).toBe(end);
+    // Past the unmoved end but inside the window: not past grace.
+    expect(verifiablyPastGrace({ ...live, outage: w }, GRACE, end + GRACE + 60n)).toBe(false);
+    expect(verifiablyPastGrace({ ...live, outage: w }, GRACE, end + GRACE + 3_601n)).toBe(true);
+  });
+  it('never calls the grace period over while the window is unread', () => {
+    const g = graceEndOf(live, GRACE, end + GRACE + DAY);
+    expect(g).toEqual({ graceEnd: end + GRACE, movedByOutage: false, outageKnown: false });
+    expect(verifiablyPastGrace(live, GRACE, end + GRACE + DAY)).toBe(false);
+    const none = { ...live, outage: { downAt: 0n, windowEnd: 0n } };
+    expect(verifiablyPastGrace(none, GRACE, end + GRACE + 1n)).toBe(true);
+    expect(verifiablyPastGrace(none, GRACE, end + GRACE)).toBe(false);
   });
 });

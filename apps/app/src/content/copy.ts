@@ -4703,6 +4703,12 @@ const copySource = {
       'This loan is past due — we couldn’t read the exact grace deadline right now. Once the grace window ends and the default is recorded, the collateral claim appears here.',
     graceUnknownViewer:
       'This loan is past due. Once its grace window ends, the lender can claim the collateral.',
+    // #3525 — a grace end inside an L2 sequencer outage (or the recovery
+    // window after it) moves to that window's end on-chain (#3410).
+    graceMovedByOutage:
+      'This deadline is later than usual because the network was recently down: the protocol gives borrowers the recovery window to repay.',
+    graceOutageUnknown:
+      'We couldn’t check whether a recent network outage moved this deadline, so it may be later than shown.',
     // Codex #1166 r1 — past graceEnd the contracts REJECT ordinary
     // repayment (RepayFacet RepaymentPastGracePeriod; only a
     // fallback-pending cure is exempt), so never suggest a repay race.

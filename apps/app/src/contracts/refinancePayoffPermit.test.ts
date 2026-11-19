@@ -29,6 +29,9 @@ vi.mock('./erc20', () => erc20);
 vi.mock('./loanLive', async (orig) => ({
   ...(await orig<typeof import('./loanLive')>()),
   loanEndTimeOf: () => 10_000n,
+  // #3525 — the moved grace end the quote clamps to: the pinned due date
+  // plus the grace, no outage.
+  graceEndOf: (_l: unknown, g: bigint) => ({ graceEnd: 10_000n + g, movedByOutage: false, outageKnown: true }),
 }));
 
 import {
