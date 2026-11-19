@@ -44,7 +44,7 @@ import {
   effectivePreset,
   instantOff,
   presetFactsKey,
-  readInstantSlot,
+  readInstantSlotForChange,
   readPresetFacts,
   type EffectivePreset,
   type InstantSlotRecord,
@@ -157,7 +157,7 @@ export async function readAutoLendReview(own: OwnStateClient, diamond: Hex, draf
     own.read((c) => readPresetFacts(c, diamond, account, own.chainId, draft.lending, draft.collateral, draft.slot, rollRunner)).then((x) => x.value),
     draft.change
       ? own
-          .read((c) => readInstantSlot(c, diamond, account, draft.lending, draft.collateral, draft.slot, facts.blockNumber))
+          .read((c) => readInstantSlotForChange(c, diamond, account, draft.lending, draft.collateral, draft.slot, facts.blockNumber))
           .then((x) => x.value)
           .catch(() => null)
       : Promise.resolve(null),

@@ -33,6 +33,7 @@ import { changeCall, networkKeeper, PROFILE_ABI, MAX_KEEPERS, readKeeperSettings
 import type { BatchStep } from '../tx/batch';
 import { readKeeperSteps, ROLL_STEP, runnerState, type RunnerState } from '../keepers/keeperSteps';
 import type { IndexerClient } from '../reads/world/indexerClient';
+import { routeState, selectorOf } from '../capability/routes';
 
 type Hex = `0x${string}`;
 
@@ -232,6 +233,19 @@ export interface InstantSlotRecord {
   renewal: boolean;
   takeover: boolean;
   setAt: bigint;
+}
+
+/** The slot's consents for a change: the record, or no consents at all where
+ *  this Diamond has no instant market (its loupe says so), so an ordinary
+ *  change is not blocked by a capability the network lacks. A record that
+ *  could not be read on a Diamond that has, or may have, the market throws. */
+export async function readInstantSlotForChange(c: PublicClient, diamond: Hex, owner: Hex, lending: Hex, collateral: Hex, slot: number, blockNumber?: bigint): Promise<InstantSlotRecord> {
+  try {
+    return await readInstantSlot(c, diamond, owner, lending, collateral, slot, blockNumber);
+  } catch (e) {
+    if ((await routeState(c, diamond, selectorOf(INSTANT, 'getInstantSlot'))) === 'absent') return { fills: false, renewal: false, takeover: false, setAt: 0n };
+    throw e;
+  }
 }
 
 export async function readInstantSlot(c: PublicClient, diamond: Hex, owner: Hex, lending: Hex, collateral: Hex, slot: number, blockNumber?: bigint): Promise<InstantSlotRecord> {

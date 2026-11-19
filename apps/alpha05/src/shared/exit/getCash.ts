@@ -176,19 +176,27 @@ export async function readHandoverReach(c: PublicClient, diamond: Hex, loan: Cas
 async function readHandover(own: OwnStateClient, diamond: Hex, loan: CashLoan): Promise<Handover> {
   const intents = (await own.read((c) => readLenderIntents(c, diamond))).value;
   const cands = handoverCandidates(intents.intents, loan, own.account);
+  // A candidate that could not be read is not a candidate that refused: with
+  // none ready, an unread one makes the answer unknown, never "none".
+  let unread: string | null = null;
   for (const i of cands) {
     const consent = await own
       .read((c) => readInstantSlot(c, diamond, i.owner, loan.lending, loan.collateral, i.slot))
       .then(
         (x) => x.value.takeover,
-        () => false,
+        (e: unknown) => {
+          unread = e instanceof Error ? e.message : String(e);
+          return false;
+        },
       );
     if (!consent) continue;
     const asked = await askThrough(own, async (c) =>
       c.simulateContract({ address: diamond, ...takeoverCall(loan.loanId, i.owner, i.slot, await chainValidUntil(c)), account: own.account }),
     );
     if (asked.kind === 'answered') return { kind: 'ready', owner: i.owner, slot: i.slot, receives: loan.principal };
+    if (asked.kind === 'unreadable') unread = asked.reason;
   }
+  if (unread !== null) throw new Error(unread);
   return { kind: 'none' };
 }
 
@@ -201,7 +209,7 @@ async function readDirectSale(own: OwnStateClient, diamond: Hex, loan: CashLoan)
         .read((c) => readOffer(c, diamond, id))
         .then(
           (x) => ({ id, o: x.value }),
-          () => null,
+          (e: unknown) => ({ id, unread: e instanceof Error ? e.message : String(e) }),
         ),
     ),
   );
@@ -209,11 +217,18 @@ async function readDirectSale(own: OwnStateClient, diamond: Hex, loan: CashLoan)
   // net it would pay; that refusal comes before the buyer's own checks, so a
   // net alone does not show the sale completes.
   const quoted: { offerId: bigint; rateBps: bigint; net: bigint }[] = [];
+  // As for the handover: an unread probe leaves the answer unknown.
+  let unread: string | null = null;
   for (const x of offers) {
-    if (x === null || !buyOfferCandidate(x.o, loan, own.account)) continue;
+    if ('unread' in x) {
+      unread = x.unread;
+      continue;
+    }
+    if (!buyOfferCandidate(x.o, loan, own.account)) continue;
     const asked = await askThrough(own, async (c) =>
       c.simulateContract({ address: diamond, ...directSaleCall(loan.loanId, x.id, MAX, MAX, await chainValidUntil(c)), account: own.account }),
     );
+    if (asked.kind === 'unreadable') unread = asked.reason;
     if (asked.kind !== 'reverted') continue;
     const net = netFromProbe(asked.error);
     if (net !== null) quoted.push({ offerId: x.id, rateBps: x.o.interestRateBps, net });
@@ -226,7 +241,9 @@ async function readDirectSale(own: OwnStateClient, diamond: Hex, loan: CashLoan)
       c.simulateContract({ address: diamond, ...directSaleCall(loan.loanId, q.offerId, q.net, MAX, await chainValidUntil(c)), account: own.account }),
     );
     if (asked.kind === 'answered') return { kind: 'ready', ...q };
+    if (asked.kind === 'unreadable') unread = asked.reason;
   }
+  if (unread !== null) throw new Error(unread);
   return { kind: 'none' };
 }
 

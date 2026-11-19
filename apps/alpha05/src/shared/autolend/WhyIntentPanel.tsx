@@ -51,7 +51,7 @@ export function WhyIntentPanel({ intent, chain, own }: { intent: IntentSummary; 
   const solver = keeper ?? own.account;
   const terms = [i.minRateBps, i.maxDurationDays, i.availableCapital, i.maxExposure, i.livePrincipal].map(String).join(',');
   const index = useQuery({
-    queryKey: worldKey(world.chainId, 'intentNearest', i.lendingAsset.toLowerCase(), i.collateralAsset.toLowerCase(), String(i.slot), terms),
+    queryKey: worldKey(world.chainId, 'intentNearest', i.owner.toLowerCase(), i.lendingAsset.toLowerCase(), i.collateralAsset.toLowerCase(), String(i.slot), terms),
     queryFn: () => readIntentNearest(world.indexer, world.chainId, i),
     enabled: open && sameChain && world.indexer.origin !== null,
     refetchInterval: NEAREST_POLL_MS,

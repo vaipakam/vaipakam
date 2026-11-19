@@ -27,6 +27,19 @@ export async function routesSelector(c: PublicClient, diamond: Hex, selector: He
   }
 }
 
+/** Whether the Diamond routes `selector`, telling a loupe that answers "no
+ *  facet" (`absent`) from a loupe that could not be read (`unknown`). Used
+ *  where an absent optional capability lets a step go ahead that an unread
+ *  one must not. */
+export async function routeState(c: PublicClient, diamond: Hex, selector: Hex): Promise<'routed' | 'absent' | 'unknown'> {
+  try {
+    const at = (await c.readContract({ address: diamond, abi: DiamondLoupeFacetABI as Abi, functionName: 'facetAddress', args: [selector] })) as Hex;
+    return at.toLowerCase() === ZERO ? 'absent' : 'routed';
+  } catch {
+    return 'unknown';
+  }
+}
+
 /** Whether the instant market's takeover at face value is deployed here. */
 export function takeoverRouted(c: PublicClient, diamond: Hex): Promise<boolean> {
   return routesSelector(c, diamond, selectorOf(InstantTakeoverFacetABI as Abi, 'takeoverInstant'));
