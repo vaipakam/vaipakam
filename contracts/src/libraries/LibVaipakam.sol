@@ -3174,8 +3174,9 @@ library LibVaipakam {
         uint256 borrowerTariffPaid; // VPFI C* pulled from borrower vault (0 unless borrowerMode == Full)
         uint256 lenderTariffPaid; // VPFI C* pulled from lender vault (0 unless lenderMode == Full)
         uint256 cStarOpen; // notional C* at open (full term); loan-side reward-cap base (PR-5c)
-        // #1353 (M2 PR-5c) — REQUIRED cache of the per-side lifetime reward
-        // ceiling at open: `½ × cStarOpen × (BPS − rewardHaircutBpsAtOpen) / BPS`.
+        // #1353 (M2 PR-5c), #3360 — REQUIRED cache of the per-side lifetime
+        // reward ceiling at open:
+        // `½ × min(cStarOpen, keptFeeNumeraire18) × (BPS − rewardHaircutBpsAtOpen) / BPS`.
         // Recompute only as a consistency check, never as the sole source (rev 15).
         // May round to 0 for a STAMPED dust `C*` (even `cStarOpen` itself can
         // floor to 0 on a genuinely-priced tiny loan); such a loan is still
@@ -3185,6 +3186,22 @@ library LibVaipakam {
         // ceiling — do not reintroduce a `cStarOpen == 0` or
         // `loanSideRewardCapOpen == 0` skip (Codex #1371 r4/r5).
         uint128 loanSideRewardCapOpen;
+        /// @dev #3360 — the initiation fee the platform KEPT from this loan,
+        ///      in lending-asset wei: what the fee host measured as received
+        ///      for the loan's initiation fee, i.e. the fee charged after the
+        ///      payer's hold discount less every share actually paid away
+        ///      (matcher, integrator, inviter). The treasury and reserve parts
+        ///      both count. Written once by the charge
+        ///      (`OfferAcceptFeeFacet`) in the accept, before the stamp reads
+        ///      it; 0 when no initiation fee was charged.
+        uint256 keptFeeOpen;
+        /// @dev #3360 — `keptFeeOpen` priced to the numeraire by the same
+        ///      conversion and on the same scale as the list fee behind
+        ///      `cStarOpen`. Each side's lifetime cap is half of
+        ///      `min(cStarOpen, keptFeeNumeraire18)` after the haircut, so the
+        ///      two sides together never earn more than the kept fee less the
+        ///      haircut. 0 (no kept fee, or unpriced) gives a 0 cap.
+        uint256 keptFeeNumeraire18;
     }
 
     /**

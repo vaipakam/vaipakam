@@ -687,7 +687,9 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
                 borrowerTariffPaid: 7 ether,
                 lenderTariffPaid: 5 ether,
                 cStarOpen: 10 ether,
-                loanSideRewardCapOpen: 4 ether
+                loanSideRewardCapOpen: 4 ether,
+                keptFeeOpen: 0, // raw fixture: the reward path reads the cached cap
+                keptFeeNumeraire18: 0
             })
         );
 
@@ -735,7 +737,9 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
                 borrowerTariffPaid: 7 ether,
                 lenderTariffPaid: 0,
                 cStarOpen: 10 ether,
-                loanSideRewardCapOpen: 4 ether
+                loanSideRewardCapOpen: 4 ether,
+                keptFeeOpen: 0, // raw fixture: the reward path reads the cached cap
+                keptFeeNumeraire18: 0
             })
         );
 

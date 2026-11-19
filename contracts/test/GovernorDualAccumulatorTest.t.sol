@@ -256,7 +256,9 @@ contract GovernorDualAccumulatorTest is SetupTest {
                 borrowerTariffPaid: 0,
                 lenderTariffPaid: 0,
                 cStarOpen: uint128(0),
-                loanSideRewardCapOpen: uint128(cap)
+                loanSideRewardCapOpen: uint128(cap),
+                keptFeeOpen: 0, // raw fixture: the reward path reads the cached cap
+                keptFeeNumeraire18: 0
             })
         );
 
@@ -438,7 +440,9 @@ contract GovernorDualAccumulatorTest is SetupTest {
                 borrowerTariffPaid: 0,
                 lenderTariffPaid: 0,
                 cStarOpen: 0,
-                loanSideRewardCapOpen: uint128(cap)
+                loanSideRewardCapOpen: uint128(cap),
+                keptFeeOpen: 0, // raw fixture: the reward path reads the cached cap
+                keptFeeNumeraire18: 0
             })
         );
     }
@@ -2058,7 +2062,9 @@ contract GovernorDualAccumulatorTest is SetupTest {
                 borrowerTariffPaid: 0,
                 lenderTariffPaid: 0,
                 cStarOpen: 0,
-                loanSideRewardCapOpen: uint128(floor5 / 8)
+                loanSideRewardCapOpen: uint128(floor5 / 8),
+                keptFeeOpen: 0, // raw fixture: the reward path reads the cached cap
+                keptFeeNumeraire18: 0
             })
         );
         uint256[] memory ids = new uint256[](1);

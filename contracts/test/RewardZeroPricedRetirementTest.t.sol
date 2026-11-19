@@ -95,7 +95,9 @@ contract RewardZeroPricedRetirementTest is SetupTest, IVaipakamErrors {
                 borrowerTariffPaid: 0,
                 lenderTariffPaid: 0,
                 cStarOpen: 0,
-                loanSideRewardCapOpen: cap
+                loanSideRewardCapOpen: cap,
+                keptFeeOpen: 0, // raw fixture: the reward path reads the cached cap
+                keptFeeNumeraire18: 0
             })
         );
     }

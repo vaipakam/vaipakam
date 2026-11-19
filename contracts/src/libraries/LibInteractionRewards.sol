@@ -7028,33 +7028,10 @@ library LibInteractionRewards {
         uint256 rewardedDaysIncl
     ) private view returns (uint256) {
         LibVaipakam.FeeEntitlement storage fe = s.feeEntitlementByLoanId[loanId];
+        // #3360 — the cache is the only source. A zero is a real zero (a dust
+        // C*, or no kept initiation fee), never a record to backfill from
+        // `cStarOpen`, which would lift the kept-fee bound.
         uint256 capOpen = fe.loanSideRewardCapOpen;
-        if (capOpen == 0 && fe.cStarOpen != 0) {
-            // #1353 (M2 PR-5c) — LAZY BACKFILL: a record STAMPED before the cap
-            // cache existed (an in-place upgrade from #1347, where
-            // `loanSideRewardCapOpen` was an appended slot reading 0) still has a
-            // real `cStarOpen`. Derive the ceiling from it (rev-15 "recompute
-            // only as a consistency check") so the legacy loan is capped at its
-            // true fee-linked ceiling rather than treated as a real zero (Codex
-            // #1371 r6). A genuine dust record (`cStarOpen == 0`) keeps a 0
-            // ceiling (capped to ~0).
-            // A legacy record also predates `rewardHaircutBpsAtOpen`, so that
-            // field reads 0 even though no party selected a literal 0% haircut;
-            // fall back to the {REWARD_HAIRCUT_DEFAULT_BPS} default (matching
-            // {cfgRewardHaircutBps}'s zero-sentinel) so the derived ceiling is
-            // `½ × C* × (1 − default)`, not the too-generous `½ × C*` (Codex
-            // #1371 r7).
-            uint256 haircut = fe.rewardHaircutBpsAtOpen;
-            if (haircut == 0) haircut = LibVaipakam.REWARD_HAIRCUT_DEFAULT_BPS;
-            // `Math.mulDiv` so an extreme `cStarOpen` can't overflow the
-            // intermediate product (Codex #1371 r10), matching the stamp site.
-            capOpen =
-                Math.mulDiv(
-                    fe.cStarOpen,
-                    LibVaipakam.BASIS_POINTS - haircut,
-                    LibVaipakam.BASIS_POINTS
-                ) / 2;
-        }
         if (capOpen == 0) return 0;
         uint256 openDays = fe.openDays;
         if (openDays == 0) return capOpen; // defensive; stamp guarantees ≥ 1

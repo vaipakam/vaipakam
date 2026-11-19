@@ -2833,11 +2833,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](4);
+        s = new bytes4[](5);
         s[0] = FeeEntitlementFacet.chargeFullTariff.selector;
         s[1] = FeeEntitlementFacet.quoteCStar.selector;
         s[2] = FeeEntitlementFacet.getFeeEntitlement.selector;
         s[3] = FeeEntitlementFacet.repriceFeeEntitlementOnExtension.selector;
+        s[4] = FeeEntitlementFacet.getLoanRewardCapBasis.selector;
     }
 
     function _getAggregatorAdapterFactorySelectors()

@@ -890,6 +890,8 @@
     "L|vaipakam@360[uint256]|2|0|uint256|feeEntitlementByLoanId[].lenderTariffPaid",
     "L|vaipakam@360[uint256]|3|0|uint256|feeEntitlementByLoanId[].cStarOpen",
     "L|vaipakam@360[uint256]|4|0|uint128|feeEntitlementByLoanId[].loanSideRewardCapOpen",
+    "L|vaipakam@360[uint256]|5|0|uint256|feeEntitlementByLoanId[].keptFeeOpen",
+    "L|vaipakam@360[uint256]|6|0|uint256|feeEntitlementByLoanId[].keptFeeNumeraire18",
     "L|vaipakam@365[uint256]@0[uint8]|0|0|uint256|loanSideRewardPaidVpfi[][]",
     "L|vaipakam@366[uint256]@0[uint8]|0|0|uint256|loanSideRewardedDays[][]",
     "L|vaipakam@368[uint256]|0|0|enum LibVaipakam.CapMode|dayCapMode[]",
