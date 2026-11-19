@@ -351,6 +351,31 @@ contract VaipakamTimelockTwoWaitsTest is Test {
         tl.schedule(address(target), 0, data, bytes32(0), bytes32(0), RESTART);
     }
 
+    /// @dev Granting the role back to the same account does not revive an
+    ///      approval it gave under its earlier grant; a fresh approval does.
+    function testRegrantingTheApproverDoesNotReviveItsApprovals() public {
+        bytes memory data = _setFee();
+        bytes32 id = _id(data);
+        vm.prank(pauser);
+        tl.approveUrgent(id);
+        bytes32 role = tl.URGENT_APPROVER_ROLE();
+        vm.startPrank(address(tl));
+        tl.revokeRole(role, pauser);
+        tl.grantRole(role, pauser);
+        vm.stopPrank();
+        assertTrue(tl.hasRole(role, pauser));
+        assertFalse(tl.isUrgentApproved(id), "old grant's approval stays void");
+
+        vm.prank(proposer);
+        vm.expectRevert(abi.encodeWithSelector(VaipakamTimelock.DelayBelowRequired.selector, id, RESTART, STANDARD));
+        tl.schedule(address(target), 0, data, bytes32(0), bytes32(0), RESTART);
+
+        vm.prank(pauser);
+        tl.approveUrgent(id);
+        assertTrue(tl.isUrgentApproved(id), "a fresh approval counts");
+        _schedule(data, RESTART);
+    }
+
     /// @dev An approval lapses after the window; until then it holds.
     function testApprovalLapsesAfterItsWindow() public {
         bytes memory data = _setFee();

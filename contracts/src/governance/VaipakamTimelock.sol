@@ -153,7 +153,15 @@ contract VaipakamTimelock is TimelockController {
     struct UrgentApproval {
         address approver;
         uint64 approvedAt;
+        /// @dev The approver's grant count when it approved: an approval
+        ///      counts only while it still holds the SAME grant, so a revoke
+        ///      followed by a fresh grant voids what it approved before.
+        uint32 grant;
     }
+
+    /// @dev How many times each account has been granted
+    ///      {URGENT_APPROVER_ROLE}. Bumped on every new grant.
+    mapping(address => uint32) private _approverGrant;
 
     /// @dev Operation ids an urgent approver approved and nobody has
     ///      scheduled yet. An approval counts only while its approver still
@@ -328,7 +336,8 @@ contract VaipakamTimelock is TimelockController {
     function approveUrgent(bytes32 id) external onlyRole(URGENT_APPROVER_ROLE) {
         if (isOperation(id)) revert UrgentApprovalForScheduledOperation(id);
         address approver = _msgSender();
-        _urgentApproved[id] = UrgentApproval({approver: approver, approvedAt: uint64(block.timestamp)});
+        _urgentApproved[id] =
+            UrgentApproval({approver: approver, approvedAt: uint64(block.timestamp), grant: _approverGrant[approver]});
         emit UrgentApproved(id, approver);
     }
 
@@ -342,12 +351,15 @@ contract VaipakamTimelock is TimelockController {
 
     /// @notice Whether operation `id` holds an urgent approval that would let
     ///         it be scheduled now: unspent, given by an account that still
-    ///         holds {URGENT_APPROVER_ROLE}, and within
+    ///         holds {URGENT_APPROVER_ROLE} under the same grant, and within
     ///         {URGENT_APPROVAL_WINDOW} of when it was given.
     function isUrgentApproved(bytes32 id) public view returns (bool) {
         UrgentApproval memory a = _urgentApproved[id];
         if (a.approver == address(0)) return false;
         if (!hasRole(URGENT_APPROVER_ROLE, a.approver)) return false;
+        // Revoked and granted again since: the approval belongs to the old
+        // grant, so a rotation never revives it.
+        if (a.grant != _approverGrant[a.approver]) return false;
         return block.timestamp <= uint256(a.approvedAt) + URGENT_APPROVAL_WINDOW;
     }
 
@@ -428,7 +440,9 @@ contract VaipakamTimelock is TimelockController {
         if (role == URGENT_APPROVER_ROLE && hasRole(PROPOSER_ROLE, account)) {
             revert ProposerCannotApproveUrgent(account);
         }
-        return super._grantRole(role, account);
+        bool granted = super._grantRole(role, account);
+        if (granted && role == URGENT_APPROVER_ROLE) ++_approverGrant[account];
+        return granted;
     }
 
     /// @inheritdoc TimelockController
