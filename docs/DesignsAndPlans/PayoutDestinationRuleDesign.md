@@ -4,6 +4,7 @@
 **Scope:** every step that returns or pays an asset to a user: loan payouts, offer refunds, releases of capital and reserves, rewards. Payments to someone who is not a party (a liquidator, a matcher, a keeper, an inviter) are covered only to say why they differ.
 **Related:** `VaultOutflowPolicyDesign.md` (#3205), `LenderPayoutsThroughClaimDesign.md` (#3629), `PositionSaleStateGuardDesign.md` (#3710, whose section 3.3 this design replaces), `ProtectedCommitmentGuardsDesign.md`, the protected Ready balance (#3344), the offer position holder rule (#3744).
 **Scouted on:** the batch branch `claude/project-thread-ijafuu` at `4d138a83c` (batch PR #3743), 2026-11-19. File and function names below are from that tree.
+**Base.** This document describes the batch branch, not `main`. The batch carries #3629 and #3710, which `main` does not have yet. On `main` a lender sale's price is still pushed to the seller's wallet (`EarlyWithdrawalFacet.completeLoanSale`, `EarlyWithdrawalDirectFacet`), a forced sale's extra for the borrower is still paid at a wallet (`ForcedSaleFacet.payBorrowerWallet`), and open-loan lender payments are still paid directly. The batch moves each of these into a vault. "Unchanged" in the route table means unchanged from the batch branch, and section 7 tests those routes too, so the rule does not depend on which base a builder starts from.
 
 ## 1. The question
 
@@ -41,7 +42,7 @@ Two words carry the whole model for a user:
 - Every payment made to a lender while a loan stays open is held for the lender position and collected by its holder (#3629).
 - A new loan's principal goes to the borrower's vault as free balance (`OfferAcceptFeeFacet`, #3205 part 2).
 - A swap-to-repay surplus is held for the borrower position; its unused collateral goes back under the loan's lien.
-- Sale proceeds, a buyer's held amounts and a refinance's payoff move vault to vault.
+- A lender sale's price is credited to the seller's own vault as free balance, measured by what arrived (`LibFacet.creditOwnVault`, #3629). A buyer's held amounts and a refinance's payoff move vault to vault.
 - A registered integrator's share is paid into its payout account's vault as free balance (#3682).
 
 ### 3.2 Pays a wallet today
@@ -70,13 +71,17 @@ The Withdraw (`VaultDepositoryFacet.withdrawFromVault`) and the release of a que
 
 ### 4.1 Every release goes into free balance, through the outflow policy
 
-Each step in table 3.2 stops paying a wallet and releases into free balance instead. The outflow policy stays the one seam: it already books a payout whose payee vault is the paying vault as a ledger change with no transfer, and it already places the position marks of #3710. Three ways of reading the payee cover every case:
+Each step in table 3.2 stops paying a wallet and releases into free balance instead. The outflow policy stays the one seam: it already books a payout whose payee vault is the paying vault as a ledger change with no transfer, and it already places the position marks of #3710. Three ways of reading the payee cover every amount that already sits in a vault:
 
 | Payee is read from | Policy class | Used by |
 | --- | --- | --- |
 | A loan's position token | The position-holder payout (exists) | Surplus collateral, a loan reserve taken back, every claim |
 | An offer's position token | A new offer-holder payout (#3744) | Cancel, size-down, a match's leftovers, a direct accept's unused collateral, a collection offer's released backing |
-| The account itself | A new own-balance release: no payee, no transfer, the free-balance ledger rises | Auto-lend capital, a seller's interest claim, a sale vehicle's collateral, a reward, a salary |
+| The account itself | A new own-balance release: no payee, no transfer, the free-balance ledger rises | Auto-lend capital, a seller's interest claim, a sale vehicle's collateral |
+
+The own-balance release is only for an amount that is already in the entitled account's vault under a lien or a reservation. It first drops that lien or reservation by exactly the amount, and the policy's free-balance guard then confirms the vault holds it unencumbered before the ledger rises. It can never create a credit that tokens do not back.
+
+**An amount the protocol itself holds is a transfer, not a release.** A reward sits in reward custody or the Diamond, a salary stream's funds sit in the Diamond, and a sale's price passes through the Diamond. These are paid by the existing measured credit into the owner's vault (`LibFacet.creditOwnVault` for the Diamond's holdings, the reward routes' vault credit for reward custody): the tokens move from the actual custody to the vault, and the tracked ledger and the free-balance ledger rise together by what arrived, never by what was sent. The custody's own row is debited by what left it.
 
 No step names a payee. A step passes the loan or offer and the token, or nothing at all for the account's own balance, and the policy does the rest. The policy emits the same `VaultOutflow` event for each, with zero delivered outside the vault when nothing moved, so the indexer shows one kind of entry: "returned to your vault balance".
 
@@ -95,6 +100,8 @@ A new loan's principal keeps going to the borrower's vault as free balance at th
 ### 4.3 One door to a wallet
 
 `LibVaultOutflow.toOwner` and `toAllowlisted` are called from two hosts only: the Withdraw and the release of a queued payout. A build check, beside the raw-payout check of #3710 (pre-deploy step 1d3), reads the compiler's AST and refuses any other caller of the two helpers, and any other construction of the owner classes. The clawback and a recovered account's sweep keep their own class (the recovery payout) and are listed.
+
+The Diamond's own holdings get the same treatment. `LibDelivery.pushOut` is the push that can reach a wallet (it credits a protected recipient's vault and pays anyone else directly). Its callers become a listed set in the same check: a liquidator's bonus, a keeper's bonus, and the admin's treasury claim. The reward and salary callers leave that list. `pushExact` and `pushMeasured` are used only with a vault, a protocol contract or the backstop as recipient, and the check lists those callers too, so a new push of the Diamond's holdings to a user's wallet fails the build.
 
 With one door, the protected-mode checks live in one place:
 
@@ -167,7 +174,7 @@ The follow-on: every step that takes a user's money takes a stated amount from f
 | 5 | New loan principal | Either side's accept, or a matcher | The borrower of that accept | Borrower's vault, free | Unchanged |
 | 6 | Swap-to-repay surplus | Borrower token holder | That holder | Held for the borrower position | Unchanged |
 | 7 | Preclose, refinance, handover payouts | The borrower side | Each side's token holder | Vaults, held or free by the step | Unchanged |
-| 8 | Sale of a lender position: the price | Buyer or seller | The seller | Seller's vault | Unchanged |
+| 8 | Sale of a lender position: the price | Buyer or seller | The seller | Seller's vault, free (batch branch; `main` still pushes to the seller's wallet) | Seller's vault, free, measured |
 | 9 | Surplus collateral out of a live loan | Borrower token holder | That holder | Holder's wallet (vault on failure) | Holder's vault, free |
 | 10 | Offer cancel | Offer token holder | That holder | Creator's wallet | Holder's vault, free |
 | 11 | Offer size-down | Offer token holder | That holder | Creator's wallet | Holder's vault, free |
@@ -179,8 +186,8 @@ The follow-on: every step that takes a user's money takes a stated amount from f
 | 17 | Auto-lend capital taken back | Slot owner; anyone for a recovered account | The account | Owner's wallet | The account's vault, free |
 | 18 | Loan reserve taken back | Borrower token holder | That holder | Owner's wallet | Holder's vault, free |
 | 19 | Integrator's share | An accept | The registered integrator | Payout account's vault, free | Unchanged |
-| 20 | Reward claim | The claimant | The claimant | Vault, or wallet for a contract or on a failed credit | Vault, always |
-| 21 | Salary stream | The beneficiary | The beneficiary | Wallet | Beneficiary's vault, free |
+| 20 | Reward claim | The claimant | The claimant | Vault, or wallet for a contract or on a failed credit | Vault, always: a measured transfer from reward custody |
+| 21 | Salary stream | The beneficiary | The beneficiary | Wallet | Beneficiary's vault, free: a measured transfer from the Diamond |
 | 22 | VPFI taken out | The owner | The owner | Owner's wallet (queued if protected) | The one Withdraw (4.9) |
 | 23 | Withdraw, and the release of a queued payout | The owner | The owner | Owner's wallet, or an allowlisted address | Unchanged: the one door |
 | 24 | Clawback, recovered account's sweep | Owner, signer, keeper as allowed | The recovery address | Recovery address | Unchanged |
@@ -198,7 +205,7 @@ Rows 9 to 18 and 20 to 22 change: the thirteen steps of table 3.2. Every other r
 
 ## 7. Tests
 
-1. For every row 9 to 18 and 20 to 22: the wallet's balance does not change, the vault's free balance rises by the amount, and one `VaultOutflow` entry records it.
+1. For every row 8 to 18 and 20 to 22: the wallet's balance does not change, the vault's free balance rises by the amount, and one `VaultOutflow` entry records it.
 2. The same rows against a protected account: nothing is queued, no payout room is used, free balance rises.
 3. The same rows against a locked account: the step succeeds where it did before and the amount is free in the vault.
 4. A matcher's fill on a protected creator's offer opens no queued payout on that account.
@@ -212,6 +219,10 @@ Rows 9 to 18 and 20 to 22 change: the thirteen steps of table 3.2. Every other r
 12. The build check refuses a new caller of the owner payout helpers, and passes with the two listed hosts.
 13. The drive-every-route test of #3568 (nothing reaches a protected wallet before the delay) passes with no route-specific allowance.
 14. Rewards: a contract claimant is credited in its vault; a failed credit leaves the reward claimable and pays no wallet.
+15. Rewards, a salary and a sale's price with a fee-charging token: the vault's free balance rises by what arrived, the custody row falls by what left, and the vault's free balance never exceeds its unencumbered token balance.
+16. An own-balance release for more than the lien or reservation it names is refused, and one against a vault that does not hold the amount unencumbered is refused.
+17. The build check refuses a new caller of the Diamond's wallet-capable push and passes with the listed callers.
+18. Rows 3 and 6, which `main` still pays at a wallet: the wallet's balance does not change and the amount is held for the position until its holder collects it.
 
 Transient storage does not carry between a test's top-level calls on current forge. Drive each batch test inside one call.
 
@@ -231,7 +242,7 @@ Build the rule as decided: every release into free balance through the outflow p
 
 ## 10. Build notes
 
-**Order.** (1) The own-balance release, the batch figure and `withdrawCredited`. (2) Rows 9 to 18 moved onto the releases, the holder's-wallet payout deleted, the build check added with two hosts. (3) #3744 on the offer-holder payout. (4) Rewards, salary and the VPFI exit. (5) The app's two verbs, the balance view and the "also withdraw" option. (6) Paying from the vault (#3746), if the owner agrees.
+**Order.** (1) The own-balance release, the batch figure and `withdrawCredited`, on top of the batch branch (#3743), which already moves the sale price, the forced sale's extra and open-loan lender payments into vaults. (2) Rows 9 to 18 moved onto the releases, the holder's-wallet payout deleted, the build check added with two hosts. (3) #3744 on the offer-holder payout. (4) Rewards, salary and the VPFI exit. (5) The app's two verbs, the balance view and the "also withdraw" option. (6) Paying from the vault (#3746), if the owner agrees.
 
 **Facets that change together.** `VaultOutflowFacet` and `LibVaultOutflow` with every facet in table 3.2; `MulticallFacet` and `VaultDepositoryFacet` for the batch figure; `LibDepositoryLedger` is inlined widely, so this is a fresh-deploy change like the rest of the batch.
 
