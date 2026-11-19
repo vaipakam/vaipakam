@@ -214,6 +214,12 @@ interface BaseEnv {
   // API quota — `parseMaxPages` in the proxy is the canonical
   // clamp.
   OPENSEA_OFFERS_MAX_PAGES?: string;
+  // #3769 — the limits on watching loans the wallet does not hold: how many
+  // loans one wallet may watch (across chains) and how many watch changes it
+  // may make a day. Plain vars, strings like every wrangler var, read through
+  // `watchLimitsOf` (defaults 10 and 20, the owner's figures of 2026-11-19).
+  WATCH_MAX_LOANS_PER_WALLET?: string;
+  WATCH_MAX_CHANGES_PER_DAY?: string;
   // T-086 Round-6 / Block D (#345) — per-IP rate-limit on the new
   // GET /opensea/signed-offer/{chainId}/{contract}/{tokenId}/{orderHash}
   // endpoint. One RTT to OpenSea per inbound (no pagination), so

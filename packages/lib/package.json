@@ -106,6 +106,10 @@
       "types": "./src/alertsMessage.ts",
       "default": "./src/alertsMessage.ts"
     },
+    "./watchedLoans": {
+      "types": "./src/watchedLoans.ts",
+      "default": "./src/watchedLoans.ts"
+    },
     "./notificationProvenance": {
       "types": "./src/notificationProvenance.ts",
       "default": "./src/notificationProvenance.ts"

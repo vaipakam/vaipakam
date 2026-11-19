@@ -55,6 +55,11 @@ import {
   buildTelegramTestMessage,
   buildTelegramUnlinkMessage,
 } from '@vaipakam/lib/alertsMessage';
+import {
+  buildListWatchedLoansMessage,
+  buildUnwatchLoanMessage,
+  buildWatchLoanMessage,
+} from '@vaipakam/lib/watchedLoans';
 import { claimSignedRequest, SignedRequestLedgerUnavailableError } from './signedRequestUse';
 import {
   chainVerifyGate,
@@ -85,13 +90,15 @@ const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
 /** The alert actions whose message names nothing but the wallet, the
  *  chain and the time. */
-export type AlertAuthAction = 'link' | 'unlink' | 'test-alert';
+export type AlertAuthAction = 'link' | 'unlink' | 'test-alert' | 'list-watched';
 
 /** What a signed alert request authorises: one of the fixed actions,
  *  or a settings save, whose message also names the values it saves. */
 export type AlertAuthorisation =
   | AlertAuthAction
-  | { action: 'save-settings'; settings: AlertSettingsChange };
+  | { action: 'save-settings'; settings: AlertSettingsChange }
+  /** #3769 — watch or stop watching one loan; the message names it. */
+  | { action: 'watch-loan' | 'unwatch-loan'; loanId: number };
 
 const MESSAGE_BUILDERS: Record<
   AlertAuthAction,
@@ -100,6 +107,7 @@ const MESSAGE_BUILDERS: Record<
   link: buildTelegramLinkMessage,
   unlink: buildTelegramUnlinkMessage,
   'test-alert': buildTelegramTestMessage,
+  'list-watched': buildListWatchedLoansMessage,
 };
 
 /** The exact message the wallet must have signed for `auth`. */
@@ -107,9 +115,15 @@ export function alertRequestMessage(
   req: SignedLinkRequest,
   auth: AlertAuthorisation,
 ): string {
-  return typeof auth === 'string'
-    ? MESSAGE_BUILDERS[auth](req.wallet, req.chain_id, req.issuedAt)
-    : buildAlertSettingsMessage(req.wallet, req.chain_id, auth.settings, req.issuedAt);
+  if (typeof auth === 'string') return MESSAGE_BUILDERS[auth](req.wallet, req.chain_id, req.issuedAt);
+  switch (auth.action) {
+    case 'save-settings':
+      return buildAlertSettingsMessage(req.wallet, req.chain_id, auth.settings, req.issuedAt);
+    case 'watch-loan':
+      return buildWatchLoanMessage(req.wallet, req.chain_id, auth.loanId, req.issuedAt);
+    case 'unwatch-loan':
+      return buildUnwatchLoanMessage(req.wallet, req.chain_id, auth.loanId, req.issuedAt);
+  }
 }
 
 export interface SignedLinkRequest {

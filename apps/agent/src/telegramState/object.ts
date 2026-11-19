@@ -30,6 +30,15 @@ import {
   type SqlLike,
   type UnansweredLock,
 } from './store';
+import {
+  WatchStore,
+  type WatchAddOutcome,
+  type WatchedLoan,
+  type WatchLimits,
+  type WatchRemoveOutcome,
+  type WatchRow,
+  type WatchUpdate,
+} from './watches';
 
 /** The binding name in `wrangler.jsonc`. */
 export interface TelegramStateBinding {
@@ -43,11 +52,16 @@ export function stateStub(env: TelegramStateBinding): DurableObjectStub<Telegram
 
 export class TelegramState extends DurableObject {
   private readonly store: TelegramStateStore;
+  private readonly watches: WatchStore;
 
   constructor(ctx: DurableObjectState, env: unknown) {
     super(ctx, env as never);
     const storage = ctx.storage;
-    this.store = new TelegramStateStore(storage.sql as unknown as SqlLike, (fn) => storage.transactionSync(fn));
+    const sql = storage.sql as unknown as SqlLike;
+    const tx = <T,>(fn: () => T): T => storage.transactionSync(fn);
+    // The state store runs the schema (watches included) before anything else.
+    this.store = new TelegramStateStore(sql, tx);
+    this.watches = new WatchStore(sql, tx);
   }
 
   // ─── Handshake codes ──────────────────────────────────────────────────
@@ -122,5 +136,22 @@ export class TelegramState extends DurableObject {
   }
   takeUnansweredLocks(sentBefore: number, now: number, limit: number): UnansweredLock[] {
     return this.store.takeUnansweredLocks(sentBefore, now, limit);
+  }
+
+  // ─── Watched loans (#3769) ────────────────────────────────────────────
+  watchLoan(dep: ChainDeployment, wallet: string, loanId: number, now: number, limits: WatchLimits): WatchAddOutcome {
+    return this.watches.add(dep, wallet, loanId, now, limits);
+  }
+  unwatchLoan(dep: ChainDeployment, wallet: string, loanId: number, now: number, limits: WatchLimits): WatchRemoveOutcome {
+    return this.watches.remove(dep, wallet, loanId, now, limits);
+  }
+  watchedLoans(wallet: string, deps: ChainDeployment[]): WatchedLoan[] {
+    return this.watches.list(wallet, deps);
+  }
+  dueWatches(dep: ChainDeployment, limit: number): WatchRow[] {
+    return this.watches.due(dep, limit);
+  }
+  recordWatches(dep: ChainDeployment, updates: WatchUpdate[], now: number): void {
+    this.watches.record(dep, updates, now);
   }
 }

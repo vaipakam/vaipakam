@@ -142,6 +142,10 @@ The wallet's `user_thresholds` row, which the keeper's watchers and the pre-noti
 
 **Scheduled work waits for the schema (#2410).** This Worker auto-deploys on merge, so a build can be live before the indexer's deploy has applied the migrations it was written against. Each cron tick therefore first checks that every migration in [`packages/lib/src/sharedD1Migrations.json`](../../packages/lib/src/sharedD1Migrations.json) is recorded in `d1_migrations`. Until then the tick runs no pass and logs `[vaipakam-agent] this tick declined: D1 migration(s) … not applied`, and it resumes by itself on the first tick after they land. HTTP routes are not gated: a route that reads or writes a new column must tolerate the previous schema itself.
 
+### Watched loans (#3769)
+
+A wallet may watch a loan it does not hold and get Telegram alerts about it. `src/watchedLoanRoutes.ts` serves `POST /watch/loans/{add,remove,list}`, each signed over the messages in `@vaipakam/lib/watchedLoans` and claimed once like every signed alert request. The watches live in the Telegram state object (schema version 2, `src/telegramState/watches.ts`), keyed per deployment, with the per-wallet limits `WATCH_MAX_LOANS_PER_WALLET` (10) and `WATCH_MAX_CHANGES_PER_DAY` (20), both plain vars. `src/watchedLoanAlerts.ts` is the alert pass: minute 2 of each five-minute window, so it never shares an invocation with the main tick; it reads the `loans` projection and one Multicall3 read of the health level and due dates per chain, within a 40-subrequest allowance. Every message says the wallet holds no position.
+
 ## Related
 
 - `apps/keeper` — sibling signing Worker; this one defers all on-chain submissions to it.

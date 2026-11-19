@@ -179,6 +179,29 @@ const SCHEMA: readonly string[] = [
      seen_at  INTEGER NOT NULL,
      PRIMARY KEY (chain_id, diamond)
    );`,
+  // Version 2 (#3769): the loans a wallet watches without holding them, and
+  // the per-wallet daily count of watch changes. Kept per deployment like the
+  // LOCK requests: a loan id names a loan only on one Diamond, so a fresh
+  // deploy's ids are never read against an older Diamond's watches.
+  // Statements are split on ';', so no comment or literal inside may hold one.
+  `CREATE TABLE IF NOT EXISTS watched_loans (
+     wallet       TEXT    NOT NULL,
+     chain_id     INTEGER NOT NULL,
+     diamond      TEXT    NOT NULL,
+     loan_id      INTEGER NOT NULL,
+     created_at   INTEGER NOT NULL,
+     last_band    TEXT    NOT NULL DEFAULT 'healthy',
+     due_told_for INTEGER NOT NULL DEFAULT 0,
+     checked_at   INTEGER NOT NULL DEFAULT 0,
+     PRIMARY KEY (wallet, chain_id, diamond, loan_id)
+   );
+   CREATE INDEX IF NOT EXISTS idx_watched_loans_due ON watched_loans(chain_id, diamond, checked_at);
+   CREATE TABLE IF NOT EXISTS watch_changes (
+     wallet TEXT    NOT NULL,
+     day    INTEGER NOT NULL,
+     count  INTEGER NOT NULL,
+     PRIMARY KEY (wallet, day)
+   );`,
 ];
 
 /** Bring the schema to the current version. Idempotent. */

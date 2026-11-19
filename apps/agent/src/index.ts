@@ -171,6 +171,15 @@ import type { AlertSettingsChange } from '@vaipakam/lib/alertsMessage';
 import { isTickDue } from '@vaipakam/lib/cronCadence';
 import { AGENT_TICK_CADENCE_MINUTES } from './tickCadence';
 import { readJsonBody } from '@vaipakam/lib/requestBody';
+import {
+  WATCH_TICK_CADENCE_MINUTES,
+  WATCH_TICK_OFFSET,
+  d1LoansOf,
+  runWatchedLoanAlerts,
+  viemWatchReader,
+  type WatchLaneDeps,
+} from './watchedLoanAlerts';
+import { d1LoanOf, handleWatchRoute, isWatchPath, watchLimitsOf, type WatchPath } from './watchedLoanRoutes';
 import { chainProtectionReader, d1LocaleReader } from './alertChannelChange';
 import {
   applyDueChannelChanges,
@@ -231,7 +240,12 @@ export default {
     // the condition under which a lap's length would matter), and an expired
     // Telegram link code is deleted up to five minutes later — consuming one
     // already checks its expiry, so a late delete is never a late accept.
-    if (!isTickDue(controller.scheduledTime, AGENT_TICK_CADENCE_MINUTES)) {
+    // #3769 — the watched-loan alert pass runs on its OWN minute of each
+    // five-minute window, so it never shares an invocation (and its
+    // subrequest allowance) with the main tick's lanes below.
+    const watchTick = isTickDue(controller.scheduledTime, WATCH_TICK_CADENCE_MINUTES, WATCH_TICK_OFFSET);
+    const mainTick = isTickDue(controller.scheduledTime, AGENT_TICK_CADENCE_MINUTES);
+    if (!mainTick && !watchTick) {
       return;
     }
     // #2239 — decline the whole tick when this build has no D1 binding.
@@ -252,6 +266,17 @@ export default {
       // eslint-disable-next-line no-console
       console.warn(schemaDeclineNotice(WORKER_NAME, 'this tick', schema));
       return;
+    }
+    if (watchTick) {
+      ctx.waitUntil(
+        (async () => runWatchedLoanAlerts(watchLaneDeps(resolved)))().catch((err) => {
+          // eslint-disable-next-line no-console
+          console.error('[agent] runWatchedLoanAlerts pass failed:', redactedError(err));
+        }),
+      );
+      // A missing or unparseable scheduled time runs every cadence at once
+      // (fail-open); the main lanes then follow in the same invocation.
+      if (!mainTick) return;
     }
     // Each pass wrapped so a transient D1 / RPC blip on one can't
     // wedge the others. Same isolation policy the ops/hf-watcher
@@ -494,6 +519,10 @@ export default {
     // instead of the user's self-attestation.
     if (url.pathname === '/telegram/test' && req.method === 'POST') {
       return handleTestTelegram(req, resolved);
+    }
+    // #3769 — watching loans the wallet does not hold (signed, limited).
+    if (isWatchPath(url.pathname) && req.method === 'POST') {
+      return handleWatch(req, url.pathname, resolved);
     }
     // #1040 phase 1 — support-ticket capture from the connected app support
     // widget (rate limit + validation inside the handler).
@@ -856,6 +885,38 @@ function channelDeps(env: Env): ChannelDeps {
     read: chainProtectionReader(env),
     now: Math.floor(Date.now() / 1000),
   };
+}
+
+/** #3769 — what the watched-loan alert pass needs. */
+function watchLaneDeps(env: Env): WatchLaneDeps {
+  const token = env.TG_BOT_TOKEN;
+  const chains = getChainConfigs(env);
+  const byId = new Map(chains.map((c) => [c.id, c]));
+  return {
+    chains: chains.map((c) => ({ id: c.id, name: c.name, diamond: c.diamond })),
+    state: stateStub(env),
+    loans: (chainId, ids) => d1LoansOf(env.DB, chainId, ids),
+    reader: (chain) => viemWatchReader({ ...chain, rpc: byId.get(chain.id)!.rpc }),
+    send: token ? (chatId, text) => sendMessage(token, chatId, text) : null,
+    appOrigin: env.FRONTEND_ORIGIN.split(',')[0]!.trim(),
+    now: Math.floor(Date.now() / 1000),
+  };
+}
+
+/** #3769 — one watch route, with this agent's state, loans and limits. */
+async function handleWatch(req: Request, path: WatchPath, env: Env): Promise<Response> {
+  const corsOrigin = resolveAllowedOrigin(req, env);
+  const read = await readJsonBody(req, MAX_SIGNED_REQUEST_BODY_BYTES);
+  if (!read.ok) return json({ error: read.error }, read.status, corsOrigin);
+  const answer = await handleWatchRoute(path, read.value, {
+    state: stateStub(env),
+    loanOf: (chainId, loanId) => d1LoanOf(env.DB, chainId, loanId),
+    authorise: (parsed, auth) => authoriseAlertRequest(req, env, parsed, auth),
+    deployments: () => getChainConfigs(env).map((c) => ({ chainId: c.id, diamond: c.diamond })),
+    limits: watchLimitsOf(env),
+    now: () => Math.floor(Date.now() / 1000),
+  });
+  return json(answer.body, answer.status, corsOrigin);
 }
 
 /** #1722 — what the keeper routes need: the token, the state object, the

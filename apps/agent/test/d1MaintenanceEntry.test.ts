@@ -15,6 +15,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import worker from '../src/index';
 import { AGENT_TICK_CADENCE_MINUTES } from '../src/tickCadence';
+import { WATCH_TICK_CADENCE_MINUTES, WATCH_TICK_OFFSET } from '../src/watchedLoanAlerts';
 
 /** A scheduled time on a minute the five-minute cadence acts on. */
 const DUE_MINUTE = Date.UTC(2026, 9, 22, 8, 0, 0);
@@ -125,8 +126,12 @@ describe('scheduled, on a build with no D1 binding', () => {
 });
 
 describe('scheduled cadence (#2236)', () => {
-  it('acts only on minutes divisible by the cadence, and a skipped minute does nothing at all', async () => {
+  it('acts only on its own minutes, and a skipped minute does nothing at all', async () => {
     expect(AGENT_TICK_CADENCE_MINUTES).toBe(5);
+    // #3769 — the watched-loan pass has its own minute in each window, never
+    // the main tick's, so the two never share an invocation.
+    expect(WATCH_TICK_CADENCE_MINUTES).toBe(5);
+    expect(WATCH_TICK_OFFSET % 5).not.toBe(0);
     for (let m = 0; m < 10; m++) {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const ctx = fakeCtx();
@@ -137,7 +142,7 @@ describe('scheduled cadence (#2236)', () => {
       );
       // On a build with no D1 binding a DUE tick says so once; a skipped one
       // returns before even that, having touched nothing.
-      expect(warn.mock.calls.length, `minute +${m}`).toBe(m % 5 === 0 ? 1 : 0);
+      expect(warn.mock.calls.length, `minute +${m}`).toBe(m % 5 === 0 || m % 5 === WATCH_TICK_OFFSET ? 1 : 0);
       expect(ctx.waitUntil).not.toHaveBeenCalled();
       warn.mockRestore();
     }
