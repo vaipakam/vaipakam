@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {PriceGuardState} from "../src/oracle/PriceGuardState.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {FeedRegistryInterface} from "@vaipakam-vendor/chainlink/FeedRegistryInterface.sol";
@@ -46,7 +47,7 @@ contract FeedOverrideTest is SetupTest {
         // Fresh 8-decimal feed returning $1000 at the current block time.
         feed = new MockChainlinkAggregator(int256(1000e8), block.timestamp, 8);
 
-        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.FeedRegistry, registry);
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.FeedRegistry, registry);
 
         // Route every registry.getFeed(asset, usd) to our scriptable aggregator.
         vm.mockCall(
@@ -117,13 +118,13 @@ contract FeedOverrideTest is SetupTest {
         bytes32 subject = bytes32(uint256(uint160(address(feed))));
         vm.expectRevert(
             abi.encodeWithSelector(
-                PriceGuard.InvalidChange.selector,
-                PriceGuard.Kind.FeedMaxStaleness,
+                PriceGuardState.InvalidChange.selector,
+                PriceGuardState.Kind.FeedMaxStaleness,
                 subject,
                 bytes32(uint256(25 hours + 1))
             )
         );
-        guard.proposeChange(PriceGuard.Kind.FeedMaxStaleness, subject, bytes32(uint256(25 hours + 1)));
+        guard.proposeChange(PriceGuardState.Kind.FeedMaxStaleness, subject, bytes32(uint256(25 hours + 1)));
 
         LibTestPriceGuard.setFeedOverride(address(diamond), address(feed), 25 hours, 0);
         assertEq(guard.feedMaxStaleness(address(feed)), 25 hours, "25h stored");

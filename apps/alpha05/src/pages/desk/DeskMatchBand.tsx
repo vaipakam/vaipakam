@@ -144,7 +144,7 @@ export function DeskMatchBand({
           </p>
           <p data-testid="desk-match-terms">{terms(state.pair, state.verdict)}</p>
           <p className="tier-b" data-testid="desk-match-share">
-            {shareText(state.verdict.amount, state.pair.ask.lendingAsset, read.data.settings, amount, copy)}
+            {shareText(state.verdict.amount, state.pair.ask.durationDays, state.pair.ask.lendingAsset, read.data.settings, amount, copy)}
           </p>
           <p className="tier-b" data-testid="desk-match-capacity">
             {capacityText(read.data.settings, copy)}

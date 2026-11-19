@@ -115,8 +115,8 @@ contract SeedAnvilOffers is Script {
         // KYC enforcement is OFF on retail deploys (per CLAUDE.md), so
         // these calls are no-ops at the gate level. Setting the tier
         // anyway keeps the user dashboard's "your KYC tier" view
-        // populated and matches the existing testnet-seeder pattern in
-        // `SepoliaActiveLoan.s.sol`.
+        // populated, as the positive-flow fixture
+        // (`positive-flows/PositiveFlowsBase.sol`) does.
         vm.startBroadcast(adminKey);
         ProfileFacet(diamond).updateKYCTier(lender, LibVaipakam.KYCTier.Tier2);
         ProfileFacet(diamond).updateKYCTier(borrower, LibVaipakam.KYCTier.Tier2);
@@ -167,6 +167,8 @@ contract SeedAnvilOffers is Script {
         returns (LibVaipakam.CreateOfferParams memory)
     {
         return LibVaipakam.CreateOfferParams({
+            integrator: address(0),
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: mUsdc,
             amount: LENDER_AMOUNT_MIN,
@@ -204,6 +206,8 @@ contract SeedAnvilOffers is Script {
         // Borrower is single-fill in Phase 1 — `amountMax == amount`
         // (auto-collapse via 0 also works; spelled out here for clarity).
         return LibVaipakam.CreateOfferParams({
+            integrator: address(0),
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Borrower,
             lendingAsset: mUsdc,
             amount: BORROWER_AMOUNT,

@@ -7,6 +7,7 @@ import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../../src/interfaces/IVaipakamErrors.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../../src/facets/ClaimViewFacet.sol";
 import {PrecloseFacet} from "../../src/facets/PrecloseFacet.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {VaipakamNFTFacet} from "../../src/facets/VaipakamNFTFacet.sol";
@@ -122,7 +123,7 @@ contract PositiveFlowsPositionHolder is PositiveFlowsStaged {
             abi.encodeWithSelector(IVaipakamErrors.NotNFTOwner.selector),
             "PF-163: the opener should not be able to claim the collateral (NotNFTOwner)"
         );
-        (address asset, uint256 amount,,,,,,) = ClaimFacet(diamond).getClaimable(loanId, false);
+        (address asset, uint256 amount,,,,,,) = ClaimViewFacet(diamond).getClaimable(loanId, false);
         require(asset == address(weth) && amount == COLLATERAL_AMOUNT, "PF-163: the borrower claim should be the WETH collateral");
         require(
             _vaultBalance(weth, newBorrower) - vaultBefore == amount,
@@ -131,7 +132,7 @@ contract PositiveFlowsPositionHolder is PositiveFlowsStaged {
         vm.startBroadcast(newBorrowerKey);
         ClaimFacet(diamond).claimAsBorrower(loanId);
         vm.stopBroadcast();
-        (,, bool claimed,,,,,) = ClaimFacet(diamond).getClaimable(loanId, false);
+        (,, bool claimed,,,,,) = ClaimViewFacet(diamond).getClaimable(loanId, false);
         require(claimed, "PF-163: the current holder's claim should settle the collateral");
         console.log("Current borrower-position holder claimed the collateral:", amount);
     }
@@ -170,7 +171,7 @@ contract PositiveFlowsPositionHolder is PositiveFlowsStaged {
             abi.encodeWithSelector(IVaipakamErrors.NotNFTOwner.selector),
             "PF-234: the opener should not be able to claim the repayment (NotNFTOwner)"
         );
-        (address asset, uint256 amount,,,,,,) = ClaimFacet(diamond).getClaimable(loanId, true);
+        (address asset, uint256 amount,,,,,,) = ClaimViewFacet(diamond).getClaimable(loanId, true);
         require(asset == address(usdc), "PF-234: the lender claim should be in the lending asset");
         require(amount >= LOAN_AMOUNT, "PF-234: the lender claim should cover at least the principal");
         require(
@@ -180,7 +181,7 @@ contract PositiveFlowsPositionHolder is PositiveFlowsStaged {
         vm.startBroadcast(newLenderKey);
         ClaimFacet(diamond).claimAsLender(loanId);
         vm.stopBroadcast();
-        (,, bool claimed,,,,,) = ClaimFacet(diamond).getClaimable(loanId, true);
+        (,, bool claimed,,,,,) = ClaimViewFacet(diamond).getClaimable(loanId, true);
         require(claimed, "PF-234: the current holder's claim should settle the repayment");
         console.log("Current lender-position holder claimed the repayment:", amount);
 

@@ -7,11 +7,11 @@
  * sanctions, the loan settling another way).
  *
  * EXISTENCE is the CHAIN's say-so, not the marker's: the borrower
- * position NFT is natively locked (`positionLock(borrowerTokenId) ==
- * PrecloseOffset`) from posting until completion or cancel, so an
+ * position NFT carries the offset route (`positionRoute(borrowerTokenId)
+ * == PrecloseOffset`) from posting until completion or cancel, so an
  * offset made on another device still shows here. The device-local
  * marker only remembers WHICH offer id was created (needed for
- * cancel); when the lock is live but the marker is missing, the
+ * cancel); when the route is open but the marker is missing, the
  * surface still renders with the cancel affordance degraded.
  */
 import { useCallback, useEffect, useState } from 'react';

@@ -15,8 +15,11 @@ import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
+import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibStandingInstructions} from "../libraries/LibStandingInstructions.sol";
 import {LibFallbackCustody} from "../libraries/LibFallbackCustody.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
@@ -30,6 +33,8 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {SettlementLegFacet} from "./SettlementLegFacet.sol";
+import {StandingInstructionFacet} from "./StandingInstructionFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
 
@@ -199,6 +204,15 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
      * @param loanId The loan ID to repay.
      */
     function repayLoan(uint256 loanId) external nonReentrant {
+        // #3681 — the "repay at the due date" standing instruction reaches
+        // this same entry by self-call, having bound the holder whose payment
+        // reserve pays (StandingInstructionFacet.runDueRepayment). The
+        // reserve then pays exactly what a wallet would: same amounts,
+        // splits and events, the holder named as payer. Any other caller,
+        // a self-call with no binding included, pays from its wallet.
+        address reserveHolder =
+            msg.sender == address(this) ? LibStandingInstructions.takeReserveRepayer(loanId) : address(0);
+        address payer = reserveHolder == address(0) ? msg.sender : reserveHolder;
         // T-090 v1.1 (#389) §5.8 — block voluntary close while an
         // intent-based swap-to-repay commit is live: its lot is promised
         // to a live LOP order that may still fill, so closing the loan
@@ -261,10 +275,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
         // there since rental fees are deducted from a borrower-funded
         // prepay vault regardless of caller.
         if (loan.assetType == LibVaipakam.AssetType.ERC20) {
-            if (msg.sender == loan.lender) revert LenderCannotRepayOwnLoan();
-            if (
-                LibPositionNFT.ownerOf(loan.lenderTokenId) == msg.sender
-            ) revert LenderCannotRepayOwnLoan();
+            LibAuth.requireNotLenderSide(loan, payer);
         }
 
         uint256 graceEnd = LibLoanClock.graceEnd(loan);
@@ -338,40 +349,31 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
                 plan.treasuryShare = newTreasury;
             }
 
-            // Treasury share transferred immediately (no claim needed).
-            // Skipped entirely when the VPFI discount path satisfied it.
-            // #1281-011 — through the one payer -> treasury pull, which
-            // refuses a short arrival by name.
-            LibFacet.transferFromPayerToTreasury(msg.sender, loan.principalAsset, plan.treasuryShare);
-
-            // T-037 — Lender's due: borrower → lender's vault in ONE
-            // transfer. The Diamond carries the borrower's allowance
-            // (granted by the prior `approve()`) so the chokepoint's
-            // cross-payer variant pushes the asset from the borrower's
-            // wallet into the lender's vault without ever residing
-            // on the Diamond. Routing through `vaultDepositERC20From`
-            // ensures the protocolTrackedVaultBalance counter ticks
-            // up under the LENDER (the owner of the receiving vault,
-            // not the borrower who's the payer).
-            // #821 — vault-lock: a flagged stored lender would otherwise brick
-            // this deposit (the receiving-vault screen reverts). Pin the
-            // receive-side exemption to `loan.lender` so the close-out completes
-            // and the borrower's debt clears; the proceeds land in the lender's
-            // OWN (protocol-tracked) vault, frozen behind the Tier-1 claim gate
-            // (the `claimAsLender` stored-owner screen) until the flag clears.
-            LibSanctionedLock.begin(s, loan.lender);
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultDepositERC20From.selector,
-                    msg.sender,        // payer — borrower
-                    loan.lender,       // user — lender, owns the receiving vault
-                    loan.principalAsset,
-                    plan.lenderDue
+            // Both legs leave through one host (#3669, #3681): a hand repayment's
+            // from the payer's wallet (SettlementLegFacet), a reserve-paid one's
+            // from the holder's released reserve (StandingInstructionFacet). The
+            // treasury share goes first; a leg the token refuses waits, liened,
+            // in the payer's own vault, and the repayment still completes. The
+            // lender due lands in the stored lender's vault behind the
+            // receive-side exemption (#821), frozen behind the claim gate.
+            // The treasury share's floor is cut from the interest (#3649
+            // stage 3), so a parked share keeps it.
+            ITreasuryFeeHost.FeeBasis memory basis =
+                LibFeeFloor.interest(plan.interest + plan.lateFee, LibVaipakam.effectiveTreasuryFeeBps(loan));
+            bool parked = abi.decode(
+                LibFacet.crossFacetCallReturn(
+                    reserveHolder == address(0)
+                        ? abi.encodeCall(
+                            SettlementLegFacet.payRepaymentLegs,
+                            (loanId, msg.sender, loan.principalAsset, plan.treasuryShare, plan.lenderDue, basis)
+                        )
+                        : abi.encodeCall(
+                            StandingInstructionFacet.payRepaymentFromReserve,
+                            (loanId, reserveHolder, plan.treasuryShare, plan.lenderDue, basis)
+                        ),
+                    VaultDepositFailed.selector
                 ),
-                VaultDepositFailed.selector
-            );
-            LibSanctionedLock.end(
-                s, loan.lender, loanId, loan.principalAsset, plan.lenderDue
+                (bool)
             );
             // #998 S10 (#1006 / #1132) — both holders' fail-closed markers are
             // recorded centrally at the `Repaid` transition (terminalizeFromAny).
@@ -392,7 +394,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // (`withdrawVPFIFromVault`), so reserve the proceeds against that
             // unstake path until the holder claims (released path-agnostically
             // in `ClaimFacet._claimAsLenderImpl`). No-op for non-VPFI principal.
-            if (loan.principalAsset == s.vpfiToken) {
+            if (!parked && loan.principalAsset == s.vpfiToken) {
                 LibEncumbrance.encumberLenderProceeds(
                     loanId, loan.lender, loan.principalAsset, plan.lenderDue
                 );
@@ -490,32 +492,22 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
                 totalDue
             );
 
-            // #821 (Codex #832 r3 P1) — both withdrawals below pull the prepay
-            // from the repayer's (`msg.sender`) own vault. Arm the move-out
-            // exemption so a borrower flagged after init can still settle the
-            // rental repayment (Tier-2 stays open) — the prepay is pushed OUT to
-            // the already-screened treasury / lender, the payer loses custody.
-            LibSanctionedLock.beginMoveOut(s, msg.sender);
-            // Treasury share: immediate from borrower's vault. #2440 — the
-            // treasury accrues what reached it.
-            LibFacet.vaultFeeToTreasury(msg.sender, loan.prepayAsset, treasuryShare);
-
-            // Lender's rental share: withdraw from borrower's vault → Diamond → lender's vault.
-            // #2440 — a voluntary repayment: refused unless the whole share
-            // reached the Diamond, so the lender is never paid out of the
-            // Diamond's other balance and the loan never closes on less.
-            LibVaultOutflow.toDiamondExact(msg.sender, loan.prepayAsset, lenderShare, loanId, OutflowReason.REPAYMENT);
-            LibSanctionedLock.endMoveOut(s);
-            // #821 (Codex #832 r2 P1) — vault-lock the lender's rental share so a
-            // flagged stored lender doesn't brick the rental repayment; the share
-            // lands in the lender's OWN vault, frozen behind the claim gate
-            // (T-051 — the Diamond-side transfer ticks protocolTrackedVaultBalance
-            // so the subsequent claim's vaultWithdrawERC20 doesn't underflow).
-            // #2440 — the same voluntary repayment's second hop: refused unless
-            // the lender's vault received the whole share, so the claim below
-            // names the share the loan closes on and never a shrunk figure.
-            LibSanctionedLock.depositLockedInFull(
-                s, loan.lender, loanId, loan.prepayAsset, lenderShare
+            // The rental's two legs leave the prepay through the settlement
+            // host (SettlementLegFacet.payRentalLegs), sourced from the STORED
+            // `loan.borrower`'s vault, where the prepay was deposited at
+            // origination, never from `msg.sender`'s: after a protected-account
+            // replacement the caller is the borrower's manager, whose own vault
+            // holds no prepay (the same rule as the rental preclose, #574). The treasury
+            // share (#2440 accrued as it arrived, #3669 parked when refused)
+            // and the lender's share, exact, into the stored lender's vault
+            // behind the receive-side exemption (#821), so a flagged party on
+            // either side never bricks the rental repayment.
+            LibFacet.crossFacetCall(
+                abi.encodeCall(
+                    SettlementLegFacet.payRentalLegs,
+                    (loanId, loan.borrower, loan.prepayAsset, treasuryShare, lenderShare)
+                ),
+                VaultDepositFailed.selector
             );
             // #998 S10 (#1006 / #1132) — both holders' fail-closed markers are
             // recorded centrally at the `Repaid` transition (terminalizeFromAny).
@@ -653,7 +645,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
         // library just transitioned to (typically `Repaid`).
         emit LoanRepaid(
             loanId,
-            msg.sender,
+            payer,
             interest,
             lateFee,
             /* outstandingPrincipal */ 0,
@@ -797,34 +789,17 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             if (partialAmount >= loan.principal)
                 revert PartialWouldRetireFullPrincipal();
 
-            // Pay accrued + partial to the CURRENT lender-position holder.
-            //
-            // Codex #659 P2 — the both-side consolidation hook above re-anchors
-            // `loan.lender` to `ownerOf(lenderTokenId)` in the common case, but
-            // it is deliberately SKIPPED when the lender side carries unreserved
-            // `heldForLender` VPFI (`_isExcludedLive`, #597 dependency). In that
-            // narrow case `loan.lender` can still be stale, and unlike the full
-            // repay path (vault deposit + claim + #592 encumbrance) this partial
-            // pays the lender DIRECTLY, so a stale anchor would hand the departed
-            // lender the principal+interest while the current NFT holder's owed
-            // principal is reduced. Resolve the recipient from NFT ownership —
-            // the canonical authority (see the self-repay guard's rationale in
-            // `repayLoan`) — so the payout is correct regardless of whether the
-            // consolidation ran or was skipped. The loan is Active here, so the
-            // lender NFT is live (never burned pre-terminal) and `ownerOf` holds.
-            // #998 S10 (#1006) Class B — this is a DIRECT inline payout (no
-            // vault+claim deferral like full repay). Pay the CURRENT lender-position
-            // holder inline when clean, or FREEZE fail-closed (park payer → stored
-            // lender vault + `heldForLender` + encumber + marker) when the holder is
-            // registry-flagged. Replaces the prior fail-open `_assertNotSanctioned`,
-            // which would pay a previously-confirmed-flagged holder during an oracle
-            // outage. Hosted on `EncumbranceMutateFacet`: the host resolves
-            // `ownerOf(lenderTokenId)` and, on the clean path, pays the combined
-            // principal-repayment + interest share via `safeTransferFrom(msg.sender)`
-            // exactly as before.
+            // #3629 — hold accrued + partial for the lender position: from the
+            // payer into the STORED `loan.lender`'s vault, on the loan's held
+            // ledger, reserved, for the position holder's claim
+            // (`ClaimFacet.claimHeldForLender`, or the final lender claim).
+            // Nothing is paid to a wallet. The held balance follows the
+            // position, so a stale `loan.lender` (consolidation skipped, #659)
+            // only names the custody vault: the claim pays whoever holds the
+            // lender token then. Hosted on `EncumbranceMutateFacet` for size.
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EncumbranceMutateFacet.freezeOrPayActiveLenderFromPayer.selector,
+                    EncumbranceMutateFacet.holdActiveLenderFromPayer.selector,
                     loan.id,
                     msg.sender,
                     loan.principalAsset,
@@ -839,7 +814,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // #1383 — a yield-fee discount can drive `treasuryShare` to 0 on the
             // VPFI-payment path; the shared pull is a no-op at zero.
             // #1281-011 — and it refuses a short arrival by name.
-            LibFacet.transferFromPayerToTreasury(msg.sender, loan.principalAsset, treasuryShare);
+            LibFacet.transferFromPayerToTreasury(msg.sender, loan.principalAsset, treasuryShare, LibFeeFloor.interest(accrued, LibVaipakam.effectiveTreasuryFeeBps(loan)));
 
             // #1808 — through the ledger's single writer (checkpoint first).
             // `partialAmount < loan.principal` is pinned above.
@@ -951,21 +926,18 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // lien (the prepay pool is drained by this very mechanism,
             // not protected by a lien), so no decrement here.
 
-            // #998 S10 (#1006) Class B — the lender's prepay share is pulled from
-            // the payer's (`msg.sender`) own rental prepay vault. NFT-rental loans
-            // skip the eager consolidation at this function's start, so `loan.lender`
-            // can be stale; the host resolves the LIVE `ownerOf(lenderTokenId)`.
-            // Pay that current holder inline when clean, or FREEZE fail-closed (park
-            // payer-vault → stored-lender vault + `heldForLender` + encumber +
-            // marker) when they are registry-flagged, replacing the fail-open
-            // `_assertNotSanctioned`. The host arms the from-side move-out exemption
-            // around the withdraw so a borrower flagged after init can still service
-            // the partial rental (Tier-2 stays open) — the payer loses custody.
+            // #3629 — the lender's prepay share moves from the STORED
+            // `loan.borrower`'s vault (where the rental prepay lives; after a
+            // protected-account replacement `msg.sender` is the manager, whose
+            // vault holds none of it) into the STORED `loan.lender`'s vault,
+            // held for the lender position's claim. The host arms the from-side
+            // move-out exemption so a borrower flagged after init can still
+            // service the partial rental (Tier-2 stays open).
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector,
+                    EncumbranceMutateFacet.holdActiveLenderFromVault.selector,
                     loan.id,
-                    msg.sender,
+                    loan.borrower,
                     loan.prepayAsset,
                     lenderShare
                 ),
@@ -977,9 +949,9 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // borrower flagged after init can still service the partial rental.
             // #1383 — a yield-fee discount can drive `treasuryShare` to 0 on the
             // VPFI-payment path; the fee leg skips a zero amount.
-            LibSanctionedLock.beginMoveOut(LibVaipakam.storageSlot(), msg.sender);
+            LibSanctionedLock.beginMoveOut(LibVaipakam.storageSlot(), loan.borrower);
             // #2440 — the treasury accrues what reached it.
-            LibFacet.vaultFeeToTreasury(msg.sender, loan.prepayAsset, treasuryShare);
+            LibFacet.vaultFeeToTreasury(loan.borrower, loan.prepayAsset, treasuryShare);
             LibSanctionedLock.endMoveOut(LibVaipakam.storageSlot());
 
             // Pass-2 D1 (#1188) — keep `durationDays` immutable (fixed
@@ -1001,7 +973,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultSetRentalUser.selector,
                     loan.id,
-                    msg.sender, // Still renter
+                    loan.borrower, // Still the stored renter (not a manager calling for it)
                     newExpires
                 ),
                 NFTRenterUpdateFailed.selector

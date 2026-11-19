@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibIntentFill} from "../src/libraries/LibIntentFill.sol";
+import {LenderIntentViewFacet} from "../src/facets/LenderIntentViewFacet.sol";
+import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -11,16 +14,23 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {LibMetricsTypes} from "../src/libraries/LibMetricsTypes.sol";
 import {LibTiming} from "../src/libraries/LibTiming.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {LibTestTiming} from "./helpers/LibTestTiming.sol";
+import {LibTestPayout} from "./helpers/LibTestPayout.sol";
+import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.sol";
+import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
+import {AutoLifecycleSettingsFacet} from "../src/facets/AutoLifecycleSettingsFacet.sol";
 
 /**
  * @title  LenderIntentLendUntilTest
@@ -53,6 +63,10 @@ contract LenderIntentLendUntilTest is SetupTest {
         ConfigFacet(address(diamond)).setPartialFillEnabled(true);
         vm.prank(owner);
         LenderIntentFacet(address(diamond)).setLenderIntentEnabled(true);
+        // This suite moves the clock by days between fills; the slot's
+        // calm-price check is covered in IntentCalmCheckTest, so it is off here.
+        vm.prank(lender);
+        OfferPriceGuardFacet(address(diamond)).setIntentCalmCheck(mockERC20, mockCollateralERC20, 0, false);
     }
 
     // ─── helpers ────────────────────────────────────────────────────────
@@ -62,6 +76,7 @@ contract LenderIntentLendUntilTest is SetupTest {
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20,
             mockCollateralERC20,
+            0,
             MAX_EXPOSURE,
             MIN_RATE_BPS,
             MAX_INIT_LTV_BPS,
@@ -81,7 +96,7 @@ contract LenderIntentLendUntilTest is SetupTest {
         vm.prank(lender);
         ERC20(mockERC20).approve(address(diamond), amount);
         vm.prank(lender);
-        LenderIntentFacet(address(diamond)).fundLenderIntent(mockERC20, mockCollateralERC20, amount);
+        LenderIntentFacet(address(diamond)).fundLenderIntent(mockERC20, mockCollateralERC20, 0, amount);
     }
 
     function _newBorrower(string memory name) internal returns (address b) {
@@ -105,6 +120,8 @@ contract LenderIntentLendUntilTest is SetupTest {
         vm.prank(creator);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: principal,
@@ -144,7 +161,7 @@ contract LenderIntentLendUntilTest is SetupTest {
 
     function _preview(uint256 cp, uint256 fill) internal view returns (LibOfferMatch.IntentPreviewResult memory) {
         return RiskPreviewFacet(address(diamond)).previewIntent(
-            solver, solver, lender, mockERC20, mockCollateralERC20, cp, fill
+            solver, solver, lender, mockERC20, mockCollateralERC20, 0, cp, fill
         );
     }
 
@@ -152,7 +169,7 @@ contract LenderIntentLendUntilTest is SetupTest {
         LibOfferMatch.IntentPreviewResult memory r = _preview(cp, fill);
         assertTrue(r.ok, "preview admits the fill");
         vm.prank(solver);
-        return OfferMatchIntentFacet(address(diamond)).matchIntent(lender, mockERC20, mockCollateralERC20, cp, fill);
+        return OfferMatchIntentFacet(address(diamond)).matchIntent(lender, mockERC20, mockCollateralERC20, 0, cp, fill);
     }
 
     /// @dev The fill is refused for the lend-until time, by the preview and
@@ -164,20 +181,20 @@ contract LenderIntentLendUntilTest is SetupTest {
         vm.prank(solver);
         vm.expectRevert(
             abi.encodeWithSelector(
-                OfferMatchIntentFacet.LenderIntentPastLendUntil.selector,
+                LibIntentFill.LenderIntentPastLendUntil.selector,
                 vm.getBlockTimestamp() + uint256(duration) * 1 days,
                 uint256(lendUntil)
             )
         );
-        OfferMatchIntentFacet(address(diamond)).matchIntent(lender, mockERC20, mockCollateralERC20, cp, fill);
+        OfferMatchIntentFacet(address(diamond)).matchIntent(lender, mockERC20, mockCollateralERC20, 0, cp, fill);
     }
 
     function _intentCapital() internal view returns (uint256) {
-        return LenderIntentFacet(address(diamond)).getLenderIntentCapital(lender, mockERC20, mockCollateralERC20);
+        return LenderIntentViewFacet(address(diamond)).getLenderIntentCapital(lender, mockERC20, mockCollateralERC20, 0);
     }
 
     function _livePrincipal() internal view returns (uint256) {
-        return LenderIntentFacet(address(diamond)).getLenderIntentLivePrincipal(lender, mockERC20, mockCollateralERC20);
+        return LenderIntentViewFacet(address(diamond)).getLenderIntentLivePrincipal(lender, mockERC20, mockCollateralERC20, 0);
     }
 
     function _vaultHolding(address user) internal view returns (uint256) {
@@ -193,7 +210,7 @@ contract LenderIntentLendUntilTest is SetupTest {
         _setIntent(0, false);
         _fundIntent(PRINCIPAL);
         (LibMetricsTypes.LenderIntentSummary[] memory rows,) =
-            LenderIntentFacet(address(diamond)).getActiveLenderIntents(0, 10);
+            LenderIntentViewFacet(address(diamond)).getActiveLenderIntents(0, 10);
         assertEq(rows.length, 1, "listed");
         assertEq(rows[0].lendUntil, 0, "no end date in the feed");
         assertFalse(rows[0].acceptsProRata, "no pro-rata opt-in in the feed");
@@ -212,7 +229,7 @@ contract LenderIntentLendUntilTest is SetupTest {
         _assertPastLendUntil(tooLong, PRINCIPAL, 31, lendUntil);
         assertGt(_fill(fits, PRINCIPAL), 0, "the 30-day term fits");
         LibVaipakam.LenderIntent memory i =
-            LenderIntentFacet(address(diamond)).getLenderIntent(lender, mockERC20, mockCollateralERC20);
+            LenderIntentViewFacet(address(diamond)).getLenderIntent(lender, mockERC20, mockCollateralERC20, 0);
         assertEq(i.lendUntil, lendUntil, "stored");
     }
 
@@ -270,7 +287,7 @@ contract LenderIntentLendUntilTest is SetupTest {
         RepayFacet(address(diamond)).repayLoan(loanId);
 
         (LibMetricsTypes.RollableIntentLoan[] memory rows, uint256 total) =
-            LenderIntentFacet(address(diamond)).getRollableIntentLoans(0, 10);
+            LenderIntentViewFacet(address(diamond)).getRollableIntentLoans(0, 10);
         assertEq(total, 1, "still registered");
         assertEq(rows.length, 0, "an ended intent offers no roll");
 
@@ -278,13 +295,13 @@ contract LenderIntentLendUntilTest is SetupTest {
         vm.expectRevert(LenderIntentFacet.LenderIntentEnded.selector);
         LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
 
-        (, uint256 owed,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 owed,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertGt(owed, PRINCIPAL, "principal plus interest owed");
         // The claim settles into the position holder's vault (here the same
         // vault the repayment landed in), as free balance, not intent capital.
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
-        (,, bool claimed) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (,, bool claimed) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertTrue(claimed, "the normal claim consumed the lender claim");
         assertGe(_vaultHolding(lender), owed, "the whole claim sits in the lender's vault");
         assertEq(_intentCapital(), 0, "nothing re-committed behind the ended intent");
@@ -298,17 +315,17 @@ contract LenderIntentLendUntilTest is SetupTest {
         _setIntent(uint64(start + 2 days + SLACK), false);
         _fundIntent(PRINCIPAL);
         (LibMetricsTypes.LenderIntentSummary[] memory rows, uint256 total) =
-            LenderIntentFacet(address(diamond)).getActiveLenderIntents(0, 10);
+            LenderIntentViewFacet(address(diamond)).getActiveLenderIntents(0, 10);
         assertEq(total, 1, "registered");
         assertEq(rows.length, 1, "listed while open");
         assertEq(rows[0].lendUntil, uint64(start + 2 days + SLACK), "summary carries the date");
 
         vm.warp(start + 1 days + SLACK);
-        (rows,) = LenderIntentFacet(address(diamond)).getActiveLenderIntents(0, 10);
+        (rows,) = LenderIntentViewFacet(address(diamond)).getActiveLenderIntents(0, 10);
         assertEq(rows.length, 1, "exactly one day left still lists");
 
         vm.warp(start + 1 days + SLACK + 1);
-        (rows, total) = LenderIntentFacet(address(diamond)).getActiveLenderIntents(0, 10);
+        (rows, total) = LenderIntentViewFacet(address(diamond)).getActiveLenderIntents(0, 10);
         assertEq(total, 1, "still registered, capital withdrawable");
         assertEq(rows.length, 0, "a closed window is not listed");
     }
@@ -319,7 +336,7 @@ contract LenderIntentLendUntilTest is SetupTest {
         vm.prank(lender);
         vm.expectRevert(LenderIntentFacet.LenderIntentInvalidBounds.selector);
         LenderIntentFacet(address(diamond)).setLenderIntent(
-            mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS,
+            mockERC20, mockCollateralERC20, 0, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS,
             MAX_DURATION, MIN_FILL, false, uint64(vm.getBlockTimestamp() + 1 days - 1), false, true, type(uint64).max
         );
         // The window is measured from when the new terms may be filled: one
@@ -330,12 +347,12 @@ contract LenderIntentLendUntilTest is SetupTest {
         vm.prank(lender);
         vm.expectRevert(LenderIntentFacet.LenderIntentInvalidBounds.selector);
         LenderIntentFacet(address(diamond)).setLenderIntent(
-            mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS,
+            mockERC20, mockCollateralERC20, 0, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS,
             MAX_DURATION, MIN_FILL, false, uint64(vm.getBlockTimestamp() + 1 days + 59), false, true, type(uint64).max
         );
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).setLenderIntent(
-            mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS,
+            mockERC20, mockCollateralERC20, 0, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS,
             MAX_DURATION, MIN_FILL, false, uint64(vm.getBlockTimestamp() + 1 days + 60), false, true, type(uint64).max
         );
         (, uint256 cp) = _post("b-age", PRINCIPAL, 1);
@@ -345,7 +362,7 @@ contract LenderIntentLendUntilTest is SetupTest {
 
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).setLenderIntent(
-            mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS,
+            mockERC20, mockCollateralERC20, 0, MAX_EXPOSURE, MIN_RATE_BPS, MAX_INIT_LTV_BPS,
             MAX_DURATION, MIN_FILL, false, uint64(vm.getBlockTimestamp() + 2 days), false, true, type(uint64).max
         );
         LibOfferMatch.IntentPreviewResult memory r = _preview(cp, PRINCIPAL);
@@ -387,8 +404,8 @@ contract LenderIntentLendUntilTest is SetupTest {
         LibOfferMatch.IntentPreviewResult memory r = _preview(cpProRata, PRINCIPAL);
         assertEq(uint8(r.intentError), uint8(LibOfferMatch.IntentError.FullTermRequired), "off: refused");
         vm.prank(solver);
-        vm.expectRevert(OfferMatchIntentFacet.LenderIntentFullTermRequired.selector);
-        OfferMatchIntentFacet(address(diamond)).matchIntent(lender, mockERC20, mockCollateralERC20, cpProRata, PRINCIPAL);
+        vm.expectRevert(LibIntentFill.LenderIntentFullTermRequired.selector);
+        OfferMatchIntentFacet(address(diamond)).matchIntent(lender, mockERC20, mockCollateralERC20, 0, cpProRata, PRINCIPAL);
 
         _setIntent(0, true);
         uint256 proRataLoan = _fill(cpProRata, PRINCIPAL);
@@ -411,7 +428,7 @@ contract LenderIntentLendUntilTest is SetupTest {
         vm.prank(b);
         RepayFacet(address(diamond)).repayLoan(loanId);
         uint256 arrived = _vaultHolding(lender) - vaultBefore;
-        (, uint256 owed,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 owed,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertEq(owed, arrived, "the claim is what arrived");
         // Ten days of a 30-day term at 5-6% APR: well under full-term interest.
         assertLt(arrived - PRINCIPAL, (PRINCIPAL * 600 * 30) / (10_000 * 365), "accrued interest only");
@@ -438,16 +455,16 @@ contract LenderIntentLendUntilTest is SetupTest {
             "off, full-term partial"
         );
         vm.prank(solver);
-        vm.expectRevert(OfferMatchIntentFacet.LenderIntentPartialRepayNotAllowed.selector);
-        OfferMatchIntentFacet(address(diamond)).matchIntent(lender, mockERC20, mockCollateralERC20, cpFullPartial, PRINCIPAL);
+        vm.expectRevert(LibIntentFill.LenderIntentPartialRepayNotAllowed.selector);
+        OfferMatchIntentFacet(address(diamond)).matchIntent(lender, mockERC20, mockCollateralERC20, 0, cpFullPartial, PRINCIPAL);
         assertEq(
             uint8(_preview(cpProRataPartial, PRINCIPAL).intentError),
             uint8(LibOfferMatch.IntentError.FullTermRequired),
             "off, pro-rata partial"
         );
         vm.prank(solver);
-        vm.expectRevert(OfferMatchIntentFacet.LenderIntentFullTermRequired.selector);
-        OfferMatchIntentFacet(address(diamond)).matchIntent(lender, mockERC20, mockCollateralERC20, cpProRataPartial, PRINCIPAL);
+        vm.expectRevert(LibIntentFill.LenderIntentFullTermRequired.selector);
+        OfferMatchIntentFacet(address(diamond)).matchIntent(lender, mockERC20, mockCollateralERC20, 0, cpProRataPartial, PRINCIPAL);
 
         _setIntent(0, true);
         assertEq(
@@ -456,8 +473,8 @@ contract LenderIntentLendUntilTest is SetupTest {
             "on, full-term partial"
         );
         vm.prank(solver);
-        vm.expectRevert(OfferMatchIntentFacet.LenderIntentPartialRepayNotAllowed.selector);
-        OfferMatchIntentFacet(address(diamond)).matchIntent(lender, mockERC20, mockCollateralERC20, cpFullPartial, PRINCIPAL);
+        vm.expectRevert(LibIntentFill.LenderIntentPartialRepayNotAllowed.selector);
+        OfferMatchIntentFacet(address(diamond)).matchIntent(lender, mockERC20, mockCollateralERC20, 0, cpFullPartial, PRINCIPAL);
     }
 
     /// @dev Opted in, a pro-rata request allowing partial repayment fills. A
@@ -465,14 +482,11 @@ contract LenderIntentLendUntilTest is SetupTest {
     ///      vault, nothing re-committed) and leaves exposure untouched; after
     ///      the final repayment the roll re-commits only what the lender claim
     ///      holds, and exposure drops by the original fill exactly once.
+    /// @dev #3629 — a partial repayment is held for the lender position in the
+    ///      owner's vault (never paid to a wallet), and the roll at full
+    ///      repayment re-commits the final claim plus everything still held.
     function test_partialRepay_admittedForOptedInProRata() public {
-        address b = _newBorrower("b-partial");
-        uint256 cp = _postBorrower(b, PRINCIPAL, 30, false, true);
-        _setIntent(0, true);
-        _fundIntent(PRINCIPAL);
-        uint256 loanId = _fill(cp, PRINCIPAL);
-        assertTrue(LoanFacet(address(diamond)).getLoanDetails(loanId).allowsPartialRepay, "loan allows partial repay");
-        assertEq(_livePrincipal(), PRINCIPAL, "exposure out");
+        (uint256 loanId, address b) = _proRataLoan("b-partial");
 
         vm.warp(vm.getBlockTimestamp() + 5 days);
         uint256 walletBefore = ERC20(mockERC20).balanceOf(lender);
@@ -480,21 +494,200 @@ contract LenderIntentLendUntilTest is SetupTest {
         uint256 capitalBefore = _intentCapital();
         vm.prank(b);
         RepayFacet(address(diamond)).repayPartial(loanId, 400 ether);
-        assertGt(ERC20(mockERC20).balanceOf(lender) - walletBefore, 400 ether, "the slice and its interest paid to the holder");
-        assertEq(_vaultHolding(lender), vaultBefore, "nothing lands in the vault");
-        assertEq(_intentCapital(), capitalBefore, "nothing re-committed");
-        assertEq(_livePrincipal(), PRINCIPAL, "exposure unchanged until the loan closes");
+        uint256 held = _lenderHeld(loanId);
+        assertGt(held, 400 ether, "the slice and its interest are held for the position");
+        assertEq(ERC20(mockERC20).balanceOf(lender), walletBefore, "nothing paid to the wallet");
+        assertEq(_vaultHolding(lender) - vaultBefore, held, "held in the owner's vault");
+        assertEq(_intentCapital(), capitalBefore, "nothing re-committed yet");
+        // #3714 — live is the outstanding principal, so it fell by the slice.
+        assertEq(_livePrincipal(), LoanFacet(address(diamond)).getLoanDetails(loanId).principal, "live follows the outstanding principal");
+        assertLt(_livePrincipal(), PRINCIPAL, "it fell with the repaid slice");
 
         vm.warp(vm.getBlockTimestamp() + 5 days);
         vm.prank(b);
         RepayFacet(address(diamond)).repayLoan(loanId);
-        (, uint256 owed,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 owed,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertLt(owed, PRINCIPAL, "the claim carries only the remainder");
         assertGt(owed, PRINCIPAL - 400 ether, "remainder plus its interest");
 
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
-        assertEq(_intentCapital() - capitalBefore, owed, "the roll re-commits only the claim");
+        assertEq(_intentCapital() - capitalBefore, owed + held, "the roll re-commits the claim and the held part");
+        assertEq(_lenderHeld(loanId), 0, "nothing left held");
         assertEq(_livePrincipal(), 0, "exposure released by the original fill, once");
+    }
+
+    /// @dev #3629 — the held part goes back behind the intent while the loan
+    ///      runs; the loan stays open and its exposure is unchanged.
+    function test_recommitHeldToIntent_whileOpen() public {
+        (uint256 loanId, address b) = _proRataLoan("b-recommit");
+        vm.warp(vm.getBlockTimestamp() + 5 days);
+        vm.prank(b);
+        RepayFacet(address(diamond)).repayPartial(loanId, 400 ether);
+        uint256 held = _lenderHeld(loanId);
+        uint256 capitalBefore = _intentCapital();
+        (LibMetricsTypes.RollableIntentLoan[] memory rows,) =
+            LenderIntentViewFacet(address(diamond)).getRollableIntentLoans(0, 50);
+        assertEq(rows.length, 1, "the open loan with a held payment is a candidate");
+        assertTrue(rows[0].open, "marked open");
+        assertEq(rows[0].held, held, "with what is held");
+
+        vm.prank(lender);
+        LenderIntentFacet(address(diamond)).recommitHeldToIntent(loanId);
+        assertEq(_intentCapital() - capitalBefore, held, "the held part is intent capital again");
+        assertEq(_lenderHeld(loanId), 0, "nothing left held");
+        assertEq(
+            _livePrincipal(),
+            LoanFacet(address(diamond)).getLoanDetails(loanId).principal,
+            "a recommit moves capital, not live: live stays the outstanding principal"
+        );
+        assertEq(
+            uint256(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
+            uint256(LibVaipakam.LoanStatus.Active),
+            "the loan runs on"
+        );
+
+        vm.prank(lender);
+        vm.expectRevert(LenderIntentFacet.LenderIntentNothingToRoll.selector);
+        LenderIntentFacet(address(diamond)).recommitHeldToIntent(loanId);
+    }
+
+    /// @dev #3629 — a stranger cannot re-commit the owner's held payments, and
+    ///      a cancelled intent sends them to the holder's claim instead.
+    function test_recommitHeldToIntent_refusals() public {
+        (uint256 loanId, address b) = _proRataLoan("b-recommit-refused");
+        vm.warp(vm.getBlockTimestamp() + 5 days);
+        vm.prank(b);
+        RepayFacet(address(diamond)).repayPartial(loanId, 400 ether);
+
+        vm.prank(b);
+        vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
+        LenderIntentFacet(address(diamond)).recommitHeldToIntent(loanId);
+
+        vm.prank(lender);
+        LenderIntentFacet(address(diamond)).cancelLenderIntent(mockERC20, mockCollateralERC20, 0);
+        vm.prank(lender);
+        vm.expectRevert(LenderIntentFacet.LenderIntentLoanNotRollable.selector);
+        LenderIntentFacet(address(diamond)).recommitHeldToIntent(loanId);
+
+        uint256 held = _lenderHeld(loanId);
+        uint256 vaultBefore = _vaultHolding(lender);
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimHeldForLender(loanId);
+        assertEq(_lenderHeld(loanId), 0, "claimed instead");
+        assertEq(_vaultHolding(lender), vaultBefore, "the held funds were already in the holder's vault");
+        assertGt(held, 0);
+    }
+
+    function _proRataLoan(string memory name) internal returns (uint256 loanId, address b) {
+        b = _newBorrower(name);
+        uint256 cp = _postBorrower(b, PRINCIPAL, 30, false, true);
+        _setIntent(0, true);
+        _fundIntent(PRINCIPAL);
+        loanId = _fill(cp, PRINCIPAL);
+        assertTrue(LoanFacet(address(diamond)).getLoanDetails(loanId).allowsPartialRepay, "loan allows partial repay");
+        assertEq(_livePrincipal(), PRINCIPAL, "exposure out");
+    }
+
+    function _lenderHeld(uint256 loanId) internal view returns (uint256 amount) {
+        (, , , , , , amount, ) = ClaimViewFacet(address(diamond)).getClaimable(loanId, true);
+    }
+
+    // ─── #3618 follow-up — the lend-until time bounds an extension ──────
+
+    /// @dev A 20-day intent loan with both sides' auto-extend caps wide open
+    ///      (rate 0–10%, expiry 400 days) and an extension reserve, so only
+    ///      the intent's lend-until time can refuse the extension.
+    function _extendableIntentLoan(uint64 lendUntil) internal returns (uint256 loanId, address b) {
+        uint256 cp;
+        (b, cp) = _post("b-ext", PRINCIPAL, 20);
+        _setIntent(lendUntil, false);
+        _fundIntent(PRINCIPAL);
+        loanId = _fill(cp, PRINCIPAL);
+        LibTestPayout.withdrawAllFree(address(diamond), b);
+
+        uint64 farExpiry = uint64(vm.getBlockTimestamp() + 400 days);
+        vm.prank(b);
+        AutoLifecycleSettingsFacet(address(diamond)).setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry, type(uint256).max);
+        vm.prank(lender);
+        AutoLifecycleSettingsFacet(address(diamond)).setAutoExtendLenderCaps(loanId, true, 0, 1000, farExpiry);
+
+        ERC20Mock(mockERC20).mint(b, 50 ether);
+        vm.startPrank(b);
+        ERC20(mockERC20).approve(address(diamond), 50 ether);
+        StandingInstructionFacet(address(diamond)).fundLoanReserve(loanId, 0, 50 ether);
+        vm.stopPrank();
+    }
+
+    function _extend(address b, uint256 loanId, uint256 days_) internal {
+        vm.prank(b);
+        AutoLifecycleFacet(address(diamond)).extendLoanInPlace(loanId, uint16(MIN_RATE_BPS), days_);
+    }
+
+    /// @dev An extension ending exactly at the lend-until time is taken; one
+    ///      second later is refused, naming both times. The bound view
+    ///      reports the time the executor uses.
+    function test_extend_boundByLendUntil() public {
+        uint64 lendUntil = uint64(vm.getBlockTimestamp() + 30 days + SLACK);
+        (uint256 loanId, address b) = _extendableIntentLoan(lendUntil);
+        assertEq(
+            AutoLifecycleFacet(address(diamond)).getAutoExtendLendUntil(loanId), lendUntil, "the view reports the bound"
+        );
+
+        uint256 snap = vm.snapshotState();
+        vm.warp(uint256(lendUntil) - 13 days + 1);
+        vm.prank(b);
+        vm.expectRevert(
+            abi.encodeWithSelector(AutoLifecycleFacet.AutoExtendPastLendUntil.selector, uint256(lendUntil) + 1, lendUntil)
+        );
+        AutoLifecycleFacet(address(diamond)).extendLoanInPlace(loanId, uint16(MIN_RATE_BPS), 13);
+        vm.revertToState(snap);
+
+        vm.warp(uint256(lendUntil) - 13 days);
+        _extend(b, loanId, 13);
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(loanId).durationDays, 13, "extended to the end date");
+        (,, uint256 maturity,) = LoanClockFacet(address(diamond)).getLoanDeadlines(loanId);
+        assertEq(maturity, lendUntil, "ends exactly then");
+    }
+
+    /// @dev The owner's latest choice counts: clearing the lend-until time on
+    ///      the intent lifts the bound for loans it already made.
+    function test_extend_readsTheIntentLive() public {
+        uint64 lendUntil = uint64(vm.getBlockTimestamp() + 30 days + SLACK);
+        (uint256 loanId, address b) = _extendableIntentLoan(lendUntil);
+        _setIntent(0, false);
+        assertEq(AutoLifecycleFacet(address(diamond)).getAutoExtendLendUntil(loanId), 0, "no end date, no bound");
+        vm.warp(uint256(lendUntil) - 13 days);
+        _extend(b, loanId, 30);
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(loanId).durationDays, 30, "extended past the old date");
+    }
+
+    /// @dev An intent with no lend-until time leaves extensions to the caps.
+    function test_extend_noLendUntilUnbound() public {
+        (uint256 loanId, address b) = _extendableIntentLoan(0);
+        assertEq(AutoLifecycleFacet(address(diamond)).getAutoExtendLendUntil(loanId), 0, "no bound");
+        (uint64 opensAt,) = AutoLifecycleFacet(address(diamond)).getAutoExtendWindow(loanId);
+        vm.warp(opensAt);
+        _extend(b, loanId, 60);
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(loanId).durationDays, 60, "a long extension is taken");
+    }
+
+    /// @dev Once the intent's owner no longer holds the lender position the
+    ///      holder agreed to no end date, so nothing binds. The position NFT
+    ///      only moves through the sale flow; the holder is mocked here, as in
+    ///      the roll's sold-position test.
+    function test_extend_soldPositionUnbound() public {
+        uint64 lendUntil = uint64(vm.getBlockTimestamp() + 30 days + SLACK);
+        (uint256 loanId,) = _extendableIntentLoan(lendUntil);
+        uint256 tok = LoanFacet(address(diamond)).getLoanDetails(loanId).lenderTokenId;
+        LibTestPositionNFT.mockHolder(address(diamond), tok, makeAddr("positionBuyer"));
+        assertEq(AutoLifecycleFacet(address(diamond)).getAutoExtendLendUntil(loanId), 0, "a sold position is unbound");
+        vm.clearMockedCalls();
+        assertEq(AutoLifecycleFacet(address(diamond)).getAutoExtendLendUntil(loanId), lendUntil, "bound again once held");
+    }
+
+    /// @dev A loan no intent made is never bound.
+    function test_extend_nonIntentLoanUnbound() public {
+        assertEq(AutoLifecycleFacet(address(diamond)).getAutoExtendLendUntil(type(uint64).max), 0, "no origin");
     }
 }

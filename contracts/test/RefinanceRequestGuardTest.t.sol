@@ -34,6 +34,7 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {RefinancePayoffPermitHelper} from "./helpers/RefinancePayoffPermitHelper.sol";
 import {LibTestTiming} from "./helpers/LibTestTiming.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
 /**
  * @title RefinanceRequestGuardTest
@@ -83,6 +84,8 @@ contract RefinanceRequestGuardTest is SetupTest {
         uint64 expiresAt
     ) internal view returns (LibVaipakam.CreateOfferParams memory) {
         return LibVaipakam.CreateOfferParams({
+            integrator: address(0),
+            lifecycleFlex: 0,
             offerType: offerType,
             lendingAsset: mockERC20,
             amount: LOAN_PRINCIPAL,
@@ -280,6 +283,34 @@ contract RefinanceRequestGuardTest is SetupTest {
         );
         uint256 r2 = _request(loanId, 0);
         assertEq(_live(loanId), r2, "the holder records a fresh request, which stands");
+    }
+
+    /// #3339 — the transfer count belongs to the token, so the request also
+    /// snapshots WHICH token it was recorded against. An obligation handover
+    /// gives the loan a new borrower token whose count starts at 0 again,
+    /// the same as a request recorded at count 0; the request must stay
+    /// dead. Simulated by pointing the loan at another borrower token the
+    /// creator holds at count 0.
+    function test_aNewBorrowerTokenDoesNotReviveTheRequest() public {
+        uint256 loanId = _activeLoan();
+        uint256 r1 = _request(loanId, 0);
+        uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(loanId).borrowerTokenId;
+        LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
+        vm.prank(borrower);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(borrower, makeAddr("away"), tokenId);
+        assertEq(_live(loanId), 0, "precondition: the move ended the request");
+
+        uint256 otherLoan = _activeLoan();
+        uint256 freshToken = LoanFacet(address(diamond)).getLoanDetails(otherLoan).borrowerTokenId;
+        assertEq(LibTestPositionNFT.core(address(diamond)).transferCount(freshToken), 0, "fixture: a fresh token at count 0");
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        l.borrowerTokenId = freshToken;
+        TestMutatorFacet(address(diamond)).setLoan(loanId, l);
+
+        assertEq(_live(loanId), 0, "a new borrower token at count 0 does not revive the request");
+        _acceptExpectingRevert(
+            r1, abi.encodeWithSelector(LibPositionNFT.PositionMovedSinceRouteOpened.selector, freshToken, 0, 0)
+        );
     }
 
     // ─── #2424 r1 — only the RECORDED request can fill ───────────────

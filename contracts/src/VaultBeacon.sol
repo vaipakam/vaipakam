@@ -53,6 +53,14 @@ interface IVaultOwnerRecord {
  *         - The guardian (the Pauser Safe) may cancel a pending proposal and,
  *           only while the Diamond reports paused, revoke a version onto code
  *           already registered. It can never register or propose code.
+ *         - No version becomes current until {MIN_CODE_DELAY} after it was
+ *           registered, on every path, the guardian's emergency revoke
+ *           included (#3436). So new code is always visible in the registry
+ *           for longer than any protected payout delay before any unpinned
+ *           vault runs it; the guardian's speed only applies to code that has
+ *           already been visible that long.
+ *           The constructor's first version is the one exception: a fresh
+ *           deploy has no vault yet, and the factory needs code to point at.
  *         - Revocation is final; one resolution rule: pinned and not revoked,
  *           else current.
  *         - A pin change (pin, re-pin, unpin) waits the vault's own pin delay,
@@ -109,9 +117,13 @@ contract VaultBeacon is IBeacon, Ownable2Step, EIP712 {
     enum VersionStatus { None, Registered, Revoked }
     enum ProposalKind { None, CurrentVersion, Revoke }
 
+    /// @dev `registeredAt` is when the version entered the registry. A
+    ///      version may become current only {MIN_CODE_DELAY} after it, on
+    ///      every path (#3436 invariant 1).
     struct Version {
         address implementation;
         VersionStatus status;
+        uint64 registeredAt;
     }
 
     struct Proposal {
@@ -199,6 +211,7 @@ contract VaultBeacon is IBeacon, Ownable2Step, EIP712 {
     error NoDelayChange(address vault);
     error RenounceDisabled();
     error DelayTooLong(uint256 requested, uint256 max);
+    error VersionTooNew(uint256 id, uint256 usableAt);
 
     // ─── Construction ────────────────────────────────────────────────────
 
@@ -254,6 +267,12 @@ contract VaultBeacon is IBeacon, Ownable2Step, EIP712 {
         return (v.implementation, v.status);
     }
 
+    /// @notice The earliest time version `id` may become current (0 = no such version).
+    function versionUsableAt(uint256 id) external view returns (uint256) {
+        uint64 at = _versions[id].registeredAt;
+        return at == 0 ? 0 : uint256(at) + MIN_CODE_DELAY;
+    }
+
     /// @notice A vault's pending pin change (`executableAt` 0 = none; `target` 0 = unpin).
     function pendingPinOf(address vault) external view returns (uint256 target, uint256 executableAt) {
         PendingPin storage p = _pendingPin[vault];
@@ -289,6 +308,7 @@ contract VaultBeacon is IBeacon, Ownable2Step, EIP712 {
     function executeCurrentVersion() external {
         Proposal memory p = _takeProposal(ProposalKind.CurrentVersion);
         _requireLive(p.id);
+        _requireSeasoned(p.id);
         uint256 old = currentVersionId;
         currentVersionId = p.id;
         emit CurrentVaultVersionSet(old, p.id);
@@ -478,12 +498,24 @@ contract VaultBeacon is IBeacon, Ownable2Step, EIP712 {
         }
         id = n + 1;
         versionCount = id;
-        _versions[id] = Version({implementation: impl, status: VersionStatus.Registered});
+        _versions[id] = Version({
+            implementation: impl,
+            status: VersionStatus.Registered,
+            registeredAt: SafeCast.toUint64(block.timestamp)
+        });
         emit VaultVersionRegistered(id, impl);
     }
 
     function _requireLive(uint256 id) private view {
         if (_versions[id].status != VersionStatus.Registered) revert VersionNotLive(id);
+    }
+
+    /// @dev THE rule for code becoming current: registered at least
+    ///      {MIN_CODE_DELAY} ago. Checked when the change executes, so a
+    ///      proposal may name a fresh version (its own wait covers it).
+    function _requireSeasoned(uint256 id) private view {
+        uint256 usableAt = uint256(_versions[id].registeredAt) + MIN_CODE_DELAY;
+        if (block.timestamp < usableAt) revert VersionTooNew(id, usableAt);
     }
 
     function _openProposal(ProposalKind kind, uint256 id, uint256 successorId) private {
@@ -515,6 +547,7 @@ contract VaultBeacon is IBeacon, Ownable2Step, EIP712 {
 
     function _revoke(uint256 id, uint256 successorId, bool byGuardian) private {
         _checkRevoke(id, successorId);
+        if (id == currentVersionId) _requireSeasoned(successorId);
         _versions[id].status = VersionStatus.Revoked;
         if (id == currentVersionId) {
             currentVersionId = successorId;

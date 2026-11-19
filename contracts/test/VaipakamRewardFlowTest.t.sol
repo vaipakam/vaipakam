@@ -989,7 +989,8 @@ contract VaipakamRewardFlowTest is Test {
 
     function test_SendVersionBumped_HappyPath() public {
         vm.prank(address(diamondBase));
-        rewardBase.sendVersionBumped{value: fee}(
+        rewardBase.sendVersionBumpedTo{value: fee}(
+            MIRROR,
             uint16(42),
             payable(address(diamondBase))
         );
@@ -1024,7 +1025,34 @@ contract VaipakamRewardFlowTest is Test {
     function test_SendVersionBumped_RevertWhen_NotDiamond() public {
         vm.deal(address(this), 1 ether);
         vm.expectRevert(VaipakamRewardMessenger.OnlyDiamond.selector);
-        rewardBase.sendVersionBumped{value: fee}(1, payable(owner));
+        rewardBase.sendVersionBumpedTo{value: fee}(MIRROR, 1, payable(owner));
+    }
+
+    /// @dev #912 — the single-lane version send refuses a chain the owner
+    ///      did not put on the broadcast list, and so does its quote.
+    function test_SendVersionBumpedTo_RevertWhen_NotBroadcastDestination() public {
+        vm.deal(address(diamondBase), 1 ether);
+        vm.prank(address(diamondBase));
+        vm.expectRevert(
+            abi.encodeWithSelector(VaipakamRewardMessenger.NotBroadcastDestination.selector, uint256(999))
+        );
+        rewardBase.sendVersionBumpedTo{value: fee}(999, 1, payable(owner));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(VaipakamRewardMessenger.NotBroadcastDestination.selector, uint256(999))
+        );
+        rewardBase.quoteSendVersionBumpedTo(999, 1);
+    }
+
+    /// @dev #912 — too little value for the lane is refused before anything
+    ///      is sent.
+    function test_SendVersionBumpedTo_RevertWhen_FeeShort() public {
+        vm.deal(address(diamondBase), 1 ether);
+        vm.prank(address(diamondBase));
+        vm.expectRevert(
+            abi.encodeWithSelector(VaipakamRewardMessenger.InsufficientFee.selector, fee - 1, fee)
+        );
+        rewardBase.sendVersionBumpedTo{value: fee - 1}(MIRROR, 1, payable(owner));
     }
 
     function test_Receive_TierUpdated_RevertOnCanonical() public {
@@ -1113,8 +1141,8 @@ contract VaipakamRewardFlowTest is Test {
         assertEq(quoted, fee, "quote covers the one lane");
     }
 
-    function test_QuoteSendVersionBumped_ReturnsNonZero() public view {
-        uint256 quoted = rewardBase.quoteSendVersionBumped(uint16(1));
-        assertEq(quoted, fee, "quote covers the single configured destination");
+    function test_QuoteSendVersionBumpedTo_ReturnsNonZero() public view {
+        uint256 quoted = rewardBase.quoteSendVersionBumpedTo(MIRROR, uint16(1));
+        assertEq(quoted, fee, "quote covers the one lane");
     }
 }

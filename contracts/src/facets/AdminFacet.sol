@@ -880,10 +880,11 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
     /// @notice Set the escape period: how long a manual pause must run, after
     ///         launch, before a protected account's escape route opens (#3173).
     /// @dev    ADMIN_ROLE-only, which the Timelock holds after handover.
-    ///         Bounded inside [49 hours, 7 days]: the floor keeps it longer
-    ///         than the timelock's 48-hour delay, so a pause that is part of an
-    ///         ordinary fix never opens the escape. Pass 0 to restore the
-    ///         default (3 days). Applies to manual pauses that START after this
+    ///         Bounded inside [7 days, 10 days]: the floor is the vault code
+    ///         delay, so a vault fix registered when the pause starts is live
+    ///         before the escape opens (#3441), and it is longer than the
+    ///         timelock's 48-hour delay. Pass 0 to restore the default
+    ///         (7 days). Applies to manual pauses that START after this
     ///         call; a pause already running keeps the period it started with,
     ///         so a change can neither open nor close its escape. Emits
     ///         `LibPausable.EscapeGraceSet`.

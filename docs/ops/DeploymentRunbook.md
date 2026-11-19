@@ -950,11 +950,11 @@ entire 14-leg matrix is Safe-signable — emit one batch JSON per chain
 and execute. The auth-mismatch case above only occurs during phased
 handovers (e.g. when one chain's Safe SDK lands earlier than another's).
 
-### 3. Smoke tests (positive + partial flow sweeps)
+### 3. Smoke tests (positive flow and midpoint sweeps)
 
 None of the flow scripts is a post-deploy check for a shared chain, and each
-refuses one (#848, #2763): `PositiveFlows.s.sol`, `PartialFlows.s.sol`,
-`NegativeFlows.s.sol` and the `Sepolia*` seeding scripts all re-point the
+refuses one (#848, #2763): `PositiveFlows.s.sol`, the staged modules under
+`script/positive-flows/` (`PositiveFlowsMidpoints` and `PositiveFlowsRefusals` included) all re-point the
 Diamond's oracle (and, for some, its sanctions oracle and risk parameters) at
 mocks they deploy, which on a live testnet would replace the chain's real price
 and sanctions sources. They share one guard (`script/lib/RehearsalChain.sol`):
@@ -967,11 +967,12 @@ fork with the `contracts/script/fork-scenarios/` driver instead. Run the flow
 scripts on a local Anvil (section 5a), or on a rehearsal Diamond:
 
 ```bash
-REHEARSAL_ALLOW_CHAIN_ID=84532 \
-  forge script script/PartialFlows.s.sol --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --slow
+REHEARSAL_ALLOW_CHAIN_ID=84532 RPC_URL=$BASE_SEPOLIA_RPC_URL \
+  bash script/positive-flows/run-staged.sh PositiveFlowsMidpoints
 ```
 
-`PartialFlows.s.sol` stands up 13 partial midpoints.
+`PositiveFlowsMidpoints` stands up 14 UI-testable midpoint states, a varied open-offer book among them, and leaves
+them in place for checking the app by hand.
 
 ### 4. Recovery from a mid-flight failure
 
@@ -1026,10 +1027,8 @@ each item is checked:
       returns that chain's CCIP TokenAdminRegistry, not the zero
       address.
 - [ ] `PositiveFlows.s.sol` (a simulation), the staged positive-flow
-      modules through `script/positive-flows/run-staged.sh` and
-      `PartialFlows.s.sol` green on every chain. The partial flows are not
-      staged yet (#3574), so any that fill an offer they posted stop under
-      `--broadcast` with `TermsAgeNeedsStagedRun` before sending anything.
+      modules through `script/positive-flows/run-staged.sh`, including
+      `PositiveFlowsMidpoints`, green on every chain.
       On a live chain, `run-staged.sh PositiveFlowsTimed` waits out the
       cancel cooldowns and then stops with exit code 75 before PF-116's
       month-long wait; run it again once the time it prints has passed.
@@ -1944,25 +1943,27 @@ for m in PositiveFlowsBasicLifecycle PositiveFlowsAdvancedCredit PositiveFlowsVa
   bash script/positive-flows/run-staged.sh "$m" || break
 done
 
-# Partial — 7 UI-testable midpoint states (offer states, partial repay,
-# collateral doubled, keeper enabled, refinance offer posted, stray token,
-# dual claimable). Not staged yet (#3502): a state reached by filling an offer
-# the script posted stops the broadcast with `TermsAgeNeedsStagedRun` before
-# anything is sent; run it without `--broadcast` to check it meanwhile:
-ionice -c 2 -n 0 forge script script/AnvilNewPartialFlows.s.sol \
-  --rpc-url http://localhost:8545 --broadcast --slow
+# Midpoints — 14 UI-testable states left in place for checking the app by
+# hand (open offers and a varied offer book, active loans of each kind, a
+# repaid loan nobody claimed, a partly filled range offer, a refinance request
+# and a listing with no taker, a stray token in a vault). Staged like the modules above; nothing is
+# put back, because the states are what the run is for:
+bash script/positive-flows/run-staged.sh PositiveFlowsMidpoints
 
-# Negative — 9 gate verifications (range bounds, fallback consent, self-
-# collateralized offer, zero duration, collateral floor, claim before
-# terminal, partial repay opt-out):
-ionice -c 2 -n 0 forge script script/AnvilNegativeFlows.s.sol \
-  --rpc-url http://localhost:8545 --broadcast --slow
+# Refusals — 9 gates the Diamond must enforce, each required by its exact
+# error (offer range bounds, the rate ceiling, the creator's consent, a
+# self-collateralised offer, a zero duration, the collateral floor, a claim
+# on an active loan, a partial repayment the loan did not allow). Probed in
+# the simulation only; the two loan probes open their loan one stage after
+# its offer:
+bash script/positive-flows/run-staged.sh PositiveFlowsRefusals
 ```
 
 Each script must exit `EXIT=0`. The positive flows log `[PF-###] PASS` per
 scenario and a passed/skipped count per module; a `[PF-###] SKIP` line says why
-that scenario could not run here, and is a skip, not a pass. The other two
-scripts log a `*** PASSED ***` banner, with skipped scenarios and their
+that scenario could not run here, and is a skip, not a pass. The midpoints
+and refusal modules log the same way, by id (`[MID-A] PASS`, `[NEG-9] PASS`). The
+old negative-flow script logged a `*** PASSED ***` banner, with skipped scenarios and their
 unit-test pointers listed at the bottom. A staged run's result is the summary
 its finish prints. Paths that need chain time to pass and have no staged run
 live in `forge test`, because one `--broadcast` cannot advance chain time
@@ -1970,15 +1971,17 @@ mid-script.
 
 ### 5b. Testnet smoke tests (after the Anvil sweep is green)
 
-Run the `Sepolia*` family against a rehearsal Diamond on the target testnet
-first, then execute on mainnet forks. Like the flow suites, these scripts point
-the Diamond at their own mocks, so they refuse a shared chain unless
+Run the midpoint module against a rehearsal Diamond on the target testnet
+first, then execute on mainnet forks. It leaves open offers and active loans
+in place, which is what the reward checks below need. Like the flow suites, it
+points the Diamond at its own mocks, so it refuses a shared chain unless
 `REHEARSAL_ALLOW_CHAIN_ID` names it (see section 3); the fork-scenarios driver
-covers a live deployment.
+covers a live deployment. (The `SepoliaActiveLoan` and `SepoliaOpenOffers`
+seeders this step used to run are retired; their states are MID-C and MID-G.)
 
 ```bash
-REHEARSAL_ALLOW_CHAIN_ID=<chain id> \
-  forge script script/SepoliaActiveLoan.s.sol   --rpc-url $RPC_URL --broadcast
+REHEARSAL_ALLOW_CHAIN_ID=<chain id> RPC_URL=$RPC_URL \
+  bash script/positive-flows/run-staged.sh PositiveFlowsMidpoints
 ```
 
 Manual checks post-smoke:
@@ -2004,27 +2007,24 @@ forge script script/PositiveFlows.s.sol --rpc-url $RPC_URL --disable-block-gas-l
 # waits for the chain's own clock between stages instead of stepping it):
 RPC_URL=$RPC_URL bash script/positive-flows/run-staged.sh PositiveFlowsBasicLifecycle
 
-# Full partial flow — 13 UI-testable midpoint states (6 legacy + 7 new)
-# (same chain rule as the positive flow):
-forge script script/PartialFlows.s.sol  --rpc-url $RPC_URL --broadcast --slow
+# The 14 UI-testable midpoint states (same chain rule as the positive flow):
+RPC_URL=$RPC_URL bash script/positive-flows/run-staged.sh PositiveFlowsMidpoints
 
-# Full negative flow — 9 gate verifications (same chain rule):
-forge script script/NegativeFlows.s.sol --rpc-url $RPC_URL --broadcast --slow
+# The 9 refusals (same chain rule):
+RPC_URL=$RPC_URL bash script/positive-flows/run-staged.sh PositiveFlowsRefusals
 ```
 
-Each wrapper instantiates its child scripts in the script-runner's
-own simulation memory and dispatches through their `external run()`
-— no extra deploy txns are emitted by the wrapper itself; the visible
-on-chain effect is exactly the union of the children's broadcasts in
-order. Both halves of each composition already use `Deployments.lib`
-for the diamond address and the standard env-var topology
-(`PRIVATE_KEY`, `ADMIN_*`, `LENDER_*`, `BORROWER_*`, `NEW_LENDER_*`,
-`NEW_BORROWER_*`), so the wrappers inherit chain-agnosticism with
-no further configuration.
+`PositiveFlows.s.sol` instantiates each module in the script-runner's own
+simulation memory and dispatches through its `external run()`; it emits no
+deploy transactions of its own. Every module reads the Diamond from
+`Deployments` and the standard actor keys (`PRIVATE_KEY`, `ADMIN_*`,
+`LENDER_*`, `BORROWER_*`, `NEW_LENDER_*`, `NEW_BORROWER_*`), so each runs on
+any chain the rehearsal rule allows with no further configuration.
 
 When to use which:
-- **Full sweep on a new chain** → use the `*Flows.s.sol` wrappers
-  (this section). One forge invocation per flow type instead of two.
+- **Full sweep on a new chain** → the `PositiveFlows.s.sol` simulation, then
+  every staged module, the midpoint and refusal modules included, through
+  `run-staged.sh` (this section).
 - **Re-run a specific subset** → invoke one module directly
   (`script/positive-flows/PositiveFlowsAdvancedCredit.s.sol`, etc.), or one
   scenario with `ONLY_SCENARIO=PF-230-floor`. Every module builds its own

@@ -50,8 +50,8 @@ export function AutoLendSection() {
   // protocol drops it from the wallet's list. Its open step (the finish
   // card, or a tracker still waiting) stays on screen until it is closed,
   // from the record kept with the panel, not with the list.
-  const keyOf = (r: { lending: Hex; collateral: Hex }) => `${r.lending.toLowerCase()}-${r.collateral.toLowerCase()}`;
-  const live = new Set(rows.map((r) => keyOf({ lending: r.intent.lendingAsset, collateral: r.intent.collateralAsset })));
+  const keyOf = (r: { lending: Hex; collateral: Hex; slot: number }) => `${r.lending.toLowerCase()}-${r.collateral.toLowerCase()}-${r.slot}`;
+  const live = new Set(rows.map((r) => keyOf({ lending: r.intent.lendingAsset, collateral: r.intent.collateralAsset, slot: r.intent.slot })));
   const gone = opened.filter((o) => o.who === who && !live.has(keyOf(o)));
   const held = chain !== null && own !== null ? gone.map((o) => <HeldManage key={keyOf(o)} row={o} chain={chain} own={own} meta={meta ?? null} onDone={read.refetch} />) : [];
   if (rows.length === 0) return held.length === 0 ? null : <section className="positions-section autolend-section">{held}</section>;
@@ -77,7 +77,7 @@ export function AutoLendSection() {
           const i = r.intent;
           const state = autoLendState(r, at);
           return (
-            <li key={`${i.lendingAsset}-${i.collateralAsset}`} className="card autolend-card" data-testid="autolend-card" data-state={state}>
+            <li key={`${i.lendingAsset}-${i.collateralAsset}-${i.slot}`} className="card autolend-card" data-testid="autolend-card" data-state={state}>
               <h3>{format('autoLend.cardTitle', { lend: assetName(i.lendingAsset, meta), coll: assetName(i.collateralAsset, meta) })}</h3>
               <p className="tier-a">{text(state === 'active' ? 'autoLend.stateActive' : state === 'ended' ? 'autoLend.stateEnded' : 'autoLend.stateStopped')}</p>
               <p>{format('autoLend.cardUnlent', { amount: amt(i.availableCapital, i.lendingAsset) })}</p>
@@ -109,7 +109,7 @@ export function AutoLendSection() {
  *  with nothing set aside): its panel, until closed, then nothing. */
 function HeldManage({ row, chain, own, meta, onDone }: { row: OpenManage; chain: SupportedChain; own: OwnStateClient; meta: TokenMetaMap | null; onDone: () => void }) {
   const { text, format } = useCopy();
-  const { kind, open } = useManageOpen(row.lending, row.collateral);
+  const { kind, open } = useManageOpen(row.lending, row.collateral, row.slot);
   if (kind === null) return null;
   return (
     <div className="card autolend-card" data-testid="autolend-card" data-state="gone">
@@ -119,6 +119,7 @@ function HeldManage({ row, chain, own, meta, onDone }: { row: OpenManage; chain:
         kind={kind}
         lending={row.lending}
         collateral={row.collateral}
+        slot={row.slot}
         unlent={row.unlent}
         chain={chain}
         own={own}
@@ -153,9 +154,9 @@ function ManageRow({
 }) {
   const { text } = useCopy();
   const i = row.intent;
-  const { kind, open } = useManageOpen(i.lendingAsset, i.collateralAsset, { who: `${own.chainId}:${own.account}`, unlent: i.availableCapital });
+  const { kind, open } = useManageOpen(i.lendingAsset, i.collateralAsset, i.slot, { who: `${own.chainId}:${own.account}`, unlent: i.availableCapital });
   const offers = manageOffers(row.active, state === 'ended', i.availableCapital);
-  const [changing, setChanging] = useChangeOpen(i.lendingAsset, i.collateralAsset);
+  const [changing, setChanging] = useChangeOpen(i.lendingAsset, i.collateralAsset, i.slot);
   if (changing && kind === null)
     return (
       <AutoLendChange
@@ -176,6 +177,7 @@ function ManageRow({
         kind={kind}
         lending={i.lendingAsset}
         collateral={i.collateralAsset}
+        slot={i.slot}
         unlent={i.availableCapital}
         chain={chain}
         own={own}

@@ -72,18 +72,25 @@ library LibEncumbrance {
         address owner,
         address lend,
         address coll,
+        uint8 slot,
         uint256 requested,
         uint256 available
     );
 
-    /// @notice #2814 — raised when a withdrawal or a draw exceeds what
-    ///         `holder` has reserved for `loanId`'s auto-extensions.
-    error ExtendReserveInsufficient(
+    /// @notice #2814 / #3681 — raised when a withdrawal or a draw exceeds what
+    ///         `holder` has in its loan reserve of `kind` for `loanId`
+    ///         (0 payment, 1 collateral).
+    error LoanReserveInsufficient(
         uint256 loanId,
         address holder,
+        uint8 kind,
         uint256 requested,
         uint256 available
     );
+
+    /// @notice #3681 — a loan reserve kind other than payment (0) or
+    ///         collateral (1).
+    error LoanReserveKindUnknown(uint8 kind);
 
     /// @notice #2342 — selector of `EncumbranceMutateFacet.syncTierExclusion`,
     ///         the host that re-derives a loan's VPFI fee-tier exclusion from
@@ -141,6 +148,7 @@ library LibEncumbrance {
             released: false
         });
         s.encumbered[loan.borrower][asset][tokenId] += amount;
+        _pledge(asset, loan.collateralAssetType, amount);
     }
 
     /// @notice Release a collateral lien in full. Idempotent — already-
@@ -151,7 +159,13 @@ library LibEncumbrance {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Encumbrance storage lien = s.loanCollateralLien[loanId];
         if (lien.released || lien.user == address(0)) return;
+        // #3669 — a lien that backs a parked lender leg (an in-kind default
+        // the token refused) is the lender side's: only the lender side's
+        // release lifts it, and that release deletes the parked row first.
+        // Every other release, the borrower claim's included, leaves it.
+        if (s.parkedLenderLeg[loanId].collateralLien) return;
         _decrementAggregate(lien.user, lien.asset, lien.tokenId, lien.amount);
+        _unpledge(lien.asset, lien.assetType, lien.amount);
         lien.released = true;
         // #569 round-7 P1 — zero the per-loan amount on release so a
         // released tombstone can never be mis-read as a live lien. The
@@ -192,6 +206,7 @@ library LibEncumbrance {
             );
         }
         _decrementAggregate(lien.user, lien.asset, lien.tokenId, consumed);
+        _unpledge(lien.asset, lien.assetType, consumed);
         unchecked {
             lien.amount -= consumed;
         }
@@ -239,9 +254,11 @@ library LibEncumbrance {
                 released: false
             });
             s.encumbered[loan.borrower][asset][tokenId] += added;
+            _pledge(asset, loan.collateralAssetType, added);
         } else {
             s.encumbered[lien.user][lien.asset][lien.tokenId] += added;
             lien.amount += added;
+            _pledge(lien.asset, lien.assetType, added);
         }
         notifyTierExclusion(loanId, false);
     }
@@ -379,46 +396,69 @@ library LibEncumbrance {
         _decrementAggregate(seller, asset, 0, amount);
     }
 
-    // ─── #2814 — the auto-extend reserve, in the depositor's own vault ────
+    // ─── #2814 / #3681 — the loan reserve, in the depositor's own vault ───
 
-    /// @notice Reserve `amount` of `asset` (the loan's principal asset) that
-    ///         `holder` just deposited into their own vault for `loanId`'s
-    ///         auto-extensions. It is not free balance: no other withdrawal
-    ///         reaches it, and it leaves only through an extension's draw or
-    ///         {unlienExtendReserve} for the depositor's own withdrawal. The
-    ///         tokens are the depositor's own, so this is no fee-tier exclusion.
-    function lienExtendReserve(
+    /// @notice Reserve `amount` of `asset` that `holder` just placed in their
+    ///         own vault for `loanId`: kind 0 the PAYMENT reserve (the lending
+    ///         asset, drawn by an automatic extension's charge and by the
+    ///         interest and due-date standing instructions), kind 1 the
+    ///         COLLATERAL reserve (the collateral asset, moved into the
+    ///         collateral lien by the top-up instruction). Not free balance:
+    ///         no other withdrawal reaches it, and it leaves only through those
+    ///         draws or {unlienLoanReserve} for the depositor's own withdrawal.
+    ///         The tokens are the depositor's own, so this is no fee-tier
+    ///         exclusion, and the collateral reserve is NOT pledged: it counts
+    ///         in no lien and no pledged total until the top-up moves it.
+    /// @return reserved What the holder has in that reserve after it.
+    function lienLoanReserve(
         uint256 loanId,
         address holder,
+        uint8 kind,
         address asset,
         uint256 amount
-    ) internal {
-        if (amount == 0) return;
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        s.extendReserve[loanId][holder] += amount;
-        s.encumbered[holder][asset][0] += amount;
+    ) internal returns (uint256 reserved) {
+        mapping(address => uint256) storage row = _reserveRow(loanId, kind);
+        reserved = row[holder] + amount;
+        if (amount == 0) return reserved;
+        row[holder] = reserved;
+        LibVaipakam.storageSlot().encumbered[holder][asset][0] += amount;
     }
 
-    /// @notice Release `amount` of `holder`'s reserve for `loanId` back to free
-    ///         balance, for the extension's draw or the depositor's withdrawal,
-    ///         which both run straight after. Reverts
-    ///         {ExtendReserveInsufficient} past what is reserved.
-    function unlienExtendReserve(
+    /// @notice Release `amount` of `holder`'s reserve of `kind` for `loanId`
+    ///         back to free balance, for a draw or the depositor's withdrawal,
+    ///         which run straight after (a collateral top-up re-encumbers it
+    ///         at once as collateral). Reverts {LoanReserveInsufficient} past
+    ///         what is reserved.
+    /// @return left What is left in that reserve.
+    function unlienLoanReserve(
         uint256 loanId,
         address holder,
+        uint8 kind,
         address asset,
         uint256 amount
-    ) internal {
-        if (amount == 0) return;
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 reserved = s.extendReserve[loanId][holder];
+    ) internal returns (uint256 left) {
+        mapping(address => uint256) storage row = _reserveRow(loanId, kind);
+        uint256 reserved = row[holder];
         if (amount > reserved) {
-            revert ExtendReserveInsufficient(loanId, holder, amount, reserved);
+            revert LoanReserveInsufficient(loanId, holder, kind, amount, reserved);
         }
+        if (amount == 0) return reserved;
         unchecked {
-            s.extendReserve[loanId][holder] = reserved - amount;
+            left = reserved - amount;
         }
+        row[holder] = left;
         _decrementAggregate(holder, asset, 0, amount);
+    }
+
+    function _reserveRow(uint256 loanId, uint8 kind)
+        private
+        view
+        returns (mapping(address => uint256) storage)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (kind == 0) return s.paymentReserve[loanId];
+        if (kind == 1) return s.collateralReserve[loanId];
+        revert LoanReserveKindUnknown(kind);
     }
 
     // ─── #998 S10 (#1006) Class B — ACTIVE-loan held reservation ─────────────
@@ -634,6 +674,27 @@ library LibEncumbrance {
         notifyTierExclusion(loanId, false);
     }
 
+    // ─── Parked settlement leg — #3669 ──────────────────────────────────
+
+    /// @notice Lien `amount` of `asset` (ERC-20) in `payer`'s vault for a
+    ///         settlement leg a token refused to deliver to its payee
+    ///         (`SettlementLegFacet`). The caller has already moved the amount
+    ///         into `payer`'s vault. The per-loan record is the parked row in
+    ///         `LibVaipakam.Storage.parkedLenderLeg`, which names the payer
+    ///         and the amount, so {releaseParkedLeg} always unwinds the bucket
+    ///         this filled.
+    function encumberParkedLeg(address payer, address asset, uint256 amount) internal {
+        if (amount == 0) return;
+        LibVaipakam.storageSlot().encumbered[payer][asset][0] += amount;
+    }
+
+    /// @notice Release a parked leg's lien (see {encumberParkedLeg}) just
+    ///         before the release moves it out of `payer`'s vault.
+    function releaseParkedLeg(address payer, address asset, uint256 amount) internal {
+        if (amount == 0) return;
+        _decrementAggregate(payer, asset, 0, amount);
+    }
+
     // ─── Intent working-capital lien — #393 v1-d ────────────────────────
 
     /// @notice Lien `amount` of `owner`'s just-deposited intent working
@@ -654,11 +715,12 @@ library LibEncumbrance {
         address owner,
         address lend,
         address coll,
+        uint8 slot,
         uint256 amount
     ) internal {
         if (amount == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        s.lenderIntentCapital[owner][lend][coll] += amount;
+        s.lenderIntentCapital[owner][lend][coll][slot] += amount;
         s.encumbered[owner][lend][0] += amount;
     }
 
@@ -676,16 +738,17 @@ library LibEncumbrance {
         address owner,
         address lend,
         address coll,
+        uint8 slot,
         uint256 amount
     ) internal {
         if (amount == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 liened = s.lenderIntentCapital[owner][lend][coll];
+        uint256 liened = s.lenderIntentCapital[owner][lend][coll][slot];
         if (amount > liened) {
-            revert IntentCapitalInsufficient(owner, lend, coll, amount, liened);
+            revert IntentCapitalInsufficient(owner, lend, coll, slot, amount, liened);
         }
         unchecked {
-            s.lenderIntentCapital[owner][lend][coll] = liened - amount;
+            s.lenderIntentCapital[owner][lend][coll][slot] = liened - amount;
         }
         _decrementAggregate(owner, lend, 0, amount);
     }
@@ -725,6 +788,7 @@ library LibEncumbrance {
             released: false
         });
         s.encumbered[loan.borrower][asset][tokenId] += amount;
+        _pledge(asset, loan.collateralAssetType, amount);
         notifyTierExclusion(loanId, false);
     }
 
@@ -978,6 +1042,29 @@ library LibEncumbrance {
             tokenId = loan.collateralTokenId;
             amount = loan.collateralQuantity;
         }
+    }
+
+    /// @dev #3685 — add `amount` to the platform-wide total of ERC-20
+    ///      `asset` pledged under open loans' collateral liens
+    ///      (`Storage.collateralPledged`). Every collateral lien change in this
+    ///      library moves the total by the same amount, so it always equals the
+    ///      sum of the live ERC-20 collateral liens of that asset: open loans,
+    ///      and fallback custody, which sits under a live lien until it is
+    ///      claimed or sold. A re-key that keeps the collateral in place (a
+    ///      refinance carry-over, a consolidation) moves nothing. NFT
+    ///      collateral is not counted: it has no liquidity tier, so no
+    ///      concentration ratio.
+    function _pledge(address asset, LibVaipakam.AssetType assetType, uint256 amount) private {
+        if (assetType != LibVaipakam.AssetType.ERC20 || amount == 0) return;
+        LibVaipakam.storageSlot().collateralPledged[asset] += amount;
+    }
+
+    /// @dev #3685 — take `amount` off `asset`'s pledged total; the mirror of
+    ///      {_pledge}. Checked: a total that would go below zero means the
+    ///      bookkeeping has drifted, and the lien change reverts with it.
+    function _unpledge(address asset, LibVaipakam.AssetType assetType, uint256 amount) private {
+        if (assetType != LibVaipakam.AssetType.ERC20 || amount == 0) return;
+        LibVaipakam.storageSlot().collateralPledged[asset] -= amount;
     }
 
     function _decrementAggregate(

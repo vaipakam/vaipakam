@@ -52,6 +52,21 @@ library LibPriceGuard {
         if (n != s.numeraireSymbol) revert PriceGuardNumeraireMismatch(address(g), s.numeraireSymbol, n);
     }
 
+    /// @notice A token priced by an exchange rate (#3683) may be collateral,
+    ///         never the asset lent.
+    error RatePricedLendingAsset(address asset);
+
+    /// @notice Refuse `asset` as a loan's or offer's principal when the guard
+    ///         prices it by an exchange rate (#3683). The rate's rise is
+    ///         capped, so a debt in such a token could be valued below what
+    ///         it is redeemable for, which overstates every health factor
+    ///         against it. With no reachable guard nothing is priced at all,
+    ///         rate-priced or not, so there is nothing to refuse.
+    function requireNotRatePricedLending(address asset) internal view {
+        (bool ok, IPriceGuard g) = tryGuard();
+        if (ok && g.isRatePriced(asset)) revert RatePricedLendingAsset(asset);
+    }
+
     /// @notice {guard} without the revert, for a best-effort reader that
     ///         treats a missing guard as an unset feed. `ok` is false
     ///         whenever {guard} would revert.

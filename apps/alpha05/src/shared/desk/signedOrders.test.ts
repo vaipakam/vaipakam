@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { encodeAbiParameters, encodeEventTopics, keccak256, type Log } from 'viem';
-import { canonicalOrderJson } from '@vaipakam/lib/signedOfferWire';
+import { NO_COLLECTION, canonicalOrderJson } from '@vaipakam/lib/signedOfferWire';
 import { cancelCall, measureSignedCancel, orderSentence, signedCancelBlockers, signedCancelReceipt, targetKey, type SignedCancelReview } from './cancelSigned';
 import { fillable, mySignedOrderFrom, readMySignedOrders, sharedNonces, SIGNED_OFFER, standingOf, type MySignedOrder } from './mySignedOrders';
 import { lapsesAt, orderHashOf, signedStake, signedStakeLeft, SIGNED_OFFER_TYPES, typedMessage, type SignedOrderWire } from './signedOrder';
@@ -43,6 +43,8 @@ function order(patch: Partial<SignedOrderWire> = {}): SignedOrderWire {
     periodicInterestCadence: '0',
     refinanceTargetLoanId: '0',
     useFullTermInterest: true,
+    lifecycleFlex: '0',
+    integrator: '0x0000000000000000000000000000000000000000',
     creatorFull: false,
     creatorMaxCStar: '0',
     creatorAllowFullDowngrade: false,
@@ -53,6 +55,7 @@ function order(patch: Partial<SignedOrderWire> = {}): SignedOrderWire {
     signer: ME,
     nonce: '7',
     deadline: '2000',
+    ...NO_COLLECTION,
     ...patch,
   };
 }
@@ -70,7 +73,7 @@ const copy = {
 };
 
 describe('the signed order', () => {
-  it('hashes as the EIP-712 struct of all 31 fields, in the contract’s order', () => {
+  it('hashes as the EIP-712 struct of all 36 fields, in the contract’s order', () => {
     const names = SIGNED_OFFER_TYPES.SignedOffer.map((f) => `${f.type} ${f.name}`).join(',');
     const typeHash = keccak256(new TextEncoder().encode(`SignedOffer(${names})`));
     const o = order();

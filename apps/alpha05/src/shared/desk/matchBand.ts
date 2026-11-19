@@ -25,12 +25,13 @@
  * transfers that reached the sender's wallet or its vault.
  */
 import { parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
-import { ConfigFacetABI, OfferMatchFacetABI, ServiceCapacityFacetABI, VaultFactoryFacetABI, VaultOutflowFacetABI } from '@vaipakam/contracts/abis';
+import { ConfigFacetABI, FeeLevelsFacetABI, OfferMatchFacetABI, ServiceCapacityFacetABI, VaultFactoryFacetABI, VaultOutflowFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess, CopyKey } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
 import type { Refusal } from '../eligibility/types';
 import type { BookRow } from '../offers/book';
+import { lifFeeOf, sameLifTerms, type LifTerms } from '../offers/initiationFee';
 import { answerOrNull } from '../reads/answer';
 import type { Receipt, ReceiptRow } from '../receipt/types';
 import type { LegOutcome } from '../tx/outcome';
@@ -46,6 +47,7 @@ const OUTFLOW = VaultOutflowFacetABI as Abi;
 /** The `VaultOutflow` class of a payment to the actor of an action (a
  *  matcher's share of the initiation fee): `OutflowClass.Incentive`. */
 export const INCENTIVE_CLASS = 8;
+const FEE_LEVELS = FeeLevelsFacetABI as Abi;
 const CONFIG = ConfigFacetABI as Abi;
 const CAPACITY = ServiceCapacityFacetABI as Abi;
 const VAULTS = VaultFactoryFacetABI as Abi;
@@ -87,6 +89,7 @@ const REFUSAL: readonly CopyKey[] = [
   'matchBand.codeCadence',
   'matchBand.codeGuard',
   'matchBand.codeFresh',
+  'matchBand.codeTermsNotAccepted',
 ];
 
 /** Why the protocol refuses a pair, in words. */
@@ -185,8 +188,12 @@ export interface PairVerdict {
 export interface MatchSettings {
   /** The matching switch (`getPartialFillEnabled`). */
   switchOn: boolean | null;
-  lifBps: bigint | null;
+  /** The initiation fee's term rule (#3649). */
+  lif: LifTerms | null;
   matcherBps: bigint | null;
+  /** The treasury's initiation floor (`getTreasuryFeeFloors`, first value):
+   *  the matcher's share is sized on the fee above it (#3649 stage 3). */
+  floorBps: bigint | null;
   /** Whether a matching-capacity limit is in force (the solver curve has a
    *  free tier); null when unread. */
   capacityLimited: boolean | null;
@@ -209,13 +216,15 @@ export async function readMatchSettings(c: PublicClient, diamond: Hex, blockNumb
   const at = { blockNumber };
   const read = <T>(abi: Abi, functionName: string, args: readonly unknown[] = []) =>
     answerOrNull(c.readContract({ address: diamond, abi, functionName, args, ...at }) as Promise<T>);
-  const [switchOn, lifBps, matcherBps, curve] = await Promise.all([
+  const [switchOn, lifRaw, matcherBps, floors, curve] = await Promise.all([
     read<boolean>(CONFIG, 'getPartialFillEnabled'),
-    read<bigint>(CONFIG, 'getLoanInitiationFeeBps'),
+    read<readonly [bigint, bigint, bigint, bigint]>(FEE_LEVELS, 'getLoanInitiationFeeTerms'),
     read<bigint>(CONFIG, 'getLifMatcherFeeBps'),
+    read<readonly [bigint, bigint]>(FEE_LEVELS, 'getTreasuryFeeFloors'),
     read<{ freeTier: bigint }>(CAPACITY, 'getCapacityCurve', [SOLVER_ROLE]),
   ]);
-  return { switchOn, lifBps, matcherBps, capacityLimited: curve === null ? null : curve.freeTier > 0n };
+  const lif = lifRaw === null ? null : { baseBps: lifRaw[0], baseTermDays: lifRaw[1], yearlyBps: lifRaw[2], yearDays: lifRaw[3] };
+  return { switchOn, lif, matcherBps, floorBps: floors === null ? null : floors[0], capacityLimited: curve === null ? null : curve.freeTier > 0n };
 }
 
 export async function readPairVerdict(c: PublicClient, diamond: Hex, pair: MatchPair, sender: Hex, blockNumber: bigint): Promise<PairVerdict | null> {
@@ -267,11 +276,16 @@ export function bandState(found: Pick<OverlapPairs, 'pairs' | 'crossed' | 'ownLe
   };
 }
 
-/** The most the sender's share can be for a match of `amount`: the
- *  matcher's part of the full initiation fee, rounded down as the protocol
+/** The most the sender's share can be for a match of `amount` over a term
+ *  of `termDays`: the matcher's part of the full initiation fee at that term
+ *  (#3649: the fee is term-scaled) above the treasury's floor, which the
+ *  protocol rounds up (#3649 stage 3: the matcher is paid from the reserve's
+ *  part, never the treasury's), the share rounded down as the protocol
  *  rounds it. A borrower's fee discount lowers it. */
-export function shareAtMost(amount: bigint, lifBps: bigint, matcherBps: bigint): bigint {
-  return (((amount * lifBps) / 10_000n) * matcherBps) / 10_000n;
+export function shareAtMost(amount: bigint, lif: LifTerms, termDays: bigint, matcherBps: bigint, floorBps: bigint): bigint {
+  const fee = lifFeeOf(amount, lif, termDays);
+  const floor = (amount * floorBps + 9_999n) / 10_000n;
+  return fee > floor ? ((fee - floor) * matcherBps) / 10_000n : 0n;
 }
 
 /** The review of one match, read at one block. */
@@ -338,7 +352,8 @@ export function matchChanged(a: MatchReview, b: MatchReview, copy: Pick<CopyAcce
   const sa = a.settings;
   const sb = b.settings;
   if (sa.switchOn !== sb.switchOn) return text('matchBand.changedSwitch');
-  if (sa.lifBps !== sb.lifBps || sa.matcherBps !== sb.matcherBps) return text('matchBand.changedShare');
+  const lifMoved = sa.lif === null || sb.lif === null ? sa.lif !== sb.lif : !sameLifTerms(sa.lif, sb.lif);
+  if (lifMoved || sa.matcherBps !== sb.matcherBps || sa.floorBps !== sb.floorBps) return text('matchBand.changedShare');
   if (sa.capacityLimited !== sb.capacityLimited) return text('matchBand.changedCapacity');
   if ((a.dryRun === null) !== (b.dryRun === null) || (a.dryRun === 'unread') !== (b.dryRun === 'unread')) return text('matchBand.changedVerdict');
   return null;
@@ -348,10 +363,10 @@ export function matchChanged(a: MatchReview, b: MatchReview, copy: Pick<CopyAcce
 export type AmountWords = (asset: Hex, v: bigint, exact?: boolean) => string;
 
 /** The share line: what it is at most, or why it cannot be stated. */
-export function shareText(amount: bigint, lending: Hex, s: MatchSettings, words: AmountWords, copy: Copy, exact = false): string {
-  if (s.lifBps === null || s.matcherBps === null) return copy.text('matchBand.shareUnread');
+export function shareText(amount: bigint, termDays: bigint, lending: Hex, s: MatchSettings, words: AmountWords, copy: Copy, exact = false): string {
+  if (s.lif === null || s.matcherBps === null || s.floorBps === null) return copy.text('matchBand.shareUnread');
   return copy.format('matchBand.shareAtMost', {
-    amount: words(lending, shareAtMost(amount, s.lifBps, s.matcherBps), exact),
+    amount: words(lending, shareAtMost(amount, s.lif, termDays, s.matcherBps, s.floorBps), exact),
     pct: formatBps(s.matcherBps),
   });
 }
@@ -397,8 +412,8 @@ export function matchReceipt(r: MatchReview, words: AmountWords, copy: Copy): Re
         label: text('matchBand.rowShare'),
         value: {
           kind: 'text',
-          text: shareText(v.amount, lending, r.settings, words, copy),
-          exact: shareText(v.amount, lending, r.settings, words, copy, true),
+          text: shareText(v.amount, ask.durationDays, lending, r.settings, words, copy),
+          exact: shareText(v.amount, ask.durationDays, lending, r.settings, words, copy, true),
         },
         binding: false,
       },

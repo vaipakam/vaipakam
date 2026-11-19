@@ -15,8 +15,48 @@ export { expect } from '@vaipakam/e2e-wallet';
 
 export const CHAIN_ID = E2E_CHAIN_ID;
 
+/** Connect through the Terms step when one is shown (#3734): with Terms in
+ *  force, Connect shows them first and the picker opens from "Agree and
+ *  connect" once the box is ticked. Agreeing here is the visitor's step only;
+ *  the wallet's own acceptance transaction is asked after it connects, and
+ *  `acceptTermsAtConnect` drives that. */
 export function connectWallet(page: Page): Promise<void> {
-  return connectWalletShared(page, /^connect wallet$/i);
+  return connectWalletShared(page, /^connect wallet$/i, agreeToTermsStep);
+}
+
+async function agreeToTermsStep(page: Page): Promise<void> {
+  const step = page.getByTestId('connect-terms');
+  const lead = page.getByTestId('connect-terms-lead');
+  const none = page.getByRole('button', { name: /vaipakam test wallet/i }).first();
+  // Either the Terms (in force) or the picker (none in force) comes up.
+  await Promise.race([lead.waitFor({ state: 'visible', timeout: 5_000 }), none.waitFor({ state: 'visible', timeout: 5_000 })]).catch(() => {});
+  if (!(await lead.isVisible().catch(() => false))) return;
+  await step.getByTestId('connect-terms-tick').check();
+  await step.getByTestId('connect-terms-choose').click();
+}
+
+/** The wallet's own acceptance, asked as soon as it connects with Terms in
+ *  force that it has not accepted (#3734): confirm it and wait for the
+ *  record to be read back, after which the page body is shown. */
+export async function acceptTermsAtConnect(page: Page): Promise<void> {
+  const dialog = page.getByRole('dialog', { name: 'Terms of Service' });
+  await dialog.getByRole('button', { name: 'Confirm in wallet' }).click({ timeout: 60_000 });
+  await dialog.locator('[data-phase="measured"]').waitFor({ state: 'visible', timeout: 60_000 });
+  await dialog.getByRole('button', { name: 'Continue: Using this app with your wallet' }).click();
+  await page.getByTestId('terms-hold').waitFor({ state: 'detached', timeout: 60_000 });
+}
+
+/** Decline the acceptance asked at Connect and choose to only close out
+ *  what the wallet has (#3734, design section 3.2): the page body is shown
+ *  again, and every action that takes on a position keeps its own Terms
+ *  gate, which is what a spec of that gate drives next. */
+export async function closeOutOnly(page: Page): Promise<void> {
+  const dialog = page.getByRole('dialog', { name: 'Terms of Service' });
+  // The review is still unsent, so its own way out reads "Cancel" ("Close"
+  // is only offered once it is blocked or finished).
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click({ timeout: 60_000 });
+  await page.getByTestId('terms-hold-exits').click({ timeout: 30_000 });
+  await page.getByTestId('terms-hold').waitFor({ state: 'detached', timeout: 30_000 });
 }
 
 /** Open the More sheet when the page folds the navigation into it (phone

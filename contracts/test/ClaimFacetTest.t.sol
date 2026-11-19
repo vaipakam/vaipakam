@@ -2,8 +2,12 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestCollateralCut} from "./helpers/LibTestCollateralCut.sol";
+import {LibTestTermsCut} from "./helpers/LibTestTermsCut.sol";
+import {LibTestClaimViewCut} from "./helpers/LibTestClaimViewCut.sol";
 import {LibTestProtectedCut} from "./helpers/LibTestProtectedCut.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
+import {LibTestSettlementLeg} from "./helpers/LibTestSettlementLeg.sol";
 import {LibTestVaultEndpoints} from "./helpers/LibTestVaultEndpoints.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {MockVaultWithdraw, VaultOutflowStubFailure} from "./helpers/MockVaultWithdraw.sol";
@@ -36,6 +40,7 @@ import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
@@ -321,7 +326,11 @@ contract ClaimFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
+        cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
+        cuts = LibTestTermsCut.withTermsHost(cuts); // #3734
+        cuts = LibTestClaimViewCut.withClaimView(cuts); // the claim reads
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
+        LibTestSettlementLeg.install(address(diamond)); // #3669
         LibTestForcedSalePreview.install(address(diamond));
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
@@ -412,6 +421,8 @@ contract ClaimFacetTest is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: principalAmount,
@@ -457,7 +468,7 @@ contract ClaimFacetTest is Test {
 
     function testGetClaimableAmountActiveReturnsZero() public {
         uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
-        (address asset, uint256 amount, bool claimed) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (address asset, uint256 amount, bool claimed) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertEq(asset, address(0));
         assertEq(amount, 0);
         assertFalse(claimed);
@@ -468,11 +479,11 @@ contract ClaimFacetTest is Test {
         _repayLoan(loanId);
 
         // Lender should have a claim (principal + interest)
-        (, uint256 lenderAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 lenderAmount,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertGt(lenderAmount, 0);
 
         // Borrower should have a claim (collateral)
-        (, uint256 borrowerAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+        (, uint256 borrowerAmount,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, false);
         assertGt(borrowerAmount, 0);
     }
 
@@ -496,7 +507,7 @@ contract ClaimFacetTest is Test {
     function test_holderClaim_contractHolderReceivesTheRepaidPrincipal() public {
         uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
-        (, uint256 claimAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 claimAmount,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         HolderClaimHarness h = new HolderClaimHarness(address(diamond));
         LibTestPositionNFT.move(address(diamond), LoanFacet(address(diamond)).getLoanDetails(loanId).lenderTokenId, address(h));
 
@@ -520,7 +531,7 @@ contract ClaimFacetTest is Test {
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         vm.clearMockedCalls();
-        (address claimAsset, uint256 claimAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (address claimAsset, uint256 claimAmount,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertEq(claimAsset, mockCollateralERC20, "fixture: an in-kind claim");
 
         HolderClaimHarness h = new HolderClaimHarness(address(diamond));
@@ -536,7 +547,7 @@ contract ClaimFacetTest is Test {
         _repayLoan(loanId);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
-        (, uint256 claimAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 claimAmount,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
 
         uint256 lenderBalBefore = IERC20(mockERC20).balanceOf(lender);
         uint256 lenderFreeBefore = VaultDepositoryFacet(address(diamond)).getDepositoryHolding(lender, mockERC20, 0);
@@ -557,7 +568,7 @@ contract ClaimFacetTest is Test {
         assertEq(_withdrawToWallet(lender, mockERC20, claimAmount), claimAmount, "and the lender withdraws it");
 
         // Claim marked as done
-        (,, bool claimed) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (,, bool claimed) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertTrue(claimed);
     }
 
@@ -598,7 +609,7 @@ contract ClaimFacetTest is Test {
         _repayLoan(loanId);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
-        (, uint256 claimAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+        (, uint256 claimAmount,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, false);
 
         uint256 borrowerBalBefore = IERC20(mockCollateralERC20).balanceOf(borrower);
         uint256 borrowerFreeBefore =
@@ -617,7 +628,7 @@ contract ClaimFacetTest is Test {
         );
         assertEq(_withdrawToWallet(borrower, mockCollateralERC20, claimAmount), claimAmount, "and the borrower withdraws it");
 
-        (,, bool claimed) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+        (,, bool claimed) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, false);
         assertTrue(claimed);
     }
 
@@ -910,7 +921,7 @@ contract ClaimFacetTest is Test {
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
-        (, uint256 lenderAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, uint256 lenderAmount,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertGt(lenderAmount, 0);
     }
 
@@ -976,7 +987,7 @@ contract ClaimFacetTest is Test {
         uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 2000 ether, 30);
         _repayLoan(loanId);
         TestMutatorFacet(address(diamond)).setLenderClaimAmountRaw(loanId, 0);
-        (address recordedAsset, , ) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (address recordedAsset, , ) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertTrue(recordedAsset != address(0), "fixture: the claim is recorded");
         uint256 lenderTokenId = LoanFacet(address(diamond)).getLoanDetails(loanId).lenderTokenId;
 
@@ -995,7 +1006,7 @@ contract ClaimFacetTest is Test {
         ClaimFacet(address(diamond)).claimAsLender(loanId);
 
         assertEq(IERC20(mockERC20).balanceOf(lender), lenderBefore, "nothing is paid");
-        (, , bool claimed) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (, , bool claimed) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertTrue(claimed, "the lender side is closed");
         assertEq(
             uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
@@ -1026,7 +1037,7 @@ contract ClaimFacetTest is Test {
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
 
-        (,, bool claimed) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (,, bool claimed) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertTrue(claimed);
     }
 
@@ -1071,7 +1082,7 @@ contract ClaimFacetTest is Test {
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
 
-        (,, bool claimed) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (,, bool claimed) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertTrue(claimed);
     }
 
@@ -1089,7 +1100,7 @@ contract ClaimFacetTest is Test {
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
 
-        (,, bool claimed) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (,, bool claimed) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertTrue(claimed);
         vm.clearMockedCalls();
     }
@@ -1107,7 +1118,7 @@ contract ClaimFacetTest is Test {
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
 
-        (,, bool claimed) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (,, bool claimed) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertTrue(claimed);
         vm.clearMockedCalls();
     }
@@ -1158,7 +1169,7 @@ contract ClaimFacetTest is Test {
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
 
-        (,, bool claimed) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (,, bool claimed) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertTrue(claimed);
         vm.clearMockedCalls();
     }
@@ -1175,7 +1186,7 @@ contract ClaimFacetTest is Test {
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
 
-        (,, bool claimed) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (,, bool claimed) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertTrue(claimed);
         vm.clearMockedCalls();
     }
@@ -1192,7 +1203,7 @@ contract ClaimFacetTest is Test {
         vm.prank(borrower);
         ClaimFacet(address(diamond)).claimAsBorrower(loanId);
 
-        (,, bool claimed) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+        (,, bool claimed) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, false);
         assertTrue(claimed);
         vm.clearMockedCalls();
     }
@@ -1209,7 +1220,7 @@ contract ClaimFacetTest is Test {
         vm.prank(borrower);
         ClaimFacet(address(diamond)).claimAsBorrower(loanId);
 
-        (,, bool claimed) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+        (,, bool claimed) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, false);
         assertTrue(claimed);
         vm.clearMockedCalls();
     }

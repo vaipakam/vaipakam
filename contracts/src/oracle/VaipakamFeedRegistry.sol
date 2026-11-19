@@ -84,6 +84,18 @@ contract VaipakamFeedRegistry is Ownable2Step, IFeedRegistryPairBase {
         Custom
     }
 
+    /// @notice What an entry prices (#3683). A {Price} entry is a token's
+    ///         price in a quote denomination and is the only kind {getFeed}
+    ///         returns. A {Rate} entry is a token's exchange rate into its
+    ///         underlying token (`quote` is that token), read only through
+    ///         {getRateFeed}, so a rate can never be read as a price or the
+    ///         reverse. Only the owner may propose, replace or remove a rate
+    ///         entry.
+    enum EntryKind {
+        Price,
+        Rate
+    }
+
     /// @notice A registered feed for one (token, quote denomination).
     struct Entry {
         /// @dev The Chainlink feed proxy.
@@ -99,6 +111,8 @@ contract VaipakamFeedRegistry is Ownable2Step, IFeedRegistryPairBase {
         uint32 directoryDate;
         /// @dev Block time the entry was written.
         uint64 updatedAt;
+        /// @dev The registry {epoch} the entry was written in (#3437).
+        uint64 sinceEpoch;
         /// @dev SHA-256 of that directory file.
         bytes32 directorySha256;
         /// @dev The feed's `description()`, e.g. "LINK / USD".
@@ -111,6 +125,7 @@ contract VaipakamFeedRegistry is Ownable2Step, IFeedRegistryPairBase {
     struct Change {
         address base;
         address quote;
+        EntryKind kind;
         address expectedFeed;
         address feed;
         uint8 feedDecimals;
@@ -204,8 +219,27 @@ contract VaipakamFeedRegistry is Ownable2Step, IFeedRegistryPairBase {
     /// @notice The number of proposals made.
     uint256 public proposalCount;
 
+    /// @notice An earlier binding of a pair, kept so a read can be made as
+    ///         of an older epoch (#3437). It held from `sinceEpoch` up to,
+    ///         not including, `untilEpoch`.
+    struct Past {
+        uint64 sinceEpoch;
+        uint64 untilEpoch;
+        address feed;
+        /// @dev The base symbol of its pair name, as {pairBase} reads it.
+        bytes32 baseSymbol;
+    }
+
+    /// @notice The registry's config epoch (#3437): 1 at deployment, raised
+    ///         by one for every executed proposal. A price read can be made
+    ///         as of any epoch from 1 to this one, and answers with the
+    ///         bindings that epoch had.
+    uint64 public epoch;
+
     mapping(bytes32 key => Entry) private _entries;
     mapping(bytes32 key => address[2]) private _pairOf;
+    mapping(bytes32 key => EntryKind) private _kindOf;
+    mapping(bytes32 key => Past[]) private _history;
     EnumerableSet.Bytes32Set private _keys;
 
     /// @custom:event-category informational/admin
@@ -236,12 +270,16 @@ contract VaipakamFeedRegistry is Ownable2Step, IFeedRegistryPairBase {
     event ProposalWithdrawn(uint256 indexed id);
     /// @custom:event-category informational/config
     event ProposalExecuted(uint256 indexed id, address indexed by);
+    /// @notice Proposal `id` executed as epoch `epoch` (#3437).
+    /// @custom:event-category informational/config
+    event EpochAdvanced(uint64 indexed epoch, uint256 indexed id);
     /// @notice An entry was written (or, with `feed == address(0)`, removed)
     ///         by proposal `id`.
     /// @custom:event-category informational/config
     event FeedSet(
         address indexed base,
         address indexed quote,
+        EntryKind kind,
         address previousFeed,
         address feed,
         string pair,
@@ -272,6 +310,8 @@ contract VaipakamFeedRegistry is Ownable2Step, IFeedRegistryPairBase {
     error ProposerRemoved(uint256 id, address proposer);
     error NotProposalsProposer(uint256 id, address caller);
     error RenounceDisabled();
+    error RateNeedsOwner(uint256 index);
+    error UnknownEpoch(uint64 requested, uint64 current);
 
     /// @param owner_    The chain's admin (later the Timelock).
     /// @param guardian_ The Pauser Safe: its veto is a stop-only power, the
@@ -281,6 +321,7 @@ contract VaipakamFeedRegistry is Ownable2Step, IFeedRegistryPairBase {
         testnet = TestnetChains.isTestnet(block.chainid);
         guardian = guardian_;
         delay = DEFAULT_DELAY;
+        epoch = 1;
         quoteSymbol[USD] = "USD";
         quoteSymbol[ETH] = "ETH";
         emit GuardianSet(guardian_);
@@ -295,14 +336,53 @@ contract VaipakamFeedRegistry is Ownable2Step, IFeedRegistryPairBase {
     ///         when none is. Matches the call shape of Chainlink's Feed
     ///         Registry, whose return type is an aggregator address.
     function getFeed(address base, address quote) external view returns (address) {
-        return _entries[_key(base, quote)].feed;
+        return _entries[_key(base, quote, EntryKind.Price)].feed;
+    }
+
+    /// @notice The price feed (`base`, `quote`) had at registry epoch `at`,
+    ///         or `address(0)` when it had none (#3437). Reverts
+    ///         {UnknownEpoch} for an epoch that does not exist yet, or 0.
+    function getFeedAt(address base, address quote, uint64 at) external view returns (address feed) {
+        (feed,) = _at(_key(base, quote, EntryKind.Price), at);
+    }
+
+    /// @notice The rate feed registered for `token` into `underlying`
+    ///         (#3683), or `address(0)` when none is.
+    function getRateFeed(address token, address underlying) external view returns (address) {
+        return _entries[_key(token, underlying, EntryKind.Rate)].feed;
+    }
+
+    /// @notice The rate feed for `token` into `underlying` at registry epoch
+    ///         `at`, or `address(0)` when it had none.
+    function getRateFeedAt(address token, address underlying, uint64 at) external view returns (address feed) {
+        (feed,) = _at(_key(token, underlying, EntryKind.Rate), at);
     }
 
     // ─── Reads ─────────────────────────────────────────────────────────
 
     /// @notice The full entry for (`base`, `quote`); `feed` is zero when none.
     function entry(address base, address quote) external view returns (Entry memory) {
-        return _entries[_key(base, quote)];
+        return _entries[_key(base, quote, EntryKind.Price)];
+    }
+
+    /// @notice The full rate entry for `token` into `underlying`; `feed` is
+    ///         zero when none.
+    function rateEntry(address token, address underlying) external view returns (Entry memory) {
+        return _entries[_key(token, underlying, EntryKind.Rate)];
+    }
+
+    /// @notice How many earlier bindings of the pair are kept.
+    function historyLength(address base, address quote, EntryKind kind) external view returns (uint256) {
+        return _history[_key(base, quote, kind)].length;
+    }
+
+    /// @notice One earlier binding of the pair, oldest first.
+    function historyAt(address base, address quote, EntryKind kind, uint256 index)
+        external
+        view
+        returns (Past memory)
+    {
+        return _history[_key(base, quote, kind)][index];
     }
 
     /// @inheritdoc IFeedRegistryPairBase
@@ -314,13 +394,14 @@ contract VaipakamFeedRegistry is Ownable2Step, IFeedRegistryPairBase {
     ///      asset by changing its symbol. The symbol is the text before the
     ///      pair's last " / " separator.
     function pairBase(address base, address quote) external view returns (bytes32 symbol) {
-        Entry storage e = _entries[_key(base, quote)];
+        Entry storage e = _entries[_key(base, quote, EntryKind.Price)];
         if (e.feed == address(0)) return bytes32(0);
-        bytes memory p = bytes(e.pair);
-        uint256 end = p.length;
-        while (end >= 3 && !(p[end - 3] == " " && p[end - 2] == "/" && p[end - 1] == " ")) --end;
-        if (end < 4 || end - 3 > 32) return bytes32(0);
-        for (uint256 i; i < end - 3; ++i) symbol |= bytes32(p[i]) >> (i * 8);
+        return _baseSymbol(e.pair);
+    }
+
+    /// @notice {pairBase} as of registry epoch `at` (#3437).
+    function pairBaseAt(address base, address quote, uint64 at) external view returns (bytes32 symbol) {
+        (, symbol) = _at(_key(base, quote, EntryKind.Price), at);
     }
 
     /// @notice How many pairs are registered.
@@ -333,18 +414,20 @@ contract VaipakamFeedRegistry is Ownable2Step, IFeedRegistryPairBase {
     function entriesPage(uint256 offset, uint256 limit)
         external
         view
-        returns (address[] memory bases, address[] memory quotes, Entry[] memory entries)
+        returns (address[] memory bases, address[] memory quotes, EntryKind[] memory kinds, Entry[] memory entries)
     {
         uint256 n = _keys.length();
         uint256 end = offset >= n ? offset : (n - offset < limit ? n : offset + limit);
         uint256 len = end - offset;
         bases = new address[](len);
         quotes = new address[](len);
+        kinds = new EntryKind[](len);
         entries = new Entry[](len);
         for (uint256 i; i < len; ++i) {
             bytes32 k = _keys.at(offset + i);
             bases[i] = _pairOf[k][0];
             quotes[i] = _pairOf[k][1];
+            kinds[i] = _kindOf[k];
             entries[i] = _entries[k];
         }
     }
@@ -456,10 +539,12 @@ contract VaipakamFeedRegistry is Ownable2Step, IFeedRegistryPairBase {
         if (!stillHeld || p.generation != authGeneration[proposer]) revert ProposerRemoved(id, proposer);
         _checkChanges(changes, p.byOwner);
         p.state = State.Executed;
+        uint64 e = ++epoch;
         for (uint256 i; i < changes.length; ++i) {
-            _apply(changes[i], p.directorySha256, p.directoryDate, i, id, p.byOwner);
+            _apply(changes[i], p.directorySha256, p.directoryDate, i, id, p.byOwner, e);
         }
         emit ProposalExecuted(id, msg.sender);
+        emit EpochAdvanced(e, id);
     }
 
     // ─── Internals ─────────────────────────────────────────────────────
@@ -474,8 +559,37 @@ contract VaipakamFeedRegistry is Ownable2Step, IFeedRegistryPairBase {
         if (p.state != State.Pending) revert ProposalNotPending(id, p.state);
     }
 
-    function _key(address base, address quote) private pure returns (bytes32) {
-        return keccak256(abi.encode(base, quote));
+    function _key(address base, address quote, EntryKind kind) private pure returns (bytes32) {
+        return keccak256(abi.encode(base, quote, kind));
+    }
+
+    /// @dev The binding of key `k` at epoch `at`: the live entry when it was
+    ///      written at or before `at`, else the kept binding that covered
+    ///      `at`, else none. History is in epoch order, so the walk is from
+    ///      the newest back; a pair changes rarely, so it is short.
+    function _at(bytes32 k, uint64 at) private view returns (address feed, bytes32 symbol) {
+        uint64 current = epoch;
+        if (at == 0 || at > current) revert UnknownEpoch(at, current);
+        Entry storage e = _entries[k];
+        if (e.feed != address(0) && at >= e.sinceEpoch) return (e.feed, _baseSymbol(e.pair));
+        Past[] storage h = _history[k];
+        for (uint256 i = h.length; i > 0; --i) {
+            Past storage past = h[i - 1];
+            // At or after this binding ended, and before any later one began.
+            if (at >= past.untilEpoch) return (address(0), bytes32(0));
+            if (at >= past.sinceEpoch) return (past.feed, past.baseSymbol);
+        }
+        return (address(0), bytes32(0));
+    }
+
+    /// @dev The text before a pair name's last " / ", left-aligned in one
+    ///      word; zero when there is none or it is longer than 32 bytes.
+    function _baseSymbol(string memory pair) private pure returns (bytes32 symbol) {
+        bytes memory p = bytes(pair);
+        uint256 end = p.length;
+        while (end >= 3 && !(p[end - 3] == " " && p[end - 2] == "/" && p[end - 1] == " ")) --end;
+        if (end < 4 || end - 3 > 32) return bytes32(0);
+        for (uint256 i; i < end - 3; ++i) symbol |= bytes32(p[i]) >> (i * 8);
     }
 
     /// @dev Every check that does not depend on the current entry runs at
@@ -490,15 +604,28 @@ contract VaipakamFeedRegistry is Ownable2Step, IFeedRegistryPairBase {
             Change calldata c = changes[i];
             if (c.base == address(0) || c.quote == address(0)) revert ZeroAddress();
             for (uint256 j; j < i; ++j) {
-                if (changes[j].base == c.base && changes[j].quote == c.quote) revert DuplicatePair(i);
+                if (changes[j].base == c.base && changes[j].quote == c.quote && changes[j].kind == c.kind) {
+                    revert DuplicatePair(i);
+                }
             }
+            // A rate entry prices collateral by itself (#3683): the owner's
+            // alone to add, replace or remove, whatever its category.
+            bool rate = c.kind == EntryKind.Rate;
+            if (rate && !byOwner) revert RateNeedsOwner(i);
             if (c.feed == address(0)) continue; // removal: nothing to probe
             if (!byOwner && c.category != Category.Low && c.category != Category.Medium) {
                 revert CategoryNeedsOwner(i, c.category);
             }
-            string memory sym = quoteSymbol[c.quote];
-            if (bytes(sym).length == 0) revert QuoteNotRegistered(i, c.quote);
-            if (!_endsWithQuote(c.pair, sym)) revert PairQuoteMismatch(i, c.pair, sym);
+            if (rate) {
+                // The quote is the underlying token, which must be readable;
+                // a rate feed's name has no quote-denomination suffix.
+                (bool underOk, uint8 underDec) = _readDecimals(c.quote);
+                if (!underOk || underDec > MAX_DECIMALS) revert TokenNotReadable(i, c.quote);
+            } else {
+                string memory sym = quoteSymbol[c.quote];
+                if (bytes(sym).length == 0) revert QuoteNotRegistered(i, c.quote);
+                if (!_endsWithQuote(c.pair, sym)) revert PairQuoteMismatch(i, c.pair, sym);
+            }
             if (c.heartbeat == 0) revert HeartbeatInvalid(i, c.heartbeat);
             (bool tokOk, uint8 tokDec) = _readDecimals(c.base);
             if (!tokOk || tokDec > MAX_DECIMALS) revert TokenNotReadable(i, c.base);
@@ -515,22 +642,41 @@ contract VaipakamFeedRegistry is Ownable2Step, IFeedRegistryPairBase {
     ///      the one it writes: a proposer may not replace or remove an entry
     ///      the owner placed above its scope. Checked here, at execution,
     ///      because the current entry is only known then.
-    function _apply(Change calldata c, bytes32 dirHash, uint32 dirDate, uint256 i, uint256 id, bool byOwner)
-        private
-    {
-        bytes32 k = _key(c.base, c.quote);
+    function _apply(
+        Change calldata c,
+        bytes32 dirHash,
+        uint32 dirDate,
+        uint256 i,
+        uint256 id,
+        bool byOwner,
+        uint64 newEpoch
+    ) private {
+        bytes32 k = _key(c.base, c.quote, c.kind);
         Entry storage e = _entries[k];
         address previous = e.feed;
         if (previous != c.expectedFeed) revert ExpectedFeedMismatch(i, c.expectedFeed, previous);
         if (!byOwner && previous != address(0) && e.category != Category.Low && e.category != Category.Medium) {
             revert CategoryNeedsOwner(i, e.category);
         }
+        if (previous != address(0)) {
+            // Keep the binding this change ends, so a read as of an earlier
+            // epoch still finds it (#3437).
+            _history[k].push(
+                Past({
+                    sinceEpoch: e.sinceEpoch,
+                    untilEpoch: newEpoch,
+                    feed: previous,
+                    baseSymbol: _baseSymbol(e.pair)
+                })
+            );
+        }
         if (c.feed == address(0)) {
             if (previous == address(0)) revert NothingToRemove(i);
             delete _entries[k];
             delete _pairOf[k];
+            delete _kindOf[k];
             _keys.remove(k);
-            emit FeedSet(c.base, c.quote, previous, address(0), "", Category.Low, id);
+            emit FeedSet(c.base, c.quote, c.kind, previous, address(0), "", Category.Low, id);
             return;
         }
         e.feed = c.feed;
@@ -539,10 +685,14 @@ contract VaipakamFeedRegistry is Ownable2Step, IFeedRegistryPairBase {
         e.heartbeat = c.heartbeat;
         e.directoryDate = dirDate;
         e.updatedAt = uint64(block.timestamp);
+        e.sinceEpoch = newEpoch;
         e.directorySha256 = dirHash;
         e.pair = c.pair;
-        if (_keys.add(k)) _pairOf[k] = [c.base, c.quote];
-        emit FeedSet(c.base, c.quote, previous, c.feed, c.pair, c.category, id);
+        if (_keys.add(k)) {
+            _pairOf[k] = [c.base, c.quote];
+            _kindOf[k] = c.kind;
+        }
+        emit FeedSet(c.base, c.quote, c.kind, previous, c.feed, c.pair, c.category, id);
     }
 
     /// @dev `pair` ends with " / " followed by exactly `sym`.

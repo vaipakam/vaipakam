@@ -111,3 +111,40 @@ Settled with the builder on 2026-11-16:
 Still for the builder to raise, not decide silently:
 
 - Confirm no path assumes the fee is one fixed rate, and that the bound on the fee setting still holds for the longest term the platform admits.
+
+## 11. Answers to section 10, and what is built (2026-11-16)
+
+The design thread answered section 10 on 2026-11-16:
+
+- **Everything priced from the initiation fee reads the loan's term rate**: the borrower charge at acceptance, every preview of it, the matcher's share (a cut of the amount charged, so it follows), the refinance payoff sizing, and the VPFI discount, which applies to the term-scaled fee. A signed offer's cap on the initiation fee is compared with the term rate for that offer's own term, rounded up, so a cap is never read as met by a rounded-down figure.
+- **One exception: the Full tariff's C\* keeps the base rate.** C\* already multiplies by the loan's term, so reading the term rate there would charge the term twice.
+- **An obligation handover that lengthens the agreed term** charges the incoming borrower the difference, as an extension does. A shorter or equal term charges nothing and refunds nothing.
+- **The bound on the fee settings** is checked against the longest term any path admits: the yearly rate times that longest term may not exceed the 50% fee ceiling times the one-year point.
+- **The treasury floor split is built now**, in the treasury fee host, because it ships in the audited code. Until a registry names a reserve, the reserve's part goes to the treasury, and this is stated: the fee event gives the floor part and the reserve part separately, and a per-asset counter records the reserve part the treasury holds. An extension's added fee takes no floor.
+
+Built in stage 1 (term rate):
+
+- One library computes the rate for a term and the fee for a principal and term. Every charger and preview reads it.
+- A small facet holds the three term settings (base term, yearly rate, one-year point; the base rate stays the existing initiation fee setting), their getter, and a quote of the fee and rate for a principal and term. The setter refuses a base term outside 1 to 90 days, a one-year point outside 180 to 730 days, a yearly rate below the base rate, and a yearly rate whose longest-term fee would pass the 50% ceiling. The base-rate setter now refuses a base rate above the yearly rate.
+- The loan stamps its term rate (rounded down) as its initiation fee rate when it opens.
+- The interest share default is 10%, and the yearly rate 1% (owner decision 2026-11-17, replacing 5% and 0.5%).
+
+Built in stage 2 (extension):
+
+- The loan records the start its total term is counted from and the term the fee is paid for. An extension pays the fee at the new total term less the fee at the term paid for, on the principal outstanding, under the settings in force when it takes effect. The total term is counted in whole days, rounded up, from the origination start to the new end, without paused time, so any sequence of extensions pays in sum what one loan of the same total term pays.
+- The hold-tier discount applies to the added fee as at acceptance. The Full bonus does not, because an extension pays no fresh tariff and the extension already downgrades the lender's Full stamp.
+- The fee is drawn from the borrower-position holder's vault the same way as the extension's interest charge: their extension reserve for the loan first, then their other free balance. It carries no matcher share, and stage 3 marks it as an extension fee, so no floor is taken from it.
+- The borrower's extension limits gain the largest added fee they allow. An extension whose fee is above it is refused, and nothing changes. The settings facet quotes the added fee for an extension made now to a given end, after the holder's discount, and the app's auto-extend card shows that figure and saves it as the limit.
+- A loan that paid no initiation fee (a rental, a sale vehicle) records no term and pays none on extension.
+- **An obligation handover never lengthens the term.** Its replacement maturity may not fall after the loan's current maturity (an existing lender-protection rule), so the total term counted from the origination start cannot grow, and the handover charges nothing. If that rule is ever relaxed, the handover would charge through the same computation.
+- Not yet done: the keeper's funding check reads the extension's interest charge only. It should add the quoted fee before it sends an extension, or the extension is refused for want of funds. That change belongs to the keeper app.
+
+Built in stage 3 (the floor split):
+
+- Each fee leg into the treasury names what the fee is: an initiation fee, the treasury's share of an ERC-20 loan's interest, an extension's added fee, or any other fee. With the first two it passes the floor's base: the principal, or the interest the share was taken from. The treasury fee host splits what arrived, once: the treasury's part up to the floor, the reserve's part above it. Floors round up.
+- Defaults: 0.1% of the principal for the initiation fee, 1% of the interest for the interest share. They are bounded settings on the fee settings facet, under the half rule: a floor may never exceed half of the rate it is taken from (the base initiation rate, the interest share), checked when either is set, so the part above the floor never closes. The floor setter refuses a floor above half the rate in force, and the fee setter refuses a rate below twice the floor in force; 0.2% and 5% stay as outer limits. The default initiation floor sits exactly at its limit, so raising it needs the base rate raised first. A change applies to fees collected after it.
+- The half rule also holds per loan, in the fee host. A loan keeps the interest share it opened with, so the setter checks alone would not hold for an older loan: one opened at a 2% share would send its whole interest fee to the treasury once the share is 10% and the floor 5%. When an interest fee is collected, the treasury's floor part is the lesser of the interest times the floor in force (rounded up) and half of the interest times the share that loan opened with (rounded down), before any discount. Every interest call site passes the loan's own share with the interest base; the setter checks stay, so a setting is never silently capped on new loans. The initiation fee needs nothing more, since it is charged once at acceptance under the settings in force.
+- An extension's added fee is the reserve's whole. Every other fee is the treasury's whole and is not split: NFT rental shares (a rental pays no interest and no initiation fee), liquidation handling fees, the fallback split's treasury share and rental buffers. Where a liquidation used to send the handling fee and the interest share in one transfer, it now sends them as two legs, so the split never mixes the two.
+- The matcher's share of the initiation fee is sized on the part above the floor, so it comes out of the reserve's part. With the default matcher rate of 1%, that share is small on short loans; #3682 sets the shares on the same base.
+- No reserve is named yet, so both parts go to the treasury. Each split fee emits its two parts, and a per-asset counter records the reserve's part the treasury holds, readable from the fee host.
+- The fee legs changed shape, so the two curated refresh scripts refuse a Diamond whose fee host predates the split: they refresh the host and only some of the facets that charge fees. The crossing is a fresh deploy or the all-facets refresh.

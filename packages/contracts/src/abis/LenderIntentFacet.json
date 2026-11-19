@@ -12,6 +12,11 @@
         "name": "collateralAsset",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "slot",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ],
     "outputs": [],
@@ -32,6 +37,11 @@
         "internalType": "address"
       },
       {
+        "name": "slot",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
         "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
@@ -42,469 +52,11 @@
   },
   {
     "type": "function",
-    "name": "getActiveLenderIntents",
-    "inputs": [
-      {
-        "name": "offset",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "limit",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "intents",
-        "type": "tuple[]",
-        "internalType": "struct LibMetricsTypes.LenderIntentSummary[]",
-        "components": [
-          {
-            "name": "owner",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "lendingAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "collateralAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "maxExposure",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "minRateBps",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "maxInitLtvBps",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "maxDurationDays",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "minFillAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "requiresKeeperAuth",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "livePrincipal",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "availableCapital",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "lendUntil",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "acceptsProRata",
-            "type": "bool",
-            "internalType": "bool"
-          }
-        ]
-      },
-      {
-        "name": "total",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getLenderIntent",
-    "inputs": [
-      {
-        "name": "owner",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "lendingAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "collateralAsset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct LibVaipakam.LenderIntent",
-        "components": [
-          {
-            "name": "active",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "maxExposure",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "minRateBps",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "maxInitLtvBps",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "maxDurationDays",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "minFillAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "requiresKeeperAuth",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "termsSetAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "lendUntil",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "acceptsProRata",
-            "type": "bool",
-            "internalType": "bool"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getLenderIntentCapital",
-    "inputs": [
-      {
-        "name": "owner",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "lendingAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "collateralAsset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getLenderIntentLivePrincipal",
-    "inputs": [
-      {
-        "name": "owner",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "lendingAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "collateralAsset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getLenderIntentPriority",
-    "inputs": [
-      {
-        "name": "owner",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "lendingAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "collateralAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "solver",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "initiator",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "enabled",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "credits",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "capacityCovers",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "creditUnlocks",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getLenderIntentsByOwner",
-    "inputs": [
-      {
-        "name": "owner",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "offset",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "limit",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "intents",
-        "type": "tuple[]",
-        "internalType": "struct LibMetricsTypes.OwnerLenderIntentSummary[]",
-        "components": [
-          {
-            "name": "intent",
-            "type": "tuple",
-            "internalType": "struct LibMetricsTypes.LenderIntentSummary",
-            "components": [
-              {
-                "name": "owner",
-                "type": "address",
-                "internalType": "address"
-              },
-              {
-                "name": "lendingAsset",
-                "type": "address",
-                "internalType": "address"
-              },
-              {
-                "name": "collateralAsset",
-                "type": "address",
-                "internalType": "address"
-              },
-              {
-                "name": "maxExposure",
-                "type": "uint256",
-                "internalType": "uint256"
-              },
-              {
-                "name": "minRateBps",
-                "type": "uint256",
-                "internalType": "uint256"
-              },
-              {
-                "name": "maxInitLtvBps",
-                "type": "uint16",
-                "internalType": "uint16"
-              },
-              {
-                "name": "maxDurationDays",
-                "type": "uint32",
-                "internalType": "uint32"
-              },
-              {
-                "name": "minFillAmount",
-                "type": "uint256",
-                "internalType": "uint256"
-              },
-              {
-                "name": "requiresKeeperAuth",
-                "type": "bool",
-                "internalType": "bool"
-              },
-              {
-                "name": "livePrincipal",
-                "type": "uint256",
-                "internalType": "uint256"
-              },
-              {
-                "name": "availableCapital",
-                "type": "uint256",
-                "internalType": "uint256"
-              },
-              {
-                "name": "lendUntil",
-                "type": "uint64",
-                "internalType": "uint64"
-              },
-              {
-                "name": "acceptsProRata",
-                "type": "bool",
-                "internalType": "bool"
-              }
-            ]
-          },
-          {
-            "name": "active",
-            "type": "bool",
-            "internalType": "bool"
-          }
-        ]
-      },
-      {
-        "name": "total",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getMinIntentFillNumeraire",
     "inputs": [],
     "outputs": [
       {
         "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getRollableIntentLoans",
-    "inputs": [
-      {
-        "name": "offset",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "limit",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "loans",
-        "type": "tuple[]",
-        "internalType": "struct LibMetricsTypes.RollableIntentLoan[]",
-        "components": [
-          {
-            "name": "loanId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "owner",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "lendingAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "collateralAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "amount",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      },
-      {
-        "name": "total",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -523,6 +75,19 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "recommitHeldToIntent",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -563,6 +128,11 @@
         "name": "collateralAsset",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "slot",
+        "type": "uint8",
+        "internalType": "uint8"
       },
       {
         "name": "maxExposure",
@@ -646,6 +216,11 @@
         "internalType": "address"
       },
       {
+        "name": "slot",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
         "name": "enabled",
         "type": "bool",
         "internalType": "bool"
@@ -687,6 +262,11 @@
         "internalType": "address"
       },
       {
+        "name": "slot",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
         "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
@@ -694,6 +274,92 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "HeldRecommittedToIntent",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "roller",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "collateralAsset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "slot",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newCapital",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IntentCalmCheckSet",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "lendingAsset",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "collateralAsset",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "slot",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "on",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -728,6 +394,12 @@
         "type": "address",
         "indexed": false,
         "internalType": "address"
+      },
+      {
+        "name": "slot",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
       },
       {
         "name": "rolledAmount",
@@ -765,6 +437,12 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      },
+      {
+        "name": "slot",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
       }
     ],
     "anonymous": false
@@ -790,6 +468,12 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      },
+      {
+        "name": "slot",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
       },
       {
         "name": "amount",
@@ -842,6 +526,12 @@
         "internalType": "address"
       },
       {
+        "name": "slot",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
         "name": "amount",
         "type": "uint256",
         "indexed": false,
@@ -879,6 +569,12 @@
         "internalType": "address"
       },
       {
+        "name": "slot",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
         "name": "enabled",
         "type": "bool",
         "indexed": false,
@@ -908,6 +604,12 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      },
+      {
+        "name": "slot",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
       },
       {
         "name": "maxExposure",
@@ -1121,6 +823,11 @@
         "internalType": "address"
       },
       {
+        "name": "slot",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
         "name": "requested",
         "type": "uint256",
         "internalType": "uint256"
@@ -1217,6 +924,17 @@
   },
   {
     "type": "error",
+    "name": "LenderIntentSlotOutOfRange",
+    "inputs": [
+      {
+        "name": "slot",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "LenderIntentVpfiRollUnsupported",
     "inputs": []
   },
@@ -1279,6 +997,17 @@
   },
   {
     "type": "error",
+    "name": "RatePricedLendingAsset",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ReentrancyGuardReentrantCall",
     "inputs": []
   },
@@ -1297,5 +1026,10 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "SanctionsOracleUnavailable",
+    "inputs": []
   }
 ]

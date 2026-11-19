@@ -59,6 +59,16 @@ No fund movement changes. **Facet room (2026-11-15):** OfferCreateFacet 23,990 (
 
 Equal values match as today; lender "either" matches both borrower values and the loan carries the borrower's; without the bit a differing pair is still `LifecycleTermsMismatch`; a borrower offer, rental or sale vehicle cannot set it; unknown bits refused; an edit restamps the age; preview and match agree on every case; a signed offer binds it.
 
+### As built (2026-11-15)
+
+Built as the rule above, with three differences from the change table, each because the code made the step unnecessary:
+
+- **No mutate step.** `ModifyOfferParams` cannot change any lifecycle option, so the marks are fixed at creation like the options they qualify. There is nothing to restamp.
+- **The acceptor's signed terms (`LibAcceptTerms`) are unchanged.** A direct accept takes the offer's stored values whatever its marks say, so the marks change nothing the acceptor agrees to. Only the maker's signed offer (`LibSignedOffer`, now 36 fields) carries them.
+- **The admission check sits in `OfferBookFacet.openOfferOnBook`**, the step every creation already ends with, rather than in `OfferCreateFacet`, which had about 400 bytes of room. It refuses unknown bits (`LifecycleFlexUnknownBits`), and marks on a borrower offer, an NFT rental or any offer the protocol creates on a user's behalf (sale vehicles, the offset offer, intent slices) with `LifecycleFlexNotAllowed`. A signed order is held to it when it opens on the book, and the signed-order accept preview reports such an order as an unsupported shape.
+
+The match rule (`LibOfferMatch._lifecycleTermsAgree`) reads only the lender offer's marks; a borrower offer's field is ignored there. `OfferCreatedDetails` states the marks. The indexer refuses marks on a signed borrower order at listing, and the new app's "why isn't my offer matching?" skips an option the lender takes either way. Neither app posts an offer with marks yet; the form and the offer page copy in "Consent and disclosure" are app work still to do.
+
 ### Alternatives considered
 
 1. **Automatic for pro-rata pairs** (no flag, like the term rule). Rejected for now: a partial repay leaves the lender a smaller live loan to track, and a prepay listing is a consent to a collateral sale; both deserve an explicit choice.
@@ -165,6 +175,14 @@ An intent fill is priced at the midpoint of the rate overlap, not at the lender'
 ### Changes and reach
 
 The four triple-keyed mappings, the registry key and the origin record gain the slot; every intent entry point, preview, view and event takes or states it; keeper, indexer, app and both ABI exports follow. It is a deliberate storage break, acknowledged in the storage-layout guard, and reaches a chain by fresh deploy only. The full change list and tests are on the card.
+
+### As built (2026-11-15)
+
+- The slot is a `uint8` that follows the collateral asset in every intent entry point, preview, view and event (`setLenderIntent`, `cancelLenderIntent`, `fundLenderIntent`, `withdrawLenderIntentCapital`, `setLenderIntentPriority` and their reads; `matchIntent` and `previewIntent`; `LenderIntentSet` and the other intent events, `IntentMatched`, `IntentLoanRolled`, `IntentPriorityFill`, `LenderIntentPrioritySet`). A slot of 8 or more is refused by name (`LenderIntentSlotOutOfRange`).
+- The four per-pair mappings gain an innermost slot key; the registry key, its tuple and the loan's origin record carry the slot at their tails. The feeds (`getActiveLenderIntents`, `getRollableIntentLoans`, `getLenderIntentsByOwner`) state each row's slot.
+- The backstop vault and the aggregator adapters pass the named constant for slot 0.
+- The reference keeper groups one lender's slots on a pair into one unit of its fair walk, lowest floor first (ties to the lower slot), so a lender with several slots gets no more turns than a lender with one. The new app labels each standing offer's un-lent capital by its number in Claim everything, and counts a lender with several intents on a pair once in the "lenders ready" figure.
+- Storage break acknowledged in `breaks.ack.json`; fresh deploy only.
 
 ### What stays an offer after this
 

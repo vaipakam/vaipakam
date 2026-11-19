@@ -32,7 +32,7 @@ import {LibEntitlement} from "./LibEntitlement.sol";
  *         restated.
  *
  *         WHEN IT IS REPORTED. The record is the loan's MOST RECENT default and
- *         is never cleared. `ClaimFacet.getOwedAtDefault` reports it only while
+ *         is never cleared. `ClaimViewFacet.getOwedAtDefault` reports it only while
  *         the loan stands defaulted (`Defaulted` or `FallbackPending`), so a
  *         fallback that is cured (back to `Active`), repaid, fully closed by an
  *         internal match, or a loan that has since settled, reads as "no

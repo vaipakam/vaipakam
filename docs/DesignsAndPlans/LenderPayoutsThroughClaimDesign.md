@@ -158,3 +158,18 @@ Build sections 3.1 to 3.3 as one contract PR with the spec text, ABI exports, in
 - Any reader of "interest paid to the holder" whose result would change (3.4).
 - Whether a rental's held payments should be claimable mid-rental exactly like an ERC-20 loan's (this design says yes; the prepay asset is the held asset).
 - Whether `recommitHeldToIntent` should also be offered for an amount held from a periodic interest payment (this design says yes: the same ledger, the same step).
+
+## 10. As built (#3629, 2026-11-15)
+
+- **One hold route.** `LibCloseoutFreeze.holdActiveLenderResident / FromPayer / FromVault` replace the three freeze-or-pay helpers and hold for every holder: open seller claims first, then the sanctions-lock deposit into the stored lender's vault, the held ledger, the active-held reservation, the fail-closed marker for a flagged holder, and `LenderPaymentHeld`. The swap-to-repay partial repayment now goes through the same helper instead of its own wallet transfer. `holdBorrowerSurplus` and `holdBorrowerExtra` hold every borrower extra or surplus; `ForcedSaleFacet.payBorrowerWallet` and the "held or paid" flags on `ForcedSaleSettled`, `PeriodicInterestAutoLiquidated` and `CollateralSaleProceedsSplit` are gone.
+- **One take step.** `LibHeldForLender.take` settles a held balance's records (fail-closed marker, both reservations on an open loan, parked interest reported paid and cleared, held ledger zeroed) and returns the amount and asset; the caller moves the funds. It is used by `ClaimFacet.claimHeldForLender`, `LenderIntentFacet.rollIntentLoan` and `LenderIntentFacet.recommitHeldToIntent`. The final lender claim keeps its own fold, because on a terminal loan the interest ledger is no longer read.
+- **Mid-loan claims.** `claimHeldForLender(loanId)` and `claimHeldForBorrower(loanId)` on ClaimFacet: current position holder only, Active loan only, Tier-1 screened, the registry-aware frozen-claimant stamp first, paid through the position-holder outflow route (which stamps the cooldown). The borrower one reuses `payHeldBorrowerExtra`.
+- **Auto-lend.** The roll re-commits `claim + held`; `recommitHeldToIntent` re-commits the held part of an open loan under the roll's checks and stamps `markLoanValueOut`. `getRollableIntentLoans` now returns open loans with a held amount too (`open`, `held` on each row), and the reference keeper's roll pass runs the re-commit step behind `HELD_RECOMMIT_ENABLED` (ships unset).
+- **Sale proceeds.** Both sale routes credit the seller's own vault through `LibFacet.creditOwnVault` (measured) and check the agreed least net against what arrived.
+
+Answers to section 9:
+
+- **Interest readers.** `holderEarnedGross` is read only by the sale seller-claim split and a view; the lender fee discount and the interaction rewards are resolved at payment time, so no reader sees interest twice or not at all. The interest part of a held payment is recorded as held (`holderParked`) and reported paid when it is claimed or re-committed.
+- **Rentals.** A rental's held payments are claimable mid-rental exactly like an ERC-20 loan's, in the prepay asset.
+- **Periodic interest.** Held periodic interest is re-committable by `recommitHeldToIntent`: same ledger, same step.
+- **Internal-match owed view.** `LibOwedAtInternalMatch` reads a non-zero held balance as a reason to treat the lender side as owed; with more payments held this is equal or more conservative, never less.

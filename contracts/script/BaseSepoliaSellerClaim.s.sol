@@ -6,11 +6,11 @@ import {console} from "forge-std/console.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {LibAcceptTestSigner} from "../test/helpers/LibAcceptTestSigner.sol";
-import {LibTestTiming} from "../test/helpers/LibTestTiming.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
@@ -28,20 +28,29 @@ import {IRepriceDiamondViews} from "./lib/RepriceVenueReport.sol";
  *         itself is NOT done here: `apps/app/e2e/live/live-seller-claim.mjs`
  *         drives it through the deployed app.
  *
- *         Three stages, run in order, each its own broadcast (`SC_STAGE`):
- *         - `open`: the lender offers `SC_PRINCIPAL` mUSDC (liquidToken2, the
+ *         Five stages, run in order, each its own broadcast (`SC_STAGE`). An
+ *         offer can be filled only once its terms have stood the minimum age
+ *         (#3412, a few seconds), and one broadcast cannot wait between its
+ *         own transactions, so every offer is posted in one stage and filled
+ *         in the next (#3574):
+ *         - `post`: the lender offers `SC_PRINCIPAL` mUSDC (liquidToken2, the
  *           faucet mock, default 100 mUSDC) for 30 days at `SC_RATE_BPS`
  *           (default 900) against tLIQ (liquidToken) worth three times the
- *           principal at the Diamond's own prices; the borrower accepts.
- *           Prints the loan id.
- *         - `sell` (`SC_LOAN_ID`): the new lender posts a single-value lender
+ *           principal at the Diamond's own prices. Prints the offer id.
+ *         - `open` (`SC_OFFER_ID`): the borrower accepts that offer. Refuses
+ *           unless the offer is the lender's and still open. Prints the loan
+ *           id.
+ *         - `list` (`SC_LOAN_ID`): the new lender posts a single-value lender
  *           offer on the loan's exact terms at the same rate (no rate
- *           shortfall, so the seller is paid the whole principal), and the
- *           lender sells into it with the BOUND direct sale, at the bounds
- *           the Diamond's own quote gives and a ten-minute deadline. Refuses
- *           unless the sale recorded a claim for the lender with something
- *           owed. Run it at least a few minutes after `open`: interest is
- *           earned per second, and a claim of zero proves nothing.
+ *           shortfall, so the seller is paid the whole principal). Prints
+ *           the buy offer id.
+ *         - `sell` (`SC_LOAN_ID`, `SC_BUY_OFFER_ID`): the lender sells into
+ *           that offer with the BOUND direct sale, at the bounds the
+ *           Diamond's own quote gives and a ten-minute deadline. Refuses
+ *           unless the offer is the new lender's and the sale recorded a
+ *           claim for the lender with something owed. Run `list` and `sell`
+ *           at least a few minutes after `open`: interest is earned per
+ *           second, and a claim of zero proves nothing.
  *         - `repay` (`SC_LOAN_ID`): the borrower repays in full, approving
  *           the Diamond's quote plus 1% for interest accrued before it mines
  *           (the allowance is set back to zero after); refuses unless the loan
@@ -57,7 +66,8 @@ import {IRepriceDiamondViews} from "./lib/RepriceVenueReport.sol";
  *
  *         Env (keys from contracts/.env): LENDER_PRIVATE_KEY,
  *         BORROWER_PRIVATE_KEY, NEW_LENDER_PRIVATE_KEY; `SC_STAGE`;
- *         `SC_LOAN_ID` for `sell` and `repay`. Optional: SC_PRINCIPAL (raw
+ *         `SC_OFFER_ID` for `open`; `SC_LOAN_ID` for `list`, `sell` and
+ *         `repay`; `SC_BUY_OFFER_ID` for `sell`. Optional: SC_PRINCIPAL (raw
  *         mUSDC), SC_RATE_BPS.
  */
 contract BaseSepoliaSellerClaim is Script {
@@ -71,17 +81,18 @@ contract BaseSepoliaSellerClaim is Script {
         bytes32 s = keccak256(bytes(stage));
         console.log("=== Base Sepolia seller-claim fixture (#1209), stage:", stage);
         console.log("Diamond:", diamond);
-        if (s == keccak256("open")) _open(diamond);
-        else if (s == keccak256("sell")) _sell(diamond, vm.envUint("SC_LOAN_ID"));
+        if (s == keccak256("post")) _post(diamond);
+        else if (s == keccak256("open")) _open(diamond, vm.envUint("SC_OFFER_ID"));
+        else if (s == keccak256("list")) _list(diamond, vm.envUint("SC_LOAN_ID"));
+        else if (s == keccak256("sell")) _sell(diamond, vm.envUint("SC_LOAN_ID"), vm.envUint("SC_BUY_OFFER_ID"));
         else if (s == keccak256("repay")) _repay(diamond, vm.envUint("SC_LOAN_ID"));
-        else revert("BaseSepoliaSellerClaim: SC_STAGE must be open, sell or repay");
+        else revert("BaseSepoliaSellerClaim: SC_STAGE must be post, open, list, sell or repay");
     }
 
     // ─── Stages ─────────────────────────────────────────────────────────────
 
-    function _open(address diamond) internal {
+    function _post(address diamond) internal {
         uint256 lenderKey = vm.envUint("LENDER_PRIVATE_KEY");
-        uint256 borrowerKey = vm.envUint("BORROWER_PRIVATE_KEY");
         address mUsdc = _mock("liquidToken2");
         address tLiq = _mock("liquidToken");
         uint256 principal = vm.envOr("SC_PRINCIPAL", 100 * uint256(10) ** IERC20Metadata(mUsdc).decimals());
@@ -90,9 +101,7 @@ contract BaseSepoliaSellerClaim is Script {
         console.log("Principal (raw mUSDC) / collateral (raw tLIQ) / rate bps:", principal, collateral, rateBps);
 
         address lender = vm.addr(lenderKey);
-        address borrower = vm.addr(borrowerKey);
-        require(lender != borrower, "BaseSepoliaSellerClaim: lender and borrower keys are the same wallet");
-
+        require(lender != vm.addr(vm.envUint("BORROWER_PRIVATE_KEY")), "BaseSepoliaSellerClaim: lender and borrower keys are the same wallet");
         vm.startBroadcast(lenderKey);
         ERC20Mock(mUsdc).mint(lender, principal);
         ERC20Mock(mUsdc).approve(diamond, principal);
@@ -101,13 +110,23 @@ contract BaseSepoliaSellerClaim is Script {
             type(uint64).max
         );
         vm.stopBroadcast();
+        console.log("Posted offer (predicted id - read OfferCreated from the receipt):", offerId);
+        console.log("Next, a few seconds from now: SC_STAGE=open SC_OFFER_ID=", offerId);
+    }
+
+    function _open(address diamond, uint256 offerId) internal {
+        uint256 borrowerKey = vm.envUint("BORROWER_PRIVATE_KEY");
+        address lender = vm.addr(vm.envUint("LENDER_PRIVATE_KEY"));
+        address borrower = vm.addr(borrowerKey);
+        LibVaipakam.Offer memory o = OfferCancelFacet(diamond).getOffer(offerId);
+        require(o.creator == lender && !o.accepted && o.amountFilled == 0, "BaseSepoliaSellerClaim: SC_OFFER_ID is not the lender's open offer");
 
         LibAcceptTerms.AcceptTerms memory terms =
             LibAcceptTestSigner.buildTerms(diamond, borrower, offerId, true, 0);
         bytes memory sig = LibAcceptTestSigner.sign(diamond, terms, borrowerKey);
         vm.startBroadcast(borrowerKey);
-        ERC20Mock(tLiq).mint(borrower, collateral);
-        ERC20Mock(tLiq).approve(diamond, collateral);
+        ERC20Mock(o.collateralAsset).mint(borrower, o.collateralAmount);
+        ERC20Mock(o.collateralAsset).approve(diamond, o.collateralAmount);
         uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, terms, sig);
         vm.stopBroadcast();
 
@@ -115,31 +134,34 @@ contract BaseSepoliaSellerClaim is Script {
         require(loan.status == LibVaipakam.LoanStatus.Active, "BaseSepoliaSellerClaim: the loan is not Active");
         require(loan.lender == lender && loan.borrower == borrower, "BaseSepoliaSellerClaim: the loan's parties are not the intended ones");
         console.log("Opened loan (offer, loan):", offerId, loanId);
-        console.log("Next, a few minutes from now: SC_STAGE=sell SC_LOAN_ID=", loanId);
+        console.log("Next, a few minutes from now: SC_STAGE=list SC_LOAN_ID=", loanId);
     }
 
-    function _sell(address diamond, uint256 loanId) internal {
-        uint256 lenderKey = vm.envUint("LENDER_PRIVATE_KEY");
+    function _list(address diamond, uint256 loanId) internal {
         uint256 buyerKey = vm.envUint("NEW_LENDER_PRIVATE_KEY");
-        address seller = vm.addr(lenderKey);
         address buyer = vm.addr(buyerKey);
-        LibVaipakam.Loan memory loan = LoanFacet(diamond).getLoanDetails(loanId);
-        require(loan.status == LibVaipakam.LoanStatus.Active, "BaseSepoliaSellerClaim: the loan is not Active");
-        require(loan.lender == seller, "BaseSepoliaSellerClaim: the lender key does not hold this loan's lender side");
-        require(buyer != seller && buyer != loan.borrower, "BaseSepoliaSellerClaim: the buyer must be a third wallet");
+        LibVaipakam.Loan memory loan = _requireSellable(diamond, loanId, buyer);
 
         vm.startBroadcast(buyerKey);
         ERC20Mock(loan.principalAsset).mint(buyer, loan.principal);
         ERC20Mock(loan.principalAsset).approve(diamond, loan.principal);
         uint256 buyOfferId = OfferCreateFacet(diamond).createOffer(_buyOffer(loan), type(uint64).max);
         vm.stopBroadcast();
-        // The offer-age rule (#3412): steps a simulation only; under
-        // --broadcast it refuses before sending anything (#3502).
-        LibTestTiming.waitOutTermsAge(diamond, buyOfferId);
+        console.log("Posted buy offer (predicted id - read OfferCreated from the receipt):", buyOfferId);
+        console.log("Next, a few seconds from now: SC_STAGE=sell SC_LOAN_ID / SC_BUY_OFFER_ID =", loanId, buyOfferId);
+    }
+
+    function _sell(address diamond, uint256 loanId, uint256 buyOfferId) internal {
+        uint256 lenderKey = vm.envUint("LENDER_PRIVATE_KEY");
+        address seller = vm.addr(lenderKey);
+        address buyer = vm.addr(vm.envUint("NEW_LENDER_PRIVATE_KEY"));
+        _requireSellable(diamond, loanId, buyer);
+        LibVaipakam.Offer memory o = OfferCancelFacet(diamond).getOffer(buyOfferId);
+        require(o.creator == buyer && !o.accepted && o.amountFilled == 0, "BaseSepoliaSellerClaim: SC_BUY_OFFER_ID is not the new lender's open offer");
 
         uint64 deadline = uint64(block.timestamp + SALE_WINDOW);
         (uint256 minSellerNet, uint256 maxHeld) =
-            RiskPreviewFacet(diamond).quoteSellerBounds(loanId, loan.interestRateBps, deadline);
+            RiskPreviewFacet(diamond).quoteSellerBounds(loanId, LoanFacet(diamond).getLoanDetails(loanId).interestRateBps, deadline);
         console.log("Quoted bounds (min seller net, max held):", minSellerNet, maxHeld);
         vm.startBroadcast(lenderKey);
         EarlyWithdrawalDirectFacet(diamond).sellLoanViaBuyOffer(
@@ -153,6 +175,20 @@ contract BaseSepoliaSellerClaim is Script {
         require(owed > 0, "BaseSepoliaSellerClaim: the sale recorded no claim with anything owed for the seller");
         console.log("Sold into buy offer; seller's gross claim (raw):", buyOfferId, owed);
         console.log("Next: SC_STAGE=repay SC_LOAN_ID=", loanId);
+    }
+
+    /// @dev The loan is Active, the lender key holds its lender side, and the
+    ///      buyer is a third wallet.
+    function _requireSellable(address diamond, uint256 loanId, address buyer)
+        internal
+        view
+        returns (LibVaipakam.Loan memory loan)
+    {
+        address seller = vm.addr(vm.envUint("LENDER_PRIVATE_KEY"));
+        loan = LoanFacet(diamond).getLoanDetails(loanId);
+        require(loan.status == LibVaipakam.LoanStatus.Active, "BaseSepoliaSellerClaim: the loan is not Active");
+        require(loan.lender == seller, "BaseSepoliaSellerClaim: the lender key does not hold this loan's lender side");
+        require(buyer != seller && buyer != loan.borrower, "BaseSepoliaSellerClaim: the buyer must be a third wallet");
     }
 
     function _repay(address diamond, uint256 loanId) internal {

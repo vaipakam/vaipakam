@@ -3,9 +3,13 @@
 pragma solidity ^0.8.29;
 
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {SettlementLegFacet} from "./SettlementLegFacet.sol";
+import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
+import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibSaleSizing} from "../libraries/LibSaleSizing.sol";
@@ -15,6 +19,7 @@ import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
+import {LibInterestPayment, IInterestPaymentHost} from "../libraries/LibInterestPayment.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLenderYieldFeeHost} from "../libraries/LibLenderYieldFeeHost.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
@@ -23,6 +28,7 @@ import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
 import {LibDiscountedLiquidation} from "../libraries/LibDiscountedLiquidation.sol";
 import {LibForcedSalePlan} from "../libraries/LibForcedSalePlan.sol";
+import {LibFallbackGate} from "../libraries/LibFallbackGate.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
@@ -141,20 +147,27 @@ contract ForcedSaleFacet is IVaipakamErrors {
 
     /// @notice What one forced sale did, returned to the caller.
     /// @param sold              False only when every failover route failed
-    ///                          on a terminal sale: nothing was paid, the
-    ///                          loan's lien is released and its whole
+    ///                          on a terminal sale. With `fallbackDeferred`
+    ///                          false the fallback is open: nothing was paid,
+    ///                          the loan's lien is released and its whole
     ///                          collateral is on the Diamond for the caller's
     ///                          fallback entry.
     /// @param collateralSold    Collateral that reached the Diamond and was sold.
     /// @param proceeds          `P`: lending-asset proceeds that arrived.
-    /// @param lenderPaid        What the lender received (periodic: paid, or
-    ///                          held for a frozen holder; terminal: what the
-    ///                          stored lender's vault received for the claim,
-    ///                          after the ordinary treasury cut on interest).
+    /// @param lenderPaid        What the lender side received (periodic: the
+    ///                          sellers' part plus what was held for the
+    ///                          position, #3629; terminal: what the stored
+    ///                          lender's vault received for the claim, after
+    ///                          the ordinary treasury cut on interest).
     /// @param handlingFee       `F`, to the treasury.
     /// @param keeperBonus       `B`, to the caller.
-    /// @param borrowerExtra     `X` as the borrower got it.
-    /// @param borrowerExtraHeld True when `X` was held for the claim.
+    /// @param borrowerExtra     `X` as the stored borrower's vault received
+    ///                          it, held on the surplus row for the claim.
+    /// @param fallbackDeferred  True when every route failed but the
+    ///                          fallback is not open yet (#3538): the sale
+    ///                          was undone, nothing moved, and only the
+    ///                          failure was recorded. The caller returns
+    ///                          without entering the fallback.
     struct ForcedSaleOutcome {
         bool sold;
         uint256 collateralSold;
@@ -163,7 +176,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
         uint256 handlingFee;
         uint256 keeperBonus;
         uint256 borrowerExtra;
-        bool borrowerExtraHeld;
+        bool fallbackDeferred;
     }
 
     /// @notice A sale was asked to sell `quoted`, outside the range the plan
@@ -174,6 +187,33 @@ contract ForcedSaleFacet is IVaipakamErrors {
     ///         owed, or the kind's own window is not open).
     error ForcedSaleNotDue(uint256 loanId, uint8 kind);
 
+    /// @notice #3538 — every listed route failed on a terminal sale whose
+    ///         fallback is not open yet. Raised inside {sellOrRefuse} only,
+    ///         and caught by {sellToNeed}, which records the failure.
+    error ForcedSaleRoutesFailed(uint256 loanId);
+
+    /// @notice #3538 — every listed swap route failed on a terminal forced
+    ///         sale, and the loan's in-kind fallback is not open yet, so the
+    ///         sale was undone and nothing moved. The loan stays as it was;
+    ///         anyone with a working route may sell it. A sale that fails at
+    ///         or after `fallbackOpensAt` moves the loan into the fallback.
+    /// @param loanId          The loan.
+    /// @param kind            Which forced sale ({ForcedSaleKind}).
+    /// @param failedSales     Failed sales in the loan's current record,
+    ///                        this one included.
+    /// @param fallbackOpensAt The earliest time a failed sale opens the
+    ///                        fallback (the first failure plus the minimum
+    ///                        span, `LibFallbackGate.MIN_SPAN`).
+    /// @param caller          Who submitted the sale.
+    /// @custom:event-category informational/liquidation
+    event ForcedSaleFallbackDeferred(
+        uint256 indexed loanId,
+        uint8 indexed kind,
+        uint256 failedSales,
+        uint256 fallbackOpensAt,
+        address indexed caller
+    );
+
     /// @notice Every figure of one forced sale. Nothing is left to be
     ///         inferred from balance changes.
     /// @param loanId            The loan.
@@ -182,14 +222,15 @@ contract ForcedSaleFacet is IVaipakamErrors {
     /// @param need              `N`.
     /// @param collateralSold    Collateral that reached the Diamond and was sold.
     /// @param proceeds          `P`: lending-asset proceeds that arrived.
-    /// @param lenderPaid        What the lender received (or what was held for
-    ///                          a frozen holder), at most `debt`.
+    /// @param lenderPaid        What the lender side received (paid to open
+    ///                          seller claims, or held for the position), at
+    ///                          most `debt`.
     /// @param handlingFee       `F`, to the treasury.
     /// @param keeperBonus       `B`, to the caller.
-    /// @param borrowerExtra     `X`, the borrower's share of the proceeds.
-    /// @param borrowerExtraHeld True when `X` was held in the borrower's vault
-    ///                          for the claim instead of paid to the holder's
-    ///                          wallet.
+    /// @param borrowerExtra     `X`, the borrower's share of the proceeds, held
+    ///                          in the stored borrower's vault on the surplus
+    ///                          row for the borrower-position holder's claim
+    ///                          (#3629: never paid to a wallet).
     /// @param collateralUnsold  Collateral the sale left in the borrower's
     ///                          vault (with the open loan, or for the claim).
     /// @param covered           Whether the sale's floor covered the need.
@@ -211,7 +252,6 @@ contract ForcedSaleFacet is IVaipakamErrors {
         uint256 handlingFee,
         uint256 keeperBonus,
         uint256 borrowerExtra,
-        bool borrowerExtraHeld,
         uint256 collateralUnsold,
         bool covered,
         address indexed keeper
@@ -258,10 +298,17 @@ contract ForcedSaleFacet is IVaipakamErrors {
      *            failover try-list, or for the split kind the caller's legs
      *            (atomic: any failure reverts the whole call).
      *         4. A failover with every route failed: periodic reverts
-     *            {PeriodicSettleSwapFailed} (nothing moves); terminal releases
-     *            the rest of the lien, brings the rest of the collateral to
-     *            the Diamond and returns `sold = false` for the caller's
-     *            fallback entry, which finds the loan's whole collateral there.
+     *            {PeriodicSettleSwapFailed} (nothing moves). Terminal, with
+     *            the fallback open ({LibFallbackGate.opensNow}, #3538):
+     *            releases the rest of the lien, brings the rest of the
+     *            collateral to the Diamond and returns `sold = false` for the
+     *            caller's fallback entry, which finds the loan's whole
+     *            collateral there. Terminal, with the fallback not open yet:
+     *            the sale runs in its own frame ({sellOrRefuse}), which
+     *            reverts {ForcedSaleRoutesFailed} and so undoes the pull;
+     *            the failure is recorded, {ForcedSaleFallbackDeferred} is
+     *            emitted and `fallbackDeferred = true` is returned with
+     *            nothing moved.
      *         5. Otherwise the division (see the contract notes), the kind's
      *            booking and {ForcedSaleSettled}. Each vault movement
      *            refreshes the owner's VPFI tier record at the write (#1820).
@@ -283,30 +330,73 @@ contract ForcedSaleFacet is IVaipakamErrors {
         LibSwap.SplitCall[] calldata splits,
         address keeper
     ) external onlySelf returns (ForcedSaleOutcome memory out) {
+        // Periodic and split sales never enter the fallback (periodic
+        // reverts, a split is atomic), so they need no gate.
+        if (kind != ForcedSaleKind.HealthFactorLiquidation && kind != ForcedSaleKind.TimeBasedDefault
+            || LibFallbackGate.opensNow(loanId))
+        {
+            return _sellToNeed(loanId, kind, quotedSell, adapterCalls, splits, keeper, false);
+        }
+        // #3538 — the fallback is not open: a sale whose routes all fail must
+        // change nothing but the record, so it runs in its own frame, which
+        // reverts on that outcome and undoes the pull and the lien change.
+        try ForcedSaleFacet(address(this)).sellOrRefuse(loanId, kind, quotedSell, adapterCalls, splits, keeper)
+            returns (ForcedSaleOutcome memory o)
+        {
+            return o;
+        } catch (bytes memory err) {
+            if (err.length != 36 || bytes4(err) != ForcedSaleRoutesFailed.selector) {
+                assembly ("memory-safe") {
+                    revert(add(err, 0x20), mload(err))
+                }
+            }
+        }
+        LibVaipakam.FallbackGate memory g = LibFallbackGate.recordFailure(loanId);
+        emit ForcedSaleFallbackDeferred(
+            loanId, uint8(kind), g.fails, uint256(g.firstFailAt) + LibFallbackGate.MIN_SPAN, keeper
+        );
+        out.fallbackDeferred = true;
+    }
+
+    /**
+     * @notice #3538 — {sellToNeed}'s sale, run in its own frame while the
+     *         loan's fallback is not open: the same sale, except that when
+     *         every route fails it reverts {ForcedSaleRoutesFailed} so the
+     *         pull and the lien change are undone.
+     * @dev    Self-call from {sellToNeed} only; same parameters.
+     */
+    function sellOrRefuse(
+        uint256 loanId,
+        ForcedSaleKind kind,
+        uint256 quotedSell,
+        LibSwap.AdapterCall[] calldata adapterCalls,
+        LibSwap.SplitCall[] calldata splits,
+        address keeper
+    ) external onlySelf returns (ForcedSaleOutcome memory) {
+        return _sellToNeed(loanId, kind, quotedSell, adapterCalls, splits, keeper, true);
+    }
+
+    /// @dev The sale itself. `refuseOnFail` (the fallback is not open):
+    ///      every route failing reverts instead of gathering for the fallback.
+    function _sellToNeed(
+        uint256 loanId,
+        ForcedSaleKind kind,
+        uint256 quotedSell,
+        LibSwap.AdapterCall[] calldata adapterCalls,
+        LibSwap.SplitCall[] calldata splits,
+        address keeper,
+        bool refuseOnFail
+    ) private returns (ForcedSaleOutcome memory out) {
         Job memory j;
         (j, out.collateralSold) = _open(loanId, kind, quotedSell, keeper);
         (out.sold, out.proceeds) = _sell(j, out.collateralSold, adapterCalls, splits);
         if (!out.sold) {
             if (kind == ForcedSaleKind.PeriodicSettlement) revert PeriodicSettleSwapFailed(loanId);
+            if (refuseOnFail) revert ForcedSaleRoutesFailed(loanId);
             _gatherForFallback(j, out.collateralSold);
             return out;
         }
         _settle(j, out);
-    }
-
-    /**
-     * @notice Pay `amount` of `asset` to `to`'s wallet, refused unless all of
-     *         it arrived (a wallet reading is trusted only to refuse).
-     * @dev    Reached by a self-call from
-     *         {LibCloseoutFreeze.payOrHoldBorrowerExtra} (this facet's
-     *         periodic sale and `PrepayListingFacet`'s collateral sale, #2876)
-     *         so a refusal — a token that blocks the address, a short reading,
-     *         a receiving hook that reverts — unwinds this payment alone and
-     *         the extra falls through to the held route. A settlement never
-     *         depends on the borrower's wallet.
-     */
-    function payBorrowerWallet(address asset, address to, uint256 amount) external onlySelf {
-        LibDelivery.pushExact(asset, to, amount);
     }
 
     // ─── Internals: sell ────────────────────────────────────────────────
@@ -372,7 +462,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
         uint256 rest = j.unsold == 0
             ? 0
             : LibSanctionedLock.pullToDiamond(s, loan.borrower, loan.collateralAsset, j.unsold, j.loanId, OutflowReason.LIQUIDATION);
-        loan.collateralAmount = alreadyHere + rest;
+        LibLoanCollateral.set(loan, alreadyHere + rest);
     }
 
     // ─── Internals: divide and book ─────────────────────────────────────
@@ -389,8 +479,8 @@ contract ForcedSaleFacet is IVaipakamErrors {
         if (sp.bonus > 0) LibDelivery.pushOut(loan.principalAsset, j.keeper, sp.bonus);
 
         if (j.kind == ForcedSaleKind.PeriodicSettlement) {
-            _bookPeriodic(s, j.loanId, loan, sp, out);
-            loan.collateralAmount = j.unsold;
+            _bookPeriodic(s, j.loanId, loan, sp, out, j.debt);
+            LibLoanCollateral.set(loan, j.unsold);
         } else {
             _bookTerminal(s, j.loanId, loan, sp, out);
             _recordUnsold(s, j.loanId, loan, j.unsold, out.collateralSold);
@@ -407,7 +497,6 @@ contract ForcedSaleFacet is IVaipakamErrors {
             out.handlingFee,
             out.keeperBonus,
             out.borrowerExtra,
-            out.borrowerExtraHeld,
             j.unsold,
             j.minOut >= j.need,
             j.keeper
@@ -443,40 +532,44 @@ contract ForcedSaleFacet is IVaipakamErrors {
         sp.extra = rest - sp.fee;
     }
 
-    /// @dev Periodic booking (the loan stays open): the fee to the treasury,
-    ///      the lender's interest to the current lender-position holder (paid
-    ///      inline, or held fail-closed when flagged), and the borrower's
-    ///      extra to the holder's wallet or held.
+    /// @dev Periodic booking (the loan stays open): the handling fee to the
+    ///      treasury, the recovered interest through the one interest booking
+    ///      (#3681, `LibInterestPayment` on `RepayPeriodicFacet`, shared with
+    ///      the "pay my interest" standing instruction), and the borrower's
+    ///      extra held on the surplus row (#3629: neither is paid to a
+    ///      wallet). `debt` is the period's gross shortfall the sale was sized
+    ///      for; `sp.lender` is what it recovered toward it. The booking
+    ///      takes the treasury's share of the interest at the loan's stamped
+    ///      rate (lender first on a short recovery) and counts what arrived as
+    ///      settled; the caller then advances the period once.
     function _bookPeriodic(
         LibVaipakam.Storage storage s,
         uint256 loanId,
         LibVaipakam.Loan storage loan,
         Split memory sp,
-        ForcedSaleOutcome memory out
+        ForcedSaleOutcome memory out,
+        uint256 debt
     ) private {
         // The treasury accrues what reached it (TreasuryFeeFacet).
         LibFacet.transferToTreasury(loan.principalAsset, sp.fee);
-        // #1209 / #1808 — the whole payout is interest, and this slice carries
-        // no treasury cut, so it is passed as both the gross and the net
-        // interest: open seller claims are paid out of it first, in full.
-        out.lenderPaid = LibCloseoutFreeze.freezeOrPayActiveLenderResident(
-            s,
-            loanId,
-            loan,
-            loan.principalAsset,
-            sp.lender,
-            sp.lender,
-            sp.lender
+        (out.lenderPaid, ) = abi.decode(
+            LibFacet.crossFacetCallReturn(
+                abi.encodeCall(
+                    IInterestPaymentHost.bookInterestPayment,
+                    (loanId, debt, sp.lender, LibInterestPayment.SOURCE_PERIODIC_SALE)
+                ),
+                bytes4(0)
+            ),
+            (uint256, uint256)
         );
-        // #2795 — credit exactly what the lender received, never more than the
-        // shortfall: the extra above it is the borrower's, not prepaid interest.
-        loan.interestSettled += out.lenderPaid;
-        // The owner decision of 2026-10-25: an unflagged holder is paid to
-        // their wallet; a flagged holder, or a refused payment, has the extra
-        // held for the claim at loan end.
-        (out.borrowerExtraHeld, out.borrowerExtra) = LibCloseoutFreeze.payOrHoldBorrowerExtra(
-            s, loanId, loan, LibPositionNFT.ownerOf(loan.borrowerTokenId), sp.extra
-        );
+        // #3629 (owner decision 2026-11-15) — held for the borrower position,
+        // claimable while the loan is open (`ClaimFacet.claimHeldForBorrower`)
+        // or with the borrower claim at loan end.
+        if (sp.extra > 0) {
+            out.borrowerExtra = LibCloseoutFreeze.holdBorrowerExtra(
+                s, loanId, loan, LibPositionNFT.ownerOf(loan.borrowerTokenId), loan.principalAsset, sp.extra
+            );
+        }
     }
 
     /// @dev Terminal booking (the caller ends the loan): the fee and the
@@ -496,9 +589,10 @@ contract ForcedSaleFacet is IVaipakamErrors {
         // `sp.lender` is already capped at the debt ({_split}), so the
         // interest it recovers never exceeds the interest owed.
         uint256 treasuryInterest;
+        uint256 interestRecovered;
         uint256 lenderNet = sp.lender;
         if (sp.lender > loan.principal) {
-            uint256 interestRecovered = sp.lender - loan.principal;
+            interestRecovered = sp.lender - loan.principal;
             // #1832 — terminal seam of the lifetime interest counter: what the
             // sale recovered, not what was owed.
             LibMetricsHooks.onInterestPaid(loan, interestRecovered);
@@ -508,12 +602,35 @@ contract ForcedSaleFacet is IVaipakamErrors {
             );
             lenderNet = sp.lender - treasuryInterest;
         }
-        LibFacet.transferToTreasury(loan.principalAsset, sp.fee + treasuryInterest);
+        // #3669 — a frozen treasury never stops the close-out: a refused share
+        // waits, liened, in the borrower's vault. #3649 stage 3 — two legs:
+        // the handling fee is the treasury's whole, the interest share is
+        // split at its floor (fixed at parking when it waits).
+        LibFacet.treasuryShareOrPark(2, loan.borrower, loan.principalAsset, sp.fee);
+        LibFacet.treasuryShareOrPark(
+            2,
+            loan.borrower,
+            loan.principalAsset,
+            treasuryInterest,
+            LibFeeFloor.interest(interestRecovered, LibVaipakam.effectiveTreasuryFeeBps(loan))
+        );
 
         // #821 — through the receive-side exemption so a flagged stored lender
         // never blocks the close-out; the claim names what the vault received
         // (#2440).
-        lenderNet = LibSanctionedLock.depositLocked(s, loan.lender, loanId, loan.principalAsset, lenderNet);
+        // #3669 — a share the token refuses to deposit there parks in the
+        // stored borrower's vault under a lien for the lender side; the lender
+        // claim releases it. The claim names what was credited.
+        bool parked;
+        (lenderNet, parked) = abi.decode(
+            LibFacet.crossFacetCallReturn(
+                abi.encodeWithSelector(
+                    SettlementLegFacet.depositLenderShareOrPark.selector, loanId, loan.principalAsset, lenderNet
+                ),
+                VaultDepositFailed.selector
+            ),
+            (uint256, bool)
+        );
         s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.principalAsset,
             amount: lenderNet,
@@ -530,7 +647,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
         LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
         // #592 — reserve VPFI lender proceeds against the unstake path until
         // the current holder claims; ClaimFacet releases.
-        if (loan.principalAsset == s.vpfiToken) {
+        if (!parked && loan.principalAsset == s.vpfiToken) {
             LibEncumbrance.encumberLenderProceeds(loanId, loan.lender, loan.principalAsset, lenderNet);
         }
         out.lenderPaid = lenderNet;
@@ -539,7 +656,6 @@ contract ForcedSaleFacet is IVaipakamErrors {
             out.borrowerExtra = LibCloseoutFreeze.holdBorrowerExtra(
                 s, loanId, loan, LibPositionNFT.ownerOf(loan.borrowerTokenId), loan.principalAsset, sp.extra
             );
-            out.borrowerExtraHeld = true;
         }
     }
 
@@ -569,6 +685,6 @@ contract ForcedSaleFacet is IVaipakamErrors {
         // #1132 (S10) — the borrower-side marker lands with its row, as the
         // lender's does in {_bookTerminal}.
         LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
-        loan.collateralAmount = unsold + sold;
+        LibLoanCollateral.set(loan, unsold + sold);
     }
 }

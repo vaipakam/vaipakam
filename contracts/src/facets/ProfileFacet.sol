@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -332,8 +333,11 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     /// @param loanId The loan whose flag was updated.
     /// @param keeper The specific keeper being enabled or disabled.
     /// @param enabled New flag value.
+    /// @param owner The position holder the caller acted for (#3719): the
+    ///        lender or borrower NFT holder whose manager made the change, so
+    ///        an alert names whose loan it is without a lookup.
     /// @custom:event-category state-change/loan-mutation
-    event LoanKeeperEnabled(uint256 indexed loanId, address indexed keeper, bool enabled);
+    event LoanKeeperEnabled(uint256 indexed loanId, address indexed keeper, bool enabled, address owner);
 
     /**
      * @notice Enable or disable a specific `keeper` for `loanId` (Phase 6).
@@ -369,21 +373,28 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
         address lenderHolder = LibPositionNFT.holderOrZero(loan.lenderTokenId);
         address borrowerHolder = LibPositionNFT.holderOrZero(loan.borrowerTokenId);
 
+        // #3526 — each holder's manager (its replacement wallet once retired;
+        // the retired wallet itself may not).
         if (
-            (lenderHolder == address(0) || msg.sender != lenderHolder) &&
-            (borrowerHolder == address(0) || msg.sender != borrowerHolder)
+            (lenderHolder == address(0) || msg.sender != LibProtectedAccount.manager(lenderHolder)) &&
+            (borrowerHolder == address(0) || msg.sender != LibProtectedAccount.manager(borrowerHolder))
         ) revert NotNFTOwner();
+        // The holder the caller acts for, named in the event (#3719).
+        address owner = (lenderHolder != address(0) && msg.sender == LibProtectedAccount.manager(lenderHolder))
+            ? lenderHolder
+            : borrowerHolder;
 
         s.loanKeeperEnabled[loanId][keeper] = enabled;
-        emit LoanKeeperEnabled(loanId, keeper, enabled);
+        emit LoanKeeperEnabled(loanId, keeper, enabled, owner);
     }
 
     /// @notice Emitted when an offer creator toggles a per-offer keeper enable.
     /// @param offerId The offer whose flag was updated.
     /// @param keeper The specific keeper being enabled or disabled.
     /// @param enabled New flag value.
+    /// @param owner The offer's creator (#3719).
     /// @custom:event-category state-change/offer-mutation
-    event OfferKeeperEnabled(uint256 indexed offerId, address indexed keeper, bool enabled);
+    event OfferKeeperEnabled(uint256 indexed offerId, address indexed keeper, bool enabled, address owner);
 
     /**
      * @notice Enable or disable a specific `keeper` for `offerId` (Phase 6).
@@ -409,9 +420,10 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
         LibVaipakam.Offer storage offer = s.offers[offerId];
         if (offer.creator == address(0)) revert InvalidOffer();
         if (offer.accepted) revert OfferAlreadyAccepted();
-        if (msg.sender != offer.creator) revert NotNFTOwner();
+        // #3526 — refused to a creator a replacement retired.
+        if (msg.sender != offer.creator || LibProtectedAccount.manager(msg.sender) != msg.sender) revert NotNFTOwner();
         s.offerKeeperEnabled[offerId][keeper] = enabled;
-        emit OfferKeeperEnabled(offerId, keeper, enabled);
+        emit OfferKeeperEnabled(offerId, keeper, enabled, msg.sender);
     }
 
     /// @notice Emitted when an offer creator sets their per-offer Full VPFI
@@ -464,7 +476,8 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
         LibVaipakam.Offer storage offer = s.offers[offerId];
         if (offer.creator == address(0)) revert InvalidOffer();
         if (offer.accepted) revert OfferAlreadyAccepted();
-        if (msg.sender != offer.creator) revert NotNFTOwner();
+        // #3526 — refused to a creator a replacement retired.
+        if (msg.sender != offer.creator || LibProtectedAccount.manager(msg.sender) != msg.sender) revert NotNFTOwner();
         if (creatorFull && maxCStar == 0) revert FullTariffMaxCStarRequired();
         offer.creatorFull = creatorFull;
         offer.creatorMaxCStar = maxCStar;
@@ -495,11 +508,14 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     /// @param user The whitelist owner (lender or borrower side, per user).
     /// @param keeper The keeper address.
     /// @param actions New action bitmask (see `LibVaipakam.KEEPER_ACTION_*`).
+    /// @param previousActions The bitmask before this change; zero for a
+    ///        keeper newly added (#3719), so an alert can say what was added.
     /// @custom:event-category informational/config
     event KeeperActionsUpdated(
         address indexed user,
         address indexed keeper,
-        uint16 actions
+        uint16 actions,
+        uint16 previousActions
     );
 
     /// @notice Emitted when `user` removes `keeper` from their whitelist.
@@ -537,7 +553,7 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
             revert KeeperWhitelistFull();
         s.approvedKeeperActions[msg.sender][keeper] = actions;
         s.approvedKeepersList[msg.sender].push(keeper);
-        emit KeeperActionsUpdated(msg.sender, keeper, actions);
+        emit KeeperActionsUpdated(msg.sender, keeper, actions, 0);
     }
 
     /**
@@ -557,8 +573,9 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
         if (s.approvedKeeperActions[msg.sender][keeper] == 0)
             revert KeeperNotApproved();
         _requireValidKeeperActions(actions);
+        uint16 previousActions = s.approvedKeeperActions[msg.sender][keeper];
         s.approvedKeeperActions[msg.sender][keeper] = actions;
-        emit KeeperActionsUpdated(msg.sender, keeper, actions);
+        emit KeeperActionsUpdated(msg.sender, keeper, actions, previousActions);
     }
 
     /**

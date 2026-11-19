@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
+import {TestnetChains} from "../compliance/TestnetChains.sol";
 import {LibAccessControl, DiamondAccessControl} from
     "../libraries/LibAccessControl.sol";
 
@@ -41,13 +42,42 @@ contract RiskAccessFacet is DiamondAccessControl {
     ///         configure, so a mis-set cooldown can never brick opt-ups.
     uint64 internal constant MAX_RISK_UNLOCK_COOLDOWN = 30 days;
 
+    /// @notice #3717 — the least opt-up cooldown a mainnet may run. The wait is
+    ///         what keeps a website from walking a new user through "raise
+    ///         access, then deal" in one sitting, so a mainnet never runs it
+    ///         at zero (the deploy sets 48 hours and the launch check refuses
+    ///         a zero wait). A testnet (`TestnetChains.isTestnet`) may run any
+    ///         value up to the ceiling, so its flows stay testable; any chain
+    ///         that list does not name counts as a mainnet.
+    uint64 internal constant MIN_MAINNET_RISK_UNLOCK_COOLDOWN = 1 hours;
+
     // ─── Events ──────────────────────────────────────────────────────────────
 
     /// @custom:event-category state-change/risk-access
-    event VaultRiskTierSet(address indexed vault, uint8 level);
+    /// @notice A wallet set its asset-access level.
+    /// @param vault       The wallet whose access changed (risk access is
+    ///                    keyed by the owner wallet, which is the caller).
+    /// @param level       The level now stored.
+    /// @param previousLevel The level in effect just before (#3717).
+    /// @param usableFrom  When the new level takes effect: after the opt-up
+    ///                    wait for a raise, at once for a lowering (#3717).
+    event VaultRiskTierSet(address indexed vault, uint8 level, uint8 previousLevel, uint64 usableFrom);
     /// @custom:event-category state-change/risk-access
+    /// @notice A wallet gave or withdrew its consent to one illiquid pair.
+    /// @param vault       The wallet (the caller; see {VaultRiskTierSet}).
+    /// @param pairKey     The pair's key (types and token ids included).
+    /// @param consent     Given (true) or withdrawn (false).
+    /// @param lendAsset   The pair's lending asset (#3717), so an alert names it.
+    /// @param collAsset   The pair's collateral asset (#3717).
+    /// @param usableFrom  When a grant may first be used, after the opt-up
+    ///                    wait; zero for a withdrawal (#3717).
     event IlliquidPairConsentSet(
-        address indexed vault, bytes32 indexed pairKey, bool consent
+        address indexed vault,
+        bytes32 indexed pairKey,
+        bool consent,
+        address lendAsset,
+        address collAsset,
+        uint64 usableFrom
     );
     /// @custom:event-category informational/config
     event RiskTermsVersionBumped(uint64 newVersion, bytes32 newTermsHash);
@@ -67,6 +97,9 @@ contract RiskAccessFacet is DiamondAccessControl {
 
     error InvalidRiskLevel(uint8 level);
     error RiskCooldownTooLong(uint64 requested, uint64 maxAllowed);
+    /// @notice #3717 — a mainnet's opt-up cooldown below
+    ///         {MIN_MAINNET_RISK_UNLOCK_COOLDOWN}.
+    error RiskCooldownTooShort(uint64 requested, uint64 minAllowed);
     /// @notice The revealed terms hash was zero or unchanged from the live one
     ///         (#730) — every change must publish a fresh, non-zero anchor.
     error InvalidRiskTermsHash();
@@ -265,14 +298,19 @@ contract RiskAccessFacet is DiamondAccessControl {
         return LibVaipakam.storageSlot().pendingRiskTermsCommitment;
     }
 
-    /// @notice Set the opt-up cooldown (seconds). Default 0 ⇒ opt-ups are
-    ///         immediate. Bounded by {MAX_RISK_UNLOCK_COOLDOWN}.
+    /// @notice Set the opt-up cooldown (seconds). Storage default 0 ⇒ opt-ups
+    ///         are immediate; the deploy sets it (48 hours on a mainnet,
+    ///         #3717). Bounded by {MAX_RISK_UNLOCK_COOLDOWN}, and on a mainnet
+    ///         from below by {MIN_MAINNET_RISK_UNLOCK_COOLDOWN}.
     function setRiskAccessUnlockCooldown(uint64 cooldownSec)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
         if (cooldownSec > MAX_RISK_UNLOCK_COOLDOWN) {
             revert RiskCooldownTooLong(cooldownSec, MAX_RISK_UNLOCK_COOLDOWN);
+        }
+        if (cooldownSec < MIN_MAINNET_RISK_UNLOCK_COOLDOWN && !TestnetChains.isTestnet(block.chainid)) {
+            revert RiskCooldownTooShort(cooldownSec, MIN_MAINNET_RISK_UNLOCK_COOLDOWN);
         }
         LibVaipakam.storageSlot().riskAccessUnlockCooldown = cooldownSec;
         emit RiskAccessUnlockCooldownSet(cooldownSec);
@@ -463,6 +501,18 @@ contract RiskAccessFacet is DiamondAccessControl {
         );
     }
 
+    /// @notice Reverts with the gate's refusal when `actor` may not take a
+    ///         position on the pair `p` now: its effective risk tier, its
+    ///         per-pair consent and its strict mode, read live.
+    /// @dev    The one runtime copy of {LibRiskAccess.assertActorMayTransact}
+    ///         loan creation reaches: `LoanFacet` self-calls it for the offer's
+    ///         creator, the accepting party and a sale's buyer, so it carries
+    ///         no copy of the rule (EIP-170). A view, so anyone may ask it; it
+    ///         reverts or returns nothing.
+    function requireActorMayTransact(address actor, LibRiskAccess.PairId calldata p) external view {
+        LibRiskAccess.assertActorMayTransact(LibVaipakam.storageSlot(), actor, p);
+    }
+
     // ─── Internals ───────────────────────────────────────────────────────────
 
     /// @dev #1522 — the shared expectation gate for both checked entry points.
@@ -519,7 +569,7 @@ contract RiskAccessFacet is DiamondAccessControl {
             s.riskTierSettled[vault] = newLevel;
             s.riskTierUnlockAt[vault] = uint64(block.timestamp);
         }
-        emit VaultRiskTierSet(vault, level);
+        emit VaultRiskTierSet(vault, level, uint8(effCur), s.riskTierUnlockAt[vault]);
     }
 
     function _applyIlliquidConsent(
@@ -532,12 +582,13 @@ contract RiskAccessFacet is DiamondAccessControl {
         s.illiquidPairConsent[vault][pk] = consent;
         // Stamp the live version + arm the cooldown on a GRANT; a revoke needs no
         // fresh stamp (it only ever tightens — exempt from the stale-check).
+        uint64 usableFrom;
         if (consent) {
             s.illiquidPairVersionAt[vault][pk] = s.currentRiskTermsVersion;
-            s.pairConsentUnlockAt[vault][pk] =
-                uint64(block.timestamp) + s.riskAccessUnlockCooldown;
+            usableFrom = uint64(block.timestamp) + s.riskAccessUnlockCooldown;
+            s.pairConsentUnlockAt[vault][pk] = usableFrom;
         }
-        emit IlliquidPairConsentSet(vault, pk, consent);
+        emit IlliquidPairConsentSet(vault, pk, consent, p.lendAsset, p.collAsset, usableFrom);
     }
 
     /// @dev Apply a strict-mode toggle. Enabling is immediate and clears any

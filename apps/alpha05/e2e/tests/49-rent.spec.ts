@@ -91,6 +91,8 @@ test('an empty rental book offers the faucet; an owner lists an NFT and a renter
       allowsParallelSale: false,
       refinanceTargetLoanId: 0n,
       useFullTermInterest: false,
+      lifecycleFlex: 0,
+      integrator: '0x0000000000000000000000000000000000000000',
     },
     await txDeadline(sc),
   ]);

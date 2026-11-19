@@ -10,6 +10,7 @@ import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {BeaconProxy} from "@openzeppelin/contracts/proxy/beacon/BeaconProxy.sol";
 import {VaultBeacon} from "../VaultBeacon.sol";
@@ -123,7 +124,9 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      * @dev VAULT_ADMIN_ROLE-only. The beacon must name this Diamond. Which
      *      code a vault runs is decided by the beacon (Timelock-owned, not
      *      upgradeable), never by Diamond storage: this pointer only tells
-     *      the factory which beacon new vaults point at.
+     *      the factory which beacon new vaults point at. The same call hands
+     *      the beacon to the PositionNFT core (#3526), which reverts while
+     *      the core is unset.
      */
     function initializeVaultBeacon(address beacon) external onlyRole(LibAccessControl.VAULT_ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -133,6 +136,10 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         }
         s.vaultBeacon = beacon;
         s.diamondAddress = address(this);
+        // #3526 — the PositionNFT core finds a retired holder's vault through
+        // the same beacon, so it is handed over in this one write-once step.
+        // The core exists by now: the vault code fixes it as an immutable.
+        LibPositionNFT.core().adoptVaultBeacon(beacon);
         emit VaultBeaconSet(beacon);
     }
 

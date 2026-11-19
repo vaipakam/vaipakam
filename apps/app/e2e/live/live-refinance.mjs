@@ -164,7 +164,8 @@
 // the borrower's payoff, its growth before the request's last fillable
 // moment, the payoff permit's maximum (the permit disclosure, ending
 // "nothing stays approved to the protocol", and the Permit2 approval note),
-// the wallet top-up, LIF and treasury rates, the request's lifetime and the
+// the wallet top-up, the LIF rate at the new term (the live term rule,
+// #3649) and the treasury rate, the request's lifetime and the
 // card's wallet-steps note against the contract's own `getRefinancePayoff`
 // and the live config — the retired "the approval you grant covers that
 // too" wording is itself a mismatch (#3295). A mismatch or an unparseable
@@ -352,6 +353,7 @@ import { expectedPostureFrom, postureCopyFrom } from './refinancePosture.mjs';
 import { createManifest, runVerdict } from './outcomeManifest.mjs';
 import { observationVerdict, observeAgainstChain } from './observation.mjs';
 import { readWatchedConfig } from './watchedConfig.mjs';
+import { describeLifTerms, lifRatePercentText } from './initiationFeeRule.mjs';
 import { readOfferGate, readRiskGateParties } from './riskGateReadiness.mjs';
 import { postureMisses } from './supportedPosture.mjs';
 import {
@@ -1152,7 +1154,8 @@ async function borrowerReviewMismatches(rows, config, cardText, loBlock) {
     headroom: bracketOf(nonNeg(lo.payoffBy - hi.payoffNow), nonNeg(hi.payoffBy - lo.payoffNow)),
     topUp: bracketOf(lo.shareNow, hi.shareNow),
     bound: bracketOf(lo.shareBy, hi.shareBy),
-    lifBps: config.lifBps,
+    lifTerms: config.lifTerms,
+    termDays: DAYS_N,
     treasuryFeeBps: config.treasuryFeeBps,
     clamped: graceEnd + 1n < expiresAt,
     // formatDate renders with the browser's zone; accept that and UTC.
@@ -1698,9 +1701,10 @@ const pre = await precondition('reading the preconditions from chain', async () 
   // not counted as open, and the two can never disagree.
   const openRequests = await openRequestsAt(head);
   const caps = await read('getAutoRefinanceCaps', [LOAN_ID], head);
-  // The LIVE loan-initiation fee rate (ConfigFacet), pinned to the same
-  // head — the payoff reserve below is computed from it, never assumed.
-  const { lifBps } = watched;
+  // The LIVE loan-initiation fee term-rule settings (#3649), pinned to the
+  // same head — the payoff reserve below charges the new loan the rate at
+  // its own term (REFI_DAYS) under them, never an assumed flat rate.
+  const { lifTerms } = watched;
   // The contract's own payoff for the loan at the same head (RepayFacet's
   // view): the borrower's reserve is sized from it and from the loan's
   // remaining-term fields, never from its original length (#2422 r8).
@@ -1789,7 +1793,7 @@ const pre = await precondition('reading the preconditions from chain', async () 
     offerIds,
     openRequests,
     caps,
-    lifBps,
+    lifTerms,
     repayDue,
     riskTermsHash,
     principalPaused,
@@ -1933,13 +1937,14 @@ want('lender holds the principal', pre.l.principal >= loan.principal, `${fmtP(pr
 // in between is covered and no late fee is). Never the loan's original
 // `durationDays`: a loan re-anchored by a partial repayment owes far less,
 // and a full-term figure would BLOCK it. The fee uses the LIVE rate read at
-// the pinned head (Codex #2422 r1 P2).
+// the pinned head (Codex #2422 r1 P2), at the NEW loan's term (#3649).
 const RESERVE = borrowerReserve({
   loan,
   viewDue: pre.repayDue,
   asOf: pre.now,
   horizonSec: MIN_TO_MATURITY_SEC,
-  lifBps: pre.lifBps,
+  lifTerms: pre.lifTerms,
+  termDays: DAYS_N,
 });
 const lifWei = RESERVE.lif;
 const borrowerSpareNeed = RESERVE.reserve;
@@ -1947,7 +1952,9 @@ console.log(
   `pre   payoff: contract view ${fmtP(pre.repayDue)} at block ${pre.head}; reserved for ${fmtP(RESERVE.payoff)} ` +
     `(interest clock from ${loan.interestAccrualStart || loan.startTime}, term ends ${loan.startTime + loan.durationDays * 86_400n})`,
 );
-console.log(`pre   live loan-initiation fee: ${pre.lifBps} bps → ${fmtP(lifWei)} on the new principal (decimals ${PDEC})`);
+console.log(
+  `pre   live loan-initiation fee: ${lifRatePercentText(pre.lifTerms, DAYS_N)}% at ${DAYS_N} days (${describeLifTerms(pre.lifTerms)}) → ${fmtP(lifWei)} on the new principal (decimals ${PDEC})`,
+);
 want('borrower holds the payoff top-up (remaining-term interest share + live LIF)', pre.b.principal >= borrowerSpareNeed, `${fmtP(pre.b.principal)} ≥ ${fmtP(borrowerSpareNeed)}`);
 const GAS_FLOOR = 300_000_000_000_000n; // 0.0003 ETH — several Base Sepolia txs
 console.log(`pre   current risk-terms hash: ${pre.riskTermsHash}`);

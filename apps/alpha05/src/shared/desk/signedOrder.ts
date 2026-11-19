@@ -13,8 +13,9 @@
  * the book share), and the stake a fill would draw from the signer's own
  * vault (`OfferCreateFacet._creatorPullAmount`).
  */
-import { hashStruct, type Address } from 'viem';
+import { hashStruct } from 'viem';
 import { SIGNED_OFFER_FIELDS, type SignedOrderWire } from '@vaipakam/lib/signedOfferWire';
+import { signedOfferMessage, type SignedOfferMessage } from '@vaipakam/lib/signedOfferSet';
 
 type Hex = `0x${string}`;
 
@@ -51,44 +52,8 @@ export function nonceAboveFloor(floor: bigint, draw: bigint = randomNonce()): bi
 
 /** The message viem's typed-data encoder takes for a wire order; the same
  *  struct `cancelSignedOffer` takes. */
-export function typedMessage(o: SignedOrderWire) {
-  return {
-    offerType: Number(o.offerType),
-    lendingAsset: o.lendingAsset as Address,
-    amount: BigInt(o.amount),
-    amountMax: BigInt(o.amountMax),
-    interestRateBps: BigInt(o.interestRateBps),
-    interestRateBpsMax: BigInt(o.interestRateBpsMax),
-    collateralAsset: o.collateralAsset as Address,
-    collateralAmount: BigInt(o.collateralAmount),
-    collateralAmountMax: BigInt(o.collateralAmountMax),
-    durationDays: BigInt(o.durationDays),
-    assetType: Number(o.assetType),
-    collateralAssetType: Number(o.collateralAssetType),
-    tokenId: BigInt(o.tokenId),
-    quantity: BigInt(o.quantity),
-    collateralTokenId: BigInt(o.collateralTokenId),
-    collateralQuantity: BigInt(o.collateralQuantity),
-    prepayAsset: o.prepayAsset as Address,
-    allowsPartialRepay: o.allowsPartialRepay,
-    allowsPrepayListing: o.allowsPrepayListing,
-    allowsParallelSale: o.allowsParallelSale,
-    expiresAt: BigInt(o.expiresAt),
-    fillMode: Number(o.fillMode),
-    periodicInterestCadence: Number(o.periodicInterestCadence),
-    refinanceTargetLoanId: BigInt(o.refinanceTargetLoanId),
-    useFullTermInterest: o.useFullTermInterest,
-    creatorFull: o.creatorFull,
-    creatorMaxCStar: BigInt(o.creatorMaxCStar),
-    creatorAllowFullDowngrade: o.creatorAllowFullDowngrade,
-    maxTreasuryFeeBps: Number(o.maxTreasuryFeeBps),
-    maxLoanInitiationFeeBps: Number(o.maxLoanInitiationFeeBps),
-    allowedTaker: o.allowedTaker as Address,
-    coSigner: o.coSigner as Address,
-    signer: o.signer as Address,
-    nonce: BigInt(o.nonce),
-    deadline: BigInt(o.deadline),
-  };
+export function typedMessage(o: SignedOrderWire): SignedOfferMessage {
+  return signedOfferMessage(o);
 }
 
 /** The order's key on the chain and in the book: the EIP-712 struct hash,

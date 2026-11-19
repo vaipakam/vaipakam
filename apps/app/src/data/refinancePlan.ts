@@ -57,6 +57,7 @@ import {
 } from '../contracts/preflights';
 import { assertWalletNotSanctionedLive } from './sanctions';
 import { readLiveProtocolFees, type ProtocolFees } from './fees';
+import { sameLifTerms, type LifTerms } from '../lib/initiationFee';
 import { discoverRefinanceRequest } from './refinanceDiscovery';
 import { postRefinanceVerdict } from './refinanceInterlock';
 import {
@@ -111,11 +112,11 @@ export interface RefinanceTerms {
   durationDays: number;
 }
 
-/** The fee config the review quoted. */
-export type ReviewedFees = Pick<
-  ProtocolFees,
-  'treasuryFeeBps' | 'loanInitiationFeeBps' | 'maxOfferDurationDays'
->;
+/** The fee config the review quoted. The initiation fee is the term rule
+ *  read live (#3649), never a default: a review cannot open without it. */
+export type ReviewedFees = Pick<ProtocolFees, 'treasuryFeeBps' | 'maxOfferDurationDays'> & {
+  lifTerms: LifTerms;
+};
 
 export interface RefinanceRequestReady {
   kind: 'ready';
@@ -268,7 +269,7 @@ export async function checkRefinanceRequest(
   // fees and the enforced ones.
   if (
     liveFees.treasuryFeeBps !== reviewedFees.treasuryFeeBps ||
-    liveFees.loanInitiationFeeBps !== reviewedFees.loanInitiationFeeBps ||
+    !sameLifTerms(liveFees.lifTerms, reviewedFees.lifTerms) ||
     liveFees.maxOfferDurationDays !== reviewedFees.maxOfferDurationDays
   ) {
     return refusal(loan.loanId, copy.match.termsChanged, true);
@@ -303,7 +304,8 @@ export async function checkRefinanceRequest(
   // GROWS past maturity by the grace-window late fee. On the permit route
   // it is the wallet's share — the payoff less the new loan's net
   // principal (#3042); the request asks for the old principal
-  // (`toRefinanceOfferPayload`), with the live fee rate as the bound.
+  // (`toRefinanceOfferPayload`), with the live fee rule at the request's
+  // term as the bound.
   const quote = await readPayoffQuote({
     publicClient,
     diamond,
@@ -315,7 +317,8 @@ export async function checkRefinanceRequest(
     graceSeconds,
     route,
     requestAmount: liveLoan.principal,
-    loanInitiationFeeBps: liveFees.loanInitiationFeeBps,
+    lifTerms: liveFees.lifTerms,
+    termDays: terms.durationDays,
   });
   const { payoff, bound } = quote;
   // OfferCreateFacet clamps a refinance request's expiry to the grace

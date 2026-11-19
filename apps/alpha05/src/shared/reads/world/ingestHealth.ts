@@ -73,7 +73,9 @@ export interface FreshnessInputs {
 export function attributionGap(deployment: IngestHealth['chains'][number]['deployment'], diamond: string): string | null {
   if (deployment === null) return 'The index does not say which protocol contract its figures came from.';
   if (deployment.diamond.toLowerCase() !== diamond.toLowerCase()) return 'The index describes a different protocol contract than this build.';
-  if (deployment.resetPending !== false) return 'The index is part-way through clearing an older contract\'s figures.';
+  // A rebuild can follow a new deployment or a reorganised block; the health
+  // answer does not say which yet, so the sentence names neither.
+  if (deployment.resetPending !== false) return 'The index is rebuilding this network\'s records, so figures may be incomplete. It does not say yet why it is rebuilding.';
   if (deployment.adoptedBlind !== false) return 'The index cannot yet confirm its figures all came from this build\'s protocol contract.';
   return null;
 }

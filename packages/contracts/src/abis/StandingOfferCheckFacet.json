@@ -1,0 +1,154 @@
+[
+  {
+    "type": "function",
+    "name": "checkAgainstRequest",
+    "inputs": [
+      {
+        "name": "standingOfferId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerOfferId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "quotedRateBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "c",
+        "type": "tuple",
+        "internalType": "struct StandingOfferCheckFacet.Check",
+        "components": [
+          {
+            "name": "verdict",
+            "type": "uint8",
+            "internalType": "enum StandingOfferCheckFacet.Verdict"
+          },
+          {
+            "name": "refusedBy",
+            "type": "uint8",
+            "internalType": "enum StandingOfferCheckFacet.RefusedBy"
+          },
+          {
+            "name": "code",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "offerId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "rateBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "amount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "beatsQuote",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "checkForAmount",
+    "inputs": [
+      {
+        "name": "standingOfferId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrower",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "lendingAsset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "collateralAsset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "durationDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "quotedRateBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "c",
+        "type": "tuple",
+        "internalType": "struct StandingOfferCheckFacet.Check",
+        "components": [
+          {
+            "name": "verdict",
+            "type": "uint8",
+            "internalType": "enum StandingOfferCheckFacet.Verdict"
+          },
+          {
+            "name": "refusedBy",
+            "type": "uint8",
+            "internalType": "enum StandingOfferCheckFacet.RefusedBy"
+          },
+          {
+            "name": "code",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "offerId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "rateBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "amount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "beatsQuote",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  }
+]

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
@@ -479,11 +480,11 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // borrower's collateral debited by the NEXT loan's leg (the whole
         // moved amount left that vault).
         _clearMatched(s, la, r.movedX, r.incentiveX);
-        lb.collateralAmount -= r.movedX;
+        LibLoanCollateral.reduce(lb, r.movedX);
         _clearMatched(s, lb, r.movedY, r.incentiveY);
-        lc.collateralAmount -= r.movedY;
+        LibLoanCollateral.reduce(lc, r.movedY);
         _clearMatched(s, lc, r.movedZ, r.incentiveZ);
-        la.collateralAmount -= r.movedZ;
+        LibLoanCollateral.reduce(la, r.movedZ);
 
         // EC-003 Phase 1 — collateral consumed per leg:
         //   la consumed movedZ (paid out to C's lender)
@@ -729,9 +730,9 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // the match, so `moved*` is what each lender received plus the
         // incentive; each borrower's collateral falls by the same amount.
         _clearMatched(s, la, r.movedX, r.incentiveX);
-        lb.collateralAmount -= r.movedX;
+        LibLoanCollateral.reduce(lb, r.movedX);
         _clearMatched(s, lb, r.movedY, r.incentiveY);
-        la.collateralAmount -= r.movedY;
+        LibLoanCollateral.reduce(la, r.movedY);
 
         // Status transitions + snapshot scaling. Full match → loan
         // transitions to `InternalMatched`; partial match keeps the

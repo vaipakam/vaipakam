@@ -18,6 +18,7 @@ import {LibSignedOffer} from "../src/libraries/LibSignedOffer.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {LibTestTiming} from "./helpers/LibTestTiming.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
 /**
  * @title  SignedOfferMatcherTest
@@ -164,6 +165,8 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.prank(creator);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: amount,
@@ -212,6 +215,8 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.prank(creator);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: amount,
@@ -492,7 +497,7 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.prank(keeper);
         vm.expectRevert(
             abi.encodeWithSelector(
-                SignedOfferMatchFacet.SignedOfferFillInvalid.selector,
+                LibSignedOffer.SignedOfferFillInvalid.selector,
                 ceiling + PRINCIPAL, // fillAmount
                 ceiling // remaining
             )
@@ -518,7 +523,7 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.prank(keeper);
         vm.expectRevert(
             abi.encodeWithSelector(
-                SignedOfferMatchFacet.SignedOfferFillInvalid.selector,
+                LibSignedOffer.SignedOfferFillInvalid.selector,
                 partialFill, // fillAmount
                 PRINCIPAL // remaining (= ceiling, nothing filled yet)
             )
@@ -585,6 +590,56 @@ contract SignedOfferMatcherTest is SetupTest {
             PRINCIPAL,
             "mirror ledger consumed"
         );
+    }
+
+    // ─── #3621 — the lender's "either" marks on the signed path ────────────
+    //      A signed fill opens its slice on the book through the same
+    //      `OfferBookFacet.openOfferOnBook` step every on-chain offer ends
+    //      with, so the signed and on-chain forms admit the same marks.
+
+    function test_3621_signedBorrowerWithFlexRefused() public {
+        LibSignedOffer.SignedOffer memory o =
+            _borrowerSignedOffer(3621, PRINCIPAL, PRINCIPAL, LibVaipakam.FillMode.Partial);
+        o.lifecycleFlex = LibVaipakam.LIFECYCLE_FLEX_PARTIAL_REPAY;
+        bytes memory sig = _sign(o);
+        _fundActorVault(signer, mockCollateralERC20, COLLATERAL);
+        uint256 lenderOfferId = _postLenderCounterparty(lender, PRINCIPAL);
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSignature("LifecycleFlexNotAllowed()"));
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, _alone(), lenderOfferId, PRINCIPAL, _noAuth());
+    }
+
+    function test_3621_signedLenderUnknownBitsRefused() public {
+        LibSignedOffer.SignedOffer memory o =
+            _lenderSignedOffer(3622, PRINCIPAL, PRINCIPAL, LibVaipakam.FillMode.Partial);
+        o.lifecycleFlex = 4;
+        bytes memory sig = _sign(o);
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+        uint256 borrowerOfferId = _postBorrowerCounterparty(borrower, PRINCIPAL);
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSignature("LifecycleFlexUnknownBits(uint8)", uint8(4)));
+        SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, _alone(), borrowerOfferId, PRINCIPAL, _noAuth());
+    }
+
+    /// @dev A signed lender order's marks reach its slice, and the match
+    ///      honours them: the borrower's partial-repay choice is taken.
+    function test_3621_signedLenderFlexReachesTheSliceAndTheLoan() public {
+        LibSignedOffer.SignedOffer memory o =
+            _lenderSignedOffer(3623, PRINCIPAL, PRINCIPAL, LibVaipakam.FillMode.Partial);
+        o.lifecycleFlex = LibVaipakam.LIFECYCLE_FLEX_PARTIAL_REPAY;
+        bytes memory sig = _sign(o);
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+        uint256 borrowerOfferId = _postBorrowerCounterparty(borrower, PRINCIPAL);
+        LibVaipakam.Offer memory b = OfferCancelFacet(address(diamond)).getOffer(borrowerOfferId);
+        b.allowsPartialRepay = true;
+        TestMutatorFacet(address(diamond)).setOffer(borrowerOfferId, b);
+        vm.recordLogs();
+        vm.prank(keeper);
+        uint256 loanId = SignedOfferMatchFacet(address(diamond)).matchSignedOffer(
+            o, sig, _alone(), borrowerOfferId, PRINCIPAL, _noAuth()
+        );
+        assertEq(OfferCancelFacet(address(diamond)).getOffer(_lastSliceOfferId()).lifecycleFlex, 1, "slice carries the marks");
+        assertTrue(LoanFacet(address(diamond)).getLoanDetails(loanId).allowsPartialRepay, "loan takes the borrower's choice");
     }
 
     // ─── 6. Bad signature ──────────────────────────────────────────────────
@@ -700,7 +755,7 @@ contract SignedOfferMatcherTest is SetupTest {
     // ─── 9. Dust floors (Codex #616 P1) ────────────────────────────────────
 
     /// @notice A keeper may not fill a partial-fillable signed offer BELOW the
-    ///         signer's stated minimum slice (`amount`). `_materializeSlice`
+    ///         signer's stated minimum slice (`amount`). `SignedOfferFacet.takeSignedMatchSlice`
     ///         rewrites the slice to a single value, so `previewMatch` can no
     ///         longer see the signed minimum — the matcher's vet must enforce
     ///         it. A 500 fill on a [1000, 3000] offer is below the 1000 floor.
@@ -716,7 +771,7 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.prank(keeper);
         vm.expectRevert(
             abi.encodeWithSelector(
-                SignedOfferMatchFacet.SignedOfferFillInvalid.selector,
+                LibSignedOffer.SignedOfferFillInvalid.selector,
                 belowMin, // fillAmount
                 ceiling // remaining (nothing filled yet)
             )
@@ -740,7 +795,7 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.prank(keeper);
         vm.expectRevert(
             abi.encodeWithSelector(
-                SignedOfferMatchFacet.SignedOfferFillInvalid.selector,
+                LibSignedOffer.SignedOfferFillInvalid.selector,
                 fill, // fillAmount
                 ceiling // remaining
             )
@@ -765,7 +820,7 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.prank(keeper);
         vm.expectRevert(
             abi.encodeWithSelector(
-                SignedOfferMatchFacet.SignedOfferFillInvalid.selector,
+                LibSignedOffer.SignedOfferFillInvalid.selector,
                 ceiling, // fillAmount
                 ceiling // remaining
             )
@@ -790,7 +845,7 @@ contract SignedOfferMatcherTest is SetupTest {
         uint256 cp = _postBorrowerCounterparty(borrower, PRINCIPAL);
 
         vm.prank(keeper);
-        vm.expectRevert(SignedOfferMatchFacet.SignedOfferRatioNotConstant.selector);
+        vm.expectRevert(LibSignedOffer.SignedOfferRatioNotConstant.selector);
         SignedOfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, _alone(), cp, PRINCIPAL, _noAuth());
     }
 
@@ -910,7 +965,7 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.prank(keeper);
         vm.expectRevert(
             abi.encodeWithSelector(
-                SignedOfferMatchFacet.SignedOfferFillInvalid.selector,
+                LibSignedOffer.SignedOfferFillInvalid.selector,
                 dust, // fillAmount
                 2 * PRINCIPAL // remaining (= ceiling, nothing filled)
             )
@@ -948,6 +1003,8 @@ contract SignedOfferMatcherTest is SetupTest {
         vm.prank(lowLender);
         uint256 cp = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,

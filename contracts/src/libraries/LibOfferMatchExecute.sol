@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibInitiationFee} from "./LibInitiationFee.sol";
 import {LibTiming} from "./LibTiming.sol";
 import {LibOfferMatch} from "./LibOfferMatch.sol";
 import {LibAutoRefinanceCheck} from "./LibAutoRefinanceCheck.sol";
@@ -18,6 +19,7 @@ import {EncumbranceMutateFacet} from "../facets/EncumbranceMutateFacet.sol";
 import {OfferCreateFacet} from "../facets/OfferCreateFacet.sol";
 import {RiskPreviewFacet} from "../facets/RiskPreviewFacet.sol";
 import {LibRefinanceNetting} from "./LibRefinanceNetting.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
  * @title  LibOfferMatchExecute — the match-execution core every match host shares.
@@ -163,6 +165,24 @@ library LibOfferMatchExecute {
         internal
         returns (uint256 loanId)
     {
+        return executeMatchFor(lenderOfferId, borrowerOfferId, borrowerCollFloor, msg.sender);
+    }
+
+    /// @notice {executeMatch} with the matcher named instead of taken from
+    ///         `msg.sender`. Instant market (#3656): a borrower's own instant
+    ///         borrow names no matcher (`address(0)`), so no match share is
+    ///         paid and the whole initiation fee goes to the treasury, as the
+    ///         design requires ("the borrower is never paid a share").
+    /// @param matcher The match-share recipient, or `address(0)` for none.
+    function executeMatchFor(
+        uint256 lenderOfferId,
+        uint256 borrowerOfferId,
+        uint256 borrowerCollFloor,
+        address matcher
+    )
+        internal
+        returns (uint256 loanId)
+    {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
         // #595 — carry-over-aware matched refinance. A refinance-tagged BORROWER
@@ -204,6 +224,11 @@ library LibOfferMatchExecute {
         // a full-principal transfer, not a range/partial order.
         if (s.offsetOfferToLoanId[lenderOfferId] != 0) {
             revert OffsetVehicleNotMatchable();
+        }
+        // #3328 — a collection offer fills only through its own entry, which
+        // matches a one-token slice of it, never the offer itself.
+        if (s.collectionOffer[lenderOfferId].set.kind != LibVaipakam.CollateralSetKind.None) {
+            revert IVaipakamErrors.CollectionParentNotFillable(lenderOfferId);
         }
         {
             uint256 bRefiTarget =
@@ -354,7 +379,7 @@ library LibOfferMatchExecute {
         mo.rateBps = mr.matchRateBps;
         mo.collateralAmount = mr.reqCollateral;
         mo.counterparty = s.offers[lenderOfferId].creator;
-        mo.matcher = msg.sender;
+        mo.matcher = matcher;
         mo.active = true;
         // #1369 — the lender's Full-tariff authorization lives on THEIR offer,
         // which `acceptOfferInternal` never sees (it is handed the borrower
@@ -510,8 +535,7 @@ library LibOfferMatchExecute {
         // so both offers' own tokens cool down. (A direct accept instead turns
         // the offer's own token into a loan token, and the facet stamps that
         // loan as it does.)
-        LibPositionNFT.markOfferValueOut(lenderOfferId);
-        LibPositionNFT.markOfferValueOut(borrowerOfferId);
+        LibPositionNFT.markOffersValueOut(lenderOfferId, borrowerOfferId);
         uint256 lenderRemaining = L.amountMax - L.amountFilled;
 
         // Auto-close on dust: if the leftover can't satisfy the
@@ -690,7 +714,7 @@ library LibOfferMatchExecute {
             lenderOfferId,
             borrowerOfferId,
             loanId,
-            msg.sender,
+            matcher,
             mr.matchAmount,
             mr.matchRateBps,
             lenderRemaining,
@@ -703,9 +727,10 @@ library LibOfferMatchExecute {
             // hold-tier discount into this facet inlines the discount resolver
             // and pushes OfferMatchFacet past the EIP-170 runtime-size limit,
             // and this is a convenience estimate, not the authoritative amount.
-            (mr.matchAmount * LibVaipakam.cfgLoanInitiationFeeBps()
-                * LibVaipakam.cfgLifMatcherFeeBps())
-                / (LibVaipakam.BASIS_POINTS * LibVaipakam.BASIS_POINTS),
+            // #3649 — the fee for the borrower offer's term (the loan's); no
+            // matcher (an instant fill) takes no share.
+            matcher == address(0) ? 0 : (LibInitiationFee.feeOf(mr.matchAmount, bm.durationDays)
+                * LibVaipakam.cfgLifMatcherFeeBps()) / LibVaipakam.BASIS_POINTS,
             borrowerEffFilled,
             bm.accepted
         );

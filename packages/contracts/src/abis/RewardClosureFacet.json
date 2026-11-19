@@ -786,6 +786,17 @@
   },
   {
     "type": "error",
+    "name": "CollectionParentNotFillable",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "CommitmentDayNotArmed",
     "inputs": [
       {
@@ -2333,6 +2344,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "PositionTokenNotAccepted",
+    "inputs": []
   },
   {
     "type": "error",

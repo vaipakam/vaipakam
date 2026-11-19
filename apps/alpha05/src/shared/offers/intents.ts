@@ -7,11 +7,13 @@
  * the page states what is ready and never promises a fill.
  */
 import type { Abi, PublicClient } from 'viem';
-import { AdminFacetABI, AggregatorAdapterFactoryFacetABI, LenderIntentFacetABI } from '@vaipakam/contracts/abis';
+import { AdminFacetABI, AggregatorAdapterFactoryFacetABI, LenderIntentFacetABI, LenderIntentViewFacetABI } from '@vaipakam/contracts/abis';
 import type { LifecycleTerms } from '../post/postModel';
 import { CONFIG } from './reads';
 
 const INTENT = LenderIntentFacetABI as Abi;
+/** The standing-intent reads (split off LenderIntentFacet). */
+const INTENT_VIEW = LenderIntentViewFacetABI as Abi;
 const ADMIN = AdminFacetABI as Abi;
 const FACTORY = AggregatorAdapterFactoryFacetABI as Abi;
 
@@ -22,6 +24,9 @@ export interface IntentSummary {
   owner: Hex;
   lendingAsset: Hex;
   collateralAsset: Hex;
+  /** #3626 — which of the owner's intents on the pair this is (0-7). A
+   *  lender may hold several, each with its own capital and terms. */
+  slot: number;
   maxExposure: bigint;
   minRateBps: bigint;
   maxInitLtvBps: number;
@@ -135,7 +140,7 @@ export async function readLenderIntents(client: PublicClient, diamond: Hex): Pro
   let scanned = 0;
   for (let page = 0; page < INTENT_PAGES; page++) {
     const offset = BigInt(page * INTENT_PAGE);
-    const [rows, all] = await read<readonly [readonly IntentSummary[], bigint]>(INTENT, 'getActiveLenderIntents', [offset, BigInt(INTENT_PAGE)]);
+    const [rows, all] = await read<readonly [readonly IntentSummary[], bigint]>(INTENT_VIEW, 'getActiveLenderIntents', [offset, BigInt(INTENT_PAGE)]);
     total = all;
     intents.push(...rows);
     // Count registry positions read, not rows returned: the feed leaves out an
@@ -161,7 +166,8 @@ export async function readLenderIntents(client: PublicClient, diamond: Hex): Pro
 
 /** What lenders hold ready for one pair, from their intents on it. */
 export interface StandingReady {
-  /** Intents on the pair with something ready to lend. */
+  /** Lenders on the pair with something ready to lend. A lender with
+   *  several intents on the pair (#3626) is counted once. */
   lenders: number;
   /** The most any ONE of them can lend now: the smaller of its un-lent
    *  capital and the room left under its exposure cap. A request is filled
@@ -215,6 +221,7 @@ export function standingReady(
 ): StandingReady | null {
   const { exclude, limited, unavailable, request } = opts;
   let out: StandingReady | null = null;
+  const owners = new Set<string>();
   for (const i of intents) {
     if (!same(i.lendingAsset, lending) || !same(i.collateralAsset, collateral)) continue;
     if (exclude && same(i.owner, exclude)) continue;
@@ -230,7 +237,8 @@ export function standingReady(
     // Less than the lender's smallest fill cannot be lent at all.
     if (ready === 0n || ready < i.minFillAmount) continue;
     if (out === null) out = { lenders: 0, largest: 0n, minRateBps: i.minRateBps, maxDays: 0, maxLtvBps: 0 };
-    out.lenders += 1;
+    owners.add(i.owner.toLowerCase());
+    out.lenders = owners.size;
     if (ready > out.largest) out.largest = ready;
     if (i.minRateBps < out.minRateBps) out.minRateBps = i.minRateBps;
     if (days > out.maxDays) out.maxDays = days;

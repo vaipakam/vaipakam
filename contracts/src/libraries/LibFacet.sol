@@ -3,14 +3,17 @@
 pragma solidity ^0.8.29;
 
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ISettlementLegHost} from "../interfaces/ISettlementLegHost.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibRevert} from "./LibRevert.sol";
 import {LibDelivery} from "./LibDelivery.sol";
+import {LibProtectedAccount} from "./LibProtectedAccount.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {LibNumeraireValueRead} from "./LibNumeraireValueRead.sol";
 import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
+import {LibFeeFloor} from "./LibFeeFloor.sol";
 
 /// @title LibFacet
 /// @notice Shared facet-level helpers previously duplicated across
@@ -57,13 +60,27 @@ library LibFacet {
     ///      the host moves nothing and accrues all of `amount` (#2623).
     /// @return accrued What the treasury received and was credited with.
     function transferToTreasury(address asset, uint256 amount) internal returns (uint256 accrued) {
+        return transferToTreasury(asset, amount, LibFeeFloor.other());
+    }
+
+    /// @dev #3649 stage 3 — {transferToTreasury} for a fee that feeds the
+    ///      reserve: `basis` names it and its floor's base (built with
+    ///      {LibFeeFloor.initiation}, {LibFeeFloor.interest} or
+    ///      {LibFeeFloor.extension}). The host splits what arrived at the floor
+    ///      ({LibFeeFloor}).
+    function transferToTreasury(
+        address asset,
+        uint256 amount,
+        ITreasuryFeeHost.FeeBasis memory basis
+    ) internal returns (uint256 accrued) {
         if (amount == 0) return 0;
         return abi.decode(
             crossFacetCallReturn(
                 abi.encodeWithSelector(
                     ITreasuryFeeHost.collectFeeFromDiamond.selector,
                     asset,
-                    amount
+                    amount,
+                    basis
                 ),
                 IVaipakamErrors.TreasuryTransferFailed.selector
             ),
@@ -199,6 +216,26 @@ library LibFacet {
 
 
 
+    /// @dev #3629 — credits `amount` of `asset`, held by the Diamond, to
+    ///      `owner`'s OWN vault as free balance (created if `owner` has none),
+    ///      measured: the tracked and depository holdings rise by what arrived,
+    ///      and that figure is returned. The one route for a sale's proceeds to the selling
+    ///      lender (owner decision 2026-11-15: no loan step pays a wallet; the
+    ///      seller withdraws through the vault outflow policy, where a
+    ///      protected account's delay applies). `owner` has already passed the
+    ///      sale's sanctions gate, so the vault resolution needs no exemption.
+    function creditOwnVault(address asset, address owner, uint256 amount)
+        internal
+        returns (uint256 credited)
+    {
+        if (amount == 0) return 0;
+        credited = LibDelivery.pushMeasured(asset, getOrCreateVault(owner), amount);
+        // The one writer for a payment credited to a vault: the tracked
+        // holding and the depository holding rise together, so the owner's
+        // depository withdraw can take it.
+        LibProtectedAccount.creditPayment(owner, asset, 0, amount, credited);
+    }
+
     /// @dev Deposits `amount` of `asset` into the new lender's vault and
     ///      records it in `heldForLender`. No-op on zero.
     function depositForNewLender(
@@ -241,6 +278,17 @@ library LibFacet {
         address asset,
         uint256 amount
     ) internal {
+        transferFromPayerToTreasury(payer, asset, amount, LibFeeFloor.other());
+    }
+
+    /// @dev #3649 stage 3 — {transferFromPayerToTreasury} for a fee that
+    ///      feeds the reserve (see the four-argument {transferToTreasury}).
+    function transferFromPayerToTreasury(
+        address payer,
+        address asset,
+        uint256 amount,
+        ITreasuryFeeHost.FeeBasis memory basis
+    ) internal {
         if (amount == 0) return;
         // #1281-011 / #2440 — hosted on TreasuryFeeFacet, which refuses the pull
         // unless the treasury received all of it, so the accrual never records
@@ -253,7 +301,8 @@ library LibFacet {
                 ITreasuryFeeHost.collectFeeFromPayer.selector,
                 payer,
                 asset,
-                amount
+                amount,
+                basis
             ),
             IVaipakamErrors.TreasuryTransferFailed.selector
         );
@@ -270,6 +319,17 @@ library LibFacet {
         address asset,
         uint256 amount
     ) internal returns (uint256) {
+        return vaultFeeToTreasury(user, asset, amount, LibFeeFloor.other());
+    }
+
+    /// @dev #3649 stage 3 — {vaultFeeToTreasury} for a fee that feeds the
+    ///      reserve (see the four-argument {transferToTreasury}).
+    function vaultFeeToTreasury(
+        address user,
+        address asset,
+        uint256 amount,
+        ITreasuryFeeHost.FeeBasis memory basis
+    ) internal returns (uint256) {
         if (amount == 0) return 0;
         return abi.decode(
             crossFacetCallReturn(
@@ -277,7 +337,8 @@ library LibFacet {
                     ITreasuryFeeHost.collectFeeFromVault.selector,
                     user,
                     asset,
-                    amount
+                    amount,
+                    basis
                 ),
                 IVaipakamErrors.TreasuryTransferFailed.selector
             ),
@@ -314,6 +375,43 @@ library LibFacet {
             IVaipakamErrors.VaultDepositFailed.selector
         );
         LibVaipakam.storageSlot().heldForLender[loanId] += amount;
+    }
+
+    /// @dev #3669 — a forced or terminal settlement's treasury share, through
+    ///      `SettlementLegFacet.treasuryShareOrPark`: moved to the treasury
+    ///      through `TreasuryFeeFacet`, or, when the token refuses the move,
+    ///      left in `owner`'s own vault under a lien for the treasury, so a
+    ///      frozen treasury never stops the close-out. `source` is 0 for
+    ///      `owner`'s wallet, 1 for `owner`'s vault, 2 for proceeds of
+    ///      `owner`'s the Diamond holds. Returns what reached the treasury
+    ///      now (0 when parked). Voluntary steps keep the plain helpers above
+    ///      and refuse.
+    function treasuryShareOrPark(uint8 source, address owner, address asset, uint256 amount)
+        internal
+        returns (uint256 accrued)
+    {
+        return treasuryShareOrPark(source, owner, asset, amount, LibFeeFloor.other());
+    }
+
+    /// @dev #3649 stage 3 — {treasuryShareOrPark} for a share that feeds the
+    ///      reserve (see the four-argument {transferToTreasury}). A parked
+    ///      share keeps its floor, so its release splits as the settlement
+    ///      would have.
+    function treasuryShareOrPark(
+        uint8 source,
+        address owner,
+        address asset,
+        uint256 amount,
+        ITreasuryFeeHost.FeeBasis memory basis
+    ) internal returns (uint256 accrued) {
+        if (amount == 0) return 0;
+        (accrued, ) = abi.decode(
+            crossFacetCallReturn(
+                abi.encodeCall(ISettlementLegHost.treasuryShareOrPark, (source, owner, asset, amount, basis)),
+                IVaipakamErrors.TreasuryTransferFailed.selector
+            ),
+            (uint256, bool)
+        );
     }
 
     /// @dev Staticcall variant for read-only cross-facet reads (e.g. HF/LTV).

@@ -8,6 +8,7 @@ import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -19,7 +20,7 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 /**
  * @title  InternalMatchOwedRecordTest
  * @notice #2427 — what internal matching cleared from a loan it closed, as
- *         `ClaimFacet.getOwedAtInternalMatch` reports it. Every expected figure
+ *         `ClaimViewFacet.getOwedAtInternalMatch` reports it. Every expected figure
  *         is computed here from the loan's terms and the step timestamps, not
  *         read back from the contract, so a wrong accumulation fails.
  */
@@ -105,7 +106,7 @@ contract InternalMatchOwedRecordTest is SetupTest {
 
     function _rec(uint256 loanId) internal view returns (Rec memory r) {
         (r.principal, r.interest, r.lateFee, r.lenderProceeds, r.recordedAt, r.incomplete) =
-            ClaimFacet(address(diamond)).getOwedAtInternalMatch(loanId);
+            ClaimViewFacet(address(diamond)).getOwedAtInternalMatch(loanId);
     }
 
     function _assertNone(uint256 loanId, string memory why) internal view {
@@ -150,7 +151,7 @@ contract InternalMatchOwedRecordTest is SetupTest {
         // The counterparty closed in the same call gets its own record.
         assertEq(_rec(LOAN_B).principal, 1_000e18, "B recorded too");
         // The default record does not report an internally matched loan.
-        (, , , uint64 defaultAt,) = ClaimFacet(address(diamond)).getOwedAtDefault(LOAN_A);
+        (, , , uint64 defaultAt,) = ClaimViewFacet(address(diamond)).getOwedAtDefault(LOAN_A);
         assertEq(defaultAt, 0, "no default record");
     }
 

@@ -75,7 +75,7 @@ Accept되는 순간:
   권리"를 나타냅니다
 - Loan clock이 시작됩니다
 
-Loaned amount에서 작은 **Loan Initiation Fee (`{liveValue:loanInitiationFeeBps}`%)**가 차감되어 protocol
+Loaned amount에서 작은 **Loan Initiation Fee**(loan 기간에 따라 정해짐, 아래 fees 참고)가 차감되어 protocol
 treasury로 routed됩니다. 그래서 borrower는 1,000 USDC가 아니라 `{liveValue:exampleBorrowerReceives}` USDC를
 받습니다. (**VPFI**를 보유하면 이 fee가 줄어들어 borrower가 1,000 USDC 중
 더 많은 금액을 받습니다 — 할인 설정을 켜 두었고 빌려주는 asset이 유동적인
@@ -202,9 +202,11 @@ fees는 두 가지이며, 둘 다 작습니다.
   **interest**의 비율입니다 (principal의 비율이 아닙니다). 1,000 USDC를
   30-day 8% APR로 lending하는 loan에서는 lender가 약 6.58 USDC interest를
   얻고, 그중 default rate에서 약 0.132 USDC가 Yield Fee입니다.
-- **Loan Initiation Fee — `{liveValue:loanInitiationFeeBps}`%** lending
-  amount의 비율이며, origination 시 borrower가 pay합니다. 1,000 USDC
-  loan에서는 default rate에서 2 USDC입니다.
+- **Loan Initiation Fee** — loan 기간에 따라 정해지는 lending amount의
+  비율이며, origination 시 borrower가 pay합니다. 기간 `{liveValue:lifBaseTermDays}`일까지는
+  `{liveValue:loanInitiationFeeBps}`%, `{liveValue:lifYearDays}`일에 `{liveValue:lifYearlyBps}`%까지 고르게 오르고, 그 이후에는
+  기간 `{liveValue:lifYearDays}`일마다 `{liveValue:lifYearlyBps}`%가 비례하여 적용됩니다. 위의 30일
+  1,000 USDC loan에서는 `{liveValue:exampleInitiationFee}` USDC입니다.
 
 두 fee 모두 vault에 VPFI를 hold하면 **최대 `{liveValue:tier4DiscountBps}`%
 discount**를 받을 수 있습니다(아래 참고). default나 liquidation에서는
@@ -222,7 +224,7 @@ fees는 없습니다. protocol이 가져가는 것은 위의 두 fee뿐입니다
 > 다른 token을 보낼 때 pay하는 fee와 동일합니다. 금액은 chain과
 > 그 시점의 network 혼잡도에 따라 달라지며, loan의 size에는 의존하지
 > 않습니다. 위의 protocol fees(Yield Fee `{liveValue:treasuryFeeBps}`%,
-> Loan Initiation Fee `{liveValue:loanInitiationFeeBps}`%)는
+> Loan Initiation Fee)는
 > network gas와 완전히 별개이며, protocol 자체가 collect하는 것은
 > 이 두 가지뿐입니다.
 
@@ -310,7 +312,7 @@ VPFI token과 daily reward denominator뿐입니다(활발한 chains와 조용한
 2. **Offer Book**에서 자신의 collateral과 지불 가능한 APR에 맞는 offer를
    browse합니다.
 3. **Accept**를 click하고 두 transactions에 sign하면, loan amount가
-   wallet으로 들어옵니다(`{liveValue:loanInitiationFeeBps}`% Loan Initiation Fee 차감 후).
+   wallet으로 들어옵니다(Loan Initiation Fee 차감 후).
 4. due date plus grace period 전에 repay합니다. collateral이 unlock되어
    wallet으로 돌아옵니다.
 

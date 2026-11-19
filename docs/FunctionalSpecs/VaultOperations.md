@@ -25,6 +25,14 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   Deposit and withdrawal cards, the desk, accept reviews, fee checks, and
   locked-balance displays use that same figure. A queued payout is not free
   capital that can be spent again.
+- A vault takes instructions from one caller only: the protocol contract
+  that created it. It does not trust itself, and it has no separate owner
+  record that could be handed to someone else.
+- Moving an asset out of a vault can hand control to someone else, such as an
+  NFT recipient's receiving hook or an approved spender. Every such move
+  happens only inside a protocol action that already refuses to be
+  re-entered, so a recipient or spender cannot call back into the protocol
+  mid-move. A move attempted outside such an action is refused.
 
 ## Independent boundaries on value leaving a vault
 
@@ -141,21 +149,46 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   A lock or full queue cannot produce a successful voluntary withdrawal that
   silently pays and queues nothing. A settlement may retain value safely;
   the app distinguishes that hold from a payment or queued withdrawal.
-- The separate NFT-protection setting enables the standalone position-NFT
-  contract's holder lock. It refuses transfers and approvals, disregards old
-  approvals, and locks newly minted positions from their start. A sale or
-  borrower handover is refused at fill while that lock holds; default,
-  liquidation, and grace-period collateral sales still settle.
-- Moving a protected position requires the holder to request an unlock at
-  the position-NFT contract and wait its delay. There is no platform NFT-transfer
-  queue or co-sign release. The platform may lock, cancel a pending unlock,
-  or raise the delay toward the protected account's delay, up to five days;
-  it may never unlock or lower that delay. Unlock and delay-lowering execution
-  remain callable after their wait; an automated keeper service for those
-  position-NFT actions is a separate follow-up.
+- NFT protection is the position-NFT contract's holder lock (#3205). While it
+  is on, the holder's position NFTs cannot be transferred or approved; there
+  is no queue of NFT transfers. The owner may ask to unlock, which waits the
+  delay, without disabling the account's other protection. A lock still applies its own
+  payout and new-position restrictions regardless of that setting.
 - A protected account's collateral or parallel-sale listing may pay
   marketplace fees only to its owner or allowed destinations. A locked or
   replaced account cannot post it; the protection check runs again at fill.
+
+## Ready balance (protected accounts)
+
+- A protected account's vault holds two parts of each token: the Ready
+  balance and the Protected balance. The owner's own actions may spend
+  existing vault balance on a protocol step at once only from Ready: a
+  vault-backed signed offer, the collateral of an instant-market borrow, and
+  an auto-extension charge beyond the loan's own reserve. Money the owner
+  sends from the wallet in the same action is new money and is never
+  delayed.
+- Ready is off until the owner funds it. A deposit from the wallet straight
+  into Ready is instant. Moving Protected balance into Ready waits the
+  account's delay, and the owner or any signer may cancel it meanwhile.
+  Moving Ready back to Protected is instant and may be done by the owner or
+  any signer.
+- Ready never pays a wallet. A withdrawal reaches only the Protected balance,
+  so Ready leaves the vault only after it is moved back to Protected and then
+  through the usual delayed payout.
+- A lock, a switch-off of protected mode, or an account replacement empties
+  Ready and cancels any pending top-up, for good: after an unlock the owner
+  funds Ready again.
+- The owner may set an idle period of one to thirty days. Ready not spent or
+  topped up for that long counts as Protected balance again, at the
+  deadline, with no transaction needed. Setting or shortening the period is
+  instant; lengthening it or turning it off waits the delay. The owner may
+  keep a token's Ready counting for up to thirty days from now at once.
+- Returned principal, interest and claims go to the Protected balance; Ready
+  never refills itself.
+- Every move into, out of, or spent from Ready is reported, with the account,
+  token, amount and direction, and the app can read each token's Ready
+  balance, any pending top-up and when Ready stops counting, with the reason
+  when it counts as nothing. The Protected balance is never called savings.
 
 ## Delayed changes and account replacement
 
@@ -170,23 +203,90 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   From completion, only the new wallet manages the account; the old wallet
   and its keepers lose their rights, including control of offers, intent
   capital, extension reserves, vault VPFI, locks, and implementation pinning.
-- Replacement permanently moves the vault's owner record to the new wallet,
-  which signs and receives for the account, including code-pin signatures.
-  The original wallet and the current manager cannot be proposed again.
-  Retirement never clears, protection cannot be switched off, and the replaced
-  account clears its destinations and admits no new ones. All payouts,
-  deliveries, and reward claims go through its vault and the delay to the
-  latest manager, or to that manager's own vault if protected there too.
-- One wallet may manage several replaced accounts; the app lists each.
-  Old extension consent stops counting, and managing one's own recovered
-  position earns no keeper reward. An owner-proposed replacement is cancelled
-  by a lock; while a signer holds a lock, only a signer may cancel replacement.
-  Physical position NFTs may still remain at the retired address under their
-  holder lock pending the separate vault-verified NFT movement follow-up;
-  replacement of vault authority does not claim that movement is complete.
+- The replacement manager acts as holder for the account's existing
+  positions. Old extension consent stops counting, and managing one's own
+  recovered position earns no keeper reward.
+- **The old wallet holds positions it can no longer use (#3526).** Its
+  position NFTs are locked by the replacement, and it may not ask to unlock
+  them. No position may leave the replaced account, whether the old wallet,
+  an operator it approved earlier, or a marketplace sends it, except to the
+  new wallet. Anyone may move the account's position NFTs to the new wallet;
+  the NFT contract confirms the replacement from the account's own vault
+  record, so the platform cannot direct that move anywhere else. Until they
+  move, the new wallet acts on them for the account, and every payout still
+  goes to the account under its protected payout rules.
+- **Who may act on a position is its holder's manager (#3526).** Claims,
+  collateral withdrawal and top-ups, swap-to-repay, consolidation, listing
+  cancellation, per-loan keeper choices, refinance and extension consent,
+  and a backstop opt-in all accept the holder or, once the holder was
+  replaced, its new wallet, and never the old wallet. Consent the old wallet
+  gave stops counting. The caller pays with its own funds, and proceeds go to
+  the position's holder account. A repayment is refused to the lender side,
+  including the manager of a replaced lender.
+- **A replaced account's open offers can only be cancelled.** They can never
+  be accepted, so the new wallet may cancel them (and recover their escrow
+  under the payout rules), but neither wallet may change their terms or
+  amount, stage them for a sale or a backstop, or attach a refinance payoff
+  permit. An owner-proposed replacement
+  is cancelled by a lock. While a signer holds a lock, only a signer can
+  cancel the replacement; the owner alert states that restriction.
 - Contract authority and app coverage remain distinct: the extension-reserve
   card currently offers only the connected wallet's own reserves, so it does
   not yet expose withdrawing a replaced account's reserve for its controller.
+
+## Recovery address and clawback
+
+The exit from a locked protected account (#3246 part 2; design:
+[RecoveryAddressClawbackDesign](../DesignsAndPlans/RecoveryAddressClawbackDesign.md)).
+
+- Protected mode needs a recovery address before it switches on, and a
+  signer can be finalized only while one is in force. The address proves it
+  is controlled (its own call or signature naming the account and the
+  platform) and can never be the account's wallets, its vault, the platform,
+  a signer, a nominee or an allowlisted destination, from either side.
+- A first setting comes into force after twice the account's delay (twice the
+  shortest delay while protected mode is off); a change after 30 days, the
+  current address staying in force until then. The owner or any signer may
+  cancel a pending one; a lock, a replacement, a switch-off or a clawback
+  drops it. An address whose wait has already passed is never dropped.
+- The address is cleared only while protected mode is off. Switching
+  protected mode off keeps it.
+- The owner or any signer may claw the account back, while it is locked or
+  not, by a direct call or a signature anyone submits. It pays only the
+  recovery address in force, which no trigger names, and it moves only what
+  the owner could withdraw: liened collateral, claims and offer backing stay
+  until released. It does not wait the delay, the queue or the outflow brake.
+  A linked-chat trigger is not offered yet; it will need its own permission.
+- The first clawback locks the account for good. It opens nothing new, its
+  lock never lifts, protected mode cannot be switched off, and its position
+  tokens cannot be transferred. Its open offers and Auto-lend funding can no
+  longer fill and anyone may release them back into its vault; its Ready
+  balance lapses.
+- A replacement and a clawback can happen in either order on one account.
+  Once the account is recovered, the replacement's move of the retired
+  wallet's position tokens to the new wallet is refused as a move out of a
+  recovered account; the tokens stay with the account, the current wallet
+  still claims, repays, adds collateral and cancels the account's offers on
+  them, and what they pay out reaches the recovery address, never either
+  wallet.
+- Anything that later reaches a recovered account's vault is swept on to the
+  recovery address by any caller; the sweep moves only free balance, only to
+  that address. A recovery address that is itself a protected account is paid
+  into its own vault.
+- While a recovery address is in force, the paused-platform escape route pays
+  it, not the owner wallet.
+- In the app, the recovery address is the step before "Turn on protection",
+  which stays unavailable until one is set or waiting. The owner names the
+  address and sends it a signing link; the recovery wallet opens it and signs
+  its proof without sending a transaction, so a cold wallet needs no gas, and
+  gets a link back; the owner opens that link and asks for the address. Before
+  asking, the page checks the proof belongs to this account, vault and
+  network, is signed by the named wallet, is unexpired and unused, and says
+  how long the address will wait. It shows the address in force, a waiting one
+  with the time it comes into force, and lets the owner cancel the waiting one.
+  It says that starting a clawback is not in the app yet.
+- Every setting, change, cancellation, drop, clawback and sweep is recorded
+  with the account, the address and the amounts.
 
 ## Pause escape and implementation pinning
 
@@ -194,8 +294,10 @@ remain governed by [Keeper Operations](KeeperOperations.md).
   owner's escape withdrawal route from their own vault to their own wallet.
   An automatic pause during that period does not restart the count. Queued
   payouts remain releasable.
-- The escape period is three days by default; the admin may set it between
-  49 hours and seven days. Each administrative pause keeps the period in force
+- The escape period is seven days by default; the admin may set it between
+  seven and ten days. It is never shorter than the vault code delay, so a
+  vault code fix registered when a pause starts is live before the escape
+  opens. Each administrative pause keeps the period in force
   when it started, so a change applies only to pauses that start afterwards.
   The time the running pause's escape opens is readable.
 - **Which code a vault runs (#3204).** Every vault runs code chosen by one
@@ -232,7 +334,7 @@ remain governed by [Keeper Operations](KeeperOperations.md).
 
 ## App disclosures and keeper service
 
-- The protection page shows settings, payout queues, position-NFT lock state, request
+- The protection page shows settings, the payout queue, the holder lock, request
   codes, pending changes, destinations, and signers at one block. Failed or
   partly read lists are unknown, never empty. Unreadable settings expose no
   write controls; an unsupported deployment is unavailable, not protection off.

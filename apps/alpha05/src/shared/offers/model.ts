@@ -5,8 +5,9 @@
  * state decide that, and these functions only carry their answer to the
  * page, in order.
  */
+import { lifFeeOf, type LifTerms } from './initiationFee';
 import { ASSET_ERC20, OFFER_LENDER, roleTerms, type StoredOffer } from './acceptTerms';
-import type { AcceptErrorName, AcceptPreview, OfferState } from './reads';
+import type { AcceptErrorName, AcceptPreview, MatcherTerms, OfferState } from './reads';
 
 type Hex = `0x${string}`;
 
@@ -163,9 +164,23 @@ export interface AcceptFigures {
   owedAtDue: bigint;
 }
 
-export function acceptFigures(preview: AcceptPreview, durationDays: bigint, matcherBps: bigint): AcceptFigures {
+/**
+ * The share of an acceptance's initiation fee the protocol pays its
+ * submitter (#3649): the matcher's rate of the fee's part above the
+ * treasury floor. The floor is the initiation floor of the principal,
+ * rounded up, and the part above it is sized on the fee before any
+ * referral cut, as the protocol sizes it.
+ */
+export function matcherShare(preview: AcceptPreview, terms: MatcherTerms): bigint {
+  const fee = preview.lifEstimate + preview.referralCut;
+  const floor = (preview.effectivePrincipal * terms.floorBps + BPS - 1n) / BPS;
+  const above = fee > floor ? fee - floor : 0n;
+  return (above * terms.bps) / BPS;
+}
+
+export function acceptFigures(preview: AcceptPreview, durationDays: bigint, matcher: MatcherTerms): AcceptFigures {
   const interest = interestAtDue(preview.effectivePrincipal, preview.interestRateBps, durationDays);
-  const feeBack = (preview.lifEstimate * matcherBps) / BPS;
+  const feeBack = matcherShare(preview, matcher);
   return {
     principal: preview.effectivePrincipal,
     fee: preview.lifEstimate,
@@ -201,13 +216,13 @@ export interface LenderFigures {
   backAtDue: bigint;
 }
 
-export function lenderFigures(preview: AcceptPreview, durationDays: bigint, matcherBps: bigint, protocolShareBps: bigint): LenderFigures {
+export function lenderFigures(preview: AcceptPreview, durationDays: bigint, matcher: MatcherTerms, protocolShareBps: bigint): LenderFigures {
   const interest = interestAtDue(preview.effectivePrincipal, preview.interestRateBps, durationDays);
   const protocolShare = (interest * protocolShareBps) / BPS;
   return {
     principal: preview.effectivePrincipal,
     fee: preview.lifEstimate,
-    feeBack: (preview.lifEstimate * matcherBps) / BPS,
+    feeBack: matcherShare(preview, matcher),
     collateral: preview.collateralAmount,
     rateBps: preview.interestRateBps,
     interest,
@@ -216,10 +231,11 @@ export function lenderFigures(preview: AcceptPreview, durationDays: bigint, matc
   };
 }
 
-/** The fee the list rate gives before any discount (for the "list 0.2 %"
- *  line), rounded down like every protocol fee. */
-export function listFee(principal: bigint, feeBps: bigint): bigint {
-  return (principal * feeBps) / BPS;
+/** The fee the list rule gives before any discount, at the loan's term
+ *  (#3649: the initiation fee is term-scaled), rounded down like every
+ *  protocol fee. */
+export function listFee(principal: bigint, lif: LifTerms, termDays: number | bigint): bigint {
+  return lifFeeOf(principal, lif, termDays);
 }
 
 /** Which figure moved between two previews of the same offer, by the

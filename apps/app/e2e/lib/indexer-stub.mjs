@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { POSITION_ERC721_ABI } from '@vaipakam/lib/positionNft';
 import { SIGNED_OFFER_FIELDS } from '@vaipakam/lib/signedOfferWire';
+import { signedOfferMessage } from '@vaipakam/lib/signedOfferSet';
 import { fileURLToPath } from 'node:url';
 import {
   createPublicClient,
@@ -47,10 +48,14 @@ const E2E_DEPLOYMENT = JSON.parse(
   fs.readFileSync(path.resolve(HERE, '..', '.state', 'deployments.json'), 'utf8'),
 )[String(CHAIN_ID)];
 const DIAMOND = E2E_DEPLOYMENT.diamond;
-/** #3205 — the fixture deploys the standalone PositionNFT, so holders are
- *  read there; a retired (closed) token keeps its owner, so the Diamond's
- *  `isPositionRetired` answers "nobody holds it" as a burn used to. */
-const POSITION_NFT = E2E_DEPLOYMENT.positionNFT ?? DIAMOND;
+/** #3205 — holders are read at the fixture's PositionNFT; a retired (closed)
+ *  token keeps its owner, so the Diamond's `isPositionRetired` answers
+ *  "nobody holds it". A fixture record without `positionNFT` is refused
+ *  (#3321): the Diamond is never read as the NFT. */
+const POSITION_NFT = E2E_DEPLOYMENT.positionNFT;
+if (!POSITION_NFT) {
+  throw new Error(`e2e fixture deployment (chain ${CHAIN_ID}, Diamond ${DIAMOND}) names no positionNFT (#3321)`);
+}
 /** The block the fixture Diamond was deployed at — where a log scan starts. */
 const DEPLOY_BLOCK = BigInt(E2E_DEPLOYMENT.deployBlock ?? 0);
 const pub = createPublicClient({
@@ -685,18 +690,13 @@ const signedOffers = new Map();
  *  an older type recovers the wrong signer for EVERY order the app signs. */
 const SIGNED_OFFER_TYPES = { SignedOffer: SIGNED_OFFER_FIELDS };
 
-/** Wire shape (decimal strings / bools) → the typed message viem's
- *  typed-data encoder expects, field by field from the shared list (small
- *  uints as numbers, the rest as bigints). Throws on malformed numerics —
- *  the handler's catch answers 500, which is honest for a body the desk
- *  (the only client) never produces. */
+/** Wire shape → the typed message viem's typed-data encoder expects, by the
+ *  ONE shared converter (`@vaipakam/lib/signedOfferSet`). This stub kept its
+ *  own copy, which sent every bytes32 (the #3328 collection fields) through
+ *  `BigInt`, so viem refused every order and the stub answered
+ *  `invalid-order`. Throws on malformed numerics; the handler answers 400. */
 function signedTypedMessage(o) {
-  const m = {};
-  for (const { name, type } of SIGNED_OFFER_FIELDS) {
-    const v = o[name];
-    m[name] = type === 'address' ? v : type === 'bool' ? Boolean(v) : /^uint(8|16)$/.test(type) ? Number(v) : BigInt(v ?? 0);
-  }
-  return m;
+  return signedOfferMessage(o);
 }
 
 /** The order hash — the EIP-712 STRUCT hash, matching
@@ -760,7 +760,7 @@ function readBody(req) {
  * 365-day create horizon, `LibVaipakam.MAX_OFFER_EXPIRY_HORIZON` — and
  * `ranged-collateral-ratio` — ranged principal whose collateral fails
  * the matcher's constant-ratio vet,
- * `OfferMatchFacet._vetSignedOfferForMatch`; round-4 P2s:
+ * `SignedOfferFacet._vetSignedOfferForMatch`; round-4 P2s:
  * `cadence-interval-too-long` / `cadence-required-multiyear` — the two
  * STATIC gates of `OfferCreateFacet._validatePeriodicCadence`: a
  * non-None periodic cadence whose interval (Monthly 30d / Quarterly 90d

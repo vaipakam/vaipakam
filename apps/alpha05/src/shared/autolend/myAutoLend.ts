@@ -7,7 +7,7 @@
  */
 import type { PublicClient } from 'viem';
 import { readIntentGates, type IntentSummary } from '../offers/intents';
-import { fillPosture, INTENT, type FillPosture } from './autoLend';
+import { fillPosture, INTENT_VIEW, type FillPosture } from './autoLend';
 
 type Hex = `0x${string}`;
 
@@ -34,7 +34,7 @@ export async function readMyAutoLend(c: PublicClient, diamond: Hex, owner: Hex):
   const [[rows, total], gates] = await Promise.all([
     c.readContract({
       address: diamond,
-      abi: INTENT,
+      abi: INTENT_VIEW,
       functionName: 'getLenderIntentsByOwner',
       args: [owner, 0n, BigInt(MY_AUTOLEND_LIMIT)],
       blockNumber: block.number,

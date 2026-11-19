@@ -2,6 +2,8 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibInitiationFee} from "./LibInitiationFee.sol";
+import {LibProtectedAccount} from "./LibProtectedAccount.sol";
 import {LibPermit2, ISignatureTransfer} from "./LibPermit2.sol";
 import {LibEntitlement} from "./LibEntitlement.sol";
 
@@ -149,11 +151,12 @@ library LibRefinancePayoff {
         uint256 loanId,
         LibVaipakam.Loan storage loan,
         uint256 requestAmount,
+        uint256 requestTermDays,
         uint256 at
     ) internal view returns (uint256) {
         uint256 payoff = amountAt(loanId, loan, at);
-        uint256 minNet = requestAmount
-            - (requestAmount * LibVaipakam.cfgLoanInitiationFeeBps()) / LibVaipakam.BASIS_POINTS;
+        // #3649 — the fee for the request's term, the new loan's.
+        uint256 minNet = requestAmount - LibInitiationFee.feeOf(requestAmount, requestTermDays);
         return payoff > minNet ? payoff - minNet : 0;
     }
 
@@ -174,7 +177,13 @@ library LibRefinancePayoff {
     ) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[offerId];
-        if (offer.creator != msg.sender || offer.offerType != LibVaipakam.OfferType.Borrower) {
+        // #3526 — a creator a replacement retired may not attach one: its
+        // request can never be accepted.
+        if (
+            offer.creator != msg.sender ||
+            offer.offerType != LibVaipakam.OfferType.Borrower ||
+            LibProtectedAccount.manager(msg.sender) != msg.sender
+        ) {
             revert RefinancePayoffNotRequestCreator(offerId);
         }
         if (maxAmount == 0 || deadline < block.timestamp || signature.length == 0) {

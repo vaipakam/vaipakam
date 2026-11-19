@@ -83,7 +83,7 @@ Au moment où l'acceptation se déclenche :
   remboursement »
 - Le compteur du prêt démarre
 
-De modestes **frais d'initiation du prêt (`{liveValue:loanInitiationFeeBps}` %)** sont prélevés sur
+De modestes **frais d'initiation du prêt** (selon la durée du prêt ; voir les frais plus bas) sont prélevés sur
 le montant prêté et dirigés vers le trésor du protocole. L'emprunteur
 reçoit donc `{liveValue:exampleBorrowerReceives}` USDC, pas 1 000. (Détenir des **VPFI** réduit ces frais
 — à condition que l'emprunteur ait activé le réglage de remise et que
@@ -229,9 +229,13 @@ Deux frais, tous les deux modestes :
   principal). Sur un prêt à 30 jours à 8 % APR de 1 000 USDC, le
   prêteur gagne ~6,58 USDC d'intérêts, dont ~0,132 USDC sont la
   Commission de Rendement au taux par défaut.
-- **Frais d'Initiation du Prêt — `{liveValue:loanInitiationFeeBps}` %**
-  du montant prêté, payés par l'emprunteur à l'origination. Sur un
-  prêt de 1 000 USDC, c'est 2 USDC au taux par défaut.
+- **Frais d'Initiation du Prêt** — une part du montant prêté qui
+  dépend de la durée du prêt, payée par l'emprunteur à l'origination :
+  `{liveValue:loanInitiationFeeBps}` % pour une durée jusqu'à `{liveValue:lifBaseTermDays}` jours,
+  en hausse régulière jusqu'à `{liveValue:lifYearlyBps}` % à `{liveValue:lifYearDays}` jours,
+  puis `{liveValue:lifYearlyBps}` % par tranche de `{liveValue:lifYearDays}` jours de durée,
+  au prorata. Sur le prêt de 1 000 USDC à 30 jours ci-dessus, c'est
+  `{liveValue:exampleInitiationFee}` USDC.
 
 Les deux frais peuvent bénéficier d'une **remise allant jusqu'à
 `{liveValue:tier4DiscountBps}` %** en détenant du VPFI en vault
@@ -254,8 +258,8 @@ ci-dessus.
 > chaîne. Le montant dépend de la chaîne et de la congestion du
 > réseau au moment de la transaction, pas de la taille de votre
 > prêt. Les frais de protocole ci-dessus (Commission de Rendement
-> `{liveValue:treasuryFeeBps}` %, Frais d'Initiation du Prêt
-> `{liveValue:loanInitiationFeeBps}` %) sont entièrement séparés du
+> `{liveValue:treasuryFeeBps}` % et Frais d'Initiation du Prêt)
+> sont entièrement séparés du
 > gas et sont les seuls que le protocole lui-même prélève.
 
 ---
@@ -355,7 +359,7 @@ Si vous voulez **emprunter** :
    correspond à votre garantie et à l'APR que vous pouvez payer.
 3. Cliquez sur **Accepter**, signez deux transactions, et vous
    recevez le montant du prêt dans votre portefeuille (moins les
-   Frais d'Initiation de `{liveValue:loanInitiationFeeBps}` %).
+   Frais d'Initiation du Prêt).
 4. Remboursez avant la date d'échéance plus la période de grâce.
    Votre garantie repart vers votre portefeuille.
 

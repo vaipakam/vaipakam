@@ -112,6 +112,8 @@ contract CancelAfterPartialFillTest is SetupTest {
         vm.prank(creator);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: amountMin,
@@ -155,6 +157,8 @@ contract CancelAfterPartialFillTest is SetupTest {
         vm.prank(creator);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: amount,
@@ -659,7 +663,7 @@ contract CancelAfterPartialFillTest is SetupTest {
         uint256 borrowerOfferToken = OfferCancelFacet(address(diamond)).getOffer(borrowerOfferId).positionTokenId;
         uint256 loanId = OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, borrowerOfferId);
         uint64 matchBlock = uint64(vm.getBlockNumber());
-        uint64 matchReady = uint64(vm.getBlockTimestamp()) + 5;
+        uint64 matchReady = uint64(vm.getBlockTimestamp()) + 60; // #3710: the short wait
 
         // The lender offer is still open, but the match drew 5k of its
         // deposit into the loan, so its own token cools down too.
@@ -682,9 +686,10 @@ contract CancelAfterPartialFillTest is SetupTest {
         vm.prank(lender);
         OfferCancelFacet(address(diamond)).cancelOffer(lenderOfferId);
         uint64 atBlock = uint64(vm.getBlockNumber());
-        uint64 readyAt = uint64(vm.getBlockTimestamp()) + 5;
+        // #3710 — the holder's own cancel: its token takes the long wait.
+        uint64 readyAt = uint64(vm.getBlockTimestamp()) + 900;
 
-        (uint64 b, uint64 r) = VaipakamNFTFacet(address(diamond)).positionTransferCooldown(lenderOfferToken);
+        (, uint64 b, uint64 r) = VaipakamNFTFacet(address(diamond)).positionState(lenderOfferToken);
         assertEq(b, atBlock, "the cancel stamped the offer's token");
         assertEq(r, readyAt);
         _tryMove(
@@ -692,13 +697,15 @@ contract CancelAfterPartialFillTest is SetupTest {
             abi.encodeWithSelector(VaipakamNFTFacet.PositionCoolingDown.selector, lenderOfferToken, atBlock, readyAt)
         );
 
-        // The loan the offer's slice made: neither token is held.
+        // The loan the offer's slice made: its tokens wait from the loan's
+        // own start only; the offer's cancel does not hold them.
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
-        (b, r) = VaipakamNFTFacet(address(diamond)).positionTransferCooldown(loan.lenderTokenId);
-        assertEq(b, 0, "the offer's cancel does not hold its loan's lender token");
-        assertEq(r, 0);
-        (b, r) = VaipakamNFTFacet(address(diamond)).positionTransferCooldown(loan.borrowerTokenId);
-        assertEq(b, 0, "the filled offer's end does not hold its loan's borrower token");
+        (, b, r) = VaipakamNFTFacet(address(diamond)).positionState(loan.lenderTokenId);
+        assertEq(b, matchBlock, "the offer's cancel does not hold its loan's lender token");
+        assertEq(r, matchReady);
+        (, b, r) = VaipakamNFTFacet(address(diamond)).positionState(loan.borrowerTokenId);
+        assertEq(b, matchBlock, "the filled offer's end does not hold its loan's borrower token");
+        vm.warp(matchReady);
         _tryMove(loan.lenderTokenId, "");
         _tryMove(loan.borrowerTokenId, "");
 

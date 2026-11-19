@@ -412,9 +412,7 @@ contract SwapToRepayIntentFacet is
         if (!s.cfgIntentAllowedCollateralTokens[loan.collateralAsset])
             revert IntentTokenNotAllowed(loan.collateralAsset);
         LibAuth.requireBorrowerNftOwner(loan);
-        if (msg.sender == loan.lender) revert IVaipakamErrors.LenderCannotRepayOwnLoan();
-        if (LibPositionNFT.ownerOf(loan.lenderTokenId) == msg.sender)
-            revert IVaipakamErrors.LenderCannotRepayOwnLoan();
+        LibAuth.requireNotLenderSide(loan);
         uint256 graceEnd = LibLoanClock.graceEnd(loan);
         if (block.timestamp > graceEnd) revert RepaymentPastGracePeriod();
 

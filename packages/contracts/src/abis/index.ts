@@ -84,7 +84,25 @@ import ForcedSalePreviewFacetABI from './ForcedSalePreviewFacet.json';
 import OfferPriceGuardFacetABI from './OfferPriceGuardFacet.json';
 import SignedOfferMatchFacetABI from './SignedOfferMatchFacet.json';
 import LoanClockFacetABI from './LoanClockFacet.json';
+import MarketLedgerFacetABI from './MarketLedgerFacet.json';
+import InstantMarketFacetABI from './InstantMarketFacet.json';
+import InstantFillFacetABI from './InstantFillFacet.json';
+import InstantTakeoverFacetABI from './InstantTakeoverFacet.json';
+import OfferMaterializeFacetABI from './OfferMaterializeFacet.json';
+import CollectionOfferFacetABI from './CollectionOfferFacet.json';
+import ReadyBalanceFacetABI from './ReadyBalanceFacet.json';
+import FeeLevelsFacetABI from './FeeLevelsFacet.json';
+import SettlementLegFacetABI from './SettlementLegFacet.json';
+import RecoveryClawbackFacetABI from './RecoveryClawbackFacet.json';
+import CollateralConcentrationFacetABI from './CollateralConcentrationFacet.json';
+import CollateralLienFacetABI from './CollateralLienFacet.json';
+import StandingInstructionFacetABI from './StandingInstructionFacet.json';
+import IntegratorFacetABI from './IntegratorFacet.json';
+import StandingOfferCheckFacetABI from './StandingOfferCheckFacet.json';
+import ReferralFacetABI from './ReferralFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
+import ClaimViewFacetABI from './ClaimViewFacet.json';
+import LenderIntentViewFacetABI from './LenderIntentViewFacet.json';
 import OracleFacetABI from './OracleFacet.json';
 import OracleAdminFacetABI from './OracleAdminFacet.json';
 import VaultFactoryFacetABI from './VaultFactoryFacet.json';
@@ -223,6 +241,7 @@ import PriceGuardABI from './PriceGuard.json';
 // #3379 B2 — the vault code and its protected-mode rules (standalone).
 import VaipakamVaultImplementationABI from './VaipakamVaultImplementation.json';
 import VaultProtectionABI from './VaultProtection.json';
+import VaultRecoveryABI from './VaultRecovery.json';
 
 export {
   OfferCreateFacetABI,
@@ -278,7 +297,25 @@ export {
   OfferPriceGuardFacetABI,
   SignedOfferMatchFacetABI,
   LoanClockFacetABI,
+  MarketLedgerFacetABI,
+  InstantMarketFacetABI,
+  InstantFillFacetABI,
+  InstantTakeoverFacetABI,
+  OfferMaterializeFacetABI,
+  CollectionOfferFacetABI,
+  ReadyBalanceFacetABI,
+  FeeLevelsFacetABI,
+  SettlementLegFacetABI,
+  RecoveryClawbackFacetABI,
+  CollateralConcentrationFacetABI,
+  CollateralLienFacetABI,
+  StandingInstructionFacetABI,
+  IntegratorFacetABI,
+  StandingOfferCheckFacetABI,
+  ReferralFacetABI,
   ClaimFacetABI,
+  ClaimViewFacetABI,
+  LenderIntentViewFacetABI,
   OracleFacetABI,
   OracleAdminFacetABI,
   VaultFactoryFacetABI,
@@ -367,6 +404,7 @@ export {
   PriceGuardABI,
   VaipakamVaultImplementationABI,
   VaultProtectionABI,
+  VaultRecoveryABI,
 };
 
 import type { Abi } from 'viem';

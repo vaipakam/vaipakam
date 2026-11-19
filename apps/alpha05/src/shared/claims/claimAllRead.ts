@@ -13,7 +13,7 @@
  * whose read fails is null and the list names it as left out.
  */
 import type { Abi, PublicClient } from 'viem';
-import { AdminFacetABI, LenderIntentFacetABI, MulticallFacetABI, PayrollFacetABI, VaultDepositoryFacetABI } from '@vaipakam/contracts/abis';
+import { AdminFacetABI, LenderIntentViewFacetABI, MulticallFacetABI, PayrollFacetABI, VaultDepositoryFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
@@ -29,7 +29,7 @@ import { readHeldRewards, readPendingRewards, readVpfiToken } from './rewards';
 type Hex = `0x${string}`;
 
 const ADMIN = AdminFacetABI as Abi;
-const INTENT = LenderIntentFacetABI as Abi;
+const INTENT = LenderIntentViewFacetABI as Abi;
 const DEPOSITORY = VaultDepositoryFacetABI as Abi;
 const PAYROLL = PayrollFacetABI as Abi;
 export const MULTICALL = MulticallFacetABI as Abi;
@@ -41,7 +41,7 @@ const INTENT_PAGES = 4;
  *  staff payroll, a short list. */
 export const PAYROLL_MAX_STREAMS = 100;
 
-type IntentRow = { intent: { owner: Hex; lendingAsset: Hex; collateralAsset: Hex; availableCapital: bigint }; active: boolean };
+type IntentRow = { intent: { owner: Hex; lendingAsset: Hex; collateralAsset: Hex; slot: number; availableCapital: bigint }; active: boolean };
 
 async function readIntents(c: PublicClient, diamond: Hex, account: Hex, blockNumber: bigint): Promise<ClaimAllInputs['intents']> {
   const rows: NonNullable<ClaimAllInputs['intents']>['rows'] = [];
@@ -54,7 +54,7 @@ async function readIntents(c: PublicClient, diamond: Hex, account: Hex, blockNum
       args: [account, offset, INTENT_PAGE],
       blockNumber,
     })) as readonly [readonly IntentRow[], bigint];
-    for (const r of page) rows.push({ lendingAsset: r.intent.lendingAsset, collateralAsset: r.intent.collateralAsset, available: r.intent.availableCapital, active: r.active });
+    for (const r of page) rows.push({ lendingAsset: r.intent.lendingAsset, collateralAsset: r.intent.collateralAsset, slot: Number(r.intent.slot), available: r.intent.availableCapital, active: r.active });
     offset += INTENT_PAGE;
     if (offset >= total) return { rows, complete: true };
   }

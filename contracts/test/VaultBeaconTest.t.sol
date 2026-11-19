@@ -6,6 +6,7 @@ import {VaultProtection} from "../src/vault/VaultProtection.sol";
 import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {Test, console} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
+import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
@@ -201,6 +202,13 @@ contract VaultBeaconTest is Test {
             "a pin requested at proposal time must mature before the change");
     }
 
+    /// #3441 — escape period >= vault code delay: a vault fix registered when
+    /// a pause starts is live before the pause's escape route opens.
+    function test_escapePeriodNeverOpensBeforeAVaultFixCanLand() public view {
+        assertGe(LibPausable.MIN_ESCAPE_GRACE, beacon.MIN_CODE_DELAY(),
+            "the escape period's floor must be at least the vault code delay");
+    }
+
     /// #3421 — a current-version change and a revoke each wait the full 7
     /// days: one second short is refused with the time it becomes due.
     function test_changeAndRevokeWaitSevenDays() public {
@@ -309,6 +317,14 @@ contract VaultBeaconTest is Test {
         vm.expectRevert(abi.encodeWithSelector(VaultBeacon.VersionNotLive.selector, uint256(9)));
         beacon.guardianRevokeVersion(1, 9);
 
+        // Version 2 was registered in setUp, at this same moment: too new.
+        uint256 usableAt = beacon.versionUsableAt(2);
+        assertEq(usableAt, block.timestamp + beacon.MIN_CODE_DELAY(), "usable a code delay after registration");
+        vm.prank(guardian);
+        vm.expectRevert(abi.encodeWithSelector(VaultBeacon.VersionTooNew.selector, uint256(2), usableAt));
+        beacon.guardianRevokeVersion(1, 2);
+        vm.warp(usableAt);
+
         vm.prank(stranger);
         vm.expectRevert(abi.encodeWithSelector(VaultBeacon.NotGuardian.selector, stranger));
         beacon.guardianRevokeVersion(1, 2);
@@ -317,6 +333,32 @@ contract VaultBeaconTest is Test {
         beacon.guardianRevokeVersion(1, 2);
         assertEq(beacon.currentVersionId(), 2);
         assertEq(_marker(vaultA), 2);
+    }
+
+    /// #3436 invariant 1: no version becomes current until a full code delay
+    /// after its registration, on every path. A Timelock that registers code
+    /// cannot have the guardian (or a short proposal) run it sooner.
+    function test_noVersionBecomesCurrentBeforeItHasBeenVisibleACodeDelay() public {
+        vm.warp(block.timestamp + 30 days);
+        address v4 = address(new VaultImplV3Marker());
+        uint256 id4 = beacon.registerVersion(v4);
+        uint256 usableAt = beacon.versionUsableAt(id4);
+        assertEq(usableAt, block.timestamp + beacon.MIN_CODE_DELAY());
+
+        // Guardian path: refused while too new, even while paused.
+        AdminFacet(address(diamond)).pause();
+        vm.prank(guardian);
+        vm.expectRevert(abi.encodeWithSelector(VaultBeacon.VersionTooNew.selector, id4, usableAt));
+        beacon.guardianRevokeVersion(1, id4);
+        vm.warp(usableAt - 1);
+        vm.prank(guardian);
+        vm.expectRevert(abi.encodeWithSelector(VaultBeacon.VersionTooNew.selector, id4, usableAt));
+        beacon.guardianRevokeVersion(1, id4);
+        vm.warp(usableAt);
+        vm.prank(guardian);
+        beacon.guardianRevokeVersion(1, id4);
+        assertEq(beacon.currentVersionId(), id4);
+        assertEq(beacon.versionUsableAt(99), 0, "no such version");
     }
 
     // ─── Registration ────────────────────────────────────────────────────

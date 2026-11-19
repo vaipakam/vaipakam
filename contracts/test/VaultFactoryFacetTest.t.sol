@@ -856,14 +856,14 @@ contract VaultFactoryFacetTest is Test {
     // ─── Additional branch coverage ─────────────────────────────────────────
 
     /// @dev #905 — the implementation contract locks its own initializer at
-    ///      construction, so nobody can become its owner by initializing it,
+    ///      construction, so nobody can name a Diamond of their choosing by initializing it,
     ///      whatever path deployed it.
     function testVaultImplementationCannotBeInitializedDirectly() public {
         VaipakamVaultImplementation impl = new VaipakamVaultImplementation(address(0), LibTestVaultEndpoints.none());
         vm.prank(user2);
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         impl.initialize(user2, address(impl));
-        assertEq(impl.owner(), address(0), "the implementation has no owner");
+        assertEq(impl.vaultOwner(), address(0), "the implementation records no owner wallet");
     }
 
     /// @dev #905 — the template the factory deploys is locked too, and the
@@ -874,7 +874,6 @@ contract VaultFactoryFacetTest is Test {
         VaipakamVaultImplementation(template).initialize(user2, user2);
 
         address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
-        assertEq(VaipakamVaultImplementation(vault).owner(), address(diamond), "the proxy is owned by the Diamond");
         assertEq(VaipakamVaultImplementation(vault).vaultOwner(), user1, "the vault records its owner wallet");
         // #3204 — a beacon proxy cannot be initialized twice either.
         vm.expectRevert(Initializable.InvalidInitialization.selector);

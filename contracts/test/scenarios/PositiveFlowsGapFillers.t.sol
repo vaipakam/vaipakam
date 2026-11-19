@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestCollateralCut} from "../helpers/LibTestCollateralCut.sol";
+import {LibTestTermsCut} from "../helpers/LibTestTermsCut.sol";
+import {LibTestClaimViewCut} from "../helpers/LibTestClaimViewCut.sol";
 import {LibTestProtectedCut} from "../helpers/LibTestProtectedCut.sol";
 import {LibTestPositionNFT} from "../helpers/LibTestPositionNFT.sol";
+import {LibTestSettlementLeg} from "../helpers/LibTestSettlementLeg.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "../helpers/LibTestVaultBeacon.sol";
 import {VaipakamDiamond} from "../../src/VaipakamDiamond.sol";
@@ -195,8 +199,12 @@ contract PositiveFlowsGapFillers is Test {
         // is NOT used here). No borrower hold-tier consent in this fixture ⇒
         // full (undiscounted) LIF. Net: principal − 99% of LIF (treasury
         // share); the 1% matcher cut kicks back to the acceptor (borrower).
-        uint256 expectedMatcherCut =
-            (expectedFee * LibVaipakam.LIF_MATCHER_FEE_BPS) / BASIS_POINTS;
+        // #3649 stage 3 — the matcher's share is sized above the treasury
+        // floor (0.1% of the principal, rounded up).
+        uint256 expectedMatcherCut = (
+            (expectedFee - (PRINCIPAL * LibVaipakam.FEE_FLOOR_INITIATION_BPS_DEFAULT + BASIS_POINTS - 1) / BASIS_POINTS)
+                * LibVaipakam.LIF_MATCHER_FEE_BPS
+        ) / BASIS_POINTS;
         uint256 expectedTreasuryCut = expectedFee - expectedMatcherCut;
         uint256 expectedBorrowerCredit =
             PRINCIPAL - expectedTreasuryCut; // includes their matcher kickback
@@ -356,6 +364,8 @@ contract PositiveFlowsGapFillers is Test {
         vm.prank(lender);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockUsdc,
                 amount: PRINCIPAL,
@@ -565,7 +575,11 @@ contract PositiveFlowsGapFillers is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
+        cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
+        cuts = LibTestTermsCut.withTermsHost(cuts); // #3734
+        cuts = LibTestClaimViewCut.withClaimView(cuts); // the claim reads
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
+        LibTestSettlementLeg.install(address(diamond)); // #3669
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
     }

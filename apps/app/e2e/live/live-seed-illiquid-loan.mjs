@@ -131,6 +131,7 @@ import {
 } from './seedLoanExpected.mjs';
 import { createWritePlan } from './writePlan.mjs';
 import { readWatchedConfig } from './watchedConfig.mjs';
+import { describeLifTerms, lifFeeOf, lifRatePercentText } from './initiationFeeRule.mjs';
 import { readOfferGate, readRiskGateParties } from './riskGateReadiness.mjs';
 import { configChanges } from './observation.mjs';
 import { nonceBaseline, reconcileNonce } from './noWriteSettlement.mjs';
@@ -536,16 +537,17 @@ try {
         'live-refinance.mjs would BLOCK on its balance; lower SEED_PRINCIPAL or fund that wallet',
     );
   }
-  // The initiation fee at the LIVE rate is the most the borrower can be
-  // charged; a VPFI hold-tier discount (resolved by the contract at accept,
-  // not read here) can only lower it. Both figures are stated as such.
-  const lifCap = (principal * BigInt(watched.lifBps)) / 10_000n;
+  // The initiation fee at the LIVE term rule, at this loan's term (#3649 —
+  // never the base rate alone), is the most the borrower can be charged; a
+  // VPFI hold-tier discount (resolved by the contract at accept, not read
+  // here) can only lower it. Both figures are stated as such.
+  const lifCap = lifFeeOf(principal, watched.lifTerms, DAYS);
   console.log(
     '\nFUNDS THIS RUN MOVES (Base Sepolia, testnet tokens):\n' +
       (pre.needsMint ? `  - faucet mints ${FAUCET_ILLIQUID_UNITS} ${cSym} to the borrower ${BORROWER}\n` : '') +
       `  - ${COLLATERAL_RAW} ${cSym} leave the borrower's wallet into its own vault, escrowed under the request\n` +
       `  - at accept, ${PRINCIPAL_RAW} WETH leave the lender ${LENDER}; the loan-initiation fee is taken from it in WETH: ` +
-      `at most ${formatUnits(lifCap, pre.pDec)} WETH (${Number(watched.lifBps) / 100}% live rate — lower if the borrower's VPFI hold tier discounts it, which the contract decides at accept), ` +
+      `at most ${formatUnits(lifCap, pre.pDec)} WETH (${lifRatePercentText(watched.lifTerms, DAYS)}% at ${DAYS} days under the live term rule: ${describeLifTerms(watched.lifTerms)} — lower if the borrower's VPFI hold tier discounts it, which the contract decides at accept), ` +
       `so the borrower receives at least ${formatUnits(principal - lifCap, pre.pDec)} WETH\n` +
       `  - terms: ${RATE_PCT}% a year ceiling, ${DAYS} days, full-term interest (the form's default), collateral handed over in kind on default\n` +
       '  - gas from both wallets',

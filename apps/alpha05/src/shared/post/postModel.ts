@@ -26,6 +26,7 @@
  * part is left; that rest then returns to the lender's wallet.
  */
 import { interestAtDue, listFee } from '../offers/model';
+import type { LifTerms } from '../offers/initiationFee';
 
 import type { Cadence } from '../offers/cadence';
 import type { TariffChoice } from '../offers/fullTariff';
@@ -393,6 +394,10 @@ export function createParams(p: ParsedPost, pair: PostPair, expiry: bigint, side
     allowsParallelSale: false,
     refinanceTargetLoanId: 0n,
     ...lifecycleTerms(p),
+    // #3621 — this app posts no lender "either" offers; #3682 — and names
+    // no integrator on its own offers.
+    lifecycleFlex: 0,
+    integrator: ZERO,
   } as const;
 }
 
@@ -414,11 +419,12 @@ export function isRanged(p: Pick<ParsedPost, 'amount' | 'amountMax' | 'collatera
   return p.amountMax !== p.amount || p.collateralFloor !== p.collateral;
 }
 
-/** OFF-19: the fee is the list rate on the amount, charged once in the
- *  lending asset when a lender takes the request; a discount tier can only
- *  lower it, and the tier counts as of that moment. */
-export function postFigures(amount: bigint, rateBps: bigint, durationDays: number, lifBps: bigint): PostFigures {
-  const fee = listFee(amount, lifBps);
+/** OFF-19: the fee is the list rule's rate at the term (#3649) on the
+ *  amount, charged once in the lending asset when a lender takes the
+ *  request; a discount tier can only lower it, and the tier counts as of
+ *  that moment. */
+export function postFigures(amount: bigint, rateBps: bigint, durationDays: number, lif: LifTerms): PostFigures {
+  const fee = listFee(amount, lif, durationDays);
   const interest = interestAtDue(amount, rateBps, BigInt(durationDays));
   return { received: amount - fee, fee, interest, owedAtDue: amount + interest };
 }
@@ -440,8 +446,8 @@ export interface LenderPostFigures {
   backAtDue: bigint;
 }
 
-export function lenderPostFigures(amount: bigint, rateBps: bigint, durationDays: number, lifBps: bigint, shareBps: bigint): LenderPostFigures {
-  const { received, fee, interest } = postFigures(amount, rateBps, durationDays, lifBps);
+export function lenderPostFigures(amount: bigint, rateBps: bigint, durationDays: number, lif: LifTerms, shareBps: bigint): LenderPostFigures {
+  const { received, fee, interest } = postFigures(amount, rateBps, durationDays, lif);
   const protocolShare = (interest * shareBps) / 10_000n;
   return { borrowerGets: received, fee, interest, protocolShare, backAtDue: amount + interest - protocolShare };
 }

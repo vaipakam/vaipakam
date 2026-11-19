@@ -27,9 +27,9 @@ interface AutoLendFormProps {
   onCancel: () => void;
   /** Where the typed form is kept (the Lend page's by default). */
   flowKey?: string;
-  /** A change of the Auto-lend already on the pair: the form opens on its
-   *  recorded limits (`initial`), and adding money is optional. */
-  change?: { initial: AutoLendInput; restart: boolean };
+  /** A change of an Auto-lend already on the pair, in its slot: the form
+   *  opens on its recorded limits (`initial`), and adding money is optional. */
+  change?: { initial: AutoLendInput; restart: boolean; slot: number };
 }
 
 /**
@@ -91,7 +91,7 @@ export function AutoLendForm({ chain, own, lending, collateral, meta, onReview, 
   const confirm = () => {
     setAsked(true);
     if (!parsed || !parsed.ok) return;
-    onReview(autoLendDraft(lending, collateral, parsed.parsed, isChange));
+    onReview(autoLendDraft(lending, collateral, parsed.parsed, isChange, change?.slot));
   };
 
   const field = (f: AutoLendField, label: string, hint: string, value: string, onChange: (v: string) => void, mode: 'decimal' | 'numeric' = 'decimal') => (

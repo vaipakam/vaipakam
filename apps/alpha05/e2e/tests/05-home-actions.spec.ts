@@ -10,7 +10,7 @@
 import { erc20Abi, keccak256, toHex, type Hex } from 'viem';
 import { scenario } from '../lib/chain';
 import { accountFor } from '../lib/wallets';
-import { connectWallet, expect, test } from '../lib/wallet';
+import { closeOutOnly, connectWallet, expect, test } from '../lib/wallet';
 import type { Page } from '@playwright/test';
 
 /** Nothing on the page is wider than the window (a phone never scrolls sideways). */
@@ -126,10 +126,13 @@ test('with Terms in force, turning the discount on asks for them first; turning 
   // every test, so later specs and the other project start with none.
   await sc.diamondWrite('borrower', 'setVPFIDiscountConsent', [false]);
   const hash = keccak256(toHex('alpha05 e2e Terms v1'));
-  await sc.diamondWrite('admin', 'setCurrentTos', [1, hash]);
+  await sc.diamondWrite('admin', 'publishTos', [1, hash]);
   const { page } = await launchWallet('borrower');
   await page.goto('/');
   await connectWallet(page);
+  // Declined at Connect: the wallet keeps only its close-out actions, and
+  // every action that takes on more keeps its own Terms gate.
+  await closeOutOnly(page);
   const section = page.getByRole('region', { name: 'Fee discount' });
   await expect(section).toHaveAttribute('data-consent', 'off', { timeout: 60_000 });
 
@@ -156,9 +159,10 @@ test('with Terms in force, turning the discount on asks for them first; turning 
   await section.getByRole('button', { name: 'Close' }).click();
   await expect(section).toHaveAttribute('data-consent', 'on', { timeout: 30_000 });
 
-  // A newer version: turning OFF still asks nothing.
-  await sc.diamondWrite('admin', 'setCurrentTos', [2, keccak256(toHex('alpha05 e2e Terms v2'))]);
+  // A small update: the wallet stays current, and turning OFF asks nothing.
+  await sc.diamondWrite('admin', 'publishTos', [2, keccak256(toHex('alpha05 e2e Terms v2'))]);
   await page.reload();
+  await expect(page.getByTestId('terms-update')).toHaveAttribute('data-due', 'no', { timeout: 60_000 });
   await expect(section).toHaveAttribute('data-consent', 'on', { timeout: 60_000 });
   await section.getByRole('button', { name: 'Turn off' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);

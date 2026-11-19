@@ -4,7 +4,7 @@
  *
  * Mirrors `contracts/src/libraries/LibSignedOffer.sol` exactly:
  *
- *   - `SIGNED_OFFER_TYPES.SignedOffer` lists the 35 fields in the SAME order
+ *   - `SIGNED_OFFER_TYPES.SignedOffer` lists the 36 fields in the SAME order
  *     as the Solidity struct / `SIGNED_OFFER_TYPEHASH` type string
  *     (LibSignedOffer.sol:39-105). Field order is load-bearing — any drift
  *     silently changes every hash. The unit test
@@ -37,15 +37,21 @@ import {
   SIGNED_OFFER_FIELD_NAMES,
   type SignedOrderWire,
 } from '@vaipakam/lib/signedOfferWire';
-import { signedDigest, type SignedOfferDomain, type SignedOfferPlacement } from '@vaipakam/lib/signedOfferSet';
+import {
+  signedDigest,
+  signedOfferMessage,
+  type SignedOfferDomain,
+  type SignedOfferMessage,
+  type SignedOfferPlacement,
+} from '@vaipakam/lib/signedOfferSet';
 
-/** The 35-field SignedOffer typed-data description — struct order EXACTLY as
+/** The 36-field SignedOffer typed-data description — struct order EXACTLY as
  *  `LibSignedOffer.SignedOffer` declares it (enums ⇒ uint8, GTT ⇒ uint64).
  *  The list itself is `@vaipakam/lib/signedOfferWire`'s, the one statement of
  *  the stored order the POST route and the restore converter share (#1481). */
 export const SIGNED_OFFER_TYPES = { SignedOffer: SIGNED_OFFER_FIELDS } as const;
 
-/** The 35 field names in canonical struct order, and the wire-shape order:
+/** The 36 field names in canonical struct order, and the wire-shape order:
  *  every uint as a decimal string, addresses as lowercase 0x-40-hex, bools as
  *  booleans. That is BOTH the POST body shape and the stored `order_json`
  *  shape — takers replay it verbatim into `acceptSignedOffer`. */
@@ -70,44 +76,8 @@ export function signedOfferDomain(
  *  viem's typed-data encoder expects. Callers must have validated the wire
  *  shape first (`BigInt()` throws on malformed input by design — the route's
  *  strict per-field validation runs before any hashing). */
-export function toTypedMessage(order: SignedOrderWire) {
-  return {
-    offerType: Number(order.offerType),
-    lendingAsset: order.lendingAsset as Address,
-    amount: BigInt(order.amount),
-    amountMax: BigInt(order.amountMax),
-    interestRateBps: BigInt(order.interestRateBps),
-    interestRateBpsMax: BigInt(order.interestRateBpsMax),
-    collateralAsset: order.collateralAsset as Address,
-    collateralAmount: BigInt(order.collateralAmount),
-    collateralAmountMax: BigInt(order.collateralAmountMax),
-    durationDays: BigInt(order.durationDays),
-    assetType: Number(order.assetType),
-    collateralAssetType: Number(order.collateralAssetType),
-    tokenId: BigInt(order.tokenId),
-    quantity: BigInt(order.quantity),
-    collateralTokenId: BigInt(order.collateralTokenId),
-    collateralQuantity: BigInt(order.collateralQuantity),
-    prepayAsset: order.prepayAsset as Address,
-    allowsPartialRepay: order.allowsPartialRepay,
-    allowsPrepayListing: order.allowsPrepayListing,
-    allowsParallelSale: order.allowsParallelSale,
-    expiresAt: BigInt(order.expiresAt),
-    fillMode: Number(order.fillMode),
-    periodicInterestCadence: Number(order.periodicInterestCadence),
-    refinanceTargetLoanId: BigInt(order.refinanceTargetLoanId),
-    useFullTermInterest: order.useFullTermInterest,
-    creatorFull: order.creatorFull,
-    creatorMaxCStar: BigInt(order.creatorMaxCStar),
-    creatorAllowFullDowngrade: order.creatorAllowFullDowngrade,
-    maxTreasuryFeeBps: Number(order.maxTreasuryFeeBps),
-    maxLoanInitiationFeeBps: Number(order.maxLoanInitiationFeeBps),
-    allowedTaker: order.allowedTaker as Address,
-    coSigner: order.coSigner as Address,
-    signer: order.signer as Address,
-    nonce: BigInt(order.nonce),
-    deadline: BigInt(order.deadline),
-  };
+export function toTypedMessage(order: SignedOrderWire): SignedOfferMessage {
+  return signedOfferMessage(order);
 }
 
 /** The order hash — the EIP-712 STRUCT hash (`hashStruct`), matching

@@ -998,7 +998,7 @@ const LOCK_EARLY_WITHDRAWAL_SALE = 2;
  * valid deployed behaviour a regression (#1529 review round 6).
  *
  * Both follow the app's own reads: the offset lock from
- * `positionLock(borrowerTokenId)`, the grace deadline from
+ * `positionRoute(borrowerTokenId)`, the grace deadline from
  * `getGraceBuckets` matched on the loan's duration and falling back to
  * the compile-time schedule when the chain publishes no buckets.
  *
@@ -1217,7 +1217,7 @@ async function saleLockedOn(lenderTokenId, loanId, blockNumber, account) {
   // ROUND 8 P2 — THE LOCK IS LISTING-WIDE; THE UNMOUNT IS ACCEPTANCE-
   // SPECIFIC.
   //
-  // `createLoanSaleOffer` stamps `positionLock` for the WHOLE listing
+  // `createLoanSaleOffer` stamps `positionRoute` for the WHOLE listing
   // lifecycle, but `PositionDetails` unmounts the card only on
   // `saleHold.data === 'accepted'`. Treating the raw lock as the excuse
   // therefore forgave a genuinely missing card on an ordinary LIVE
@@ -1257,7 +1257,7 @@ async function saleLockedOn(lenderTokenId, loanId, blockNumber, account) {
     // — an unread run reported as a failure of the drive, over a reply the
     // chain did give us.
     //
-    // Decided by the same test the `positionLock` catch twenty lines above
+    // Decided by the same test the `positionRoute` catch twenty lines above
     // uses for exactly this split, so the two catches in one function
     // answer the question the same way. Anything that is NOT a revert
     // still throws: a dead endpoint or a programming error in this drive
@@ -1804,7 +1804,7 @@ if (!observed) {
   // read that failed would hand the run to a worse candidate on no
   // evidence.
   //
-  // The cost is one `positionLock` read per eligible Active loan across
+  // The cost is one `positionRoute` read per eligible Active loan across
   // all authorities rather than for one authority. `saleLockedOn`
   // returns false on that read alone for an unlocked position and only
   // simulates for a locked one, so the common case stays a single cheap
@@ -3371,7 +3371,7 @@ async function jumpabilitySnapshot(loan) {
         args: [loan.id],
       }),
       pub.getBlock({ blockTag: 'latest' }).then((b) => b.timestamp),
-      positionLockOf(loan.lenderTokenId),
+      positionRouteOf(loan.lenderTokenId),
       lenderAuthorityOf(loan),
       sanctionedAuthorityUncached(observed),
     ]);
@@ -3419,7 +3419,7 @@ async function jumpabilitySnapshot(loan) {
  * to `discovery()` and reads BLOCKED, which is the honest verdict for
  * "we could not look".
  */
-async function positionLockOf(tokenId) {
+async function positionRouteOf(tokenId) {
   return Number(
     await readRoute(tokenId),
   );
@@ -4434,7 +4434,7 @@ async function observeForcedClose(page, loan, headBeforeNav, pageProviderSample)
   // common block, and each RPC resolves `latest` independently. A
   // `completeLoanSale` landing mid-flight can therefore produce a TORN
   // snapshot — `ownerOf` answering from before the sale while
-  // `positionLock` answers from after it — yielding a held / Active /
+  // `positionRoute` answers from after it — yielding a held / Active /
   // unlocked combination that never existed on any single block. The
   // page, which was correct to omit the card while the accepted sale
   // was pending, would then be reported as missing it.

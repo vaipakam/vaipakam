@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {SignatureChecker} from
     "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibInitiationFee} from "./LibInitiationFee.sol";
 import {LibTiming} from "./LibTiming.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
@@ -64,6 +65,12 @@ library LibSignedOffer {
         uint8 periodicInterestCadence; // LibVaipakam.PeriodicInterestCadence
         uint256 refinanceTargetLoanId;
         bool useFullTermInterest;
+        // #3621 — the lender's "either" marks ({LibVaipakam.Offer.lifecycleFlex}),
+        // signed so a match cannot widen what the maker agreed to take.
+        uint8 lifecycleFlex;
+        // #3682 — the integrator a BORROWER's signed offer names (address(0) =
+        // none), signed so neither a matcher nor a taker can set or change it.
+        address integrator;
         // #1949 — the MAKER's Full tariff opt-in, carried on the artifact they
         // sign: a signed offer is materialized and accepted in one transaction,
         // so the post-create setter (`ProfileFacet.setOfferCreatorFullTariff`)
@@ -92,6 +99,25 @@ library LibSignedOffer {
         address signer; // MUST equal the recovered / 1271 signer
         uint256 nonce; // per-signer batch-cancel nonce
         uint256 deadline; // signature validity deadline (unix-seconds)
+        // #3328 — a collection offer: a lender offer against a SET of NFT
+        // tokens for several loans, one token per loan. `setKind` 0 (None)
+        // is an ordinary offer and every field below is then zero; any other
+        // kind is filled only through `CollectionOfferFacet`
+        // ({fillFailure}'s route rule). `exclusionsHash` is
+        // keccak256(abi.encodePacked(ids)) of the excluded ids (zero when
+        // none); the fill presents the ids. `loans` bounds how many fills the
+        // order's ledger admits; `startTime` is when the maker signed it, and
+        // the order's expiry and deadline may be no later than it plus the
+        // governed maximum, so an order withheld for months is expired.
+        uint8 setKind; // LibVaipakam.CollateralSetKind
+        uint256 setLow;
+        uint256 setHigh;
+        bytes32 setRoot;
+        uint32 setListCount;
+        bytes32 setListHash;
+        bytes32 exclusionsHash;
+        uint16 loans;
+        uint64 startTime;
     }
 
     /// @dev keccak256 of the canonical type string. The string MUST list the
@@ -125,6 +151,8 @@ library LibSignedOffer {
         "uint8 periodicInterestCadence,"
         "uint256 refinanceTargetLoanId,"
         "bool useFullTermInterest,"
+        "uint8 lifecycleFlex,"
+        "address integrator,"
         "bool creatorFull,"
         "uint256 creatorMaxCStar,"
         "bool creatorAllowFullDowngrade,"
@@ -134,7 +162,16 @@ library LibSignedOffer {
         "address coSigner,"
         "address signer,"
         "uint256 nonce,"
-        "uint256 deadline"
+        "uint256 deadline,"
+        "uint8 setKind,"
+        "uint256 setLow,"
+        "uint256 setHigh,"
+        "bytes32 setRoot,"
+        "uint32 setListCount,"
+        "bytes32 setListHash,"
+        "bytes32 exclusionsHash,"
+        "uint16 loans,"
+        "uint64 startTime"
         ")"
     );
 
@@ -176,6 +213,7 @@ library LibSignedOffer {
         "uint8 periodicInterestCadence,"
         "uint256 refinanceTargetLoanId,"
         "bool useFullTermInterest,"
+        "uint8 lifecycleFlex,"
         "bool creatorFull,"
         "uint256 creatorMaxCStar,"
         "bool creatorAllowFullDowngrade,"
@@ -185,7 +223,16 @@ library LibSignedOffer {
         "address coSigner,"
         "address signer,"
         "uint256 nonce,"
-        "uint256 deadline"
+        "uint256 deadline,"
+        "uint8 setKind,"
+        "uint256 setLow,"
+        "uint256 setHigh,"
+        "bytes32 setRoot,"
+        "uint32 setListCount,"
+        "bytes32 setListHash,"
+        "bytes32 exclusionsHash,"
+        "uint16 loans,"
+        "uint64 startTime"
         ")"
     );
 
@@ -224,10 +271,12 @@ library LibSignedOffer {
         "uint256 collateralTokenId,uint256 collateralQuantity,address prepayAsset,"
         "bool allowsPartialRepay,bool allowsPrepayListing,bool allowsParallelSale,"
         "uint64 expiresAt,uint8 fillMode,uint8 periodicInterestCadence,"
-        "uint256 refinanceTargetLoanId,bool useFullTermInterest,bool creatorFull,"
+        "uint256 refinanceTargetLoanId,bool useFullTermInterest,uint8 lifecycleFlex,address integrator,bool creatorFull,"
         "uint256 creatorMaxCStar,bool creatorAllowFullDowngrade,uint16 maxTreasuryFeeBps,"
         "uint16 maxLoanInitiationFeeBps,address allowedTaker,address coSigner,address signer,"
-        "uint256 nonce,uint256 deadline)"
+        "uint256 nonce,uint256 deadline,uint8 setKind,uint256 setLow,uint256 setHigh,"
+        "bytes32 setRoot,uint32 setListCount,bytes32 setListHash,bytes32 exclusionsHash,"
+        "uint16 loans,uint64 startTime)"
         "TokenPermissions(address token,uint256 amount)";
 
     bytes32 private constant EIP712_DOMAIN_TYPEHASH = keccak256(
@@ -290,9 +339,22 @@ library LibSignedOffer {
     error SignedOfferTakerNotAllowed(address taker, address allowedTaker);
     error SignedOfferCoSignatureInvalid();
     error SignedOfferConsumed(bytes32 orderHash);
+    /// @notice #3328 — the order is a collection offer and this route is not
+    ///         `CollectionOfferFacet`'s, or it is an ordinary offer presented
+    ///         to the collection route.
+    error SignedOfferWrongRoute(uint8 setKind);
     /// @notice The maker's signature did not recover to / 1271-validate
     ///         against `o.signer`.
     error SignedOfferBadSignature();
+    /// @notice The match route's slice: `fillAmount` is zero, exceeds the
+    ///         remaining, is below the signed minimum or leaves a remainder
+    ///         below it, or breaks the signer's AON intent (an AON offer must
+    ///         be filled in full).
+    error SignedOfferFillInvalid(uint256 fillAmount, uint256 remaining);
+    /// @notice A matched signed offer's collateral:principal ratio is not
+    ///         constant across its range (collMin:amount != collMax:amountMax).
+    ///         A non-constant ratio is not sliceable; use separate offers or AON.
+    error SignedOfferRatioNotConstant();
 
     /// @notice Why a fill of `o` would be refused before the maker's own
     ///         signature is checked, or `None`. One statement of those checks:
@@ -310,7 +372,10 @@ library LibSignedOffer {
         TreasuryFeeAboveCap,
         LoanInitiationFeeAboveCap,
         TakerNotAllowed,
-        CoSignatureInvalid
+        CoSignatureInvalid,
+        // #3328 — a collection offer outside the collection route, or an
+        // ordinary offer inside it. Checked first.
+        WrongRoute
     }
 
     /// @notice The first refusal of a fill of `fillAmount` of `o` (order hash
@@ -328,8 +393,13 @@ library LibSignedOffer {
         bytes32 orderHash,
         address taker,
         uint256 fillAmount,
-        FillAuth calldata auth
+        FillAuth calldata auth,
+        bool collectionRoute
     ) internal view returns (VetFailure) {
+        // #3328 — a collection offer fills only through the collection route,
+        // one token per loan; every other route would read it as one loan of
+        // its whole ceiling.
+        if ((o.setKind != 0) != collectionRoute) return VetFailure.WrongRoute;
         if (!fullWellFormed(o)) return VetFailure.FullNeedsMaxCStar;
         if (LibTiming.deadlinePassed(o.deadline)) return VetFailure.DeadlinePassed;
         // The offer-expiry rule every other offer path reads ("expired AT and
@@ -339,7 +409,8 @@ library LibSignedOffer {
         if (s.signedOfferNonceUsed[o.signer][o.nonce]) return VetFailure.NonceInvalidated;
         if (o.nonce < s.signedOfferNonceFloor[o.signer]) return VetFailure.BelowCancelFloor;
         if (LibVaipakam.cfgTreasuryFeeBps() > o.maxTreasuryFeeBps) return VetFailure.TreasuryFeeAboveCap;
-        if (LibVaipakam.cfgLoanInitiationFeeBps() > o.maxLoanInitiationFeeBps) {
+        // #3649 — the rate for the term the loan opens with (the order's own).
+        if (LibInitiationFee.rateBpsUp(o.durationDays) > o.maxLoanInitiationFeeBps) {
             return VetFailure.LoanInitiationFeeAboveCap;
         }
         if (o.allowedTaker != address(0) && taker != o.allowedTaker) return VetFailure.TakerNotAllowed;
@@ -357,7 +428,7 @@ library LibSignedOffer {
         view
         returns (VetFailure f)
     {
-        f = fillFailure(o, orderHash, taker, ceilingOf(o), auth);
+        f = fillFailure(o, orderHash, taker, ceilingOf(o), auth, false);
         if (f == VetFailure.None && LibVaipakam.storageSlot().signedOfferFilled[orderHash] != 0) {
             f = VetFailure.Consumed;
         }
@@ -369,15 +440,17 @@ library LibSignedOffer {
         bytes32 orderHash,
         address taker,
         uint256 fillAmount,
-        FillAuth calldata auth
+        FillAuth calldata auth,
+        bool collectionRoute
     ) internal view {
-        revertFor(o, orderHash, taker, fillFailure(o, orderHash, taker, fillAmount, auth));
+        revertFor(o, orderHash, taker, fillFailure(o, orderHash, taker, fillAmount, auth, collectionRoute));
     }
 
     /// @notice Revert with the error that states refusal `f` of `o` taken by
     ///         `taker`; return when `f` is `None`.
     function revertFor(SignedOffer calldata o, bytes32 orderHash, address taker, VetFailure f) internal view {
         if (f == VetFailure.None) return;
+        if (f == VetFailure.WrongRoute) revert SignedOfferWrongRoute(o.setKind);
         if (f == VetFailure.FullNeedsMaxCStar) revert SignedOfferFullNeedsMaxCStar();
         if (f == VetFailure.DeadlinePassed) revert LibTiming.DeadlinePassed(o.deadline);
         if (f == VetFailure.Expired) revert SignedOfferExpired(o.expiresAt);
@@ -389,7 +462,7 @@ library LibSignedOffer {
             revert SignedOfferTreasuryFeeAboveCap(LibVaipakam.cfgTreasuryFeeBps(), o.maxTreasuryFeeBps);
         }
         if (f == VetFailure.LoanInitiationFeeAboveCap) {
-            revert SignedOfferLoanInitiationFeeAboveCap(LibVaipakam.cfgLoanInitiationFeeBps(), o.maxLoanInitiationFeeBps);
+            revert SignedOfferLoanInitiationFeeAboveCap(LibInitiationFee.rateBpsUp(o.durationDays), o.maxLoanInitiationFeeBps);
         }
         if (f == VetFailure.TakerNotAllowed) revert SignedOfferTakerNotAllowed(taker, o.allowedTaker);
         if (f == VetFailure.CoSignatureInvalid) revert SignedOfferCoSignatureInvalid();
@@ -439,7 +512,19 @@ library LibSignedOffer {
     /// @notice The offer's principal ceiling (`amountMax`, or `amount` for a
     ///         single-value offer).
     function ceilingOf(SignedOffer calldata o) internal pure returns (uint256) {
-        return o.amountMax == 0 ? o.amount : o.amountMax;
+        return ceiling(o.amount, o.amountMax, o.setKind, o.loans);
+    }
+
+    /// @notice The order's principal ceiling from its fields: `amountMax`
+    ///         (or `amount` for a single-value offer), and for a collection
+    ///         offer (#3328) the per-loan `amount` times `loans`.
+    function ceiling(uint256 amount, uint256 amountMax, uint8 setKind, uint16 loans)
+        internal
+        pure
+        returns (uint256)
+    {
+        if (setKind != 0) return amount * loans;
+        return amountMax == 0 ? amount : amountMax;
     }
 
     /// @notice #1949 — the maker Full intent for the part of `o` a fill materializes:
@@ -466,19 +551,19 @@ library LibSignedOffer {
         returns (MakerFull memory f)
     {
         if (!o.creatorFull) return f;
-        uint256 ceiling = o.amountMax == 0 ? o.amount : o.amountMax;
+        uint256 whole = ceiling(o.amount, o.amountMax, o.setKind, o.loans);
         f.full = true;
         f.allowDowngrade = o.creatorAllowFullDowngrade;
-        f.maxCStar = _cumCeiling(o.creatorMaxCStar, filledBefore + fillAmount, ceiling)
-            - _cumCeiling(o.creatorMaxCStar, filledBefore, ceiling);
+        f.maxCStar = _cumCeiling(o.creatorMaxCStar, filledBefore + fillAmount, whole)
+            - _cumCeiling(o.creatorMaxCStar, filledBefore, whole);
     }
 
     /// @dev The cumulative pro-rata ceiling at principal `filled` of an order of size
-    ///      `ceiling`: the whole signed ceiling at (or past) the order's size, else its
+    ///      `size`: the whole signed ceiling at (or past) the order's size, else its
     ///      share rounded up. Monotone in `filled`, so the slice difference above can
     ///      never underflow.
-    function _cumCeiling(uint256 maxCStar, uint256 filled, uint256 ceiling) private pure returns (uint256) {
-        return filled >= ceiling ? maxCStar : Math.mulDiv(maxCStar, filled, ceiling, Math.Rounding.Ceil);
+    function _cumCeiling(uint256 maxCStar, uint256 filled, uint256 size) private pure returns (uint256) {
+        return filled >= size ? maxCStar : Math.mulDiv(maxCStar, filled, size, Math.Rounding.Ceil);
     }
     bytes32 private constant DOMAIN_VERSION_HASH = keccak256("1");
 
@@ -512,7 +597,7 @@ library LibSignedOffer {
     ///         `SignedOffer` field is a STATIC EIP-712 type (uint/address/bool/
     ///         bytes32), so `abi.encode` is plain 32-byte-word concatenation and
     ///         the three chunks concatenated are byte-identical to the single
-    ///         36-arg encode. Keep chunk widths ≤10 if fields are added.
+    ///         37-arg encode. Keep chunk widths ≤10 if fields are added.
     function hashStruct(SignedOffer memory o) internal pure returns (bytes32) {
         return keccak256(
             bytes.concat(
@@ -547,11 +632,13 @@ library LibSignedOffer {
                     o.periodicInterestCadence,
                     o.refinanceTargetLoanId,
                     o.useFullTermInterest,
-                    o.creatorFull,
-                    o.creatorMaxCStar,
-                    o.creatorAllowFullDowngrade
+                    o.lifecycleFlex,
+                    o.integrator,
+                    o.creatorFull
                 ),
                 abi.encode(
+                    o.creatorMaxCStar,
+                    o.creatorAllowFullDowngrade,
                     o.maxTreasuryFeeBps,
                     o.maxLoanInitiationFeeBps,
                     o.allowedTaker,
@@ -559,6 +646,17 @@ library LibSignedOffer {
                     o.signer,
                     o.nonce,
                     o.deadline
+                ),
+                abi.encode(
+                    o.setKind,
+                    o.setLow,
+                    o.setHigh,
+                    o.setRoot,
+                    o.setListCount,
+                    o.setListHash,
+                    o.exclusionsHash,
+                    o.loans,
+                    o.startTime
                 )
             )
         );
@@ -679,6 +777,8 @@ library LibSignedOffer {
         p.allowsParallelSale = o.allowsParallelSale;
         p.refinanceTargetLoanId = o.refinanceTargetLoanId;
         p.useFullTermInterest = o.useFullTermInterest;
+        p.lifecycleFlex = o.lifecycleFlex;
+        p.integrator = o.integrator;
     }
 
     /// @notice Map a `SignedOffer` to a SLICE of it sized `fillAmount` — used

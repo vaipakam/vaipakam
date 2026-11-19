@@ -17,9 +17,17 @@
       "class": "user",
       "why": "the holder's own ERC-20 approval"
     },
+    "AggregatorAdapterImplementation.deposit(uint256,address)": {
+      "class": "user",
+      "why": "a depositor puts its own assets into the adapter for shares (refused until the adapter's principal has accepted the current Terms); it serves the depositor alone, so no keeper is owed"
+    },
     "AggregatorAdapterImplementation.initialize(address,address,address,address,uint16,address,string,string,uint256,uint256,uint16,uint32,uint256)": {
       "class": "init",
       "why": "the deployment, or the Diamond's factory, initializes each proxy once in the transaction that creates it"
+    },
+    "AggregatorAdapterImplementation.mint(uint256,address)": {
+      "class": "user",
+      "why": "as deposit, sized in shares: the depositor's own assets for its own shares; no keeper is owed"
     },
     "AggregatorAdapterImplementation.transfer(address,uint256)": {
       "class": "user",
@@ -54,6 +62,23 @@
     "CcipMessenger.initialize(address)": {
       "class": "init",
       "why": "the deployment, or the Diamond's factory, initializes each proxy once in the transaction that creates it"
+    },
+    "CollectionOfferFacet.createCollectionOffer(struct:LibVaipakam.CreateOfferParams,struct:LibCollateralSet.SetInput,uint16,uint256[],uint64)": {
+      "class": "user",
+      "why": "the lender posts its own collection offer, funded from its own wallet"
+    },
+    "CollectionOfferFacet.fillCollectionOffer(uint256,uint256,bytes32[],struct:LibAcceptTerms.AcceptTerms,bytes)": {
+      "class": "user",
+      "why": "the borrower opens its own loan against its own token, under its own signed acceptance"
+    },
+    "CollectionOfferFacet.fillSignedCollectionOffer(struct:LibSignedOffer.SignedOffer,bytes,struct:LibSignedOffer.OfferSet,struct:CollectionOfferFacet.SignedTake,struct:LibAcceptTerms.AcceptTerms,bytes,struct:LibSignedOffer.FillAuth)": {
+      "class": "user",
+      "why": "the borrower opens its own loan against its own token, from a lender's signed collection offer, under its own signed acceptance"
+    },
+    "CollectionOfferFacet.matchCollectionOffer(uint256,uint256,bytes32[])": {
+      "class": "gap",
+      "issue": "#3688",
+      "why": "pairs a collection offer with a posted borrower offer whose token is in the set, for the usual match share; the keeper matcher does not index collection offers yet"
     },
     "ConsolidationFacet.consolidateCollateralToHolder(uint256)": {
       "class": "user",
@@ -119,9 +144,36 @@
       "class": "user",
       "why": "the user accepts the terms for itself"
     },
-    "LenderIntentFacet.cancelLenderIntent(address,address)": {
+    "LenderIntentFacet.cancelLenderIntent(address,address,uint8)": {
       "class": "user",
       "why": "the lender's own standing intent"
+    },
+    "LenderIntentFacet.recommitHeldToIntent(uint256)": {
+      "class": "keeper",
+      "pass": "matcher",
+      "flag": "HELD_RECOMMIT_ENABLED",
+      "evidence": "apps/keeper/src/matcher.ts"
+    },
+    "LenderIntentFacet.withdrawLenderIntentCapital(address,address,address,uint8,uint256)": {
+      "class": "gap",
+      "issue": "#3246",
+      "why": "the account's manager withdraws its own un-lent intent capital; for a RECOVERED account anyone may return it to the account's vault, where the recovered account's sweep moves it to the recovery address. The keeper pass is to be built, disarmed, with the protected-account work"
+    },
+    "MarketLedgerFacet.rollMarketLedger(address,address,uint256)": {
+      "class": "user",
+      "why": "housekeeping a lender or app may run before a slot write after a long quiet gap; no keeper is owed because no figure depends on it: reads subtract the unrolled days themselves (Declared and Available) and every slot write rolls its own asset and pair"
+    },
+    "InstantMarketFacet.borrowInstant(struct:InstantMarketFacet.InstantBorrowRequest,struct:InstantFillFacet.InstantSource[])": {
+      "class": "user",
+      "why": "the borrower's own instant borrow; it opens loans for the caller only"
+    },
+    "InstantMarketFacet.setInstantSlot(address,address,uint8,bool,bool,bool,bool,uint64)": {
+      "class": "user",
+      "why": "the slot owner's own instant-market consents"
+    },
+    "InstantTakeoverFacet.takeoverInstant(uint256,address,uint8,uint64)": {
+      "class": "user",
+      "why": "the lender hands its own loan to a consenting slot; the caller is gated by the direct-sale verdict (the holder, or a keeper holding the holder's direct-sale mandate)"
     },
     "LenderIntentFacet.rollIntentLoan(uint256)": {
       "class": "keeper",
@@ -129,11 +181,11 @@
       "flag": "KEEPER_ENABLED",
       "evidence": "apps/keeper/src/matcher.ts"
     },
-    "LenderIntentFacet.setLenderIntent(address,address,uint256,uint256,uint16,uint32,uint256,bool,uint64,bool,bool,uint64)": {
+    "LenderIntentFacet.setLenderIntent(address,address,uint8,uint256,uint256,uint16,uint32,uint256,bool,uint64,bool,bool,uint64)": {
       "class": "user",
       "why": "the lender's own standing intent"
     },
-    "LenderIntentFacet.setLenderIntentPriority(address,address,bool)": {
+    "LenderIntentFacet.setLenderIntentPriority(address,address,uint8,bool)": {
       "class": "user",
       "why": "the lender's own standing intent"
     },
@@ -168,13 +220,21 @@
       "pass": "expiredTeardown",
       "flag": "EXPIRED_TEARDOWN_ENABLED",
       "evidence": "apps/keeper/src/expiredTeardown.ts",
-      "why": "the creator cancels its own offer; anyone may cancel an expired offer (refund to the creator, no keeper owed) or a vehicle offer whose route is dead (#3336), which the keeper sweeps"
+      "why": "the creator cancels its own offer; anyone may cancel an expired offer (refund to the creator, no keeper owed) or a vehicle offer whose route is dead (#3336), which the keeper sweeps; anyone may also cancel a recovered account's offer (#3246 part 2: refund to the account's vault, swept on from there)"
     },
     "OfferCancelFacet.teardownStaleSaleListing(uint256)": {
       "class": "keeper",
       "pass": "expiredTeardown",
       "flag": "EXPIRED_TEARDOWN_ENABLED",
       "evidence": "apps/keeper/src/expiredTeardown.ts"
+    },
+    "OfferPriceGuardFacet.setIntentCalmCheck(address,address,uint8,bool)": {
+      "class": "user",
+      "why": "the caller's own lender intent slot setting; no step waits on it"
+    },
+    "ReferralFacet.bindInviter(address)": {
+      "class": "user",
+      "why": "the caller binds its own inviter, once, before its first loan as borrower; no step waits on it"
     },
     "OfferPriceGuardFacet.armOfferPriceGuard(uint16)": {
       "class": "user",
@@ -198,12 +258,22 @@
       "flag": "KEEPER_ENABLED",
       "evidence": "apps/keeper/src/matcher.ts"
     },
+    "RecoveryClawbackFacet.sweepRecovered(address,struct:VaultOutflowTypes.ClawbackAsset[])": {
+      "class": "gap",
+      "issue": "#3246",
+      "why": "moves a recovered account's free balance on to the recovery address its own record names (a payout that reached it after the clawback); the keeper pass is to be built, disarmed, with the protected-account work"
+    },
+    "SettlementLegFacet.releaseParkedTreasury(address,address)": {
+      "class": "gap",
+      "issue": "#3669",
+      "why": "moves treasury shares a token refused at a close-out from the payer's vault to the treasury the vault code names, once the token allows it; the destination is fixed. The keeper pass (read TreasuryShareParked rows, retry while getParkedTreasury is non-zero, shipped disarmed) lands with the contract batch"
+    },
     "SignedOfferMatchFacet.matchSignedOffer(struct:LibSignedOffer.SignedOffer,bytes,struct:LibSignedOffer.OfferSet,uint256,uint256,struct:LibSignedOffer.FillAuth)": {
       "class": "alternative",
       "of": "OfferMatchFacet.matchOffers(uint256,uint256)",
       "why": "matches an off-chain signed offer the matcher does not index; on-chain offers are matched by matchOffers"
     },
-    "OfferMatchIntentFacet.matchIntent(address,address,address,uint256,uint256)": {
+    "OfferMatchIntentFacet.matchIntent(address,address,address,uint8,uint256,uint256)": {
       "class": "keeper",
       "pass": "matcher",
       "flag": "KEEPER_ENABLED",
@@ -258,6 +328,10 @@
       "class": "user",
       "why": "the holder locks its own tokens; it only tightens"
     },
+    "PositionNFT.recover(uint256[])": {
+      "class": "user",
+      "why": "moves a replaced (retired) account's position NFTs to the wallet its vault names as the replacement (#3526); the replacement wallet calls it for its own account. Anyone may, because the destination is the vault's record, not the caller's choice. Nothing waits on it: the replacement wallet already acts on the positions where they are, and payouts follow the account"
+    },
     "PositionNFT.requestUnlock()": {
       "class": "user",
       "why": "the holder asks to unlock its own tokens; it waits the holder's own lock delay"
@@ -306,10 +380,6 @@
       "class": "gated",
       "gate": "the collateral-listing executor or the offer's pinned executor (`_listingGrantSubject` refuses any other msg.sender); the vault then refuses a conduit outside the registry's CONDUITS set"
     },
-    "PriceGuard.executeChange(enum:PriceGuard.Kind,bytes32)": {
-      "class": "user",
-      "why": "governance applies a config change it proposed through the Timelock once the guard's own delay has passed; a change nobody executes leaves the current entry in place"
-    },
     "ProfileFacet.approveKeeper(address,uint16)": {
       "class": "user",
       "why": "the user's own keeper settings"
@@ -353,15 +423,25 @@
       "flag": "TIER_PUSH_RETRY_ENABLED",
       "evidence": "apps/keeper/src/tierPushRetry.ts"
     },
+    "ProtocolBroadcastFacet.broadcastTierTableVersionTo(uint256)": {
+      "class": "gap",
+      "issue": "#912",
+      "why": "sends Base's tier-table version to one mirror after governance changes the tier table, so the mirror stops honouring caches stamped with the old table; the caller pays the lane. The keeper pass (compare each mirror's getCurrentTierTableVersion with getTierTableVersion, send where behind, shipped disarmed) lands with the contract batch"
+    },
     "ProtocolBroadcastFacet.topUpBroadcastBudget()": {
       "class": "user",
       "why": "a payment into the protocol broadcast budget; no step waits on it"
     },
-    "PriceGuard.executeChange(enum:PriceGuard.Kind,bytes32)": {
+    "PriceGuard.executeChange(enum:PriceGuardState.Kind,bytes32)": {
       "class": "user",
       "why": "governance applies a config change it proposed through the Timelock once the guard's own delay has passed; a change nobody executes leaves the current entry in place"
     },
-    "PriceGuard.executeSecondaryRemoval(enum:PriceGuard.Source)": {
+    "PriceGuard.recordRate(address,bytes32)": {
+      "class": "gap",
+      "issue": "#3683",
+      "why": "records a rate-priced token's exchange rate under its binding, bounded by the binding's daily rise and fall rules; no one chooses the value. Unrecorded, the accepted rate stops following honest growth, which undervalues the collateral and never overvalues it. The keeper's hourly price checkpoint pass is to call it for every binding a token has had, shipped disarmed"
+    },
+    "PriceGuard.executeSecondaryRemoval(enum:PriceGuardState.Source)": {
       "class": "user",
       "why": "the owner or the guardian applies a secondary-source removal it proposed once the fixed 48-hour wait has passed; a removal nobody executes leaves the source muted, still able to refuse a price"
     },
@@ -761,6 +841,30 @@
       "class": "user",
       "why": "the signer cancels its own signed offers below a floor"
     },
+    "StandingInstructionFacet.clearStandingInstructions(uint256)": {
+      "class": "user",
+      "why": "the current borrower-position holder clears its own standing instructions; any other caller is refused"
+    },
+    "StandingInstructionFacet.runCollateralTopUp(uint256)": {
+      "class": "gap",
+      "issue": "#3681",
+      "why": "moves the holder's own collateral reserve into the loan's collateral when the health factor is at or below the holder's trigger, at most once per configured interval; anyone may call it once the instruction is due, and a skipped run says why by event. No keeper pass backs it yet; the pass ships disarmed with the keeper follow-up of #3681"
+    },
+    "StandingInstructionFacet.runDueRepayment(uint256)": {
+      "class": "gap",
+      "issue": "#3681",
+      "why": "repays the loan in full from the holder's own payment reserve inside the holder's lead window before the due date; anyone may call it once the instruction is due, and a skipped run says why by event. No keeper pass backs it yet; the pass ships disarmed with the keeper follow-up of #3681"
+    },
+    "StandingInstructionFacet.runInterestPayment(uint256)": {
+      "class": "gap",
+      "issue": "#3681",
+      "why": "pays an ended period's unpaid interest from the holder's own payment reserve through the shared interest booking; anyone may call it once the instruction is due, and a skipped run says why by event. No keeper pass backs it yet; the pass ships disarmed with the keeper follow-up of #3681"
+    },
+    "StandingInstructionFacet.withdrawLoanReserve(address,uint256,uint8,uint256)": {
+      "class": "gap",
+      "issue": "#3246",
+      "why": "the account's manager withdraws its own unused loan reserve; for a RECOVERED account anyone may return it to the account's vault, where the recovered account's sweep moves it to the recovery address. The keeper pass is to be built, disarmed, with the protected-account work"
+    },
     "SwapToRepayIntentFacet.cancelExpiredIntent(uint256)": {
       "class": "keeper",
       "pass": "expiredTeardown",
@@ -772,6 +876,26 @@
       "pass": "protocolUpkeep",
       "flag": "PROTOCOL_UPKEEP_ENABLED",
       "evidence": "apps/keeper/src/protocolUpkeep.ts"
+    },
+    "VaultRecovery.cancelRecoveryAddress(struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultRecovery.clawback(struct:VaultOutflowTypes.ClawbackAsset[],struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultRecovery.clearRecoveryAddress(struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultRecovery.requestRecoveryAddress(address,struct:VaultProtectionBase.Auth,struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultRecovery.settleRecoveryAddress()": {
+      "class": "user",
+      "why": "tidies the account's own record by writing a recovery address that has come into force; nothing depends on it (the address counts from its time on), so no keeper is owed. Runs only inside a vault (onlyDelegateCall)"
     },
     "VPFIDiscountFacet.pokeMyTier()": {
       "class": "user",
@@ -875,7 +999,7 @@
       "flag": "PROTECTED_ACCOUNT_ENABLED",
       "evidence": "apps/keeper/src/protectedAccount.ts"
     },
-    "VaultProtection.addAllowlisted(address,struct:VaultProtection.Auth)": {
+    "VaultProtection.addAllowlisted(address,struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
@@ -883,15 +1007,15 @@
       "class": "user",
       "why": "a key voids its own next signature nonce for a purpose, through the vault (a direct call to this code is refused)"
     },
-    "VaultProtection.cancelAllowlisted(address,struct:VaultProtection.Auth)": {
+    "VaultProtection.cancelAllowlisted(address,struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
-    "VaultProtection.cancelSetting(uint8,struct:VaultProtection.Auth)": {
+    "VaultProtection.cancelSetting(uint8,struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
-    "VaultProtection.enable(uint32,struct:VaultProtection.Auth)": {
+    "VaultProtection.enable(uint32,struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
@@ -919,35 +1043,35 @@
       "flag": "PROTECTED_ACCOUNT_ENABLED",
       "evidence": "apps/keeper/src/protectedAccount.ts"
     },
-    "VaultProtection.lock(struct:VaultProtection.Auth)": {
+    "VaultProtection.lock(struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
-    "VaultProtection.removeAllowlisted(address,struct:VaultProtection.Auth)": {
+    "VaultProtection.removeAllowlisted(address,struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
-    "VaultProtection.replacement(uint8,address,struct:VaultProtection.Auth)": {
+    "VaultProtection.replacement(uint8,address,struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
-    "VaultProtection.requestDisable(struct:VaultProtection.Auth)": {
+    "VaultProtection.requestDisable(struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
-    "VaultProtection.requestUnlock(struct:VaultProtection.Auth)": {
+    "VaultProtection.requestUnlock(struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
-    "VaultProtection.setDelay(uint32,struct:VaultProtection.Auth)": {
+    "VaultProtection.setDelay(uint32,struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
-    "VaultProtection.signerChange(uint8,address,struct:VaultProtection.Auth)": {
+    "VaultProtection.signerChange(uint8,address,struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
-    "VaultProtection.verifyDestination(address,address,struct:VaultProtection.Auth)": {
+    "VaultProtection.verifyDestination(address,address,struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
@@ -958,6 +1082,18 @@
     "VpfiReturnSender.initialize(address,address,address,address,uint256)": {
       "class": "init",
       "why": "the deployment, or the Diamond's factory, initializes each proxy once in the transaction that creates it"
+    },
+    "ReadyBalanceFacet.cancelReadyTopUp(address,address)": {
+      "class": "gated",
+      "gate": "the account itself or one of its active signers (`_requireOwnerOrSigner` refuses any other msg.sender); it only cancels a pending Protected-to-Ready top-up (#3344)"
+    },
+    "ReadyBalanceFacet.releaseReady(address,address,uint256)": {
+      "class": "gated",
+      "gate": "the account itself or one of its active signers (`_requireOwnerOrSigner` refuses any other msg.sender); it only moves Ready back to the Protected balance (#3344)"
+    },
+    "StandingInstructionFacet.previewInterestPayment(uint256)": {
+      "class": "user",
+      "why": "a keeper's eth_call preview of the pay-my-interest instruction: it always reverts with the skip reason it would record, so it changes nothing and no keeper is owed"
     }
   }
 }

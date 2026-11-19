@@ -6,7 +6,6 @@ import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
-import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibSaleSolvency} from "../libraries/LibSaleSolvency.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
@@ -16,13 +15,13 @@ import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibOfferAdmission} from "../libraries/LibOfferAdmission.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
-import {LibRiskMath} from "../libraries/LibRiskMath.sol";
-import {LibInitRiskGate} from "../libraries/LibInitRiskGate.sol";
 import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
+import {LegalFacet} from "./LegalFacet.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {OfferPriceGuardFacet} from "./OfferPriceGuardFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
+import {ReferralFacet} from "./ReferralFacet.sol";
 
 /**
  * @title OfferPreviewFacet
@@ -48,15 +47,6 @@ import {ProfileFacet} from "./ProfileFacet.sol";
 contract OfferPreviewFacet {
     /// @notice The offer does not exist (zero creator).
     error InvalidOffer();
-
-    /// @notice #3358 — the first check loan creation runs after the accept or
-    ///         match core that would refuse the loan, if any: the offer's
-    ///         cadence (#3025), then the makers' price-move guards (#3358).
-    enum OriginationRefusal {
-        None,
-        CadenceNotAdmitted,
-        PriceGuardRefused
-    }
 
     /**
      * @notice Read-only projection + first-failing-blocker for a direct
@@ -201,24 +191,22 @@ contract OfferPreviewFacet {
         // phantom fee; `lifEstimate` stays 0.
         if (_isErc20 && _saleLoanId == 0) {
             address _borrower = _isLender ? acceptor : offer.creator;
-            // HoldOnly hybrid (#1352, §F3): quote exactly what `_acceptOffer`
-            // will charge — the shared helper resolves the consent-gated
-            // hold-tier discount (capped 50%, liquid-asset only) and applies it
-            // to the lending-asset LIF. The retired peg-custody VPFI path is
-            // gone. Resolve liquidity the same way accept does so the discount
-            // gate matches.
-            preview.lifEstimate = LibVPFIDiscount.holdOnlyBorrowerLif(
+            // Quote exactly what the accept will charge: the hold discount
+            // (#1352, §F3, consent-gated, capped 50%, liquid only) and the
+            // borrower's referral cut (#3722), by the one rule the charge
+            // reads, resolving liquidity as the accept does. Non-Full: the
+            // borrower's Full bump only materialises once the Full tariff is
+            // confirmed at accept (#1347); the Full-aware quote is
+            // `FeeEntitlementFacet.quoteCStar`.
+            ReferralFacet.FeeQuote memory fq = ReferralFacet(address(this)).quoteBorrowerFee(
                 _borrower,
+                offer.lendingAsset,
                 preview.effectivePrincipal,
-                OracleFacet(address(this)).checkLiquidity(offer.lendingAsset) ==
-                    LibVaipakam.LiquidityStatus.Liquid,
-                // #1347 — the accept-time preview quotes the HoldOnly (non-Full)
-                // LIF: `previewAccept` takes no Full opt-in, and the borrower's
-                // `+10%` Full bump only materialises once the Full tariff is
-                // confirmed at accept. The Full-aware quote is a separate view
-                // (`FeeEntitlementFacet.quoteCStar` + the Stage-E preview wiring).
+                offer.durationDays, // #3649 — the term rate the accept charges
                 /*fullMode=*/ false
             );
+            preview.lifEstimate = fq.fee;
+            preview.referralCut = fq.cut;
         }
 
         // ─── Precondition chain (first failure wins) ────────────────
@@ -251,6 +239,10 @@ contract OfferPreviewFacet {
         // #951 v2 (Codex #959) — mirror `_acceptOffer`'s cancelled-offer guard.
         if (s.offerCancelled[offerId]) {
             preview.errorCode = OfferAcceptFacet.AcceptError.OfferIsCancelled;
+            return preview;
+        }
+        if (s.collectionOffer[offerId].set.kind != LibVaipakam.CollateralSetKind.None) {
+            preview.errorCode = OfferAcceptFacet.AcceptError.CollectionParent;
             return preview;
         }
         // T-407-C (#566) — a partially-filled offer must advance via
@@ -491,6 +483,13 @@ contract OfferPreviewFacet {
             }
         }
 
+        // #3734 — loan creation asks both parties' Terms acceptance (the
+        // exiting seller of a sale vehicle is not asked) before its cadence.
+        if (!_termsClear(_saleLoanId == 0 ? offer.creator : address(0), acceptor)) {
+            preview.errorCode = OfferAcceptFacet.AcceptError.TermsNotAccepted;
+            return preview;
+        }
+
         // #3025 — loan creation re-admits the offer's cadence on the loan it
         // opens (inside `initiateLoan`, after every check above and before the
         // refinance hook below), so a cadence the rule no longer admits is
@@ -634,6 +633,7 @@ contract OfferPreviewFacet {
         LibVaipakam.CreateOfferParams memory params
     ) private view returns (OfferAcceptFacet.AcceptError) {
         LibSignedOffer.VetFailure f = LibSignedOffer.vetFailure(o, p.orderHash, acceptor, auth);
+        if (f == LibSignedOffer.VetFailure.WrongRoute) return OfferAcceptFacet.AcceptError.SignedOfferUnsupportedShape;
         if (f == LibSignedOffer.VetFailure.FullNeedsMaxCStar) return OfferAcceptFacet.AcceptError.SignedOfferMalformed;
         if (f == LibSignedOffer.VetFailure.DeadlinePassed) return OfferAcceptFacet.AcceptError.SignedOfferDeadlinePassed;
         if (f == LibSignedOffer.VetFailure.Expired) return OfferAcceptFacet.AcceptError.OfferExpired;
@@ -655,6 +655,13 @@ contract OfferPreviewFacet {
             params.assetType != LibVaipakam.AssetType.ERC20
                 || params.collateralAssetType != LibVaipakam.AssetType.ERC20
                 || params.refinanceTargetLoanId != 0
+                // #3621 — the lender's "either" marks: only a lender may carry
+                // them, and only the known bits. The fill refuses the rest at
+                // `OfferBookFacet.openOfferOnBook` (`LifecycleFlexNotAllowed` /
+                // `LifecycleFlexUnknownBits`); this view names it as a shape
+                // the signed path cannot take.
+                || (params.lifecycleFlex != 0 && params.offerType != LibVaipakam.OfferType.Lender)
+                || (params.lifecycleFlex & ~LibVaipakam.LIFECYCLE_FLEX_MASK) != 0
         ) return OfferAcceptFacet.AcceptError.SignedOfferUnsupportedShape;
         // `OfferCreateFacet._createOfferSetup`'s live gates, at their place in
         // the fill: before the stake is read. Either can change after the
@@ -795,72 +802,12 @@ contract OfferPreviewFacet {
         );
     }
 
-    /**
-     * @notice #3326 — the initiation risk gate's bounds for an ERC-20 loan of
-     *         `lendingAsset` against `collateralAsset`, read live: the
-     *         collateral the gate requires for `amount`, whether the
-     *         depth-tiered regime set that floor, and the largest principal
-     *         `collateral` supports under it (the inverse, rounded so any
-     *         amount at or below it passes). When the gate does not apply to
-     *         the pair (an illiquid leg), the floor is 0 and the cap is
-     *         unbounded.
-     * @dev The ONE host of the match core's risk bounds. The match core
-     *      ({LibOfferMatch}) is compiled into four facets; it asks here by
-     *      self-call so the rule, and its bytecode, live once. Under
-     *      depth-tiered LTV the cap is min(per-asset init-LTV ceiling, the
-     *      collateral tier's cap), as `LoanFacet._checkInitialLtvAndHf`
-     *      applies it; a Tier-0 collateral caps at 0, so the floor is
-     *      `type(uint256).max` and the cap 0. Otherwise the floor is the
-     *      HF admission floor. Reverts when a liquid leg has no usable price
-     *      (#2419), as the binding gate does.
-     */
-    function initRiskBounds(address lendingAsset, address collateralAsset, uint256 amount, uint256 collateral)
-        external
-        view
-        returns (uint256 floor, bool tiered, uint256 amountCap)
-    {
-        if (!LibInitRiskGate.applies(
-            OracleFacet(address(this)).checkLiquidity(lendingAsset),
-            OracleFacet(address(this)).checkLiquidity(collateralAsset)
-        )) return (0, false, type(uint256).max);
-        tiered = LibVaipakam.cfgDepthTieredLtvEnabled();
-        if (tiered) {
-            uint256 capBps = LibVaipakam.assetInitLtvCeilingBps(collateralAsset);
-            uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(
-                OracleFacet(address(this)).getEffectiveLiquidityTier(collateralAsset)
-            ));
-            if (tierCap < capBps) capBps = tierCap;
-            floor = LibRiskMath.minCollateralForLtvCap(amount, lendingAsset, collateralAsset, capBps);
-            amountCap = LibRiskMath.maxLendingForLtvCap(collateral, lendingAsset, collateralAsset, capBps);
-        } else {
-            floor = LibRiskMath.minCollateralForLending(amount, lendingAsset, collateralAsset);
-            amountCap = LibRiskMath.maxLendingForCollateral(collateral, lendingAsset, collateralAsset);
-        }
-    }
-
-    /**
-     * @notice #3358 — the first origination check loan creation would refuse
-     *         a loan opened now from `offerId` with `principal` funded, where
-     *         `otherOfferId` (0 = none) is the other maker's offer in a match:
-     *         the cadence rule first, then the price-move guards, in loan
-     *         creation's order.
-     * @dev The match preview asks it (one call for both checks); the accept
-     *      preview runs the same two checks inline. Each asks the entry loan
-     *      creation itself calls, so the refusal is the one it would raise.
-     *      Not for a lender-sale vehicle, which the cadence rule exempts.
-     */
-    function previewOriginationRefusal(uint256 offerId, uint256 principal, uint256 otherOfferId)
-        external
-        view
-        returns (OriginationRefusal)
-    {
-        try OfferPreviewFacet(address(this)).requireOriginationCadenceAdmitted(offerId, principal) {} catch {
-            return OriginationRefusal.CadenceNotAdmitted;
-        }
-        if (!_priceGuardsClear(LibVaipakam.storageSlot(), offerId, otherOfferId)) {
-            return OriginationRefusal.PriceGuardRefused;
-        }
-        return OriginationRefusal.None;
+    /// @dev #3734 — whether `a` and `b` (0 = skip) have both accepted the
+    ///      Terms that count now, asked of the rule's one host.
+    function _termsClear(address a, address b) private view returns (bool) {
+        (bool ok, bytes memory r) =
+            address(this).staticcall(abi.encodeWithSelector(LegalFacet.termsBlocker.selector, a, b));
+        return ok && abi.decode(r, (address)) == address(0);
     }
 
     /// @dev Whether the price-move guards on `offerId` and `otherOfferId`

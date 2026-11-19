@@ -45,6 +45,12 @@ contract TestMutatorFacet {
         LibPrepayCleanup.clearActiveListing(loan, loanId);
     }
 
+    /// @notice #3538 test-only — seed `loanId`'s failed-sale record, so a
+    ///         test can reach the in-kind fallback with one failing sale.
+    function setFallbackGate(uint256 loanId, LibVaipakam.FallbackGate memory g) external {
+        LibVaipakam.storageSlot().fallbackGate[loanId] = g;
+    }
+
     /// @notice Overwrite the entire Offer record at `offerId`.
     function setOffer(uint256 offerId, LibVaipakam.Offer memory data) external {
         LibVaipakam.storageSlot().offers[offerId] = data;
@@ -495,6 +501,14 @@ contract TestMutatorFacet {
     ///         the named-field storage path — no hardcoded slot math.
     function setTreasuryFeeBpsAtInitRaw(uint256 loanId, uint16 bps) external {
         LibVaipakam.storageSlot().loans[loanId].treasuryFeeBpsAtInit = bps;
+    }
+
+    /// @notice #3649 stage 3 — write the treasury floors directly, for a test
+    ///         Diamond that does not cut `FeeLevelsFacet`. Zero ⇒ default.
+    function setFeeFloorsRaw(uint16 initiationBps, uint16 interestBps) external {
+        LibVaipakam.FeeFloorConfig storage c = LibVaipakam.storageSlot().feeFloorCfg;
+        c.initiationBps = initiationBps;
+        c.interestBps = interestBps;
     }
 
     /// @notice Write `s.offerIdToLoanId[offerId] = loanId` directly.
@@ -1807,6 +1821,14 @@ contract TestMutatorFacet {
         LibVaipakam.AssetType assetType
     ) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #3685 — keep the pledged total equal to the sum of live ERC-20
+        // collateral liens, as LibEncumbrance does, so a later release
+        // through the real writer does not underflow. An overwritten live
+        // lien comes off the total first.
+        LibVaipakam.Encumbrance storage prev = s.loanCollateralLien[loanId];
+        if (!prev.released && prev.assetType == LibVaipakam.AssetType.ERC20 && prev.amount != 0) {
+            s.collateralPledged[prev.asset] -= prev.amount;
+        }
         s.loanCollateralLien[loanId] = LibVaipakam.Encumbrance({
             user: user,
             asset: asset,
@@ -1816,6 +1838,7 @@ contract TestMutatorFacet {
             released: false
         });
         s.encumbered[user][asset][tokenId] += amount;
+        if (assetType == LibVaipakam.AssetType.ERC20) s.collateralPledged[asset] += amount;
     }
 
     /// @notice #2342 — seed a LEGACY (pre-#2342) swap-to-repay-FULL freeze
@@ -1936,7 +1959,7 @@ contract TestMutatorFacet {
     /// @param interestGross #1209 — the payout's gross interest (before the
     ///        fee); the host pays open seller claims out of it first.
     /// @param interestNet   What the lender side receives of that interest.
-    function callFreezeOrPayActiveLenderResident(
+    function callHoldActiveLenderResident(
         uint256 loanId,
         address asset,
         uint256 amount,
@@ -1945,7 +1968,7 @@ contract TestMutatorFacet {
     ) external {
         _selfCall(
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector,
+                EncumbranceMutateFacet.holdActiveLenderResident.selector,
                 loanId,
                 asset,
                 amount,
@@ -1957,7 +1980,7 @@ contract TestMutatorFacet {
 
     /// @notice Drive the payer-funded Class B host (the ERC-20 `repayPartial`
     ///         shape). `payer` must have approved the diamond for `amount`.
-    function callFreezeOrPayActiveLenderFromPayer(
+    function callHoldActiveLenderFromPayer(
         uint256 loanId,
         address payer,
         address asset,
@@ -1967,7 +1990,7 @@ contract TestMutatorFacet {
     ) external {
         _selfCall(
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.freezeOrPayActiveLenderFromPayer.selector,
+                EncumbranceMutateFacet.holdActiveLenderFromPayer.selector,
                 loanId,
                 payer,
                 asset,
@@ -1980,7 +2003,7 @@ contract TestMutatorFacet {
 
     /// @notice Drive the vault-funded Class B host (the NFT-rental prepay shape).
     ///         `fromUser`'s vault must hold `amount` of `asset`.
-    function callFreezeOrPayActiveLenderFromVault(
+    function callHoldActiveLenderFromVault(
         uint256 loanId,
         address fromUser,
         address asset,
@@ -1988,7 +2011,7 @@ contract TestMutatorFacet {
     ) external {
         _selfCall(
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector,
+                EncumbranceMutateFacet.holdActiveLenderFromVault.selector,
                 loanId,
                 fromUser,
                 asset,

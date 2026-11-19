@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
@@ -13,6 +14,8 @@ import {SaleFloorFacet} from "./SaleFloorFacet.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
+import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
@@ -32,6 +35,7 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
  // For NFT updates/burns
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
+import {CollateralLienFacet} from "./CollateralLienFacet.sol";
  // For transfers
 import {ProfileFacet} from "./ProfileFacet.sol";
  // For KYC if high-value
@@ -676,11 +680,16 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // beside the collateral the sale did not take. When every route fails
         // it returns `sold = false` with the whole collateral on the Diamond,
         // and the loan enters the fallback exactly as before (#1005: an empty
-        // or all-disabled try-list reverts `NoEnabledSwapRoute` instead).
+        // or all-disabled try-list reverts `NoEnabledSwapRoute` instead) —
+        // once the fallback is open (#3538: an earlier failed sale of the
+        // loan at least `LibFallbackGate.MIN_SPAN` old). Before that, a
+        // failed sale is undone and only recorded (`fallbackDeferred`).
         ForcedSaleFacet.ForcedSaleOutcome memory out =
             _sellToNeed(loanId, sellAmount, adapterCalls);
         if (!out.sold) {
-            _enterFallback(loanId);
+            // #3538 — every route failed but the fallback is not open yet:
+            // the sale was undone and only the failure recorded.
+            if (!out.fallbackDeferred) _enterFallback(loanId);
             return;
         }
 
@@ -1008,54 +1017,38 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
         // Treasury receipt — single transfer, same as full.
         // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
-        LibFacet.transferToTreasury(loan.principalAsset, handlingFee + treasuryInterestFee);
+        // #3649 stage 3 — two legs: the handling fee is the treasury's whole,
+        // the interest share is split at its floor.
+        LibFacet.transferToTreasury(loan.principalAsset, handlingFee);
+        LibFacet.transferToTreasury(loan.principalAsset, treasuryInterestFee, LibFeeFloor.interest(interestPortion, LibVaipakam.effectiveTreasuryFeeBps(loan)));
 
         // Lender's share goes directly to their vault. We deliberately
         // do NOT write `s.lenderClaims[loanId]` — claims are reserved
         // for terminal events (the lender NFT is still Active, the
         // claim flow runs at proper close / full liquidation / default).
         //
-        // #1383 — and BECAUSE no claim is written, the recipient here is the
-        // final word: there is no `ownerOf`-gated claim behind it to correct a
-        // stale address. This paid `loan.lender`, which the skip-not-block
-        // consolidation can leave pointing at the PREVIOUS lender — handing them
-        // the principal and interest outright, with nothing for the current
-        // holder to claim against. Every other recovery entry pairs its deposit
-        // with a `lenderClaims` write and is saved by that gate; this one is
-        // not, so it must pay the holder directly. This is misrouted principal,
-        // not a fee discount: it stands whatever is decided about whether
-        // recovered interest earns the Full bump.
+        // #3629 — the lender's part is held for the lender position: open
+        // seller claims first, then into the STORED `loan.lender`'s vault on
+        // the loan's held ledger, reserved, for whoever holds the lender token
+        // to claim (`ClaimFacet.claimHeldForLender`, or the final claim). The
+        // held balance follows the position, so a stale `loan.lender` (the
+        // skip-not-block consolidation, #1383) only names the custody vault and
+        // can no longer take the principal and interest for itself. Hosted on
+        // `EncumbranceMutateFacet` for size.
         uint256 lenderProceeds = afterFees - treasuryInterestFee;
-        // #1383 — pay-or-freeze through the #998 S10 Class B host rather than a
-        // raw locked deposit. Same shape as `RepayPeriodicFacet`'s
-        // auto-liquidation leg: an ACTIVE loan, funds already in the Diamond, no
-        // claim record behind it. The host resolves `ownerOf` itself, pays a
-        // clean holder directly, and FREEZES fail-closed (park into the stored
-        // lender's vault + `heldForLender` + encumber + marker) for a
-        // registry-flagged one.
-        //
-        // A raw `depositLocked(ownerOf(...))` was the first attempt and is
-        // WRONG here: `getOrCreateUserVault` refuses to mint a vault for a
-        // flagged wallet (`SanctionedRecipientHasNoVault`), so a flagged holder
-        // who never opened one would revert the liquidation outright — blocking
-        // a close-out, which is exactly what Tier-2 handling exists to avoid.
-        // Paying the stale `loan.lender` instead was the original bug.
-        //
         // #2440 — a partial liquidation leaves the loan ACTIVE and books this
         // payout as received in full: the interest settled from it, the
         // principal it retires, and the accrual restart below. So, like the
         // rest of this all-or-nothing call (see the function's NatSpec), it is
-        // refused unless the lender-position holder (or the frozen holder's
-        // vault) received all of `lenderProceeds`. (The host itself refuses a
-        // short arrival at the holder's wallet; the check here covers the
-        // frozen holder's vault.) The close-out that acts on
-        // what arrived is the FULL liquidation, which stays open: a keeper
-        // turned away here calls {triggerLiquidation}.
+        // refused unless the sellers and the custody vault received all of
+        // `lenderProceeds`. The close-out that acts on what arrived is the
+        // FULL liquidation, which stays open: a keeper turned away here calls
+        // {triggerLiquidation}.
         if (lenderProceeds > 0) {
             LibDelivery.requireFull(loan.principalAsset, lenderProceeds, abi.decode(
                 LibFacet.crossFacetCallReturn(
                     abi.encodeWithSelector(
-                        EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector,
+                        EncumbranceMutateFacet.holdActiveLenderResident.selector,
                         loanId,
                         loan.principalAsset,
                         lenderProceeds,
@@ -1091,7 +1084,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // from `now`, and a full-term minimum runs to maturity to the second
         // (#3169). The pre-partial coupon was already settled interest-first
         // from the swap proceeds above.
-        loan.collateralAmount -= swappedCollateral;
+        LibLoanCollateral.reduce(loan, swappedCollateral);
         LibInterestLedger.reducePrincipal(s, loan, principalRepaid, principalRepaid);
         // #3169 — only the clock's start moves; the residual's full-term
         // minimum runs to the term's end to the second
@@ -1447,6 +1440,6 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     }
 
     function _decrementLienAtPartialLiq(uint256 loanId, uint256 consumed) private {
-        _callEncumb2(EncumbranceMutateFacet.decrementCollateralLien.selector, loanId, consumed);
+        _callEncumb2(CollateralLienFacet.decrementCollateralLien.selector, loanId, consumed);
     }
 }

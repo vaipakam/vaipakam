@@ -310,6 +310,34 @@ FACETS=(
   "SignedOfferMatchFacet"
   # The loan clock's disclosure, split off LoanFacet (#3410).
   "LoanClockFacet"
+  "MarketLedgerFacet"
+  # The instant market (#3656): the borrower entry, one fill, the takeover.
+  "InstantMarketFacet"
+  "InstantFillFacet"
+  "InstantTakeoverFacet"
+  # #3328: the signed-offer / intent-slice materialize entries.
+  "OfferMaterializeFacet"
+  # #3328: NFT collection offers.
+  "CollectionOfferFacet"
+  # #3344: a protected account's Ready balance.
+  "ReadyBalanceFacet"
+  "FeeLevelsFacet"
+  # A refused settlement leg's park and release (#3669).
+  "SettlementLegFacet"
+  # #3246 part 2: the clawback to a recovery address.
+  "RecoveryClawbackFacet"
+  # The new-loan cap host and the collateral-lien entries (#3685).
+  "CollateralConcentrationFacet"
+  "CollateralLienFacet"
+  # Standing instructions and the loan reserve (#3681).
+  "StandingInstructionFacet"
+  # The claim reads, split off ClaimFacet (EIP-170).
+  "ClaimViewFacet"
+  # The standing-intent reads, split off LenderIntentFacet (EIP-170).
+  "LenderIntentViewFacet"
+  "IntegratorFacet"
+  "StandingOfferCheckFacet"
+  "ReferralFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"
@@ -444,6 +472,9 @@ FACETS=(
   # #3379 B2 — the protected-mode rules every vault delegatecalls; the app
   # encodes its calls for `protect` and the indexer decodes its events.
   "VaultProtection"
+  # #3246 part 2 — the recovery-address and clawback code VaultProtection
+  # delegatecalls; the app encodes those writes for `protect`.
+  "VaultRecovery"
   # #2399 — the Diamond PROXY itself. Not a facet: its fallback raises
   # `FunctionDoesNotExist()` for an unrouted selector, the revert a stale ABI
   # produces. Listed under `proxy` in diamond-facets.json, and the combined

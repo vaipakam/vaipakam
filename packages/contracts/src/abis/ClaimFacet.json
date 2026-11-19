@@ -87,7 +87,7 @@
   },
   {
     "type": "function",
-    "name": "getBorrowerSurplusClaim",
+    "name": "claimHeldForBorrower",
     "inputs": [
       {
         "name": "loanId",
@@ -95,121 +95,12 @@
         "internalType": "uint256"
       }
     ],
-    "outputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "claimed",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
-    "name": "getClaimable",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "isLender",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "claimed",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "assetType",
-        "type": "uint8",
-        "internalType": "enum LibVaipakam.AssetType"
-      },
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "quantity",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "heldForLender",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "hasRentalNftReturn",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getClaimableAmount",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "isLender",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "claimed",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getFallbackSnapshot",
+    "name": "claimHeldForLender",
     "inputs": [
       {
         "name": "loanId",
@@ -217,127 +108,8 @@
         "internalType": "uint256"
       }
     ],
-    "outputs": [
-      {
-        "name": "lenderCollateral",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "treasuryCollateral",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "borrowerCollateral",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "lenderPrincipalDue",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "treasuryPrincipalDue",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "active",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "retryAttempted",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getOwedAtDefault",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "principal",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "interest",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "lateFee",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "recordedAt",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "viaFallback",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getOwedAtInternalMatch",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "principal",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "interest",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "lateFee",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "lenderProceeds",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "recordedAt",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "incomplete",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -427,6 +199,37 @@
   },
   {
     "type": "event",
+    "name": "BorrowerHeldExtraPaid",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "BorrowerSurplusClaimed",
     "inputs": [
       {
@@ -474,6 +277,37 @@
       },
       {
         "name": "proceeds",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "HeldForLenderClaimed",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "claimant",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1120,6 +954,17 @@
         "name": "key",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CollectionParentNotFillable",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },
@@ -2749,6 +2594,11 @@
   {
     "type": "error",
     "name": "PositionNFTNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PositionTokenNotAccepted",
     "inputs": []
   },
   {

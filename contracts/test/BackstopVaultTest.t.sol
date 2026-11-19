@@ -3,6 +3,8 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
+import {LibTestCalmPair} from "./helpers/LibTestCalmPair.sol";
+import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {BackstopVaultImplementation} from "../src/BackstopVaultImplementation.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
@@ -16,6 +18,7 @@ import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
+import {MarketLedgerFacet} from "../src/facets/MarketLedgerFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
@@ -72,6 +75,7 @@ contract BackstopVaultTest is SetupTest {
         vm.prank(borrower);
         BackstopFacet(address(diamond)).setOfferBackstopEligible(offerId2, base + 2 days);
         vm.warp(base + 3 days);
+        LibTestCalmPair.checkpoint(address(diamond), mockCollateralERC20, mockERC20);
         uint8 role = uint8(LibVaipakam.ServiceCapacityRole.Solver);
         vm.prank(owner);
         ServiceCapacityFacet(address(diamond)).setCapacityCurve(role, 1e18, 1e16, 100e18, 1e18);
@@ -105,6 +109,7 @@ contract BackstopVaultTest is SetupTest {
         vm.prank(borrower);
         BackstopFacet(address(diamond)).setOfferBackstopEligible(offerId2, base + 2 days);
         vm.warp(base + 3 days);
+        LibTestCalmPair.checkpoint(address(diamond), mockCollateralERC20, mockERC20);
         uint8 role = uint8(LibVaipakam.ServiceCapacityRole.Solver);
         vm.prank(owner);
         ServiceCapacityFacet(address(diamond)).setCapacityCurve(role, 1e18, 1e16, 100e18, 1e18);
@@ -112,11 +117,11 @@ contract BackstopVaultTest is SetupTest {
         vm.prank(poker);
         BackstopFacet(address(diamond)).backstopFill(offerId1); // the poker's one free action
         LibOfferMatch.IntentPreviewResult memory r = RiskPreviewFacet(address(diamond)).previewIntent(
-            vault, poker, vault, mockERC20, mockCollateralERC20, offerId2, PRINCIPAL
+            vault, poker, vault, mockERC20, mockCollateralERC20, 0, offerId2, PRINCIPAL
         );
         assertEq(uint8(r.intentError), uint8(LibOfferMatch.IntentError.CapacityExhausted), "the exhausted poker is named");
         r = RiskPreviewFacet(address(diamond)).previewIntent(
-            vault, makeAddr("fresh-initiator"), vault, mockERC20, mockCollateralERC20, offerId2, PRINCIPAL
+            vault, makeAddr("fresh-initiator"), vault, mockERC20, mockCollateralERC20, 0, offerId2, PRINCIPAL
         );
         assertTrue(r.ok, "a fresh initiator's free action covers the same fill");
         vm.prank(poker);
@@ -198,6 +203,8 @@ contract BackstopVaultTest is SetupTest {
         vm.prank(borrower);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -241,9 +248,27 @@ contract BackstopVaultTest is SetupTest {
             base + 2 days
         );
         vm.warp(base + 3 days); // past eligibleAfter, before expiresAt
+        // The backstop slot's fills run the calm-price check: two hourly
+        // checkpoints, then the hour after.
+        LibTestCalmPair.checkpoint(address(diamond), mockCollateralERC20, mockERC20);
     }
 
     // ─── 1. Provisioning ──────────────────────────────────────────────────────
+
+    /// @dev #3714 — seeding the backstop's slot moves its reserved capital,
+    ///      so the ledger's Available takes it in, in the same step.
+    function test_seedBackstopOrigination_movesAvailable() public {
+        (, uint256 before, , , ) = MarketLedgerFacet(address(diamond)).getMarketLedger(mockERC20);
+        (, uint256 fillable, , uint256 capital) = MarketLedgerFacet(address(diamond)).getSlotLedger(
+            vault, mockERC20, mockCollateralERC20, LibVaipakam.PROTOCOL_INTENT_SLOT
+        );
+        assertEq(before, fillable, "the backstop slot is the only slot");
+        _seed(1 ether);
+        (, uint256 afterSeed, , , ) = MarketLedgerFacet(address(diamond)).getMarketLedger(mockERC20);
+        uint256 expected = capital + 1 ether;
+        if (expected > MAX_EXPOSURE) expected = MAX_EXPOSURE;
+        assertEq(afterSeed, expected, "available follows the seeded capital");
+    }
 
     function test_provision_setsVault() public view {
         assertEq(BackstopFacet(address(diamond)).getBackstopVault(), vault, "vault set");
@@ -281,6 +306,24 @@ contract BackstopVaultTest is SetupTest {
         assertEq(loan.lender, vault, "loan.lender == backstop vault");
         assertEq(loan.principal, PRINCIPAL, "principal");
         assertEq(loan.principalAsset, mockERC20, "principal asset");
+    }
+
+    /// The backstop fill runs the slot's calm-price check like any intent
+    /// fill: the collateral reads 50% above both checkpoints, refused by name.
+    function test_backstopFill_movingPair_isRefused() public {
+        (uint256 offerId, ) = _eligibleOffer();
+        mockOraclePrice(mockCollateralERC20, 1.5e8, 8);
+        vm.expectRevert(
+            abi.encodeWithSelector(OfferPriceGuardFacet.IntentPairNotCalm.selector, mockERC20, mockCollateralERC20)
+        );
+        BackstopFacet(address(diamond)).backstopFill(offerId);
+    }
+
+    /// The backstop vault's slot cannot switch the check off.
+    function test_backstopVault_cannotSwitchTheCalmCheckOff() public {
+        vm.prank(vault);
+        vm.expectRevert(abi.encodeWithSelector(OfferPriceGuardFacet.IntentCalmCheckRequired.selector, vault));
+        OfferPriceGuardFacet(address(diamond)).setIntentCalmCheck(mockERC20, mockCollateralERC20, 0, false);
     }
 
     // ─── #954 (§1.5) — re-screen the offer creator at FILL ──────────────────
@@ -532,6 +575,7 @@ contract BackstopVaultTest is SetupTest {
     function test_backstopFill_notOptedIn_reverts() public {
         (uint256 offerId, ) = _postBorrowerOffer(base + 7 days); // no opt-in
         vm.warp(base + 3 days);
+        LibTestCalmPair.checkpoint(address(diamond), mockCollateralERC20, mockERC20);
         vm.expectRevert(BackstopFacet.OfferNotBackstopFillable.selector);
         BackstopFacet(address(diamond)).backstopFill(offerId);
     }
@@ -596,6 +640,8 @@ contract BackstopVaultTest is SetupTest {
         vm.prank(borrower);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -657,6 +703,8 @@ contract BackstopVaultTest is SetupTest {
         vm.prank(borrower);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockCollateralERC20,
                 amount: PRINCIPAL,
@@ -905,6 +953,7 @@ contract BackstopVaultTest is SetupTest {
         BackstopFacet(address(diamond)).backstopFill(offerId);
 
         vm.warp(now_ + 2 days + 1);
+        LibTestCalmPair.checkpoint(address(diamond), mockCollateralERC20, mockERC20);
         vm.prank(makeAddr("poker"));
         uint256 loanId = BackstopFacet(address(diamond)).backstopFill(offerId);
         assertEq(LoanFacet(address(diamond)).getLoanDetails(loanId).lender, vault, "filled after the new delay");

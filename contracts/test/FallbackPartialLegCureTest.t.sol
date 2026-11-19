@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {LibTestFallbackGate} from "./helpers/LibTestFallbackGate.sol";
 import {CustodyInvariantBase} from "./invariants/CustodyInvariantBase.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
@@ -11,6 +12,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
@@ -159,6 +161,7 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
         uint256 c = _plCureByTopUp(f);
 
         _plSetRisk(f.a, PL_HF_LIQUIDATABLE, PL_LTV_LIQUIDATABLE);
+        LibTestFallbackGate.open(address(diamond), f.a);
         uint256 sellQuote = liquidationQuote(address(diamond), f.a);
         vm.prank(plLiquidator);
         RiskFacet(address(diamond)).triggerLiquidation(f.a, sellQuote, _plRoute(false));
@@ -185,6 +188,7 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
         uint256 c = _plCureByTopUp(f);
 
         _plSetRisk(f.a, PL_HF_LIQUIDATABLE, PL_LTV_LIQUIDATABLE);
+        LibTestFallbackGate.open(address(diamond), f.a);
         uint256 sellQuote = liquidationQuote(address(diamond), f.a);
         vm.prank(plLiquidator);
         RiskFacet(address(diamond)).triggerLiquidation(f.a, sellQuote, _plRoute(true));
@@ -210,6 +214,7 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
 
         LibVaipakam.Loan memory l = _plLoan(f.a);
         vm.warp(uint256(l.startTime) + l.durationDays * 1 days + PL_PAST_EVERY_GRACE);
+        LibTestFallbackGate.open(address(diamond), f.a);
         uint256 sellQuote = defaultQuote(address(diamond), f.a);
         vm.prank(plLiquidator);
         DefaultedFacet(address(diamond)).triggerDefault(f.a, sellQuote, _plRoute(false));
@@ -235,6 +240,7 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
 
         LibVaipakam.Loan memory l = _plLoan(f.a);
         vm.warp(uint256(l.startTime) + l.durationDays * 1 days + PL_PAST_EVERY_GRACE);
+        LibTestFallbackGate.open(address(diamond), f.a);
         uint256 sellQuote = defaultQuote(address(diamond), f.a);
         vm.prank(plLiquidator);
         DefaultedFacet(address(diamond)).triggerDefault(f.a, sellQuote, _plRoute(true));
@@ -278,7 +284,7 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
 
         assertEq(_plRow(f.a), 0, "the custody returned to the pledge");
         _plAssertPledge(f.a, c);
-        (, uint256 owed, bool claimed) = ClaimFacet(address(diamond)).getClaimableAmount(f.a, false);
+        (, uint256 owed, bool claimed) = ClaimViewFacet(address(diamond)).getClaimableAmount(f.a, false);
         assertEq(owed, c, "the borrower is owed exactly collateralAmount");
         assertFalse(claimed, "and has not claimed it yet");
         assertEq(_plBal(weth, address(diamond)), f.diamondWeth0, "the curing repayment moved nothing through the Diamond");
@@ -473,6 +479,7 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
     ///      top-up does not cure it unless the cell restores them.
     function _plLiquidateToFallback(uint256 loanId) internal {
         _plSetRisk(loanId, PL_HF_LIQUIDATABLE, PL_LTV_LIQUIDATABLE);
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         RiskFacet(address(diamond)).triggerLiquidation(loanId, sellQuote, _plRoute(true));
         assertEq(
@@ -498,6 +505,8 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
         _plFund(lender_, lending, principal);
         _plFund(borrower_, collateral, collateralAmount);
         LibVaipakam.CreateOfferParams memory p = LibVaipakam.CreateOfferParams({
+            integrator: address(0),
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Lender,
             lendingAsset: lending,
             amount: principal,
@@ -613,7 +622,7 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
             c - sold,
             "only the unsold collateral stays encumbered"
         );
-        (address keptAsset, uint256 kept, ) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+        (address keptAsset, uint256 kept, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, false);
         assertEq(keptAsset, weth, "the borrower claim is the unsold collateral");
         assertEq(kept, c - sold, "the borrower claim is exactly the unsold collateral");
         assertEq(_plBal(weth, address(diamond)), diamond0, "the Diamond kept none of it");
@@ -648,7 +657,7 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
     }
 
     function _plSlices(uint256 loanId) internal view returns (uint256 l, uint256 t, uint256 b) {
-        (l, t, b,,,,) = ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);
+        (l, t, b,,,,) = ClaimViewFacet(address(diamond)).getFallbackSnapshot(loanId);
     }
 
     function _plSnapshotTotal(uint256 loanId) internal view returns (uint256) {

@@ -274,8 +274,8 @@ export async function probeClaim(
   const tokenId = isLender ? loan.lenderTokenId : loan.borrowerTokenId;
 
   // 1. Does the wallet still hold this side's position NFT? A
-  //    sold position isn't ours to claim; a burned (legacy) or retired
-  //    (#3205) one means the side was already claimed — nothing either.
+  //    sold position isn't ours to claim; a retired one (#3205) means
+  //    the side was already claimed — nothing either.
   try {
     const owner = await readPositionHolderOn(publicClient, diamond, BigInt(tokenId));
     if (owner === 'gone' || owner.toLowerCase() !== me) return NONE;

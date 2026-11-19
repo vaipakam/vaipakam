@@ -1384,9 +1384,9 @@ backup, not a second keeper:
 
 ## Releasing protected payouts and applying matured protected-mode changes
 
-- When an account runs in protected account mode, a payout from its vault
-  waits the delay the owner chose, and the settings that loosen protection take effect only after that
-  delay. Releasing a held item and applying a matured change are open to
+- When an account runs in protected account mode, a payout from its vault is
+  held back for the delay the owner chose, and the settings that loosen
+  protection take effect only after that delay. Releasing a held item and applying a matured change are open to
   anyone. Without a keeper nobody makes those calls on time, so a payout the
   owner waited out stays in the vault until someone makes the call by hand.
   The keeper makes them.
@@ -1406,8 +1406,8 @@ backup, not a second keeper:
 - A matured change is applied only when the protocol's own record still holds
   the change its announcement named, at the time it named: a change that was
   cancelled or asked again with a later time is not applied early. Settings
-  changes (a lowered delay, the platform NFT-protection setting or co-sign
-  requirement switched off, an account unlock, an unpin, switching the mode off) are applied together, one
+  changes (a lowered delay, the co-sign requirement switched off, an unlock,
+  an unpin, switching the mode off) are applied together, one
   call per account. Switching the mode off waits while the account still has
   open payouts; the keeper reports it as waiting, applies the
   account's other due settings meanwhile, and never reports the switch-off
@@ -1422,11 +1422,10 @@ backup, not a second keeper:
   does not try an expired one and reports it as expired. A scheduled replacement of the
   primary wallet is applied only while it still has the approvals it needs.
   Every change left waiting is reported with the protocol's reason.
-- Each kind of work (Telegram locks, payout releases, applied
-  changes) has its own share of the calls the keeper makes in a run, so a long queue of one
+- Each kind of work (Telegram locks, releases, applied changes) has its own share of the calls the keeper makes in a run, so a long queue of one
   kind never holds back another: an unlock, a replacement or a signer
   addition that would expire is not left waiting behind payouts. The kinds
-  also take turns going first, one run in three each, because each call
+  also take turns going first, every other run each, because each call
   waits to be confirmed: on a chain with slow blocks the kind that always
   went first could use the whole run's time, so a due item waits at most a
   couple of runs, never indefinitely. Within one kind, each run starts at a

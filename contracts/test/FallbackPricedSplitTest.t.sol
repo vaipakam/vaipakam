@@ -12,11 +12,12 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibFallback} from "../src/libraries/LibFallback.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
-import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
+import {CollateralLienFacet} from "../src/facets/CollateralLienFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
@@ -107,7 +108,7 @@ contract FallbackPricedSplitTest is SetupTest {
         _enterFallbackViaProducer(LOAN);
         unavailableEmitted = _emitted(vm.getRecordedLogs());
         uint256 due;
-        (lc, tc, bc, due, , , ) = ClaimFacet(address(diamond)).getFallbackSnapshot(LOAN);
+        (lc, tc, bc, due, , , ) = ClaimViewFacet(address(diamond)).getFallbackSnapshot(LOAN);
         assertEq(due, DUE, "fixture-live: the due is principal plus the 3% bonus");
     }
 
@@ -236,7 +237,7 @@ contract FallbackPricedSplitTest is SetupTest {
         _enterFallbackViaProducer(LOAN);
         bool unavailable = _emitted(vm.getRecordedLogs());
         (uint256 lc, uint256 tc, uint256 bc, , , , ) =
-            ClaimFacet(address(diamond)).getFallbackSnapshot(LOAN);
+            ClaimViewFacet(address(diamond)).getFallbackSnapshot(LOAN);
         assertTrue(unavailable, "the oracle-unavailable event is emitted");
         assertEq(lc, COLLATERAL, "the lender takes the whole collateral");
         assertEq(tc + bc, 0, "treasury and borrower take nothing");
@@ -252,7 +253,7 @@ contract FallbackPricedSplitTest is SetupTest {
     function _assertEntryRefusedWith(bytes memory refusal) internal {
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(LOAN);
         vm.startPrank(address(diamond));
-        EncumbranceMutateFacet(address(diamond)).releaseCollateralLien(LOAN);
+        CollateralLienFacet(address(diamond)).releaseCollateralLien(LOAN);
         LibTestOutflow.withdrawERC20(address(diamond), l.borrower, l.collateralAsset, address(diamond), l.collateralAmount);
         vm.expectRevert(refusal);
         FallbackCustodyFacet(address(diamond)).enterFallback(LOAN);
@@ -264,7 +265,7 @@ contract FallbackPricedSplitTest is SetupTest {
             "the refused entry left the loan Active"
         );
         (uint256 lc, uint256 tc, uint256 bc, , , bool active, ) =
-            ClaimFacet(address(diamond)).getFallbackSnapshot(LOAN);
+            ClaimViewFacet(address(diamond)).getFallbackSnapshot(LOAN);
         assertFalse(active, "no fallback snapshot was written");
         assertEq(lc + tc + bc, 0, "and no split was recorded");
     }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalOrderJson } from '@vaipakam/lib/signedOfferWire';
+import { NO_COLLECTION, canonicalOrderJson } from '@vaipakam/lib/signedOfferWire';
 import { createIndexerClient } from '../reads/world/indexerClient';
 import { bookSignedOrderFrom, makerCover, readMarketSignedBook, sortSides, standingRateBps, type BookSignedOrder } from './signedBook';
 import { orderHashOf, type SignedOrderWire } from './signedOrder';
@@ -41,6 +41,8 @@ function order(patch: Partial<SignedOrderWire> = {}): SignedOrderWire {
     periodicInterestCadence: '0',
     refinanceTargetLoanId: '0',
     useFullTermInterest: true,
+    lifecycleFlex: '0',
+    integrator: '0x0000000000000000000000000000000000000000',
     creatorFull: false,
     creatorMaxCStar: '0',
     creatorAllowFullDowngrade: false,
@@ -51,6 +53,7 @@ function order(patch: Partial<SignedOrderWire> = {}): SignedOrderWire {
     signer: MAKER,
     nonce: '7',
     deadline: '2000',
+    ...NO_COLLECTION,
     ...patch,
   };
 }

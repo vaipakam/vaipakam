@@ -53,6 +53,7 @@ import { formatBpsAsPercent, formatTokenAmountExact } from '../lib/format';
 import { MAX_INTEREST_BPS, percentToBps } from '../lib/offerSchema';
 import type { PositionLoan } from '../data/hooks';
 import { useProtocolFees } from '../data/fees';
+import { formatLifRate } from '../lib/initiationFee';
 import { useAutoRefinancePosture } from '../data/protocol';
 import {
   readApprovalsLeft,
@@ -174,10 +175,13 @@ export function BatchRefinancePanel({
       setError(blocked);
       return;
     }
+    // `ready` requires the live fee read, the initiation fee's term rule
+    // included (#3649); a review never quotes a guessed rate.
+    if (!fees.lifTerms) return;
     const terms: RefinanceTerms = { rateBps, durationDays };
     const reviewedFees: ReviewedFees = {
       treasuryFeeBps: fees.treasuryFeeBps,
-      loanInitiationFeeBps: fees.loanInitiationFeeBps,
+      lifTerms: fees.lifTerms,
       maxOfferDurationDays: fees.maxOfferDurationDays,
     };
     onStart();
@@ -665,7 +669,7 @@ function RefinanceReview({
                 ? copy.batchRefinance.permit.youMayOwe
                 : copy.batchRefinance.youMayOwe,
               youCanLose: `${copy.refinance.noGuarantee} ${copy.refinance.shortIsSafe}`,
-              fees: `${copy.fees.borrowerLIF(formatBpsAsPercent(fees.loanInitiationFeeBps))} ${copy.refinance.feesTreasuryNote(formatBpsAsPercent(fees.treasuryFeeBps))}`,
+              fees: `${copy.fees.borrowerLIF(formatLifRate(fees.lifTerms, terms.durationDays))} ${copy.refinance.feesTreasuryNote(formatBpsAsPercent(fees.treasuryFeeBps))}`,
               whenThisEnds: `${copy.batchRefinance.endsEach} ${copy.refinance.guardrailNote}`,
             }}
           />

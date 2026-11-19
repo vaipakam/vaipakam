@@ -46,7 +46,7 @@ function figures(over: Partial<ProtocolFigures> = {}): ProtocolFigures {
     offersPosted: { ok: true, value: 0n },
     assets: { ok: true, value: { rows: [], meta: {} } },
     custody: { ok: true, value: { kind: 'external', address: TREASURY } },
-    feeRates: { ok: true, value: { treasuryShareBps: 200n, loanStartFeeBps: 20n } },
+    feeRates: { ok: true, value: { treasuryShareBps: 200n, loanStartFee: { baseBps: 20n, baseTermDays: 30n, yearlyBps: 50n, yearDays: 365n } } },
     treasury: { ok: true, value: { heldOnOpenLoanAssets: 0n, feesSinceStart: 0n, feesLastDay: 0n, feesLastWeek: 0n } },
     convert: { ok: true, value: { targets: [], lastConversionAt: 0n } },
     vpfi: { ok: true, value: { kind: 'none' } },

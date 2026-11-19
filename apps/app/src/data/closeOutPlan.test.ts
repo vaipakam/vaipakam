@@ -66,7 +66,7 @@ const ctx: CloseOutCtx = {
     getBlock: async () => ({ timestamp: reads.now }),
     readContract: async () => reads.lock,
   } as unknown as PublicClient,
-  diamond: DEPLOYMENTS[84532]!.diamond as `0x${string}`, // a legacy-mode record (#3205)
+  diamond: DEPLOYMENTS[84532]!.diamond as `0x${string}`, // a recorded Diamond (#3205)
   holder: '0x00000000000000000000000000000000000000b0',
 };
 const LOAN: CloseOutLoan = {

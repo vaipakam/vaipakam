@@ -48,7 +48,7 @@ export interface PartialRepayInputs {
   graceEnd: bigint | null;
   /** The latest block's time. */
   chainNow: bigint;
-  /** The borrower position's lock (`positionLock`); null when unread. */
+  /** The borrower position's lock (`positionRoute`); null when unread. */
   borrowerLock: number | null;
   /** Whether a refinance request is live for the loan; null when unread. */
   refinanceLive: boolean | null;

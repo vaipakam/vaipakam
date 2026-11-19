@@ -522,6 +522,17 @@
   },
   {
     "type": "error",
+    "name": "CollectionParentNotFillable",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "CommitmentDayNotArmed",
     "inputs": [
       {
@@ -2130,6 +2141,11 @@
   },
   {
     "type": "error",
+    "name": "PositionTokenNotAccepted",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "PriceReadOutOfGas",
     "inputs": []
   },
@@ -2137,17 +2153,6 @@
     "type": "error",
     "name": "PriceZero",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ProtectedVaultLocked",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",
@@ -4477,11 +4482,6 @@
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "TooManyPendingRows",
-    "inputs": []
   },
   {
     "type": "error",

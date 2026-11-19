@@ -34,7 +34,7 @@ describe('watchedConfig — the one snapshot', () => {
       'autoRefinance',
       'partialFill',
       'treasuryFeeBps',
-      'lifBps',
+      'lifTerms',
       'graceBuckets',
       'riskTermsHash',
       'principalPaused',
@@ -96,11 +96,14 @@ describe('watchedConfig — the one snapshot', () => {
       if (fn === 'getFeesConfig') return [200n, 20n];
       if (fn === 'getProtocolConfigBundle') return Array.from({ length: 13 }, (_, i) => BigInt(i));
       if (fn === 'isAssetPaused') return args[0] === '0xC';
+      if (fn === 'getLoanInitiationFeeTerms') return [20n, 30n, 50n, 365n];
       return `${fn}-value`;
     };
     const snap = await readWatchedConfig(read, { principalAsset: '0xP', collateralAsset: '0xC' }, 9n);
     expect(Object.keys(snap).sort()).toEqual(WATCHED_CONFIG.map((e) => e.key).sort());
     expect(snap).toMatchObject({ partialFill: true, treasuryFeeBps: 200n, maxOfferDurationDays: 12n, principalPaused: false, collateralPaused: true });
+    // #3649: the four term-rule settings, named, never the base rate alone.
+    expect(snap.lifTerms).toEqual({ baseBps: 20n, baseTermDays: 30n, yearlyBps: 50n, yearDays: 365n });
     expect(calls.filter((c) => c.startsWith('getFeesConfig'))).toEqual(['getFeesConfig()@9']);
     expect(calls.every((c) => c.endsWith('@9'))).toBe(true);
   });
@@ -115,6 +118,7 @@ describe('watchedConfig — participants are screened inside the snapshot', () =
     if (fn === 'getPartialFillEnabled') return true;
     if (fn === 'getFeesConfig') return [200n, 20n];
     if (fn === 'getProtocolConfigBundle') return Array.from({ length: 13 }, (_, i) => BigInt(i));
+    if (fn === 'getLoanInitiationFeeTerms') return [20n, 30n, 50n, 365n];
     return 0n;
   };
   it('adds screen:<label> for each participant, tri-state, with the oracle asked directly', async () => {

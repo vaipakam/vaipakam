@@ -51,6 +51,21 @@
             "name": "protection",
             "type": "address",
             "internalType": "address"
+          },
+          {
+            "name": "priorPriceGuards",
+            "type": "address[2]",
+            "internalType": "address[2]"
+          },
+          {
+            "name": "priorConduits",
+            "type": "address[2]",
+            "internalType": "address[2]"
+          },
+          {
+            "name": "priorConduitKeys",
+            "type": "bytes32[2]",
+            "internalType": "bytes32[2]"
           }
         ]
       }
@@ -138,6 +153,84 @@
   {
     "type": "function",
     "name": "PRICE_GUARD",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "PRIOR_CONDUIT_0",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "PRIOR_CONDUIT_1",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "PRIOR_CONDUIT_KEY_0",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "PRIOR_CONDUIT_KEY_1",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "PRIOR_PRICE_GUARD_0",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "PRIOR_PRICE_GUARD_1",
     "inputs": [],
     "outputs": [
       {
@@ -428,6 +521,63 @@
   },
   {
     "type": "function",
+    "name": "isAcceptedConduit",
+    "inputs": [
+      {
+        "name": "conduit",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isAcceptedConduitKey",
+    "inputs": [
+      {
+        "name": "conduitKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isAcceptedPriceGuard",
+    "inputs": [
+      {
+        "name": "guard",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "isValidSignature",
     "inputs": [
       {
@@ -664,19 +814,6 @@
   },
   {
     "type": "function",
-    "name": "owner",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "pendingAdditions",
     "inputs": [],
     "outputs": [
@@ -747,6 +884,19 @@
   },
   {
     "type": "function",
+    "name": "protectionEpoch",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "protectionLockCount",
     "inputs": [],
     "outputs": [
@@ -809,6 +959,39 @@
       },
       {
         "name": "lockedAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "protectionRecovery",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "inForce",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "pending",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "pendingAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "recovered",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "recoveredAt",
         "type": "uint64",
         "internalType": "uint64"
       }
@@ -1070,13 +1253,6 @@
         "internalType": "bytes32"
       }
     ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "renounceOwnership",
-    "inputs": [],
-    "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
@@ -1420,19 +1596,6 @@
   },
   {
     "type": "function",
-    "name": "transferOwnership",
-    "inputs": [
-      {
-        "name": "newOwner",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "userExpires",
     "inputs": [
       {
@@ -1597,6 +1760,21 @@
             "name": "protection",
             "type": "address",
             "internalType": "address"
+          },
+          {
+            "name": "priorPriceGuards",
+            "type": "address[2]",
+            "internalType": "address[2]"
+          },
+          {
+            "name": "priorConduits",
+            "type": "address[2]",
+            "internalType": "address[2]"
+          },
+          {
+            "name": "priorConduitKeys",
+            "type": "bytes32[2]",
+            "internalType": "bytes32[2]"
           }
         ]
       }
@@ -1723,25 +1901,6 @@
       },
       {
         "name": "verifier",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "OwnershipTransferred",
-    "inputs": [
-      {
-        "name": "previousOwner",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "newOwner",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -2036,25 +2195,8 @@
   },
   {
     "type": "error",
-    "name": "OwnableInvalidOwner",
-    "inputs": [
-      {
-        "name": "owner",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "OwnableUnauthorizedAccount",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
+    "name": "PriorEndpointsInvalid",
+    "inputs": []
   },
   {
     "type": "error",

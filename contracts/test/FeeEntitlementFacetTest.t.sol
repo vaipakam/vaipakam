@@ -30,6 +30,7 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -125,6 +126,8 @@ contract FeeEntitlementFacetTest is SetupTest {
         vm.prank(lender);
         uint256 oid_ = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -347,6 +350,8 @@ contract FeeEntitlementFacetTest is SetupTest {
         vm.prank(lender);
         uint256 oid_ = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNft721,
                 amount: 10 ether, // rental fee
@@ -936,6 +941,8 @@ contract FeeEntitlementFacetTest is SetupTest {
         vm.prank(borrower);
         uint256 oid_ = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -1509,7 +1516,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         uint256 baseTreasury = IERC20(mockERC20).balanceOf(treasuryRecipient) - tBefore;
         (, uint256 baseClaim, ) =
-            ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
 
         // ── Replay 2: the HOLDER holds an AGED, consented stake. ──
         vm.revertToState(snap);
@@ -1546,7 +1553,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote2, defaultAdapterCalls());
         uint256 heldTreasury = IERC20(mockERC20).balanceOf(treasuryRecipient) - tBefore;
         (, uint256 heldClaim, ) =
-            ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
 
         // The discount reached the rental leg at all.
         assertLt(heldTreasury, baseTreasury,

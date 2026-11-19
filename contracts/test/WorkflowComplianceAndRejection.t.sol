@@ -2,8 +2,12 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestCollateralCut} from "./helpers/LibTestCollateralCut.sol";
+import {LibTestTermsCut} from "./helpers/LibTestTermsCut.sol";
+import {LibTestClaimViewCut} from "./helpers/LibTestClaimViewCut.sol";
 import {LibTestProtectedCut} from "./helpers/LibTestProtectedCut.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {LibTestSettlementLeg} from "./helpers/LibTestSettlementLeg.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
@@ -334,7 +338,11 @@ contract WorkflowComplianceAndRejection is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
+        cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
+        cuts = LibTestTermsCut.withTermsHost(cuts); // #3734
+        cuts = LibTestClaimViewCut.withClaimView(cuts); // the claim reads
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
+        LibTestSettlementLeg.install(address(diamond)); // #3669
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
         AccessControlFacet(address(diamond)).initializeAccessControl();
@@ -425,6 +433,8 @@ contract WorkflowComplianceAndRejection is Test {
         vm.prank(lender);
         uint256 erc20OfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(mockUsdc),
                 amount: PRINCIPAL,
@@ -488,6 +498,8 @@ contract WorkflowComplianceAndRejection is Test {
         vm.prank(lender);
         uint256 nftOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(mockNft),
                 amount: 1 ether,
@@ -537,6 +549,8 @@ contract WorkflowComplianceAndRejection is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(mockUsdc),
                 amount: PRINCIPAL,
@@ -589,6 +603,8 @@ contract WorkflowComplianceAndRejection is Test {
         vm.prank(sanctionedUser);
         uint256 sanctionedOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: address(mockUsdc),
                 amount: PRINCIPAL,
@@ -636,6 +652,8 @@ contract WorkflowComplianceAndRejection is Test {
         vm.prank(sanctionedUser);
         uint256 sanctionedOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(mockUsdc),
                 amount: PRINCIPAL,
@@ -696,6 +714,8 @@ contract WorkflowComplianceAndRejection is Test {
         vm.prank(lender);
         uint256 smallOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(mockUsdc),
                 amount: 100 ether,
@@ -751,6 +771,8 @@ contract WorkflowComplianceAndRejection is Test {
         vm.prank(lender);
         uint256 largeOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(mockUsdc),
                 amount: 10000 ether,
@@ -804,6 +826,8 @@ contract WorkflowComplianceAndRejection is Test {
         vm.prank(newLender);
         uint256 buyOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(mockUsdc),
                 amount: PRINCIPAL,
@@ -858,6 +882,8 @@ contract WorkflowComplianceAndRejection is Test {
         vm.expectRevert(LibAutoRefinanceCheck.RefinanceTargetIncompatible.selector);
         OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: address(mockUsdc),
                 amount: PRINCIPAL,

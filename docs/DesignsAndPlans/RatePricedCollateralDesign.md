@@ -37,6 +37,8 @@ Each rate-priced token has one binding, held by the price guard and changed only
 
 Which kind to use is decided per token and chain. On the chain where the token is issued, the token's own conversion function is the source of truth for redemption. On other chains that function usually does not exist and the rate arrives only as a feed.
 
+**How a binding starts (#3683 build).** A binding is proposed only through its own proposal call, which registers the binding and measures the rate the source reports at that moment as the binding's first accepted rate. From then until execution the rate is recorded under the daily bound like any other, so a rate pushed up at execution gains nothing. Execution records the rate once more, taking the lower of what the source reports and the accepted rate grown by the daily bound, so a delay with no recording in it cannot start the binding high either. While the binding is still pending nothing is priced from it, so a correction larger than the fall bound is taken as the new, lower accepted rate without marking the price distrusted; once the binding executes, the normal fall rule applies.
+
 ## 4. Safeguards
 
 1. **The rate may not jump up.** The guard keeps the last accepted rate and its time. A read uses the lower of the reported rate and the last accepted rate grown at the largest daily rise **over the time since it was recorded, counted as at most one day**. An attacker who inflates a vault's share value in one transaction (for example by donating to it) gains nothing: the price moves by at most one day's bound, however old the stored point is. Anyone may call a function that records the current accepted rate (itself bounded the same way), so the stored point keeps up with honest growth; the hourly price checkpoint pass does it. If recording stops for several days the allowance does not build up: the accepted rate then catches up by at most one day's bound per recording and real time elapsed, which undervalues the collateral for a while and never overvalues it.
@@ -96,6 +98,8 @@ The price guard work belongs with the rest of #3272 and the as-of reads of #3437
 7. A binding change raises the price version; an open loan keeps the old binding; a mute reaches every loan.
 8. A rate-priced token with no pool depth is illiquid.
 9. The underlying may not itself be rate-priced.
+10. The first accepted rate is the one reported at proposal; a rate inflated at execution moves the starting rate by no more than the daily bound, with or without recordings during the delay.
+11. A fall past the bound while the binding is pending lowers the accepted rate and marks nothing distrusted; the same fall after execution marks the price distrusted.
 
 ## 9. Alternatives considered
 

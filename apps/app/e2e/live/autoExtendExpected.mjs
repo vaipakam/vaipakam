@@ -8,8 +8,8 @@
  *
  *   borrower  setAutoExtendBorrowerCaps(loanId, true, 0, maxRate, latestEnd)
  *   lender    setAutoExtendLenderCaps(loanId, true, minRate, MAX_INTEREST_BPS, latestEnd)
- *   borrower  approve(Diamond, 0)?  approve(Diamond, exactly amount)?  fundExtendReserve(loanId, amount)
- *   borrower  withdrawExtendReserve(borrower, loanId, amount)
+ *   borrower  approve(Diamond, 0)?  approve(Diamond, exactly amount)?  fundLoanReserve(loanId, 0, amount)
+ *   borrower  withdrawLoanReserve(borrower, loanId, 0, amount)
  *
  * The caps mirror the app's `capsArgs` (src/data/autoExtend.ts): the side a
  * party does not bound is left open, 0 below and the protocol's maximum
@@ -94,8 +94,8 @@ export function fundSteps({ suffix = '', borrower, diamond, asset, loanId, amoun
       id: `b-fund${suffix}`,
       role: 'borrower',
       kind: 'tx',
-      purpose: `fundExtendReserve(${loanId}, ${amount})`,
-      expected: tx(diamond, { functionName: 'fundExtendReserve', args: { loanId: BigInt(loanId), amount } }),
+      purpose: `fundLoanReserve(${loanId}, 0, ${amount})`,
+      expected: tx(diamond, { functionName: 'fundLoanReserve', args: { loanId: BigInt(loanId), kind: 0, amount } }),
     },
   ];
 }
@@ -106,11 +106,11 @@ export function withdrawStep({ suffix = '', borrower, diamond, loanId, amount, c
     id: `b-withdraw${suffix}`,
     role: 'borrower',
     kind: 'tx',
-    purpose: `withdrawExtendReserve(borrower, ${loanId}, ${amount}) from ${where}`,
+    purpose: `withdrawLoanReserve(borrower, ${loanId}, 0, ${amount}) from ${where}`,
     expected: expectedTx({
       from: borrower,
       to: diamond,
-      call: { functionName: 'withdrawExtendReserve', args: { account: borrower, loanId: BigInt(loanId), amount } },
+      call: { functionName: 'withdrawLoanReserve', args: { account: borrower, loanId: BigInt(loanId), kind: 0, amount } },
       chainId,
     }),
   };
@@ -213,13 +213,13 @@ export function reserveFigureMismatches(lines, templates, bounds, decimals, symb
 }
 
 /**
- * The one indexer row a deposit must produce: kind ExtendReserveFunded,
+ * The one indexer row a deposit must produce: kind LoanReserveFunded,
  * this loan, filed under the depositor, from the deposit's own transaction.
  */
 export function fundedRowFor(events, { loanId, txHash, holder }) {
   return (Array.isArray(events) ? events : []).find(
     (e) =>
-      e?.kind === 'ExtendReserveFunded' &&
+      e?.kind === 'LoanReserveFunded' &&
       Number(e.loanId) === Number(loanId) &&
       String(e.txHash).toLowerCase() === String(txHash).toLowerCase() &&
       String(e.actor ?? '').toLowerCase() === String(holder).toLowerCase(),

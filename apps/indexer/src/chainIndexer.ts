@@ -169,7 +169,7 @@ import {
   type ParticipantRow,
 } from './walletActivity';
 import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
-import { LEGACY_POSITION_EVENTS, POSITION_TRANSFER_EVENT, positionNftForDiamond, readPositionHolder, scannedAddresses } from './positionNft';
+import { POSITION_NFT_EVENTS, positionNftForDiamond, readPositionHolder, scannedAddresses } from './positionNft';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -204,10 +204,9 @@ function getDeployBlock(chainId: number): number | undefined {
 const EVENT_ABI: readonly AbiEvent[] = (() => {
   const seen = new Set<string>();
   const out: AbiEvent[] = [];
-  // #3205 — the ERC-721 `Transfer` the generated Diamond ABI no longer
-  // carries: emitted by the PositionNFT (standalone) or a legacy Diamond.
-  // The legacy Diamond's NFT-queue events too (TODO(#3321 positionNft-legacy-removal)).
-  for (const item of [...(DIAMOND_ABI_VIEM as Abi), POSITION_TRANSFER_EVENT as AbiEvent, ...LEGACY_POSITION_EVENTS]) {
+  // #3205 — the PositionNFT's ERC-721 events (`Transfer`, `Approval`,
+  // `ApprovalForAll`), which the generated Diamond ABI does not carry.
+  for (const item of [...(DIAMOND_ABI_VIEM as Abi), ...(POSITION_NFT_EVENTS as Abi)]) {
     if (item.type !== 'event') continue;
     const ev = item as AbiEvent;
     let sig: string;
@@ -1187,8 +1186,8 @@ async function resolveCurrentHolders(
     // '0' is the stub-row sentinel, never a real ERC721 id.
     if (!tokenId || tokenId === '0') return null;
     try {
-      // #3318 r2 — a retired receipt (standalone) or a burned token
-      // (legacy) has no live holder: 'gone' at this same pinned head.
+      // #3318 r2 — a retired receipt has no live holder: 'gone' at this
+      // same pinned head.
       const holder = await readPositionHolder(client, positionNftForDiamond(diamond), BigInt(tokenId), head);
       return holder === 'gone' ? null : holder.toLowerCase();
     } catch {
@@ -2691,8 +2690,8 @@ async function runChainPass(
       // (config-facet events, ERC-721 Approval, etc.) throw on decode
       // and are skipped.
       const rawLogs = await client.getLogs({
-        // #3205: plus the PositionNFT on a standalone-mode chain, whose
-        // `Transfer` events keep the holder columns current.
+        // #3205: plus the chain's PositionNFT, whose `Transfer` events
+        // keep the holder columns current.
         address: scannedAddresses(diamond),
         fromBlock: cursor,
         toBlock: chunkEnd,
@@ -3344,6 +3343,13 @@ async function processOfferLogs(
         borrowerOfferId: bigint;
         // #760 — block of the OfferMatched log, for the block-pinned
         // absolute `amountFilled` read in the apply loop below.
+        blockNumber: bigint; }
+    // #3328 — a collection offer's parent moved: one loan was filled from
+    // it (its `amountFilled` grew by the per-loan amount) or its lender
+    // lowered the loans left (its `amount` / `amountMax` shrank). Both are
+    // re-read block-pinned, like a match, so a re-scan writes the same row.
+    | { kind: 'collection';
+        offerId: bigint;
         blockNumber: bigint; };
   const orderedMatchAndModify: ModifiedOrMatched[] = [];
   for (const log of logs) {
@@ -3384,6 +3390,14 @@ async function processOfferLogs(
         borrowerOfferId: a.borrowerOfferId as bigint,
         // #760 — carried so the matched apply can read the absolute
         // `amountFilled` block-pinned to THIS event (idempotent re-scan).
+        blockNumber: log.blockNumber,
+      });
+    } else if (log.eventName === 'CollectionOfferFilled' || log.eventName === 'CollectionOfferReduced') {
+      // #3328 — the parent's amounts moved; re-read them in log order with
+      // the matches and modifications.
+      orderedMatchAndModify.push({
+        kind: 'collection',
+        offerId: a.offerId as bigint,
         blockNumber: log.blockNumber,
       });
     } else if (log.eventName === 'OfferClosed') {
@@ -3733,6 +3747,48 @@ async function processOfferLogs(
       // #2382 r2 — the borrower offer's fills are re-read by the refresh
       // lane (see `borrowerFillsStale`), not here.
       borrowerFillsStale.add(Number(ev.borrowerOfferId));
+    } else if (ev.kind === 'collection') {
+      // #3328 — the parent's post-image, block-pinned (idempotent re-scan).
+      // FAIL-CLOSED like the match read above: a failed read aborts the scan
+      // before the cursor advances.
+      let od: { amount?: bigint; amountMax?: bigint; amountFilled?: bigint };
+      try {
+        od = (await client.readContract({
+          address: diamond,
+          abi: DIAMOND_OFFER_DETAILS_ABI,
+          functionName: 'getOfferDetails',
+          args: [ev.offerId],
+          blockNumber: ev.blockNumber,
+        })) as { amount?: bigint; amountMax?: bigint; amountFilled?: bigint };
+        if (od.amount === undefined || od.amountMax === undefined || od.amountFilled === undefined) {
+          throw new Error('getOfferDetails returned no amounts');
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[chainIndexer] #3328 getOfferDetails(${Number(ev.offerId)}) for a collection offer failed; aborting scan so the cursor doesn't advance`,
+          redactedError(err),
+        );
+        throw err;
+      }
+      const r = await env.DB.prepare(
+        `UPDATE offers
+         SET amount = ?,
+             amount_max = ?,
+             amount_filled = ?,
+             updated_at = ?
+         WHERE chain_id = ? AND offer_id = ?`,
+      )
+        .bind(
+          BigInt(od.amount).toString(),
+          BigInt(od.amountMax).toString(),
+          BigInt(od.amountFilled).toString(),
+          now,
+          chainId,
+          Number(ev.offerId),
+        )
+        .run();
+      if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
     } else {
       // OfferModified — full post-image. Status stays 'active'
       // (modifications are only allowed on unaccepted offers;
@@ -3924,6 +3980,7 @@ export async function processSignedOfferLogs(
     'SignedOfferCancelled',
     'SignedOfferNonceBurned',
     'SignedOfferCancelFloorRaised',
+    'SignedCollectionOfferFilled',
   ]);
   // Replay in chain log order (the scan already delivers logs ordered by
   // (blockNumber, logIndex)): a match ratchet followed by a cancel in the
@@ -4058,6 +4115,53 @@ export async function processSignedOfferLogs(
              WHERE chain_id = ? AND order_hash = ? AND status = 'active'`
           : `UPDATE signed_offers
              SET filled_amount = ?, updated_at = ?
+             WHERE chain_id = ? AND order_hash = ? AND status = 'active'`,
+      )
+        .bind(absFilled.toString(), now, chainId, orderHash)
+        .run();
+      if ((r.meta?.changes ?? 0) > 0) updates++;
+    } else if (log.eventName === 'SignedCollectionOfferFilled') {
+      // #3328 — one loan of a signed collection offer. The event carries the
+      // loans left, so the row's status needs no ledger read; the filled
+      // principal is the block-pinned ledger (each fill counts one loan's
+      // amount), read only for an order the book carries. The book admits no
+      // collection order today (the POST route refuses setKind != 0), so this
+      // is normally a no-op; it keeps the row honest if that changes.
+      const orderHash = (a.orderHash as string).toLowerCase();
+      const row = await env.DB.prepare(
+        `SELECT status FROM signed_offers WHERE chain_id = ? AND order_hash = ?`,
+      )
+        .bind(chainId, orderHash)
+        .first<{ status: string }>();
+      if (!row) {
+        console.log(
+          `[chainIndexer] SignedCollectionOfferFilled for untracked order ${orderHash} (chain ${chainId}) — no-op`,
+        );
+        continue;
+      }
+      let absFilled: bigint;
+      try {
+        absFilled = (await client.readContract({
+          address: diamond,
+          abi: DIAMOND_SIGNED_OFFER_ABI,
+          functionName: 'signedOfferFilledAmount',
+          args: [orderHash],
+          blockNumber: log.blockNumber,
+        })) as bigint;
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[chainIndexer] signedOfferFilledAmount(${orderHash}) for SignedCollectionOfferFilled failed; aborting scan so the cursor doesn't advance`,
+          redactedError(err),
+        );
+        throw err;
+      }
+      const done = Number(a.loansLeft) === 0;
+      const r = await env.DB.prepare(
+        done
+          ? `UPDATE signed_offers SET status = 'filled', filled_amount = ?, updated_at = ?
+             WHERE chain_id = ? AND order_hash = ? AND status = 'active'`
+          : `UPDATE signed_offers SET filled_amount = ?, updated_at = ?
              WHERE chain_id = ? AND order_hash = ? AND status = 'active'`,
       )
         .bind(absFilled.toString(), now, chainId, orderHash)
@@ -5445,8 +5549,8 @@ export async function processLoanLogs(
   // order of the two events within the tx.
   const loanDetailsByLoanId = new Map<number, Record<string, unknown>>();
   // #3205 (#3318 Codex r4) — who each position token minted in this batch was
-  // minted to, from the Diamond's own `NFTMinted` (emitted on both legacy and
-  // standalone chains, in the loan's own transaction). The loan seeding reads
+  // minted to, from the Diamond's own `NFTMinted` (emitted in the loan's own
+  // transaction). The loan seeding reads
   // it first, so a fresh token's holder comes from the mint, never from
   // token-id reuse.
   const mintedTo = new Map<string, string>();
@@ -6134,9 +6238,10 @@ export async function processLoanLogs(
           .bind(refreshedGraceEnd, now, chainId, loanId)
           .run();
       }
-    } else if (log.eventName === 'CollateralAdded') {
-      // Borrower topped up collateral — loan stays Active, but
-      // `collateral_amount` grows. The event carries `newCollateralAmount`.
+    } else if (log.eventName === 'CollateralAdded' || log.eventName === 'CollateralTopUpRun') {
+      // Borrower topped up collateral (directly, or by the #3681 standing
+      // instruction drawing the collateral reserve) — loan stays Active, but
+      // `collateral_amount` grows. Both events carry `newCollateralAmount`.
       const collateralAdded = await env.DB.prepare(
         `UPDATE loans SET collateral_amount = ?, updated_at = ?
          WHERE chain_id = ? AND loan_id = ?`,
@@ -6315,7 +6420,10 @@ export async function processLoanLogs(
         'lender',
         chainTimeOf(blockTimestamps, log.blockNumber),
       );
-    } else if (log.eventName === 'LoanSaleCompleted') {
+    } else if (log.eventName === 'LoanSaleCompleted' || log.eventName === 'InstantTakenOver') {
+      // #3656 — an instant-market takeover moves the lender position the same
+      // way (`LibLoan.migrateLenderPosition`, burn + fresh mint) and its event
+      // carries no new token id either, so it shares this block-pinned read.
       // EarlyWithdrawal TWO-STEP sale-offer flow (`completeLoanSale`): like the
       // direct `sellLoanViaBuyOffer`→`LoanSold` path, it migrates the ORIGINAL
       // loan's lender position (LibLoan.migrateLenderPosition burns the old token
@@ -6340,7 +6448,7 @@ export async function processLoanLogs(
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error(
-          `[chainIndexer] #749 getLoanDetails(${loanId}) for LoanSaleCompleted failed; aborting scan so the cursor doesn't advance`,
+          `[chainIndexer] #749 getLoanDetails(${loanId}) for ${log.eventName} failed; aborting scan so the cursor doesn't advance`,
           redactedError(err),
         );
         throw err;
@@ -7099,7 +7207,7 @@ export async function processLoanLogs(
     // transitions to a loan's lender/borrower-tokenId at offer
     // accept). We fire all 3 UPDATEs blindly; only the matching
     // row gets touched, the others no-op.
-    // #3205 — standalone mode retires a closed position's token instead of
+    // #3205 — the PositionNFT retires a closed position's token instead of
     // burning it (no `Transfer` to 0x0), so the retirement clears the holder
     // exactly as a burn did (#749): the position drops out of the
     // by-holder routes and the claimables.

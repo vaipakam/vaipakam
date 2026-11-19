@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { configChanges, observationVerdict, observeAgainstChain } from './observation.mjs';
 
-const CONFIG = { paused: false, autoRefinance: true, partialFill: true, treasuryFeeBps: 200n, lifBps: 20n, graceBuckets: [] };
+const CONFIG = { paused: false, autoRefinance: true, partialFill: true, treasuryFeeBps: 200n, lifTerms: { baseBps: 20n, baseTermDays: 30n, yearlyBps: 50n, yearDays: 365n }, graceBuckets: [] };
 
 /** A readConfig that returns each queued reading in turn, logging calls. */
 function reader(readings, log) {

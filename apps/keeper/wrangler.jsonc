@@ -353,6 +353,13 @@
   //     period's grace is over and so sells part of the borrower's
   //     collateral when the period's interest is unpaid. Ships unset. Needs
   //     no on-chain role. Arming it is an owner decision.
+  //   - HELD_RECOMMIT_ENABLED — 'true' lets the matcher's roll pass also
+  //     submit `recommitHeldToIntent` (#3629): for an open intent loan whose
+  //     owner delegated auto-roll, payments held for the lender position go
+  //     back behind the owner's intent. Moves only the owner's own held funds
+  //     into their own intent; pays the keeper nothing. Ships unset. Needs the
+  //     owner's AUTO_ROLL delegation, like the roll. Arming it is an owner
+  //     decision.
   //   - REWARD_CLOSE_OUT_ENABLED — 'true' arms the #2984 reward close-out
   //     pass: day-closure walks, retired-era finalization, the pending-surplus
   //     drain, the transport-remainder park and the day-cursor prune. All
@@ -414,8 +421,7 @@
   //     keeper. Ships unset. Needs no on-chain role. Arming it is an owner
   //     decision.
   //   - PROTECTED_ACCOUNT_ENABLED — 'true' arms the #3088 protected account
-  //     pass: releasePayout / releasePositionTransfer for queued rows past
-  //     their delay, and the finalize calls of matured protected-mode
+  //     pass: releasePayout for queued rows past their delay, and the finalize calls of matured protected-mode
   //     changes, every minute. Permissionless; it pays only gas and moves
   //     nothing to the keeper. Ships unset. Needs no on-chain role. Arming it
   //     is an owner decision.

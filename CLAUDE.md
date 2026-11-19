@@ -113,8 +113,18 @@ Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))` — this
 | **ProfileFacet**       | User country (sanctions), KYC verification                                  |
 | **AdminFacet**         | Treasury, 0x proxy, allowance target config                                 |
 | **OfferBookFacet** | The step where a new offer enters the book (#3242): `openOfferOnBook`, the `address(this)`-gated self-call every `OfferCreateFacet` creation ends with, applies the two book bounds (the $10 value floor on a liquid priced principal, the per-wallet open-offer cap), records the offer in the active index and emits `OfferCreated` + `OfferCreatedDetails` (still `OfferCreateFacet`'s declarations, emitted by name, so topic hashes are unchanged). Also `requireOfferValueAdmitted` (OfferMutateFacet's amount re-check) and `getOfferBookBounds(wallet)`. Split off `OfferCreateFacet`, which had about 100 bytes of EIP-170 headroom. **`OfferCreatedDetails` is no longer emitted from OfferCreateFacet's code.** Refreshed together with OfferCreateFacet and OfferMutateFacet |
+| **OfferMaterializeFacet** | Turns an offer agreed off the book into a normal on-chain offer at the moment it fills (#3328): `createSignedOfferVault` / `createSignedOfferWallet`, the Diamond-only entries the signed-offer accept and match (`SignedOfferFacet`, `SignedOfferMatchFacet`) and the standing-intent slice (`LibIntentFill`) self-call. Split off `OfferCreateFacet` along the "how the creator's assets arrive" seam: what an offer IS (validation, record, position token, book entry) is `LibOfferCreate`, inlined in both facets, so there is one creation rule. **The materialize entries are NOT on OfferCreateFacet any more.** Refreshed together with OfferCreateFacet (one rule, two hosts) and with the facets that self-call it |
+| **CollectionOfferFacet** | NFT collection offers (#3328): one lender offer against a set of tokens (whole collection, id range, or a Merkle-listed set) for several loans. `createCollectionOffer` posts a PARENT offer (an all-or-nothing lender offer whose principal lien reserves every loan; the set lives in `s.collectionOffer`) through the Diamond-only `OfferCreateFacet.createCollectionParent`. Each fill draws a one-token lender SLICE from the parent (`OfferMaterializeFacet.createCollectionSlice`) and runs it through the ordinary accept (`fillCollectionOffer`, via `verifyAndBindAccept` + `acceptOfferInternal`) or the ordinary match core (`matchCollectionOffer`, via the Diamond-only `OfferMatchFacet.matchCoreInternal`), so every origination check applies per fill. Also `reduceCollectionLoans` (released principal to the lender's wallet) and the governed limits. The parent itself is refused by every ordinary route (`CollectionParentNotFillable`: accept and its preview, match and its preview, edit, direct loan sale). **Refreshed together with OfferCreateFacet, OfferMaterializeFacet, OfferAcceptFacet, OfferMatchFacet and every facet that carries the parent refusal** |
 | **SaleFloorFacet** | The one rule for a forced sale's slippage floor (#3359): `saleFloorBps` returns the per-tier figure (2.5% / 3.5% / 4.5% by OracleFacet's `getCloseOutLiquidityTier`) when the pair is calm against both of the last two hourly checkpoints and the collateral covers 110% of the debt, else the full `cfgMaxLiquidationSlippageBps`. ForcedSaleFacet (sizing and minimum output, reported as `ForcedSalePlan.floorBps`) and RiskFacet's partial liquidation self-call it. Also the permissionless hourly checkpoint writer `checkpointHourlyPrices` and the bounded settings. Its own facet because ForcedSaleFacet had about 300 bytes of EIP-170 headroom. **Refreshed together with ForcedSaleFacet, RiskFacet and OracleFacet**; `RedeployFacets` refuses a Diamond that does not already route `saleFloorBps` (`PredatesSaleFloorRule`) |
+| **MarketLedgerFacet** | The instant market's common ledger (§8): `getMarketLedger` / `getPairLedger` (Declared, Lent, Lent from Auto-lend slots, Lent through the instant market, per lending asset and per pair), the permissionless `rollDeclaredLedger`, and `syncDeclared`, the `address(this)`-gated Declared host that `LenderIntentFacet.setLenderIntent` / `cancelLenderIntent` self-call. Its own facet because `LenderIntentFacet` had no EIP-170 room. Lent is written inline from `LibMetricsHooks`, `LibInterestLedger` and `matchIntent`, never through this facet. **Refreshed together with LenderIntentFacet**: a slot writer refreshed onto a Diamond that does not route `syncDeclared` reverts every set and cancel |
+| **InstantMarketFacet** / **InstantFillFacet** | The instant market (#3656): `borrowInstant` (a borrower fills from several Auto-lend slots and lender offers in one transaction, each fill its own loan at its source's own price, a refusing source skipped and reported, reverting only below the stated least), the slot owner's instant-market consents (`setInstantSlot`, cleared by `LenderIntentFacet.setLenderIntent`), the master switch and fill bound, and the group label. `InstantFillFacet.fillInstant` is the `address(this)`-gated one-fill executor `borrowInstant` calls per source; it inlines the match core (`LibOfferMatchExecute.executeMatchFor`, matcher `address(0)` so no match share is paid), which is why it is its own facet. A slot fill runs the one slot rule in `LibIntentFill`, shared with `OfferMatchIntentFacet.matchIntent`. **The two must be refreshed together**, and with OfferMatchIntentFacet and OfferAcceptFeeFacet (the no-matcher fee split) |
+| **InstantTakeoverFacet** | The instant market's takeover at face value (#3656 §7): `takeoverInstant` hands an instant-market loan with interest by time from its lender to another lender's Auto-lend slot that gave the takeover consent. The slot must admit the loan as if it were opened now (rate, lifecycle terms, term, loan-to-value, health factor, exposure room). Its capital pays exactly the principal outstanding into the outgoing holder's vault, the position moves on the same loan record (`LibLoan.migrateLenderPosition`, so the outgoing holder's earned interest becomes a seller claim) and the borrower signs nothing. Its opening checks are the direct sale's (`SaleExitVerdictFacet.requireSaleExitOpen`, route Direct). It is its own facet because the position move reaches libraries whose inline assembly withholds the memory guard that `borrowInstant`'s frame needs. **Refreshed together with SaleExitVerdictFacet, LenderIntentFacet and InstantMarketFacet** |
+| **CollateralConcentrationFacet** | The ONE host of the new-loan init-LTV cap and of collateral concentration (#3685): `newLoanInitLtvCapBps` (LoanFacet's admission gate and its snapshot, OfferPreviewFacet's match bounds, LibRiskMath's offer bounds and the offer book's logical ceiling all self-call it), the per-asset view `getConcentration`, the per-loan record `loanConcentrationAtInit`, and the bounded ADMIN settings. Concentration = value of the asset pledged under live collateral liens / the sale size its liquidity tier is measured at; at High the cap is the next lower tier's (lowest tier: its cap less a step), in both LTV regimes, and the views say whether that actually binds. **The cap is no longer computed inline anywhere**; read it here |
+| **CollateralLienFacet** | The four collateral-lien entries (`releaseCollateralLien`, `decrementCollateralLien`, `incrementCollateralLien`, `recreateCollateralLien`), split off `EncumbranceMutateFacet` in #3685 when the per-asset pledged total joined every lien change and that facet went over EIP-170. **They are NOT on EncumbranceMutateFacet any more.** LibEncumbrance stays the one writer of liens and of the pledged total |
 | **NotificationFeeFacet** | The paid-notification fee: `markNotifBilled` (`NOTIF_BILLER_ROLE`) and the wallet's own consent to it (`setNotificationFeeConsent` / `getNotificationFeeConsent`). Split off `LoanFacet` and `ProfileFacet` in #2769, when screening the payer pushed `LoanFacet` over EIP-170. **`markNotifBilled` is NOT on LoanFacet any more** |
+| **StandingInstructionFacet** | The borrower's standing instructions on a loan (#3681): the two per-loan reserves (`fundLoanReserve` / `withdrawLoanReserve`, kind 0 = the payment reserve, which the auto-extension also draws, kind 1 = the collateral reserve), `setStandingInstructions` / `clearStandingInstructions`, and the three permissionless executors `runCollateralTopUp`, `runInterestPayment` and `runDueRepayment`, each of which emits `StandingInstructionSkipped` with a reason instead of reverting when a run cannot go ahead. **`fundExtendReserve` / `withdrawExtendReserve` are NOT on AutoLifecycleFacet any more.** A reserve is the holder's own vault balance under a per-loan lien, never collateral. The interest payment books through `RepayPeriodicFacet.bookInterestPayment` (`LibInterestPayment`), the same booking the periodic forced sale uses, and the due repayment binds the holder (transient, `LibStandingInstructions.bindReserveRepayer`) and self-calls the ordinary `RepayFacet.repayLoan`, which self-calls back `payRepaymentFromReserve` here for the reserve-paid legs. A hand repayment's legs go the same way, to `SettlementLegFacet.payRepaymentLegs`: RepayFacet sizes the legs and moves none itself (it has no EIP-170 room); a due-date plan (auto-extend or auto-refinance) and repay-at-due are mutually exclusive |
+| **ClaimViewFacet** | The claim reads: `getClaimable`, `getClaimableAmount`, `getBorrowerSurplusClaim`, `getFallbackSnapshot`, `getOwedAtDefault` and `getOwedAtInternalMatch`. Split off `ClaimFacet` along its read / write seam when ClaimFacet went over EIP-170. **These reads are NOT on ClaimFacet any more**, so an app or keeper that reads them through `ClaimFacetABI` must use `ClaimViewFacetABI` or the combined Diamond ABI. Selectors and return shapes are unchanged. **Refreshed together with ClaimFacet**; `RedeployFacets` repoints the six selectors. Hand-built test Diamonds add it with `LibTestClaimViewCut.withClaimView` |
+| **LenderIntentViewFacet** | The standing-intent reads: `getLenderIntent`, `getLenderIntentLivePrincipal`, `getLenderIntentCapital`, `getLenderIntentPriority` and the three paginated feeds `getActiveLenderIntents`, `getRollableIntentLoans` and `getLenderIntentsByOwner`. Split off `LenderIntentFacet` along its read / write seam when LenderIntentFacet went over EIP-170. **These reads are NOT on LenderIntentFacet any more**: an app or keeper reading them through `LenderIntentFacetABI` must use `LenderIntentViewFacetABI` or the combined Diamond ABI. The kill-switch and fill-floor getters stay with their setters on LenderIntentFacet. Selectors and return shapes are unchanged. **Refreshed together with LenderIntentFacet** |
 
 **Refresh-together families (#1566 slices 2–3, #2472, #2440).** Each facet set
 below carries one behaviour across a self-call or a fill, so refreshing a subset
@@ -230,14 +240,26 @@ runs half of it on old code:
 - **OfferPreviewFacet + the match core's hosts (#3326).** The shared match
   core (`LibOfferMatch`, inlined in OfferMatchFacet, OfferMatchIntentFacet,
   SignedOfferMatchFacet and RiskPreviewFacet) asks
-  `OfferPreviewFacet.initRiskBounds` for the loan-initiation risk bounds: the
+  `RiskPreviewFacet.initRiskBounds` for the loan-initiation risk bounds: the
   collateral floor for an amount and the largest amount a collateral backs.
   Each host used to inline its own copy, and all four sat near EIP-170. A match
   host refreshed onto a Diamond that does not route `initRiskBounds` reverts
   `FunctionDoesNotExist` on every match and match preview (a hard revert, not a
-  split Diamond). `RedeployFacets` refreshes the match hosts but not
-  OfferPreviewFacet, so it refuses such a Diamond
-  (`PredatesMatchRiskBoundsHost`).
+  split Diamond). The host was OfferPreviewFacet until #3328 moved it to
+  RiskPreviewFacet (OfferPreviewFacet had reached EIP-170).
+  **`initRiskBounds` is NOT on OfferPreviewFacet any more.** `RedeployFacets`
+  refreshes RiskPreviewFacet with the match hosts, so it carries the host
+  itself and needs no refusal for it.
+
+- **SignedOfferFacet + SignedOfferMatchFacet (#3443 follow-up).** The
+  keeper match of a signed offer runs its signed-offer half (the fill and
+  slice rules, the maker's signature, the fill ledger and the slice's
+  materialization) through one self-call, `takeSignedMatchSlice`, and keeps
+  only the match. Split because the match facet had passed EIP-170 by 342
+  bytes. A match facet refreshed without the host reverts
+  `FunctionDoesNotExist` on every signed match (a hard revert, never an
+  unchecked slice). Reaches a chain by fresh deploy or
+  `RefreshAllFacetsInPlace`.
 
 - **SaleExitVerdictFacet + EarlyWithdrawalFacet + EarlyWithdrawalDirectFacet
   (#1841).** Both lender-exit entries run their opening checks through one
@@ -397,12 +419,24 @@ runs half of it on old code:
   the obligation handover (the incoming borrower's offer). The offer book records a guard armed before posting,
   and the accept, match and standing-intent previews ask the same entry
   (the match preview and `RiskPreviewFacet.previewIntent` through
-  `OfferPreviewFacet.previewOriginationRefusal`). An unguarded fill
+  `OfferPriceGuardFacet.previewOriginationRefusal`, which #3734 moved off
+  OfferPreviewFacet for EIP-170 room and which also reports a Terms refusal). An unguarded fill
   makes no self-call, so a Diamond without the host fills unguarded offers
   as before, but a guarded offer's fill reverts `FunctionDoesNotExist` there
   (a hard revert, never an unchecked fill). The calm rule is
   `LibPairCalm`, shared with `SaleFloorFacet`. Reaches a chain by fresh
   deploy or `RefreshAllFacetsInPlace`.
+
+- **ReadyBalanceFacet + OfferMaterializeFacet + InstantFillFacet +
+  AutoLifecycleFacet + VaultDepositoryFacet + the vault template — the
+  protected Ready balance (#3344).** The three spend sites (a vault-backed
+  signed offer, the instant-market borrower's vault collateral, the
+  auto-extension charge beyond the reserve) self-call `spendReady`, and the
+  depository withdraw reads `readySpendable` to keep Ready out of a wallet. A
+  spend site refreshed without the host reverts `FunctionDoesNotExist` for
+  every account (a hard revert, never an unchecked spend). Intent and instant
+  slices materialize through `createCommittedSliceVault`, which draws neither
+  the depository ledger nor Ready. Reaches a chain by fresh deploy.
 
 - **Every facet that reads a loan deadline (#668 / #935, owner decision
   D2).** A loan's due date and grace end are read only through
@@ -475,6 +509,93 @@ runs half of it on old code:
   or a fresh deploy. The app keeps the old approval route only where the
   Diamond lacks the route, a temporary bridge #3074 removes after the
   all-waves fresh deploy.
+
+- **RepayPeriodicFacet + ForcedSaleFacet + StandingInstructionFacet + RepayFacet
+  + AutoLifecycleFacet + AutoLifecycleSettingsFacet — interest booking and the
+  loan reserves (#3681).** Mid-loan interest is booked in ONE place,
+  `LibInterestPayment`, reached through `RepayPeriodicFacet.bookInterestPayment`:
+  the periodic forced sale and the reserve's interest payment both self-call it,
+  and it takes the treasury share (lender first on a short recovery) through the
+  fee host. Each caller advances the period its own way, once. The due repayment
+  binds the holder and self-calls `RepayFacet.repayLoan`, and the auto-extension draws the
+  same payment reserve (`LibEncumbrance.unlienLoanReserve`). A seller or executor
+  refreshed without the host reverts `FunctionDoesNotExist` (a hard revert, never
+  an unbooked payment). Cross it by fresh deploy or `RefreshAllFacetsInPlace`.
+
+- **The collateral pledged total (#3685).** Every collateral lien change
+  moves `collateralPledged[asset]` inside `LibEncumbrance`, which is inlined
+  in many facets (find them with a grep for `CollateralLien(`), and the four
+  lien entries live on `CollateralLienFacet`. Loan creation, the previews and
+  the offer book read their cap from `CollateralConcentrationFacet`. A lien a
+  pre-#3685 Diamond created is not in the total, so releasing it afterwards
+  underflows and reverts. Cross it by fresh deploy:
+  `RefreshAllFacetsInPlace` / `RefreshChangedFacetsInPlace` refuse the
+  crossing while any ERC-20 loan is open (`OpenLoanAcrossCollateralPledge`)
+  and need the manual pause, and `RedeployFacets` / `ReplaceStaleFacets`
+  refuse a Diamond that does not already route `newLoanInitLtvCapBps`
+  (`PredatesCollateralConcentration`).
+
+- **LegalFacet + every facet that opens a position (#3734).** The Terms
+  rule lives once, in `LibTerms`, and its one runtime host is
+  `LegalFacet.requireCurrentTerms`: LoanFacet (both parties), the two
+  position migrations in `LibLoan` (every facet inlining them), OfferBookFacet
+  (posting, sale listings exempt), LenderIntentFacet,
+  StandingInstructionFacet and AutoLifecycleFacet (the in-place extension)
+  self-call it, and the previews ask `termsBlocker`. A caller refreshed
+  without the host reverts `FunctionDoesNotExist` on every opening step (a
+  hard revert, never an unchecked position); a hand-built test Diamond adds
+  it with `LibTestTermsCut.withTermsHost`. A loan's `startTime` and
+  `durationDays` may be written only by the three steps that ask the rule
+  (origination, the in-place extension, the obligation handover);
+  `check-loan-start-term-writer.mjs`, pre-deploy step 1d4, refuses any other
+  write. Reaches a chain by fresh deploy.
+
+- **The position state guard (#3710).** Every value-out marks the loan's
+  position tokens through `LibPositionNFT` (a per-token state number, a wait
+  before the token may move, an ERC-4906 refresh the core emits), and only
+  from the seams: the outflow policy (every class naming a loan but
+  Consolidation), `LibLoanCollateral` (the one writer of
+  `loan.collateralAmount`; `check-loan-collateral-writer.mjs`, pre-deploy step
+  1d2, refuses any other write), the loan-terms writer, `LibHeldForLender.take`,
+  `retire` and the offer-token marks. The offer-token mark runs once, on
+  `VaipakamNFTFacet.markOfferPositions` (an `address(this)`-gated self-call
+  host), so the match core does not compile it into its four hosts. Never
+  place a mark by hand on a route.
+  The holder's own move (the caller of the guarded action, recorded in
+  transient storage by `LibReentrancyGuard`, holds the paid token) takes the
+  long wait. A collateral withdrawal releases into the borrower token
+  holder's vault through the `PositionHolder` class: the policy reads the
+  payee from the token. Nothing a loan or an open offer owes a party is paid
+  to a wallet (owner decision 2026-11-19); only the owner's own withdrawal
+  reaches one. The core, the vault
+  implementation, `VaultOutflowFacet`, `VaipakamNFTFacet` and every facet
+  inlining those libraries change together, so it reaches a chain by fresh
+  deploy. `check-raw-payouts.mjs` (step 1d3) refuses a token or native
+  transfer in facets or libraries outside the policy and `LibDelivery` unless
+  listed with its reason.
+
+- **MarketLedgerFacet + LenderIntentFacet + OfferMatchIntentFacet +
+  InstantFillFacet + InstantTakeoverFacet + BackstopFacet + every facet that
+  inlines `LibMarketLedger.syncLoan` (#3656, #3714).** The market ledger's
+  slot figures (Declared, Available and each slot's live principal) are
+  written only by MarketLedgerFacet. A slot write (set, cancel, fund,
+  withdraw, recommit) and the backstop seed self-call `syncSlot`; a fill
+  (`LibIntentFill.recordSlotLoan`) self-calls `onSlotFilled`; a release or
+  roll self-calls `onSlotReleased`; and every principal move of a slot-held
+  loan reaches `syncLoan`, which self-calls `onSlotLoanPrincipal`. That last
+  set is effectively every repay, default, claim, liquidation, sale and
+  consolidation facet, through `LibInterestLedger` and `LibMetricsHooks`. A
+  caller refreshed onto a Diamond that does not route the host reverts
+  `FunctionDoesNotExist` on that step (a hard revert, including on the
+  repay of a slot-held loan). An old caller beside a new host, or the
+  reverse, leaves live principal and Available out of step with the open
+  loans (a silent divergence, not a revert). The ledger's storage is new,
+  so this is a fresh-deploy crossing. Find the members with a grep for
+  `MarketLedgerFacet.`, `LibMarketLedger.syncLoan`, `recordSlotLoan`,
+  `LibMetricsHooks` and `LibInterestLedger`, not from this list. The host
+  never blocks a close-out for a ledger reason: a loan with no slot origin is
+  treated as held by no slot, and every subtraction saturates. Only the
+  opening path (`onSlotFilled`) refuses a missing origin.
 
 How the #1566 slices reach a chain is settled (owner, 2026-10-07, decision O1 = A): **every
 chain that runs slices 2–3 gets a fresh deploy.** Nothing is upgraded in place
@@ -1364,7 +1485,7 @@ artifacts and stay in their respective env / config:
   `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_REMIT_ACK_ENABLED`, `REWARD_COMMIT_ENABLED`,
   `REWARD_SANCTIONS_KEEPER_ENABLED`,
   `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
-  `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_DELIVERY_CONFLICT_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_REMAINDER_RETURN_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `TIER_EXCLUSION_REFRESH_ENABLED`, `REWARD_INDEX_COMPACT_ENABLED`, `SANCTIONS_FLAG_REFRESH_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `PROTECTED_ACCOUNT_ENABLED`, `PROTECTED_LOCK_ENABLED`, `PROTECTED_ALERTS_ENABLED`, `STANDIN_REFRESH_ENABLED`, `POSITION_UPKEEP_ENABLED`, `BACKSTOP_FILL_ENABLED`, `EXPIRED_TEARDOWN_ENABLED`, `VAULT_BEACON_UPKEEP_ENABLED`, `PRICE_CHECKPOINT_ENABLED`, `ASSET_RANKINGS_ENABLED`, `KEEPER_FEE_BALANCE_ALERT_ENABLED`, `REWARD_STAGING_UPKEEP_ENABLED`, `REWARD_STAGING_UNWIND_ENABLED`, `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`, `RPC_*`,
+  `REWARD_CLOSE_OUT_ENABLED`, `REWARD_ZEROED_DAY_ENABLED`, `REWARD_DELIVERY_CONFLICT_ENABLED`, `REWARD_RETURN_TRANSPORT_ENABLED`, `REWARD_REMAINDER_RETURN_ENABLED`, `REWARD_ENTRY_SETTLE_ENABLED`, `PROTOCOL_UPKEEP_ENABLED`, `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, `TIER_PUSH_RETRY_ENABLED`, `TIER_EXCLUSION_REFRESH_ENABLED`, `REWARD_INDEX_COMPACT_ENABLED`, `SANCTIONS_FLAG_REFRESH_ENABLED`, `PREPAY_AUTO_LIST_ENABLED`, `PROTECTED_ACCOUNT_ENABLED`, `PROTECTED_LOCK_ENABLED`, `PROTECTED_ALERTS_ENABLED`, `STANDIN_REFRESH_ENABLED`, `POSITION_UPKEEP_ENABLED`, `BACKSTOP_FILL_ENABLED`, `EXPIRED_TEARDOWN_ENABLED`, `VAULT_BEACON_UPKEEP_ENABLED`, `PRICE_CHECKPOINT_ENABLED`, `ASSET_RANKINGS_ENABLED`, `KEEPER_FEE_BALANCE_ALERT_ENABLED`, `REWARD_STAGING_UPKEEP_ENABLED`, `REWARD_STAGING_UNWIND_ENABLED`, `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`, `HELD_RECOMMIT_ENABLED`, `RPC_*`,
   `KEEPER_AGENT_TOKEN` (the agent's keeper routes, with the plain var
   `AGENT_ORIGIN`; the keeper holds no user bot token since #1722),
   `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID` (operator alerts — see "Two
@@ -1410,8 +1531,9 @@ artifacts and stay in their respective env / config:
   unwind step, which releases a stuck staging record's holdings back to
   where they came from, also on `REWARD_STAGING_UNWIND_ENABLED`),
   `graceDefault` (#2483) on
-  `GRACE_DEFAULT_ENABLED` and `periodicSettle` on
-  `PERIODIC_SETTLE_ENABLED`, all added after it. `rewardDayClose` makes the
+  `GRACE_DEFAULT_ENABLED`, `periodicSettle` on
+  `PERIODIC_SETTLE_ENABLED` and the matcher's held-payment re-commit step
+  (#3629, `recommitHeldToIntent`) on `HELD_RECOMMIT_ENABLED`, all added after it. `rewardDayClose` makes the
   daily `closeDay` / `finalizeDay` / `broadcastGlobal` calls and pays their
   CCIP fees from the keeper key; it ships unset too. `graceDefault` submits
   `triggerDefault` for past-grace loans; it ships unset, so that pass is
@@ -1930,9 +2052,8 @@ gates from the source; just don't enable them on the retail deploy.
 See [`docs/DesignsAndPlans/Roadmap.md`](docs/DesignsAndPlans/Roadmap.md) for the
 fork plan.
 
-The Sepolia test scripts (`SepoliaActiveLoan.s.sol`,
-`SepoliaOpenOffers.s.sol`) and the positive-flow fixture
-(`script/positive-flows/PositiveFlowsBase.sol`) call
+The positive-flow fixture
+(`script/positive-flows/PositiveFlowsBase.sol`) calls
 `updateKYCTier(...)` / `setTradeAllowance(...)` defensively but those
 calls are no-ops while enforcement is off and trade-pair checks are
 unconditional. They can stay.

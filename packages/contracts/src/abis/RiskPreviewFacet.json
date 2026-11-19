@@ -132,6 +132,50 @@
   },
   {
     "type": "function",
+    "name": "initRiskBounds",
+    "inputs": [
+      {
+        "name": "lendingAsset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "collateralAsset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "collateral",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "floor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tiered",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "amountCap",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "previewCreatorBlock",
     "inputs": [
       {
@@ -177,6 +221,11 @@
         "name": "collateralAsset",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "slot",
+        "type": "uint8",
+        "internalType": "uint8"
       },
       {
         "name": "counterpartyOfferId",
@@ -428,6 +477,16 @@
             "internalType": "bool"
           },
           {
+            "name": "lifecycleFlex",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "integrator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
             "name": "creatorFull",
             "type": "bool",
             "internalType": "bool"
@@ -476,6 +535,51 @@
             "name": "deadline",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "setKind",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "setLow",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "setHigh",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "setRoot",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "setListCount",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "setListHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "exclusionsHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "loans",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "startTime",
+            "type": "uint64",
+            "internalType": "uint64"
           }
         ]
       },

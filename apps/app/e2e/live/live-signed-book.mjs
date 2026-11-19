@@ -113,6 +113,7 @@ import {
   visit,
 } from './driver.mjs';
 import { confirmWriteOrReport } from './writeConfirm.mjs';
+import { SIGNED_OFFER_FIELDS } from '@vaipakam/lib/signedOfferWire';
 
 // Entry-point guard: this executable reads SITE directly, which can run
 // before any guarded driver function. Without it an omitted SITE_URL
@@ -383,48 +384,18 @@ const confirmLedgerAtCeiling = (orderHash, ceiling, minBlock) =>
   });
 
 /** Wire order (all-strings JSON) → the typed struct viem's ABI encoder
- *  expects for `cancelSignedOffer` / `signedOfferOrderHash` — the same
- *  mapping as the app's `signedOfferTypedMessage`. */
+ *  expects for `cancelSignedOffer` / `signedOfferOrderHash`, field by field
+ *  from the one field list (the same rule as `@vaipakam/lib/signedOfferSet`'s
+ *  `signedOfferMessage`, which this plain-Node driver cannot import). */
 function wireToStruct(o) {
-  return {
-    offerType: Number(o.offerType),
-    lendingAsset: o.lendingAsset,
-    amount: BigInt(o.amount),
-    amountMax: BigInt(o.amountMax),
-    interestRateBps: BigInt(o.interestRateBps),
-    interestRateBpsMax: BigInt(o.interestRateBpsMax),
-    collateralAsset: o.collateralAsset,
-    collateralAmount: BigInt(o.collateralAmount),
-    collateralAmountMax: BigInt(o.collateralAmountMax),
-    durationDays: BigInt(o.durationDays),
-    assetType: Number(o.assetType),
-    collateralAssetType: Number(o.collateralAssetType),
-    tokenId: BigInt(o.tokenId),
-    quantity: BigInt(o.quantity),
-    collateralTokenId: BigInt(o.collateralTokenId),
-    collateralQuantity: BigInt(o.collateralQuantity),
-    prepayAsset: o.prepayAsset,
-    allowsPartialRepay: o.allowsPartialRepay,
-    allowsPrepayListing: o.allowsPrepayListing,
-    allowsParallelSale: o.allowsParallelSale,
-    expiresAt: BigInt(o.expiresAt),
-    fillMode: Number(o.fillMode),
-    periodicInterestCadence: Number(o.periodicInterestCadence),
-    refinanceTargetLoanId: BigInt(o.refinanceTargetLoanId),
-    useFullTermInterest: o.useFullTermInterest,
-    // #1949 — the maker's Full tariff opt-in is part of the signed struct.
-    creatorFull: o.creatorFull,
-    creatorMaxCStar: BigInt(o.creatorMaxCStar),
-    creatorAllowFullDowngrade: o.creatorAllowFullDowngrade,
-    // #3327 — the maker's fee caps, taker binding and co-signer.
-    maxTreasuryFeeBps: Number(o.maxTreasuryFeeBps),
-    maxLoanInitiationFeeBps: Number(o.maxLoanInitiationFeeBps),
-    allowedTaker: o.allowedTaker,
-    coSigner: o.coSigner,
-    signer: o.signer,
-    nonce: BigInt(o.nonce),
-    deadline: BigInt(o.deadline),
-  };
+  const out = {};
+  for (const { name, type } of SIGNED_OFFER_FIELDS) {
+    const v = o[name];
+    if (type === 'bool' || type === 'address' || type === 'bytes32') out[name] = v;
+    else if (type === 'uint8' || type === 'uint16' || type === 'uint32') out[name] = Number(v);
+    else out[name] = BigInt(v);
+  }
+  return out;
 }
 
 /** The order's principal ceiling — mirrors `SignedOfferFacet._ceiling`:

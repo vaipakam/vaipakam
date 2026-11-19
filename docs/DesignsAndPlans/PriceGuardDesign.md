@@ -168,6 +168,40 @@ like a direct asset feed.
   a guard change. Listening for the guard's own change events, pending
   changes included, is #3453.
 
+## The guard and its reader (#3437)
+
+With the price versions and the rate pricing added, the guard no longer fit
+under the 24,576-byte contract limit. It is split along its read / write seam:
+
+- **`PriceGuard`** keeps the storage, the owner and guardian, every delayed
+  change, the rate records and the config getters. It is the one address the
+  Diamond and the vaults call.
+- **`PriceGuardReader`** holds the pricing path: the primary feed, the
+  cross-checks, the quorum, the sequencer window and the rate price. It
+  declares no state of its own and shares the guard's layout through one base
+  contract, `PriceGuardState`.
+
+Each price read on the guard makes a static call to itself, and only that
+self-call runs the reader's code over the guard's storage. Being static, it
+cannot write. The reader refuses to answer a direct call, so its own address
+reports nothing. The guard names its reader as a constructor argument, and
+its constructor refuses a reader built for a different numeraire or network.
+
+Two conditions make the pinned reader safe, and both are held:
+
+1. **The reader's code can never change.** It has no proxy, no
+   `SELFDESTRUCT` and no `DELEGATECALL`, and no instruction that writes,
+   logs or creates. `PriceGuardReaderOpcodeTest` walks the compiled code and
+   refuses any of them. That test is load-bearing, and its header says so.
+2. **The deploy checks the reader before it deploys the guard.** The deploy
+   library compares the reader's runtime code at its address with this
+   tree's compiled artifact, immutables aside, and refuses on any difference.
+
+The guard's own code holds the reader's address as an immutable, so pinning
+the guard's code also pins which reader it runs. The storage anchor is not
+used for either contract: it covers code that can be upgraded in place, and
+neither can be.
+
 ## Build order
 
 1. **Part 1 (done, #3447).**

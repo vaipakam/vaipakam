@@ -148,7 +148,7 @@ Loan Initiation Fee に適用されます。後者では、**lending asset で
 
 > **Network gas は別物です。** 上記の discount は Vaipakam の
 > **protocol fees**（yield fee `{liveValue:treasuryFeeBps}`%、
-> Loan Initiation Fee `{liveValue:loanInitiationFeeBps}`%）に
+> Loan Initiation Fee）に
 > 適用されます。すべての on-chain action に必要な **blockchain
 > network gas fee**（Base / Sepolia / Arbitrum などで offer
 > create / accept / repay / claim / withdraw 等を行うときに
@@ -2091,13 +2091,13 @@ Borrow は、ERC-20 担保に対する ERC-20 の貸し手オファー（`offerT
 
 ### Borrow: 確認と署名
 
-確認画面は、オファー、その状態、`previewAccept`、`getOfferLinkedLoanId`、`getCurrentRiskTermsHash`、両方の区分、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、ウォレットのボールト・残高・承認額、`previewOfferAcceptBlock`、割引の同意を読み、ウォレットが開く直前にもう一度読みます。ウォレットは保存されたオファーから作った EIP-712 `AcceptTerms`（ドメイン `Vaipakam AcceptOffer`、バージョン 1）に、新しい 128 ビットの nonce と 30 分の期限で署名します。非流動の確認は、確認画面が非流動と示した側だけを指定します。承認額が足りないときだけ担保額ちょうどの承認を行い、署名付きで `acceptOffer` を試行してから送信します。承認後に止まった場合、ほかに変更がなければアプリは承認額を元の値に戻します。結果は、このオファーとウォレットの `LoanInitiated` とレシートの `Transfer` ログから読みます。許可額は最初のウォレット確認の直前に読み直され、リセット時にはその値に戻します。送信後にリバートした承諾や、ウォレットが取り消しまたは置き換えた承諾にも、トランザクション追跡が同じリセットを行います。レビューには `allowsPartialRepay`、`allowsPrepayListing`、`parallelSaleOrderHash` を伴う `allowsParallelSale`、`refinanceTargetLoanId`、関連ローンを示し、返済額は一時停止がない場合の金額と明記します。一時停止中も利息は発生し、期日だけが後ろにずれるためです。 各承認ステップは、レシートが含まれたブロックで読み直した許可額で判定し、レシートのステータスでは判定しません。ゼロでない許可額から別のゼロでない値への変更を拒むトークン（`approve` のドライランで判別）には先にゼロへのステップが入り、確認画面ではそれを追加のプロンプトとして数えます。規約の同意はウォレットが開く直前に再度読み取られます。 どちらの売却経路も担保を NFT として出品するため、トークン担保では、付与された出品・売却の許可はこのローンでは使えないものとして表示されます。確認画面は、プレビューの金額での元本と担保の `getNumeraireValue` を、何も拘束しない行として加えます。
+確認画面は、オファー、その状態、`previewAccept`、`getOfferLinkedLoanId`、`getCurrentRiskTermsHash`、両方の区分、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeTerms`、ウォレットのボールト・残高・承認額、`previewOfferAcceptBlock`、割引の同意を読み、ウォレットが開く直前にもう一度読みます。ウォレットは保存されたオファーから作った EIP-712 `AcceptTerms`（ドメイン `Vaipakam AcceptOffer`、バージョン 1）に、新しい 128 ビットの nonce と 30 分の期限で署名します。非流動の確認は、確認画面が非流動と示した側だけを指定します。承認額が足りないときだけ担保額ちょうどの承認を行い、署名付きで `acceptOffer` を試行してから送信します。承認後に止まった場合、ほかに変更がなければアプリは承認額を元の値に戻します。結果は、このオファーとウォレットの `LoanInitiated` とレシートの `Transfer` ログから読みます。許可額は最初のウォレット確認の直前に読み直され、リセット時にはその値に戻します。送信後にリバートした承諾や、ウォレットが取り消しまたは置き換えた承諾にも、トランザクション追跡が同じリセットを行います。レビューには `allowsPartialRepay`、`allowsPrepayListing`、`parallelSaleOrderHash` を伴う `allowsParallelSale`、`refinanceTargetLoanId`、関連ローンを示し、返済額は一時停止がない場合の金額と明記します。一時停止中も利息は発生し、期日だけが後ろにずれるためです。 各承認ステップは、レシートが含まれたブロックで読み直した許可額で判定し、レシートのステータスでは判定しません。ゼロでない許可額から別のゼロでない値への変更を拒むトークン（`approve` のドライランで判別）には先にゼロへのステップが入り、確認画面ではそれを追加のプロンプトとして数えます。規約の同意はウォレットが開く直前に再度読み取られます。 どちらの売却経路も担保を NFT として出品するため、トークン担保では、付与された出品・売却の許可はこのローンでは使えないものとして表示されます。確認画面は、プレビューの金額での元本と担保の `getNumeraireValue` を、何も拘束しない行として加えます。
 
 <a id="borrow-fee"></a>
 
 ### Borrow: 組成手数料
 
-手数料は `previewAccept` の `lifEstimate` です。元本に対する `getLoanInitiationFeeBps` を借りるトークンで、渡される額から差し引きます。同意がオンで借りるトークンが流動であれば保有ティア割引で下がり、ティアは受諾時点で決まります。このページが Full 料金を選ぶことはありません。手数料のために VPFI を徴収することも返金することもありません。 送信者の取り分（手数料の `getLifMatcherFeeBps`）は送信者に支払われ、直接の受諾では借り手がそれにあたるため、ウォレットには手数料を差し引いた元本にその取り分を加えた額が届きます。
+手数料は `previewAccept` の `lifEstimate` です。元本に対する `getLoanInitiationFeeTerms`（オファー期間に対する料率） を借りるトークンで、渡される額から差し引きます。同意がオンで借りるトークンが流動であれば保有ティア割引で下がり、ティアは受諾時点で決まります。このページが Full 料金を選ぶことはありません。手数料のために VPFI を徴収することも返金することもありません。 送信者の取り分（手数料の `getLifMatcherFeeBps`）は送信者に支払われ、直接の受諾では借り手がそれにあたるため、ウォレットには手数料を差し引いた元本にその取り分を加えた額が届きます。
 
 <a id="borrow-risks"></a>
 
@@ -2121,7 +2121,7 @@ Basic は単一値のリクエストを出します。`amount` = `amountMax`、`
 
 ### Borrow: リクエストの確認と掲載
 
-確認画面はウォレットから `createOffer` をシミュレートし、両方の区分、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、最長期間、ウォレットのボールト・残高・承認額、両側が流動的なら `calculateLTV` を読み、毎ブロックとウォレットが開く直前に読み直します。承認額が足りない間、シミュレーションは担保の引き出しまでしか進めないため、トークンの引き出しエラーやプロトコルのエラー名がない revert は解消すべき承認として示し、名前のあるプロトコルエラーは拒否として扱います。ちょうどの額を承認した後、`createOffer` を再度シミュレートして送信します。承認後に止まった場合、他に変更がなければ承認額を元の値に戻します。結果はこのウォレットの `OfferCreated` と、ボールトへの担保の `Transfer` から読みます。
+確認画面はウォレットから `createOffer` をシミュレートし、両方の区分、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeTerms`、最長期間、ウォレットのボールト・残高・承認額、両側が流動的なら `calculateLTV` を読み、毎ブロックとウォレットが開く直前に読み直します。承認額が足りない間、シミュレーションは担保の引き出しまでしか進めないため、トークンの引き出しエラーやプロトコルのエラー名がない revert は解消すべき承認として示し、名前のあるプロトコルエラーは拒否として扱います。ちょうどの額を承認した後、`createOffer` を再度シミュレートして送信します。承認後に止まった場合、他に変更がなければ承認額を元の値に戻します。結果はこのウォレットの `OfferCreated` と、ボールトへの担保の `Transfer` から読みます。
 
 <a id="borrow-nft-collateral"></a>
 
@@ -2169,13 +2169,13 @@ Lend は、ERC-20 担保に対する ERC-20 の借入リクエスト（`offerTyp
 
 ### Lend: 確認と署名
 
-確認画面は Borrow と同じもの（オファー、その状態、`previewAccept`、`getOfferLinkedLoanId`、`getCurrentRiskTermsHash`、両方の分類、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、`getLifMatcherFeeBps`、ウォレットのボールト、`previewOfferAcceptBlock`、手数料割引の同意）に加えて `getTreasuryFeeBps` を読み取り、残高と承認額は貸し手が支払う側である貸出資産で測ります。そこに不足があれば署名はブロックされ、貸し手ポジションの売却手段も同様です。ウォレットは EIP-712 `AcceptTerms`（ドメイン `Vaipakam AcceptOffer`、バージョン 1）に署名し、承認額が足りない場合にのみ元本ちょうどを承認し（ゼロでない値同士の変更を拒むトークンには先にゼロにする手順を入れます）、`acceptOffer` をシミュレーションしてから送信します。途中で止まったフローが残した承認は Borrow と同様にリセットされます。結果として、このオファーの `LoanInitiated`、ウォレットからの元本の `Transfer`、マッチャー取り分が戻る `Transfer` を読み取ります。
+確認画面は Borrow と同じもの（オファー、その状態、`previewAccept`、`getOfferLinkedLoanId`、`getCurrentRiskTermsHash`、両方の分類、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeTerms`、`getLifMatcherFeeBps`、ウォレットのボールト、`previewOfferAcceptBlock`、手数料割引の同意）に加えて `getTreasuryFeeBps` を読み取り、残高と承認額は貸し手が支払う側である貸出資産で測ります。そこに不足があれば署名はブロックされ、貸し手ポジションの売却手段も同様です。ウォレットは EIP-712 `AcceptTerms`（ドメイン `Vaipakam AcceptOffer`、バージョン 1）に署名し、承認額が足りない場合にのみ元本ちょうどを承認し（ゼロでない値同士の変更を拒むトークンには先にゼロにする手順を入れます）、`acceptOffer` をシミュレーションしてから送信します。途中で止まったフローが残した承認は Borrow と同様にリセットされます。結果として、このオファーの `LoanInitiated`、ウォレットからの元本の `Transfer`、マッチャー取り分が戻る `Transfer` を読み取ります。
 
 <a id="lend-fee"></a>
 
 ### Lend: 手数料とプロトコルの取り分
 
-手数料は `previewAccept` の `lifEstimate` で、借り手が負担します。貸出資産での元本の `getLoanInitiationFeeBps` で、借り手への受け渡し額から差し引かれ、受諾時に借り手の保有ティア割引で、また `creatorFull` が設定され課金が成功した場合は Full タリフのボーナスで下がります。送信者の取り分（手数料の `getLifMatcherFeeBps`）は送信者、ここでは貸し手に支払われます。利息に対するプロトコルの取り分は `getTreasuryFeeBps` で、ローン開始時にローンごとに固定されます（`treasuryFeeBpsAtInit`）。同意がオンなら、貸し手の保有ティア割引が利息の精算時にこれを下げます。確認画面には今日の料率と、その料率での取り分が上限として表示されます。
+手数料は `previewAccept` の `lifEstimate` で、借り手が負担します。貸出資産での元本の `getLoanInitiationFeeTerms`（オファー期間に対する料率） で、借り手への受け渡し額から差し引かれ、受諾時に借り手の保有ティア割引で、また `creatorFull` が設定され課金が成功した場合は Full タリフのボーナスで下がります。送信者の取り分（手数料の `getLifMatcherFeeBps`）は送信者、ここでは貸し手に支払われます。利息に対するプロトコルの取り分は `getTreasuryFeeBps` で、ローン開始時にローンごとに固定されます（`treasuryFeeBpsAtInit`）。同意がオンなら、貸し手の保有ティア割引が利息の精算時にこれを下げます。確認画面には今日の料率と、その料率での取り分が上限として表示されます。
 
 <a id="lend-risks"></a>
 
@@ -2229,13 +2229,13 @@ Ethereum、BNB Chain、Polygon（および BNB Testnet と Polygon Amoy）では
 
 ### Lend: オファーの確認と掲載
 
-確認画面はウォレットから `createOffer` をシミュレートし、両資産の区分、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeBps`、`getTreasuryFeeBps`、最長期間、ウォレットのボールト、貸出資産（貸し手がロックする側）の残高と承認額、両側が流動的な場合の `calculateLTV` を読みます。毎ブロック、およびウォレットが開く直前に読み直します。承認額が足りない間、シミュレーションは金額の引き出しまでしか届かないため、トークンの引き出しエラー、`VaultDepositFailed`（データなしで巻き戻った引き出しをプロトコルが包んだもので、WETH は承認不足でこうなります）、プロトコルのエラー名のない巻き戻しは、解消すべき承認として示されます。これはリクエストの確認と同じ規則で、それ以外の名前付きプロトコルエラーは拒否です。金額ちょうどの承認の後、`createOffer` を再びシミュレートして送信します。承認の後に止まった場合、ほかに変更がなければ承認額を以前の値に戻します。結果として、このウォレットの `offerType` 0 の `OfferCreated` と、金額のボールトへの `Transfer` を読みます。
+確認画面はウォレットから `createOffer` をシミュレートし、両資産の区分、`getEffectiveGraceSeconds(durationDays)`、`getLoanInitiationFeeTerms`、`getTreasuryFeeBps`、最長期間、ウォレットのボールト、貸出資産（貸し手がロックする側）の残高と承認額、両側が流動的な場合の `calculateLTV` を読みます。毎ブロック、およびウォレットが開く直前に読み直します。承認額が足りない間、シミュレーションは金額の引き出しまでしか届かないため、トークンの引き出しエラー、`VaultDepositFailed`（データなしで巻き戻った引き出しをプロトコルが包んだもので、WETH は承認不足でこうなります）、プロトコルのエラー名のない巻き戻しは、解消すべき承認として示されます。これはリクエストの確認と同じ規則で、それ以外の名前付きプロトコルエラーは拒否です。金額ちょうどの承認の後、`createOffer` を再びシミュレートして送信します。承認の後に止まった場合、ほかに変更がなければ承認額を以前の値に戻します。結果として、このウォレットの `offerType` 0 の `OfferCreated` と、金額のボールトへの `Transfer` を読みます。
 
 <a id="lend-offer-fee"></a>
 
 ### Lend: オファーにかかる手数料
 
-`createOffer` は貸し手に何も課しません。表示される手数料は借り手のもので、貸出資産での金額の `getLoanInitiationFeeBps` です。`acceptOffer` 実行時に有効な料率で計算され、その時点の借り手の保有ティア割引で下がり、借り手への送金額から差し引かれます。表示額は今日の料率によります。利息のうちプロトコルの取り分は `getTreasuryFeeBps` で、ローン開始時にローンごとに固定されます（`treasuryFeeBpsAtInit`）。同意がオンなら、利息の精算時に貸し手の保有ティア割引がそれを下げます。確認画面は今日の料率と、その料率での取り分を上限として示します。`getTreasuryFeeBps` の読み取りに失敗した場合はそう示し、取り分も戻る額も表示しません。
+`createOffer` は貸し手に何も課しません。表示される手数料は借り手のもので、貸出資産での金額の `getLoanInitiationFeeTerms`（オファー期間に対する料率） です。`acceptOffer` 実行時に有効な料率で計算され、その時点の借り手の保有ティア割引で下がり、借り手への送金額から差し引かれます。表示額は今日の料率によります。利息のうちプロトコルの取り分は `getTreasuryFeeBps` で、ローン開始時にローンごとに固定されます（`treasuryFeeBpsAtInit`）。同意がオンなら、利息の精算時に貸し手の保有ティア割引がそれを下げます。確認画面は今日の料率と、その料率での取り分を上限として示します。`getTreasuryFeeBps` の読み取りに失敗した場合はそう示し、取り分も戻る額も表示しません。
 
 <a id="positions"></a>
 
@@ -2251,7 +2251,7 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 ### Position: ローンの読み方
 
-ページは `getLoanDetails(loanId)` と、貸し手・借り手のポジション NFT の保有者（デプロイメントが記録する PositionNFT コントラクト上の `ownerOf`。#3205 より前のデプロイメントでは Diamond 自体の `ownerOf`）を読みます。役割はウォレットが今保有しているトークンです。進行中のローン（Active または FallbackPending）では、`getLoanDeadlines`（停止クレジット前の現在の期間の満期。延長や借り手の引き継ぎで書き換わります、停止クレジット、満期、猶予期間の終了）、利払いスケジュールがあれば `getPeriodicInterestEnabled` とともに `previewPeriodicSettle`、`isLoanDefaultable` (+ `paused`, `sequencerHealthy`, `defaultKycAdmission`)、`calculateHealthFactor`、`calculateLTV` を読みます。すべてのローンで `getLoanCollateralLien` と `isSaleVehicleLoan` を読みます。各読み取りは独立しており、失敗したものは 0 ではなく不明と表示し、日付を `startTime` と `durationDays` から計算することはありません。
+ページは `getLoanDetails(loanId)` と、貸し手・借り手のポジション NFT の保有者（デプロイメントが記録する PositionNFT コントラクト上の `ownerOf`）を読みます。役割はウォレットが今保有しているトークンです。進行中のローン（Active または FallbackPending）では、`getLoanDeadlines`（停止クレジット前の現在の期間の満期。延長や借り手の引き継ぎで書き換わります、停止クレジット、満期、猶予期間の終了）、利払いスケジュールがあれば `getPeriodicInterestEnabled` とともに `previewPeriodicSettle`、`isLoanDefaultable` (+ `paused`, `sequencerHealthy`, `defaultKycAdmission`)、`calculateHealthFactor`、`calculateLTV` を読みます。すべてのローンで `getLoanCollateralLien` と `isSaleVehicleLoan` を読みます。各読み取りは独立しており、失敗したものは 0 ではなく不明と表示し、日付を `startTime` と `durationDays` から計算することはありません。
 
 価格のあるローンでは `getInternalMatchConfigBundle` も読みます。内部マッチングが有効な間、LTVがしきい値からしきい値＋`externalLiquidationPriorityWindowBps` までにあるローンは内部マッチング用に確保され、外部の清算ルートはすべて拒否します（`InternalMatchOnlyBand`）。ページはその範囲を示します。`loanInitiationFeeBpsAtInit` が 0（料率が記録される前に開始したローン）の場合は未記録と表示し、`treasuryFeeBpsAtInit` が 0 の場合は決済が適用する従来の1%として表示します。現物引き渡しの警告はERC-20ローンのみが対象です。NFTレンタルには担保がなく、デフォルトすると借り手の利用が終わり、前払いの賃料はトレジャリーの取り分を差し引いて貸し手へ支払われ、バッファはトレジャリーへ送られます。ページは代わりにそれを示します。
 
@@ -2263,7 +2263,7 @@ Positions は共通のリーダーを通して Home と同じ保有一覧を読�
 
 ### 全額返済: 金額の決め方
 
-この操作は 1 つのルールに従います: `repayLoan` は、Active または FallbackPending の ERC-20 ローンについて、`loan.lender` でも `ownerOf(lenderTokenId)` でもない任意のウォレットに提示されます（`LenderCannotRepayOwnLoan`）。Active のローンでは実効的な猶予期間の終了後に止まり（`RepaymentPastGracePeriod`）、借り手ポジションの開いているルートが `SwapToRepayIntent` の間も止まります（Diamond 上の `positionRoute(borrowerTokenId)`。#3205 より前のデプロイメントでは `positionLock(borrowerTokenId)`）。貸し手の売却出品、借り換えリクエスト、全体の一時停止では止まりません。レンタルはまだここでは提示しません。
+この操作は 1 つのルールに従います: `repayLoan` は、Active または FallbackPending の ERC-20 ローンについて、`loan.lender` でも `ownerOf(lenderTokenId)` でもない任意のウォレットに提示されます（`LenderCannotRepayOwnLoan`）。Active のローンでは実効的な猶予期間の終了後に止まり（`RepaymentPastGracePeriod`）、借り手ポジションの開いているルートが `SwapToRepayIntent` の間も止まります（Diamond 上の `positionRoute(borrowerTokenId)`）。貸し手の売却出品、借り換えリクエスト、全体の一時停止では止まりません。レンタルはまだここでは提示しません。
 
 確認画面は `calculateRepaymentAmount(loanId)` を最新ブロックで読み、さらにブロック時刻を `min(now + 30 分, 猶予期間の終了)` に上書きして読みます。同じリクエストで実行時のブロック時刻も読み、上書きを無視した接続は使いません。承認額は 2 つ目の数値ちょうどで、ウォレットを開く前に呼び出しをシミュレーションします。受領後は、返済がローンを残した状態をその `LoanRepaid` ログから読み（ブロック時点の状態ではありません。同じブロックの後続の請求で既に清算済みになっている場合があるためです）、支払額を `Transfer` ログから測り、allowance が承認額から支払額を引いた値を示す場合は以前の値に戻します。その数値を超える allowance（無制限を含む）も同じ数値まで下げます。`repayLoan(loanId)` には上限も期限もないためです。戻す処理では、その後に元の大きい値に戻します。
 
@@ -2555,7 +2555,7 @@ NFTはレンタルの間ずっとあなたのボールトに留まり、レン�
 
 ### リワード：手数料割引ティア
 
-カードは 1 つのブロックで `getVPFIDiscountConsent`、`isCanonicalVpfiChain`、`getEffectiveDiscount` を読みます。`getEffectiveDiscount` は手数料の計算が適用するティアと割引を返します：同意がオフならゼロ、上限は 50%、ほかのネットワークではホームネットワークから送られたコピーです。同じブロックで `explainTier` と `getTwaConfig` も読みます。`explainTier` は同意の有無にかかわらず、計上済み VPFI だけで得られるティア、各保有ルールの数値、有効ティアをそれより低く抑えているルールを返します。カードがそのルールを示すのは、説明が手数料の計算と同じティアになるときだけで、同意がオフのときは、オンにすればどのティアが適用されるかを示します。Advanced では各ルールの数値と `getTwaConfig` が返す設定を表示し、平均の期間と振り返り期間は別々の長さとして示します。表は 1 つのブロックで `getVpfiTierThresholds`、`getVpfiTierDiscountBps`、`getFeesConfig` を読みます。ティア 1〜3 はそのしきい値から、ティア 4 は自身のしきい値を超えたところから始まります。各手数料は基本手数料に（1 − 上限適用後の割引）を掛けたもので、正確に計算されます。表はティアが決まるホームネットワークでのみ表示されます。
+カードは 1 つのブロックで `getVPFIDiscountConsent`、`isCanonicalVpfiChain`、`getEffectiveDiscount` を読みます。`getEffectiveDiscount` は手数料の計算が適用するティアと割引を返します：同意がオフならゼロ、上限は 50%、ほかのネットワークではホームネットワークから送られたコピーです。同じブロックで `explainTier` と `getTwaConfig` も読みます。`explainTier` は同意の有無にかかわらず、計上済み VPFI だけで得られるティア、各保有ルールの数値、有効ティアをそれより低く抑えているルールを返します。カードがそのルールを示すのは、説明が手数料の計算と同じティアになるときだけで、同意がオフのときは、オンにすればどのティアが適用されるかを示します。Advanced では各ルールの数値と `getTwaConfig` が返す設定を表示し、平均の期間と振り返り期間は別々の長さとして示します。表は 1 つのブロックで `getVpfiTierThresholds`、`getVpfiTierDiscountBps`、`getLoanInitiationFeeTerms`、`getFeesConfig` を読みます。ティア 1〜3 はそのしきい値から、ティア 4 は自身のしきい値を超えたところから始まります。各手数料は基本手数料に（1 − 上限適用後の割引）を掛けたもので、正確に計算されます。表はティアが決まるホームネットワークでのみ表示されます。
 
 <a id="rewards-tier-elsewhere"></a>
 
@@ -2585,7 +2585,7 @@ NFTはレンタルの間ずっとあなたのボールトに留まり、レン�
 
 ### Rate desk：重なりのマッチ
 
-マッチ欄はラダーの重なった段を組み合わせます。最良の買い気配以下の貸し手のオファーと、最良の売り気配以上の借り手のリクエストを組み、同じウォレットのペアと、金利の幅が交わらないペアは除きます。プロトコルがマッチするのは、2 つの下限の高い方が 2 つの上限の低い方以下の場合だけです。両側が重なっていても幅が交わらない場合、マッチ欄は何もマッチできないと示します。1 つのブロックで `getPartialFillEnabled`、`getLoanInitiationFeeBps`、`getLifMatcherFeeBps`、`getCapacityCurve(0)` を読み、スイッチがオンのときだけ、あなたのウォレットを matcher と initiator の両方として `previewMatch(lenderOfferId, borrowerOfferId, matcher, initiator)` を最大 12 ペア、価格の良い順に読みます。プレビューがエラーなしの最初のペアが、プレビューの金額、金利（双方が受け入れる幅の中間）、必要担保とともに示されます。該当がなければ、価格の最も良いペアの拒否が理由とともに示されます。取り分は上限として示され、金額 × 組成手数料率 × マッチャー率です。手数料は借り手の割引後に課され、その割引はプレビューに含まれないためです。カーブの無料枠がゼロを超える場合は容量制限が有効で、マッチは送信者に対して 1 回の約定として数えられます。確認画面は設定、プレビュー、あなたのボールトをブロックごとに読み直し、ウォレットを開く前に `matchOffers` をドライランします。数値が変わった場合は確認し直す必要があります。その後アプリは、あなたのウォレットを matcher とするそのペアの `OfferMatched` を探し、貸し手のボールトの `VaultOutflow` 記録のうち、インセンティブ区分で貸出資産をあなたのウォレットまたはボールトに支払ったものから取り分を測ります。オファーの返金やローン額は別の区分のため、数えられることはありません。先に成立した競合マッチがオファーの残りを減らすと、成立するローンと取り分は確認時より小さくなることがあり、完了カードは成立した内容を示します。ラダーはインデックスを読むため、マッチ済みのペアはチェーンが処理した後も数分間表示されることがあります。接続中のウォレットのオファーを含むペアも除外され、バンドはその旨を示します。それをマッチすると、そのウォレットが貸し手または借り手となり、自身の資金がローンに入るためです。
+マッチ欄はラダーの重なった段を組み合わせます。最良の買い気配以下の貸し手のオファーと、最良の売り気配以上の借り手のリクエストを組み、同じウォレットのペアと、金利の幅が交わらないペアは除きます。プロトコルがマッチするのは、2 つの下限の高い方が 2 つの上限の低い方以下の場合だけです。両側が重なっていても幅が交わらない場合、マッチ欄は何もマッチできないと示します。1 つのブロックで `getPartialFillEnabled`、`getLoanInitiationFeeTerms`、`getLifMatcherFeeBps`、`getCapacityCurve(0)` を読み、スイッチがオンのときだけ、あなたのウォレットを matcher と initiator の両方として `previewMatch(lenderOfferId, borrowerOfferId, matcher, initiator)` を最大 12 ペア、価格の良い順に読みます。プレビューがエラーなしの最初のペアが、プレビューの金額、金利（双方が受け入れる幅の中間）、必要担保とともに示されます。該当がなければ、価格の最も良いペアの拒否が理由とともに示されます。取り分は上限として示され、金額 × 組成手数料率 × マッチャー率です。手数料は借り手の割引後に課され、その割引はプレビューに含まれないためです。カーブの無料枠がゼロを超える場合は容量制限が有効で、マッチは送信者に対して 1 回の約定として数えられます。確認画面は設定、プレビュー、あなたのボールトをブロックごとに読み直し、ウォレットを開く前に `matchOffers` をドライランします。数値が変わった場合は確認し直す必要があります。その後アプリは、あなたのウォレットを matcher とするそのペアの `OfferMatched` を探し、貸し手のボールトの `VaultOutflow` 記録のうち、インセンティブ区分で貸出資産をあなたのウォレットまたはボールトに支払ったものから取り分を測ります。オファーの返金やローン額は別の区分のため、数えられることはありません。先に成立した競合マッチがオファーの残りを減らすと、成立するローンと取り分は確認時より小さくなることがあり、完了カードは成立した内容を示します。ラダーはインデックスを読むため、マッチ済みのペアはチェーンが処理した後も数分間表示されることがあります。接続中のウォレットのオファーを含むペアも除外され、バンドはその旨を示します。それをマッチすると、そのウォレットが貸し手または借り手となり、自身の資金がローンに入るためです。
 
 <a id="offer-terms-wait"></a>
 
@@ -2657,7 +2657,7 @@ NFTはレンタルの間ずっとあなたのボールトに留まり、レン�
 
 ### アナリティクス：手数料と保管の読み取り方
 
-手数料率は `getTreasuryFeeBps` と `getLoanInitiationFeeBps` です。手数料の数値は `getTreasuryMetrics` で、開始以来の合計は `feeLedgerTotal`、1日と1週間の数値は手数料台帳を末尾から最大 `MAX_FEE_EVENTS_ITER`（10,000）件まで走査するため、それを超えると下限になります。各台帳項目には、ベストエフォートのルールによる計上時点の基準通貨での価値が記録され、評価できなかった場合は 0 です。表示されるトレジャリーは `getTreasury`、現在のボールトコードが指すアドレスです。ボールトから徴収された手数料はそのボールト自身のコードが指すトレジャリーへ送られ、`recordTreasuryAccrual` は手数料が Diamond に届くたびに `treasuryBalances` に計上するため、古いコードに固定されたボールトや以前の設定によって、`getTreasury` が何を示していても手数料がそこに保有されることがあります。そのためページは常に `getTreasuryMetrics` の保有額を、未完了ローンの資産だけについて合計した値として、`getTreasuryConvertConfig` の最終変換と目標とともに表示します。デプロイ記録と異なるトレジャリーは警告されます。
+手数料率は `getTreasuryFeeBps` と `getLoanInitiationFeeTerms` です。手数料の数値は `getTreasuryMetrics` で、開始以来の合計は `feeLedgerTotal`、1日と1週間の数値は手数料台帳を末尾から最大 `MAX_FEE_EVENTS_ITER`（10,000）件まで走査するため、それを超えると下限になります。各台帳項目には、ベストエフォートのルールによる計上時点の基準通貨での価値が記録され、評価できなかった場合は 0 です。表示されるトレジャリーは `getTreasury`、現在のボールトコードが指すアドレスです。ボールトから徴収された手数料はそのボールト自身のコードが指すトレジャリーへ送られ、`recordTreasuryAccrual` は手数料が Diamond に届くたびに `treasuryBalances` に計上するため、古いコードに固定されたボールトや以前の設定によって、`getTreasury` が何を示していても手数料がそこに保有されることがあります。そのためページは常に `getTreasuryMetrics` の保有額を、未完了ローンの資産だけについて合計した値として、`getTreasuryConvertConfig` の最終変換と目標とともに表示します。デプロイ記録と異なるトレジャリーは警告されます。
 
 <a id="analytics-vpfi"></a>
 

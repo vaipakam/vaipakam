@@ -44,7 +44,7 @@ function review(over: Partial<RentReview> = {}): RentReview {
     offerId: 7n,
     offer: listing(),
     state: 'open',
-    preview: { effectivePrincipal: 2_000_000n, interestRateBps: 0n, collateralAmount: 0n, lifEstimate: 0n, collateralResidualRefund: 0n, error: 'None' },
+    preview: { effectivePrincipal: 2_000_000n, interestRateBps: 0n, collateralAmount: 0n, lifEstimate: 0n, collateralResidualRefund: 0n, error: 'None', referralCut: 0n },
     linkedLoanId: 0n,
     riskTermsHash: `0x${'ab'.repeat(32)}` as Hex,
     nftClass: 'illiquid',

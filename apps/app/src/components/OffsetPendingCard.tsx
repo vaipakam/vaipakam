@@ -30,7 +30,6 @@ import type { OffsetPendingState } from '../data/offsetPending';
 import { formatTokenAmountExact } from '../lib/format';
 import type { TokenMeta } from '../contracts/erc20';
 import { readPositionRouteOn } from '../contracts/positionNft';
-import { useRouteBlocksTransfer } from '../contracts/positionNft';
 
 export function OffsetPendingCard({
   loanId,
@@ -59,7 +58,6 @@ export function OffsetPendingCard({
   onCleared: () => void;
   onDone: (msg: string) => void;
 }) {
-  const routeBlocks = useRouteBlocksTransfer();
   // #3205 — without this device's marker, the offer the indexer names for
   // the loan (verified to exist) is the one a cancel targets.
   const offerId = rememberedOfferId ?? state?.indexedOfferId ?? null;
@@ -98,7 +96,7 @@ export function OffsetPendingCard({
       // wallet's approvals view as the remedy — the r1 finding
       // (silence about a lingering payoff-sized approval) is answered
       // by the disclosure, not by a guess about ownership.
-      onDone(routeBlocks ? copy.offset.cancelledApprovalKept : copy.offset.cancelledApprovalKeptRoute);
+      onDone(copy.offset.cancelledApprovalKept);
       onCleared();
       void queryClient.invalidateQueries({ queryKey: ['offsetPending'] });
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
@@ -151,7 +149,7 @@ export function OffsetPendingCard({
         return;
       }
       if (live.status !== LOAN_STATUS_ACTIVE) {
-        setError(routeBlocks ? copy.offset.restoreLoanClosed : copy.offset.restoreLoanClosedRoute);
+        setError(copy.offset.restoreLoanClosed);
         void queryClient.invalidateQueries({ queryKey: ['offsetPending'] });
         return;
       }
@@ -186,11 +184,11 @@ export function OffsetPendingCard({
       <h3>{copy.offset.pendingTitle}</h3>
       <p className="muted">
         {state !== undefined && !state.loanActive
-          ? (routeBlocks ? copy.offset.pendingLoanClosed : copy.offset.pendingLoanClosedRoute)
+          ? copy.offset.pendingLoanClosed
           : moved
             ? copy.offset.pendingMoved
           : state?.termUnfillable
-            ? (routeBlocks ? copy.offset.pendingTermUnfillable : copy.offset.pendingTermUnfillableRoute)
+            ? copy.offset.pendingTermUnfillable
             : copy.offset.pendingBody}{' '}
         {offerId !== null
           ? copy.offset.pendingOffer(offerId)
@@ -198,12 +196,12 @@ export function OffsetPendingCard({
       </p>
       {moved ? null : (
         <div className="banner banner-warn" role="note">
-          <span className="banner-body">{routeBlocks ? copy.offset.lockWarn : copy.offset.lockWarnRoute}</span>
+          <span className="banner-body">{copy.offset.lockWarn}</span>
         </div>
       )}
-      {/* #3205 — where moving the NFT does not block, say when the app
+      {/* #3205 — moving the NFT does not block, so say when the app
           cannot tell whether it moved since the offset was posted. */}
-      {!routeBlocks && state?.positionMoved === 'unknown' && completable ? (
+      {state?.positionMoved === 'unknown' && completable ? (
         <p className="field-hint" style={{ marginTop: 8 }}>
           {copy.offset.movedUnknown}
         </p>

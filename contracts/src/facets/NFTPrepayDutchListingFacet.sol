@@ -24,6 +24,7 @@ import {CollateralListingExecutor} from "../seaport/CollateralListingExecutor.so
 import {NFTPrepayListingFacet} from "./NFTPrepayListingFacet.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 
 /**
  * @title NFTPrepayDutchListingFacet
@@ -191,7 +192,11 @@ contract NFTPrepayDutchListingFacet is
         _assertDutchWindow(loanId, auctionEndTime, gracePeriodEnd);
 
         address holder = LibPositionNFT.ownerOf(loan.borrowerTokenId);
-        if (holder != msg.sender) revert NotPositionHolder(loanId, msg.sender, holder);
+        // #3526 — a replaced (retired) holder may not open a listing; its
+        // replacement recovers the position first and lists as the holder.
+        if (holder != msg.sender || LibProtectedAccount.manager(holder) != msg.sender) {
+            revert NotPositionHolder(loanId, msg.sender, holder);
+        }
         // #818 Tier-1 sanctions — posting a Dutch collateral-sale listing routes
         // value to the holder on fill; `holder == msg.sender`. See the fixed-price
         // `postPrepayListing` for the rationale.
@@ -272,7 +277,11 @@ contract NFTPrepayDutchListingFacet is
         _assertDutchWindow(loanId, newAuctionEndTime, gracePeriodEnd);
 
         address holder = LibPositionNFT.ownerOf(loan.borrowerTokenId);
-        if (holder != msg.sender) revert NotPositionHolder(loanId, msg.sender, holder);
+        // #3526 — a replaced (retired) holder may not open a listing; its
+        // replacement recovers the position first and lists as the holder.
+        if (holder != msg.sender || LibProtectedAccount.manager(holder) != msg.sender) {
+            revert NotPositionHolder(loanId, msg.sender, holder);
+        }
         // #818 Tier-1 sanctions — see `postPrepayDutchListing`. `holder == msg.sender`.
         LibVaipakam._assertNotSanctioned(msg.sender);
         // #825-r2 (P1) — screen fee-leg recipients and apply the protected-account

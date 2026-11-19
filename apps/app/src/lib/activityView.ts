@@ -136,6 +136,43 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   // #2795 — a borrower extra held on an open loan, paid out when the
   // obligation was handed over to a replacement borrower.
   BorrowerHeldExtraPaid: { label: 'Held sale extra paid out', category: 'collateral', priority: 50 },
+  // #3629 — every lender payment on an open loan is held for the position;
+  // the holder claims it while the loan runs, or Auto-lend re-commits it.
+  LenderPaymentHeld: { label: 'Payment held for the lender', category: 'loan-repay', priority: 30 },
+  HeldForLenderClaimed: { label: 'Held payment claimed', category: 'loan-modify', priority: 72 },
+  HeldRecommittedToIntent: { label: 'Held payment lent again', category: 'loan-modify', priority: 72 },
+  // #3669 — a leg or treasury share the token refused, held in the payer's
+  // vault under a lien until it can be delivered. The settlement it rides in
+  // carries the row's outcome, so these sit below it.
+  SettlementLegParked: { label: 'Payment held in the payer’s vault', category: 'loan-repay', priority: 30 },
+  SettlementLegReleased: { label: 'Held payment delivered', category: 'loan-repay', priority: 40 },
+  TreasuryShareParked: { label: 'Protocol fee held in the vault', category: 'other', priority: 30 },
+  TreasuryShareReleased: { label: 'Held protocol fee paid', category: 'other', priority: 40 },
+  // A forced sale that failed and was deferred: the fallback opens only after
+  // the minimum span, so the sale can be submitted again first.
+  ForcedSaleFallbackDeferred: { label: 'Collateral sale failed; it can be tried again', category: 'loan-default', priority: 40 },
+  // #3649 — the added initiation fee an extension charges; rides the
+  // extension (LoanExtended, 75).
+  ExtensionFeeCharged: { label: 'Initiation fee paid for the added term', category: 'loan-modify', priority: 15 },
+  // #3328 — collection offers. A fill rides the loan's own opening
+  // (LoanInitiated, 90), so the plain fill sits below it.
+  CollectionOfferCreated: { label: 'Collection offer posted', category: 'offer', priority: 50 },
+  CollectionOfferReduced: { label: 'Collection offer reduced', category: 'offer', priority: 55 },
+  CollectionOfferFilled: { label: 'Collection offer filled', category: 'loan-open', priority: 70 },
+  SignedCollectionOfferFilled: { label: 'Signed collection offer filled', category: 'loan-open', priority: 80 },
+  // #3656 — the instant market. One borrow opens a group of loans, each with
+  // its own InstantLoanOpened, summed by InstantBorrowed.
+  InstantBorrowed: { label: 'Instant borrow', category: 'loan-open', priority: 88 },
+  InstantLoanOpened: { label: 'Loan started by an instant borrow', category: 'loan-open', priority: 60 },
+  InstantSlotSet: { label: 'Instant market settings updated', category: 'offer', priority: 40 },
+  InstantTakenOver: { label: 'Loan taken over by another lender', category: 'loan-modify', priority: 82 },
+  // #3344 — the account's Ready balance (protected mode).
+  ReadyMoved: { label: 'Ready balance updated', category: 'other', priority: 50 },
+  ReadyTopUpRequested: { label: 'Ready balance top-up requested', category: 'other', priority: 40 },
+  ReadyTopUpCancelled: { label: 'Ready balance top-up cancelled', category: 'other', priority: 40 },
+  ReadyIdlePeriodSet: { label: 'Ready balance idle period set', category: 'other', priority: 40 },
+  ReadyIdlePeriodChangeRequested: { label: 'Ready balance idle period change requested', category: 'other', priority: 40 },
+  ReadyUntilSet: { label: 'Ready balance expiry updated', category: 'other', priority: 30 },
   // #1209 — a lender sale's seller keeps a claim on the interest they earned.
   // Recorded rides the sale (below LoanSold's 80); a payment rides the
   // repayment that funded it; the withdrawal is the seller's own transaction;
@@ -188,9 +225,30 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   // the companion of `LoanExtended` in the same transaction, so it rides
   // inside that row (below the default of 20) and states where the charge
   // came from.
-  ExtendReserveFunded: { label: 'Extension reserve funded', category: 'loan-modify', priority: 40 },
-  ExtendReserveWithdrawn: { label: 'Extension reserve withdrawn', category: 'loan-modify', priority: 40 },
+  LoanReserveFunded: { label: 'Loan reserve funded', category: 'loan-modify', priority: 40 },
+  LoanReserveWithdrawn: { label: 'Loan reserve withdrawn', category: 'loan-modify', priority: 40 },
   ExtendChargeDrawn: { label: 'Extension charge paid', category: 'loan-modify', priority: 15 },
+  // #3681 — the loan reserves' runs and the standing instructions; the
+  // interest booking and extension fee ride inside their parent rows.
+  InterestPaidFromReserve: { label: 'Interest paid from loan reserve', category: 'loan-repay', priority: 30 },
+  DueRepaymentRun: { label: 'Repaid from loan reserve', category: 'loan-repay', priority: 30 },
+  CollateralTopUpRun: { label: 'Collateral topped up from loan reserve', category: 'collateral', priority: 30 },
+  StandingInstructionsSet: { label: 'Standing instructions set', category: 'loan-modify', priority: 40 },
+  StandingInstructionsCleared: { label: 'Standing instructions cleared', category: 'loan-modify', priority: 40 },
+  StandingInstructionSkipped: { label: 'Standing instruction skipped', category: 'loan-modify', priority: 40 },
+  InterestPaymentBooked: { label: 'Interest payment booked', category: 'loan-repay', priority: 15 },
+  HolderWalletPaymentToVault: { label: 'Payment credited to vault', category: 'other', priority: 30 },
+  // #3681 / #3682 / #3722 / #3246 — reserve legs, Auto-lend settings, fee
+  // shares, invitations and recovery moves.
+  RepaymentLegsFromReserve: { label: 'Repayment paid from loan reserve', category: 'loan-repay', priority: 15 },
+  InterestPaymentAttemptFailed: { label: 'Interest payment from reserve did not go through', category: 'loan-repay', priority: 20 },
+  IntentCalmCheckSet: { label: 'Auto-lend price check changed', category: 'loan-modify', priority: 40 },
+  LenderIntentIntegratorNamed: { label: 'Auto-lend integrator named', category: 'loan-modify', priority: 40 },
+  IntegratorShareSettled: { label: 'Integrator fee share settled', category: 'loan-open', priority: 15 },
+  ReferralShareSettled: { label: 'Referral fee share settled', category: 'loan-open', priority: 15 },
+  InviterBound: { label: 'Invitation accepted', category: 'other', priority: 40 },
+  AccountClawedBack: { label: 'Balance moved to the recovery address', category: 'other', priority: 60 },
+  RecoveredBalanceSwept: { label: 'Remaining balance moved to the recovery address', category: 'other', priority: 60 },
   // #1558 — the borrower's signed payoff permit on a refinance request. The
   // pull is the companion of `LoanRefinanced` in the same transaction, so it
   // rides inside that row and states where the payoff came from.
@@ -277,12 +335,8 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   PayoutCancelled: { label: 'Payout cancelled', category: 'other', priority: 40 },
   PayoutHeldInVault: { label: 'Payout kept in vault', category: 'other', priority: 55 },
   PaymentCreditedToVault: { label: 'Payment credited to vault', category: 'other', priority: 55 },
-  PositionTransferQueued: { label: 'Position NFT transfer queued', category: 'other', priority: 40 },
-  PositionTransferReleased: { label: 'Position NFT transfer released', category: 'other', priority: 40 },
-  PositionTransferCancelled: { label: 'Position NFT transfer cancelled', category: 'other', priority: 40 },
   EscapeWithdrawal: { label: 'Withdrawal during protocol pause', category: 'other', priority: 60 },
   PayoutCosigned: { label: 'Payout co-signed', category: 'other', priority: 40 },
-  PositionTransferCosigned: { label: 'Position transfer co-signed', category: 'other', priority: 40 },
   ProtectedModeEnabled: { label: 'Protected mode turned on', category: 'other', priority: 40 },
   ProtectedModeDisabled: { label: 'Protected mode turned off', category: 'other', priority: 40 },
   SettingChangeRequested: { label: 'Protected setting change requested', category: 'other', priority: 40 },
@@ -610,16 +664,16 @@ export function rowValue(row: Pick<ActivityRowView, 'related'>): RowValue {
 export interface SaleShare {
   role: 'lender' | 'borrower';
   leg: Extract<ValueLeg, { kind: 'token' }>;
-  /** Held for the party's claim rather than paid to their wallet. The
-   *  lender's part always is: it waits for the lender's claim. */
+  /** Held for the party's claim rather than paid to their wallet. Since
+   *  #3629 every part is: no sale pays a wallet. */
   held: boolean;
 }
 
 /**
  * #2876 — the viewer's own part of a collateral sale's proceeds. The split
- * event names each party and the amount owed to them, and says whether the
- * borrower's remainder was paid or held, so this reads those named fields of
- * that one event and nothing else. A part is stated only when the indexer
+ * event names each party and the amount owed to them, both held for that
+ * party's claim (#3629: no sale pays a wallet), so this reads those named
+ * fields of that one event and nothing else. A part is stated only when the indexer
  * established the proceeds as an ERC-20 amount (`assetType` 0 on the same
  * event), so an amount is never shown in units the row could not name. A zero
  * part is not a share.
@@ -642,9 +696,7 @@ export function saleProceedsShares(
       out.push({ role, leg: { kind: 'token', asset, amount: BigInt(amount), amountMax: null }, held });
     };
     part(a.lender, a.lenderAmount, 'lender', true);
-    if (typeof a.borrowerHeld === 'boolean') {
-      part(a.borrower, a.borrowerAmount, 'borrower', a.borrowerHeld);
-    }
+    part(a.borrower, a.borrowerAmount, 'borrower', true);
   }
   return out;
 }

@@ -601,9 +601,12 @@ library Deployments {
     function writeProtocolRegistry(address a) internal { _writeAddr(".protocolRegistry", a); }
     function writeBackstopVault(address a)   internal { _writeAddr(".backstopVault",   a); }
     function writeVaultProtection(address a) internal { _writeAddr(".vaultProtection", a); }
+    function writeVaultRecovery(address a) internal { _writeAddr(".vaultRecovery", a); }
     /// @notice #3272 — the chain's PriceGuard, the one price source the
     ///         Diamond and the vaults read (through the registry pointer).
     function writePriceGuard(address a) internal { _writeAddr(".priceGuard", a); }
+    /// @notice #3437 — the reader whose code answers that guard's price reads.
+    function writePriceGuardReader(address a) internal { _writeAddr(".priceGuardReader", a); }
     function writeTimelock(address a)        internal { _writeAddr(".timelock",        a); }
     function writeVpfiToken(address a)       internal { _writeAddr(".vpfiToken",       a); }
     function writeVpfiTokenImpl(address a)   internal { _writeAddr(".vpfiTokenImpl",   a); }

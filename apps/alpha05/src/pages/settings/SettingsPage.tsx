@@ -10,9 +10,9 @@ import { getSupportedChain } from '../../chain/chains';
 import { FeeDiscountConsent } from '../../shared/consent/FeeDiscountConsent';
 import { useCopy } from '../../shared/copy/useCopy';
 import { WhyLink } from '../../shared/help/WhyLink';
-import { fingerprint, PRIVACY_URL, termsUrl } from '../../shared/terms/terms';
+import { countingVersion, fingerprint, PRIVACY_URL, termsUrl } from '../../shared/terms/terms';
 import { useTerms } from '../../shared/terms/useTerms';
-import { formatUtc } from '../../shared/ui/format';
+import { formatUtc, formatUtcDate } from '../../shared/ui/format';
 import { Approvals } from './Approvals';
 import { InstallApp } from './InstallApp';
 import { Keepers } from './Keepers';
@@ -179,16 +179,26 @@ function TermsStatus({ chainName }: { chainName: string }) {
   return (
     <div data-testid="settings-terms" data-terms={t.kind}>
       {t.kind === 'none' && <p className="tier-b">{format('settings.legalNone', { chain: chainName })}</p>}
-      {t.kind === 'accepted' && (
-        <p className="tier-b">{format('settings.legalAccepted', { chain: chainName, version: String(t.version), fingerprint: fingerprint(t.hash) })}</p>
+      {t.kind === 'accepted' &&
+        (t.latestAccepted ? (
+          <p className="tier-b">{format('settings.legalAccepted', { chain: chainName, version: String(t.version), fingerprint: fingerprint(t.hash) })}</p>
+        ) : (
+          <p className="tier-b" data-testid="settings-terms-older">
+            {format('settings.legalAcceptedOlder', { chain: chainName, accepted: String(countingVersion(t.posture)), version: String(t.version) })}
+          </p>
+        ))}
+      {t.kind === 'accepted' && t.due && (
+        <p className="tier-a" data-testid="settings-terms-due">
+          {t.due.newVersion
+            ? format('settings.legalDueVersion', { chain: chainName, version: String(t.due.version), date: formatUtcDate(t.due.effectiveAt) })
+            : format('settings.legalDueMinimum', { chain: chainName, version: String(t.due.minVersion), date: formatUtcDate(t.due.effectiveAt) })}
+        </p>
       )}
       {t.kind === 'needed' && (
         <>
           <p className="tier-b">{format('settings.legalNeeded', { chain: chainName, version: String(t.version), fingerprint: fingerprint(t.hash) })}</p>
           <p className="tier-b">{text('settings.legalNeededWhen')}</p>
-          {t.previous && (
-            <p className="tier-b">{format('terms.newer', { previous: String(t.previous.version), when: formatUtc(t.previous.acceptedAt) })}</p>
-          )}
+          {t.previous && <p className="tier-b">{format('terms.newer', { previous: String(t.previous.version), when: formatUtc(t.previous.acceptedAt) })}</p>}
         </>
       )}
       {t.kind !== 'none' && (

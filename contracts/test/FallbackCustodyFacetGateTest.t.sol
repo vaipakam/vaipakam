@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {LibTestFallbackGate} from "./helpers/LibTestFallbackGate.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
@@ -10,12 +11,14 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {IZeroExProxy} from "../src/interfaces/IZeroExProxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {defaultQuote} from "./helpers/ForcedSaleQuote.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
+import {LibTestGuard} from "./helpers/LibTestGuard.sol";
 
 /**
  * @title  FallbackCustodyFacetGateTest
@@ -93,6 +96,8 @@ contract FallbackCustodyFacetGateTest is SetupTest {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -142,6 +147,7 @@ contract FallbackCustodyFacetGateTest is SetupTest {
     ///      with the Diamond's balance unchanged by the entry.
     function _fcEnter() internal {
         uint256 heldBefore = _bal(address(diamond));
+        LibTestFallbackGate.open(address(diamond), loanId);
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         assertEq(
@@ -150,7 +156,7 @@ contract FallbackCustodyFacetGateTest is SetupTest {
             "fixture-live: the real producer entered FallbackPending"
         );
         (uint256 l, uint256 t, uint256 b, , , bool active, ) =
-            ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);
+            ClaimViewFacet(address(diamond)).getFallbackSnapshot(loanId);
         assertTrue(active, "fixture-live: the snapshot is active");
         assertGt(l, 0, "fixture-live: a non-zero lender slice");
         assertEq(l + t + b, COLLATERAL, "fixture-live: the split covers the whole collateral");
@@ -204,7 +210,7 @@ contract FallbackCustodyFacetGateTest is SetupTest {
     ///      read still (total, 0).
     function _fcAssertCustodyUntouched() internal view {
         assertEq(uint8(_fcStatus(loanId)), uint8(LibVaipakam.LoanStatus.FallbackPending), "still FallbackPending");
-        (, , , , , bool active, bool retried) = ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);
+        (, , , , , bool active, bool retried) = ClaimViewFacet(address(diamond)).getFallbackSnapshot(loanId);
         assertTrue(active, "the snapshot is still active");
         assertFalse(retried, "no retry was recorded");
         assertEq(_bal(address(diamond)), diamondHeldAfterEntry, "the Diamond's balance did not move");
@@ -305,9 +311,11 @@ contract FallbackCustodyFacetGateTest is SetupTest {
         uint256 treasury0 = _bal(treasury);
         uint256 lenderVault0 = _bal(lenderVault);
 
+        LibTestGuard.hold(address(diamond)); // stands in for the guarded claim (#3432)
         vm.prank(address(diamond));
         (uint256 toTreasury, uint256 toLenderSlice, uint256 retained) = FallbackCustodyFacet(address(diamond))
             .disposeFallbackCustody(loanId, lender, LibFallbackCustody.Move.ToLender);
+        LibTestGuard.release(address(diamond));
 
         assertEq(toTreasury, treasuryCol, "returns the treasury slice");
         assertEq(toLenderSlice, lenderCol, "returns the lender slice");
@@ -348,7 +356,7 @@ contract FallbackCustodyFacetGateTest is SetupTest {
         assertEq(_bal(treasury) - treasury0, treasuryCol, "treasury slice paid");
         assertEq(_bal(_borrowerVault()), borrowerCol, "the borrower slice stays in the borrower's vault");
         assertEq(_bal(address(diamond)), diamondHeldAfterEntry, "the Diamond is never a waypoint");
-        (, , , , , bool active, ) = ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);
+        (, , , , , bool active, ) = ClaimViewFacet(address(diamond)).getFallbackSnapshot(loanId);
         assertFalse(active, "the claim closed the snapshot");
         (uint256 vaultHeld, uint256 diamondHeld) =
             FallbackCustodyFacet(address(diamond)).getFallbackCustody(loanId);

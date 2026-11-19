@@ -506,6 +506,35 @@ contract NFTPrepayListingFacetTest is SetupTest {
         );
     }
 
+    /// @notice #3526 — a replaced (retired) holder cannot post a listing,
+    ///         and neither can its replacement until it recovers the position.
+    function test_postPrepayListing_retiredHolderIsRefused() public {
+        _scaffoldActiveLoan({allowsPrepay: true});
+        uint256 ask = _floorPlusBuffer();
+        address nominee = makeAddr("borrowerReplacement");
+        LibTestProtection.enable(address(diamond), borrowerHolder, 2 days);
+        LibTestProtection.propose(address(diamond), borrowerHolder, borrowerHolder, nominee);
+        vm.warp(block.timestamp + 2 days);
+        LibTestProtection.finalizeReplacement(address(diamond), borrowerHolder);
+
+        vm.prank(borrowerHolder);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NFTPrepayListingFacet.NotPositionHolder.selector, LOAN_ID, borrowerHolder, borrowerHolder
+            )
+        );
+        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, ask, TEST_SALT_A, conduitKey, _emptyFeeLegs()
+        );
+        vm.prank(nominee);
+        vm.expectRevert(
+            abi.encodeWithSelector(NFTPrepayListingFacet.NotPositionHolder.selector, LOAN_ID, nominee, borrowerHolder)
+        );
+        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, ask, TEST_SALT_A, conduitKey, _emptyFeeLegs()
+        );
+    }
+
     /// @notice Protected account mode — a locked holder cannot post a listing.
     function test_postPrepayListing_lockedHolderIsRefused() public {
         _scaffoldActiveLoan({allowsPrepay: true});

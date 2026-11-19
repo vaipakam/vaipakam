@@ -1,0 +1,16 @@
+## Thread — Instant market: Available, exact live principal, and room for the term-average acknowledgement
+
+The common ledger now keeps a third slot-side figure beside Declared and Lent: **Available**, per lending asset and per pair. It is the sum, over every active Auto-lend slot whose fill window is still open, of what that slot could lend now: the lesser of the capital reserved under the slot (liened in the lender's own vault) and the slot's unused exposure, counted as nothing when that is below the slot's smallest fill. "How full" a market is now reads as the principal lent out of slots divided by that principal plus Available, so it can never pass 100% and a fully lent slot keeps its whole weight. Declared stays, labelled as the limit lenders set. Advances #3714 (TermAverageAndLinkGuardsDesign §7, InstantMarketDesign §8).
+
+A slot's live principal, which also bounds its largest exposure, is now exactly the outstanding principal of the open loans it holds. It falls by the principal a partial repayment clears, drops to nothing when a loan is fully repaid, defaults or is written off (not later, at the lender's claim), leaves the slot when the loan is sold, consolidated to a new holder or taken over out of it, and joins the incoming slot at the principal outstanding on a takeover. Before this change a slot kept counting a loan's original amount until the lender claimed it. The sum of every slot's live principal is the "lent from slots" figure.
+
+Every step that changes a slot's terms, its reserved capital or its live principal moves Available in the same transaction, through the one ledger host. A slot whose window closes leaves Available at the end of its closing UTC day with no transaction, the same way it leaves Declared, so both are stated as of the start of today (UTC). A slot counts from the moment it is set, although a fill waits the minimum age (at most 60 seconds). Available is a figure of liened capital, not a reading of vault balances: a fill that finds the vault short refuses and never lends more than is there. The borrow preview remains the binding answer for one borrow.
+
+The ledger views now return Available too, a per-slot view states a slot's limit, fillable amount, live principal and reserved capital, and the permissionless housekeeping roll is renamed to cover both totals. The unfunded mark proposed first was withdrawn by the design owner before it shipped: there is no mark, no permissionless step for it and no keeper pass.
+
+The instant borrow request also gains the borrower's own acknowledgement that a fixed rate is far from the term average (#3713). It is carried in the request but not enforced: the shared term-average check (#3635 part A) will require it outside the band. No other write path carries it yet; that belongs to the thread building the check.
+
+This changes the storage layout and the ledger views, so it reaches a chain only by fresh deploy.
+
+> Caveat: Available counts a slot from the moment its terms are set; the minimum terms age (1 to 60 seconds, #3443) before a fill is not held out.
+> Caveat: A cancelled slot or one whose window has closed counts nothing available while its open loans still count as lent from slots.

@@ -92,8 +92,9 @@ export interface SupportedChain {
   testnet: boolean;
   nativeGasSymbol: string;
   diamondAddress: `0x${string}`;
-  /** #3205 — where this chain's position NFTs live, and in which mode. Read
-   *  through `contracts/positionNft`. */
+  /** #3205 — this chain's PositionNFT and Diamond. Read through
+   *  `contracts/positionNft`. Building it refuses a deployment record
+   *  without `positionNFT` (#3321). */
   positionNft: PositionNftSurface;
   deployBlock: number;
 }

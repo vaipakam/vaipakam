@@ -6,6 +6,12 @@ import {console} from "forge-std/console.sol";
 import {DiamondFacetNames} from "./DiamondFacetNames.sol";
 import {LaunchGate} from "../../src/governance/LaunchGate.sol";
 import {LaunchCrossChainChecks} from "../../src/governance/LaunchCrossChainChecks.sol";
+import {PriceGuard} from "../../src/oracle/PriceGuard.sol";
+import {PriceGuardReader} from "../../src/oracle/PriceGuardReader.sol";
+import {VaipakamFeedRegistry} from "../../src/oracle/VaipakamFeedRegistry.sol";
+import {Erc4626RateReader} from "../../src/oracle/rate/Erc4626RateReader.sol";
+import {VaultProtection} from "../../src/vault/VaultProtection.sol";
+import {VaultRecovery} from "../../src/vault/VaultRecovery.sol";
 
 /**
  * @title FacetSizeLimitTest
@@ -76,7 +82,7 @@ contract FacetSizeLimitTest is Test, DiamondFacetNames {
 
     /// @notice Every facet's runtime bytecode must be within EIP-170.
     function test_EveryFacetUnderEip170SizeLimit() public view {
-        string[118] memory facets = cutFacetNames();
+        string[136] memory facets = cutFacetNames();
         for (uint256 i; i < facets.length; ++i) {
             _assertUnderLimit(facets[i]);
         }
@@ -88,6 +94,17 @@ contract FacetSizeLimitTest is Test, DiamondFacetNames {
 
     /// @dev EIP-3860 maximum initcode size, in bytes.
     uint256 internal constant EIP3860_INITCODE_LIMIT = 49_152;
+
+    /// @notice The vault's protection code is two deployables since #3246
+    ///         part 2: {VaultProtection} (settings, signers, lock,
+    ///         replacement) and {VaultRecovery} (the recovery address and
+    ///         the clawback), which the first reaches by delegatecall. Neither
+    ///         is a facet, so `cutFacetNames()` never names them; the split
+    ///         exists because the single contract crossed EIP-170.
+    function test_VaultProtectionCodeUnderSizeLimit() public view {
+        _assertUnderLimit(type(VaultProtection).name);
+        _assertUnderLimit(type(VaultRecovery).name);
+    }
 
     /// @notice #2975 — the LaunchGate and the companion it creates are
     ///         deployed by every chain's `contracts` phase, and no facet list
@@ -110,6 +127,17 @@ contract FacetSizeLimitTest is Test, DiamondFacetNames {
         );
     }
 
+    /// @notice #3437 — the price guard, the reader that runs its pricing
+    ///         path, the feed registry and the rate readers are standalone
+    ///         contracts no facet list names. The guard was split from its
+    ///         reader because together they did not fit.
+    function test_PriceContractsUnderSizeLimit() public view {
+        _assertUnderLimit(type(PriceGuard).name);
+        _assertUnderLimit(type(PriceGuardReader).name);
+        _assertUnderLimit(type(VaipakamFeedRegistry).name);
+        _assertUnderLimit(type(Erc4626RateReader).name);
+    }
+
     /// @notice #1780 — report every facet within {HEADROOM_WARN_BYTES} of the
     ///         EIP-170 limit, so a facet running out of room is visible in a
     ///         normal `forge test -vv` run instead of surfacing as a failed
@@ -118,7 +146,7 @@ contract FacetSizeLimitTest is Test, DiamondFacetNames {
     ///         actually OVER the limit is failed by the test above, which is
     ///         where enforcement belongs.
     function test_ReportFacetsNearSizeLimit() public view {
-        string[118] memory facets = cutFacetNames();
+        string[136] memory facets = cutFacetNames();
 
         // TWO passes, critical band first (#1842). The report is read top
         // down by someone who did not come looking for it, so the facets
@@ -147,7 +175,7 @@ contract FacetSizeLimitTest is Test, DiamondFacetNames {
     ///      reason the limit test checks it: the Diamond's constructor
     ///      installs it, so it never appears in `cutFacetNames()`.
     function _reportBand(
-        string[118] memory facets,
+        string[136] memory facets,
         uint256 lo,
         uint256 hi,
         string memory label

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Abi, Log } from 'viem';
 import { useConfig } from 'wagmi';
 import { sendWrite } from '../tx/send';
-import { ClaimFacetABI, RepayFacetABI } from '@vaipakam/contracts/abis';
+import { ClaimViewFacetABI, RepayFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useCopy } from '../copy/useCopy';
@@ -27,7 +27,7 @@ import { isRevoked, rentalUpdate } from './rentalLog';
 type Hex = `0x${string}`;
 
 const REPAY_ABI = RepayFacetABI as Abi;
-const CLAIM_ABI = ClaimFacetABI as Abi;
+const CLAIM_ABI = ClaimViewFacetABI as Abi;
 
 /** `LibVaipakam.LoanStatus.Repaid`: the status a rental's close leaves it in. */
 const STATUS_REPAID = 1;

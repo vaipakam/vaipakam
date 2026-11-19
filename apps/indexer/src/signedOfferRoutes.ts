@@ -45,7 +45,7 @@ import {
 import { slotRefusalStatus, takeCallerSlot } from '@vaipakam/lib/rateLimit';
 import { readJsonBody } from '@vaipakam/lib/requestBody';
 import { redactedError } from '@vaipakam/lib/errorDescription';
-import { canonicalOrderJson, signedOfferColumns } from '@vaipakam/lib/signedOfferWire';
+import { NO_COLLECTION, canonicalOrderJson, signedOfferColumns } from '@vaipakam/lib/signedOfferWire';
 import { canonicalPlacementJson, placementProblem, type SignedOfferPlacement } from '@vaipakam/lib/signedOfferSet';
 
 /** A signed offer: the order struct and its signature, which for a smart
@@ -170,6 +170,9 @@ const ENUM_FIELDS: Record<string, number> = {
   collateralAssetType: 2,
   fillMode: 2,
   periodicInterestCadence: 4,
+  // #3621 — the lender's "either" marks: bit 0 partial repay, bit 1 prepay
+  // listing, nothing else (`LifecycleFlexUnknownBits`).
+  lifecycleFlex: 3,
 };
 
 const ADDRESS_FIELDS = [
@@ -179,6 +182,10 @@ const ADDRESS_FIELDS = [
   // #3327 — zero is meaningful for both: anyone may take / no co-signer.
   'allowedTaker',
   'coSigner',
+  // #3682 — zero is meaningful: no integrator named. A non-zero one on a
+  // lender's offer is attribution only; whether it earns a share is the
+  // fill's question, not the book's.
+  'integrator',
   'signer',
 ] as const;
 
@@ -239,7 +246,7 @@ function validateOrder(
   raw: Record<string, unknown>,
   now: number,
 ): { order: SignedOrderWire } | { error: string } {
-  // Exactly the 35 struct fields — unknown keys are rejected so order_json
+  // Exactly the 46 struct fields — unknown keys are rejected so order_json
   // stays the canonical replay payload (extra junk would survive into the
   // stored JSON otherwise).
   const keys = Object.keys(raw);
@@ -303,6 +310,17 @@ function validateOrder(
       return { error: `invalid-${f}` };
     }
     out[f] = v;
+  }
+
+  // #3328 — a signed COLLECTION offer (setKind != 0) is filled only through
+  // `CollectionOfferFacet.fillSignedCollectionOffer`, never through the
+  // acceptSignedOffer / match routes this book serves (the contract refuses
+  // it there with `SignedOfferWrongRoute`), and its collateral is an NFT,
+  // which the v0.5 shape check below refuses anyway. So the book carries
+  // only ordinary orders: every collection field must be its zero value.
+  for (const [f, zero] of Object.entries(NO_COLLECTION)) {
+    if (raw[f] !== zero) return { error: f === 'setKind' ? 'unsupported-collection' : `invalid-${f}` };
+    out[f] = zero;
   }
 
   // durationDays — the contracts' hard governance ceiling is
@@ -386,6 +404,11 @@ function validateOrder(
   // (`SignedOfferUnsupportedShape`).
   if (BigInt(out.refinanceTargetLoanId as string) !== 0n) {
     return { error: 'unsupported-refinance' };
+  }
+  // (b1) #3621 `LifecycleFlexNotAllowed` — only a LENDER offer may carry
+  // "either" marks (the ERC-20 shape is guaranteed above).
+  if (out.lifecycleFlex !== '0' && out.offerType !== '0') {
+    return { error: 'lifecycle-flex-not-allowed' };
   }
   // (b) `_createOfferSetup` self-lending guard: principal and collateral
   // must be distinct contracts (`SelfCollateralizedOffer`). The contract
@@ -486,7 +509,7 @@ function validateOrder(
   if (out.offerType === '0' && collateralAmountMax !== collateralAmount) {
     return { error: 'lender-collateral-range' };
   }
-  // `SignedOfferRatioNotConstant` (SignedOfferMatchFacet._vetSignedOfferForMatch,
+  // `SignedOfferRatioNotConstant` (SignedOfferFacet._vetSignedOfferForMatch,
   // Codex #1145 r3 P2) — a RANGED order (`amountMax > amount`) is consumed
   // through `matchSignedOffer` slices (direct fill is disabled for ranged
   // principal), and the matcher requires a CONSTANT collateral:principal
@@ -523,7 +546,7 @@ function validateOrder(
 /**
  * POST /signed-offers
  *
- * Body: `{ chainId: number, order: <35-field SignedOffer wire object>,
+ * Body: `{ chainId: number, order: <46-field SignedOffer wire object>,
  *          signature: 0x-hex, set?: { others: 0x-hash[], index: number } }` —
  * every uint as a decimal string, addresses 0x-40-hex, bools as booleans (the
  * same shape GET returns and takers replay on-chain). `set` is present only
@@ -989,7 +1012,7 @@ export async function handleSignedOffersGet(
     // One query per side so each cap is applied within a PRICE-ordered
     // slice (see MAX_BOOK_ROWS_PER_SIDE). `orderBy` is a whitelisted
     // literal chosen here, never caller input. Every stored order is the
-    // 35-field shape: the route writes nothing else, and migrations 0078
+    // 36-field shape: the route writes nothing else, and migrations 0078
     // and 0093 removed the older shapes (#1481, #3327).
     const perSideCap =
       signer !== null ? SIGNER_BOOK_ROWS_PER_SIDE : MAX_BOOK_ROWS_PER_SIDE;

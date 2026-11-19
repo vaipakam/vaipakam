@@ -42,7 +42,7 @@ export type DocCoverage =
 /** Keyed by the heading text exactly as the document writes it, after `### `. */
 export const DOC_COVERAGE: Readonly<Record<string, DocCoverage>> = {
   'Treasury fee on lender interest': { shown: ['treasuryFeeBps'] },
-  'Loan-initiation fee': { shown: ['loanInitiationFeeBps'] },
+  'Loan-initiation fee': { shown: ['loanInitiationFeeBps', 'lifBaseTermDays', 'lifYearlyBps', 'lifYearDays'] },
   'LIF matcher kickback': { shown: ['lifMatcherFeeBps'] },
   'VPFI tier discount thresholds + tier discount BPS': { shown: ['tierThresholds', 'tierDiscountBps'] },
   'Liquidation handling fee + max slippage + max liquidator incentive': {

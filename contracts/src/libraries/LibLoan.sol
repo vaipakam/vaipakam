@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTerms} from "./LibTerms.sol";
 import {LibProtectedAccount} from "./LibProtectedAccount.sol";
 import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
@@ -37,6 +38,9 @@ library LibLoan {
         // taking over a lender position is one: refused here, the one place
         // a lender position changes hands, so every sale route holds it.
         LibProtectedAccount.requireCanOpen(newLender);
+        // #3734 — and must have accepted the Terms in force; the exiting
+        // seller is not asked.
+        LibTerms.requireCurrent(newLender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         _requirePositionMayLeave(loan.lenderTokenId);
@@ -236,9 +240,12 @@ library LibLoan {
     /// @dev #3205 (#3318 Codex r6) — the ONE check that a position may change
     ///      hands, made by both handover primitives on the EXITING token: its
     ///      current holder's positions must not be held against leaving
-    ///      (`LibProtectedAccount.protectsNfts`: the PositionNFT holder lock,
-    ///      or a retired protected account), the same rule and error the sale
-    ///      verdict applies at listing. A sale or handover moves a position by
+    ///      (`LibProtectedAccount.positionExit` == Held: a retired account, a
+    ///      locked protected vault, or a holder lock without protected mode),
+    ///      the same rule and error the sale verdict applies at listing. A
+    ///      protected holder under the holder lock may leave (#3339): what
+    ///      comes back lands in its vault under the payout delay, and a lender
+    ///      sale applies `LibProtectedAccount.requireLockedSaleFloor` first. A sale or handover moves a position by
     ///      retiring the token and minting a new one, which the core's
     ///      transfer guard never sees, so the lock is checked here, for every
     ///      route (listed sale and its auto-linked accept, direct sale,
@@ -248,7 +255,9 @@ library LibLoan {
     ///      positions rather than hand them over, so none needs an exemption.
     function _requirePositionMayLeave(uint256 tokenId) private view {
         address holder = LibPositionNFT.ownerOf(tokenId);
-        if (LibProtectedAccount.protectsNfts(holder)) revert LibProtectedAccount.PositionNftsLocked(holder);
+        if (LibProtectedAccount.positionExit(holder) == LibProtectedAccount.PositionExit.Held) {
+            revert LibProtectedAccount.PositionNftsLocked(holder);
+        }
     }
 
     /// @dev Replaces the borrower on an existing loan. Symmetric to
@@ -263,6 +272,8 @@ library LibLoan {
         // Same rule as {migrateLenderPosition}: a locked or replaced
         // protected account takes over no obligation.
         LibProtectedAccount.requireCanOpen(newBorrower);
+        // #3734 — the incoming borrower must have accepted the Terms in force.
+        LibTerms.requireCurrent(newBorrower);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         _requirePositionMayLeave(loan.borrowerTokenId);
@@ -314,6 +325,9 @@ library LibLoan {
         // policy exists to refuse.
         _indexLoanForHolder(s, previousBorrower, newBorrower, loan.lender, loanId);
         if (newBorrower != previousBorrower) loan.borrowerNotifBilled = false;
+        // #3722 — taking over an obligation counts as the incoming wallet's
+        // first loan as borrower: it can no longer bind an inviter.
+        s.hasBorrowed[newBorrower] = true;
 
         loan.borrower = newBorrower;
         loan.borrowerTokenId = newTokenId;

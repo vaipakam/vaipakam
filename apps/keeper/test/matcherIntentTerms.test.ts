@@ -11,7 +11,7 @@ const COLL = '0x00000000000000000000000000000000000000c2';
 
 function intent(acceptsProRata: boolean): LenderIntentSummary {
   return {
-    owner: '0x00000000000000000000000000000000000000aa', lendingAsset: LEND, collateralAsset: COLL,
+    owner: '0x00000000000000000000000000000000000000aa', lendingAsset: LEND, collateralAsset: COLL, slot: 0,
     maxExposure: 1000n, minRateBps: 100n, maxInitLtvBps: 8000, maxDurationDays: 365, minFillAmount: 1n,
     requiresKeeperAuth: false, livePrincipal: 0n, availableCapital: 1000n, lendUntil: 0n, acceptsProRata,
   } as LenderIntentSummary;

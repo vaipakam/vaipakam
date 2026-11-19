@@ -4,6 +4,8 @@ pragma solidity ^0.8.29;
 
 import {LibListingEscrow} from "../libraries/LibListingEscrow.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
+import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibPrepayOrder} from "../libraries/LibPrepayOrder.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
@@ -315,7 +317,8 @@ contract OfferParallelSaleFacet is
         // posture exactly (no dual-auth window).
         bool callerAuthorized;
         if (!offer.accepted) {
-            callerAuthorized = (offer.creator == msg.sender);
+            // #3526 — the creator's manager, as `OfferCancelFacet` allows.
+            callerAuthorized = offer.creator != address(0) && LibProtectedAccount.manager(offer.creator) == msg.sender;
         } else {
             uint256 loanId = s.offerIdToLoanId[uint256(offerId)];
             if (loanId != 0) {
@@ -324,7 +327,8 @@ contract OfferParallelSaleFacet is
                     // A retired token (prior terminal) reads 0: no one is
                     // authorized, and the revert below applies.
                     address currentHolder = LibPositionNFT.holderOrZero(borrowerTokenId);
-                    callerAuthorized = currentHolder != address(0) && currentHolder == msg.sender;
+                    callerAuthorized =
+                        currentHolder != address(0) && LibProtectedAccount.manager(currentHolder) == msg.sender;
                 }
             }
         }
@@ -503,7 +507,7 @@ contract OfferParallelSaleFacet is
         LibVaipakam.Offer storage offer = s.offers[uint256(offerId)];
 
         // ── Caller-gate (creator-only) ────────────────────────────
-        if (offer.creator != msg.sender) revert NotOfferCreator();
+        LibAuth.requireOfferCreator(offer);
 
         // ── Offer-shape preconditions (§19.5 opt-in) ──────────────
         if (!offer.allowsParallelSale) revert ParallelSaleNotEnabled(offerId);

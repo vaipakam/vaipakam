@@ -209,6 +209,7 @@ describe('readProtocolKnobGetters — multi-part settings (#2680)', () => {
   const HOSTS = {
     adminFacet: '0x00000000000000000000000000000000000000A1',
     configFacet: '0x00000000000000000000000000000000000000C1',
+    feeLevelsFacet: '0x00000000000000000000000000000000000000F1',
   } as const;
   const SELECTOR_HOST = new Map<string, string>(
     LABELLED_KNOB_GETTERS.map((g) => [
@@ -220,6 +221,8 @@ describe('readProtocolKnobGetters — multi-part settings (#2680)', () => {
     getPartialLiquidationSizing: [12_000n, 9_500n, 0n],
     getTierLiqDiscountBps: [770, 600, 500],
     getNotificationFeeConfig: [5n * 10n ** 17n, 123n],
+    // #3649 — baseBps, baseTermDays, yearlyBps, yearDays.
+    getLoanInitiationFeeTerms: [20n, 30n, 50n, 365n],
     getGraceBuckets: [
       { maxDurationDays: 7n, graceSeconds: 3600n },
       { maxDurationDays: 0n, graceSeconds: 2_592_000n },
@@ -260,11 +263,16 @@ describe('readProtocolKnobGetters — multi-part settings (#2680)', () => {
       tier2LiqDiscountBps: '600',
       tier3LiqDiscountBps: '500',
       notificationFeeVpfi: '500000000000000000',
+      lifBaseTermDays: '30',
+      lifYearlyBps: '50',
+      lifYearDays: '365',
       graceBuckets: [
         { maxDurationDays: '7', graceSeconds: '3600' },
         { maxDurationDays: '0', graceSeconds: '2592000' },
       ],
     });
+    // The base rate is the bundle's; the term tuple does not republish it.
+    expect(r.values).not.toHaveProperty('lifBaseBps');
     // A running total is not a setting and is never published.
     expect(Object.values(r.values)).not.toContain('123');
     expect(r.unreported.filter((k) => LABELLED_KNOB_KEYS.includes(k))).toEqual([]);

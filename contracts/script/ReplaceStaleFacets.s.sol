@@ -17,6 +17,7 @@ import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
+import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
@@ -90,6 +91,9 @@ contract ReplaceStaleFacets is DeployDiamond {
     /// @notice #3410 - the target Diamond predates the sequencer-outage loan
     ///         clock; see {_requireSequencerOutageClock}.
     error PredatesSequencerOutageClock(address diamond);
+    /// @notice #3649 stage 3 - the target Diamond predates the treasury floor
+    ///         split; see {_requireTreasuryFeeFloor}.
+    error PredatesTreasuryFeeFloor(address diamond);
     /// @notice #1820 - the target Diamond predates the tier record seam; see
     ///         {_requireTierRecordSeam}.
     error PredatesTierRecordSeam(address diamond);
@@ -99,6 +103,9 @@ contract ReplaceStaleFacets is DeployDiamond {
     /// @notice #3242 - the target Diamond predates the offer-book bounds; see
     ///         {_requireOfferBook}.
     error PredatesOfferBook(address diamond);
+    /// @notice #3685 - the target Diamond predates the collateral pledged
+    ///         total; see {_requireCollateralConcentration}.
+    error PredatesCollateralConcentration(address diamond);
     /// @notice #3204 - the target Diamond predates the VaultBeacon (fresh deploy only).
     error PredatesVaultBeacon(address diamond);
     /// @notice #3205 - the target Diamond predates the PositionNFT core. Fresh deploy only.
@@ -146,6 +153,7 @@ contract ReplaceStaleFacets is DeployDiamond {
         // #3410 - and one from before the sequencer-outage loan clock; see
         // {_requireSequencerOutageClock}.
         _requireSequencerOutageClock(diamond);
+        _requireTreasuryFeeFloor(diamond);
         // #1820 - and one from before the tier record seam; see
         // {_requireTierRecordSeam}.
         _requireTierRecordSeam(diamond);
@@ -158,6 +166,9 @@ contract ReplaceStaleFacets is DeployDiamond {
         // #3242 - and one from before the offer-book bounds; see
         // {_requireOfferBook}.
         _requireOfferBook(diamond);
+        // #3685 - and one from before the collateral pledged total; see
+        // {_requireCollateralConcentration}.
+        _requireCollateralConcentration(diamond);
         // #3204 - a Diamond from before the VaultBeacon is fresh-deploy only.
         if (IDiamondLoupe(diamond).facetAddress(VaultFactoryFacet.getVaultBeacon.selector) == address(0)) {
             revert PredatesVaultBeacon(diamond);
@@ -531,6 +542,25 @@ contract ReplaceStaleFacets is DeployDiamond {
         }
     }
 
+    /// @dev #3685 - refuse a Diamond from before the collateral pledged
+    ///      total. Every collateral lien change now moves a per-asset pledged
+    ///      total (LibEncumbrance, inlined in many facets), the four lien
+    ///      entries moved from EncumbranceMutateFacet to CollateralLienFacet,
+    ///      and loan creation, the previews and the offer book read their
+    ///      init-LTV cap from CollateralConcentrationFacet. This curated set
+    ///      carries only some of those facets, so crossing here would leave
+    ///      lien entries on old code that moves no total, and a pre-#3685
+    ///      loan's release would underflow the total. Crossing the boundary is
+    ///      a fresh deploy, never this refresh. The marker is the routing of
+    ///      `CollateralConcentrationFacet.newLoanInitLtvCapBps`. Called before
+    ///      the broadcast starts, so a refused run sends nothing.
+    function _requireCollateralConcentration(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(CollateralConcentrationFacet.newLoanInitLtvCapBps.selector)
+                == address(0)
+        ) revert PredatesCollateralConcentration(diamond);
+    }
+
     /// @dev #3242 (Codex #3283 r1) - refuse a Diamond from before the
     ///      offer-book bounds. The per-wallet open-offer count goes up in the
     ///      book's entry step and comes down in every facet that takes an offer
@@ -568,6 +598,20 @@ contract ReplaceStaleFacets is DeployDiamond {
         if (IDiamondLoupe(diamond).facetAddress(LoanClockFacet.getSequencerOutageWindow.selector) == address(0)) {
             revert PredatesSequencerOutageClock(diamond);
         }
+    }
+
+    /// @dev #3649 stage 3 - refuse a Diamond whose treasury fee host predates
+    ///      the floor split. Every fee leg now names its kind and floor base,
+    ///      a new selector shape, and this script refreshes the host but not
+    ///      every facet that charges a fee, so against an older Diamond it
+    ///      would either leave those callers on the old host or break their
+    ///      fees. The crossing is a fresh deploy or `RefreshAllFacetsInPlace`.
+    ///      Called before the broadcast starts.
+    function _requireTreasuryFeeFloor(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(TreasuryFeeFacet.getReservePartHeldByTreasury.selector)
+                == address(0)
+        ) revert PredatesTreasuryFeeFloor(diamond);
     }
 
     /// @dev #668 / #935 (owner decision D2) - refuse a Diamond from before

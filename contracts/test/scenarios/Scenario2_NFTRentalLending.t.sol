@@ -2,8 +2,12 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestCollateralCut} from "../helpers/LibTestCollateralCut.sol";
+import {LibTestTermsCut} from "../helpers/LibTestTermsCut.sol";
+import {LibTestClaimViewCut} from "../helpers/LibTestClaimViewCut.sol";
 import {LibTestProtectedCut} from "../helpers/LibTestProtectedCut.sol";
 import {LibTestPositionNFT} from "../helpers/LibTestPositionNFT.sol";
+import {LibTestSettlementLeg} from "../helpers/LibTestSettlementLeg.sol";
 import {LibTestVaultEndpoints} from "../helpers/LibTestVaultEndpoints.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "../helpers/LibTestVaultBeacon.sol";
@@ -31,6 +35,7 @@ import {RiskMatchLiquidationFacet} from "../../src/facets/RiskMatchLiquidationFa
 import {DefaultedFacet} from "../../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../../src/facets/ClaimViewFacet.sol";
 import {AddCollateralFacet} from "../../src/facets/AddCollateralFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {DiamondCutFacet} from "../../src/facets/DiamondCutFacet.sol";
@@ -79,7 +84,7 @@ contract Scenario2_NFTRentalLending is Test {
     address mockZeroExProxy;
 
     uint256 constant BASIS_POINTS = 10000;
-    uint256 constant TREASURY_FEE_BPS = 200; // 2% (rev-8 freeze #1352; loans snapshot the live default at origination)
+    uint256 constant TREASURY_FEE_BPS = 1000; // 10% (#3649; loans snapshot the live default at origination)
     uint256 constant RENTAL_BUFFER_BPS = 500; // 5%
 
     uint256 constant DAILY_FEE = 10 ether;
@@ -296,7 +301,11 @@ contract Scenario2_NFTRentalLending is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
+        cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
+        cuts = LibTestTermsCut.withTermsHost(cuts); // #3734
+        cuts = LibTestClaimViewCut.withClaimView(cuts); // the claim reads
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
+        LibTestSettlementLeg.install(address(diamond)); // #3669
         LibTestForcedSalePreview.install(address(diamond));
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
@@ -389,6 +398,8 @@ contract Scenario2_NFTRentalLending is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: address(mockNft721),
                 amount: DAILY_FEE,
@@ -494,7 +505,7 @@ contract Scenario2_NFTRentalLending is Test {
         // Step 5: Lender claims rental fees + NFT
         // Check lender claimable
         (address lenderClaimAsset, uint256 lenderClaimAmount, bool lenderClaimed) =
-            ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertEq(lenderClaimAsset, mockUsdc, "Lender claim asset should be USDC");
         assertFalse(lenderClaimed, "Lender should not have claimed yet");
 
@@ -522,7 +533,7 @@ contract Scenario2_NFTRentalLending is Test {
 
         // Step 6: Borrower claims buffer refund
         (address borrowerClaimAsset, uint256 borrowerClaimAmount, bool borrowerClaimed) =
-            ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, false);
         assertEq(borrowerClaimAsset, mockUsdc, "Borrower claim asset should be USDC");
         assertFalse(borrowerClaimed, "Borrower should not have claimed yet");
 
@@ -595,7 +606,7 @@ contract Scenario2_NFTRentalLending is Test {
 
         // Step 5: Lender claims
         (address lenderClaimAsset, uint256 lenderClaimAmount, bool lenderClaimed) =
-            ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertEq(lenderClaimAsset, mockUsdc, "Lender claim asset should be USDC");
         assertFalse(lenderClaimed, "Lender should not have claimed yet");
 
@@ -623,7 +634,7 @@ contract Scenario2_NFTRentalLending is Test {
 
         // Step 6: Verify no borrower claim on default (borrower loses prepay)
         (, uint256 borrowerClaimAmount,) =
-            ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, false);
         assertEq(borrowerClaimAmount, 0, "Borrower should have no claim on default");
     }
 }

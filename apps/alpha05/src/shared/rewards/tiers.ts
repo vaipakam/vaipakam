@@ -20,14 +20,16 @@
  * (no rounding), with the cap applied.
  */
 import type { Abi, PublicClient } from 'viem';
-import { ConfigFacetABI, VPFIDiscountAccumulatorFacetABI } from '@vaipakam/contracts/abis';
+import { ConfigFacetABI, FeeLevelsFacetABI, VPFIDiscountAccumulatorFacetABI } from '@vaipakam/contracts/abis';
 import { VPFI_DISCOUNT_ABI } from '../consent/feeDiscount';
 import { answerOrNull } from '../reads/answer';
 import { readVpfiHome } from './vpfiFacts';
+import type { LifTerms } from '../offers/initiationFee';
 
 type Hex = `0x${string}`;
 
 const CONFIG = ConfigFacetABI as Abi;
+const FEE_LEVELS = FeeLevelsFacetABI as Abi;
 const ACCUMULATOR = VPFIDiscountAccumulatorFacetABI as Abi;
 
 /** The ceiling on any party's fee discount, in basis points (the
@@ -197,8 +199,9 @@ export interface TierTable {
    *  development build serialises a prop's array of plain values to JSON,
    *  which a bigint breaks. */
   tiers: readonly { threshold: bigint; bps: bigint }[];
-  /** The loan initiation fee, in basis points of the principal. */
-  lifBps: bigint;
+  /** The loan initiation fee's term rule (#3649): it is term-scaled, so the
+   *  table shows the discounted base and yearly rates with their terms. */
+  lif: LifTerms;
   /** The fee on interest a lender earns, in basis points of that interest. */
   yieldFeeBps: bigint;
   blockNumber: bigint;
@@ -208,12 +211,18 @@ export async function readTierTable(c: PublicClient, diamond: Hex): Promise<Tier
   const blockNumber = await c.getBlockNumber({ cacheTime: 0 });
   const at = { blockNumber };
   const read = <T>(functionName: string) => c.readContract({ address: diamond, abi: CONFIG, functionName, ...at }) as Promise<T>;
-  const [t, b, fees] = await Promise.all([
+  const [t, b, fees, lif] = await Promise.all([
     read<readonly [bigint, bigint, bigint, bigint]>('getVpfiTierThresholds'),
     read<readonly [bigint, bigint, bigint, bigint]>('getVpfiTierDiscountBps'),
     read<readonly [bigint, bigint]>('getFeesConfig'),
+    c.readContract({ address: diamond, abi: FEE_LEVELS, functionName: 'getLoanInitiationFeeTerms', ...at }) as Promise<readonly [bigint, bigint, bigint, bigint]>,
   ]);
-  return { tiers: [0, 1, 2, 3].map((i) => ({ threshold: t[i]!, bps: b[i]! })), yieldFeeBps: fees[0], lifBps: fees[1], blockNumber };
+  return {
+    tiers: [0, 1, 2, 3].map((i) => ({ threshold: t[i]!, bps: b[i]! })),
+    yieldFeeBps: fees[0],
+    lif: { baseBps: lif[0], baseTermDays: lif[1], yearlyBps: lif[2], yearDays: lif[3] },
+    blockNumber,
+  };
 }
 
 /** The discount a tier's setting gives once the cap applies. */
@@ -259,14 +268,17 @@ export interface TierRow {
   toIncluded: boolean;
   discount: string;
   capped: boolean;
+  /** The discounted initiation-fee rate for terms up to the base term. */
   lif: string;
+  /** The discounted rate at the one-year point (and a year beyond it). */
+  lifYear: string;
   yieldFee: string;
 }
 
 /** The table's rows, from tier 0 (no discount) to tier 4, with the
  *  protocol's own boundaries: tiers 1 to 3 start at their threshold, tier 4
  *  starts above its own, so tier 3 includes the tier-4 figure. */
-export function tierRows(t: Pick<TierTable, 'tiers' | 'lifBps' | 'yieldFeeBps'>): TierRow[] {
+export function tierRows(t: Pick<TierTable, 'tiers' | 'lif' | 'yieldFeeBps'>): TierRow[] {
   const [t1, t2, t3, t4] = t.tiers.map((x) => x.threshold) as [bigint, bigint, bigint, bigint];
   const bands: { from: bigint; fromAbove: boolean; to: bigint | null; toIncluded: boolean }[] = [
     { from: 0n, fromAbove: false, to: t1, toIncluded: false },
@@ -282,7 +294,8 @@ export function tierRows(t: Pick<TierTable, 'tiers' | 'lifBps' | 'yieldFeeBps'>)
       ...band,
       discount: discountPercent(cappedBps(bps)),
       capped: bps > MAX_DISCOUNT_BPS,
-      lif: discountedFee(t.lifBps, bps),
+      lif: discountedFee(t.lif.baseBps, bps),
+      lifYear: discountedFee(t.lif.yearlyBps, bps),
       yieldFee: discountedFee(t.yieldFeeBps, bps),
     };
   });

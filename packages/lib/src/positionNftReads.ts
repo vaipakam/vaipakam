@@ -1,10 +1,7 @@
 /**
- * #3205 — the position-NFT reads every surface shares, over either mode
- * (`positionNft.mjs`). The client is typed structurally so callers on another
- * physical copy of viem pass theirs unchanged (see `contractRevert`).
- *
- * TODO(#3321 positionNft-legacy-removal): drop the legacy branches with the
- * legacy mode.
+ * #3205 — the position-NFT reads every surface shares (`positionNft.mjs`).
+ * The client is typed structurally so callers on another physical copy of
+ * viem pass theirs unchanged (see `contractRevert`).
  */
 import {
   PositionRetiredError,
@@ -35,10 +32,9 @@ export async function readPositionRoute(
 
 /**
  * Who holds the live position `tokenId`, or `'gone'` when the chain says it
- * no longer represents an open position: the token was never minted or was
- * burned (legacy, an `ownerOf` revert), or it was retired (standalone, where
- * a closed position's token keeps its owner). A transport failure THROWS: it
- * establishes nothing.
+ * no longer represents an open position: the token was never minted (an
+ * `ownerOf` revert), or it was retired (a closed position's token keeps its
+ * owner). A transport failure THROWS: it establishes nothing.
  */
 export async function readPositionHolder(
   client: ReadClient,

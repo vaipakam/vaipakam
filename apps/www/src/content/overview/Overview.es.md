@@ -76,7 +76,7 @@ En el momento que acepta:
   USDC + intereses"; el suyo dice "Se me debe mi WETH cuando pague"
 - El cronómetro del préstamo empieza a correr
 
-Una pequeña **Comisión de iniciación del préstamo (`{liveValue:loanInitiationFeeBps}`%)** se descuenta
+Una pequeña **Comisión de iniciación del préstamo** (según el plazo del préstamo; ver las comisiones más abajo) se descuenta
 del importe prestado y se envía al tesoro del protocolo. Así que el
 prestatario recibe `{liveValue:exampleBorrowerReceives}` USDC, no 1.000. (Tener **VPFI** reduce esta comisión
 —siempre que el prestatario haya activado el ajuste de descuento y el activo
@@ -220,9 +220,13 @@ Dos comisiones, ambas pequeñas:
   En un préstamo a 30 días al 8% APR de 1.000 USDC, el prestamista
   gana ~6,58 USDC de intereses, de los cuales ~0,132 USDC son la
   Comisión sobre Rendimiento al tipo por defecto.
-- **Comisión de Iniciación del Préstamo — `{liveValue:loanInitiationFeeBps}`%**
-  del importe prestado, pagada por el prestatario en el origen. En
-  un préstamo de 1.000 USDC, eso es 2 USDC al tipo por defecto.
+- **Comisión de Iniciación del Préstamo** — una parte del importe
+  prestado que depende del plazo del préstamo, pagada por el
+  prestatario en el origen: `{liveValue:loanInitiationFeeBps}`% para un plazo de hasta
+  `{liveValue:lifBaseTermDays}` días, subiendo de forma uniforme hasta `{liveValue:lifYearlyBps}`%
+  a los `{liveValue:lifYearDays}` días y, a partir de ahí, `{liveValue:lifYearlyBps}`% por cada
+  `{liveValue:lifYearDays}` días de plazo, de forma proporcional. En el préstamo
+  de 1.000 USDC a 30 días de arriba, eso es `{liveValue:exampleInitiationFee}` USDC.
 
 Ambas comisiones pueden tener un **descuento de hasta el
 `{liveValue:tier4DiscountBps}`%** manteniendo VPFI en vault (ver más
@@ -244,8 +248,8 @@ comisiones anteriores.
 > enviar cualquier token en la misma cadena. El importe depende de
 > la cadena y de la congestión de la red en ese momento, no del
 > tamaño de tu préstamo. Las comisiones del protocolo anteriores
-> (Comisión sobre Rendimiento `{liveValue:treasuryFeeBps}`%,
-> Comisión de Iniciación del Préstamo `{liveValue:loanInitiationFeeBps}`%)
+> (Comisión sobre Rendimiento `{liveValue:treasuryFeeBps}`%
+> y Comisión de Iniciación del Préstamo)
 > son completamente independientes del gas de red y son las únicas
 > que cobra el propio protocolo.
 
@@ -343,7 +347,7 @@ Si quieres **pedir prestado**:
    coincida con tu garantía y el APR que puedes pagar.
 3. Haz clic en **Aceptar**, firma dos transacciones, y recibes el
    importe del préstamo en tu billetera (menos la Comisión de
-   Iniciación del `{liveValue:loanInitiationFeeBps}`%).
+   Iniciación del Préstamo).
 4. Devuelve antes de la fecha de vencimiento más el periodo de
    gracia. Tu garantía vuelve a tu billetera.
 

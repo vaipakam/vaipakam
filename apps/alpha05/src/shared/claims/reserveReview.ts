@@ -3,7 +3,8 @@
  * go through the wallet's connection, the receipt it is confirmed against,
  * and its outcome measured from the transaction's own record.
  *
- * `withdrawExtendReserve` takes the whole reserve the review read, from the
+ * `withdrawLoanReserve` (kind 0, the payment reserve) takes the whole
+ * reserve the review read, from the
  * wallet's OWN vault to the wallet, so protected account mode queues it like
  * any withdrawal of the account's own (RB-PAYOUT-ROUTE). An extension that
  * draws on the reserve before the withdrawal confirms makes the amount too
@@ -22,7 +23,7 @@ import type { Receipt, ReceiptRow, ReceiptText } from '../receipt/types';
 import { askThrough } from '../tx/simulate';
 import type { LegOutcome } from '../tx/outcome';
 import { readPaused } from './sellerClaim';
-import { AUTO, readReserveRow, reserveDrawable, reserveLogs, reserveRowKey, reserveVerdict, type ReserveRow } from './reserve';
+import { readReserveRow, RESERVE_PAYMENT, STANDING, reserveDrawable, reserveLogs, reserveRowKey, reserveVerdict, type ReserveRow } from './reserve';
 
 type Hex = `0x${string}`;
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
@@ -47,7 +48,7 @@ export interface ReserveReview {
 /** The call the review stands for: the wallet's own reserve on the loan,
  *  all of it. */
 export function reserveCall(loanId: bigint, account: Hex, amount: bigint) {
-  return { abi: AUTO, functionName: 'withdrawExtendReserve' as const, args: [account, loanId, amount] as const };
+  return { abi: STANDING, functionName: 'withdrawLoanReserve' as const, args: [account, loanId, RESERVE_PAYMENT, amount] as const };
 }
 
 export async function readReserveReview(own: OwnStateClient, diamond: Hex, loanId: bigint, identity: string, copy: Pick<CopyAccess, 'text'>): Promise<ReserveReview> {

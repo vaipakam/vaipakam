@@ -50,7 +50,7 @@ export interface RepayInputs {
   graceEnd: bigint | null;
   /** The latest block's time. */
   chainNow: bigint;
-  /** The borrower position's lock (`positionLock`); null when unread. */
+  /** The borrower position's lock (`positionRoute`); null when unread. */
   borrowerLock: number | null;
 }
 

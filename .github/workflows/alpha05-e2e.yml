@@ -68,8 +68,13 @@ jobs:
   # cancelled at 167 of 199 with nothing failing. Sharding halves the time
   # again; every test reverts the chain after itself, so files do not depend
   # on each other and any split runs the same tests.
+  #
+  # Three shards since 2026-11-19: shard 2 of 2 carried 107 tests and both
+  # projects were cancelled at the 60-minute limit (89 and 97 done, nothing
+  # failing). Each shard pays its own fixture compile, so a third shard costs
+  # runner time, not wall time.
   e2e:
-    name: anvil-tier scenarios (${{ matrix.project }} ${{ matrix.shard }}/2)
+    name: anvil-tier scenarios (${{ matrix.project }} ${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
     # A cold fixture compile (viaIR, every facet) is the long pole; the forge
     # cache below makes most runs incremental.
@@ -78,7 +83,7 @@ jobs:
       fail-fast: false
       matrix:
         project: [desktop, phone]
-        shard: [1, 2]
+        shard: [1, 2, 3]
     steps:
       - name: Checkout (with submodules — the fixture compiles the contracts)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -147,8 +152,8 @@ jobs:
       - name: Typecheck the e2e surface
         run: pnpm --filter @vaipakam/alpha05 run e2e:typecheck
 
-      - name: Run e2e (${{ matrix.project }}, shard ${{ matrix.shard }}/2)
-        run: pnpm --filter @vaipakam/alpha05 run e2e --project=${{ matrix.project }} --shard=${{ matrix.shard }}/2
+      - name: Run e2e (${{ matrix.project }}, shard ${{ matrix.shard }}/3)
+        run: pnpm --filter @vaipakam/alpha05 run e2e --project=${{ matrix.project }} --shard=${{ matrix.shard }}/3
 
       - name: Upload traces on failure
         if: failure()
@@ -179,5 +184,5 @@ jobs:
     steps:
       - name: Every shard passed
         run: |
-          echo "desktop and phone, both shards: ${{ needs.e2e.result }}"
+          echo "desktop and phone, every shard: ${{ needs.e2e.result }}"
           test "${{ needs.e2e.result }}" = "success"

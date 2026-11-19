@@ -1,10 +1,10 @@
 /**
  * The live sale listing's standing surface — rendered by the page on
- * the CHAIN's say-so (positionLock == EarlyWithdrawalSale), outside
+ * the CHAIN's say-so (positionRoute == EarlyWithdrawalSale), outside
  * the strategy-card gates, so it survives data hiccups, mode
  * switches, and being listed from another device. Cancel needs the
  * offer id (device-local marker, live-verified); without it the card
- * still shows the lock.
+ * still shows the listing.
  *
  * There is nothing to fund and nothing to restore (#2674): a buyer's
  * acceptance escrows the buyer's payment and the settlement is deducted
@@ -25,7 +25,6 @@ import {
   type LoanSalePendingState,
 } from '../data/loanSalePending';
 import { formatDateTime } from '../lib/format';
-import { useRouteBlocksTransfer } from '../contracts/positionNft';
 
 export function LoanSalePendingCard({
   state,
@@ -46,7 +45,6 @@ export function LoanSalePendingCard({
    *  its result must outlive it. */
   onDone: (message: string) => void;
 }) {
-  const routeBlocks = useRouteBlocksTransfer();
   const { onSupportedChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
   const { write } = useDiamondWrite();
@@ -67,7 +65,7 @@ export function LoanSalePendingCard({
     setError(null);
     try {
       await write('cancelOffer', [BigInt(state.offerId)]);
-      onDone(routeBlocks ? copy.loanSale.cancelled : copy.loanSale.cancelledRoute);
+      onDone(copy.loanSale.cancelled);
       onCleared();
       void queryClient.invalidateQueries({ queryKey: ['loanSalePending'] });
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
@@ -78,11 +76,7 @@ export function LoanSalePendingCard({
     }
   }
 
-  const listingLine = state.offerId
-    ? (routeBlocks ? copy.loanSale.pending : copy.loanSale.pendingRoute)(state.offerId)
-    : routeBlocks
-      ? copy.loanSale.pendingNoId
-      : copy.loanSale.pendingNoIdRoute;
+  const listingLine = state.offerId ? copy.loanSale.pending(state.offerId) : copy.loanSale.pendingNoId;
 
   return (
     <section className="card">
@@ -93,7 +87,7 @@ export function LoanSalePendingCard({
               and is current, REPLACES the pre-acceptance text rather than
               sitting under it. */}
           {view === 'settled'
-            ? (routeBlocks ? copy.loanSale.loanSettledWhileListed : copy.loanSale.loanSettledWhileListedRoute)
+            ? copy.loanSale.loanSettledWhileListed
             : view === 'moved'
               ? canCancel
                 ? copy.loanSale.movedEnded
@@ -101,13 +95,7 @@ export function LoanSalePendingCard({
             : view === 'accepted'
               ? copy.loanSale.acceptedCompleting
               : view === 'expired'
-                ? (canCancel
-                    ? routeBlocks
-                      ? copy.loanSale.expiredUnsold
-                      : copy.loanSale.expiredUnsoldRoute
-                    : routeBlocks
-                      ? copy.loanSale.expiredUnsoldNoCancel
-                      : copy.loanSale.expiredUnsoldNoCancelRoute)(
+                ? (canCancel ? copy.loanSale.expiredUnsold : copy.loanSale.expiredUnsoldNoCancel)(
                     formatDateTime(Number(state.expiresAt)),
                   )
                 : listingLine}
@@ -132,9 +120,9 @@ export function LoanSalePendingCard({
           <p className="field-hint" style={{ marginTop: 8 }}>
             {copy.loanSale.boundsNote}
           </p>
-          {/* #3205 — where moving the NFT does not block (standalone
-              PositionNFT), say when the app cannot tell whether it moved. */}
-          {!routeBlocks && state.positionMoved === 'unknown' ? (
+          {/* #3205 — moving the NFT does not block, so say when the app
+              cannot tell whether it moved. */}
+          {state.positionMoved === 'unknown' ? (
             <p className="field-hint" style={{ marginTop: 8 }}>
               {copy.loanSale.movedUnknown}
             </p>

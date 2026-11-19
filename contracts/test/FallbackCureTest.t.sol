@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {LibTestFallbackGate} from "./helpers/LibTestFallbackGate.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -13,6 +14,7 @@ import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
@@ -72,6 +74,8 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -116,6 +120,8 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
             "swap failed"
         );
         uint256 diamond0 = ERC20Mock(mockCollateralERC20).balanceOf(address(diamond));
+
+        LibTestFallbackGate.open(address(diamond), 1);
 
         uint256 sellQuote = defaultQuote(address(diamond), 1);
         DefaultedFacet(address(diamond)).triggerDefault(1, sellQuote, defaultAdapterCalls());
@@ -198,7 +204,7 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
         assertEq(row, 0, "the custody row returned to the pledge");
         // Snapshot wiped so neither side can pull against a stale split.
         (, , , , , bool active, ) =
-            ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);
+            ClaimViewFacet(address(diamond)).getFallbackSnapshot(loanId);
         assertFalse(active, "fallback snapshot cleared by the cure-repay");
     }
 
@@ -379,10 +385,10 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
         AddCollateralFacet(address(diamond)).addCollateral(loanId, 0);
     }
 
-    // ─── ClaimFacet.getFallbackSnapshot view ────────────────────────────────
+    // ─── ClaimViewFacet.getFallbackSnapshot view ────────────────────────────────
 
     /// @dev While a loan is in FallbackPending, the new
-    ///      `ClaimFacet.getFallbackSnapshot` view returns the live three-way
+    ///      `ClaimViewFacet.getFallbackSnapshot` view returns the live three-way
     ///      collateral split + the principal-due figures + active=true so
     ///      the frontend can render the breakdown without re-decoding logs.
     function testGetFallbackSnapshotReturnsLiveSplit() public view {
@@ -394,7 +400,7 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
             uint256 treasuryPrincipalDue,
             bool active,
             bool retryAttempted
-        ) = ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);
+        ) = ClaimViewFacet(address(diamond)).getFallbackSnapshot(loanId);
 
         assertTrue(active, "snapshot active while in FallbackPending");
         assertFalse(retryAttempted, "no retry yet");
@@ -432,7 +438,7 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
             uint256 treasuryPrincipalDue,
             bool active,
             bool retryAttempted
-        ) = ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);
+        ) = ClaimViewFacet(address(diamond)).getFallbackSnapshot(loanId);
 
         assertFalse(active, "snapshot cleared on cure");
         assertFalse(retryAttempted);
@@ -455,7 +461,7 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
             ,
             bool active,
             bool retryAttempted
-        ) = ClaimFacet(address(diamond)).getFallbackSnapshot(9_999_999);
+        ) = ClaimViewFacet(address(diamond)).getFallbackSnapshot(9_999_999);
 
         assertFalse(active, "no snapshot for unknown loan");
         assertFalse(retryAttempted);
@@ -468,7 +474,7 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
         view
         returns (uint256 p, uint256 i, uint256 l, uint64 at, bool viaFallback)
     {
-        return ClaimFacet(address(diamond)).getOwedAtDefault(loanId);
+        return ClaimViewFacet(address(diamond)).getOwedAtDefault(loanId);
     }
 
     /// Entering the fallback IS the default: it records what the loan owed at

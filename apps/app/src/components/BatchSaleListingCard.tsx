@@ -46,7 +46,6 @@ import { rememberLoanSaleOffer } from '../data/loanSalePending';
 import { useReviewConsent } from '../hooks/useReviewConsent';
 import { ConfirmReceipt } from './ConfirmReceipt';
 import { ConsentWithdrawnNote } from './ConsentWithdrawnNote';
-import { useRouteBlocksTransfer } from '../contracts/positionNft';
 
 type ReadyPlan = Extract<SaleListingPlan, { kind: 'ready' }>;
 
@@ -369,7 +368,6 @@ function SaleReview({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
-  const routeBlocks = useRouteBlocksTransfer();
   const readyCount = plans.filter((p) => p.kind === 'ready').length;
   return (
     <>
@@ -413,7 +411,7 @@ function SaleReview({
               onChange={(e) => onConsent(e.target.checked)}
               style={{ marginTop: 4 }}
             />
-            <span>{routeBlocks ? copy.batchSale.consentLabel : copy.batchSale.consentLabelRoute}</span>
+            <span>{copy.batchSale.consentLabel}</span>
           </label>
           {consentNote}
           {/* The same six-row review every other write shows, worded for
@@ -426,7 +424,7 @@ function SaleReview({
             disabled={confirmDisabled}
             data={{
               youReceive: copy.batchSale.receiveEach,
-              youLock: routeBlocks ? copy.batchSale.lockEach : copy.batchSale.lockEachRoute,
+              youLock: copy.batchSale.lockEach,
               youMayOwe: copy.batchSale.youMayOwe,
               youCanLose: copy.loanSale.receiptCanLose,
               fees: copy.loanSale.receiptFees,
@@ -435,7 +433,7 @@ function SaleReview({
           >
             <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
               <span className="banner-body">
-                {routeBlocks ? copy.batchSale.lockWarning : copy.batchSale.lockWarningRoute}
+                {copy.batchSale.lockWarning}
               </span>
             </div>
           </ConfirmReceipt>

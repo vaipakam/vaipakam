@@ -6,6 +6,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibNotificationFee} from "../libraries/LibNotificationFee.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
+import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
@@ -27,7 +28,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *      The pricing and the debit are {LibNotificationFee}; the tariff itself
  *      is governance config on `ConfigFacet` (`setNotificationFee`).
  */
-contract NotificationFeeFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
+contract NotificationFeeFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessControl, IVaipakamErrors {
 
     /**
      * @notice T-032 — record the FIRST PaidPush-tier notification for a
@@ -74,10 +75,12 @@ contract NotificationFeeFacet is DiamondPausable, DiamondAccessControl, IVaipaka
      *             the notification — the user's billed flag stays
      *             false until they top up VPFI)
      *           - anything the payer's tier refresh raises. The vault
-     *             withdrawal refreshes the payer's tier record (#1820)
-     *             and, this entry holding no reentrancy guard, pushes the
-     *             tier then, BEFORE the recycle credit, the billed flag,
-     *             the accrual and the event. Since #898 / #911 that push
+     *             withdrawal refreshes the payer's tier record (#1820);
+     *             this entry holds the Diamond's reentrancy guard (every
+     *             vault move runs inside a guarded action, #3432), so the
+     *             tier push is queued and sent when the guard is released,
+     *             AFTER the recycle credit, the billed flag, the accrual
+     *             and the event. Since #898 / #911 that push
      *             never reverts the bill: an empty budget, a down or paused
      *             lane, or an empty destination list leaves the payer's
      *             lane OWED (`ProtocolBroadcastFacet.TierPushDeferred`).
@@ -106,6 +109,7 @@ contract NotificationFeeFacet is DiamondPausable, DiamondAccessControl, IVaipaka
      */
     function markNotifBilled(uint256 loanId, bool isLenderSide)
         external
+        nonReentrant
         whenNotPaused
         onlyRole(LibAccessControl.NOTIF_BILLER_ROLE)
     {

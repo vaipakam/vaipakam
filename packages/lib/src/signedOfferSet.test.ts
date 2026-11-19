@@ -24,6 +24,7 @@ function offer(seed: number) {
   for (const f of SIGNED_OFFER_FIELDS) {
     if (f.type === 'address') m[f.name] = '0x000000000000000000000000000000000000beef';
     else if (f.type === 'bool') m[f.name] = false;
+    else if (f.type === 'bytes32') m[f.name] = `0x${seed.toString(16).padStart(64, '0')}`;
     else if (f.type === 'uint256') m[f.name] = BigInt(seed);
     else m[f.name] = 1;
   }

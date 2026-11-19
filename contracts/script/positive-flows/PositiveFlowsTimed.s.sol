@@ -11,6 +11,7 @@ import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../../src/facets/ClaimViewFacet.sol";
 import {NumeraireConfigFacet} from "../../src/facets/NumeraireConfigFacet.sol";
 import {RepayPeriodicFacet} from "../../src/facets/RepayPeriodicFacet.sol";
 import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
@@ -334,13 +335,13 @@ contract PositiveFlowsTimed is PositiveFlowsStaged {
 
     /// @dev Each side claims if it has not yet; the loan then settles.
     function _claimUnclaimed(uint256 loanId) internal {
-        (,, bool lenderClaimed) = ClaimFacet(diamond).getClaimableAmount(loanId, true);
+        (,, bool lenderClaimed) = ClaimViewFacet(diamond).getClaimableAmount(loanId, true);
         if (!lenderClaimed) {
             vm.startBroadcast(lenderKey);
             ClaimFacet(diamond).claimAsLender(loanId);
             vm.stopBroadcast();
         }
-        (,, bool borrowerClaimed) = ClaimFacet(diamond).getClaimableAmount(loanId, false);
+        (,, bool borrowerClaimed) = ClaimViewFacet(diamond).getClaimableAmount(loanId, false);
         if (!borrowerClaimed) {
             vm.startBroadcast(borrowerKey);
             ClaimFacet(diamond).claimAsBorrower(loanId);

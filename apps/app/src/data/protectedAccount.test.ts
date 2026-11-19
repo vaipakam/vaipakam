@@ -16,7 +16,6 @@ const ZERO = '0x0000000000000000000000000000000000000000';
 const record = (over: Partial<ProtectedAccountRecord> = {}): ProtectedAccountRecord => ({
   enabled: true,
   locked: false,
-  protectNfts: false,
   requireCosign: false,
   retired: false,
   delaySeconds: 172_800,
@@ -24,7 +23,6 @@ const record = (over: Partial<ProtectedAccountRecord> = {}): ProtectedAccountRec
   pendingDelayAt: 0n,
   pendingDisableAt: 0n,
   pendingUnlockAt: 0n,
-  pendingNftOffAt: 0n,
   pendingCosignOffAt: 0n,
   cooldownUntil: 0n,
   lockedAt: 0n,
@@ -181,7 +179,6 @@ describe('ownWithdrawalVerdict', () => {
     recordFailed: false,
     record: record({ enabled: true, ...over }),
     payouts: Array.from({ length: rows }) as never[],
-    transfers: [] as never[],
   });
   it('queues for a protected account with room', () => {
     expect(ownWithdrawalVerdict(snap({}), false)).toEqual({ kind: 'open', queued: true });
@@ -206,11 +203,10 @@ describe('ownPayoutRoute', () => {
     recordFailed: false,
     record: record({ enabled: true, delaySeconds: 172800, ...over }),
     payouts: Array.from({ length: rows }) as never[],
-    transfers: [] as never[],
   });
   it('pays the wallet with protection off or absent', () => {
     expect(ownPayoutRoute(snap({ enabled: false }), false).kind).toBe('wallet');
-    expect(ownPayoutRoute({ supported: false, recordFailed: false, record: null, payouts: null, transfers: null }, false).kind).toBe('wallet');
+    expect(ownPayoutRoute({ supported: false, recordFailed: false, record: null, payouts: null }, false).kind).toBe('wallet');
   });
   it('queues with protection on, naming the delay and the co-signature', () => {
     expect(ownPayoutRoute(snap({ requireCosign: true }), false)).toEqual({ kind: 'queued', delaySeconds: 172800, cosign: true, to: null });
@@ -266,7 +262,7 @@ describe('ownPayoutRoute', () => {
   });
   it('is unread when the record or the queue is unread', () => {
     expect(ownPayoutRoute(undefined, false).kind).toBe('unread');
-    expect(ownPayoutRoute({ ...snap({}), transfers: null }, false).kind).toBe('unread');
+    expect(ownPayoutRoute({ ...snap({}), payouts: null }, false).kind).toBe('unread');
   });
 });
 

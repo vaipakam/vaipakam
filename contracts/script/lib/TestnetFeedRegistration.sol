@@ -46,6 +46,7 @@ library TestnetFeedRegistration {
             all[n++] = VaipakamFeedRegistry.Change({
                 base: f.base,
                 quote: f.quote,
+                kind: VaipakamFeedRegistry.EntryKind.Price,
                 expectedFeed: current,
                 feed: f.feed,
                 feedDecimals: _decimals(f.feed),

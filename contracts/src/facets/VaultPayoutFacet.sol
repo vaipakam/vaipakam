@@ -173,7 +173,7 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
     /**
      * @notice During a manual pause that has lasted its escape period (#3173:
      *         the governance setting in force when the pause started, default
-     *         3 days) after the Diamond's launch, take `amount` of a FREE asset out of your own
+     *         7 days) after the Diamond's launch, take `amount` of a FREE asset out of your own
      *         vault to your own wallet.
      * @dev    For accounts without protected mode. A protected account's
      *         queued payouts keep releasing during the same window
@@ -201,7 +201,16 @@ contract VaultPayoutFacet is DiamondReentrancyGuard {
         uint256 own = LibDepositoryLedger.holding(msg.sender, asset, tokenId);
         if (amount > own) revert LibProtectedAccount.AmountExceedsFree(amount, own);
         LibDepositoryLedger.debit(msg.sender, asset, tokenId, amount);
-        _pay(kind, msg.sender, asset, tokenId, amount, msg.sender, OutflowReason.ESCAPE);
+        // #3246 part 2 — whenever a recovery address is in force (an account
+        // that set one and then switched protected mode off keeps it), the
+        // escape pays it and not the owner wallet (4.4).
+        (address recovery,) = LibProtectedAccount.recoveryOf(msg.sender);
+        if (recovery != address(0)) {
+            LibVaipakam.assertRecipientNotBarred(recovery);
+            LibVaultOutflow.toRecovery(msg.sender, kind, asset, tokenId, amount, OutflowReason.ESCAPE);
+        } else {
+            _pay(kind, msg.sender, asset, tokenId, amount, msg.sender, OutflowReason.ESCAPE);
+        }
         emit EscapeWithdrawal(msg.sender, asset, tokenId, amount);
     }
 

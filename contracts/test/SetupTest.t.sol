@@ -49,6 +49,22 @@ import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {SaleFloorFacet} from "../src/facets/SaleFloorFacet.sol";
 import {LoanClockFacet} from "../src/facets/LoanClockFacet.sol";
+import {MarketLedgerFacet} from "../src/facets/MarketLedgerFacet.sol";
+import {InstantMarketFacet} from "../src/facets/InstantMarketFacet.sol";
+import {InstantFillFacet} from "../src/facets/InstantFillFacet.sol";
+import {InstantTakeoverFacet} from "../src/facets/InstantTakeoverFacet.sol";
+import {ReadyBalanceFacet} from "../src/facets/ReadyBalanceFacet.sol";
+import {OfferMaterializeFacet} from "../src/facets/OfferMaterializeFacet.sol";
+import {CollectionOfferFacet} from "../src/facets/CollectionOfferFacet.sol";
+import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
+import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
+import {RecoveryClawbackFacet} from "../src/facets/RecoveryClawbackFacet.sol";
+import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
+import {CollateralLienFacet} from "../src/facets/CollateralLienFacet.sol";
+import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.sol";
+import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
+import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
+import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {TestOfferFloor} from "./helpers/TestOfferFloor.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -189,6 +205,8 @@ import {ForcedSalePreviewFacet} from "../src/facets/ForcedSalePreviewFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {SaleExitVerdictFacet} from "../src/facets/SaleExitVerdictFacet.sol";
 import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
+import {LenderIntentViewFacet} from "../src/facets/LenderIntentViewFacet.sol";
 import {RefinancePayoffFacet} from "../src/facets/RefinancePayoffFacet.sol";
 import {RateModelFacet} from "../src/facets/RateModelFacet.sol";
 import {VaipakamNFTMetadataFacet} from "../src/facets/VaipakamNFTMetadataFacet.sol";
@@ -432,6 +450,18 @@ contract SetupTest is Test {
     OfferPriceGuardFacet offerPriceGuardFacet;
     SignedOfferMatchFacet signedOfferMatchFacet;
     LoanClockFacet loanClockFacet;
+    MarketLedgerFacet marketLedgerFacet;
+    InstantMarketFacet instantMarketFacet;
+    InstantFillFacet instantFillFacet;
+    InstantTakeoverFacet instantTakeoverFacet;
+    ReadyBalanceFacet readyBalanceFacet;
+    OfferMaterializeFacet offerMaterializeFacet;
+    CollectionOfferFacet collectionOfferFacet;
+    FeeLevelsFacet feeLevelsFacet;
+    SettlementLegFacet settlementLegFacet;
+    RecoveryClawbackFacet recoveryClawbackFacet;
+    CollateralConcentrationFacet collateralConcentrationFacet;
+    CollateralLienFacet collateralLienFacet;
     SaleExitVerdictFacet saleExitVerdictFacet;
     SellerClaimFacet sellerClaimFacet;
     RefinancePayoffFacet refinancePayoffFacet;
@@ -612,6 +642,19 @@ contract SetupTest is Test {
         offerPriceGuardFacet = OfferPriceGuardFacet(ArtifactDeploy.deploy(type(OfferPriceGuardFacet).name));
         signedOfferMatchFacet = SignedOfferMatchFacet(ArtifactDeploy.deploy(type(SignedOfferMatchFacet).name));
         loanClockFacet = LoanClockFacet(ArtifactDeploy.deploy(type(LoanClockFacet).name));
+        marketLedgerFacet = MarketLedgerFacet(ArtifactDeploy.deploy(type(MarketLedgerFacet).name));
+        instantMarketFacet = InstantMarketFacet(ArtifactDeploy.deploy(type(InstantMarketFacet).name));
+        instantFillFacet = InstantFillFacet(ArtifactDeploy.deploy(type(InstantFillFacet).name));
+        instantTakeoverFacet = InstantTakeoverFacet(ArtifactDeploy.deploy(type(InstantTakeoverFacet).name));
+        readyBalanceFacet = ReadyBalanceFacet(ArtifactDeploy.deploy(type(ReadyBalanceFacet).name));
+        offerMaterializeFacet = OfferMaterializeFacet(ArtifactDeploy.deploy(type(OfferMaterializeFacet).name));
+        collectionOfferFacet = CollectionOfferFacet(ArtifactDeploy.deploy(type(CollectionOfferFacet).name));
+        feeLevelsFacet = FeeLevelsFacet(ArtifactDeploy.deploy(type(FeeLevelsFacet).name));
+        settlementLegFacet = SettlementLegFacet(ArtifactDeploy.deploy(type(SettlementLegFacet).name));
+        recoveryClawbackFacet = RecoveryClawbackFacet(ArtifactDeploy.deploy(type(RecoveryClawbackFacet).name));
+        collateralConcentrationFacet =
+            CollateralConcentrationFacet(ArtifactDeploy.deploy(type(CollateralConcentrationFacet).name));
+        collateralLienFacet = CollateralLienFacet(ArtifactDeploy.deploy(type(CollateralLienFacet).name));
         saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
         sellerClaimFacet = SellerClaimFacet(ArtifactDeploy.deploy(type(SellerClaimFacet).name));
         refinancePayoffFacet = RefinancePayoffFacet(ArtifactDeploy.deploy(type(RefinancePayoffFacet).name));
@@ -649,7 +692,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](119);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](137);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1162,6 +1205,109 @@ contract SetupTest is Test {
             facetAddress: address(loanClockFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getLoanClockFacetSelectors()
+        });
+        // Instant market §8 — the common ledger.
+        cuts[119] = IDiamondCut.FacetCut({
+            facetAddress: address(marketLedgerFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getMarketLedgerFacetSelectors()
+        });
+        // #3656 — the instant market and its one-fill executor.
+        cuts[120] = IDiamondCut.FacetCut({
+            facetAddress: address(instantMarketFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getInstantMarketFacetSelectors()
+        });
+        cuts[121] = IDiamondCut.FacetCut({
+            facetAddress: address(instantFillFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getInstantFillFacetSelectors()
+        });
+        cuts[122] = IDiamondCut.FacetCut({
+            facetAddress: address(instantTakeoverFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getInstantTakeoverFacetSelectors()
+        });
+        cuts[123] = IDiamondCut.FacetCut({
+            facetAddress: address(offerMaterializeFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferMaterializeFacetSelectors()
+        });
+        cuts[124] = IDiamondCut.FacetCut({
+            facetAddress: address(collectionOfferFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getCollectionOfferFacetSelectors()
+        });
+        cuts[125] = IDiamondCut.FacetCut({
+            facetAddress: address(readyBalanceFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getReadyBalanceFacetSelectors()
+        });
+        // #3649 — the initiation fee's term schedule.
+        cuts[126] = IDiamondCut.FacetCut({
+            facetAddress: address(feeLevelsFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getFeeLevelsFacetSelectors()
+        });
+        // #3669 — the refused settlement leg host.
+        cuts[127] = IDiamondCut.FacetCut({
+            facetAddress: address(settlementLegFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSettlementLegFacetSelectors()
+        });
+        // #3246 part 2 — the clawback to a recovery address.
+        cuts[128] = IDiamondCut.FacetCut({
+            facetAddress: address(recoveryClawbackFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRecoveryClawbackFacetSelectors()
+        });
+        // #3685 — the new-loan cap host, which loan creation self-calls.
+        cuts[129] = IDiamondCut.FacetCut({
+            facetAddress: address(collateralConcentrationFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getCollateralConcentrationFacetSelectors()
+        });
+        // #3685 — the collateral-lien entries, split off EncumbranceMutateFacet.
+        cuts[130] = IDiamondCut.FacetCut({
+            facetAddress: address(collateralLienFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getCollateralLienFacetSelectors()
+        });
+        // #3681 — the loan reserve and the standing instructions.
+        cuts[131] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(StandingInstructionFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getStandingInstructionFacetSelectors()
+        });
+        // The claim reads, split off ClaimFacet (EIP-170).
+        cuts[132] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(ClaimViewFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getClaimViewFacetSelectors()
+        });
+        // The standing-intent reads, split off LenderIntentFacet (EIP-170).
+        cuts[133] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(LenderIntentViewFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getLenderIntentViewFacetSelectors()
+        });
+        // #3682 — the integrator registry and the share's delivery.
+        cuts[134] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(IntegratorFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getIntegratorFacetSelectors()
+        });
+        // #3720 — the standing-offer check.
+        cuts[135] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(StandingOfferCheckFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getStandingOfferCheckFacetSelectors()
+        });
+        // #3722 — the referral share.
+        cuts[136] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(ReferralFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getReferralFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).
@@ -1743,7 +1889,7 @@ contract SetupTest is Test {
         LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
         uint256 diamond0 = ERC20(l.collateralAsset).balanceOf(address(diamond));
         vm.startPrank(address(diamond));
-        EncumbranceMutateFacet(address(diamond)).releaseCollateralLien(loanId);
+        CollateralLienFacet(address(diamond)).releaseCollateralLien(loanId);
         LibTestOutflow.withdrawERC20(address(diamond), l.borrower, l.collateralAsset, address(diamond), l.collateralAmount);
         FallbackCustodyFacet(address(diamond)).enterFallback(loanId);
         vm.stopPrank();
@@ -1800,7 +1946,7 @@ contract SetupTest is Test {
         mockOraclePrice(l.collateralAsset, FALLBACK_FIXTURE_PAR_PRICE, colDec);
 
         (uint256 lc, uint256 tc, uint256 bc, , , bool active, ) =
-            ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);
+            ClaimViewFacet(address(diamond)).getFallbackSnapshot(loanId);
         assertTrue(active, "fixture-live: an active snapshot");
         assertEq(lc, lenderCollateral, "fixture-live: the producer computed the lender slice");
         assertEq(tc, treasuryCollateral, "fixture-live: the producer computed the treasury slice");

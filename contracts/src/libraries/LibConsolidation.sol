@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibVaultOutflow} from "./LibVaultOutflow.sol";
 import {LibPositionNFT} from "./LibPositionNFT.sol";
+import {LibLoanCollateral} from "./LibLoanCollateral.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {LibInteractionRewards} from "./LibInteractionRewards.sol";
@@ -324,7 +325,7 @@ library LibConsolidation {
             // and LTV checks run on that figure.
             if (credited < amount) {
                 LibEncumbrance.decrementCollateralLien(loanId, amount - credited);
-                loan.collateralAmount = credited;
+                LibLoanCollateral.set(loan, credited);
                 amount = credited;
             }
         } else if (t == LibVaipakam.AssetType.ERC721) {

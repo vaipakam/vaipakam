@@ -2,8 +2,12 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestCollateralCut} from "../helpers/LibTestCollateralCut.sol";
+import {LibTestTermsCut} from "../helpers/LibTestTermsCut.sol";
+import {LibTestClaimViewCut} from "../helpers/LibTestClaimViewCut.sol";
 import {LibTestProtectedCut} from "../helpers/LibTestProtectedCut.sol";
 import {LibTestPositionNFT} from "../helpers/LibTestPositionNFT.sol";
+import {LibTestSettlementLeg} from "../helpers/LibTestSettlementLeg.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "../helpers/LibTestVaultBeacon.sol";
 import {VaipakamDiamond} from "../../src/VaipakamDiamond.sol";
@@ -26,6 +30,7 @@ import {RepayFacet} from "../../src/facets/RepayFacet.sol";
 import {DefaultedFacet} from "../../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../../src/facets/ClaimViewFacet.sol";
 import {AddCollateralFacet} from "../../src/facets/AddCollateralFacet.sol";
 import {DiamondCutFacet} from "../../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
@@ -256,7 +261,11 @@ contract Scenario4_IlliquidCollateral is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
+        cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
+        cuts = LibTestTermsCut.withTermsHost(cuts); // #3734
+        cuts = LibTestClaimViewCut.withClaimView(cuts); // the claim reads
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
+        LibTestSettlementLeg.install(address(diamond)); // #3669
         LibTestForcedSalePreview.install(address(diamond));
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
@@ -322,6 +331,8 @@ contract Scenario4_IlliquidCollateral is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockUsdc,
                 amount: PRINCIPAL,
@@ -388,13 +399,13 @@ contract Scenario4_IlliquidCollateral is Test {
 
         // Step 6: Verify lender claimable = full collateral
         (address claimAsset, uint256 lenderClaimAmount, bool claimed) =
-            ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+            ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertEq(claimAsset, mockIlliquid, "Lender claim asset should be illiquid collateral");
         assertEq(lenderClaimAmount, COLLATERAL, "Lender should claim full collateral amount");
         assertFalse(claimed, "Lender should not have claimed yet");
 
         // Step 7: Verify borrower has no claim (illiquid default = full transfer to lender)
-        (, uint256 borrowerClaimAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+        (, uint256 borrowerClaimAmount,) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, false);
         assertEq(borrowerClaimAmount, 0, "Borrower should have no claim after illiquid default");
 
         // Step 8: Lender claims the collateral
@@ -415,7 +426,7 @@ contract Scenario4_IlliquidCollateral is Test {
         assertEq(lenderIllqAfter - lenderIllqBefore, COLLATERAL, "Lender should receive full collateral");
 
         // Verify claim is marked as done
-        (,, bool lenderClaimed) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        (,, bool lenderClaimed) = ClaimViewFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertTrue(lenderClaimed, "Lender claim should be marked as done");
 
         // Step 9: Loan should be Settled (lender claimed, borrower has nothing to claim)

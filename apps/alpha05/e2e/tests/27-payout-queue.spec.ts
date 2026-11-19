@@ -20,7 +20,7 @@ import { increaseTime, mine } from '../lib/anvil';
 import { scenario } from '../lib/chain';
 import { connectWallet, expect, test } from '../lib/wallet';
 import { VAULT_SIGNER } from '@vaipakam/lib/vaultProtectionAuth';
-import { enableProtection, protect } from '../lib/protection';
+import { enableProtection, protect, recoveryInForce } from '../lib/protection';
 
 type Pending = { state: number; cosigned: boolean; releaseAt: bigint; amount: bigint };
 
@@ -117,7 +117,9 @@ test('a secondary signer looks the account up, approves a payout that needs appr
   const signer = sc.address('borrower');
   const { owner, ids, codes } = await queueWithdrawals(sc, 1, async () => {
     // A signer nominated, accepted from its own key, active after the delay;
-    // then every release needs a signer's approval.
+    // then every release needs a signer's approval. Finalizing it needs the
+    // recovery address in force, not only pending (#3246 part 2).
+    await recoveryInForce(sc, sc.address('lender'));
     await protect(sc, 'lender', sc.address('lender'), 'signerChange', [VAULT_SIGNER.add, signer]);
     await protect(sc, 'borrower', sc.address('lender'), 'signerChange', [VAULT_SIGNER.accept, signer]);
     await increaseTime(DELAY + 60);

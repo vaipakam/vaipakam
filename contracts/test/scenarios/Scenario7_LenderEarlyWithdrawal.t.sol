@@ -2,8 +2,12 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTestCollateralCut} from "../helpers/LibTestCollateralCut.sol";
+import {LibTestTermsCut} from "../helpers/LibTestTermsCut.sol";
+import {LibTestClaimViewCut} from "../helpers/LibTestClaimViewCut.sol";
 import {LibTestProtectedCut} from "../helpers/LibTestProtectedCut.sol";
 import {LibTestPositionNFT} from "../helpers/LibTestPositionNFT.sol";
+import {LibTestSettlementLeg} from "../helpers/LibTestSettlementLeg.sol";
 import {Test} from "forge-std/Test.sol";
 import {LibTestVaultBeacon} from "../helpers/LibTestVaultBeacon.sol";
 import {VaipakamDiamond} from "../../src/VaipakamDiamond.sol";
@@ -60,6 +64,13 @@ import {LibTestTiming} from "../helpers/LibTestTiming.sol";
  *         Scenario 7b: Create sale offer, new lender accepts (Option 2).
  */
 contract Scenario7_LenderEarlyWithdrawal is Test {
+    /// @dev The seller's wallet plus its vault: #3629 pays sale proceeds
+    ///      into the seller's vault.
+    function _ownedBySeller() internal view returns (uint256) {
+        address v = VaultFactoryFacet(address(diamond)).getUserVaultAddress(lender);
+        return ERC20(mockERC20).balanceOf(lender) + (v == address(0) ? 0 : ERC20(mockERC20).balanceOf(v));
+    }
+
     VaipakamDiamond diamond;
     address owner;
     address lender;
@@ -288,7 +299,11 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()
         });
+        cuts = LibTestCollateralCut.withCollateralHosts(cuts); // #3685
+        cuts = LibTestTermsCut.withTermsHost(cuts); // #3734
+        cuts = LibTestClaimViewCut.withClaimView(cuts); // the claim reads
         IDiamondCut(address(diamond)).diamondCut(LibTestProtectedCut.withProtected(cuts), address(0), "");
+        LibTestSettlementLeg.install(address(diamond)); // #3669
         // #3242 — wei-sized offers below the $10 floor; see {TestOfferFloor}.
         TestOfferFloor.lower(address(diamond));
         AccessControlFacet(address(diamond)).initializeAccessControl();
@@ -351,6 +366,8 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -393,12 +410,14 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         vm.warp(block.timestamp + 1 days);
 
         // Record lender balance before sale
-        uint256 lenderBalBefore = ERC20(mockERC20).balanceOf(lender);
+        uint256 lenderBalBefore = _ownedBySeller();
 
         // newLender creates a Lender offer (buy offer) with duration=29 (remaining days)
         vm.prank(newLender);
         uint256 buyOfferId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: PRINCIPAL,
@@ -457,7 +476,8 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         // liam.  vaultWithdrawERC20 is mocked, so the diamond needs tokens
         // to pay liam; that funding happens in the test helper. Here we just
         // assert balance strictly INCREASED by roughly principal - accrued.
-        uint256 lenderBalAfter = ERC20(mockERC20).balanceOf(lender);
+        // #3629 — the proceeds land in the seller's vault, not its wallet.
+        uint256 lenderBalAfter = _ownedBySeller();
         assertGt(lenderBalAfter, lenderBalBefore, "Lender should have received net principal");
 
         vm.clearMockedCalls();

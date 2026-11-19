@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibOfferPriceGuard} from "../libraries/LibOfferPriceGuard.sol";
+import {LibLoanCollateral} from "../libraries/LibLoanCollateral.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibPriceRead} from "../libraries/LibPriceRead.sol";
 import {LibTiming} from "../libraries/LibTiming.sol";
@@ -19,9 +20,12 @@ import {LibLoan} from "../libraries/LibLoan.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
+import {LibFeeFloor} from "../libraries/LibFeeFloor.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
+import {CollateralLienFacet} from "./CollateralLienFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
@@ -310,7 +314,8 @@ contract PrecloseFacet is
 
             // Treasury fee transferred immediately (skipped when satisfied in VPFI).
             // #1281-011 — the one payer -> treasury pull (refuses a short arrival).
-            LibFacet.transferFromPayerToTreasury(msg.sender, loan.principalAsset, plan.treasuryShare);
+            LibFacet.transferFromPayerToTreasury(
+                msg.sender, loan.principalAsset, plan.treasuryShare, LibFeeFloor.interest(plan.interest + plan.lateFee, LibVaipakam.effectiveTreasuryFeeBps(loan)));
 
             // T-037 — Lender's due: direct borrower → lender's vault.
             // Routed through the cross-payer chokepoint variant so the
@@ -318,18 +323,11 @@ contract PrecloseFacet is
             // LENDER (the vault owner) while pulling from the
             // borrower's allowance.
             // #998 S10 note: the frozen-claimant markers recorded at the top of
-            // precloseDirect protect the transferred-flagged-HOLDER case (stored
-            // `loan.lender` clean → this deposit succeeds → the marker freezes the
-            // flagged current holder's later claim). A flagged STORED `loan.lender`
-            // still bricks this deposit on `getOrCreateUserVault`'s Tier-1 screen —
-            // a PRE-EXISTING #821 completeness gap (the borrower's escape is
-            // `repayLoan`, which carries the exemption). Adding the receive-side
-            // exemption here overflows this EIP-170-maxed facet, so it is deferred
-            // to a follow-up that splits PrecloseFacet (see #1124).
+            // precloseDirect protect the transferred-flagged-HOLDER case (the
+            // marker freezes the flagged current holder's later claim).
             // #3178 — the close-out delivery route resolves the lender's vault
             // as a RECEIVER: neither its version nor a sanctions flag on the
-            // stored lender can block the borrower's early close (which also
-            // closes the flagged-lender half of #1124 for this leg).
+            // STORED lender can block the borrower's early close (#1124).
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultDeliverERC20From.selector,
@@ -451,9 +449,9 @@ contract PrecloseFacet is
             // the stale address would price it off the seller's hold tier and,
             // once the peg is set, DEBIT the seller's VPFI vault for a discount
             // they don't receive. The discount must follow the party who is
-            // actually paid. (That the interim vault credit still resolves
-            // `loan.lender` is the pre-existing #1124 gap — this leg must not
-            // extend that gap into spending a non-participant's VPFI.)
+            // actually paid. (The interim vault credit still resolves
+            // `loan.lender`, whose vault the claim is paid from; this leg must
+            // not spend a non-participant's VPFI on that account.)
             {
                 (uint256 rentLenderExtra, uint256 rentNewTreasury) =
                     LibPreclose.resolveLenderYieldFee(
@@ -851,7 +849,7 @@ contract PrecloseFacet is
 
         address payAsset = LibPreclose.paymentAsset(loan);
         // #1281-011 — the one payer -> treasury pull (refuses a short arrival).
-        LibFacet.transferFromPayerToTreasury(msg.sender, payAsset, treasuryFee);
+        LibFacet.transferFromPayerToTreasury(msg.sender, payAsset, treasuryFee, LibFeeFloor.interest(accruedInterest, LibVaipakam.effectiveTreasuryFeeBps(loan)));
         // #1209 / #1808 — the open seller claims are paid first out of the
         // interest, straight from the payer into each seller's vault, and the
         // holder's part of it is recorded as held for the lender side, so a
@@ -971,9 +969,9 @@ contract PrecloseFacet is
             if (rentDue > 0) {
                 // Treasury takes its cut only on the accrued (elapsed) rent,
                 // matching the ERC-20 path (the shortfall goes fully to the
-                // lender). Lender share → current lender-position holder from the
-                // prepay vault (fail-closed park if the holder is flagged),
-                // mirroring the daily deduction path.
+                // lender). The lender share moves from the prepay vault into
+                // the stored lender's vault, held for the lender position's
+                // claim (#3629), mirroring the daily deduction path.
                 (uint256 rentTreasury, uint256 rentLenderOnAccrued) =
                     LibEntitlement.splitTreasury(loan, accruedRent);
 
@@ -983,9 +981,8 @@ contract PrecloseFacet is
                 // which the quote path now prices against (Codex #1389 P2).
                 //
                 // Keyed on the CURRENT lender-NFT holder, NOT `loan.lender`: this
-                // leg deliberately forwards the catch-up rent to the current
-                // position holder (`freezeOrPayActiveLenderFromVault` resolves the
-                // holder), and rentals are excluded from the eager consolidation,
+                // catch-up rent is held for the current position holder's claim
+                // (#3629), and rentals are excluded from the eager consolidation,
                 // so the stored `loan.lender` can be stale here. Resolving the
                 // discount — or a VPFI vault debit — against a party who is not
                 // receiving the proceeds would charge the wrong account.
@@ -1006,7 +1003,7 @@ contract PrecloseFacet is
                 uint256 lenderTotal = (rentDue - accruedRent) + rentLenderOnAccrued;
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        EncumbranceMutateFacet.freezeOrPayActiveLenderFromVault.selector,
+                        EncumbranceMutateFacet.holdActiveLenderFromVault.selector,
                         loanId,
                         loan.borrower,
                         loan.prepayAsset,
@@ -1032,7 +1029,7 @@ contract PrecloseFacet is
         // below (rekey create-leg).
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.releaseCollateralLien.selector,
+                CollateralLienFacet.releaseCollateralLien.selector,
                 loanId
             ),
             bytes4(0)
@@ -1092,7 +1089,7 @@ contract PrecloseFacet is
         // paid-notification flag on an obligation transfer.
         address previousBorrower = loan.borrower;
         loan.borrower = newBorrower;
-        loan.collateralAmount = offer.collateralAmount;
+        LibLoanCollateral.set(loan, offer.collateralAmount);
         // #569 Codex #572 P1 #2 (2026-06-13) — copy the incoming offer's
         // collateral IDENTITY too, not just the amount. `assertAssetContinuity`
         // pins only `collateralAsset` + `collateralAssetType`, so an
@@ -1206,7 +1203,7 @@ contract PrecloseFacet is
         // protected. No-op on NFT rentals (D-1).
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.recreateCollateralLien.selector,
+                CollateralLienFacet.recreateCollateralLien.selector,
                 loanId
             ),
             bytes4(0)

@@ -145,3 +145,7 @@ See the [audit record](../procedures/FunctionalSpecsCodeVsDocsAudit.md#the-lende
 ## Tier LTV: a default and a ceiling per tier, with no floor: a spec change made on a recorded owner decision (#3547, 2026-11-11)
 
 See the [audit record](../procedures/FunctionalSpecsCodeVsDocsAudit.md#tier-ltv-a-default-and-a-ceiling-per-tier-with-no-floor-a-spec-change-made-on-a-recorded-owner-decision-3547-2026-11-11).
+
+## Periodic forced sale took no treasury share of the interest it recovered: resolved toward intent (#3681, 2026-11-16)
+
+See the [audit record](../procedures/FunctionalSpecsCodeVsDocsAudit.md#periodic-forced-sale-took-no-treasury-share-of-the-interest-it-recovered-resolved-toward-intent-3681-2026-11-16).

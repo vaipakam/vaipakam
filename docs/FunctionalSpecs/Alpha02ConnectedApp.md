@@ -5242,7 +5242,7 @@ Its intended behaviour, as the test oracle for this surface:
   "protection off". When the account's settings cannot be read the page
   shows no controls at all, because "off" drawn over a failed read would
   invite turning protection on twice or hide a lock. When the payout
-  queue, the transfer queue, the payout addresses or the signers cannot
+  queue, the payout addresses or the signers cannot
   be read, each says so and says not to assume it is empty; a partly read
   list counts as unread, since the one missing row could be the one an
   attacker queued. Each queued payout shows its request code (the same
@@ -5373,7 +5373,16 @@ Its intended behaviour, as the test oracle for this surface:
   a gasless order, movement at fill) alongside the protocol fee that
   applies to the user's side: a lender's yield after the fee on interest,
   a borrower's one-time initiation fee on the principal, quoted from the
-  live deployed fee values. The user's own
+  live deployed fee values. The initiation fee is term-based, so every
+  surface quotes it at the rate for that order's or loan's own term, never
+  at one flat rate, and a signed order's initiation-fee cap is that term's
+  rate rounded up, the figure the protocol compares it with. Until the
+  live fee settings are read, the fee shows as not yet known rather than
+  as a default figure; the help page's fee answer states the rule with
+  the live settings, and the protocol console lists all four settings
+  (the base rate labelled as the base rate, never as the fee). The
+  operator's live review drives judge a review's initiation fee by the
+  same rule at the new loan's term, read from the protocol. The user's own
   open offers can be repriced or resized in place in one transaction —
   only by their creator; a bought offer position is view-only — and an
   amend that increases the locked amount asks for the token approval

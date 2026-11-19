@@ -6,7 +6,7 @@
  * otherwise sell a borrower's collateral on a premise the chain no longer
  * holds. Each asserts that NOTHING was written, not just the outcome tag.
  */
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { armHeldFence } from './helpers/epochFence';
 import {
   decodeFunctionData,
@@ -41,6 +41,13 @@ import {
 } from '../src/graceDefault';
 import type { ServerOrchestrationResult } from '../src/serverQuotes';
 import { PREPARED_FEES_84532 } from './helpers/preparedFees';
+
+// The test Diamond is in no deployment record, so its position-NFT surface
+// is stated here (#3321: the keeper refuses an unknown Diamond).
+vi.mock('../src/positionNft', async (orig) => ({
+  ...(await orig<typeof import('../src/positionNft')>()),
+  positionNftForDiamond: (diamond: Address) => ({ diamond, nft: `0x${'e1'.padStart(40, '0')}` as Address }),
+}));
 
 // Every send asserts the epoch fence (#2569 r4): armed here as the tick arms it.
 beforeEach(() => armHeldFence());
@@ -150,7 +157,7 @@ function harness(scene: Scene) {
           loanReads += 1;
           return l;
         }
-        case 'positionLock':
+        case 'positionRoute':
           return BigInt(scene.lock ?? 0);
         case 'calculateHealthFactor':
           if (typeof scene.hf === 'function') return scene.hf();

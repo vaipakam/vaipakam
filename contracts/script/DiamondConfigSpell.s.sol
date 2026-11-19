@@ -46,7 +46,7 @@ import {EnvFlag} from "./lib/EnvFlag.sol";
  *      This spell composes all four into a single external `run()` that
  *      opens one operator-action window and dispatches each child via
  *      `new ConfigureFoo(); child.run();`. The pattern mirrors
- *      `PositiveFlows.s.sol` / `PartialFlows.s.sol`: each child opens
+ *      `PositiveFlows.s.sol`: each child opens
  *      its own `vm.startBroadcast(adminKey)` window inside its own
  *      `run()`; the wrapper itself emits no extra broadcast txns.
  *

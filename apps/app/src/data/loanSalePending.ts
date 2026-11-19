@@ -1,7 +1,7 @@
 /**
  * Page-owned pending-sale state for the lender Option-2 listing
  * (createLoanSaleOffer). Unlike the refinance marker, EXISTENCE is a
- * pure chain read — `positionLock(lenderTokenId) ==
+ * pure chain read — `positionRoute(lenderTokenId) ==
  * EarlyWithdrawalSale` is authoritative — so a listing made on
  * another device still shows here. The device-local marker remembers
  * the offer id (needed for cancel and for the listing's own record;

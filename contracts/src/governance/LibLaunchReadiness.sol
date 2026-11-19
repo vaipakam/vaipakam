@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibAccessControl} from "../libraries/LibAccessControl.sol";
 import {LibLaunchCrossChainReadiness} from "./LibLaunchCrossChainReadiness.sol";
+import {TestnetChains} from "../compliance/TestnetChains.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 
 /// @dev The Diamond reads the launch requirements need. Declared here rather
@@ -19,6 +20,7 @@ interface ILaunchReadableDiamond {
     // forge-lint: disable-next-line(mixed-case-function)
     function getVPFIToken() external view returns (address);
     function getVaultBeacon() external view returns (address);
+    function getRiskAccessUnlockCooldown() external view returns (uint64);
     function getBackstopVault() external view returns (address);
     function getFusionLimitOrderProtocol() external view returns (address);
     function getCollateralListingExecutor() external view returns (address);
@@ -264,7 +266,7 @@ library LibLaunchReadiness {
         view
         returns (Check[] memory checks)
     {
-        checks = new Check[](12);
+        checks = new Check[](13);
         checks[0] = _treasury(diamond);
         checks[1] = _sanctions(diamond);
         checks[2] = _priceFeed(diamond, declared.weth);
@@ -277,6 +279,7 @@ library LibLaunchReadiness {
         checks[9] = _rewardRole(diamond, declared.rewardRole);
         checks[10] = _vaultEndpoints(diamond);
         checks[11] = _rewardCapArmed(diamond);
+        checks[12] = _riskAccessWait(diamond);
     }
 
     /// @notice Whether every check was answered and met.
@@ -312,6 +315,29 @@ library LibLaunchReadiness {
     }
 
     // ─── The requirements ──────────────────────────────────────────────
+
+    /// @dev #3717 — the wait between a wallet raising its own asset access (or
+    ///      consenting to an illiquid pair) and the first deal that uses it.
+    ///      At zero, a website can walk a new user through "raise access, then
+    ///      deal" in one sitting, which is the one case the wait exists for.
+    ///      The setting's storage default is zero, so a mainnet launch
+    ///      refuses until the deploy (48 hours) or the admin has set it; the
+    ///      setter already refuses a mainnet value under one hour. A testnet
+    ///      may run any value and is reported met with the figure.
+    function _riskAccessWait(address diamond) private view returns (Check memory c) {
+        c.label = "risk access wait set";
+        try ILaunchReadableDiamond(diamond).getRiskAccessUnlockCooldown() returns (uint64 wait) {
+            c.checkable = true;
+            c.met = wait != 0 || TestnetChains.isTestnet(block.chainid);
+            c.detail = string.concat(
+                "getRiskAccessUnlockCooldown() is ",
+                Strings.toString(wait),
+                c.met ? " seconds" : " seconds: a raised access level would be usable at once on a mainnet"
+            );
+        } catch {
+            c.detail = "getRiskAccessUnlockCooldown() unreadable";
+        }
+    }
 
     /// @dev #3431 — every vault pays or approves only the endpoints fixed in
     ///      its CODE. One that differs from the Diamond's own setting would

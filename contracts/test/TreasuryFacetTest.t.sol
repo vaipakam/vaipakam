@@ -16,6 +16,7 @@ import {HelperTest} from "./HelperTest.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {ProtectedAccountFacet} from "../src/facets/ProtectedAccountFacet.sol";
 
 /**
  * @title TreasuryFacetTest
@@ -47,7 +48,7 @@ contract TreasuryFacetTest is Test {
         TestMutatorFacet testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](4);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](5);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(treasuryFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -67,6 +68,13 @@ contract TreasuryFacetTest is Test {
             facetAddress: address(testMutatorFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getTestMutatorFacetSelectors()
+        });
+        // #3379 B2 — every payout to a wallet first asks whether the payee is
+        // in protected mode, through this facet's `isProtectionOn`.
+        cuts[4] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(ProtectedAccountFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getProtectedAccountFacetSelectors()
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();

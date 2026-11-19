@@ -1458,3 +1458,24 @@ above had flagged for cleanup.
 **Status:** resolved. Spec §1 (tier-to-LTV mapping, governance ceilings,
 the ceiling setter, the config bundle), WebsiteReadme's admin line and the
 implementation notes' test list state the new rule.
+
+## Periodic forced sale took no treasury share of the interest it recovered: resolved toward intent (#3681, 2026-11-16)
+
+**What the code did.** The periodic settlement's forced sale paid the lender
+the whole interest it recovered and added it to the loan's settled interest.
+The final repayment charges the treasury's share only on interest net of
+what is settled, so interest a sale recovered never bore the treasury share,
+while the same interest paid by a partial repayment, or left to the final
+repayment, did.
+
+**The intent.** The treasury share is a fee on interest however the interest
+is collected; a sale that skips it pays a lender more than an ordinary
+payment would. The standing-instructions design (#3681) asked for one shared
+booking of mid-loan interest; scouting found the sale did not take the share
+the design assumed, and the design thread decided on 2026-11-16 that the
+shared booking takes it, so the sale does too, lender first on a short
+recovery.
+
+**Status:** resolved. The sale and the pay-my-interest instruction book
+through the same function; ProjectDetailsREADME's Standing Instructions
+section states the rule.

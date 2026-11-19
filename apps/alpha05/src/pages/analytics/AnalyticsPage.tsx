@@ -380,7 +380,16 @@ function FeesAndTreasury({ chain, f }: { chain: SupportedChain; f: ProtocolFigur
         <Row label={text('analytics.treasuryShare')} testId="analytics-treasury-share">
           {rates ? format('analytics.rate', { rate: formatBps(rates.treasuryShareBps) }) : unread(f.feeRates)}
         </Row>
-        <Row label={text('analytics.loanStartFee')}>{rates ? format('analytics.rate', { rate: formatBps(rates.loanStartFeeBps) }) : unread(f.feeRates)}</Row>
+        <Row label={text('analytics.loanStartFee')}>
+          {rates
+            ? format('analytics.loanStartFeeRule', {
+                base: formatBps(rates.loanStartFee.baseBps),
+                baseDays: rates.loanStartFee.baseTermDays.toString(),
+                year: formatBps(rates.loanStartFee.yearlyBps),
+                yearDays: rates.loanStartFee.yearDays.toString(),
+              })
+            : unread(f.feeRates)}
+        </Row>
       </dl>
       <p className="tier-a">{format('analytics.feesValued', { unit })}</p>
       <dl className="facts" data-testid="analytics-fees-collected">

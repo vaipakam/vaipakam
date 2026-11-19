@@ -10,6 +10,7 @@ import type { Posture } from '../capability/types';
 import { figured, textValue, type Receipt, type ReceiptText } from '../receipt/types';
 import { assetName, exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatBps, formatScaled, formatSpan, formatUtc } from '../ui/format';
+import { lifRateText } from '../offers/initiationFee';
 import { pageHandoff } from '../../routes/pageMap';
 import { isRanged, postFigures, ZERO, type ParsedPost } from './postModel';
 import { lockedName, ltvText, needsApproval, promptCount, type LtvRead, type PostReview, type StartGate } from './postReview';
@@ -54,9 +55,9 @@ function startRows(start: StartGate, copy: Pick<CopyAccess, 'text' | 'format'>):
 export function requestReceipt(r: PostReview, meta: TokenMetaMap | null, copy: Pick<CopyAccess, 'text' | 'format'>, advanced = false, keeper: Posture = 'unknown'): Receipt {
   const { text, format } = copy;
   const { parsed, pair } = r.draft;
-  const f = postFigures(parsed.amount, parsed.rateBps, parsed.durationDays, r.lifBps);
+  const f = postFigures(parsed.amount, parsed.rateBps, parsed.durationDays, r.lif);
   const ranged = isRanged(parsed);
-  const largest = ranged ? postFigures(parsed.amountMax, parsed.rateBps, parsed.durationDays, r.lifBps) : null;
+  const largest = ranged ? postFigures(parsed.amountMax, parsed.rateBps, parsed.durationDays, r.lif) : null;
   const returned = parsed.collateral - parsed.collateralFloor;
   const amount = (asset: Hex, value: bigint) => ({ kind: 'amount' as const, asset, amount: value });
   const textRow = (label: CopyKey, value: ReceiptText, binding: boolean) => ({ label: text(label), value: textValue(value), binding });
@@ -98,7 +99,7 @@ export function requestReceipt(r: PostReview, meta: TokenMetaMap | null, copy: P
     // rate in force then, so these are today's figures, labelled as such.
     { label: text('request.rowReceive'), value: amount(pair.lending, f.received), binding: false },
     { label: text('accept.rowFee'), value: amount(pair.lending, f.fee), binding: false },
-    textRow('accept.rowFeeRule', format('request.feeRule', { rate: formatBps(r.lifBps) }), false),
+    textRow('accept.rowFeeRule', format('request.feeRule', { rate: lifRateText(r.lif, parsed.durationDays) }), false),
     // With a schedule the figure is the whole term's interest, and the
     // instalments paid along the way count toward it, so it is labelled as a
     // total rather than as what is left to pay at the due date.

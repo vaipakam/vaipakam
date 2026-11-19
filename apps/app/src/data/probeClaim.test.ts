@@ -4,7 +4,7 @@
  * each failure shape is pinned.
  */
 import { DEPLOYMENTS } from '@vaipakam/contracts/deployments';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   ContractFunctionExecutionError,
   ContractFunctionRevertedError,
@@ -13,20 +13,8 @@ import {
 import { isMemoizableProbe, loanClaimRefetchInterval, OWED_RETRY_MS, probeClaim } from './claimables';
 import type { PositionLoan } from './hooks';
 
-// Keep the legacy ownership path covered independently of the live deployment.
-vi.mock('@vaipakam/contracts/deployments', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@vaipakam/contracts/deployments')>();
-  return {
-    ...actual,
-    DEPLOYMENTS: {
-      ...actual.DEPLOYMENTS,
-      84532: { ...actual.DEPLOYMENTS[84532], positionNFT: undefined },
-    },
-  };
-});
-
 const ME = '0x00000000000000000000000000000000000000aa';
-const DIAMOND = DEPLOYMENTS[84532]!.diamond as `0x${string}`;
+const DIAMOND = DEPLOYMENTS[84532]!.diamond as `0x${string}`; // a recorded Diamond (#3205)
 const USDC = '0x00000000000000000000000000000000000000c1';
 const ZERO = '0x0000000000000000000000000000000000000000';
 
@@ -40,6 +28,8 @@ type Reads = Record<string, unknown | (() => unknown)>;
 function client(reads: Reads): PublicClient {
   return {
     readContract: async ({ functionName }: { functionName: string }) => {
+      // The holder read pairs `ownerOf` with the Diamond's retirement flag.
+      if (functionName === 'isPositionRetired' && !('isPositionRetired' in reads)) return false;
       if (!(functionName in reads)) throw new Error(`unexpected read ${functionName}`);
       const r = reads[functionName];
       return typeof r === 'function' ? (r as () => unknown)() : r;

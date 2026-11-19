@@ -1,18 +1,21 @@
-import { useState, type FormEvent } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { isAddress, getAddress } from 'viem';
 import { useMode } from '../../app/ModeContext';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useCopy } from '../copy/useCopy';
 import { WhyLink } from '../help/WhyLink';
 import { useOwnRead } from '../reads/useOwnRead';
+import { copyText } from '../address/AddressBook';
 import { FormField } from '../ui/FormField';
 import { Notice } from '../ui/Notice';
 import { OwnStamp } from '../ui/OwnStamp';
 import { formatSpan, formatUtc, shortAddress } from '../ui/format';
 import { useNow } from '../ui/useNow';
 import { PayoutQueue } from './PayoutQueue';
-import { changeText, dueChanges, pendingChanges, readSafetyFacts, safetyClock, type SafetyAction, type SafetyDraft, type SafetyMode } from './safety';
+import { answerFits, hasRecovery, parseRecoveryProof, recoveryAddressProblem, recoveryRequestLink } from './recovery';
+import { changeText, dueChanges, pendingChanges, readSafetyFacts, safetyClock, type SafetyAction, type SafetyDraft, type SafetyFacts, type SafetyMode } from './safety';
 import { SafetyActionFlow, useSafetyHeld } from './SafetyAction';
 
 const DAY = 86_400;
@@ -37,6 +40,22 @@ export function SafetyCard({ own, chain }: { own: OwnStateClient; chain: Support
   const nowMs = useNow(1000);
   const f = facts.data;
   const m = f?.mode;
+
+  // #3246 part 2 — an answer link from the recovery wallet (`rp_*`) opens
+  // its review here, once per answer, when it belongs to this wallet, this
+  // network and this vault; any other answer is said not to fit.
+  const [params] = useSearchParams();
+  const answered = params.has('rp_sig');
+  const answer = answered ? parseRecoveryProof(params) : null;
+  const answerFitsHere = answer !== null && f !== null && f !== undefined && answerFits(answer, chain.chainId, diamond, wallet, f.vault);
+  const openedAnswer = useRef<string | null>(null);
+  useEffect(() => {
+    if (!answerFitsHere || answer === null || held.choice !== null || openedAnswer.current === answer.sig) return;
+    openedAnswer.current = answer.sig;
+    held.open({ action: 'recovery', draft: null, proof: answer });
+    // Opened once per answer; the held choice carries it from here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [answerFitsHere, answer?.sig]);
 
   const open = (action: SafetyAction, draft: SafetyDraft | null = null) => {
     setChoosing(false);
@@ -77,13 +96,31 @@ export function SafetyCard({ own, chain }: { own: OwnStateClient; chain: Support
       );
     const now = safetyClock(f, nowMs);
     return (
-      <SafetyState mode={m} now={now} openRows={f.openRows} wallet={wallet} busy={held.choice !== null} choosing={choosing} onChoose={() => setChoosing(true)} onAction={open} />
+      <>
+        <SafetyState
+          mode={m}
+          now={now}
+          openRows={f.openRows}
+          wallet={wallet}
+          busy={held.choice !== null}
+          choosing={choosing}
+          recoveryReady={f.recovery !== null && hasRecovery(f.recovery)}
+          onChoose={() => setChoosing(true)}
+          onAction={open}
+        />
+        <RecoverySection facts={f} chainId={chain.chainId} diamond={diamond} enabled={m.enabled} busy={held.choice !== null} onCancel={() => open('recoveryCancel')} />
+      </>
     );
   })();
 
   return (
     <section className="home-section" aria-labelledby="vault-safety" data-testid="vault-safety">
       <h2 id="vault-safety">{text('safety.cardTitle')}</h2>
+      {answered && (answer === null || (f && !answerFitsHere)) && (
+        <Notice tone="warn" tier="A">
+          <span data-testid="recovery-answer-unfit">{text(answer === null ? 'recovery.proofBad' : f?.vault === null ? 'recovery.proofNoVault' : 'recovery.proofOther')}</span>
+        </Notice>
+      )}
       {body}
       {choosing && held.choice === null && f && m && m !== 'absent' && !m.enabled && (
         <TurnOnForm bounds={f.bounds} onCancel={() => setChoosing(false)} onChosen={(d) => open('enable', d)} />
@@ -111,12 +148,14 @@ interface StateProps {
   wallet: `0x${string}`;
   busy: boolean;
   choosing: boolean;
+  /** Whether a recovery address is set or pending: switching on needs one. */
+  recoveryReady: boolean;
   onChoose: () => void;
   onAction: (a: SafetyAction) => void;
 }
 
 /** What the account's mode is, in words, and the actions it allows now. */
-function SafetyState({ mode: m, now, openRows, wallet, busy, choosing, onChoose, onAction }: StateProps) {
+function SafetyState({ mode: m, now, openRows, wallet, busy, choosing, recoveryReady, onChoose, onAction }: StateProps) {
   const { text, format } = useCopy();
   if (!m.enabled) {
     return (
@@ -125,7 +164,12 @@ function SafetyState({ mode: m, now, openRows, wallet, busy, choosing, onChoose,
           {text('safety.stateOff')}
         </p>
         <p className="tier-b">{text('safety.offLead')}</p>
-        {!busy && !choosing && (
+        {!recoveryReady && (
+          <p className="tier-b" data-testid="vault-safety-recovery-first">
+            {text('recovery.first')}
+          </p>
+        )}
+        {!busy && !choosing && recoveryReady && (
           <button type="button" className="btn btn-primary" onClick={onChoose} data-testid="vault-safety-turn-on">
             {text('safety.turnOn')}
           </button>
@@ -248,3 +292,143 @@ function TurnOnForm({ bounds, onCancel, onChosen }: { bounds: { min: number; max
     </form>
   );
 }
+
+/**
+ * #3246 part 2 — the account's recovery address: in force, pending (and
+ * when it comes into force), or none, and the first half of setting one:
+ * the owner names the address and gets the link that wallet signs from.
+ * The vault keeps the address, so an account with no vault creates it first.
+ */
+function RecoverySection({
+  facts: f,
+  chainId,
+  diamond,
+  enabled,
+  busy,
+  onCancel,
+}: {
+  facts: SafetyFacts;
+  chainId: number;
+  diamond: `0x${string}`;
+  enabled: boolean;
+  busy: boolean;
+  onCancel: () => void;
+}) {
+  const { text, format } = useCopy();
+  const [asking, setAsking] = useState(false);
+  const [typed, setTyped] = useState('');
+  const [link, setLink] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const r = f.recovery;
+  const valid = isAddress(typed.trim(), { strict: false });
+  const problem = valid && f.vault !== null ? recoveryAddressProblem(getAddress(typed.trim()), f.account, f.vault, diamond, r) : null;
+  const error = typed.trim() === '' ? null : !valid ? text('recovery.badAddress') : problem === null ? null : text(PROBLEM[problem]);
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!valid || problem !== null) return;
+    setLink(recoveryRequestLink({ chainId, account: f.account, recovery: getAddress(typed.trim()) }));
+    setCopied(false);
+  };
+  return (
+    <div data-testid="vault-safety-recovery">
+      <h3>{text('recovery.sectionTitle')}</h3>
+      <p className="tier-b">{text('recovery.lead')}</p>
+      {r === null ? (
+        <p className="tier-a" data-testid="vault-safety-recovery-state" data-state="unread">
+          {text('recovery.unreadCard')}
+        </p>
+      ) : (
+        <>
+          {r.inForce !== null && (
+            <p className="tier-a" data-testid="vault-safety-recovery-state" data-state="in-force">
+              {format('recovery.inForce', { address: r.inForce })}
+            </p>
+          )}
+          {r.pending !== null && (
+            <p className="tier-a" data-testid="vault-safety-recovery-pending" data-state="pending">
+              {format('recovery.pending', { address: r.pending, at: formatUtc(r.pendingAt) })}
+            </p>
+          )}
+          {r.pending !== null && !busy && (
+            <p className="actions">
+              <button type="button" className="btn" onClick={onCancel} data-testid="vault-safety-recovery-cancel">
+                {text('recovery.cancel')}
+              </button>
+            </p>
+          )}
+          {!hasRecovery(r) && (
+            <p className="tier-a" data-testid="vault-safety-recovery-state" data-state="none">
+              {text(enabled ? 'recovery.first' : 'recovery.none')}
+            </p>
+          )}
+        </>
+      )}
+      {r !== null && !r.recovered && f.vault === null && <p className="tier-b">{text('recovery.needsVault')}</p>}
+      {r !== null && !r.recovered && f.vault !== null && !busy && !asking && (
+        <p className="actions">
+          <button type="button" className="btn" onClick={() => setAsking(true)} data-testid="vault-safety-recovery-choose">
+            {text(r.inForce !== null || r.pending !== null ? 'recovery.change' : 'recovery.choose')}
+          </button>
+        </p>
+      )}
+      {asking && f.vault !== null && (
+        <form className="partial-form" onSubmit={submit} noValidate data-testid="vault-safety-recovery-form">
+          <FormField label={text('recovery.addressLabel')} hint={text('recovery.addressHint')} error={error}>
+            {({ id, describedBy, invalid }) => (
+              <input
+                id={id}
+                type="text"
+                inputMode="text"
+                autoComplete="off"
+                spellCheck={false}
+                value={typed}
+                aria-describedby={describedBy}
+                aria-invalid={invalid}
+                onChange={(e) => {
+                  setTyped(e.target.value);
+                  setLink(null);
+                }}
+                data-testid="vault-safety-recovery-address"
+              />
+            )}
+          </FormField>
+          <div className="row-actions">
+            <button type="submit" className="btn btn-primary" disabled={!valid || problem !== null} data-testid="vault-safety-recovery-link-make">
+              {text('recovery.makeLink')}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                setAsking(false);
+                setTyped('');
+                setLink(null);
+              }}
+            >
+              {text('flow.cancel')}
+            </button>
+          </div>
+          {link !== null && (
+            <>
+              <p className="tier-b">{format('recovery.sendLink', { address: getAddress(typed.trim()) })}</p>
+              <textarea readOnly value={link} rows={3} aria-label={text('book.copyLink')} data-testid="vault-safety-recovery-link" onFocus={(e) => e.currentTarget.select()} />
+              <p className="actions">
+                <button type="button" className="btn" onClick={() => void copyText(link).then(setCopied)}>
+                  {text(copied ? 'book.copied' : 'book.copyLink')}
+                </button>
+              </p>
+              <p className="tier-b">{text('recovery.waitAnswer')}</p>
+            </>
+          )}
+        </form>
+      )}
+    </div>
+  );
+}
+
+const PROBLEM = {
+  self: 'recovery.problemSelf',
+  vault: 'recovery.problemVault',
+  protocol: 'recovery.problemProtocol',
+  current: 'recovery.problemCurrent',
+} as const;

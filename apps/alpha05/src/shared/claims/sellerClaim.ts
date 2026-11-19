@@ -17,7 +17,7 @@
  * the seller's part of it is stated as decided then.
  */
 import { parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
-import { AdminFacetABI, ClaimFacetABI, LoanFacetABI, SellerClaimFacetABI } from '@vaipakam/contracts/abis';
+import { AdminFacetABI, ClaimViewFacetABI, LoanFacetABI, SellerClaimFacetABI } from '@vaipakam/contracts/abis';
 import type { CopyAccess } from '../copy/useCopy';
 import { closed, OPEN, unknownVerdict, type Refusal, type Verdict } from '../eligibility/types';
 import { treasuryShareBps, type LoanDetails } from '../positions/loanView';
@@ -30,7 +30,7 @@ type Hex = `0x${string}`;
 
 export const SELLER = SellerClaimFacetABI as Abi;
 const LOAN = LoanFacetABI as Abi;
-const CLAIM = ClaimFacetABI as Abi;
+const CLAIM = ClaimViewFacetABI as Abi;
 const ADMIN = AdminFacetABI as Abi;
 
 /** `LibVaipakam.LoanStatus`. */

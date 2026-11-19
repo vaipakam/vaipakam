@@ -16,7 +16,9 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 /** `vaultOwner` is a wallet no loan scenario touches: the protected-account
  *  spec turns protection ON for it, which would delay every payout of a
- *  shared role and so change what every later spec saw.
+ *  shared role and so change what every later spec saw. `vaultRecovery` is
+ *  its recovery address (#3246 part 2): it only signs the proof, so it must
+ *  hold no other role on that account.
  *
  *  `rewardLender` / `rewardBorrower` are the two sides of the claim-horizon
  *  drive's one loan (spec 54, #3207). Theirs are the only reward entries on
@@ -29,6 +31,7 @@ export type Role =
   | 'newLender'
   | 'newBorrower'
   | 'vaultOwner'
+  | 'vaultRecovery'
   | 'rewardLender'
   | 'rewardBorrower';
 export const ROLES: Role[] = [
@@ -37,6 +40,7 @@ export const ROLES: Role[] = [
   'newLender',
   'newBorrower',
   'vaultOwner',
+  'vaultRecovery',
   'rewardLender',
   'rewardBorrower',
 ];

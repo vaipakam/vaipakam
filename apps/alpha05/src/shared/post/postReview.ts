@@ -24,7 +24,8 @@ import type { CopyAccess, CopyKey } from '../copy/useCopy';
 import { refusalFromError, revertArgs, UNRECOGNISED } from '../eligibility/refusal';
 import { readAssetClass, type AssetClass } from '../offers/assets';
 import { shortfall } from '../offers/model';
-import { CONFIG, ORACLE, readGraceSeconds, readLifBps, readTreasuryFeeBps, readVault, readWalletFunds, tokenAcceptsApproval, type WalletFunds } from '../offers/reads';
+import { CONFIG, ORACLE, readGraceSeconds, readTreasuryFeeBps, readVault, readWalletFunds, tokenAcceptsApproval, type WalletFunds } from '../offers/reads';
+import { readLifTerms, sameLifTerms, type LifTerms } from '../offers/initiationFee';
 import { assetName, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { askThrough } from '../tx/simulate';
 import { chainValidUntil } from '../tx/deadline';
@@ -100,7 +101,8 @@ export interface PostReview {
   /** #3358: whether the pair can be priced for the guard the post arms;
    *  null when it arms none. */
   guardPriced: boolean | null;
-  lifBps: bigint;
+  /** The initiation fee's term rule (#3649). */
+  lif: LifTerms;
   /** A lending offer's protocol share of interest, today's setting (the
    *  loan fixes the share in force when it opens); null for a request, or
    *  when it could not be read. */
@@ -310,12 +312,12 @@ export async function readPostReview(own: OwnStateClient, diamond: Hex, draft: P
   const params = createParams(parsed, pair, draft.expiresAt, draft.side);
   const leg = pair.leg;
   const stake = stakeOf(draft.side, parsed, pair);
-  const [lendingClass, collateralClass, maxDurationDays, graceSeconds, lifBps, vault, held, protocolShareBps] = await Promise.all([
+  const [lendingClass, collateralClass, maxDurationDays, graceSeconds, lif, vault, held, protocolShareBps] = await Promise.all([
     r<AssetClass>((c) => readAssetClass(c, diamond, pair.lending)),
     r<AssetClass>((c) => readAssetClass(c, diamond, pair.collateral)),
     r<bigint>((c) => readMaxDurationDays(c, diamond)),
     r<bigint>((c) => readGraceSeconds(c, diamond, BigInt(parsed.durationDays))),
-    r<bigint>((c) => readLifBps(c, diamond)),
+    r<LifTerms>((c) => readLifTerms(c, diamond)),
     r<Hex>((c) => readVault(c, diamond, account)),
     leg.kind === 'erc721'
       ? r<Erc721State>((c) => readErc721(c, pair.collateral, leg.tokenId, account, diamond))
@@ -405,7 +407,7 @@ export async function readPostReview(own: OwnStateClient, diamond: Hex, draft: P
     periodGraceSeconds,
     tariff,
     guardPriced,
-    lifBps,
+    lif,
     protocolShareBps: protocolShareBps as bigint | null,
     vault,
     holding,
@@ -539,7 +541,7 @@ export function changedBetween(a: PostReview, b: PostReview, copy: Pick<CopyAcce
   if (
     a.graceSeconds !== b.graceSeconds ||
     a.periodGraceSeconds !== b.periodGraceSeconds ||
-    a.lifBps !== b.lifBps ||
+    !sameLifTerms(a.lif, b.lif) ||
     a.maxDurationDays !== b.maxDurationDays ||
     a.protocolShareBps !== b.protocolShareBps
   )
@@ -582,17 +584,18 @@ export function ltvText(l: LtvRead, copy: Pick<CopyAccess, 'text' | 'format'>, s
  *  an offer); none for a token leg, whose token is checked by its id. */
 export interface PostFormInputs {
   maxDurationDays: bigint;
-  lifBps: bigint;
+  /** The initiation fee's term rule (#3649). */
+  lif: LifTerms;
   balance: bigint | null;
 }
 
 export async function readPostFormInputs(client: PublicClient, diamond: Hex, account: Hex, stakeAsset: Hex | null): Promise<PostFormInputs> {
-  const [maxDurationDays, lifBps, balance] = await Promise.all([
+  const [maxDurationDays, lif, balance] = await Promise.all([
     readMaxDurationDays(client, diamond),
-    readLifBps(client, diamond),
+    readLifTerms(client, diamond),
     stakeAsset !== null ? readWalletFunds(client, stakeAsset, account, diamond).then((f) => f.balance) : Promise.resolve(null),
   ]);
-  return { maxDurationDays, lifBps, balance };
+  return { maxDurationDays, lif, balance };
 }
 
 /** The collateral as the review and the outcome name it: "NFT #7 of vRENT"

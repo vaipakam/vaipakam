@@ -240,6 +240,38 @@ export interface DeploymentFacets {
   signedOfferMatchFacet?: HexAddress;
   /** #3410 — the loan clock's disclosure, split off LoanFacet. */
   loanClockFacet?: HexAddress;
+  /** Instant market §8 — the common ledger. */
+  marketLedgerFacet?: HexAddress;
+  /** #3656 — the instant market: borrower entry, settings and slot consents. */
+  instantMarketFacet?: HexAddress;
+  /** #3656 — one instant-borrow fill (Diamond-internal). */
+  instantFillFacet?: HexAddress;
+  /** #3656 §7 — a lender's takeover at face value into another slot. */
+  instantTakeoverFacet?: HexAddress;
+  /** #3328 — signed-offer / intent-slice materialization (Diamond-internal). */
+  offerMaterializeFacet?: HexAddress;
+  /** #3328 — NFT collection offers. */
+  collectionOfferFacet?: HexAddress;
+  /** #3344 — a protected account's Ready balance. */
+  readyBalanceFacet?: HexAddress;
+  feeLevelsFacet?: HexAddress;
+  /** #3669 — a refused settlement leg's park and release. */
+  settlementLegFacet?: HexAddress;
+  /** #3246 part 2 — the clawback to a protected account's recovery address. */
+  recoveryClawbackFacet?: HexAddress;
+  /** #3685 — the new-loan init-LTV cap host and collateral concentration. */
+  collateralConcentrationFacet?: HexAddress;
+  /** #3685 — the collateral-lien entries, split off EncumbranceMutateFacet. */
+  collateralLienFacet?: HexAddress;
+  /** #3681 — standing instructions and the loan reserve. */
+  standingInstructionFacet?: HexAddress;
+  /** The claim reads, split off claimFacet along its read / write seam. */
+  claimViewFacet?: HexAddress;
+  /** The standing-intent reads, split off lenderIntentFacet the same way. */
+  lenderIntentViewFacet?: HexAddress;
+  integratorFacet?: HexAddress;
+  standingOfferCheckFacet?: HexAddress;
+  referralFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
   /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */
@@ -265,10 +297,11 @@ export interface Deployment {
    *  Optional until each chain's next fresh deploy writes it. */
   vaultBeacon?: HexAddress;
   /** #3205 — the PositionNFT: the ownership record of every position
-   *  (owners, approvals, transfers, the holder lock). Absent on a chain whose
-   *  Diamond predates it, where the Diamond itself is still the position
-   *  NFT; read through `positionNftAddress`. Optional until each chain's
-   *  next fresh deploy writes it. */
+   *  (owners, approvals, transfers, the holder lock). Typed optional only
+   *  because a record written before the deploy that introduced it lacks it;
+   *  every position-NFT reader refuses such a record
+   *  (`@vaipakam/lib/positionNft`'s `positionNftSurface`, #3321) rather than
+   *  reading the Diamond in its place. */
   positionNFT?: HexAddress;
   /** #3272 — the ProtocolRegistry: the delayed, Timelock-owned endpoints the
    *  Diamond and every vault share (the price guard first). Optional until
@@ -280,11 +313,18 @@ export interface Deployment {
   /** #3379 B2 — the protected-mode code every vault delegatecalls; fixed in
    *  the vault code. */
   vaultProtection?: HexAddress;
+  /** #3246 part 2 — the recovery-address and clawback code the protected-mode
+   *  code delegatecalls; fixed in it (`VaultProtection.RECOVERY`). */
+  vaultRecovery?: HexAddress;
   /** #3272 — the PriceGuard: the one price source the Diamond and every
    *  vault read, through the registry's `PRICE_GUARD` pointer (read the
    *  pointer, not this key, to find the guard in force). Optional until each
    *  chain's next fresh deploy writes it. */
   priceGuard?: HexAddress;
+  /** #3437 — the PriceGuardReader whose code answers the guard's price
+   *  reads, over the guard's storage. Fixed in the guard's code: a new
+   *  reader means a new guard. Recorded so the pair is visible together. */
+  priceGuardReader?: HexAddress;
   treasury: HexAddress;
   admin: HexAddress;
   facets: DeploymentFacets;
@@ -577,15 +617,4 @@ export function getDeployment(
 ): Deployment | undefined {
   if (chainId == null) return undefined;
   return DEPLOYMENTS[chainId];
-}
-
-/** #3205 — the contract that holds a chain's position NFTs: its
- *  `positionNFT` when the deployment records one, otherwise the Diamond
- *  itself, which was the position NFT before #3205. Both answer the same
- *  ERC-721 surface (owners, approvals, transfers, enumeration), so a read
- *  or a transfer aimed here works on either. A TEMPORARY bridge for the
- *  chains not yet freshly deployed past #3205; remove the fallback once
- *  every deployment records `positionNFT`. */
-export function positionNftAddress(d: Pick<Deployment, 'diamond' | 'positionNFT'>): HexAddress {
-  return d.positionNFT ?? d.diamond;
 }

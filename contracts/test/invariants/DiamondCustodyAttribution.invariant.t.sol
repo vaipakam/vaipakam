@@ -7,6 +7,7 @@ import {CustodyInvariantBase} from "./CustodyInvariantBase.sol";
 import {CustodyHandler} from "./CustodyHandler.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../../src/facets/ClaimViewFacet.sol";
 import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {MetricsFacet} from "../../src/facets/MetricsFacet.sol";
@@ -155,7 +156,7 @@ contract DiamondCustodyAttributionInvariant is CustodyInvariantBase {
         );
         address fc = handler.collateralOf(fb[0]);
         (uint256 row, uint256 legacyF) = FallbackCustodyFacet(address(diamond)).getFallbackCustody(fb[0]);
-        (uint256 l, uint256 tr, uint256 b,,, bool active,) = ClaimFacet(address(diamond)).getFallbackSnapshot(fb[0]);
+        (uint256 l, uint256 tr, uint256 b,,, bool active,) = ClaimViewFacet(address(diamond)).getFallbackSnapshot(fb[0]);
         assertTrue(active, "fixture-live: the snapshot is active");
         assertGt(row, 0, "fixture-live: fallback custody exists");
         assertEq(row, l + tr + b, "all of it is the vault-held custody row");
@@ -392,7 +393,7 @@ contract DiamondCustodyAttributionInvariant is CustodyInvariantBase {
                 assertEq(row, 0, "V3: a loan outside FallbackPending holds no fallback custody row");
                 continue;
             }
-            (uint256 l, uint256 tr, uint256 b,,, bool active,) = ClaimFacet(address(diamond)).getFallbackSnapshot(id);
+            (uint256 l, uint256 tr, uint256 b,,, bool active,) = ClaimViewFacet(address(diamond)).getFallbackSnapshot(id);
             if (!active) continue;
             assertEq(row, l + tr + b, "V3: the custody row equals its active snapshot's total");
             (uint256 lien,) = TestMutatorFacet(address(diamond)).getLoanCollateralLienAmount(id);

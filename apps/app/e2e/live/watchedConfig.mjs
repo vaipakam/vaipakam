@@ -31,6 +31,7 @@
 import configFacetAbi from '@vaipakam/contracts/abis/ConfigFacet.json' with { type: 'json' };
 import { toFunctionSelector } from 'viem';
 
+import { lifTermsOf } from './initiationFeeRule.mjs';
 import { SET_PAYOFF_PERMIT_SIGNATURE } from './refinanceExpected.mjs';
 
 /** A picker for one named output of `getProtocolConfigBundle`, by its
@@ -66,7 +67,9 @@ export const WATCHED_CONFIG = Object.freeze([
   { key: 'partialFill', fn: 'getPartialFillEnabled' },
   // The fees both reviews quote (and the borrower's reserve is sized with).
   { key: 'treasuryFeeBps', fn: 'getFeesConfig', pick: (r) => r[0] },
-  { key: 'lifBps', fn: 'getLoanInitiationFeeBps' },
+  // The loan initiation fee's four term-rule settings (#3649), never the
+  // base rate alone: the fee on a loan longer than the base term is higher.
+  { key: 'lifTerms', fn: 'getLoanInitiationFeeTerms', pick: lifTermsOf },
   // The grace window the reviews show and the payoff permit's deadline is
   // clamped to.
   { key: 'graceBuckets', fn: 'getGraceBuckets' },
@@ -133,7 +136,7 @@ export const STATE_READS = Object.freeze({
   checkRefinanceRequest: 'one refinance request’s standing against its loan (reverts when it cannot be taken)',
   getRefinanceRequest: 'one loan’s recorded refinance request',
   // #3295: what the app reads for the payoff permit — computed from the loan
-  // and the watched LIF rate, and, for a posted request, its attached permit.
+  // and the watched LIF term settings, and, for a posted request, its attached permit.
   getRefinancePayoff: 'one loan’s refinance payoff and wallet share, and the payoff permit attached to one request',
   // riskGateReadiness.mjs (#3231): one party's standing under the risk-access
   // gate. The gate SWITCH itself is watched config (riskAccessGate).

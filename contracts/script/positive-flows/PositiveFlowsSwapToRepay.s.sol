@@ -8,6 +8,7 @@ import {LibSwap} from "../../src/libraries/LibSwap.sol";
 import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../../src/facets/ClaimViewFacet.sol";
 import {SwapToRepayFacet} from "../../src/facets/SwapToRepayFacet.sol";
 import {SwapToRepayPartialFacet} from "../../src/facets/SwapToRepayPartialFacet.sol";
 import {FixedRateSwapAdapter} from "../mocks/FixedRateSwapAdapter.sol";
@@ -119,14 +120,14 @@ contract PositiveFlowsSwapToRepay is PositiveFlowsStaged {
             "PF-118: exactly the sized collateral should be sold");
         uint256 surplus = usdc.balanceOf(borrower) - borrowerBefore;
         uint256 treasuryShare = _treasuryUsdc() - treasuryBefore;
-        (address lenderAsset, uint256 lenderShare,,,,,,) = ClaimFacet(diamond).getClaimable(loanId, true);
+        (address lenderAsset, uint256 lenderShare,,,,,,) = ClaimViewFacet(diamond).getClaimable(loanId, true);
         require(lenderAsset == address(usdc), "PF-118: the lender is repaid in the lending asset");
         require(treasuryShare > 0, "PF-118: a full-term payoff should carry a treasury share");
         require(lenderShare + treasuryShare == required, "PF-118: the lender's and treasury's shares should be the debt");
         require(_vaultBalance(usdc, lender) - lenderVaultBefore == lenderShare,
             "PF-118: the lender's share should land in the lender's vault");
         require(surplus == proceeds - required, "PF-118: the proceeds above the debt should reach the borrower");
-        (address collAsset, uint256 residual,,,,,,) = ClaimFacet(diamond).getClaimable(loanId, false);
+        (address collAsset, uint256 residual,,,,,,) = ClaimViewFacet(diamond).getClaimable(loanId, false);
         require(collAsset == address(weth) && residual == COLLATERAL_AMOUNT - toSell,
             "PF-118: the unsold collateral should be the borrower's claim");
         require(collateralVaultBefore - _vaultBalance(weth, borrower) == toSell,
@@ -134,8 +135,8 @@ contract PositiveFlowsSwapToRepay is PositiveFlowsStaged {
         console.log("Lender / treasury / borrower surplus:", lenderShare, treasuryShare, surplus);
 
         _claimBoth(lenderKey, borrowerKey, loanId);
-        (,, bool lenderClaimed,,,,,) = ClaimFacet(diamond).getClaimable(loanId, true);
-        (,, bool borrowerClaimed,,,,,) = ClaimFacet(diamond).getClaimable(loanId, false);
+        (,, bool lenderClaimed,,,,,) = ClaimViewFacet(diamond).getClaimable(loanId, true);
+        (,, bool borrowerClaimed,,,,,) = ClaimViewFacet(diamond).getClaimable(loanId, false);
         require(lenderClaimed, "PF-118: the lender claims its share");
         require(borrowerClaimed, "PF-118: the borrower claims the unsold collateral");
     }

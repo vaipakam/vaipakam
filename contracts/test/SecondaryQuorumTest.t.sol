@@ -18,6 +18,7 @@ import {IFeedRegistryPairBase} from "../src/interfaces/IFeedRegistryPairBase.sol
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibTestPriceGuard} from "./helpers/LibTestPriceGuard.sol";
 import {PriceGuard} from "../src/oracle/PriceGuard.sol";
+import {PriceGuardState} from "../src/oracle/PriceGuardState.sol";
 
 /**
  * @title SecondaryQuorumTest
@@ -125,9 +126,9 @@ contract SecondaryQuorumTest is Test {
         // #3272 part 2 - the Diamond prices through a guard keyed by these
         // denominators, named by the registry it records.
         LibTestPriceGuard.installWith(address(diamond), owner, LibTestPriceGuard.identity(mockDenom, LibTestPriceGuard.ETH));
-        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.FeedRegistry, mockRegistry);
-        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.Weth, mockWeth);
-        LibTestPriceGuard.setAddress(address(diamond), PriceGuard.Kind.EthNumeraireFeed, mockEthUsdFeed);
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.FeedRegistry, mockRegistry);
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.Weth, mockWeth);
+        LibTestPriceGuard.setAddress(address(diamond), PriceGuardState.Kind.EthNumeraireFeed, mockEthUsdFeed);
 
         // Default ETH/USD: $2000, 8 decimals, fresh.
         _mockFeedFull(mockEthUsdFeed, int256(2000e8), 8);
@@ -274,15 +275,15 @@ contract SecondaryQuorumTest is Test {
     }
 
     function _enableTellor() internal {
-        LibTestPriceGuard.setSource(address(diamond), PriceGuard.Source.Tellor, mockTellor);
+        LibTestPriceGuard.setSource(address(diamond), PriceGuardState.Source.Tellor, mockTellor);
     }
 
     function _enableApi3() internal {
-        LibTestPriceGuard.setSource(address(diamond), PriceGuard.Source.Api3, mockApi3);
+        LibTestPriceGuard.setSource(address(diamond), PriceGuardState.Source.Api3, mockApi3);
     }
 
     function _enableDia() internal {
-        LibTestPriceGuard.setSource(address(diamond), PriceGuard.Source.Dia, mockDia);
+        LibTestPriceGuard.setSource(address(diamond), PriceGuardState.Source.Dia, mockDia);
     }
 
     function _readPrice() internal view returns (uint256, uint8) {
@@ -661,7 +662,7 @@ contract SecondaryQuorumTest is Test {
         assertEq(price, CHAINLINK_PRICE_8DEC);
 
         // Tighten to 100bps (1%) — same 2%-off data now disagrees.
-        LibTestPriceGuard.setUint(address(diamond), PriceGuard.Kind.SecondaryMaxDeviationBps, 100);
+        LibTestPriceGuard.setUint(address(diamond), PriceGuardState.Kind.SecondaryMaxDeviationBps, 100);
         vm.expectRevert(OracleFacet.OraclePriceDivergence.selector);
         OracleFacet(address(diamond)).getAssetPrice(mockAsset);
     }
@@ -683,7 +684,7 @@ contract SecondaryQuorumTest is Test {
         (uint256 price, ) = _readPrice();
         assertEq(price, CHAINLINK_PRICE_8DEC);
 
-        LibTestPriceGuard.setUint(address(diamond), PriceGuard.Kind.SecondaryMaxStaleness, 14400); // 4h
+        LibTestPriceGuard.setUint(address(diamond), PriceGuardState.Kind.SecondaryMaxStaleness, 14400); // 4h
         (uint256 price2, ) = _readPrice();
         assertEq(price2, CHAINLINK_PRICE_8DEC);
     }
@@ -875,7 +876,7 @@ contract SecondaryQuorumTest is Test {
     ///         has stood undisputed for the buffer, it counts.
     function testTellorBuffer_freshSubmissionIsNotConsumed() public {
         TellorRecordMock tellor = new TellorRecordMock();
-        LibTestPriceGuard.setSource(address(diamond), PriceGuard.Source.Tellor, address(tellor));
+        LibTestPriceGuard.setSource(address(diamond), PriceGuardState.Source.Tellor, address(tellor));
         _enableApi3();
         _mockApi3Disagree();
         tellor.submit(SECONDARY_AGREE_18DEC, block.timestamp);
@@ -894,7 +895,7 @@ contract SecondaryQuorumTest is Test {
 
     function testTellorBuffer_readsTheNewestValueOutsideTheBuffer() public {
         TellorRecordMock tellor = new TellorRecordMock();
-        LibTestPriceGuard.setSource(address(diamond), PriceGuard.Source.Tellor, address(tellor));
+        LibTestPriceGuard.setSource(address(diamond), PriceGuardState.Source.Tellor, address(tellor));
         // An agreeing value 30 minutes old, then a disagreeing one 5 minutes
         // old: the buffer hides the newer one, so Tellor agrees.
         tellor.submit(SECONDARY_AGREE_18DEC, block.timestamp - 30 minutes);

@@ -1185,6 +1185,12 @@ export interface ProtocolKnobValues {
   tier1LiqDiscountBps?: string;
   tier2LiqDiscountBps?: string;
   tier3LiqDiscountBps?: string;
+  /** #3649 — the loan initiation fee's term rule beyond the base rate
+   *  (the bundle's `loanInitiationFeeBps`): the base term and one-year
+   *  point in days, the yearly rate in bps, effective values. */
+  lifBaseTermDays?: string;
+  lifYearlyBps?: string;
+  lifYearDays?: string;
   // #3272 part 2 — the pricing settings, read from the price guard
   // (`PRICE_GUARD_KNOB_GETTERS`): its governance, its fixed numeraire
   // identity, its chain wiring and its cross-checks.

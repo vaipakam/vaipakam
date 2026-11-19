@@ -869,6 +869,17 @@
   },
   {
     "type": "error",
+    "name": "CollectionParentNotFillable",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "CommitmentDayNotArmed",
     "inputs": [
       {
@@ -2505,6 +2516,11 @@
   {
     "type": "error",
     "name": "PositionNFTNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PositionTokenNotAccepted",
     "inputs": []
   },
   {
@@ -5076,6 +5092,11 @@
   {
     "type": "error",
     "name": "VaultDepositFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultMoveOutsideGuard",
     "inputs": []
   },
   {

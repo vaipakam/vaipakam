@@ -33,7 +33,7 @@
  * block, then the protocol's own dry run of the very call is asked.
  */
 import { parseEventLogs, type Abi, type Log, type PublicClient } from 'viem';
-import { AdminFacetABI, PositionNFTABI, ProtectedAccountFacetABI, VaultFactoryFacetABI, VaultPayoutFacetABI, VaultProtectionABI } from '@vaipakam/contracts/abis';
+import { AdminFacetABI, PositionNFTABI, ProtectedAccountFacetABI, VaultFactoryFacetABI, VaultPayoutFacetABI, VaultProtectionABI, VaultRecoveryABI } from '@vaipakam/contracts/abis';
 import { directAuth, protectionCall } from '@vaipakam/lib/protectedAccountView';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess } from '../copy/useCopy';
@@ -46,6 +46,7 @@ import { askThrough } from '../tx/simulate';
 import { formatSpan, formatUtc } from '../ui/format';
 import { positionNftForDiamond } from '../positions/positionNft';
 import { readProtectedRecord, VAULT } from './payout';
+import { answerFits, hasRecovery, readRecovery, recoveryCall, recoveryCancelCall, type RecoveryProof, type RecoveryState } from './recovery';
 
 type Hex = `0x${string}`;
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
@@ -55,9 +56,9 @@ const PAYOUT = VaultPayoutFacetABI as Abi;
 const ADMIN = AdminFacetABI as Abi;
 const POSITION_NFT = PositionNFTABI as Abi;
 const FACTORY = VaultFactoryFacetABI as Abi;
-const VAULT_PROTECTION = VaultProtectionABI as Abi;
+const VAULT_PROTECTION = [...(VaultProtectionABI as Abi), ...(VaultRecoveryABI as Abi)] as Abi;
 
-export type SafetyAction = 'enable' | 'lock' | 'unlock' | 'finalize';
+export type SafetyAction = 'enable' | 'lock' | 'unlock' | 'finalize' | 'recovery' | 'recoveryCancel';
 
 /** The `VaultProtection` function (or, for a due co-sign switch-off only,
  *  the Diamond's) each action's main step calls. */
@@ -66,10 +67,13 @@ export const SAFETY_FUNCTION = {
   lock: 'lock',
   unlock: 'requestUnlock',
   finalize: 'finalizeSettings',
+  recovery: 'requestRecoveryAddress',
+  recoveryCancel: 'cancelRecoveryAddress',
 } as const satisfies Record<SafetyAction, string>;
 
-/** `ProtectedAccountFacet.CHANGE_*`. */
-export const CHANGE_KIND = { disable: 1, lowerDelay: 2, nftOff: 3, cosignOff: 4, unlock: 5 } as const;
+/** `ProtectedAccountFacet.CHANGE_*` (3, NFT protection off, retired with
+ *  #3205: NFT protection is the PositionNFT holder lock). */
+export const CHANGE_KIND = { disable: 1, lowerDelay: 2, cosignOff: 4, unlock: 5 } as const;
 export type PendingChange = keyof typeof CHANGE_KIND;
 
 /** The account's protected mode as `getProtectedAccount` returns it (times
@@ -77,10 +81,9 @@ export type PendingChange = keyof typeof CHANGE_KIND;
 export interface SafetyMode {
   enabled: boolean;
   locked: boolean;
-  /** Whether the account's position NFTs are protected: on a chain with the
-   *  standalone PositionNFT (#3205), its holder lock, read at the token
-   *  contract; on a pre-#3205 Diamond, the mode's own NFT flag. Null when
-   *  the token contract gave no answer. */
+  /** Whether the account's position NFTs are protected: the PositionNFT
+   *  holder lock (#3205), read at the token contract. Null when the token
+   *  contract gave no answer. */
   nftLock: boolean | null;
   /** When a requested holder unlock at the PositionNFT can be applied (0 =
    *  none). Applied at the token contract after the lock's delay, never by
@@ -93,10 +96,6 @@ export interface SafetyMode {
   pendingDelayAt: number;
   pendingDisableAt: number;
   pendingUnlockAt: number;
-  /** A pre-#3205 Diamond's pending NFT-protection switch-off, which
-   *  `finalizeSettingChanges` applies (0 = none, and always 0 where the
-   *  PositionNFT's holder lock protects the NFTs). */
-  pendingNftOffAt: number;
   pendingCosignOffAt: number;
   cooldownUntil: number;
   lockedAt: number;
@@ -121,26 +120,28 @@ export interface SafetyFacts {
   openRows: number | null;
   /** The block's time in unix seconds; null when unread. */
   chainNow: number | null;
+  /** #3246 part 2 — the account's recovery address; none without a vault;
+   *  null when unread. */
+  recovery: RecoveryState | null;
   readAt: number;
 }
 
-/** The account's protected record (`protectedAccountFromVault`). On a
- *  pre-#3205 Diamond the NFT flag was `retiredProtectNfts` /
- *  `protectNfts`. */
+/** No recovery address: the state of an account without a vault. */
+export const NO_RECOVERY: RecoveryState = { inForce: null, pending: null, pendingAt: 0, recovered: false };
+
+/** The account's protected record (`protectedAccountFromVault`). */
 type RawMode = Record<string, boolean | number | bigint | string>;
 
-/** The PositionNFT holder lock's answer, or null when unread; 'legacy' on a
- *  pre-#3205 Diamond, whose mode carries the flag itself. */
-type NftLockRead = { locked: boolean; unlockAt: number } | 'legacy' | null;
+/** The PositionNFT holder lock's answer, or null when unread. */
+type NftLockRead = { locked: boolean; unlockAt: number } | null;
 
 export function toMode(r: RawMode, lock: NftLockRead): SafetyMode {
   const n = (v: unknown) => Number(v as number | bigint);
-  const legacy = lock === 'legacy';
   return {
     enabled: r.enabled === true,
     locked: r.locked === true,
-    nftLock: legacy ? (r.retiredProtectNfts ?? r.protectNfts) === true : lock === null ? null : lock.locked,
-    nftUnlockAt: legacy || lock === null ? 0 : lock.unlockAt,
+    nftLock: lock === null ? null : lock.locked,
+    nftUnlockAt: lock === null ? 0 : lock.unlockAt,
     requireCosign: r.requireCosign === true,
     retired: r.retired === true,
     delaySeconds: n(r.delaySeconds),
@@ -148,7 +149,6 @@ export function toMode(r: RawMode, lock: NftLockRead): SafetyMode {
     pendingDelayAt: n(r.pendingDelayAt),
     pendingDisableAt: n(r.pendingDisableAt),
     pendingUnlockAt: n(r.pendingUnlockAt),
-    pendingNftOffAt: legacy ? n(r.retiredPendingNftOffAt ?? r.pendingNftOffAt) : 0,
     pendingCosignOffAt: n(r.pendingCosignOffAt),
     cooldownUntil: n(r.cooldownUntil),
     lockedAt: n(r.lockedAt),
@@ -171,11 +171,9 @@ async function readMode(c: PublicClient, diamond: Hex, account: Hex, blockNumber
 }
 
 /** The account's position NFT protection: the PositionNFT's holder lock
- *  where the chain has the standalone token (#3205), or 'legacy' where the
- *  pre-#3205 Diamond keeps it in the mode itself. */
+ *  (#3205). */
 async function readNftLock(c: PublicClient, diamond: Hex, account: Hex, blockNumber: bigint): Promise<NftLockRead> {
   const surface = positionNftForDiamond(diamond);
-  if (surface.mode === 'legacy') return 'legacy';
   const l = await answerOrNull(
     c.readContract({ address: surface.nft, abi: POSITION_NFT, functionName: 'lockOf', args: [account], blockNumber }) as Promise<
       readonly [boolean, bigint, bigint, bigint, bigint]
@@ -196,6 +194,7 @@ export async function readSafetyFacts(c: PublicClient, diamond: Hex, account: He
     readSanctionsPosture(c, diamond, account, block.number),
     read<readonly bigint[]>(PAYOUT, 'getPendingPayoutIds', [account]),
   ]);
+  const recovery = vault === null ? (mode === null ? null : NO_RECOVERY) : await answerOrNull(readRecovery(c, vault, block.number));
   return {
     account,
     vault,
@@ -205,6 +204,7 @@ export async function readSafetyFacts(c: PublicClient, diamond: Hex, account: He
     frozen: frozenState(posture),
     openRows: ids === null ? null : ids.length,
     chainNow: Number(block.timestamp),
+    recovery,
     readAt: Date.now(),
   };
 }
@@ -218,7 +218,6 @@ export function safetyClock(f: Pick<SafetyFacts, 'chainNow' | 'readAt'>, nowMs: 
 export function pendingChanges(m: SafetyMode): { change: PendingChange; at: number }[] {
   const all: { change: PendingChange; at: number }[] = [
     { change: 'lowerDelay', at: m.pendingDelayAt },
-    { change: 'nftOff', at: m.pendingNftOffAt },
     { change: 'cosignOff', at: m.pendingCosignOffAt },
     { change: 'unlock', at: m.pendingUnlockAt },
     { change: 'disable', at: m.pendingDisableAt },
@@ -244,6 +243,8 @@ export interface SafetyReview {
   action: SafetyAction;
   /** `enable` only. */
   draft: SafetyDraft | null;
+  /** `recovery` only: the recovery wallet's signed answer. */
+  proof: RecoveryProof | null;
   facts: SafetyFacts;
   /** The changes due when read (`finalize` only). */
   due: PendingChange[];
@@ -270,8 +271,17 @@ const diamondStep = (abi: Abi, functionName: string, args: readonly unknown[]): 
  *  (#3379 B2). `account` is the connected wallet, which authorizes each
  *  vault write directly; `vault` is its vault (null: none yet); `due` the
  *  changes a `finalize` applies. */
-export function safetySteps(action: SafetyAction, account: Hex, vault: Hex | null, draft: SafetyDraft | null, due: readonly PendingChange[] = []): SafetyStep[] {
+export function safetySteps(
+  action: SafetyAction,
+  account: Hex,
+  vault: Hex | null,
+  draft: SafetyDraft | null,
+  due: readonly PendingChange[] = [],
+  proof: RecoveryProof | null = null,
+): SafetyStep[] {
   const auth = directAuth(account);
+  if (action === 'recovery') return proof === null ? [] : [{ to: 'vault', abi: VAULT, functionName: 'protect', args: [recoveryCall(proof, account)] }];
+  if (action === 'recoveryCancel') return [{ to: 'vault', abi: VAULT, functionName: 'protect', args: [recoveryCancelCall(account)] }];
   if (action === 'enable') {
     return [
       ...(vault === null ? [diamondStep(FACTORY, 'getOrCreateUserVault', [account])] : []),
@@ -295,16 +305,24 @@ export function stepCall(step: SafetyStep, diamond: Hex, vault: Hex) {
   return { address: step.to === 'vault' ? vault : diamond, abi: step.abi, functionName: step.functionName, args: step.args };
 }
 
-export async function readSafetyReview(own: OwnStateClient, diamond: Hex, action: SafetyAction, draft: SafetyDraft | null, identity: string, copy: Copy): Promise<SafetyReview> {
+export async function readSafetyReview(
+  own: OwnStateClient,
+  diamond: Hex,
+  action: SafetyAction,
+  draft: SafetyDraft | null,
+  proof: RecoveryProof | null,
+  identity: string,
+  copy: Copy,
+): Promise<SafetyReview> {
   const account = own.account;
   const facts = await own.read((c: PublicClient) => readSafetyFacts(c, diamond, account)).then((x) => x.value);
   const now = safetyClock(facts, Date.now());
   const due = action === 'finalize' && facts.mode !== null && facts.mode !== 'absent' && now !== null ? dueChanges(facts.mode, now) : [];
-  const base: SafetyReview = { identity, action, draft, facts, due, dryRun: null, readAt: Date.now() };
+  const base: SafetyReview = { identity, action, draft, proof, facts, due, dryRun: null, readAt: Date.now() };
   if (safetyBlockers(base, copy).length > 0) return base;
   // Only the first step can be asked on the current state: each later one
   // depends on the one before it having landed.
-  const first = safetySteps(action, account, facts.vault, draft, due)[0];
+  const first = safetySteps(action, account, facts.vault, draft, due, proof)[0];
   if (first === undefined || (first.to === 'vault' && facts.vault === null)) return base;
   const call = stepCall(first, diamond, facts.vault ?? diamond);
   const dry = await askThrough(own, (c) => c.simulateContract({ ...call, account }));
@@ -320,11 +338,23 @@ export function safetyBlockers(r: SafetyReview, copy: Copy): string[] {
   const m = f.mode;
   if (m === 'absent') return [text('safety.unavailable')];
   if (m !== null && m.retired) return [text('safety.retired')];
-  const pauseCloses = r.action !== 'lock';
+  const pauseCloses = r.action !== 'lock' && r.action !== 'recovery' && r.action !== 'recoveryCancel';
   if (pauseCloses && f.paused === true) return [text('safety.paused')];
-  if (r.action === 'enable') {
+  if (r.action === 'recovery') {
+    const p = r.proof;
+    if (p === null || !answerFits(p, p.chainId, p.diamond, f.account, f.vault)) return [text('recovery.proofOther')];
+    const now = safetyClock(f, Date.now());
+    if (now !== null && now > Number(p.expiry)) return [format('recovery.proofLapsed', { at: formatUtc(Number(p.expiry)) })];
+    if (f.recovery !== null && f.recovery.inForce !== null && f.recovery.inForce.toLowerCase() === p.recovery.toLowerCase())
+      return [text('recovery.alreadyInForce')];
+  } else if (r.action === 'recoveryCancel') {
+    // The vault takes a cancel whatever the mode, locked or not; only a
+    // pending address is needed. Unread is not none: the dry run decides.
+    if (f.vault === null || (f.recovery !== null && f.recovery.pending === null)) return [text('recovery.nothingPending')];
+  } else if (r.action === 'enable') {
     if (f.frozen === 'flagged') return [text('safety.flagged')];
     if (m !== null && m.enabled) return [text('safety.alreadyOn')];
+    if (f.recovery !== null && !hasRecovery(f.recovery)) return [text('recovery.first')];
     const d = r.draft?.delaySeconds ?? 0;
     if (f.bounds !== null && (d < f.bounds.min || d > f.bounds.max)) return [format('safety.delayOutOfBounds', { min: formatSpan(f.bounds.min), max: formatSpan(f.bounds.max) })];
   } else if (m !== null) {
@@ -346,12 +376,14 @@ export function safetyBlockers(r: SafetyReview, copy: Copy): string[] {
 }
 
 const modeKey = (m: SafetyFacts['mode']) => (m === null || m === 'absent' ? String(m) : JSON.stringify(m));
+const recoveryKey = (r: RecoveryState | null) => JSON.stringify(r);
 
 /** What a re-read found changed, in words, or null when nothing the review
  *  states moved. */
 export function safetyChanged(a: SafetyReview, b: SafetyReview, copy: Pick<CopyAccess, 'text'>): string | null {
   const { text } = copy;
   if (modeKey(a.facts.mode) !== modeKey(b.facts.mode)) return text('safety.changedMode');
+  if (recoveryKey(a.facts.recovery) !== recoveryKey(b.facts.recovery)) return text('recovery.changed');
   if (a.due.join() !== b.due.join()) return text('safety.changedDue');
   if (a.action === 'lock' && a.facts.openRows !== b.facts.openRows) return text('safety.changedRows');
   if (a.facts.bounds?.min !== b.facts.bounds?.min || a.facts.bounds?.max !== b.facts.bounds?.max) return text('safety.changedBounds');
@@ -365,7 +397,6 @@ type Args = Record<string, unknown>;
 /** The words for each change, as the card and the finish card name it. */
 export const CHANGE_WORDS = {
   lowerDelay: 'safety.changeLowerDelay',
-  nftOff: 'safety.changeNftOff',
   cosignOff: 'safety.changeCosignOff',
   unlock: 'safety.changeUnlock',
   disable: 'safety.changeDisable',
@@ -412,6 +443,16 @@ export function measureSafety(r: SafetyReview, logs: readonly Log[], diamond: He
   // protection is in force in the vault, and the card says the platform side
   // is still to be applied rather than reporting the whole action as undone.
   const platformPending: LegOutcome = { status: 'not-done', label: text('safety.legPlatform'), reason: text('safety.platformPending') };
+  if (r.action === 'recovery') {
+    const asked = findVault('RecoveryAddressRequested').find((e) => r.proof !== null && String(e.args.recovery ?? '').toLowerCase() === r.proof.recovery.toLowerCase());
+    if (!asked) return [{ status: 'not-done', label: text('recovery.title'), reason: text('recovery.notRecorded') }];
+    return [{ status: 'done', label: format('recovery.legAsked', { address: String(asked.args.recovery), at: formatUtc(BigInt(asked.args.at as bigint)) }) }];
+  }
+  if (r.action === 'recoveryCancel') {
+    const cancelled = findVault('RecoveryAddressCancelled')[0];
+    if (!cancelled) return [{ status: 'not-done', label: text('recovery.cancelTitle'), reason: text('recovery.cancelNotRecorded') }];
+    return [{ status: 'done', label: format('recovery.legCancelled', { address: String(cancelled.args.recovery) }) }];
+  }
   if (r.action === 'enable') {
     const on = applied.find((e) => e.args.enabled === true);
     const inVault = findVault('ProtectionEnabled')[0];

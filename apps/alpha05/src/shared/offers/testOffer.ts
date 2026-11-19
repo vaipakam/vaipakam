@@ -38,6 +38,7 @@ export function offer(over: Partial<StoredOffer> = {}): StoredOffer {
     refinanceTargetLoanId: 0n,
     parallelSaleOrderHash: `0x${'00'.repeat(32)}`,
     periodicInterestCadence: 0,
+    lifecycleFlex: 0,
     expiresAt: 0n,
     accepted: false,
     creatorFull: false,

@@ -65,6 +65,10 @@ library LibFeeEntitlement {
         uint256 principal,
         uint256 durationDays
     ) internal view returns (uint256 cStar, bool numeraireOk) {
+        // #3649 — deliberately the BASE rate, not the loan's term rate: C* is
+        // already base × term-in-years × K, linear in the term, and the term
+        // rate would scale it with the term twice (design thread decision
+        // 2026-11-16; `FeeLevelsDesign.md` §5). Do not switch it.
         uint256 baseLifTokenWei = (principal *
             LibVaipakam.cfgLoanInitiationFeeBps()) / LibVaipakam.BASIS_POINTS;
         (uint256 baseLifNumeraire18, bool feedOk) = _lifToNumeraire18(

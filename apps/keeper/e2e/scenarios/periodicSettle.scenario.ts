@@ -147,7 +147,18 @@ describe('periodicSettle on an Anvil chain', () => {
     expect(Number(ev.kind)).toBe(PERIODIC);
     expect(ev.debt).toBe(plan.debt);
     expect(ev.collateralSold).toBe(quoted);
-    expect(ev.lenderPaid).toBe(plan.debt);
+    // #3681: the periodic sale books through the one interest booking, which
+    // takes the treasury's share of the interest first, so the lender side
+    // receives the net and the two parts together are the debt recovered.
+    const booked = await sc.diamondEvents('InterestPaymentBooked', fromBlock);
+    expect(booked).toHaveLength(1);
+    const b = booked[0].args;
+    expect(b.loanId).toBe(loanId);
+    expect(b.gross).toBe(plan.debt);
+    expect(b.recovered).toBe(plan.debt);
+    expect(b.treasuryPaid).toBeGreaterThan(0n);
+    expect(ev.lenderPaid).toBe(b.lenderPaid);
+    expect((b.lenderPaid as bigint) + (b.treasuryPaid as bigint)).toBe(plan.debt);
     expect(ev.covered).toBe(true);
     expect((ev.keeper as Address).toLowerCase()).toBe(sc.address('keeper').toLowerCase());
     const tx = await sc.pub.getTransaction({ hash: sold[0].transactionHash });

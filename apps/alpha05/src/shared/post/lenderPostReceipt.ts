@@ -22,6 +22,7 @@ import type { Posture } from '../capability/types';
 import { figured, textValue, type Receipt, type ReceiptText } from '../receipt/types';
 import { exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { formatBps, formatSpan, formatUtc } from '../ui/format';
+import { lifRateText } from '../offers/initiationFee';
 import { pageHandoff } from '../../routes/pageMap';
 import { isRanged, lenderPostFigures, partCollateral, ZERO, type ParsedPost } from './postModel';
 import { ltvText, needsApproval, promptCount, stakeOfDraft, type PostReview } from './postReview';
@@ -45,7 +46,7 @@ export function lenderPostReceipt(r: PostReview, meta: TokenMetaMap | null, copy
   const shareBps = r.protocolShareBps;
   // A direct take borrows the whole amount (`acceptOffer` sizes a lending
   // offer's loan at its largest amount), so the figures are the whole amount's.
-  const f = lenderPostFigures(parsed.amountMax, parsed.rateBps, parsed.durationDays, r.lifBps, shareBps ?? 0n);
+  const f = lenderPostFigures(parsed.amountMax, parsed.rateBps, parsed.durationDays, r.lif, shareBps ?? 0n);
   const ranged = isRanged(parsed);
   const amount = (asset: Hex, value: bigint) => ({ kind: 'amount' as const, asset, amount: value });
   const textRow = (label: CopyKey, value: ReceiptText, binding: boolean) => ({ label: text(label), value: textValue(value), binding });
@@ -76,7 +77,7 @@ export function lenderPostReceipt(r: PostReview, meta: TokenMetaMap | null, copy
     // rate in force then and lowered by their discount tier: today's figure.
     { label: text(ranged ? 'lendOffer.rowBorrowerGetsWhole' : 'lendOffer.rowBorrowerGets'), value: amount(pair.lending, f.borrowerGets), binding: false },
     { label: text('lendAccept.rowFee'), value: amount(pair.lending, f.fee), binding: false },
-    textRow('accept.rowFeeRule', format('lendOffer.feeRule', { rate: formatBps(r.lifBps) }), false),
+    textRow('accept.rowFeeRule', format('lendOffer.feeRule', { rate: lifRateText(r.lif, parsed.durationDays) }), false),
     // With a schedule the figure is the whole term's interest, and the
     // instalments paid along the way count toward it.
     {

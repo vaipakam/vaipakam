@@ -518,6 +518,61 @@
   },
   {
     "type": "function",
+    "name": "requireActorMayTransact",
+    "inputs": [
+      {
+        "name": "actor",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "p",
+        "type": "tuple",
+        "internalType": "struct LibRiskAccess.PairId",
+        "components": [
+          {
+            "name": "lendAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "lendType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "lendTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "collType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "collTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "prepayAsset",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "revealRiskTermsBump",
     "inputs": [
       {
@@ -741,6 +796,24 @@
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      },
+      {
+        "name": "lendAsset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "collAsset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "usableFrom",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
       }
     ],
     "anonymous": false
@@ -862,6 +935,18 @@
         "type": "uint8",
         "indexed": false,
         "internalType": "uint8"
+      },
+      {
+        "name": "previousLevel",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "usableFrom",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
       }
     ],
     "anonymous": false
@@ -884,6 +969,22 @@
   },
   {
     "type": "error",
+    "name": "IlliquidPairNotConsented",
+    "inputs": [
+      {
+        "name": "actor",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "pairKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidRiskLevel",
     "inputs": [
       {
@@ -897,6 +998,22 @@
     "type": "error",
     "name": "InvalidRiskTermsHash",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MidTierPairNotAcknowledged",
+    "inputs": [
+      {
+        "name": "actor",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "pairKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
   },
   {
     "type": "error",
@@ -947,6 +1064,22 @@
   },
   {
     "type": "error",
+    "name": "RiskCooldownTooShort",
+    "inputs": [
+      {
+        "name": "requested",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "minAllowed",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RiskTermsHashAlreadyUsed",
     "inputs": []
   },
@@ -968,6 +1101,27 @@
         "name": "currentTermsVersion",
         "type": "uint64",
         "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RiskTierTooLow",
+    "inputs": [
+      {
+        "name": "actor",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "requiredTier",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "actorTier",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ]
   }

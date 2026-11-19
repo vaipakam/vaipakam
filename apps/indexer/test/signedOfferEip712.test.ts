@@ -7,7 +7,7 @@
  *      `contracts/src/libraries/LibSignedOffer.sol` byte-for-byte. The
  *      known-good vector here is constructed INDEPENDENTLY of the helper:
  *      the typehash is keccak256 of a byte-for-byte copy of the contract's
- *      canonical type string (LibSignedOffer.sol:74-105), the struct hash is
+ *      canonical type string, read from LibSignedOffer.sol itself, the struct hash is
  *      a manual `keccak256(abi.encode(typehash, ...32 static words))`, and
  *      the digest is a manual `keccak256(0x1901 ‖ domainSeparator ‖
  *      structHash)` with the domain separator assembled from the contract's
@@ -18,6 +18,8 @@
  *   2. `validateOrder` (signedOfferRoutes.ts) — the strict shape gate for
  *      the public POST surface.
  */
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   concatHex,
@@ -27,6 +29,7 @@ import {
   type Hex,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
+import { NO_COLLECTION } from '@vaipakam/lib/signedOfferWire';
 import {
   SIGNED_OFFER_TYPES,
   SIGNED_OFFER_FIELD_NAMES,
@@ -40,46 +43,33 @@ import {
 } from '../src/signedOfferEip712';
 import { validateOrder } from '../src/signedOfferRoutes';
 
-// Byte-for-byte copy of the contract's canonical type string —
-// LibSignedOffer.sol SIGNED_OFFER_TYPEHASH (lines 74-105).
-const CONTRACT_TYPE_STRING =
-  'SignedOffer(' +
-  'uint8 offerType,' +
-  'address lendingAsset,' +
-  'uint256 amount,' +
-  'uint256 amountMax,' +
-  'uint256 interestRateBps,' +
-  'uint256 interestRateBpsMax,' +
-  'address collateralAsset,' +
-  'uint256 collateralAmount,' +
-  'uint256 collateralAmountMax,' +
-  'uint256 durationDays,' +
-  'uint8 assetType,' +
-  'uint8 collateralAssetType,' +
-  'uint256 tokenId,' +
-  'uint256 quantity,' +
-  'uint256 collateralTokenId,' +
-  'uint256 collateralQuantity,' +
-  'address prepayAsset,' +
-  'bool allowsPartialRepay,' +
-  'bool allowsPrepayListing,' +
-  'bool allowsParallelSale,' +
-  'uint64 expiresAt,' +
-  'uint8 fillMode,' +
-  'uint8 periodicInterestCadence,' +
-  'uint256 refinanceTargetLoanId,' +
-  'bool useFullTermInterest,' +
-  'bool creatorFull,' +
-  'uint256 creatorMaxCStar,' +
-  'bool creatorAllowFullDowngrade,' +
-  'uint16 maxTreasuryFeeBps,' +
-  'uint16 maxLoanInitiationFeeBps,' +
-  'address allowedTaker,' +
-  'address coSigner,' +
-  'address signer,' +
-  'uint256 nonce,' +
-  'uint256 deadline' +
-  ')';
+/**
+ * The contract's canonical type string, read from its source of truth:
+ * the string literals of `SIGNED_OFFER_TYPEHASH = keccak256(...)` in
+ * LibSignedOffer.sol. A pinned copy here went stale once (#3682 added
+ * `address integrator`), so the test reads the contract instead.
+ */
+function contractTypeString(): string {
+  const src = readFileSync(
+    fileURLToPath(
+      new URL('../../../contracts/src/libraries/LibSignedOffer.sol', import.meta.url),
+    ),
+    'utf8',
+  );
+  const m = /bytes32\s+internal\s+constant\s+SIGNED_OFFER_TYPEHASH\s*=\s*keccak256\(([\s\S]*?)\);/.exec(
+    src,
+  );
+  if (!m) throw new Error('SIGNED_OFFER_TYPEHASH not found in LibSignedOffer.sol');
+  // The argument is adjacent string literals only (Solidity concatenates
+  // them); anything else would mean the shape changed and must fail here.
+  const body = m[1].replace(/\/\/[^\n]*/g, '');
+  const literals = [...body.matchAll(/"([^"\\]*)"/g)];
+  const rest = body.replace(/"([^"\\]*)"/g, '').trim();
+  if (rest !== '') throw new Error(`unexpected tokens in SIGNED_OFFER_TYPEHASH: ${rest}`);
+  return literals.map((l) => l[1]).join('');
+}
+
+const CONTRACT_TYPE_STRING = contractTypeString();
 
 const TEST_PK =
   '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80' as Hex; // anvil key 0
@@ -129,6 +119,8 @@ function makeOrder(overrides: Partial<SignedOrderWire> = {}): SignedOrderWire {
     periodicInterestCadence: '0',
     refinanceTargetLoanId: '0',
     useFullTermInterest: false,
+    lifecycleFlex: '0',
+    integrator: '0x0000000000000000000000000000000000000000',
     creatorFull: false,
     creatorMaxCStar: '0',
     creatorAllowFullDowngrade: false,
@@ -139,6 +131,7 @@ function makeOrder(overrides: Partial<SignedOrderWire> = {}): SignedOrderWire {
     signer: SIGNER.address.toLowerCase(),
     nonce: '7',
     deadline: DEADLINE_7D,
+    ...NO_COLLECTION,
     ...overrides,
   };
 }
@@ -153,7 +146,7 @@ describe('signedOfferEip712 — hash agreement with LibSignedOffer.sol', () => {
       SIGNED_OFFER_TYPES.SignedOffer.map((f) => `${f.type} ${f.name}`).join(',') +
       ')';
     expect(derived).toBe(CONTRACT_TYPE_STRING);
-    expect(SIGNED_OFFER_FIELD_NAMES.length).toBe(35);
+    expect(SIGNED_OFFER_FIELD_NAMES.length).toBe(46);
   });
 
   it('orderHashOf equals a manually-assembled keccak256(abi.encode(typehash, ...fields))', () => {
@@ -326,7 +319,25 @@ describe('validateOrder — the POST shape gate', () => {
     expect('order' in out && out.order.maxTreasuryFeeBps).toBe('0');
   });
 
-  it('rejects a missing / extra field (exact 35-key contract)', () => {
+  it('#3328 — refuses a collection order and any non-zero collection field', () => {
+    const r = (o: Partial<SignedOrderWire>) => makeOrder(o) as unknown as Record<string, unknown>;
+    expectError(r({ setKind: '1', loans: '3' }), 'unsupported-collection');
+    expectError(r({ loans: '3' }), 'invalid-loans');
+    expectError(
+      r({ exclusionsHash: `0x${'1'.repeat(64)}` }),
+      'invalid-exclusionsHash',
+    );
+    expectError(r({ startTime: '1' }), 'invalid-startTime');
+  });
+
+  it('#3328 — the collection fields change the order hash', () => {
+    const base = orderHashOf(makeOrder());
+    expect(orderHashOf(makeOrder({ setKind: '1' }))).not.toBe(base);
+    expect(orderHashOf(makeOrder({ setRoot: `0x${'2'.repeat(64)}` }))).not.toBe(base);
+    expect(orderHashOf(makeOrder({ startTime: '1' }))).not.toBe(base);
+  });
+
+  it('rejects a missing / extra field (exact 46-key contract)', () => {
     const missing = makeOrder() as unknown as Record<string, unknown>;
     delete missing.nonce;
     expectError(missing, 'order-field-count');
@@ -647,7 +658,7 @@ describe('validateOrder — the POST shape gate', () => {
     });
 
     it('rejects a ranged row with a non-constant collateral ratio (SignedOfferRatioNotConstant)', () => {
-      // #1145 r3 — mirrors OfferMatchFacet._vetSignedOfferForMatch:
+      // #1145 r3 — mirrors SignedOfferFacet._vetSignedOfferForMatch:
       // `collateralAmount * ceiling == effCollMax * amount`, ranged rows
       // only (they are matcher-only depth).
       expectError(

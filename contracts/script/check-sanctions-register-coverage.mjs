@@ -25,7 +25,7 @@
  *     `freezeOrPayActiveLender{Resident,FromPayer,FromVault}`, or a
  *     `recordFrozenClaimant*` / `recordSanctionsFrozenClaimant` /
  *     `_recordFrozenClaimant` call whose side arg is `true`
- *   - a borrower-lane register `freezeOrPayBorrowerSurplus` or such a call whose
+ *   - a borrower-lane register `holdBorrowerSurplus` or such a call whose
  *     side arg is `false`
  *
  * Side-match rule:
@@ -77,6 +77,8 @@ const ALLOWLIST = {
     '#2440 failed-retry restore came back short; resizes BOTH FallbackPending claim rows to their shrunken snapshot slices (no new payout). The rows were registered at fallback ENTRY (enterFallback terminalizes), and its only path (retryFallbackSwap) is reached solely via ClaimFacet._retryFallbackSwap, whose two callers register both holders in the same tx (_claimViaBackstopImpl terminalizes; _claimAsLenderImpl records both + terminalizes)',
   'RiskMatchLiquidationFacet.sol::_retainInternalMatchResidual':
     'internal-match over-collateralized residual helper — its only caller (_settleFallbackOrTransitionPostMatch Active-full branch) terminalizes Active→InternalMatched (registers both holders) BEFORE this borrowerClaims write in the same tx',
+  'SettlementLegFacet.sol::releaseParkedLeg':
+    '#3669 a lender leg the token refused at a loan\'s settlement (a repayment leg or the default\'s collateral) was parked in the payer\'s vault; release sets the lender claim row to what actually reached the lender side\'s vault (no new payout). The row was registered at that terminal transition (terminalizeFromAny records both holders), and its two callers act on it in the same tx: the lender claim (_claimAsLenderImpl) runs its own fail-closed register right after, and the intent roll consumes the claim into the owner\'s own standing intent, paying no holder',
   'LibConsolidation.sol::_moveBorrowerHeld':
     '#2795 open-loan held borrower extra following its position to the new holder: the write only LOWERS the borrowerSurplusClaims row to what the new holder\'s vault actually received (no new payout). Every addition to that row registers its holder (LibCloseoutFreeze.addBorrowerSurplus calls recordFrozenClaimant), and consolidation only reaches this move for a holder its own sanctions check passed (Tier-1 reverts, Tier-2 skips a flagged holder)',
 };
@@ -98,11 +100,11 @@ const BOTH_TOKENS = ['terminalize', 'recordSanctionsFrozenClaimantBoth'];
 const LENDER_HELPERS = [
   'freezeLenderProceeds',
   'parkLenderPayoffAndFreeze',
-  'freezeOrPayActiveLenderResident',
-  'freezeOrPayActiveLenderFromPayer',
-  'freezeOrPayActiveLenderFromVault',
+  'holdActiveLenderResident',
+  'holdActiveLenderFromPayer',
+  'holdActiveLenderFromVault',
 ];
-const BORROWER_HELPERS = ['freezeOrPayBorrowerSurplus'];
+const BORROWER_HELPERS = ['holdBorrowerSurplus'];
 // Side-parameterised registers — the boolean arg selects the lane.
 const SIDED_REGISTERS = [
   'recordFrozenClaimantForLoan',
@@ -306,7 +308,7 @@ function structRhsIsArtifact(rhs) {
 // DEFERRED-claim writes above, S10 also requires that an INLINE "pay
 // `ownerOf(positionTokenId)` now" payout be sanctions-aware: it must route
 // through the fail-closed `LibCloseoutFreeze.freezeOrPayActiveLender*` /
-// `freezeOrPayBorrowerSurplus` helpers (park-or-pay) or carry an
+// `holdBorrowerSurplus` helpers (park-or-pay) or carry an
 // `assertNotFrozenParty` / `mustFreezeParty` guard — NOT a bare fail-open
 // `_assertNotSanctioned` (which returns false during an oracle outage, the exact
 // gap Invariant B targets).
@@ -366,7 +368,7 @@ const FREEZE_GUARD_TOKENS = [
   'assertNotFrozenParty',
   'depositLocked',
   'freezeLenderProceeds',
-  'freezeOrPayBorrowerSurplus',
+  'holdBorrowerSurplus',
   'freezeOrPayActiveLender',
   'recordFrozenClaimant',
   'recordSanctionsFrozenClaimant',
@@ -598,7 +600,7 @@ if (violations.length > 0 || violationsB.length > 0 || deadAllow.length > 0) {
     console.error(
       '\n  Each function above resolves a position holder via ownerOf and pays it raw.\n' +
         '  Route the payout through LibCloseoutFreeze.freezeOrPayActiveLender* /\n' +
-        '  freezeOrPayBorrowerSurplus (park-or-pay), or guard it with assertNotFrozenParty /\n' +
+        '  holdBorrowerSurplus (park-or-pay), or guard it with assertNotFrozenParty /\n' +
         '  mustFreezeParty, OR — if it is a deliberate discretionary hard-block or a\n' +
         '  prepay-sale vehicle covered by syncPrepaySale* — add it to ALLOWLIST_B with a\n' +
         '  one-line reason. See docs/DesignsAndPlans/S10CentralEnforcement.md §2 Invariant B.',

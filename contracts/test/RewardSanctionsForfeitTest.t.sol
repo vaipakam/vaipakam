@@ -12,6 +12,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {LibTestProtection} from "./helpers/LibTestProtection.sol";
@@ -1709,7 +1710,10 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         oracle.setFlagged(alice, false);
         assertEq(_observe(alice), DELIVER, "delisted: the window [F, L] is recorded");
 
-        vm.warp(_dayStart(L + 2));
+        // #3171 — a consolidation splits at the START of today, so the entry
+        // (window [F, L + 3)) has nothing left for the holder only from day
+        // L + 3: that is where the earner rule keeps it whole.
+        vm.warp(_dayStart(L + 3));
         vm.recordLogs();
         _mut().callRepointRewardEntry(LOAN_R, bob, true);
         Vm.Log[] memory logs = vm.getRecordedLogs();
@@ -1736,10 +1740,11 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
 
     /// @notice R7 - an OPEN entry consolidated to a new holder while the earner
     ///         carries sanctions history is SPLIT at today (Codex #2489 r15): the
-    ///         earner keeps the days through today as a closed, claimable entry
+    ///         earner keeps the days before today as a closed, claimable entry
     ///         (flagged days forfeit, the rest pay), the holder gets a fresh entry
-    ///         from tomorrow with the per-loan pointer on it, and the holder's
-    ///         later claim pays only the days after the split.
+    ///         from today (#3171: the holder the day ends with carries it) with
+    ///         the per-loan pointer on it, and the holder's later claim pays only
+    ///         the days from the split.
     /// @dev   Mutation: keep-with-earner instead of the split → the holder has
     ///        no entry and the seller keeps accruing the holder's days.
     function test_sanc_R7_anOpenEntryConsolidated_isSplitAtToday_betweenEarnerAndHolder() public {
@@ -1758,12 +1763,12 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         assertEq(_count(logs, keccak256("RewardEntrySplitAtTransfer(uint256,uint256,address,address,uint256)")), 1, "split announced");
         LibVaipakam.RewardEntry memory old = _entry(id);
         assertEq(old.user, alice, "the earned days stay with the earner");
-        assertEq(old.endDay, L + 3, "closed at today + 1");
+        assertEq(old.endDay, L + 2, "closed at the start of today (#3171)");
         assertTrue(old.closed, "claimable now");
         uint256[] memory bobIds = _lens().getUserRewardEntryIds(bob);
         assertEq(bobIds.length, 1, "the holder has the remainder");
         LibVaipakam.RewardEntry memory fresh = _entry(bobIds[0]);
-        assertEq(fresh.startDay, L + 3, "from tomorrow");
+        assertEq(fresh.startDay, L + 2, "from today: the holder the day ends with carries it (#3171)");
         assertEq(fresh.endDay, L + 20, "to the original end");
         assertEq(fresh.perDayNumeraire18, 1e18, "same rate");
         (uint256 lenderPtr, ) = _mut().getLoanEntryIdsRaw(LOAN_R3);
@@ -1774,18 +1779,18 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         uint256 paid = _claimWallet(alice);
         uint256 forfeitMine;
         uint256 payMine;
-        for (uint256 d = F; d <= L + 2; ++d) {
+        for (uint256 d = F; d <= L + 1; ++d) {
             if (d <= L) forfeitMine += _value(d);
             else payMine += _value(d);
         }
-        assertEq(paid, payMine + _value(F - 1) + _value(L + 1), "the earner is paid the unflagged days through today");
+        assertEq(paid, payMine + _value(F - 1) + _value(L + 1), "the earner is paid the unflagged days before today");
         assertEq(_bucket() - bucket0, forfeitMine + _value(F) + _value(L), "the flagged days forfeit");
 
         _finalize(L + 3, L + 4);
         vm.warp(_dayStart(L + 5));
         _mut().closeRewardEntryRaw(bobIds[0], uint32(L + 5));
         uint256 paidBob = _claimWallet(bob);
-        assertEq(paidBob, _value(L + 3) + _value(L + 4), "the holder is paid only the days after the split");
+        assertEq(paidBob, _value(L + 2) + _value(L + 3) + _value(L + 4), "the holder is paid only the days from the split");
     }
 
     /// @notice R6 - the inverse: a CLEAN earner's entry is not forfeited under a
@@ -2313,7 +2318,7 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         _mut().setSanctionsFrozenClaimant(LOAN_V, true, alice);
         uint256 id = _seed(alice, LOAN_V);
         bytes32 loanHash = keccak256(abi.encode(LoanFacet(address(diamond)).getLoanDetails(LOAN_V)));
-        (, uint256 claimAmt, , , , , uint256 held, ) = ClaimFacet(address(diamond)).getClaimable(LOAN_V, true);
+        (, uint256 claimAmt, , , , , uint256 held, ) = ClaimViewFacet(address(diamond)).getClaimable(LOAN_V, true);
         assertEq(claimAmt, 7 ether, "fixture LIVE: a lender claimable stands");
 
         oracle.setFlagged(alice, true);
@@ -2326,7 +2331,7 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
             loanHash,
             "the loan record is untouched"
         );
-        (, uint256 claimAmt2, , , , , uint256 held2, ) = ClaimFacet(address(diamond)).getClaimable(LOAN_V, true);
+        (, uint256 claimAmt2, , , , , uint256 held2, ) = ClaimViewFacet(address(diamond)).getClaimable(LOAN_V, true);
         assertEq(claimAmt2, claimAmt, "the claimable is untouched");
         assertEq(held2, held, "and the held lender value");
         assertEq(_mut().getSanctionsFrozenClaimant(LOAN_V, true), alice, "the frozen-claimant marker stands");

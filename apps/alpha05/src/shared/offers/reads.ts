@@ -16,6 +16,7 @@ import {
   RiskAccessFacetABI,
   RiskPreviewFacetABI,
   ConfigFacetABI,
+  FeeLevelsFacetABI,
   VaultFactoryFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { AtBlock } from '../tx/anchored';
@@ -30,6 +31,7 @@ export const ORACLE = OracleFacetABI as Abi;
 export const RISK_ACCESS = RiskAccessFacetABI as Abi;
 export const RISK_PREVIEW = RiskPreviewFacetABI as Abi;
 export const CONFIG = ConfigFacetABI as Abi;
+export const FEE_LEVELS = FeeLevelsFacetABI as Abi;
 export const VAULT_FACTORY = VaultFactoryFacetABI as Abi;
 
 /** `LibMetricsTypes.OfferState`, by enum position. */
@@ -86,6 +88,12 @@ export const ACCEPT_ERRORS = [
   'SignedOfferFeeAboveCap',
   'SignedOfferTakerNotAllowed',
   'SignedOfferCoSignatureInvalid',
+  // #3328 — a collection offer, which fills only through the collection-offer
+  // route (one loan per token); `previewAccept` reports it for a direct take.
+  'CollectionParent',
+  // #3734 — the taker or the offer's maker is not current on this
+  // network's Terms of Service; the preview does not say which.
+  'TermsNotAccepted',
 ] as const;
 export type AcceptErrorName = (typeof ACCEPT_ERRORS)[number] | 'Unrecognised';
 
@@ -147,6 +155,9 @@ export interface AcceptPreview {
   lifEstimate: bigint;
   collateralResidualRefund: bigint;
   error: AcceptErrorName;
+  /** #3722 — the part of the fee not charged because the acceptor is inside
+   *  an inviter's referral period (already off `lifEstimate`). */
+  referralCut: bigint;
 }
 
 type Raw = Record<string, unknown>;
@@ -183,6 +194,7 @@ export function storedOfferFrom(raw: Raw): StoredOffer {
     refinanceTargetLoanId: raw.refinanceTargetLoanId as bigint,
     parallelSaleOrderHash: raw.parallelSaleOrderHash as Hex,
     periodicInterestCadence: Number(raw.periodicInterestCadence),
+    lifecycleFlex: Number(raw.lifecycleFlex ?? 0),
     expiresAt: BigInt(raw.expiresAt as bigint | number),
     accepted: Boolean(raw.accepted),
     creatorFull: Boolean(raw.creatorFull),
@@ -197,6 +209,7 @@ export function previewFrom(raw: Raw): AcceptPreview {
     lifEstimate: raw.lifEstimate as bigint,
     collateralResidualRefund: raw.collateralResidualRefund as bigint,
     error: acceptErrorName(Number(raw.errorCode)),
+    referralCut: raw.referralCut as bigint,
   };
 }
 
@@ -351,14 +364,6 @@ export async function readGraceSeconds(client: PublicClient, diamond: Hex, durat
   })) as bigint;
 }
 
-export async function readLifBps(client: PublicClient, diamond: Hex): Promise<bigint> {
-  return (await client.readContract({
-    address: diamond,
-    abi: CONFIG,
-    functionName: 'getLoanInitiationFeeBps',
-  })) as bigint;
-}
-
 /** The protocol's share of the interest a lender earns, in basis points,
  *  under today's setting: each loan fixes the figure in force when it opens. */
 export async function readTreasuryFeeBps(client: PublicClient, diamond: Hex): Promise<bigint> {
@@ -369,14 +374,20 @@ export async function readTreasuryFeeBps(client: PublicClient, diamond: Hex): Pr
   })) as bigint;
 }
 
-/** The share of an initiation fee paid to whoever submits the acceptance
- *  or match, in basis points of the fee. */
-export async function readLifMatcherBps(client: PublicClient, diamond: Hex): Promise<bigint> {
-  return (await client.readContract({
-    address: diamond,
-    abi: CONFIG,
-    functionName: 'getLifMatcherFeeBps',
-  })) as bigint;
+/** What the protocol pays whoever submits an acceptance or match (#3649):
+ *  its rate, applied to the initiation fee's part above the treasury floor,
+ *  and that floor, in basis points of the principal. */
+export interface MatcherTerms {
+  bps: bigint;
+  floorBps: bigint;
+}
+
+export async function readMatcherTerms(client: PublicClient, diamond: Hex): Promise<MatcherTerms> {
+  const [bps, floors] = await Promise.all([
+    client.readContract({ address: diamond, abi: CONFIG, functionName: 'getLifMatcherFeeBps' }) as Promise<bigint>,
+    client.readContract({ address: diamond, abi: FEE_LEVELS, functionName: 'getTreasuryFeeFloors' }) as Promise<readonly [bigint, bigint]>,
+  ]);
+  return { bps, floorBps: floors[0] };
 }
 
 export async function readVault(client: PublicClient, diamond: Hex, account: Hex, b?: AtBlock): Promise<Hex> {

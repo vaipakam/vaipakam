@@ -16,6 +16,7 @@ import {VaultOutflowTypes, OutflowReason} from "../src/vault/VaultOutflowTypes.s
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
+import {LibTestGuard} from "./helpers/LibTestGuard.sol";
 
 /**
  * @title  VaultOutflowPolicyTest
@@ -76,21 +77,24 @@ contract VaultOutflowPolicyTest is SetupTest {
 
     /// @dev Run outflow `o` from `user`'s vault through policy entry `entry`
     ///      (0 = struct, 1 = scalar args, 2 = compact Owner, 3 = compact
-    ///      Diamond ERC-20), as the Diamond itself.
-    function _run(uint8 entry, address user, VaultOutflowTypes.Outflow memory o) internal returns (uint256) {
+    ///      Diamond ERC-20), as the Diamond itself inside a guarded action.
+    function _run(uint8 entry, address user, VaultOutflowTypes.Outflow memory o) internal returns (uint256 got) {
+        LibTestGuard.hold(address(diamond));
         vm.prank(address(diamond));
-        if (entry == 0) return VaultOutflowFacet(address(diamond)).vaultOutflow(user, o);
-        if (entry == 1) {
-            return VaultOutflowFacet(address(diamond)).vaultOutflowArgs(
+        if (entry == 0) {
+            got = VaultOutflowFacet(address(diamond)).vaultOutflow(user, o);
+        } else if (entry == 1) {
+            got = VaultOutflowFacet(address(diamond)).vaultOutflowArgs(
                 user, uint8(o.kind), o.asset, o.tokenId, o.amount, o.to, uint8(o.class_), o.ref, o.positionToken, o.reason
             );
-        }
-        if (entry == 2) {
-            return VaultOutflowFacet(address(diamond)).vaultOutflowToOwner(
+        } else if (entry == 2) {
+            got = VaultOutflowFacet(address(diamond)).vaultOutflowToOwner(
                 user, uint8(o.kind), o.asset, o.tokenId, o.amount, o.reason
             );
+        } else {
+            got = VaultOutflowFacet(address(diamond)).vaultOutflowToDiamondERC20(user, o.asset, o.amount, o.ref, o.reason);
         }
-        return VaultOutflowFacet(address(diamond)).vaultOutflowToDiamondERC20(user, o.asset, o.amount, o.ref, o.reason);
+        LibTestGuard.release(address(diamond));
     }
 
     // ─── One check path, every entry ─────────────────────────────────────
@@ -217,6 +221,7 @@ contract VaultOutflowPolicyTest is SetupTest {
     // ─── Just-in-time grants ─────────────────────────────────────────────
 
     function _grant(address spender, VaultOutflowTypes.GrantClass c, uint256 amount) internal {
+        LibTestGuard.hold(address(diamond));
         vm.prank(address(diamond));
         VaultOutflowFacet(address(diamond)).vaultGrant(
             alice,
@@ -230,6 +235,7 @@ contract VaultOutflowPolicyTest is SetupTest {
                 ref: 5
             })
         );
+        LibTestGuard.release(address(diamond));
     }
 
     function test_aGrantNamesOnlyTheSpenderTheVaultCodeFixes() public {
@@ -275,8 +281,10 @@ contract VaultOutflowPolicyTest is SetupTest {
         VaipakamVaultImplementation(v).closeGrant();
 
         // The Diamond closes it and books what the spender took.
+        LibTestGuard.hold(address(diamond));
         vm.prank(address(diamond));
         uint256 consumed = VaultOutflowFacet(address(diamond)).vaultCloseGrant(alice);
+        LibTestGuard.release(address(diamond));
         assertEq(consumed, 3 ether, "what the spender took, measured from the approval");
         assertEq(token.allowance(v, taker), 0, "nothing left standing");
     }
@@ -330,6 +338,7 @@ contract VaultOutflowPolicyTest is SetupTest {
         vm.expectRevert(
             abi.encodeWithSelector(VaipakamVaultImplementation.GrantRefused.selector, VaultOutflowTypes.GrantClass.Conduit, rogue)
         );
+        LibTestGuard.hold(address(diamond));
         vm.prank(address(diamond));
         VaultOutflowFacet(address(diamond)).vaultGrant(
             alice,
@@ -343,6 +352,7 @@ contract VaultOutflowPolicyTest is SetupTest {
                 ref: 5
             })
         );
+        LibTestGuard.release(address(diamond));
         // ERC-1155 listing escrow.
         ERC1155Mock coll = ERC1155Mock(deployCode("ERC1155Mock.sol:ERC1155Mock"));
         vm.expectRevert(

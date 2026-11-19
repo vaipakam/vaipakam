@@ -1,11 +1,9 @@
 /**
- * #3205 — a position NFT's holder, read from the contract that holds the
- * chain's position NFTs: the standalone PositionNFT where the deployments
- * bundle records one, else the pre-#3205 Diamond. The rule is the app's own
- * (`@vaipakam/lib/positionNft`); this only binds it to a driver's client.
- *
- * TODO(#3321 positionNft-legacy-removal): the Diamond fallback goes with the
- * legacy mode.
+ * #3205 — a position NFT's holder, read from the standalone PositionNFT the
+ * deployments bundle records for the chain. A chain whose record names no
+ * PositionNFT is refused (#3321): there is no Diamond fallback. The rule is
+ * the app's own (`@vaipakam/lib/positionNft`); this only binds it to a
+ * driver's client.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,7 +12,8 @@ import { positionNftSurface, positionRouteCall, readPositionOwner } from '@vaipa
 
 const BUNDLE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../packages/contracts/src/deployments.json');
 
-/** The chain's position-NFT surface, from the committed bundle. */
+/** The chain's position-NFT surface, from the committed bundle. Throws when
+ *  the record names no PositionNFT. */
 export function positionSurfaceFor(chainId) {
   const d = JSON.parse(fs.readFileSync(BUNDLE, 'utf8'))[String(chainId)];
   if (!d?.diamond) throw new Error(`deployments bundle has no Diamond for chain ${chainId}`);
@@ -30,7 +29,7 @@ export function positionHolderReader(pub, chainId) {
 }
 
 /** `(tokenId, blockNumber?) => route ordinal`: the open protocol route,
- *  `positionRoute` (standalone) or the legacy `positionLock`. */
+ *  read with `positionRoute` on the Diamond. */
 export function positionRouteReader(pub, chainId) {
   const surface = positionSurfaceFor(chainId);
   return async (tokenId, blockNumber) =>

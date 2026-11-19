@@ -834,7 +834,7 @@ contract MetricsFacet {
      *      safe). `availableToClaimNumeraire` currently returns 0 —
      *      claim valuations require ClaimInfo iteration with per-asset
      *      pricing beyond the scope of this snapshot; integrators
-     *      should call `ClaimFacet.getClaimable` per loan.
+     *      should call `ClaimViewFacet.getClaimable` per loan.
      */
     function getUserSummary(address user)
         external
@@ -1895,11 +1895,18 @@ contract MetricsFacet {
     /// @dev The identity a retired receipt keeps: the loan's status and the
     ///      lent and pledged assets with their kinds and symbols (from the
     ///      loan, or the offer when no loan exists). Every amount stays zero.
+    ///      Its position status reads `LoanClosed` whatever was stored when it
+    ///      retired (#3339): a retired token governs no claim, and some paths
+    ///      retire a token without first marking it closed (a zero-residual
+    ///      matched loan's borrower token), so passing the stored status
+    ///      through would let a transferable receipt read as governing
+    ///      claim rights. The loan's real lifecycle stays in `loanStatus`.
     function _retiredIdentity(
         NFTPositionSummary memory s,
         LibVaipakam.Storage storage vs,
         LibVaipakam.Offer storage offer
     ) private view {
+        s.nftStatus = LibVaipakam.LoanPositionStatus.LoanClosed;
         if (s.loanId != 0) {
             LibVaipakam.Loan storage loan = vs.loans[s.loanId];
             s.loanStatus = loan.status;

@@ -3,7 +3,10 @@ pragma solidity ^0.8.29;
 
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {SetupTest} from "./SetupTest.t.sol";
+import {LibTestProtection} from "./helpers/LibTestProtection.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
 import {AutoLifecycleSettingsFacet} from "../src/facets/AutoLifecycleSettingsFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -23,7 +26,9 @@ import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {ClaimViewFacet} from "../src/facets/ClaimViewFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
@@ -78,6 +83,11 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
 
     function _f() internal view returns (AutoLifecycleFacet) {
         return AutoLifecycleFacet(address(diamond));
+    }
+
+    /// @dev #3681 — the loan reserve's fund / withdraw entries.
+    function _si() internal view returns (StandingInstructionFacet) {
+        return StandingInstructionFacet(address(diamond));
     }
 
     /// @dev The consent and caps surface (#3410: AutoLifecycleSettingsFacet).
@@ -299,6 +309,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: LOAN_PRINCIPAL,
@@ -339,6 +351,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         uint256 rateBps
     ) internal view returns (LibVaipakam.CreateOfferParams memory) {
         return LibVaipakam.CreateOfferParams({
+            integrator: address(0),
+            lifecycleFlex: 0,
             offerType: LibVaipakam.OfferType.Borrower,
             lendingAsset: mockERC20,
             amount: LOAN_PRINCIPAL,
@@ -525,7 +539,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         // Both sides opt into auto-extend within a wide rate / expiry band.
         uint64 farExpiry = uint64(block.timestamp + 400 days);
         vm.prank(borrower);
-        _s().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry);
+        _s().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry, type(uint256).max);
         vm.prank(lender);
         _s().setAutoExtendLenderCaps(loanId, true, 0, 1000, farExpiry);
 
@@ -546,7 +560,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         ERC20Mock(mockERC20).mint(who, amount);
         vm.startPrank(who);
         ERC20(mockERC20).approve(address(diamond), amount);
-        _f().fundExtendReserve(loanId, amount);
+        _si().fundLoanReserve(loanId, 0, amount);
         vm.stopPrank();
     }
 
@@ -834,6 +848,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.prank(lender);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: LOAN_PRINCIPAL,
@@ -1212,6 +1228,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.prank(lender);
         return OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
+                integrator: address(0),
+                lifecycleFlex: 0,
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockERC20,
                 amount: LOAN_PRINCIPAL,
@@ -1562,7 +1580,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             lockedBefore,
             "collateral stays locked once, for the replacement"
         );
-        (, uint256 owedToOldLender, ) = ClaimFacet(address(diamond)).getClaimableAmount(oldLoanId, true);
+        (, uint256 owedToOldLender, ) = ClaimViewFacet(address(diamond)).getClaimableAmount(oldLoanId, true);
         assertGe(owedToOldLender, oldLoan.principal, "the exiting lender is paid out at least the principal");
     }
 
@@ -1606,7 +1624,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         _admin().setAutoRefinanceEnabled(switchOn);
         uint256 walletBefore = ERC20(mockERC20).balanceOf(borrower);
         _signAndAcceptOffer(newLender, newLenderPk, taggedOfferId);
-        (, m[0], ) = ClaimFacet(address(diamond))
+        (, m[0], ) = ClaimViewFacet(address(diamond))
             .getClaimableAmount(oldLoanId, true);
         uint256 walletAfter = ERC20(mockERC20).balanceOf(borrower);
         m[1] = walletBefore > walletAfter ? walletBefore - walletAfter : 0;
@@ -1719,20 +1737,27 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
     ///         draw is stated in the event.
     function test_2814_extension_drawsTheReserveFirst_atTheViewsCharge() public {
         uint256 loanId = _setupExtendableLoan();
-        (address asset, uint256 reserved, uint256 otherFree, uint256 chargeNow, ) =
+        (address asset, uint256 reserved, uint256 otherFree, uint256 quoted, ) =
             _f().getExtendFunding(loanId, borrower);
         assertEq(asset, mockERC20, "the principal asset");
         assertEq(reserved, EXTEND_RESERVE, "the deposit is reserved");
         assertEq(otherFree, 0, "the reserve is not free balance");
+        // #3649 — the quote includes the largest added initiation fee the
+        // caps admit; the interest charge is the rest.
+        uint256 chargeNow = quoted - _extensionFeeBound(loanId);
         assertGt(chargeNow, 0, "interest is owed");
         vm.expectEmit(true, true, false, true, address(diamond));
         emit AutoLifecycleFacet.ExtendChargeDrawn(
             loanId, borrower, mockERC20, chargeNow, 0, EXTEND_RESERVE - chargeNow
         );
+        // #3649 — the added term's initiation fee is drawn next, from what is
+        // left of the reserve.
+        (, uint256 fee, , ) = FeeLevelsFacet(address(diamond)).quoteExtensionFee(loanId, block.timestamp + 30 days);
+        assertGt(fee, 0, "the extension adds term");
         vm.prank(borrower);
         _f().extendLoanInPlace(loanId, 500, 30);
         (, uint256 left, , , ) = _f().getExtendFunding(loanId, borrower);
-        assertEq(left, EXTEND_RESERVE - chargeNow, "the charge left the reserve");
+        assertEq(left, EXTEND_RESERVE - chargeNow - fee, "the charge and the fee left the reserve");
     }
 
     /// @notice #2814 — a reserve short of the charge, with nothing else free,
@@ -1745,7 +1770,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         LibTestPayout.withdrawAllFree(address(diamond), borrower);
         uint64 farExpiry = uint64(block.timestamp + 400 days);
         vm.prank(borrower);
-        _s().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry);
+        _s().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry, type(uint256).max);
         vm.prank(lender);
         _s().setAutoExtendLenderCaps(loanId, true, 0, 1000, farExpiry);
         _fundReserve(loanId, borrower, 1);
@@ -1764,16 +1789,61 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         uint256 loanId = _setupExtendableLoan();
         (, , , uint256 chargeNow, uint256 chargeAtEnd) = _f().getExtendFunding(loanId, borrower);
         assertGt(chargeAtEnd, chargeNow, "later costs more (interest and late fee)");
+        uint256 bound = _extensionFeeBound(loanId);
         (, uint64 closesAt) = _f().getAutoExtendWindow(loanId);
         vm.warp(closesAt);
         (, , , uint256 chargeThen, ) = _f().getExtendFunding(loanId, borrower);
         assertEq(chargeThen, chargeAtEnd, "the view's ceiling is the charge at the grace end");
+        chargeAtEnd -= bound;
         vm.expectEmit(true, true, false, true, address(diamond));
         emit AutoLifecycleFacet.ExtendChargeDrawn(
             loanId, borrower, mockERC20, chargeAtEnd, 0, EXTEND_RESERVE - chargeAtEnd
         );
         vm.prank(borrower);
         _f().extendLoanInPlace(loanId, 500, 30);
+    }
+
+    /// @dev #3649 — the largest added initiation fee the caps admit: the fee
+    ///      at the latest end both sides allow, within the borrower's fee cap.
+    function _extensionFeeBound(uint256 loanId) internal view returns (uint256) {
+        LibVaipakam.AutoExtendCaps memory b = _s().getAutoExtendBorrowerCaps(loanId);
+        LibVaipakam.AutoExtendCaps memory l = _s().getAutoExtendLenderCaps(loanId);
+        uint256 end = l.maxNewExpiry < b.maxNewExpiry ? l.maxNewExpiry : b.maxNewExpiry;
+        (, uint256 fee, , ) = FeeLevelsFacet(address(diamond)).quoteExtensionFee(loanId, end);
+        return fee < b.maxExtensionFee ? fee : b.maxExtensionFee;
+    }
+
+    /// @notice #3649 — the funding quote includes the largest added fee the
+    ///         caps admit, and never more than the borrower's fee cap.
+    function test_3649_fundingQuote_includesTheAddedFeeWithinTheCap() public {
+        uint256 loanId = _setupExtendableLoan();
+        uint256 bound = _extensionFeeBound(loanId);
+        assertGt(bound, 0, "the caps admit added term");
+        (, , , uint256 withFee, ) = _f().getExtendFunding(loanId, borrower);
+        LibVaipakam.AutoExtendCaps memory b = _s().getAutoExtendBorrowerCaps(loanId);
+        vm.prank(borrower);
+        _s().setAutoExtendBorrowerCaps(loanId, true, b.minRateBps, b.maxRateBps, b.maxNewExpiry, 1);
+        (, , , uint256 capped, ) = _f().getExtendFunding(loanId, borrower);
+        assertEq(withFee - capped, bound - 1, "the bound is held to the borrower's fee cap");
+    }
+
+    /// @notice #3344 — a protected holder may spend only its Ready balance on
+    ///         an extension, so the funding view counts no more of its free
+    ///         balance than that: free funds outside Ready do not read as
+    ///         extension cover the execution would then refuse.
+    function test_3344_fundingQuote_countsOnlyReadyForAProtectedHolder() public {
+        uint256 loanId = _buildActiveLoan();
+        ERC20Mock(mockERC20).mint(borrower, 5 ether);
+        vm.startPrank(borrower);
+        ERC20(mockERC20).approve(address(diamond), 5 ether);
+        VaultDepositoryFacet(address(diamond)).depositToVault(uint8(LibVaipakam.AssetType.ERC20), mockERC20, 0, 5 ether);
+        vm.stopPrank();
+        (, , uint256 freeBefore, , ) = _f().getExtendFunding(loanId, borrower);
+        assertGe(freeBefore, 5 ether, "fixture: free balance counts while unprotected");
+
+        LibTestProtection.enable(address(diamond), borrower, 2 days);
+        (, , uint256 freeAfter, , ) = _f().getExtendFunding(loanId, borrower);
+        assertEq(freeAfter, 0, "no Ready balance, so nothing beyond the reserve can fund it");
     }
 
     /// @notice #2814 — unused reserve goes back to the depositor's wallet, and
@@ -1785,14 +1855,14 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.prank(borrower);
         vm.expectRevert(
             abi.encodeWithSelector(
-                LibEncumbrance.ExtendReserveInsufficient.selector, loanId, borrower, 4 ether, 3 ether
+                LibEncumbrance.LoanReserveInsufficient.selector, loanId, borrower, uint8(0), 4 ether, 3 ether
             )
         );
-        _f().withdrawExtendReserve(borrower, loanId, 4 ether);
+        _si().withdrawLoanReserve(borrower, loanId, 0, 4 ether);
         vm.expectEmit(true, true, false, true, address(diamond));
-        emit AutoLifecycleFacet.ExtendReserveWithdrawn(loanId, borrower, mockERC20, 3 ether, 0);
+        emit StandingInstructionFacet.LoanReserveWithdrawn(loanId, borrower, 0, mockERC20, 3 ether, 0);
         vm.prank(borrower);
-        _f().withdrawExtendReserve(borrower, loanId, 3 ether);
+        _si().withdrawLoanReserve(borrower, loanId, 0, 3 ether);
         assertEq(ERC20(mockERC20).balanceOf(borrower), walletBefore + 3 ether, "back in the wallet");
         (, uint256 reserved, , , ) = _f().getExtendFunding(loanId, borrower);
         assertEq(reserved, 0, "nothing left reserved");
@@ -1809,7 +1879,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.expectRevert(
             abi.encodeWithSelector(LibProtectedAccount.NotAccountManager.selector, borrower, stranger)
         );
-        _f().withdrawExtendReserve(borrower, loanId, 3 ether);
+        _si().withdrawLoanReserve(borrower, loanId, 0, 3 ether);
     }
 
     /// @notice #2814 — a repayment leaves the reserve alone, and the depositor
@@ -1828,7 +1898,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         assertEq(chargeNow, 0, "a closed loan cannot be extended");
         uint256 walletBefore = ERC20(mockERC20).balanceOf(borrower);
         vm.prank(borrower);
-        _f().withdrawExtendReserve(borrower, loanId, 2 ether);
+        _si().withdrawLoanReserve(borrower, loanId, 0, 2 ether);
         assertEq(ERC20(mockERC20).balanceOf(borrower), walletBefore + 2 ether, "withdrawn after the close");
     }
 
@@ -1841,12 +1911,12 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         ERC20Mock(mockERC20).mint(lender, 1 ether);
         vm.startPrank(lender);
         ERC20(mockERC20).approve(address(diamond), 1 ether);
-        vm.expectRevert(AutoLifecycleFacet.NotBorrowerNftOwner.selector);
-        _f().fundExtendReserve(loanId, 1 ether);
+        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
+        _si().fundLoanReserve(loanId, 0, 1 ether);
         vm.stopPrank();
         vm.prank(borrower);
-        vm.expectRevert(AutoLifecycleFacet.ExtendReserveZeroAmount.selector);
-        _f().fundExtendReserve(loanId, 0);
+        vm.expectRevert(StandingInstructionFacet.LoanReserveZeroAmount.selector);
+        _si().fundLoanReserve(loanId, 0, 0);
         _admin().setAutoExtendEnabled(false);
         _fundReserve(loanId, borrower, 1 ether);
         (, uint256 reserved, , , ) = _f().getExtendFunding(loanId, borrower);
@@ -1869,12 +1939,12 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.prank(newHolder);
         vm.expectRevert(
             abi.encodeWithSelector(
-                LibEncumbrance.ExtendReserveInsufficient.selector, loanId, newHolder, 1, 0
+                LibEncumbrance.LoanReserveInsufficient.selector, loanId, newHolder, uint8(0), 1, 0
             )
         );
-        _f().withdrawExtendReserve(newHolder, loanId, 1);
+        _si().withdrawLoanReserve(newHolder, loanId, 0, 1);
         vm.prank(borrower);
-        _f().withdrawExtendReserve(borrower, loanId, 2 ether);
+        _si().withdrawLoanReserve(borrower, loanId, 0, 2 ether);
     }
 
     /// @notice #2814 Codex r1 — a rental loan's principal is the NFT contract,
@@ -1891,7 +1961,94 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         assertEq(asset, l.principalAsset, "the asset is still stated");
         assertEq(reserved + otherFree + chargeNow + chargeEnd, 0, "nothing to fund or charge");
         vm.prank(borrower);
-        vm.expectRevert(AutoLifecycleFacet.UnsupportedAssetTypeForExtend.selector);
-        _f().fundExtendReserve(loanId, 1 ether);
+        vm.expectRevert(
+            abi.encodeWithSelector(StandingInstructionFacet.LoanReserveNotOffered.selector, loanId, uint8(0))
+        );
+        _si().fundLoanReserve(loanId, 0, 1 ether);
+    }
+
+    // ─── #3649 — an extension pays the initiation fee for the added term ──
+
+    function _fees() internal view returns (FeeLevelsFacet) {
+        return FeeLevelsFacet(address(diamond));
+    }
+
+    function _paidDays(uint256 loanId) internal view returns (uint256) {
+        return LoanFacet(address(diamond)).getLoanDetails(loanId).lifPaidDays;
+    }
+
+    /// @notice A 30-day loan extended by 45 days at its window pays the fee at
+    ///         the new total term less the fee already paid, out of the
+    ///         holder's reserve, and records the new term paid for.
+    function test_3649_ExtensionChargesTheAddedTerm() public {
+        uint256 loanId = _setupExtendableLoan();
+        assertEq(_paidDays(loanId), 30, "origination pays for its own term");
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(loanId).lifTermOrigin, block.timestamp - 27 days);
+
+        uint256 newEnd = block.timestamp + 45 days;
+        (uint256 gross, uint256 fee, uint256 paid, uint256 newPaid) = _fees().quoteExtensionFee(loanId, newEnd);
+        assertEq(paid, 30);
+        assertEq(newPaid, 72, "27 days used plus 45 new");
+        (uint256 at72,,) = _fees().quoteLoanInitiationFee(LOAN_PRINCIPAL, 72);
+        (uint256 at30,,) = _fees().quoteLoanInitiationFee(LOAN_PRINCIPAL, 30);
+        assertEq(gross, at72 - at30, "the difference of the two fees");
+        assertEq(fee, gross, "no discount without consent");
+        assertGt(fee, 0);
+
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit AutoLifecycleFacet.ExtensionFeeCharged(loanId, borrower, mockERC20, fee, 30, 72);
+        vm.prank(borrower);
+        _f().extendLoanInPlace(loanId, 500, 45);
+        assertEq(_paidDays(loanId), 72);
+    }
+
+    /// @notice Above the borrower's limit the extension is refused and
+    ///         nothing changes; at the exact fee it goes through.
+    function test_3649_ExtensionFeeAboveTheBorrowerLimitIsRefused() public {
+        uint256 loanId = _setupExtendableLoan();
+        (, uint256 fee,,) = _fees().quoteExtensionFee(loanId, block.timestamp + 45 days);
+        uint64 farExpiry = uint64(block.timestamp + 400 days);
+        vm.prank(borrower);
+        _s().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry, fee - 1);
+        vm.prank(borrower);
+        vm.expectRevert(abi.encodeWithSelector(AutoLifecycleFacet.ExtensionFeeAboveCap.selector, fee, fee - 1));
+        _f().extendLoanInPlace(loanId, 500, 45);
+        assertEq(_paidDays(loanId), 30, "unchanged");
+
+        vm.prank(borrower);
+        _s().setAutoExtendBorrowerCaps(loanId, true, 0, 1000, farExpiry, fee);
+        vm.prank(borrower);
+        _f().extendLoanInPlace(loanId, 500, 45);
+        assertEq(_paidDays(loanId), 72);
+    }
+
+    /// @notice Two extensions together pay what one loan of the same total
+    ///         term pays: the fee depends only on the total term.
+    function test_3649_ExtensionsSumToOneLoanOfTheTotalTerm() public {
+        uint256 loanId = _setupExtendableLoan();
+        (, uint256 fee1,,) = _fees().quoteExtensionFee(loanId, block.timestamp + 45 days);
+        vm.prank(borrower);
+        _f().extendLoanInPlace(loanId, 500, 45);
+        _warpToExtendWindow(loanId);
+        (, uint256 fee2,, uint256 total) = _fees().quoteExtensionFee(loanId, block.timestamp + 300 days);
+        vm.prank(borrower);
+        _f().extendLoanInPlace(loanId, 500, 300);
+        assertEq(_paidDays(loanId), total);
+        (uint256 atTotal,,) = _fees().quoteLoanInitiationFee(LOAN_PRINCIPAL, total);
+        (uint256 at30,,) = _fees().quoteLoanInitiationFee(LOAN_PRINCIPAL, 30);
+        assertEq(fee1 + fee2, atTotal - at30, "telescopes to the single-loan fee");
+        assertGt(total, 365, "crossed the one-year point");
+    }
+
+    /// @notice An extension that does not take the total term past the term
+    ///         already paid for charges nothing.
+    function test_3649_NoFeeWhenTheTotalTermDoesNotGrow() public {
+        uint256 loanId = _setupExtendableLoan();
+        // 27 days used; ending 3 days on keeps the total at 30.
+        (uint256 gross, uint256 fee, uint256 paid, uint256 newPaid) =
+            _fees().quoteExtensionFee(loanId, block.timestamp + 3 days);
+        assertEq(gross, 0);
+        assertEq(fee, 0);
+        assertEq(paid, newPaid);
     }
 }

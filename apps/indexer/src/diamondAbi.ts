@@ -64,9 +64,8 @@ export const DIAMOND_SIGNED_OFFER_ABI = SignedOfferFacetABI;
 export const DIAMOND_OFFER_BOOK_ABI = OfferBookFacetABI;
 
 /** ERC-721 `ownerOf`. #3205: aim it at `positionNftForDiamond(diamond).nft`
- *  (`./positionNft`) — the standalone PositionNFT, or the Diamond on a
- *  legacy-mode chain — never at the Diamond directly. Reverts on burned /
- *  nonexistent tokens; the caller catches and falls back. */
+ *  (`./positionNft`), the PositionNFT, never at the Diamond. Reverts on a
+ *  nonexistent token; the caller catches and falls back. */
 export const ERC721_OWNER_OF_ABI = [
   {
     type: 'function',

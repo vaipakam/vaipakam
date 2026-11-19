@@ -193,8 +193,10 @@ export function TierSection({ chain, own }: { chain: SupportedChain; own: OwnSta
                     <dd className="value-amount">{band(r)}</dd>
                     <dt className="tier-b">{text('rewardsTier.colDiscount')}</dt>
                     <dd className="value-amount">{r.capped ? format('rewardsTier.discountCapped', { discount: r.discount }) : `${r.discount}%`}</dd>
-                    <dt className="tier-b">{text('rewardsTier.colLif')}</dt>
+                    <dt className="tier-b">{format('rewardsTier.colLif', { days: table.data!.lif.baseTermDays.toString() })}</dt>
                     <dd className="value-amount">{`${r.lif}%`}</dd>
+                    <dt className="tier-b">{format('rewardsTier.colLifYear', { days: table.data!.lif.yearDays.toString() })}</dt>
+                    <dd className="value-amount">{`${r.lifYear}%`}</dd>
                     <dt className="tier-b">{text('rewardsTier.colYield')}</dt>
                     <dd className="value-amount">{`${r.yieldFee}%`}</dd>
                   </dl>

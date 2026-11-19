@@ -33,7 +33,7 @@ const ctx: TicketContext = {
 };
 const NOW = 1_000_000n;
 /** #3327 — the live fees and the signer's cancel floor a review signs against. */
-const TERMS = { treasuryFeeBps: 200n, lifBps: 20n, cancelFloor: 0n };
+const TERMS = { treasuryFeeBps: 200n, lif: { baseBps: 20n, baseTermDays: 30n, yearlyBps: 50n, yearDays: 365n }, cancelFloor: 0n };
 
 function draftOf(patch: Partial<TicketInput> = {}) {
   const input: TicketInput = { ...DEFAULT_TICKET, amount: '0.5', collateral: '250', rate: '6', mode: 'sign', ...patch };
