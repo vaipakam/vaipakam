@@ -422,11 +422,13 @@
       },
       "keepers": {
         "q": "What are keepers, and can they take my assets?",
-        "a1": "Keepers are optional <s>delegated role-managers</s> — they can execute the on-chain role assigned to them (for example, calling <c>repayLoan</c> on the user's behalf or triggering a default settlement), but they <s2>cannot claim assets</s2>. Claims are always locked to whoever currently holds the relevant Vaipakam position NFT, which is the user unless they have transferred it.",
+        "a1": "Keepers are optional <s>delegated role-managers</s>. A keeper you approve can take the steps you allowed it on your behalf (for example, finishing a loan sale or an offset you started, or extending a loan), but it <s2>cannot claim assets</s2>. Claims are always locked to whoever currently holds the relevant Vaipakam position NFT, which is the user unless they have transferred it.",
         "a2": "Enabling a keeper takes <s>two opt-ins</s>, by design:",
-        "li1": "<s>User-level:</s> in advanced settings, the user must turn on keeper access for their side (borrower or lender) and add the keeper to a whitelist.",
+        "li1": "<s>User-level:</s> in advanced settings, the user must turn on keeper access and approve the keeper, choosing which steps it may take.",
         "li2": "<s>Position-level:</s> the offer (or accept) flow must have keeper execution enabled for that specific position.",
-        "a3": "If either layer is off, the keeper cannot act — flipping the position-level flag alone is not enough. Keeper access for an existing loan can also be enabled or disabled later, from advanced settings, for the user's own side. Keeper controls only appear in <s>Advanced mode</s>; they are intentionally hidden from the default everyday workflow."
+        "a3": "If either layer is off, the keeper cannot act — flipping the position-level flag alone is not enough. Keeper access for an existing loan can also be enabled or disabled later, from advanced settings, for the user's own side. Keeper controls only appear in <s>Advanced mode</s>; they are intentionally hidden from the default everyday workflow.",
+        "a4": "Some steps need no approval at all, because <s>anyone may submit them</s>: a liquidation, a default once the grace period has ended, matching two offers, and a standing instruction a borrower has set (a collateral top-up, an interest payment or a repayment at the due date, each paid from the borrower's own reserve). Vaipakam runs a keeper that submits these steps, and publishes an open-source keeper bot that anyone may run.",
+        "a5": "You can run that bot for your own wallets: list them, and it carries out only the standing instructions on loans those wallets hold, paying gas from its own key. That key needs no approval and cannot move your assets, so if it leaks, the loss is the gas it holds. A step runs only when someone submits it: if no keeper is running, nothing happens on its own."
       },
       "fees": {
         "q": "What fees does the platform charge?",

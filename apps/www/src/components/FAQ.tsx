@@ -495,7 +495,7 @@ const FAQS: FaqEntry[] = [
     id: "keepers",
     category: "users",
     searchText:
-      "keeper keepers role manager delegate automation third party execution whitelist opt-in advanced mode claim nft",
+      "keeper keepers role manager delegate automation third party execution whitelist opt-in advanced mode claim nft bot open source standing instruction permissionless",
     renderA: () => (
       <>
         <p>
@@ -504,7 +504,6 @@ const FAQS: FaqEntry[] = [
             components={{
               s: <strong />,
               s2: <strong />,
-              c: <code />,
             }}
           />
         </p>
@@ -533,6 +532,15 @@ const FAQS: FaqEntry[] = [
             i18nKey="faq.entries.keepers.a3"
             components={{ s: <strong /> }}
           />
+        </p>
+        <p>
+          <Trans
+            i18nKey="faq.entries.keepers.a4"
+            components={{ s: <strong /> }}
+          />
+        </p>
+        <p>
+          <Trans i18nKey="faq.entries.keepers.a5" />
         </p>
       </>
     ),

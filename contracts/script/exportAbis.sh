@@ -128,6 +128,7 @@ FACETS=(
   "AdminFacet"        # T-092 #518 — getAutoExtendEnabled (admin kill switch read by autoExtendDetector)
   "AutoLifecycleFacet" # T-092 #518 — extendLoanInPlace / getAutoExtendWindow (autoExtendDetector)
   "AutoLifecycleSettingsFacet" # #3410 — getAutoExtendBorrowerCaps / getAutoExtendLenderCaps (autoExtendDetector), split off AutoLifecycleFacet
+  "StandingInstructionFacet" # #3789 — getLoanReserve, runCollateralTopUp, previewInterestPayment / runInterestPayment, runDueRepayment, StandingInstructionSkipped (standingInstructions detector, "my positions" mode)
 )
 
 # The combined Diamond ABI the error set is read from (see the header).
