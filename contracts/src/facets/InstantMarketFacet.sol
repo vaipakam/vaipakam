@@ -371,15 +371,39 @@ contract InstantMarketFacet is DiamondReentrancyGuard, DiamondPausable, DiamondA
         fr.collateralOffered = req.collateralOffered;
     }
 
+    /// @notice #3761 — whether the instant market is on, and whether
+    ///         `lendingAsset` lent against `collateralAsset` is a pair it
+    ///         serves: two different assets, both blue-chip. The same rule
+    ///         {setInstantSlot} and {borrowInstant} enforce, so an app can say
+    ///         ahead of time whether a lend form may offer instant borrowing,
+    ///         instead of reading a refused write.
+    /// @return enabled  The market switch ({setInstantMarketEnabled}).
+    /// @return eligible Whether the pair qualifies, read independently of
+    ///                  the switch: a qualifying pair reads true while the
+    ///                  market is off.
+    function instantPairEligible(address lendingAsset, address collateralAsset)
+        external
+        view
+        returns (bool enabled, bool eligible)
+    {
+        return (LibVaipakam.storageSlot().instantCfg.enabled, _pairEligible(lendingAsset, collateralAsset));
+    }
+
     function _maxFills(LibVaipakam.InstantMarketConfig storage c) private view returns (uint8) {
         return c.maxFills == 0 ? DEFAULT_MAX_FILLS : c.maxFills;
     }
 
     function _requireEligiblePair(address lendingAsset, address collateralAsset) private view {
-        if (
-            lendingAsset == collateralAsset
-                || !LibRiskAccess._isBlueChip(lendingAsset)
-                || !LibRiskAccess._isBlueChip(collateralAsset)
-        ) revert InstantPairNotEligible(lendingAsset, collateralAsset);
+        if (!_pairEligible(lendingAsset, collateralAsset)) {
+            revert InstantPairNotEligible(lendingAsset, collateralAsset);
+        }
+    }
+
+    /// @dev The one statement of the instant market's pair rule: two
+    ///      different assets, both blue-chip.
+    function _pairEligible(address lendingAsset, address collateralAsset) private view returns (bool) {
+        return lendingAsset != collateralAsset
+            && LibRiskAccess._isBlueChip(lendingAsset)
+            && LibRiskAccess._isBlueChip(collateralAsset);
     }
 }

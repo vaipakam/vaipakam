@@ -323,6 +323,31 @@ contract InstantMarketTest is InstantMarketBase {
         );
     }
 
+    /// @dev #3761 — the eligibility view states the same pair rule the writes
+    ///      enforce, and reads the switch apart from it.
+    function test_pairEligibleViewMatchesTheRule() public {
+        InstantMarketFacet m = InstantMarketFacet(address(diamond));
+        (bool enabled, bool eligible) = m.instantPairEligible(mockERC20, mockCollateralERC20);
+        assertTrue(enabled, "fixture: the market is on");
+        assertTrue(eligible, "two blue-chip assets qualify");
+        (, eligible) = m.instantPairEligible(mockERC20, mockERC20);
+        assertFalse(eligible, "one asset against itself does not");
+
+        vm.prank(owner);
+        m.setInstantMarketEnabled(false);
+        (enabled, eligible) = m.instantPairEligible(mockERC20, mockCollateralERC20);
+        assertFalse(enabled, "the switch reads off");
+        assertTrue(eligible, "the pair still qualifies while the market is off");
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSignature("getEffectiveLiquidityTier(address)", mockCollateralERC20),
+            abi.encode(uint8(2))
+        );
+        (, eligible) = m.instantPairEligible(mockERC20, mockCollateralERC20);
+        assertFalse(eligible, "a collateral that is not blue-chip does not qualify");
+    }
+
     /// @dev The instant consent needs interest by time on the slot, and
     ///      setting the slot's terms again clears it.
     function test_consentNeedsProRataAndResetsWithTerms() public {

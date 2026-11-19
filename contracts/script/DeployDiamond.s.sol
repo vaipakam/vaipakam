@@ -2692,7 +2692,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev Selectors for `InstantMarketFacet` — the instant market (#3656):
     ///      settings, the slot consents, the instant borrow and its views.
     function _getInstantMarketSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](8);
         s[0] = InstantMarketFacet.setInstantMarketEnabled.selector;
         s[1] = InstantMarketFacet.setInstantMaxFills.selector;
         s[2] = InstantMarketFacet.getInstantMarketConfig.selector;
@@ -2700,6 +2700,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[4] = InstantMarketFacet.getInstantSlot.selector;
         s[5] = InstantMarketFacet.borrowInstant.selector;
         s[6] = InstantMarketFacet.getInstantGroup.selector;
+        s[7] = InstantMarketFacet.instantPairEligible.selector;
     }
 
     /// @dev Selectors for `InstantFillFacet` — one instant-borrow fill
