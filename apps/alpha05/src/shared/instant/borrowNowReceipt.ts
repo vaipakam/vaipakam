@@ -26,6 +26,8 @@ export function borrowNowBlocker(r: BorrowNowReview, meta: TokenMetaMap | null, 
       return text('borrowNow.stateMarketOff');
     case 'no-source':
       return text('borrowNow.stateNoSource');
+    case 'none-found':
+      return text('borrowNow.stateNoneFound');
     case 'short-collateral':
       return format('borrowNow.stateShort', { have: tokenAmount(s.have, r.terms.collateral, meta, format), need: tokenAmount(s.need, r.terms.collateral, meta, format) });
     case 'needs-approval':
@@ -121,7 +123,13 @@ export function borrowNowReceipt(r: BorrowNowReview, diamond: Hex, meta: TokenMe
     { label: text('borrowNow.rowPartial'), value: { kind: 'text', text: text(t.allowsPartialRepay ? 'borrowNow.partialYes' : 'borrowNow.partialNo') }, binding: true },
   );
 
-  const consequences: ReceiptText[] = [text('borrowNow.loseBlock'), text('borrowNow.loseMore'), text('borrowNow.loseFee'), text('borrowNow.loseCollateral')];
+  const consequences: ReceiptText[] = [
+    text('borrowNow.loseBlock'),
+    text('borrowNow.loseMore'),
+    ...(r.searchComplete ? [] : [text('borrowNow.loseSearchBounded')]),
+    text('borrowNow.loseFee'),
+    text('borrowNow.loseCollateral'),
+  ];
   const sections = [{ title: text('borrowNow.statementTitle'), body: [format('borrowNow.statement', { days: String(t.termDays) }), text('borrowNow.statementEach')] }];
   return {
     title: text('borrowNow.title'),

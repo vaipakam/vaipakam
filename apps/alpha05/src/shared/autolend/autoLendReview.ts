@@ -14,7 +14,7 @@ import { bpsPercent } from '../offers/priceGuard';
 import { assetName, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import type { RiskNeed } from '../risk/riskAccess';
 import { readRiskNeed } from '../risk/riskNeed';
-import type { Receipt, ReceiptRow, ReceiptText } from '../receipt/types';
+import type { Receipt, ReceiptRow, ReceiptText, ReceiptValue } from '../receipt/types';
 import { allowanceSteps } from '../tx/approval';
 import { chainValidUntil } from '../tx/deadline';
 import { askThrough } from '../tx/simulate';
@@ -349,7 +349,7 @@ export function autoLendReceipt(r: AutoLendReview, meta: TokenMetaMap | null, co
     },
     { label: text('autoLend.rowInterest'), value: { kind: 'text', text: text(p.acceptsProRata ? 'autoLend.interestBoth' : 'autoLend.interestFull') }, binding: true },
     ...presetRows(r, copy),
-    { label: text('autoLend.calmTitle'), value: { kind: 'text', text: text(r.calm === 'off' ? 'autoLend.calmRowOff' : 'autoLend.calmRowOn') }, binding: false },
+    { label: text('autoLend.calmTitle'), value: calmRowValue(r.calm, base !== null, copy), binding: false },
     { label: text('autoLend.rowFiller'), value: { kind: 'text', text: text(base?.requiresKeeperAuth === true ? 'autoLend.fillerAllowed' : 'autoLend.fillerAny') }, binding: true },
     { label: text('autoLend.rowFirstFill'), value: { kind: 'time', unixSeconds: Number(r.facts.chainNow + r.facts.minTermsAgeSec) }, binding: false },
   ];
@@ -533,6 +533,15 @@ export function presetLegs(logs: PresetLogs, e: EffectivePreset, copy: Copy): Le
 /** What the pause for a moving price means for this setup: on for a new or
  *  restarted Auto-lend, kept as it is for a change, and why fills would wait
  *  now when the pair's price checks or price say so. */
+/** The pause row of the receipt. A change keeps whatever the slot already
+ *  has, so an unread setting there is unknown, never "On"; a new Auto-lend
+ *  starts with it on. */
+export function calmRowValue(calm: CalmStatus | null, change: boolean, copy: Copy): ReceiptValue {
+  const { text } = copy;
+  if (calm === null && change) return { kind: 'unknown', why: text('autoLend.calmRowUnread') };
+  return { kind: 'text', text: text(calm === 'off' ? 'autoLend.calmRowOff' : 'autoLend.calmRowOn') };
+}
+
 export function calmConsequences(calm: CalmStatus | null, copy: Copy): ReceiptText[] {
   const { text, format } = copy;
   if (calm === null) return [text('autoLend.calmSetupUnread')];

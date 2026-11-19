@@ -4571,6 +4571,8 @@ export const copy = {
     loseFee: A('A loan initiation fee is taken from each amount borrowed, so what reaches your vault is less than the amount shown.'),
     stateMarketOff: A('Borrowing from lenders standing ready is switched off on this network, so nothing can be borrowed this way now. You can post a request instead.'),
     stateNoSource: A('No lender standing ready on this pair can take this borrow now. You can post a request for all of it instead; nothing is borrowed now.'),
+    stateNoneFound: A('None of the standing lenders this page read can take this borrow now, and more exist than it reads, so one may still exist. You can post a request for all of it instead; nothing is borrowed now.'),
+    loseSearchBounded: A('This page reads only the first lenders standing ready on the network, so a lender it did not read is not in this borrow even where it would have taken part of it.'),
     stateShort: A('Your wallet holds {{have}}, less than the {{need}} of collateral it must supply. Lower the amount or the collateral, or add to your vault first.'),
     stateNeedsApproval: A(
       'What this block gives cannot be read until your approval is in place, so no figure is shown. Approving exactly {{amount}} lets the review read it; nothing is borrowed until you sign again.',
@@ -5345,6 +5347,7 @@ export const copy = {
     calmSwitchOn: B('Switch the pause back on'),
     calmRowOn: B('On'),
     calmRowOff: B('Off'),
+    calmRowUnread: B('Not read; the change keeps the current setting'),
     calmNoMoney: A('This moves no money and changes none of your limits.'),
     calmLoseOff: A('Fills from this Auto-lend stop waiting for a steady price. A loan can open while the collateral price moves fast.'),
     calmLoseOn: A('Fills from this Auto-lend wait while the collateral price moves fast, or while the pair lacks its last two hourly price checks.'),

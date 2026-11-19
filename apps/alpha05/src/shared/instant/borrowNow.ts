@@ -291,8 +291,12 @@ export type BorrowNowState =
   | { kind: 'plan'; plan: BorrowNowPlan }
   /** The instant market's switch is off on this network. */
   | { kind: 'market-off' }
-  /** No standing source on the pair could take this borrow. */
+  /** No standing source on the pair could take this borrow (every source
+   *  on the network was searched). */
   | { kind: 'no-source' }
+  /** None of the sources the bounded search read could take it, and more
+   *  exist that it did not read: not known to be none. */
+  | { kind: 'none-found' }
   /** The wallet holds less collateral than its part. */
   | { kind: 'short-collateral'; have: bigint; need: bigint }
   /** The figure needs the approval in place and the token's allowance could
@@ -304,6 +308,9 @@ export type BorrowNowState =
 export interface BorrowNowReview {
   terms: BorrowNowTerms;
   sources: InstantSource[];
+  /** Whether the source search read every source on the network (false when
+   *  a list was longer than the view reads: a fill may exist beyond it). */
+  searchComplete: boolean;
   state: BorrowNowState;
   /** The collateral the wallet supplies (the rest comes from the vault's
    *  free balance), and the approval that needs. */
