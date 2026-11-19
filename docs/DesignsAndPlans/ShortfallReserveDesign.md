@@ -118,7 +118,10 @@ A shortfall is paid once, from one round. Nothing carries forward to a later rou
 - Name: "shortfall reserve" (app label may be "Reserve"). Never insurance, insured, cover, coverage, guarantee, protected, safe or risk-free.
 - Describe it as: a reserve funded from platform fees that pays part of some measured lender losses on top-tier assets, by published rules, while funds last; no payment is promised.
 - Never shown as a benefit when a user decides to lend: not on the lend form, not on an offer, not beside a rate. It appears on its own page, in the risk disclosure (as a statement that nothing is promised) and on a closed loan that has a record.
-- A loan's page shows a record's state with what is known and what is not: recorded, the round, the eligible amount, the amount paid or the fact that the round is not yet settled. Never an expected payout before the round closes.
+- **Nothing is sent to a lender before the reserve has paid (owner decision 2026-11-19).** No alert, no message and no amount. A record's eligible amount can still be scaled down by the round's ratio or cancelled, so stating it early reads as a promise.
+- Before payment, a closed loan's page shows only what is certain: the shortfall the close-out measured, that a reserve record exists for it, its round, and the date that round settles. It shows no eligible amount and no expected payout.
+- After payment, the lender is told once, and the loan's page shows: the amount received, the asset, the round, the round's total recorded shortfall, the amount the round paid in all, and the ratio applied to every record in it. A record that was cancelled or paid nothing says so, with the reason the event states.
+- The reserve's rules and its balances stay on its public page at all times (section 8). The fees that fund it are visible on chain, and saying where they go is not a promise to pay.
 
 ## 10. Contract and off-chain changes
 
