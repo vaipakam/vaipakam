@@ -22,7 +22,7 @@ Related designs: `VaultOutflowPolicyDesign.md`, `PayoutDestinationRuleDesign.md`
 
 - The guarantor borrows as any borrower does. The collateral stays in the guarantor's own vault under the loan's lien, and returns to the guarantor when the loan is repaid.
 - Anyone who is not on the lender's side may repay a loan **in full**. So the other person can close the loan from their own wallet.
-- A part payment is different today. Only the holder of the borrower position may make one, and only where the loan allows part repayment, and there is no entry by which anyone pays one interest period from a wallet. Card #3779 (`RepaymentByOthersDesign.md`) opens both to anyone who is not on the lender's side. That is a contract change and is not part of this document. Until it is built, everything short of the full repayment is paid by the guarantor.
+- A part payment is different today. Only the holder of the borrower position may make one, and only where the loan allows part repayment, and there is no entry by which anyone, the holder included, pays interest alone from a wallet. Card #3779 (`RepaymentByOthersDesign.md`) opens the part payment to anyone who is not on the lender's side, and adds a wallet payment of the interest accrued so far, at any time, on a loan with or without part repayment. That is a contract change and is not part of this document. Until it is built, everything short of the full repayment is paid by the guarantor.
 - The borrowed funds arrive in the guarantor's vault as free balance. Sending them on is the guarantor's own Withdraw, under that account's own policy, and then an ordinary transfer.
 
 **The flow.**
@@ -31,8 +31,8 @@ Related designs: `VaultOutflowPolicyDesign.md`, `PayoutDestinationRuleDesign.md`
 2. The review states: "Your collateral secures this loan. If it is not repaid, your collateral is sold or passes to the lender. {address} is not bound to repay by anything on chain."
 3. After the loan opens, the app offers the two steps that send the funds: Withdraw, then send. For a protected account the app says that the address must be an approved destination and that the account's delay applies. It never routes around either.
 4. The app gives a link to the loan. The other person opens it and sees the loan with the amount that closes it today. Their page states: "Repaying returns the collateral to {guarantor}, not to you."
-   - **Before #3779 is built:** one action, **Repay**, which repays the loan in full, and the line "Only {guarantor} can pay part of this loan or one interest period. To pay part, send them the amount." The guarantor's own page shows each amount as it falls due, so they can ask for it.
-   - **Once #3779 is built:** the loan's page offers what that design gives any wallet that is not on the lender's side: **Repay**, **Pay part** where the loan allows it, and **Pay this period's interest** where one is due. The flow adds nothing of its own. The app reads which entries the deployment routes and shows only those.
+   - **Before #3779 is built:** one action, **Repay**, which repays the loan in full, and the line "Only {guarantor} can pay part of this loan. To pay part, send them the amount." The guarantor's own page shows each amount as it falls due, so they can ask for it.
+   - **Once #3779 is built:** the loan's page offers what that design gives any wallet that is not on the lender's side: **Repay**, **Pay part** where the loan allows it, and **Pay interest** where any has accrued. The flow adds nothing of its own. The app reads which entries the deployment routes and shows only those.
 5. Either person may switch on alerts for the loan (section 9).
 
 **Not offered.**
@@ -177,7 +177,7 @@ The page promises no result and names no rate.
 ## 12. Tests
 
 1. Borrow for someone: the loan's collateral, lien and borrower position are the guarantor's; a full repayment from the other address closes the loan and the collateral is claimable by the guarantor only; a protected guarantor's send waits the account's delay and is refused to an address that is not approved.
-2. The other person's page offers repayment and alerts and nothing else. On a deployment without #3779 it offers the full repayment only and shows both statements of section 2; with it, the part payment and the period's interest appear where the loan allows them.
+2. The other person's page offers repayment and alerts and nothing else. On a deployment without #3779 it offers the full repayment only and shows both statements of section 2; with it, the part payment appears where the loan allows it and the interest payment where any interest has accrued.
 3. A contract wallet as owner completes every row of the matrix in section 3, or the row is listed as refused with its reason.
 4. A goal changes nothing on chain except, when the user asks, the slot's "lend until".
 5. Give this loan: the receiver collects later payments into their own vault; the giver keeps what was collected before; on a loan with an open seller claim the review shows the amount owed ahead of the holder, and the receiver's first interest payment is reduced by it; each refusal of the transfer check is shown with its reason.
