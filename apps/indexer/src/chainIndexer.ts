@@ -165,9 +165,10 @@ import {
   eventParticipants,
   inlineParticipants,
   participantRows,
-  writeParticipants,
+  participantStatements,
   type ParticipantRow,
 } from './walletActivity';
+import { loadVaultOwners, vaultOwnerStatements, vaultPairsOf, withRecipientOwner } from './vaultOwners';
 import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
 import { POSITION_NFT_EVENTS, positionNftForDiamond, readPositionHolder, scannedAddresses } from './positionNft';
 
@@ -7429,6 +7430,9 @@ export async function recordActivityEvents(
   // null and the borrower hidden — matches the pre-fix behaviour,
   // not a new degradation.
   const creatorByOfferId = await loadSaleCreators(env, chainId, logs);
+  // #3388 — the owner of each vault an outflow in this batch pays, so the row
+  // is filed under that owner (see vaultOwners.ts).
+  const vaultOwners = await loadVaultOwnersOrBatchOnly(env, chainId, logs);
 
   // #2383 — the asset/amount each row moved or offered, fixed here where the
   // sibling events and the loan/offer records are at hand (see
@@ -7440,7 +7444,7 @@ export async function recordActivityEvents(
   // can answer for a wallet. Collected and batched after the loop.
   const participantWrites: ParticipantRow[] = [];
   for (const log of logs) {
-    const args = withSaleCreator(log, creatorByOfferId);
+    const args = withRecipientOwner(log.eventName, withSaleCreator(log, creatorByOfferId), vaultOwners);
     const { actor, loanId, offerId } = pluckActivityRefs(log.eventName, args);
     participantWrites.push(
       ...participantRows(
@@ -7480,8 +7484,30 @@ export async function recordActivityEvents(
       .run();
     if ((result.meta?.changes ?? 0) > 0) inserted++;
   }
-  await writeParticipants(env.DB, chainId, participantWrites);
+  // One batch: the participant rows and the vault pairs these logs state
+  // (#3388), so recording the pairs costs no further round trip.
+  const closing = [
+    ...participantStatements(env.DB, chainId, participantWrites),
+    ...vaultOwnerStatements(env.DB, chainId, vaultPairsOf(logs)),
+  ];
+  if (closing.length > 0) await env.DB.batch(closing);
   return inserted;
+}
+
+/**
+ * #3388 — the vault owners a batch of logs needs (`loadVaultOwners`), FAIL-OPEN
+ * to the pairs the logs state themselves: a failed lookup leaves a payout row
+ * without `recipientOwner`, so it reaches its holder through the loan filter
+ * only, as before this field existed, and never stops the scan. A budget
+ * refusal is still seen by the scan core, which reads the budget, not this.
+ */
+async function loadVaultOwnersOrBatchOnly(env: Env, chainId: number, logs: readonly DecodedLog[]): Promise<Map<string, string>> {
+  try {
+    return await loadVaultOwners(env.DB, chainId, logs);
+  } catch (err) {
+    console.warn(`[chainIndexer] chain ${chainId}: vault owners not read; payout rows keep their vault recipient only`, redactedError(err));
+    return vaultPairsOf(logs);
+  }
 }
 
 /**
@@ -8208,10 +8234,12 @@ async function refreshPendingLane(
     const creators = kept.some((l) => l.eventName === 'OfferConsumedBySale')
       ? await loadSaleCreators(env, chainId, kept)
       : new Map<number, string>();
+    // Read only: a pending block may be replaced, so its pairs are not recorded.
+    const vaultOwners = await loadVaultOwnersOrBatchOnly(env, chainId, kept);
     const rows: PendingEventRow[] = [];
     for (const log of kept) {
       if (!log.blockHash) continue; // a log without its block's hash cannot be told apart from a replacement
-      const args = withSaleCreator(log, creators);
+      const args = withRecipientOwner(log.eventName, withSaleCreator(log, creators), vaultOwners);
       const { actor, loanId, offerId } = pluckActivityRefs(log.eventName, args);
       const v = activityValue(log.eventName, args, valueCtx!);
       rows.push({

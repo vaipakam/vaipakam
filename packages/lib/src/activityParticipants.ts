@@ -49,6 +49,23 @@ import { activityActor, actorAttributedKinds } from './activityActor';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
+/**
+ * Kind → parties the INDEXER adds to the stored args, which the event itself
+ * does not carry (#3388). A `VaultOutflow` that pays a vault names the vault
+ * contract as `to`, which is no wallet; the indexer knows each vault's owner
+ * (from `UserVaultCreated` and every outflow's own owner/vault pair) and adds
+ * that owner as `recipientOwner`, so a holder payout reaches the holder's
+ * page. Absent when the indexer did not know the owner: the row then reaches
+ * the holder only through the loan filter, as before.
+ *
+ * Kept apart from {@link PARTIES} because those are ABI inputs (the test pins
+ * that), and these must never be: a derived name that an event later declared
+ * would be read as the event's own argument.
+ */
+export const INDEXER_ADDED_PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly string[]>([
+  ['VaultOutflow', ['recipientOwner']],
+]);
+
 /** Kind → the address inputs naming a party besides the actor. */
 const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly string[]>([
   // ── A loan's terms, settings and outcomes (the loan's own parties also see
@@ -555,7 +572,7 @@ export function activityParticipants(eventName: string, args: Record<string, unk
   const out = new Set<string>();
   const actor = activityActor(eventName, args);
   if (actor !== null && isWalletAddress(actor)) out.add(actor);
-  for (const name of PARTIES.get(eventName) ?? []) {
+  for (const name of [...(PARTIES.get(eventName) ?? []), ...(INDEXER_ADDED_PARTIES.get(eventName) ?? [])]) {
     const a = readAddress(args, name);
     if (a) out.add(a);
   }
@@ -571,6 +588,7 @@ export function participantKinds(): ReadonlySet<string> {
 /** The classification tables, for the completeness test. Not for runtime use. */
 export const PARTICIPANT_RULE_FOR_TEST = {
   PARTIES,
+  INDEXER_ADDED_PARTIES,
   NOT_A_PARTY,
   LOCAL_NOT_A_PARTY,
   EXEMPT,

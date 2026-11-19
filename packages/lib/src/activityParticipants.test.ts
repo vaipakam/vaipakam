@@ -198,6 +198,26 @@ describe('activityParticipants — every address in the Diamond ABI is classifie
     expect(bad).toEqual([]);
   });
 
+  it('an indexer-added party is never an input of its kind, and its kind is admitted (#3388)', () => {
+    const bad: string[] = [];
+    for (const [kind, names] of PARTICIPANT_RULE_FOR_TEST.INDEXER_ADDED_PARTIES) {
+      const inputs = EVENTS.get(kind);
+      if (!inputs || !PARTIES.has(kind)) bad.push(`${kind}: not an admitted ABI event`);
+      for (const n of names) if (inputs?.some((p) => p.name === n)) bad.push(`${kind}.${n}`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it("names a vault recipient's owner the indexer added (#3388)", () => {
+    const owner = '0x' + '1'.repeat(40);
+    const vault = '0x' + '2'.repeat(40);
+    const holder = '0x' + '3'.repeat(40);
+    expect(activityParticipants('VaultOutflow', { owner, vault, to: vault, recipientOwner: holder }).sort()).toEqual(
+      [owner, vault, holder].sort(),
+    );
+    expect(activityParticipants('VaultOutflow', { owner, vault, to: vault })).not.toContain(holder);
+  });
+
   it('no party repeats the actor, and no name is both a party and not one', () => {
     const bad: string[] = [];
     for (const [kind, parties] of PARTIES) {

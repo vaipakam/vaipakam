@@ -1481,6 +1481,13 @@ The app uses chain reads and indexed reads for different jobs.
   wallet's own risk-access choices (its risk level, strict mode, and its
   consents and acknowledgements for asset pairings) are rows on its page: the
   protocol records each against the account that chose it. (#2703, #2707)
+- A payment from one vault into another (a payout to a position holder, a
+  claim held for them, a matched leg) is a row on the RECEIVING vault's
+  owner's page as well as the payer's, because the money arrived in that
+  owner's vault. The event names only the vault contract, so the history
+  service adds the vault's owner when it knows which wallet owns that vault;
+  when it does not, the row reaches the owner only through their loans, and
+  nothing names an owner the service has not seen. (#3388)
 - An Activity row states the asset and amount its transaction moved or offered
   when the activity record carries them as normalized fields — exact, or as a
   range for an offer that commits one. It never reconstructs an amount the

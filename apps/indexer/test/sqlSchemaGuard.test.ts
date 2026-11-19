@@ -213,7 +213,11 @@ describe('SQL-vs-schema guard (#1149)', () => {
     // `(?, ?, ?, ?)` group per row, so a page costs a few statements; every
     // value is bound. Executed against the REAL migrated schema by
     // `test/walletActivity.test.ts` (the backfill and its row budget).
-    expect(skipped.length).toBeLessThanOrEqual(32);
+    // Raised 32 → 34 for #3388: the vault-owner lookup is one IN-list SELECT
+    // (placeholders from `chunkD1InList`, values bound) and the pair write one
+    // multi-row INSERT repeating a fixed `(?, ?, ?)` group. Both executed
+    // against the REAL migrated schema by `test/vaultOwners.test.ts`.
+    expect(skipped.length).toBeLessThanOrEqual(34);
   });
 
   it('every static SQL statement prepares against the migrated schema', () => {
