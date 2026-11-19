@@ -1856,3 +1856,11 @@ interface IVaipakamErrors {
     ///         accepted, matched, edited or sold into directly.
     error CollectionParentNotFillable(uint256 offerId);
 }
+    /// @notice #903 — a Base-to-mirror reward message (a tier push, a tier
+    ///         table version bump or a day broadcast) arrived from a chain
+    ///         that is not the Base this deployment takes reward facts
+    ///         from. `expected` is that chain (0 when the deployment has
+    ///         none: canonical, never configured, or detached with no
+    ///         recorded origin), so every such message is refused there.
+    ///         Raised only by `LibVaipakam.requireRewardBaseSource`.
+    error WrongSourceChain(uint256 got, uint32 expected);

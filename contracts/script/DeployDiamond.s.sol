@@ -3564,7 +3564,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](21);
+        s = new bytes4[](22);
         s[0] = RewardReporterFacet.closeDay.selector;
         // #1434 P2-w1 — V3 (kind-10) ingress + the mirror-side clock reads
         // + the era ground truth (#1632 r1).
@@ -3596,6 +3596,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #917 — the one-way retirement and its record.
         s[19] = RewardReporterFacet.retireRewardChain.selector;
         s[20] = RewardReporterFacet.getRewardChainRetirement.selector;
+        // #903 — the source chain the Base-to-mirror ingress enforces.
+        s[21] = RewardReporterFacet.getRewardBaseSourceChainId.selector;
     }
 
     /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.

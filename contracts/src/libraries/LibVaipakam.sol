@@ -12563,6 +12563,56 @@ library LibVaipakam {
     ///         issue).
     ///
     /// ─── Sanctions enforcement policy (Phase 1, retail deploy) ───
+    /// @notice #903 — the chain this deployment takes Base's reward word
+    ///         from, by kind of traffic.
+    ///         - A Mirror takes both kinds (tier traffic and the day
+    ///           broadcast) from its configured `baseChainId`.
+    ///         - A Detached deployment takes the DAY BROADCAST ONLY, and only
+    ///           from the base it detached from
+    ///           (`rewardDetachedFromBaseChainId`): a day the old Base
+    ///           finalized before the detach must still land. Tier traffic
+    ///           there has no authorised source; it is refused and stays a
+    ///           failed, re-executable CCIP message.
+    ///         - A canonical or never-configured deployment receives no
+    ///           Base-to-mirror reward traffic of either kind.
+    /// @param s Diamond storage.
+    /// @param dayBroadcast True for the day broadcast, false for tier
+    ///        traffic (tier push, tier-table version bump).
+    /// @return The authorised source chain id, or 0 when there is none.
+    function rewardBaseSourceChainId(
+        Storage storage s,
+        bool dayBroadcast
+    ) internal view returns (uint32) {
+        RewardRole role = rewardRole(s);
+        if (role == RewardRole.Mirror) return s.baseChainId;
+        if (role == RewardRole.Detached && dayBroadcast) {
+            return s.rewardDetachedFromBaseChainId;
+        }
+        return 0;
+    }
+
+    /// @notice #903 — the ONE source-chain rule for every Base-to-mirror
+    ///         reward ingress. The messenger authenticates the CCIP lane and
+    ///         the remote peer; this binds the message to the Base chain the
+    ///         deployment answers to for that kind of traffic
+    ///         (`rewardBaseSourceChainId`), so a second Diamond misconfigured
+    ///         as canonical and wired as a peer can neither write tiers nor
+    ///         install a day's denominators here. Fails closed when there is
+    ///         no such chain.
+    /// @param s Diamond storage.
+    /// @param sourceChainId The CCIP source chain the messenger authenticated.
+    /// @param dayBroadcast True for the day broadcast, false for tier traffic.
+    function requireRewardBaseSource(
+        Storage storage s,
+        uint256 sourceChainId,
+        bool dayBroadcast
+    ) internal view {
+        uint32 expected = rewardBaseSourceChainId(s, dayBroadcast);
+        if (expected == 0 || sourceChainId != expected) {
+            revert IVaipakamErrors.WrongSourceChain(sourceChainId, expected);
+        }
+    }
+
     ///
     /// The retail deploy may have a sanctions oracle configured (on
     /// mainnets, Vaipakam's own `SanctionsList`, #2443). When set, the gate splits the

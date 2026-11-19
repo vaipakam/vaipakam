@@ -2591,7 +2591,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](21);
+        selectors = new bytes4[](22);
         selectors[0] = RewardReporterFacet.closeDay.selector;
         // #1434 P2-w1 — V3 (kind-10) ingress + the mirror-side clock reads
         // + the era ground truth (#1632 r1).
@@ -2622,6 +2622,8 @@ contract HelperTest {
         // #917 — the one-way retirement and its record.
         selectors[19] = RewardReporterFacet.retireRewardChain.selector;
         selectors[20] = RewardReporterFacet.getRewardChainRetirement.selector;
+        // #903 — the source chain the Base-to-mirror ingress enforces.
+        selectors[21] = RewardReporterFacet.getRewardBaseSourceChainId.selector;
         return selectors;
     }
 

@@ -332,7 +332,7 @@ contract MockRewardMessenger is IRewardMessenger {
     ///         V3 envelope built by {_v3Envelope}.
     function deliverBroadcastV2(RewardBroadcastV2 calldata b) external {
         RewardReporterFacet(diamond).onRewardBroadcastV3Received(
-            _v3Envelope(b, b.freshLenderHalf, 0)
+            _baseSource(), _v3Envelope(b, b.freshLenderHalf, 0)
         );
     }
 
@@ -397,7 +397,29 @@ contract MockRewardMessenger is IRewardMessenger {
     /// @notice #1434 P2-w1 — simulate a kind-10 delivery landing on the
     ///         mirror reporter ingress.
     function deliverBroadcastV3(RewardBroadcastV3 calldata b) external {
-        RewardReporterFacet(diamond).onRewardBroadcastV3Received(b);
+        RewardReporterFacet(diamond).onRewardBroadcastV3Received(
+            _baseSource(), b
+        );
+    }
+
+    /// @notice #903 — deliver a kind-10 packet stamped with an ARBITRARY
+    ///         authenticated source chain: the probe for a broadcast from a
+    ///         chain that is not the mirror's Base.
+    function deliverBroadcastV3From(
+        uint256 sourceChainId,
+        RewardBroadcastV3 calldata b
+    ) external {
+        RewardReporterFacet(diamond).onRewardBroadcastV3Received(
+            sourceChainId, b
+        );
+    }
+
+    /// @dev #903 — a correctly bound messenger receives a broadcast only
+    ///      from the Base the mirror answers to; the mock stamps that
+    ///      chain, read from the Diamond's own day-broadcast rule.
+    function _baseSource() private view returns (uint256) {
+        (, uint32 daySource) = RewardReporterFacet(diamond).getRewardBaseSourceChainId();
+        return daySource;
     }
 
     // ─── #1434 P2-w3 — compensation-quote surface ─────────────────────────
@@ -755,7 +777,7 @@ contract MockRewardMessenger is IRewardMessenger {
             destChainId: block.chainid
         });
         RewardReporterFacet(diamond).onRewardBroadcastV3Received(
-            _v3Envelope(v2, floorHalf, recycledHalf)
+            _baseSource(), _v3Envelope(v2, floorHalf, recycledHalf)
         );
     }
 

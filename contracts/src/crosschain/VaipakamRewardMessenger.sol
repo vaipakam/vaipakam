@@ -1328,7 +1328,9 @@ contract VaipakamRewardMessenger is
             RewardBroadcastV3 memory b3 =
                 abi.decode(payload[32:], (RewardBroadcastV3));
             emit BroadcastV3Received(sourceChainId, b3.v2.dayId);
-            IRewardReporterIngressV3(diamond).onRewardBroadcastV3Received(b3);
+            IRewardReporterIngressV3(diamond).onRewardBroadcastV3Received(
+                sourceChainId, b3
+            );
         } else if (msgType == MSG_TYPE_COMP_QUOTE) {
             // #1434 P2-w3 — mirror → Base quote. Canonical-only like every
             // mirror→Base kind; no legacy shape precedes kind-11, so no
