@@ -21,6 +21,9 @@ import {
   offerCandidate,
   orderSources,
   planFrom,
+  previewBorrowCall,
+  previewFrom,
+  type BorrowPreview,
   readInstantConfig,
   slotCandidates,
   type BorrowNowReview,
@@ -137,17 +140,40 @@ export async function readBorrowNowReview(own: OwnStateClient, diamond: Hex, t: 
     const found = await own.read((c) => findAllowanceOverride(c, t.collateral, account, diamond, walletPart)).then((x) => x.value);
     // Without a way to ask before the approval exists, the approval comes
     // first, unless the wallet holds none of the collateral at all.
-    if (found === null) return { ...base, state: short !== null && walletHas === 0n ? short : { kind: 'needs-approval' } };
+    if (found === null) {
+      if (short !== null && walletHas === 0n) return { ...base, state: short };
+      return { ...base, state: { kind: 'needs-approval', preview: await readBorrowPreview(own, diamond, t, sources) } };
+    }
     override = found;
   }
   const state = await askPlan(own, diamond, t, sources, override);
   return { ...base, state: short !== null && state.kind !== 'plan' ? short : state };
 }
 
+/** The protocol's preview of this borrow, which needs no approval; null
+ *  when it cannot be read (the review then says the figure waits for the
+ *  approval, as before). A request-level refusal is the borrow's own and is
+ *  read again by the simulation after the approval. */
+export async function readBorrowPreview(own: OwnStateClient, diamond: Hex, t: BorrowNowTerms, sources: readonly InstantSource[]): Promise<BorrowPreview | null> {
+  try {
+    return (
+      await own.read(async (c) => {
+        const req = instantRequest(t, 0n, await chainValidUntil(c, 'borrowInstant'));
+        const r = await c.readContract({ address: diamond, ...previewBorrowCall(req, sources, own.account) });
+        return previewFrom(r, sources);
+      })
+    ).value;
+  } catch {
+    return null;
+  }
+}
+
 /** What a review shows, as one key: a re-read that differs is a change. */
 export function borrowNowKey(r: BorrowNowReview): string {
   const s = r.state;
-  const state = s.kind === 'plan' ? `plan:${s.plan.total}:${s.plan.collateralLocked}:${s.plan.fills.map((f) => `${f.amount}@${f.rateBps}`).join(',')}` : s.kind;
+  const fills = (p: { total: bigint; collateralLocked: bigint; fills: readonly { amount: bigint; rateBps: bigint }[] }) =>
+    `${p.total}:${p.collateralLocked}:${p.fills.map((f) => `${f.amount}@${f.rateBps}`).join(',')}`;
+  const state = s.kind === 'plan' ? `plan:${fills(s.plan)}` : s.kind === 'needs-approval' && s.preview !== null ? `needs-approval:${fills(s.preview.plan)}` : s.kind;
   const lif = r.lif === null ? 'lif?' : `lif:${r.lif.baseBps}:${r.lif.baseTermDays}:${r.lif.yearlyBps}:${r.lif.yearDays}`;
   return [state, r.walletPart, r.approvalSteps, r.sources.length, r.risk ?? '', lif].join('|');
 }

@@ -7,8 +7,9 @@
  * would be stamped with, the grace period for its term); nothing here is a
  * new promise, and a figure that could not be read is said to be unread.
  *
- * Not yet covered: the late fee's amount (the protocol has no view of its
- * schedule, so the line names the fee without a figure), floating-rate loans
+ * The late line states the protocol's late-fee schedule (`getLateFeeSchedule`,
+ * the constants the fee is charged by), or names the fee without a figure
+ * when the schedule could not be read. Not yet covered: floating-rate loans
  * and instant-market groups (#3637, #3656), which arrive with their reviews.
  */
 import type { PublicClient } from 'viem';
@@ -77,6 +78,25 @@ export function fallToLiquidation(ltvBps: bigint, liqLtvBps: bigint): bigint {
   return BPS - (ltvBps * BPS) / liqLtvBps;
 }
 
+/** The late fee every loan pays past its due date, in basis points of the
+ *  principal it is based on: `firstDayBps` on the first day, `perDayBps`
+ *  more each further day, never above `capBps`. */
+export interface LateFeeSchedule {
+  firstDayBps: bigint;
+  perDayBps: bigint;
+  capBps: bigint;
+}
+
+/** The protocol's late-fee schedule; null when it cannot be read. */
+export async function readLateFeeSchedule(c: PublicClient, diamond: Hex): Promise<LateFeeSchedule | null> {
+  try {
+    const [firstDayBps, perDayBps, capBps] = (await c.readContract({ address: diamond, abi: CONFIG, functionName: 'getLateFeeSchedule' })) as readonly [bigint, bigint, bigint];
+    return { firstDayBps, perDayBps, capBps };
+  } catch {
+    return null;
+  }
+}
+
 export interface WhatIfInput {
   side: 'borrower' | 'lender';
   price: PriceRisk;
@@ -85,6 +105,9 @@ export interface WhatIfInput {
   interestText: (amount: bigint) => string;
   fullTermInterest: boolean;
   graceSeconds: bigint;
+  /** The late-fee schedule, or null when unread (the line then names the
+   *  fee without a figure). */
+  lateFee: LateFeeSchedule | null;
 }
 
 /** The section's lines, in order: price fall, late, early. */
@@ -101,7 +124,16 @@ export function whatIfLines(w: WhatIfInput, copy: Pick<CopyAccess, 'text' | 'for
     if (room > 0n) lines.push(format('whatIf.priceRoom', { fall: formatBps(room) }));
   }
   const span = formatSpan(Number(w.graceSeconds));
-  lines.push(format(w.side === 'borrower' ? 'whatIf.lateBorrower' : 'whatIf.lateLender', { span }));
+  if (w.lateFee === null) lines.push(format(w.side === 'borrower' ? 'whatIf.lateBorrower' : 'whatIf.lateLender', { span }));
+  else
+    lines.push(
+      format(w.side === 'borrower' ? 'whatIf.lateBorrowerFee' : 'whatIf.lateLenderFee', {
+        span,
+        first: formatBps(w.lateFee.firstDayBps),
+        perDay: formatBps(w.lateFee.perDayBps),
+        cap: formatBps(w.lateFee.capBps),
+      }),
+    );
   const full = w.interestText(w.interest);
   if (w.fullTermInterest) lines.push(format(w.side === 'borrower' ? 'whatIf.earlyFullBorrower' : 'whatIf.earlyFullLender', { full }));
   else {

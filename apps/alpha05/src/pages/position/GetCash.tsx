@@ -187,6 +187,7 @@ export function GetCash(props: GetCashProps) {
             <div data-testid="get-cash-sale" data-net={read.sale.net.toString()} data-offer={read.sale.offerId.toString()}>
               <p className="tier-a">{format('getCash.saleValue', { rate: formatBps(read.sale.rateBps), amount: amount(read.sale.net) })}</p>
               {read.sale.net < read.principal && <p className="tier-a">{format('getCash.saleCost', { cost: amount(read.principal - read.sale.net) })}</p>}
+              {read.sale.held > 0n && <p className="tier-a">{format('getCash.saleHeldMoves', { amount: amount(read.sale.held) })}</p>}
               <p className="tier-a">{text('getCash.interestStays')}</p>
               <button type="button" className="btn btn-primary" onClick={() => setRoute('sale')} data-testid="get-cash-sale-go">
                 {text('getCash.saleGo')}
@@ -194,9 +195,15 @@ export function GetCash(props: GetCashProps) {
             </div>
           )}
           {read !== null && read.direct.kind === 'open' && read.handover.kind !== 'ready' && read.sale.kind !== 'ready' && (
-            <p className="tier-a" data-testid="get-cash-now-none">
-              {text('getCash.nowNone')}
-            </p>
+            <div data-testid="get-cash-now-none">
+              <p className="tier-a">{text('getCash.nowNone')}</p>
+              {read.handover.kind === 'none' &&
+                read.handover.refusals.map((r, n) => (
+                  <p key={n} className="tier-b">
+                    {format('getCash.handoverRefused', { reason: r.reason })}
+                  </p>
+                ))}
+            </div>
           )}
         </li>
         <li data-testid="get-cash-list">
@@ -401,11 +408,10 @@ function CashFlow(props: GetCashProps & { route: Route; read: GetCashRead | null
       return { route: 'handover', owner: g.handover.owner, slot: g.handover.slot, receives: g.handover.receives };
     }
     if (g.sale.kind !== 'ready') throw new StatedRefusal({ code: 'NoBuyOffer', reason: text('getCash.nowNone'), reopensAt: null, remedy: null });
-    const held = v.heldForLender;
-    if (held === null) throw new StatedRefusal({ code: 'HeldUnread', reason: text('frozen.reservedUnread'), reopensAt: null, remedy: null });
-    return { route: 'sale', offerId: g.sale.offerId, rateBps: g.sale.rateBps, net: g.sale.net, maxHeld: held, principal: g.principal };
+    // The sale is bound to the net and the held amount its preview showed.
+    return { route: 'sale', offerId: g.sale.offerId, rateBps: g.sale.rateBps, net: g.sale.net, maxHeld: g.sale.held, principal: g.principal };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route, list, own, diamond, loanId, v.heldForLender]);
+  }, [route, list, own, diamond, loanId]);
 
   const callOf = (p: Plan, validUntil: bigint) =>
     p.route === 'handover'

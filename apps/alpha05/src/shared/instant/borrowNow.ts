@@ -193,6 +193,41 @@ export function planFrom(result: unknown, sources: readonly InstantSource[]): Bo
   return { fills: out, total: out.reduce((s, f) => s + f.amount, 0n), collateralLocked: out.reduce((s, f) => s + f.collateral, 0n) };
 }
 
+/** The protocol's preview of an instant borrow (`previewBorrowInstant`),
+ *  read before any approval: what each source would lend, the sources it
+ *  would skip with their reasons, and where the collateral would come from.
+ *  It sizes each source by the fill's own rule but does not run the loan
+ *  checks a fill runs when it opens its loan, so it is shown as a preview
+ *  and the borrow is simulated again before it is signed. */
+export interface BorrowPreview {
+  plan: BorrowNowPlan;
+  skipped: { source: InstantSource; reason: Hex }[];
+  fromVault: bigint;
+  fromWallet: bigint;
+}
+
+export function previewBorrowCall(req: InstantBorrowRequest, sources: readonly InstantSource[], borrower: Hex) {
+  return { abi: INSTANT_MARKET, functionName: 'previewBorrowInstant' as const, args: [req, sources, borrower] as const };
+}
+
+/** The preview from `previewBorrowInstant`'s result. */
+export function previewFrom(result: unknown, sources: readonly InstantSource[]): BorrowPreview {
+  const [fills, skipped, , fromVault, fromWallet] = result as readonly [
+    readonly { sourceIndex: bigint; amount: bigint; rateBps: bigint; collateral: bigint }[],
+    readonly { sourceIndex: bigint; reason: Hex }[],
+    bigint,
+    bigint,
+    bigint,
+  ];
+  const planned: PlannedFill[] = fills.map((f) => ({ source: sources[Number(f.sourceIndex)]!, amount: f.amount, rateBps: f.rateBps, collateral: f.collateral }));
+  return {
+    plan: { fills: planned, total: planned.reduce((x, f) => x + f.amount, 0n), collateralLocked: planned.reduce((x, f) => x + f.collateral, 0n) },
+    skipped: skipped.map((k) => ({ source: sources[Number(k.sourceIndex)]!, reason: k.reason })),
+    fromVault,
+    fromWallet,
+  };
+}
+
 /** How the stated amount is covered now. */
 export type Coverage = 'all' | 'part' | 'none';
 
@@ -296,8 +331,10 @@ export type BorrowNowState =
   /** The wallet holds less collateral than its part. */
   | { kind: 'short-collateral'; have: bigint; need: bigint }
   /** The figure needs the approval in place and the token's allowance could
-   *  not be set for the question: stated as not known until approved. */
-  | { kind: 'needs-approval' }
+   *  not be set for the question: stated as not known until approved.
+   *  `preview` is the protocol's preview, which needs no approval (null
+   *  when it could not be read). */
+  | { kind: 'needs-approval'; preview: BorrowPreview | null }
   /** The protocol refused the call as stated (its first refusal, by name). */
   | { kind: 'refused'; code: string; reason: string };
 

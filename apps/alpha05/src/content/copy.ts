@@ -4090,6 +4090,12 @@ export const copy = {
     lateLender: A(
       'If the borrower repays after the due date, a late fee is added for you. Once the grace period of {{span}} ends, anyone can start the default, which settles the loan from the collateral.',
     ),
+    lateBorrowerFee: A(
+      'If you repay after the due date, a late fee is added: {{first}} of the principal on the first day, {{perDay}} more each further day, at most {{cap}}. Once the grace period of {{span}} ends, anyone can start the default, which settles the loan from your collateral.',
+    ),
+    lateLenderFee: A(
+      'If the borrower repays after the due date, a late fee is added for you: {{first}} of the principal on the first day, {{perDay}} more each further day, at most {{cap}}. Once the grace period of {{span}} ends, anyone can start the default, which settles the loan from the collateral.',
+    ),
     earlyFullBorrower: A('If you repay early, the whole term’s interest, {{full}}, is still owed. The initiation fee is not returned.'),
     earlyProRataBorrower: A('If you repay halfway through the term, you pay about {{half}} in interest instead of {{full}}. The initiation fee is not returned.'),
     earlyFullLender: A('If the borrower repays early, the whole term’s interest, {{full}}, is still owed to you, before the protocol’s share.'),
@@ -4745,6 +4751,8 @@ export const copy = {
     handoverValue: A('Another lender takes the loan over at face value. You receive {{amount}} into your vault now, with no fee.'),
     saleValue: A('A standing offer at {{rate}} buys the loan. You receive {{amount}} into your vault now.'),
     saleCost: A('That is the principal less {{cost}}: the extra interest this buyer earns for the rest of the term, which you pay.'),
+    saleHeldMoves: A('Funds already held for the lender on this loan, {{amount}}, move to the buyer with the position.'),
+    handoverRefused: A('An Auto-lend with the takeover consent was refused: {{reason}}'),
     interestStays: A('Interest earned and not yet paid stays yours. It is paid to you first from the borrower’s later interest, so it can be late or short too.'),
     nowNone: A('No lender is taking a loan like this now. You can list it at your price, or leave it.'),
     handoverGo: B('Review the handover'),
@@ -4797,6 +4805,9 @@ export const copy = {
     stepSend: B('Send'),
   },
   borrowNow: {
+    previewGives: A('Before the approval, the protocol’s preview of this borrow gives {{amount}} from {{count}} sources.'),
+    previewSkipped: B('A source would be skipped: {{reason}}'),
+    previewNotBinding: B('The preview skips the loan checks each fill runs. The borrow is checked again before you sign.'),
     formTitle: B('Borrow now'),
     lead: A(
       "Borrow from the lenders standing ready on this pair, in one step. Each part is its own loan with one lender, at that lender's rate and never above your highest rate. The review shows what this block gives before you sign.",
