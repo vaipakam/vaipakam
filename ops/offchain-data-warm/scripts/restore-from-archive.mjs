@@ -371,6 +371,12 @@ const LEGAL_REF_TABLES = ['diag_legal_holds', 'diag_legal_hold_audit'];
 // admin_wallet erases attribution from the append-only record.
 const WALLET_HASH_SHAPE = /^[0-9a-f]{64}$/;
 const ADMIN_WALLET_SHAPE = /^0x[0-9a-f]{40}$/;
+/** The writer's `set-disclosure` audit detail (`diagErasure.ts`):
+ *  `disclosure_allowed=<0|1>; note=<note>`, with a NULL note written as ''. */
+const DISCLOSURE_DETAIL_SHAPE = /^disclosure_allowed=([01]); note=(.*)$/s;
+/** A writer timestamp or autoincrement id: `unixepoch()` / SQLite rowid,
+ *  so a positive safe integer and nothing else. */
+const isPositiveInt = (v) => Number.isSafeInteger(v) && v > 0;
 
 // The ingestion path's byte invariants (`diagLegalDoc.ts`): non-empty,
 // capped, starting with the PDF magic. The key SHAPE guarantees none
@@ -1018,6 +1024,20 @@ export function invalidLegalDocRefs(archive) {
  *    non-empty string — the parser rejects placements without one,
  *    and a gutted HISTORICAL placement erases the recorded legal
  *    basis even when the latest placement looks fine.
+ *  - every `set-disclosure` audit `detail`, superseded ones included
+ *    (#1489): the writer's structured format. The replay checks only
+ *    the surviving latest one, so a gutted historical disclosure
+ *    decision would otherwise restore silently.
+ *  - timestamps and ids (#1489): `created_at` / `updated_at` (holds)
+ *    and `id` / `at` (audit) are positive integers, since the writer
+ *    binds `unixepoch()` and the id is an autoincrement rowid; a hold's
+ *    `created_at` is not after its `updated_at`; audit ids are unique;
+ *    and `at` never decreases in id order. The last one matters beyond
+ *    shape: the replay orders by (at, id), and the id is the writer's
+ *    own insertion sequence, so a tampered `at` could otherwise reorder
+ *    the replay. Actions are human-paced, minutes apart, so a decrease
+ *    is tampering rather than clock jitter; fix the data, never relax
+ *    the check.
  *
  *  Returns {table, row, problem} entries for the caller to fail on. */
 export function invalidLegalRowShapes(archive) {
@@ -1036,12 +1056,55 @@ export function invalidLegalRowShapes(archive) {
         if (typeof row.hold_reason !== 'string' || row.hold_reason === '') {
           push(`hold_reason ${JSON.stringify(row.hold_reason)} is not a non-empty string — the parser rejects placements without a reason`);
         }
+        const timesOk = isPositiveInt(row.created_at) && isPositiveInt(row.updated_at);
+        if (!timesOk) {
+          push(`created_at ${JSON.stringify(row.created_at)} / updated_at ${JSON.stringify(row.updated_at)} are not both positive integers — the writer binds unixepoch() to each`);
+        } else if (row.created_at > row.updated_at) {
+          push(`created_at ${row.created_at} is after updated_at ${row.updated_at} — the writer only ever moves updated_at forward from created_at`);
+        }
       } else {
+        if (!isPositiveInt(row.id)) {
+          push(`id ${JSON.stringify(row.id)} is not a positive integer — the column is an autoincrement rowid, and it orders the audit replay`);
+        }
+        if (!isPositiveInt(row.at)) {
+          push(`at ${JSON.stringify(row.at)} is not a positive integer — the writer binds unixepoch(), and it orders the audit replay`);
+        }
+        if (row.action === 'set-disclosure' && (typeof row.detail !== 'string' || !DISCLOSURE_DETAIL_SHAPE.test(row.detail))) {
+          push(`'set-disclosure' audit detail ${JSON.stringify(row.detail)} does not match the writer's structured format — a gutted disclosure decision erases it from the append-only record, superseded or not`);
+        }
         if (typeof row.admin_wallet !== 'string' || !ADMIN_WALLET_SHAPE.test(row.admin_wallet)) {
           push(`admin_wallet ${JSON.stringify(row.admin_wallet)} is not a lowercased EVM address — the writer records the signature-recovered admin, so attribution was erased or forged`);
         }
         if (row.action === 'place' && (typeof row.detail !== 'string' || row.detail === '')) {
           push(`'place' audit detail ${JSON.stringify(row.detail)} is not the non-empty holdReason — a gutted placement erases the recorded legal basis from the append-only record`);
+        }
+      }
+    }
+    if (table.name === 'diag_legal_hold_audit') {
+      // Ordering across rows: unique ids, and `at` non-decreasing in id
+      // order. Rows whose id/at failed the shape check above are left to
+      // that diagnostic.
+      const seen = new Map(); // id -> first row index
+      const ordered = [];
+      for (const [i, row] of (table.rows ?? []).entries()) {
+        if (!isPositiveInt(row.id)) continue;
+        if (seen.has(row.id)) {
+          invalid.push({ table: table.name, row: i, problem: `id ${row.id} repeats row ${seen.get(row.id)} — autoincrement ids are unique` });
+          continue;
+        }
+        seen.set(row.id, i);
+        if (isPositiveInt(row.at)) ordered.push({ i, id: row.id, at: row.at });
+      }
+      ordered.sort((a, b) => a.id - b.id);
+      for (let k = 1; k < ordered.length; k++) {
+        const prev = ordered[k - 1];
+        const cur = ordered[k];
+        if (cur.at < prev.at) {
+          invalid.push({
+            table: table.name,
+            row: cur.i,
+            problem: `at ${cur.at} (id ${cur.id}) is earlier than at ${prev.at} (id ${prev.id}) — the writer appends in id order with the server clock, so the replay order was tampered with`,
+          });
         }
       }
     }
@@ -1163,7 +1226,7 @@ export function reconcileLegalHolds(archive) {
       let expectedAllowed = 0;
       let expectedNote = '';
       if (discRow) {
-        const m = /^disclosure_allowed=([01]); note=(.*)$/s.exec(String(discRow.detail ?? ''));
+        const m = DISCLOSURE_DETAIL_SHAPE.exec(String(discRow.detail ?? ''));
         if (!m) {
           problems.push({
             walletHash: wallet,
