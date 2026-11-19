@@ -1697,8 +1697,21 @@ Action permissions currently exposed:
   for sale).
 - **Initiate preclose** (borrower side, kick off the
   preclose flow).
-- **Refinance** (borrower side, atomic loan swap on a new
-  borrower offer).
+- **Extend in place** (either side, extend a loan within the
+  limits both holders consented to).
+- **Fill a keeper-only standing offer** (lender, fill your
+  standing lending offer when you made it keeper-only, within
+  its limits).
+- **Roll repaid loans** (lender, put a repaid standing-offer
+  loan's amount back into that offer).
+- **Lock a protected account** (owner, lock it, for example on
+  your Telegram LOCK command; never unlock it or release a
+  payout).
+
+Refinance needs no keeper permission: every refinance completes
+inside the accept of the borrower's refinance offer. The last
+three permissions act for your account as a whole, so the
+per-loan toggle does not apply to them.
 
 Permissions added on-chain that the frontend doesn't yet
 reflect get a clear "invalid permission" revert. Revocation is

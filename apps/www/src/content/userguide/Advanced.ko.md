@@ -1348,7 +1348,15 @@ permission이 설정되어 있음.
 - **Offset 완료** (borrower side, collateral sale을 통한 preclose의 second leg).
 - **Early withdrawal 시작** (lender side, position을 sale listing).
 - **Preclose 시작** (borrower side, preclose flow 시작).
-- **Refinance** (borrower side, 새 borrower offer에서 atomic loan swap).
+- **Extend in place** (어느 side든, 두 holders가 동의한 limits 안에서 loan 연장).
+- **Keeper-only standing offer fill** (lender, keeper-only로 만든 standing lending offer를 그 limits 안에서 fill).
+- **Repaid loans roll** (lender, standing offer의 repaid loan 금액을 그 offer로 되돌림).
+- **Protected account lock** (owner, 예를 들어 Telegram LOCK command로 lock; unlock하거나 payout을 release하지 않음).
+
+Refinance에는 keeper permission이 필요 없습니다: 모든 refinance는
+borrower의 refinance offer accept 안에서 완료됩니다. 마지막 세
+permissions는 account 전체를 위해 동작하므로 per-loan toggle이 적용되지
+않습니다.
 
 frontend가 아직 reflect하지 않은 on-chain permissions는 명확한
 "permission invalid" revert를 받습니다. Revocation은 모든 loans에서 즉시

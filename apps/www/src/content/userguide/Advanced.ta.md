@@ -1489,8 +1489,21 @@ keeper-க்கு குறிப்பிட்ட action permission அம�
 - **Initiate early withdrawal** (lender side, position-இல் விற்பனைக்கு
   list செய்).
 - **Initiate preclose** (borrower side, preclose flow-இல் kick off செய்).
-- **Refinance** (borrower side, ஒரு புதிய borrower offer-இல் atomic
-  loan swap).
+- **Extend in place** (எந்த side-உம், இரு holders-உம் ஒப்புக்கொண்ட
+  limits-க்குள் loan-ஐ நீட்டித்தல்).
+- **Keeper-only standing offer-ஐ fill செய்** (lender, நீங்கள்
+  keeper-only ஆக்கிய standing lending offer-ஐ அதன் limits-க்குள் fill
+  செய்தல்).
+- **Repaid loans-ஐ roll செய்** (lender, standing offer-இன் repaid loan
+  தொகையை அதே offer-க்குத் திருப்புதல்).
+- **Protected account-ஐ lock செய்** (owner, உதாரணமாக உங்கள் Telegram
+  LOCK command-இல் lock செய்தல்; ஒருபோதும் unlock செய்யாது, payout-ஐ
+  release செய்யாது).
+
+Refinance-க்கு keeper permission தேவையில்லை: ஒவ்வொரு refinance-உம்
+borrower-இன் refinance offer-இன் accept-க்குள்ளேயே முடிகிறது. கடைசி மூன்று
+permissions உங்கள் முழு account-க்காகச் செயல்படுவதால், per-loan toggle
+அவற்றுக்குப் பொருந்தாது.
 
 Frontend இன்னும் reflect செய்யாத on-chain permissions சேர்க்கப்பட்டால்,
 அவை தெளிவான "invalid permission" revert-இல் பெறும். Revocation அனைத்து

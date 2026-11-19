@@ -1557,8 +1557,22 @@ Permissions d'action actuellement exposées :
   position en vente).
 - **Initier un preclose** (côté emprunteur, lance le flux de
   preclose).
-- **Refinancer** (côté emprunteur, échange atomique de prêt
-  sur une nouvelle offre d'emprunteur).
+- **Prolonger sur place** (l'un ou l'autre côté, prolonger un
+  prêt dans les limites acceptées par les deux détenteurs).
+- **Remplir une offre permanente réservée aux keepers** (prêteur,
+  remplir votre offre de prêt permanente quand vous l'avez
+  réservée aux keepers, dans ses limites).
+- **Recycler les prêts remboursés** (prêteur, remettre le montant
+  d'un prêt remboursé d'une offre permanente dans cette offre).
+- **Verrouiller un compte protégé** (titulaire, le verrouiller,
+  par exemple sur votre commande LOCK Telegram ; jamais le
+  déverrouiller ni libérer un paiement).
+
+Le refinancement ne demande aucune permission de keeper : chaque
+refinancement se finalise dans l'acceptation de l'offre de
+refinancement de l'emprunteur. Les trois dernières permissions
+agissent pour votre compte dans son ensemble ; l'interrupteur par
+prêt ne s'y applique donc pas.
 
 Les permissions ajoutées on-chain que le frontend ne reflète
 pas encore obtiennent un revert clair de « permission

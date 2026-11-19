@@ -1554,8 +1554,23 @@ Aktuell exponierte Action-Permissions:
   Verkauf listen).
 - **Preclose initiieren** (Borrower-Seite, startet den
   Preclose-Flow).
-- **Refinance** (Borrower-Seite, atomarer Loan-Tausch auf einer
-  neuen Borrower-Offer).
+- **Verlängerung an Ort und Stelle** (beide Seiten, einen Loan
+  innerhalb der Grenzen verlängern, denen beide Halter zugestimmt
+  haben).
+- **Keeper-only Standing Offer füllen** (Lender, deine Standing
+  Offer füllen, wenn du sie keeper-only gemacht hast, innerhalb
+  ihrer Grenzen).
+- **Zurückgezahlte Loans rollen** (Lender, den Betrag eines
+  zurückgezahlten Loans aus einer Standing Offer in diese Offer
+  zurücklegen).
+- **Geschütztes Konto sperren** (Inhaber, es sperren, etwa auf
+  deinen Telegram-LOCK-Befehl; niemals entsperren oder eine
+  Auszahlung freigeben).
+
+Refinance braucht keine Keeper-Permission: jedes Refinance wird
+innerhalb des Accepts der Refinance-Offer des Borrowers
+abgeschlossen. Die letzten drei Permissions handeln für dein
+Konto als Ganzes, daher gilt der Per-Loan-Schalter für sie nicht.
 
 On-chain hinzugefügte Permissions, die das Frontend noch nicht
 abbildet, erhalten ein klares "Permission ungültig"-Revert.

@@ -1551,8 +1551,22 @@ Permisos de acción actualmente expuestos:
   posición a la venta).
 - **Iniciar preclose** (lado prestatario, dispara el flujo de
   preclose).
-- **Refinanciar** (lado prestatario, intercambio atómico de
-  préstamo sobre una nueva oferta de prestatario).
+- **Extender en el sitio** (cualquier lado, extender un préstamo
+  dentro de los límites que ambos titulares aceptaron).
+- **Completar una oferta permanente solo para keepers**
+  (prestamista, completar tu oferta permanente de préstamo cuando
+  la hiciste solo para keepers, dentro de sus límites).
+- **Reinvertir préstamos repagados** (prestamista, devolver el
+  importe de un préstamo repagado de una oferta permanente a esa
+  oferta).
+- **Bloquear una cuenta protegida** (titular, bloquearla, por
+  ejemplo con tu comando LOCK de Telegram; nunca desbloquearla ni
+  liberar un pago).
+
+Refinanciar no necesita permiso de keeper: cada refinanciación se
+completa dentro de la aceptación de la oferta de refinanciación
+del prestatario. Los tres últimos permisos actúan para tu cuenta
+en conjunto, así que el interruptor por préstamo no se les aplica.
 
 Permisos añadidos on-chain que el frontend aún no refleja
 obtienen un revert claro de "permiso inválido". La revocación es

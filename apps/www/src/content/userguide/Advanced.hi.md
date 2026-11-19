@@ -1489,8 +1489,21 @@ approved, master switch on, per-loan toggle on, और उस keeper
   को बिक्री के लिए list करें)।
 - **Preclose initiate करें** (borrower side, preclose flow
   शुरू करें)।
-- **Refinance** (borrower side, नई borrower offer पर
-  atomic loan swap)।
+- **Extend in place** (कोई भी side, loan को उन limits के भीतर
+  बढ़ाएँ जिन पर दोनों holders सहमत हुए)।
+- **Keeper-only standing offer fill करें** (lender, आपकी
+  standing lending offer fill करें जब आपने उसे keeper-only
+  बनाया हो, उसकी limits के भीतर)।
+- **Repaid loans roll करें** (lender, standing offer के repaid
+  loan की राशि उसी offer में वापस डालें)।
+- **Protected account lock करें** (owner, उसे lock करें, जैसे
+  आपके Telegram LOCK command पर; कभी unlock नहीं करता और न ही
+  payout release करता है)।
+
+Refinance के लिए keeper permission नहीं चाहिए: हर refinance
+borrower की refinance offer के accept के भीतर ही पूरा होता है।
+आख़िरी तीन permissions पूरे account के लिए काम करती हैं, इसलिए
+per-loan toggle उन पर लागू नहीं होता।
 
 On-chain जोड़ी गई permissions जिन्हें frontend अभी reflect
 नहीं करता, उन्हें साफ़ "permission invalid" revert मिलता है।

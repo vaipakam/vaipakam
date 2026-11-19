@@ -1242,8 +1242,18 @@ on、per-loan toggle on，并且该 keeper 具有对应的 action permission。
   行 preclose 的第二段)。
 - **Initiate early withdrawal** (lender 一方，将 position list 出售)。
 - **Initiate preclose** (borrower 一方，启动 preclose flow)。
-- **Refinance** (borrower 一方，对新 borrower offer 进行 atomic
-  loan swap)。
+- **Extend in place** (任一方，在双方 holders 同意的 limits 内
+  延长 loan)。
+- **Fill keeper-only standing offer** (lender，在其 limits 内
+  fill 你设为 keeper-only 的 standing lending offer)。
+- **Roll repaid loans** (lender，把 standing offer 的 repaid
+  loan 金额放回该 offer)。
+- **Lock protected account** (owner，例如在你的 Telegram LOCK
+  command 下 lock；从不 unlock，也不 release payout)。
+
+Refinance 不需要 keeper permission：每次 refinance 都在 borrower
+的 refinance offer 被 accept 时完成。最后三个 permissions 作用于你
+的整个 account，因此 per-loan toggle 不适用于它们。
 
 frontend 尚未 reflect 的 on-chain permissions 会得到清晰的
 "invalid permission" revert。Revocation 会在所有 loans 上即时生效

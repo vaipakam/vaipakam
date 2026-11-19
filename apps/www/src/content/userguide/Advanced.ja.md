@@ -1441,8 +1441,19 @@ specific action permission が set されていること。
 - **Early withdrawal を開始** (lender side、position を sale listing
   へ)。
 - **Preclose を開始** (borrower side、preclose flow を開始)。
-- **Refinance** (borrower side、新しい borrower offer 上での atomic
-  loan swap)。
+- **Extend in place** (どちらの side でも、両 holders が同意した
+  limits の範囲で loan を延長)。
+- **Keeper-only standing offer を fill** (lender、keeper-only に
+  した standing lending offer を、その limits の範囲で fill)。
+- **Repaid loans を roll** (lender、standing offer の repaid loan
+  の金額をその offer に戻す)。
+- **Protected account を lock** (owner、たとえば Telegram の LOCK
+  command で lock。unlock や payout の release は決してしない)。
+
+Refinance に keeper permission は不要です: すべての refinance は
+borrower の refinance offer の accept の中で完了します。最後の 3 つ
+の permissions は account 全体に対して働くため、per-loan toggle は
+適用されません。
 
 frontend がまだ reflect していない on-chain permissions は、明確な
 "permission invalid" revert を受け取ります。Revocation はすべての

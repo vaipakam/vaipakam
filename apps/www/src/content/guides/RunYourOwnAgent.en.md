@@ -34,16 +34,16 @@ A keeper acts only inside the limits you set on a loan, an offer, an auto-lend s
 
 ## The actions you can give a keeper
 
-| Action | What it lets the keeper do | What it never lets it do |
-| --- | --- | --- |
-| Complete a loan sale | Finish the sale of your lender position once a buyer has accepted your listing | Choose the buyer or change the price you listed |
-| Complete an offset | Finish your early close-out by offset once its new offer is accepted | Change the offer's terms |
-| Start an early withdrawal | List your lender position for sale | List at a rate above the loan's own rate |
-| Start an early close-out | Start the early close-out of your borrowing | Route anything to the keeper |
-| Extend in place | Extend a loan within the limits both its holders consented to | Go past either holder's limits |
-| Fill a keeper-only standing offer | Fill your standing lending offer when you made it keeper-only | Fill it outside its rate, size, term and loan-to-value limits |
-| Roll repaid loans | Put the repaid amount of a standing offer's loan back into that offer | Send it anywhere else |
-| Lock a protected account | Lock your protected account, for example on your Telegram LOCK command | Unlock it, or release a payout |
+| Action | What it lets the keeper do | What it never lets it do | In the public bot |
+| --- | --- | --- | --- |
+| Complete a loan sale | Finish the sale of your lender position once a buyer has accepted your listing | Choose the buyer or change the price you listed | Not yet |
+| Complete an offset | Finish your early close-out by offset once its new offer is accepted | Change the offer's terms | Not yet |
+| Start an early withdrawal | List your lender position for sale | List at a rate above the loan's own rate | Not yet |
+| Start an early close-out | Start the early close-out of your borrowing | Route anything to the keeper | Not yet |
+| Extend in place | Extend a loan within the limits both its holders consented to | Go past either holder's limits | Yes |
+| Fill a keeper-only standing offer | Fill your standing lending offer when you made it keeper-only | Fill it outside its rate, size, term and loan-to-value limits | Not yet |
+| Roll repaid loans | Put the repaid amount of a standing offer's loan back into that offer | Send it anywhere else | Not yet |
+| Lock a protected account | Lock your protected account, for example on your Telegram LOCK command | Unlock it, or release a payout | Not yet |
 
 Liquidating a loan whose health has fallen too low, and closing a loan after its grace period, are open to anyone and need no approval.
 
@@ -53,9 +53,9 @@ Liquidating a loan whose health has fallen too low, and closing a loan after its
 
 The platform's reference keeper is open source: [vaipakam-keeper-bot](https://github.com/vaipakam/vaipakam-keeper-bot). It is a Node.js program you run with your own key and your own network connection. Its README has the steps to set it up.
 
-What it does today: it watches for loans that can be liquidated and liquidates them, matches offers that can be matched, and extends loans in place where both holders consented. Those steps are open to anyone, or need the holders' extension consent, so running it needs no keeper approval from you.
+What it runs: the steps anyone may run. It liquidates loans whose health has fallen too low, matches offers that can be matched, and extends loans in place where both holders consented. These need no keeper approval from you.
 
-What it does not do today: it does not carry out the approved actions in the table above for your own positions. To have a keeper complete your sales or close-outs, you need a keeper that does, approved for exactly those actions.
+What it does not run yet: the actions a wallet approves for its own keeper, such as completing a sale or an offset, or starting an early withdrawal or an early close-out. Any approved keeper can carry these out on-chain today, inside the limits in the table above; the public bot does not do so yet, and no date is set. The table's last column says which actions the public bot runs. To have a keeper carry out the others for you, run a keeper that does, approved for exactly those actions.
 
 <a id="agent.keys"></a>
 
