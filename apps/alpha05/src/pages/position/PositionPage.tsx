@@ -30,6 +30,7 @@ import { LoanClaims } from './LoanClaims';
 import { Fact, Facts } from './Facts';
 import { InterestSchedule } from './InterestSchedule';
 import { LenderDiscount } from './LenderDiscount';
+import { TokenApprovalCard } from '../../shared/positions/TokenApprovalCard';
 
 /** What the page says when the timing allows a default but another gate
  *  of `triggerDefault` refuses it. */
@@ -173,6 +174,14 @@ function LoanBody({ loanId, view: v, own, chain, meta }: { loanId: bigint; view:
       <StatusLine status={l.status} />
       <RoleLine role={role} />
       {holder && <FrozenNotice state={frozen} />}
+      {(['lender', 'borrower'] as const).map((side) => {
+        const to = v.approved[side];
+        // Said to the side's holder, the one wallet that can remove it.
+        const mine = v.holders[side]?.toLowerCase() === account.toLowerCase();
+        return to !== null && to !== 'none' && mine ? (
+          <TokenApprovalCard key={side} side={side} tokenId={side === 'lender' ? l.lenderTokenId : l.borrowerTokenId} to={to} chain={chain} own={own} />
+        ) : null;
+      })}
       {obligations && (
         <div className="position-now">
           <StageLine stage={obligations.stage} borrowerSide={borrowerSide} rental={!erc20} defaultable={v.defaultable} />

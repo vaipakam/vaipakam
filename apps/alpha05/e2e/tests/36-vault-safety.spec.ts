@@ -142,6 +142,20 @@ test('a recovery address another wallet proves comes first; then protected mode 
   await expect(card.getByTestId('vault-safety-state')).toHaveAttribute('data-state', 'on', { timeout: 60_000 });
   await expect(card.getByTestId('vault-safety-lock')).toBeVisible();
   await expect(card.getByTestId('vault-safety-nfts')).toHaveText('Off');
+  // #3721: the card says the tokens are not locked and offers the one step.
+  await expect(card.getByTestId('vault-safety-nfts-unlocked')).toHaveText('Protected mode is on. Your position tokens are not locked.');
+  await card.getByTestId('vault-safety-lock-nfts').click();
+  const nftFlow = page.getByTestId('vault-safety-panel');
+  await expect(nftFlow).toHaveAttribute('data-action', 'lockNfts');
+  sent = flags.sentTransactions;
+  await nftFlow.getByRole('button', { name: 'Confirm in wallet' }).click();
+  const nftDone = nftFlow.locator('[data-phase="measured"]');
+  await expect(nftDone).toHaveAttribute('data-verdict', 'done', { timeout: 120_000 });
+  expect(flags.sentTransactions).toBe(sent + 1);
+  expect(await sc.pub.readContract({ address: core, abi: HOLDER_LOCK, functionName: 'isLocked', args: [me] })).toBe(true);
+  await nftDone.getByRole('button', { name: 'Close' }).click();
+  await expect(card.getByTestId('vault-safety-nfts')).toHaveText('On', { timeout: 60_000 });
+  await expect(card.getByTestId('vault-safety-lock-nfts')).toHaveCount(0);
   await fitsWidth(page);
 });
 

@@ -185,6 +185,11 @@ function SafetyState({ mode: m, now, openRows, wallet, busy, choosing, recoveryR
       <p className="tier-a" data-testid="vault-safety-state" data-state={m.locked ? 'locked' : 'on'}>
         {m.locked ? format('safety.stateLocked', { at: formatUtc(m.lockedAt), by: lockedBy }) : format('safety.stateOn', { delay: formatSpan(m.delaySeconds) })}
       </p>
+      {m.nftLock === false && (
+        <p className="tier-a" data-testid="vault-safety-nfts-unlocked">
+          {text('safety.nftsNotLocked')}
+        </p>
+      )}
       <dl className="facts">
         <dt>{text('safety.factDelay')}</dt>
         <dd data-testid="vault-safety-delay">{formatSpan(m.delaySeconds)}</dd>
@@ -217,6 +222,11 @@ function SafetyState({ mode: m, now, openRows, wallet, busy, choosing, recoveryR
           {!m.locked && (
             <button type="button" className="btn btn-danger" onClick={() => onAction('lock')} data-testid="vault-safety-lock">
               {text('safety.lockNow')}
+            </button>
+          )}
+          {m.nftLock === false && (
+            <button type="button" className="btn" onClick={() => onAction('lockNfts')} data-testid="vault-safety-lock-nfts">
+              {text('safety.lockNftsNow')}
             </button>
           )}
           {m.locked && m.pendingUnlockAt === 0 && (
