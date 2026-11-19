@@ -203,8 +203,13 @@ export function reviewAnalytics({ rec, loop, snap, copy, diamond, chainId }) {
     );
 
     // #2210 — the block's finality is stated as the indexer published it;
-    // an indexer that predates the field is "not recorded", never settled.
-    const settled = b.blockSettled ?? null;
+    // a reading that does not record it (null) is "not recorded".
+    const settled = b.blockSettled;
+    check(
+      'the indexer states whether the block was settled (true, false or null)',
+      settled === true || settled === false || settled === null,
+      `blockSettled ${JSON.stringify(settled)}`,
+    );
     const wantFinality =
       settled === null
         ? c.blockFinalityUnknown

@@ -666,11 +666,12 @@ describe('RecyclingAccount — a floored figure must not hide a shortfall', () =
     expect(guessed.textOf('recycling-block-finality')).toBe(R.blockFinalityEstimated);
     // The block number is still shown — the estimate is qualified, not hidden.
     expect(guessed.textOf('recycling-asof')).toContain('12345678');
-    const b = backing();
-    delete b.blockSettled;
-    expect(render(series({ backing: b })).textOf('recycling-block-finality')).toBe(
-      R.blockFinalityUnknown,
-    );
+    // Only the estimate carries the note on what an estimated block means.
+    expect(guessed.textOf('recycling-block-finality-note')).toBe(R.blockFinalityEstimatedNote);
+    expect(settled.has('recycling-block-finality-note')).toBe(false);
+    const unknown = render(series({ backing: backing({ blockSettled: null }) }));
+    expect(unknown.textOf('recycling-block-finality')).toBe(R.blockFinalityUnknown);
+    expect(unknown.has('recycling-block-finality-note')).toBe(false);
   });
 
   it('RENDERS the capture time, since the figures are not live', () => {

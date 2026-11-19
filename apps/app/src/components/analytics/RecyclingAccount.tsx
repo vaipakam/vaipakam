@@ -771,6 +771,11 @@ function BackingFigures({
                 ? copy.recycling.blockFinalitySettled
                 : copy.recycling.blockFinalityEstimated}
           </dd>
+          {b.blockSettled === false ? (
+            <dd data-testid="recycling-block-finality-note">
+              {copy.recycling.blockFinalityEstimatedNote}
+            </dd>
+          ) : null}
         </div>
       </dl>
       {/* Which amounts the remainder subtracts depends on where custody is

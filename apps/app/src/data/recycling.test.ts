@@ -622,12 +622,9 @@ describe('parseBacking — whether the block was settled (#2210)', () => {
     expect(v.backing.blockSettled).toBe(want);
   });
 
-  it('an indexer that predates the field reads as NOT RECORDED, never as settled', () => {
+  it('a body without the field is malformed, never read as settled or as not recorded', () => {
     const b = backing();
     delete b.blockSettled;
-    const v = parseBacking(b);
-    expect(v.kind).toBe('published');
-    if (v.kind !== 'published') return;
-    expect(v.backing.blockSettled).toBeNull();
+    expect(parseBacking(b)).toEqual({ kind: 'withheld', reason: { kind: 'malformed' } });
   });
 });

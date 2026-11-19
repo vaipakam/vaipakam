@@ -169,8 +169,8 @@ export interface PublishableBacking {
    * Whether the chain confirmed `blockNumber` as settled (#2210). `false` =
    * no settled block could be read when the figures were taken, so the block
    * is an estimate a fixed distance behind the newest one. `null` = the
-   * reading does not record it (an older indexer, or a reading taken before
-   * the indexer recorded it) — never shown as either answer.
+   * reading does not record it (a reading taken before the indexer recorded
+   * it) — shown as "Not recorded", never as either answer.
    */
   blockSettled: boolean | null;
   diamond: string;
@@ -527,8 +527,12 @@ export function parseBacking(raw: unknown): BackingView {
   }
   const custodyActivated = optional(b.custodyActivated);
   const holderBalanceKnown = optional(b.holderBalanceKnown);
-  const blockSettled = optional(b.blockSettled);
+  // #2210 — REQUIRED: the indexer publishes the key on every reading, `null`
+  // when the reading does not record it. An absent key is a malformed body,
+  // not a fourth state.
+  const blockSettled = b.blockSettled;
   if (
+    blockSettled === undefined ||
     (custodyActivated !== null && !isBool(custodyActivated)) ||
     (holderBalanceKnown !== null && !isBool(holderBalanceKnown)) ||
     (blockSettled !== null && !isBool(blockSettled))

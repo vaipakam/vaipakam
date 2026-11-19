@@ -32,6 +32,7 @@ const recBody = () => ({
     },
     pendingMigration: null,
     blockNumber: '49484775',
+    blockSettled: true,
     diamond: DIAMOND,
     unavailableReason: null,
     asOf: '2026-10-24T05:13:43.000Z',
@@ -70,7 +71,7 @@ function pageFor(rec, loop) {
     snap['recycling-asof'] = {
       text: fill(c.asOfValue, { block: b.blockNumber, at: b.asOf, contract: b.diamond }),
     };
-    const settled = b.blockSettled ?? null;
+    const settled = b.blockSettled;
     snap['recycling-block-finality'] = {
       text:
         settled === null
@@ -116,6 +117,14 @@ describe('reviewAnalytics', () => {
     const checks = run(recBody(), loopBody());
     expect(failed(checks)).toEqual([]);
     expect(checks.length).toBeGreaterThan(10);
+  });
+
+  it('fails an indexer body that omits blockSettled (#2210)', () => {
+    const rec = recBody();
+    delete rec.backing.blockSettled;
+    expect(failed(run(rec, loopBody()))).toContain(
+      'the indexer states whether the block was settled (true, false or null)',
+    );
   });
 
   it('fails a page that presents an estimated block as settled (#2210)', () => {
