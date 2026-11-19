@@ -1,0 +1,543 @@
+{
+  "$schema": "https://eips.ethereum.org/assets/eip-7730/erc7730-v2.schema.json",
+  "context": {
+    "$id": "Vaipakam Permit2 transfers",
+    "eip712": {
+      "domain": {
+        "name": "Permit2"
+      },
+      "deployments": [
+        {
+          "chainId": 97,
+          "address": "0x000000000022D473030F116dDEE9F6B43aC78BA3"
+        },
+        {
+          "chainId": 84532,
+          "address": "0x000000000022D473030F116dDEE9F6B43aC78BA3"
+        },
+        {
+          "chainId": 421614,
+          "address": "0x000000000022D473030F116dDEE9F6B43aC78BA3"
+        }
+      ]
+    }
+  },
+  "metadata": {
+    "owner": "Vaipakam",
+    "info": {
+      "url": "https://vaipakam.com"
+    },
+    "enums": {
+      "AssetType": {
+        "0": "Token (ERC-20)",
+        "1": "NFT (ERC-721)",
+        "2": "NFT (ERC-1155)"
+      },
+      "CollateralSetKind": {
+        "0": "One collateral",
+        "1": "Any token of a collection",
+        "2": "A token ID range",
+        "3": "Listed token IDs"
+      },
+      "FillMode": {
+        "0": "Partial fills allowed",
+        "1": "All or nothing",
+        "2": "Fill now or cancel"
+      },
+      "LibVaipakam_LIFECYCLE_FLEX_flags": {
+        "0": "Nothing; both options as offered",
+        "1": "Partial repay option",
+        "2": "Sale listing option",
+        "3": "Partial repay option, Sale listing option"
+      },
+      "OfferType": {
+        "0": "Lend",
+        "1": "Borrow"
+      },
+      "PeriodicInterestCadence": {
+        "0": "At the end",
+        "1": "Monthly",
+        "2": "Quarterly",
+        "3": "Every six months",
+        "4": "Yearly"
+      }
+    }
+  },
+  "display": {
+    "formats": {
+      "PermitWitnessTransferFrom(TokenPermissions permitted,address spender,uint256 nonce,uint256 deadline,SignedOffer witness)SignedOffer(uint8 offerType,address lendingAsset,uint256 amount,uint256 amountMax,uint256 interestRateBps,uint256 interestRateBpsMax,address collateralAsset,uint256 collateralAmount,uint256 collateralAmountMax,uint256 durationDays,uint8 assetType,uint8 collateralAssetType,uint256 tokenId,uint256 quantity,uint256 collateralTokenId,uint256 collateralQuantity,address prepayAsset,bool allowsPartialRepay,bool allowsPrepayListing,bool allowsParallelSale,uint64 expiresAt,uint8 fillMode,uint8 periodicInterestCadence,uint256 refinanceTargetLoanId,bool useFullTermInterest,uint8 lifecycleFlex,address integrator,bool creatorFull,uint256 creatorMaxCStar,bool creatorAllowFullDowngrade,uint16 maxTreasuryFeeBps,uint16 maxLoanInitiationFeeBps,address allowedTaker,address coSigner,address signer,uint256 nonce,uint256 deadline,uint8 setKind,uint256 setLow,uint256 setHigh,bytes32 setRoot,uint32 setListCount,bytes32 setListHash,bytes32 exclusionsHash,uint16 loans,uint64 startTime)TokenPermissions(address token,uint256 amount)": {
+        "$id": "PermitWitnessTransferFrom",
+        "intent": "Fund a signed loan offer",
+        "fields": [
+          {
+            "path": "permitted.token",
+            "label": "Permit token",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "token",
+                "collection"
+              ]
+            }
+          },
+          {
+            "path": "permitted.amount",
+            "label": "Permit amount",
+            "format": "tokenAmount",
+            "params": {
+              "tokenPath": "permitted.token"
+            }
+          },
+          {
+            "path": "spender",
+            "visible": {
+              "mustMatch": [
+                "0xBc839c06Ee431d50EA6B087E0f26e80fb022564E",
+                "0x2c300b26bc15359E7948dA61a1960303772b0335",
+                "0x0EBd0536a698707958e1c327Ba1EB2b4f329A119"
+              ]
+            }
+          },
+          {
+            "path": "nonce",
+            "visible": "never"
+          },
+          {
+            "path": "deadline",
+            "label": "Permit valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            }
+          },
+          {
+            "path": "witness.offerType",
+            "label": "Offer side",
+            "format": "enum",
+            "params": {
+              "$ref": "$.metadata.enums.OfferType"
+            }
+          },
+          {
+            "path": "witness.lendingAsset",
+            "label": "Lending asset",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "token",
+                "collection"
+              ]
+            }
+          },
+          {
+            "path": "witness.amount",
+            "label": "Amount or rental fee",
+            "format": "tokenAmount",
+            "params": {
+              "tokenPath": "witness.lendingAsset"
+            }
+          },
+          {
+            "path": "witness.amountMax",
+            "label": "Max amount",
+            "format": "tokenAmount",
+            "params": {
+              "tokenPath": "witness.lendingAsset"
+            }
+          },
+          {
+            "path": "witness.interestRateBps",
+            "label": "Interest rate (yearly)",
+            "format": "unit",
+            "params": {
+              "base": "%",
+              "decimals": 2
+            }
+          },
+          {
+            "path": "witness.interestRateBpsMax",
+            "label": "Max interest rate",
+            "format": "unit",
+            "params": {
+              "base": "%",
+              "decimals": 2
+            }
+          },
+          {
+            "path": "witness.collateralAsset",
+            "label": "Collateral asset",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "token",
+                "collection"
+              ]
+            }
+          },
+          {
+            "path": "witness.collateralAmount",
+            "label": "Collateral",
+            "format": "tokenAmount",
+            "params": {
+              "tokenPath": "witness.collateralAsset"
+            }
+          },
+          {
+            "path": "witness.collateralAmountMax",
+            "label": "Max collateral",
+            "format": "tokenAmount",
+            "params": {
+              "tokenPath": "witness.collateralAsset"
+            }
+          },
+          {
+            "path": "witness.durationDays",
+            "label": "Term (days)",
+            "format": "raw"
+          },
+          {
+            "path": "witness.assetType",
+            "label": "Lending asset type",
+            "format": "enum",
+            "params": {
+              "$ref": "$.metadata.enums.AssetType"
+            }
+          },
+          {
+            "path": "witness.collateralAssetType",
+            "label": "Collateral type",
+            "format": "enum",
+            "params": {
+              "$ref": "$.metadata.enums.AssetType"
+            }
+          },
+          {
+            "path": "witness.tokenId",
+            "label": "Token ID (NFT only)",
+            "format": "raw"
+          },
+          {
+            "path": "witness.quantity",
+            "label": "Quantity (ERC-1155 only)",
+            "format": "raw"
+          },
+          {
+            "path": "witness.collateralTokenId",
+            "label": "Collateral token ID",
+            "format": "raw"
+          },
+          {
+            "path": "witness.collateralQuantity",
+            "label": "Collateral quantity",
+            "format": "raw"
+          },
+          {
+            "path": "witness.prepayAsset",
+            "label": "Rental fee asset",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "token",
+                "collection"
+              ]
+            },
+            "visible": {
+              "ifNotIn": [
+                "0x0000000000000000000000000000000000000000"
+              ]
+            }
+          },
+          {
+            "path": "witness.allowsPartialRepay",
+            "label": "Partial repay allowed",
+            "format": "raw"
+          },
+          {
+            "path": "witness.allowsPrepayListing",
+            "label": "Collateral sale listing allowed",
+            "format": "raw"
+          },
+          {
+            "path": "witness.allowsParallelSale",
+            "label": "Parallel sale allowed",
+            "format": "raw"
+          },
+          {
+            "path": "witness.expiresAt",
+            "label": "Offer expires",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            },
+            "visible": {
+              "ifNotIn": [
+                0
+              ]
+            }
+          },
+          {
+            "path": "witness.fillMode",
+            "label": "Fill",
+            "format": "enum",
+            "params": {
+              "$ref": "$.metadata.enums.FillMode"
+            }
+          },
+          {
+            "path": "witness.periodicInterestCadence",
+            "label": "Interest paid",
+            "format": "enum",
+            "params": {
+              "$ref": "$.metadata.enums.PeriodicInterestCadence"
+            }
+          },
+          {
+            "path": "witness.refinanceTargetLoanId",
+            "label": "Refinances loan",
+            "format": "raw",
+            "visible": {
+              "ifNotIn": [
+                0
+              ]
+            }
+          },
+          {
+            "path": "witness.useFullTermInterest",
+            "label": "Full-term interest",
+            "format": "raw"
+          },
+          {
+            "path": "witness.lifecycleFlex",
+            "label": "May differ on fill",
+            "format": "enum",
+            "params": {
+              "$ref": "$.metadata.enums.LibVaipakam_LIFECYCLE_FLEX_flags"
+            }
+          },
+          {
+            "path": "witness.integrator",
+            "label": "Integrator",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            },
+            "visible": {
+              "ifNotIn": [
+                "0x0000000000000000000000000000000000000000"
+              ]
+            }
+          },
+          {
+            "path": "witness.creatorFull",
+            "label": "Maker pays fee in VPFI",
+            "format": "raw"
+          },
+          {
+            "path": "witness.creatorMaxCStar",
+            "label": "Maker max VPFI fee",
+            "format": "unit",
+            "params": {
+              "base": "VPFI",
+              "decimals": 18
+            }
+          },
+          {
+            "path": "witness.creatorAllowFullDowngrade",
+            "label": "Maker falls back if VPFI fee too high",
+            "format": "raw"
+          },
+          {
+            "path": "witness.maxTreasuryFeeBps",
+            "label": "Max treasury fee",
+            "format": "unit",
+            "params": {
+              "base": "%",
+              "decimals": 2
+            }
+          },
+          {
+            "path": "witness.maxLoanInitiationFeeBps",
+            "label": "Max initiation fee",
+            "format": "unit",
+            "params": {
+              "base": "%",
+              "decimals": 2
+            }
+          },
+          {
+            "path": "witness.allowedTaker",
+            "label": "Only this taker",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            },
+            "visible": {
+              "ifNotIn": [
+                "0x0000000000000000000000000000000000000000"
+              ]
+            }
+          },
+          {
+            "path": "witness.coSigner",
+            "label": "Co-signer",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            },
+            "visible": {
+              "ifNotIn": [
+                "0x0000000000000000000000000000000000000000"
+              ]
+            }
+          },
+          {
+            "path": "witness.signer",
+            "label": "Signed by",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "witness.nonce",
+            "visible": "never"
+          },
+          {
+            "path": "witness.deadline",
+            "label": "Offer valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            }
+          },
+          {
+            "path": "witness.setKind",
+            "label": "Collateral set",
+            "format": "enum",
+            "params": {
+              "$ref": "$.metadata.enums.CollateralSetKind"
+            }
+          },
+          {
+            "path": "witness.setLow",
+            "label": "Token IDs from",
+            "format": "raw"
+          },
+          {
+            "path": "witness.setHigh",
+            "label": "Token IDs to",
+            "format": "raw"
+          },
+          {
+            "path": "witness.setRoot",
+            "visible": "never"
+          },
+          {
+            "path": "witness.setListCount",
+            "label": "Listed token count",
+            "format": "raw"
+          },
+          {
+            "path": "witness.setListHash",
+            "visible": "never"
+          },
+          {
+            "path": "witness.exclusionsHash",
+            "visible": "never"
+          },
+          {
+            "path": "witness.loans",
+            "label": "Number of loans",
+            "format": "raw"
+          },
+          {
+            "path": "witness.startTime",
+            "label": "Opens at",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            },
+            "visible": {
+              "ifNotIn": [
+                0
+              ]
+            }
+          }
+        ]
+      },
+      "PermitWitnessTransferFrom(TokenPermissions permitted,address spender,uint256 nonce,uint256 deadline,RefinancePayoff witness)RefinancePayoff(uint256 loanId,uint256 offerId)TokenPermissions(address token,uint256 amount)": {
+        "$id": "PermitWitnessTransferFrom",
+        "intent": "Allow a refinance payoff",
+        "fields": [
+          {
+            "path": "permitted.token",
+            "label": "Permit token",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "token",
+                "collection"
+              ]
+            }
+          },
+          {
+            "path": "permitted.amount",
+            "label": "Permit amount",
+            "format": "tokenAmount",
+            "params": {
+              "tokenPath": "permitted.token"
+            }
+          },
+          {
+            "path": "spender",
+            "visible": {
+              "mustMatch": [
+                "0xBc839c06Ee431d50EA6B087E0f26e80fb022564E",
+                "0x2c300b26bc15359E7948dA61a1960303772b0335",
+                "0x0EBd0536a698707958e1c327Ba1EB2b4f329A119"
+              ]
+            }
+          },
+          {
+            "path": "nonce",
+            "visible": "never"
+          },
+          {
+            "path": "deadline",
+            "label": "Permit valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            }
+          },
+          {
+            "path": "witness.loanId",
+            "label": "Loan ID",
+            "format": "raw"
+          },
+          {
+            "path": "witness.offerId",
+            "label": "Refinance offer ID",
+            "format": "raw"
+          }
+        ]
+      }
+    }
+  }
+}

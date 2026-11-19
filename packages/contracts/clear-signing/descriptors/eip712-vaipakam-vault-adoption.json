@@ -1,0 +1,121 @@
+{
+  "$schema": "https://eips.ethereum.org/assets/eip-7730/erc7730-v2.schema.json",
+  "context": {
+    "$id": "Vaipakam vault adoption",
+    "eip712": {
+      "domain": {
+        "name": "Vaipakam Vault Adoption",
+        "version": "1"
+      },
+      "deployments": [
+        {
+          "chainId": 97,
+          "address": "0xBc839c06Ee431d50EA6B087E0f26e80fb022564E"
+        },
+        {
+          "chainId": 84532,
+          "address": "0x2c300b26bc15359E7948dA61a1960303772b0335"
+        },
+        {
+          "chainId": 421614,
+          "address": "0x0EBd0536a698707958e1c327Ba1EB2b4f329A119"
+        }
+      ]
+    }
+  },
+  "metadata": {
+    "owner": "Vaipakam",
+    "info": {
+      "url": "https://vaipakam.com"
+    },
+    "enums": {
+      "AssetKind": {
+        "0": "Token (ERC-20)",
+        "1": "NFT (ERC-721)",
+        "2": "NFT (ERC-1155)"
+      }
+    }
+  },
+  "display": {
+    "formats": {
+      "AdoptionAcknowledgment(address user,address asset,uint8 kind,uint256 tokenId,address declaredSource,uint256 amount,uint256 nonce,uint256 deadline,bytes32 ackTextHash)": {
+        "$id": "AdoptionAcknowledgment",
+        "intent": "Add a direct transfer to your vault",
+        "fields": [
+          {
+            "path": "user",
+            "label": "Account",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "asset",
+            "label": "Asset",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "token",
+                "collection"
+              ]
+            }
+          },
+          {
+            "path": "kind",
+            "label": "Asset kind",
+            "format": "enum",
+            "params": {
+              "$ref": "$.metadata.enums.AssetKind"
+            }
+          },
+          {
+            "path": "tokenId",
+            "label": "Token ID (NFT only)",
+            "format": "raw"
+          },
+          {
+            "path": "declaredSource",
+            "label": "Sent from",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "amount",
+            "label": "Amount",
+            "format": "tokenAmount",
+            "params": {
+              "tokenPath": "asset"
+            }
+          },
+          {
+            "path": "nonce",
+            "visible": "never"
+          },
+          {
+            "path": "deadline",
+            "label": "Deadline",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            }
+          },
+          {
+            "path": "ackTextHash",
+            "visible": "never"
+          }
+        ]
+      }
+    }
+  }
+}

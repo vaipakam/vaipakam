@@ -628,6 +628,19 @@ EOF
 echo "  facet list -> $OUT_DIR/_source.json"
 echo "  combined Diamond ABI -> $CONTRACTS_PKG_DIR/src/diamondAbi.json"
 
+# #3348 — the clear-signing descriptors (packages/contracts/clear-signing/)
+# are built from these ABIs, so rebuild them here; the package test's --check
+# fails on a stale set. A new non-view function with no class, or a new user
+# function with no display, stops the rebuild by name.
+if ! node "$CONTRACTS_PKG_DIR/scripts/build-clear-signing.mjs"; then
+  echo "" >&2
+  echo "The ABIs are published, but the clear-signing descriptors could not be rebuilt." >&2
+  echo "Classify each function named above in packages/contracts/clear-signing/scope.json" >&2
+  echo "(a user one also needs a display in clear-signing/display.mjs), then run:" >&2
+  echo "  node packages/contracts/scripts/build-clear-signing.mjs" >&2
+  exit 1
+fi
+
 echo ""
 echo "Done. Next steps:"
 echo "  git diff packages/contracts/src/abis/   # review the change"

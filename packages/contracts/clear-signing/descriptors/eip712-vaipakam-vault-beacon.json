@@ -1,0 +1,112 @@
+{
+  "$schema": "https://eips.ethereum.org/assets/eip-7730/erc7730-v2.schema.json",
+  "context": {
+    "$id": "Vaipakam vault versions",
+    "eip712": {
+      "domain": {
+        "name": "Vaipakam VaultBeacon",
+        "version": "1"
+      },
+      "deployments": [
+        {
+          "chainId": 97,
+          "address": "0x578d256399D77573238e22cBF7f74DE13F0684eb"
+        },
+        {
+          "chainId": 84532,
+          "address": "0x6aaa64CBC88B0ED5986058fe025cE4d317e4AA0E"
+        },
+        {
+          "chainId": 421614,
+          "address": "0x88D954Ad80DC6dEEe02356a71daE28f9f271dC5E"
+        }
+      ]
+    }
+  },
+  "metadata": {
+    "owner": "Vaipakam",
+    "info": {
+      "url": "https://vaipakam.com"
+    }
+  },
+  "display": {
+    "formats": {
+      "PinChange(address vault,uint256 target,uint256 nonce)": {
+        "$id": "PinChange",
+        "intent": "Pin your vault version",
+        "fields": [
+          {
+            "path": "vault",
+            "label": "Vault",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "target",
+            "label": "Version",
+            "format": "raw"
+          },
+          {
+            "path": "nonce",
+            "visible": "never"
+          }
+        ]
+      },
+      "CancelPin(address vault,uint256 nonce)": {
+        "$id": "CancelPin",
+        "intent": "Cancel a vault version pin",
+        "fields": [
+          {
+            "path": "vault",
+            "label": "Vault",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "nonce",
+            "visible": "never"
+          }
+        ]
+      },
+      "PinDelay(address vault,uint256 delay,uint256 nonce)": {
+        "$id": "PinDelay",
+        "intent": "Set the vault pin delay",
+        "fields": [
+          {
+            "path": "vault",
+            "label": "Vault",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "delay",
+            "label": "Delay",
+            "format": "duration"
+          },
+          {
+            "path": "nonce",
+            "visible": "never"
+          }
+        ]
+      }
+    }
+  }
+}

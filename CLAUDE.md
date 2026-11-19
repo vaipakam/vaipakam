@@ -897,6 +897,14 @@ authorizes nothing. Do not reintroduce an exclusion list.
 `_get<Facet>Selectors()` in `DeployDiamond.s.sol` (and `HelperTest.sol`) —
 `SelectorCoverageTest` fails otherwise.
 
+**When that function is not a view** (#3348), name it in
+`packages/contracts/clear-signing/scope.json` as `user`, `upkeep`, `admin` or
+`internal`; a `user` one also needs an intent and a rule for every input in
+`clear-signing/display.mjs`. The ABI export rebuilds the wallet
+clear-signing descriptors and stops, by name, on a function with no class or
+display, and the contracts package test fails on a stale descriptor. See
+`packages/contracts/clear-signing/README.md`.
+
 **When that function is one anyone may call** (state-changing, no caller
 gate), it also needs a row in `contracts/permissionless-steps.json` (#2984):
 the keeper pass and flag that back it, or why none is owed, or a recorded gap

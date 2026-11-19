@@ -1,0 +1,533 @@
+{
+  "$schema": "https://eips.ethereum.org/assets/eip-7730/erc7730-v2.schema.json",
+  "context": {
+    "$id": "Vaipakam vault protection",
+    "eip712": {
+      "domain": {
+        "name": "Vaipakam Vault",
+        "version": "1"
+      }
+    }
+  },
+  "metadata": {
+    "owner": "Vaipakam",
+    "info": {
+      "url": "https://vaipakam.com"
+    },
+    "enums": {
+      "VaultProtectionBase_REPLACE_": {
+        "1": "Propose a new owner",
+        "2": "Approve the new owner",
+        "3": "Cancel the replacement"
+      },
+      "VaultProtectionBase_SETTINGS_": {
+        "1": "Turn protected mode on",
+        "2": "Change the waiting period",
+        "3": "Turn protected mode off",
+        "4": "Unlock the account"
+      },
+      "VaultProtectionBase_SIGNER_": {
+        "1": "Add a signer",
+        "2": "Accept being a signer",
+        "3": "Remove a signer",
+        "4": "Cancel a signer change"
+      }
+    }
+  },
+  "display": {
+    "formats": {
+      "Settings(uint8 action,uint256 value,uint256 nonce,uint64 expiry)": {
+        "$id": "Settings",
+        "intent": "Change protected mode",
+        "fields": [
+          {
+            "path": "action",
+            "label": "Change",
+            "format": "enum",
+            "params": {
+              "$ref": "$.metadata.enums.VaultProtectionBase_SETTINGS_"
+            }
+          },
+          {
+            "path": "value",
+            "label": "Waiting period",
+            "format": "duration",
+            "visible": {
+              "ifNotIn": [
+                0
+              ]
+            }
+          },
+          {
+            "path": "nonce",
+            "visible": "never"
+          },
+          {
+            "path": "expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            }
+          }
+        ]
+      },
+      "AllowlistAdd(address destination,uint256 nonce,uint64 expiry)": {
+        "$id": "AllowlistAdd",
+        "intent": "Add a payout destination",
+        "fields": [
+          {
+            "path": "destination",
+            "label": "Destination",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "nonce",
+            "visible": "never"
+          },
+          {
+            "path": "expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            }
+          }
+        ]
+      },
+      "AllowlistCancel(address destination,uint256 nonce,uint64 expiry)": {
+        "$id": "AllowlistCancel",
+        "intent": "Cancel adding a payout destination",
+        "fields": [
+          {
+            "path": "destination",
+            "label": "Destination",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "nonce",
+            "visible": "never"
+          },
+          {
+            "path": "expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            }
+          }
+        ]
+      },
+      "AllowlistRemove(address destination,uint256 nonce,uint64 expiry)": {
+        "$id": "AllowlistRemove",
+        "intent": "Remove a payout destination",
+        "fields": [
+          {
+            "path": "destination",
+            "label": "Destination",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "nonce",
+            "visible": "never"
+          },
+          {
+            "path": "expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            }
+          }
+        ]
+      },
+      "SettingCancel(uint8 action,uint256 nonce,uint64 expiry)": {
+        "$id": "SettingCancel",
+        "intent": "Cancel a pending protected-mode change",
+        "fields": [
+          {
+            "path": "action",
+            "label": "Change",
+            "format": "enum",
+            "params": {
+              "$ref": "$.metadata.enums.VaultProtectionBase_SETTINGS_"
+            }
+          },
+          {
+            "path": "nonce",
+            "visible": "never"
+          },
+          {
+            "path": "expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            }
+          }
+        ]
+      },
+      "SignerChange(uint8 action,address signer,uint256 nonce,uint64 expiry)": {
+        "$id": "SignerChange",
+        "intent": "Change a co-signer",
+        "fields": [
+          {
+            "path": "action",
+            "label": "Change",
+            "format": "enum",
+            "params": {
+              "$ref": "$.metadata.enums.VaultProtectionBase_SIGNER_"
+            }
+          },
+          {
+            "path": "signer",
+            "label": "Signer",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "nonce",
+            "visible": "never"
+          },
+          {
+            "path": "expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            }
+          }
+        ]
+      },
+      "Replacement(uint8 action,address nominee,uint32 round,uint256 nonce,uint64 expiry)": {
+        "$id": "Replacement",
+        "intent": "Replace the account owner",
+        "fields": [
+          {
+            "path": "action",
+            "label": "Step",
+            "format": "enum",
+            "params": {
+              "$ref": "$.metadata.enums.VaultProtectionBase_REPLACE_"
+            }
+          },
+          {
+            "path": "nominee",
+            "label": "New owner",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "round",
+            "label": "Proposal round",
+            "format": "raw"
+          },
+          {
+            "path": "nonce",
+            "visible": "never"
+          },
+          {
+            "path": "expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            }
+          }
+        ]
+      },
+      "Lock(uint256 nonce,uint64 expiry)": {
+        "$id": "Lock",
+        "intent": "Lock your account",
+        "fields": [
+          {
+            "path": "nonce",
+            "visible": "never"
+          },
+          {
+            "path": "expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            }
+          }
+        ]
+      },
+      "VerifyDestination(address account,address diamond,uint64 request,uint256 nonce,uint64 expiry)": {
+        "$id": "VerifyDestination",
+        "intent": "Verify a payout destination",
+        "fields": [
+          {
+            "path": "account",
+            "label": "Account",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "diamond",
+            "visible": {
+              "mustMatch": [
+                "0xBc839c06Ee431d50EA6B087E0f26e80fb022564E",
+                "0x2c300b26bc15359E7948dA61a1960303772b0335",
+                "0x0EBd0536a698707958e1c327Ba1EB2b4f329A119"
+              ]
+            }
+          },
+          {
+            "path": "request",
+            "label": "Request",
+            "format": "raw"
+          },
+          {
+            "path": "nonce",
+            "visible": "never"
+          },
+          {
+            "path": "expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            }
+          }
+        ]
+      },
+      "RecoverySet(address recovery,uint256 nonce,uint64 expiry)": {
+        "$id": "RecoverySet",
+        "intent": "Set a recovery address",
+        "fields": [
+          {
+            "path": "recovery",
+            "label": "Recovery address",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "nonce",
+            "visible": "never"
+          },
+          {
+            "path": "expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            }
+          }
+        ]
+      },
+      "RecoveryProof(address account,address diamond,uint256 nonce,uint64 expiry)": {
+        "$id": "RecoveryProof",
+        "intent": "Prove control of a recovery address",
+        "fields": [
+          {
+            "path": "account",
+            "label": "For account",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "diamond",
+            "visible": {
+              "mustMatch": [
+                "0xBc839c06Ee431d50EA6B087E0f26e80fb022564E",
+                "0x2c300b26bc15359E7948dA61a1960303772b0335",
+                "0x0EBd0536a698707958e1c327Ba1EB2b4f329A119"
+              ]
+            }
+          },
+          {
+            "path": "nonce",
+            "visible": "never"
+          },
+          {
+            "path": "expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            }
+          }
+        ]
+      },
+      "RecoveryCancel(address recovery,uint256 nonce,uint64 expiry)": {
+        "$id": "RecoveryCancel",
+        "intent": "Cancel a recovery address change",
+        "fields": [
+          {
+            "path": "recovery",
+            "label": "Recovery address",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "nonce",
+            "visible": "never"
+          },
+          {
+            "path": "expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            }
+          }
+        ]
+      },
+      "RecoveryClear(uint256 nonce,uint64 expiry)": {
+        "$id": "RecoveryClear",
+        "intent": "Remove the recovery address",
+        "fields": [
+          {
+            "path": "nonce",
+            "visible": "never"
+          },
+          {
+            "path": "expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            }
+          }
+        ]
+      },
+      "Clawback(bytes32 assets,uint256 nonce,uint64 expiry)": {
+        "$id": "Clawback",
+        "intent": "Move assets to your recovery address",
+        "fields": [
+          {
+            "path": "assets",
+            "visible": "never"
+          },
+          {
+            "path": "nonce",
+            "visible": "never"
+          },
+          {
+            "path": "expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            }
+          }
+        ]
+      },
+      "PositionMove(address to,uint256 nonce,uint64 expiry)": {
+        "$id": "PositionMove",
+        "intent": "Move position NFTs to a new owner",
+        "fields": [
+          {
+            "path": "to",
+            "label": "To",
+            "format": "addressName",
+            "params": {
+              "types": [
+                "eoa",
+                "wallet",
+                "contract"
+              ]
+            }
+          },
+          {
+            "path": "nonce",
+            "visible": "never"
+          },
+          {
+            "path": "expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            }
+          }
+        ]
+      },
+      "PositionMoveCancel(uint64 at,uint256 nonce,uint64 expiry)": {
+        "$id": "PositionMoveCancel",
+        "intent": "Cancel a position NFT move",
+        "fields": [
+          {
+            "path": "at",
+            "label": "Move due at",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            }
+          },
+          {
+            "path": "nonce",
+            "visible": "never"
+          },
+          {
+            "path": "expiry",
+            "label": "Signature valid until",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            }
+          }
+        ]
+      }
+    }
+  }
+}
