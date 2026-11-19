@@ -30,7 +30,8 @@ Related designs: `VaultOutflowPolicyDesign.md`, `PayoutDestinationRuleDesign.md`
 1. On the Borrow form the guarantor chooses **Borrow for someone** and enters that person's address.
 2. The review states: "Your collateral secures this loan. If it is not repaid, your collateral is sold or passes to the lender. {address} is not bound to repay by anything on chain."
 3. After the loan opens, the app offers the two steps that send the funds: Withdraw, then send. For a protected account the app says that the address must be an approved destination and that the account's delay applies. It never routes around either.
-4. The app gives a link to the loan. The other person opens it and sees the loan with the amount that closes it today. Their page states: "Repaying returns the collateral to {guarantor}, not to you."
+4. The app gives a link to the loan. The other person opens it and sees the loan with the amount that closes it today. The collateral of a repaid loan goes to whoever holds the borrower position at that moment, and that position can be transferred or sold. So the page reads the current holder from the chain when it opens and again when the payment is prepared, and never takes it from the link. Their page states: "Repaying returns the collateral to {current holder}, not to you."
+   - **Where the position has moved.** If the current holder is not the address that opened the loan, the page says so before any payment, above the action: "This loan's borrower position is now held by {current holder}. It was opened by {guarantor}. Your payment benefits {current holder}." The payer must confirm that line. If the holder changes between the page opening and the signature, the app stops and shows the new holder first.
    - **Before #3779 is built:** one action, **Repay**, which repays the loan in full, and the line "Only {guarantor} can pay part of this loan. To pay part, send them the amount." The guarantor's own page shows each amount as it falls due, so they can ask for it.
    - **Once #3779 is built:** the loan's page offers what that design gives any wallet that is not on the lender's side: **Repay**, **Pay part** where the loan allows it, and **Pay interest** where any has accrued. The flow adds nothing of its own. The app reads which entries the deployment routes and shows only those.
 5. Either person may switch on alerts for the loan (section 9).
@@ -56,7 +57,7 @@ Build the flow in the app. No contract work.
 
 **What the user gets.** A family, a club or a team holds one lending account that several people control, with a limit per person.
 
-**How.** The account's owner is a multi-signature contract wallet. The vault belongs to that wallet, and the wallet's own rules decide who may sign what and up to how much. The platform's contracts check signatures through the standard contract-signature check, so a contract wallet is expected to pass wherever a signature is taken. The test matrix below confirms it step by step before the feature is offered.
+**How.** The account's owner is a multi-signature contract wallet. The vault belongs to that wallet, and the wallet's own rules decide who may sign what and up to how much. The platform's contracts check a signature through the standard check that accepts a contract wallet (signed offers, the accept terms, a protected account's settings), with one known exception: **adopting an asset that reached the vault by a plain transfer takes a key's signature only, so a contract-wallet account cannot adopt** (#3780 changes it, and is contract work outside this document). Until then the guide and the app say that such an account must deposit through the app, and that tokens sent to its vault by a plain transfer stay untracked. The test matrix below confirms every other step before the feature is offered.
 
 **Why not signers inside the vault.** A protected account's signers are guards: they lock, cancel and approve a replacement. They cannot spend. Giving them the power to spend would change what a signer is for every protected account, in the vault's own code, which is the most sensitive code on the platform. A contract wallet already does this job and is audited for it.
 
@@ -66,7 +67,7 @@ Build the flow in the app. No contract work.
 - A **team view**: the account's lending by term as a ladder (amount lent per due month), loans out, borrowings, and the recent activity with the approving wallet's own transaction link.
 - A guide on the site: how to set up a shared account with a contract wallet, what its limits can and cannot stop, and that a protected account's delay and signers still apply on top.
 
-**Builder to verify, as a test matrix with a contract wallet as owner:** vault creation, Terms acceptance, posting and accepting an offer (including the signed terms), receiving a position token (it is minted by the safe route, so the wallet must accept an ERC-721), setting a slot with its consents, the refinance payoff permit, a protected account's settings, Withdraw, Collect, the transfer of a position, and a standing instruction. No check in the contracts refuses a caller for being a contract. One more row is not about signatures: a contract wallet's address on one network need not be the same wallet, or exist at all, on another, so every step that names the same address on another network (a reward claim, the per-network Terms) is in the matrix, and the guide says it. Any step that refuses a contract wallet is reported with its reason, not worked around.
+**Builder to verify, as a test matrix with a contract wallet as owner:** vault creation, Terms acceptance, depositing through the app, adopting a plain transfer (expected to be refused until #3780, and listed as such), posting and accepting an offer (including the signed terms), receiving a position token (it is minted by the safe route, so the wallet must accept an ERC-721), setting a slot with its consents, the refinance payoff permit, a protected account's settings, Withdraw, Collect, the transfer of a position, and a standing instruction. No check in the contracts refuses a caller for being a contract. One more row is not about signatures: a contract wallet's address on one network need not be the same wallet, or exist at all, on another, so every step that names the same address on another network (a reward claim, the per-network Terms) is in the matrix, and the guide says it. Any step that refuses a contract wallet is reported with its reason, not worked around.
 
 ### Alternatives considered
 
@@ -176,7 +177,7 @@ The page promises no result and names no rate.
 
 ## 12. Tests
 
-1. Borrow for someone: the loan's collateral, lien and borrower position are the guarantor's; a full repayment from the other address closes the loan and the collateral is claimable by the guarantor only; a protected guarantor's send waits the account's delay and is refused to an address that is not approved.
+1. Borrow for someone: the loan's collateral, lien and borrower position are the guarantor's; a full repayment from the other address closes the loan and the collateral is claimable by the holder of the borrower position only; after the guarantor transfers the position, the other person's page names the new holder and the original guarantor before any payment, and a holder change between opening the page and signing stops the payment; a protected guarantor's send waits the account's delay and is refused to an address that is not approved.
 2. The other person's page offers repayment and alerts and nothing else. On a deployment without #3779 it offers the full repayment only and shows both statements of section 2; with it, the part payment appears where the loan allows it and the interest payment where any interest has accrued.
 3. A contract wallet as owner completes every row of the matrix in section 3, or the row is listed as refused with its reason.
 4. A goal changes nothing on chain except, when the user asks, the slot's "lend until".
@@ -191,5 +192,5 @@ The page promises no result and names no rate.
 
 1. What a payer who is not the holder must have done before the full repayment accepts them (Terms accepted, not flagged). #3779 carries the same question for the part payment.
 2. Whether a token sent to an address with no vault can be collected on first connection without any step by the giver.
-3. Which wallet connection the app uses inside a contract wallet, and how a step that waits for approvals resumes.
+3. Which wallet connection the app uses inside a contract wallet, and how a step that waits for approvals resumes. And any signature-taking entry besides adoption (#3780) that refuses a contract wallet.
 4. The rate limits of the public feed and of alerts per wallet.
