@@ -48,16 +48,22 @@
 //      entry disagrees with the oracle's authoritative read
 //      (`sanctionsFlagRefresh.ts`). Off unless SANCTIONS_FLAG_REFRESH_ENABLED
 //      is also set.
+//   8. TIER-VERSION SYNC — on the canonical chain, send Base's tier-table
+//      version to each mirror whose own version is behind it
+//      (`tierVersionSync.ts`). The lane fee is paid from the keeper's key and
+//      held to TIER_VERSION_SYNC_MAX_FEE_WEI. Off unless
+//      TIER_VERSION_SYNC_ENABLED is also set.
 //
 // Every call is simulated on the current state first and waits for its
 // receipt before the next (`stepSender.ts`). None carries value from the
-// keeper, and none moves value to it; step 4's lane fees are the protocol
-// budget's, under the facet's own rule.
+// keeper but step 8's lane fee, and none moves value to it; step 4's lane
+// fees are the protocol budget's, under the facet's own rule.
 //
 // Gated by KEEPER_ENABLED + PROTOCOL_UPKEEP_ENABLED (step 3 also by
 // PREPAY_SALE_SANCTIONS_SYNC_ENABLED, step 4 by TIER_PUSH_RETRY_ENABLED, step 5
 // by TIER_EXCLUSION_REFRESH_ENABLED, step 6 by REWARD_INDEX_COMPACT_ENABLED,
-// step 7 by SANCTIONS_FLAG_REFRESH_ENABLED). No sub-step has a cadence of its
+// step 7 by SANCTIONS_FLAG_REFRESH_ENABLED, step 8 by
+// TIER_VERSION_SYNC_ENABLED). No sub-step has a cadence of its
 // own, and every one shares the pass's sends. Ships disarmed.
 
 import { createPublicClient, decodeEventLog, encodeFunctionData, http, type Abi, type Address, type Hex, type PublicClient } from 'viem';
@@ -78,6 +84,10 @@ import { describeTierPush, emptyTierPushReport, retryTierPushes, TIER_PUSH_ABI, 
 import { describeTierExclusion, emptyTierExclusionReport, refreshTierExclusions, TIER_EXCLUSION_ABI, type TierExclusionReport } from './tierExclusionRefresh';
 import { compactRewardIndexes, describeRewardIndex, emptyRewardIndexReport, REWARD_INDEX_ABI, type RewardIndexReport } from './rewardIndexCompact';
 import { describeSanctionsFlags, emptySanctionsFlagReport, refreshSanctionsFlags, type SanctionsFlagReport } from './sanctionsFlagRefresh';
+import { describeTierVersion, emptyTierVersionReport, MAX_FEE_VAR as TIER_VERSION_MAX_FEE_VAR, mirrorVersionReader, syncTierTableVersions, type MirrorVersionRead, type TierVersionReport } from './tierVersionSync';
+import { feeCeiling } from './feeCeiling';
+import type { SendFeeCeiling } from './stepSender';
+import { getDeployment } from '@vaipakam/contracts/deployments';
 import { listLoanPartiesAfter } from './db';
 import { runIndex } from './runWindow';
 
@@ -111,6 +121,7 @@ export const STEP_SENDS = {
   'tier-exclusion': 1,
   'reward-index': 2,
   'sanctions-flag': 2,
+  'tier-version': 2,
 } as const satisfies Record<string, number>;
 /** Sends per chain per run: the steps' shares together. */
 export const MAX_SENDS_PER_RUN = Object.values(STEP_SENDS).reduce((a, b) => a + b, 0);
@@ -158,6 +169,16 @@ export interface UpkeepDeps {
   rewardIndex?: boolean;
   /** Step 7, the sanctions-flag refresh (SANCTIONS_FLAG_REFRESH_ENABLED). Off when absent. */
   sanctionsFlags?: boolean;
+  /** Step 8, the tier-version sync (TIER_VERSION_SYNC_ENABLED). Off when
+   *  absent, and off on any chain that is not the canonical one. */
+  tierVersion?: boolean;
+  /** Step 8's mirrors, each read from its own RPC. */
+  mirrors?: readonly MirrorVersionRead[];
+  /** Step 8's fee ceiling (TIER_VERSION_SYNC_MAX_FEE_WEI); the only step
+   *  that pays a fee from the keeper's key. */
+  feeCeiling?: SendFeeCeiling;
+  /** The keeper's clock, unix seconds (step 8's in-flight window). */
+  nowSec?: number;
   /** Step 6's universe: the chain's loan parties after `after`, at most
    *  `limit` (`db.ts` `listLoanPartiesAfter`). Required while step 6 is on. */
   loanParties?: (after: string, limit: number) => Promise<string[]>;
@@ -185,6 +206,8 @@ export interface UpkeepReport {
   tierExclusion: TierExclusionReport | null;
   rewardIndex: RewardIndexReport | null;
   sanctionsFlags: SanctionsFlagReport | null;
+  /** Step 8's figures; null when the step is off or this is not the canonical chain. */
+  tierVersion: TierVersionReport | null;
   refused: Map<string, string>;
   unread: Map<string, string>;
   stopped: string | null;
@@ -201,11 +224,19 @@ export async function runProtocolUpkeep(env: Env, tick: PassTick): Promise<void>
   const tierExclusion = subStepArmed(env, 'protocolUpkeep', 'step 5 (tier-exclusion refresh)', 'TIER_EXCLUSION_REFRESH_ENABLED');
   const rewardIndex = subStepArmed(env, 'protocolUpkeep', 'step 6 (reward-entry index compaction)', 'REWARD_INDEX_COMPACT_ENABLED');
   const sanctionsFlags = subStepArmed(env, 'protocolUpkeep', 'step 7 (sanctions-flag refresh)', 'SANCTIONS_FLAG_REFRESH_ENABLED');
+  const tierVersion = subStepArmed(env, 'protocolUpkeep', 'step 8 (tier-version sync)', 'TIER_VERSION_SYNC_ENABLED');
   const visit = runIndex(tick, PASS_CADENCE_SEC * 1000);
   const resolved = env.KEEPER_PRIVATE_KEY ? resolveKeeperAccount(env.KEEPER_PRIVATE_KEY) : null;
   const keeper = resolved && 'account' in resolved ? resolved.account.address : null;
   const ledger = d1EventLedger(env.DB);
   const chains = getChainConfigs(env).filter((c) => c.diamond);
+  const isCanonical = (id: number) => getDeployment(id)?.isCanonicalVPFI === true;
+  // Step 8 reads every mirror from the mirror's own RPC.
+  const mirrors: MirrorVersionRead[] = tierVersion
+    ? chains
+        .filter((c) => !isCanonical(c.id))
+        .map((c) => mirrorVersionReader(c.id, c.diamond as Address, createPublicClient({ transport: http(c.rpc) }) as PublicClient))
+    : [];
   // Chains side by side (runWindow.ts, rule 1): each has its own nonce lane.
   await Promise.all(
     chains.map(async (chain: ChainConfig) => {
@@ -226,6 +257,10 @@ export async function runProtocolUpkeep(env: Env, tick: PassTick): Promise<void>
           tierExclusion,
           rewardIndex,
           sanctionsFlags,
+          tierVersion: tierVersion && isCanonical(chain.id),
+          mirrors,
+          feeCeiling: feeCeiling(env.TIER_VERSION_SYNC_MAX_FEE_WEI, chain.id, TIER_VERSION_MAX_FEE_VAR),
+          nowSec: Math.floor(Date.now() / 1000),
           loanParties: (after, limit) => listLoanPartiesAfter(env.DB, chain.id, after, limit),
           visit,
         });
@@ -257,6 +292,7 @@ export function describeReport(r: UpkeepReport): string {
     ...describeTierExclusion(r.tierExclusion),
     ...describeRewardIndex(r.rewardIndex),
     ...describeSanctionsFlags(r.sanctionsFlags),
+    ...describeTierVersion(r.tierVersion),
     ...(r.refused.size > 0 ? [`refused=${[...r.refused].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
     ...(r.unread.size > 0 ? [`unread=${[...r.unread].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
     ...(r.stopped ? [`stopped=${r.stopped}`] : []),
@@ -279,7 +315,7 @@ export async function upkeepOnce(chainId: number, diamond: Address, deps: Upkeep
       describe: (s) => String(s),
       spends: 'the gas',
     },
-    { context: deps.context, sendDeadline: deps.sendDeadline },
+    { context: deps.context, sendDeadline: deps.sendDeadline, feeCeiling: deps.feeCeiling },
   );
   const report: UpkeepReport = {
     chainId,
@@ -294,6 +330,7 @@ export async function upkeepOnce(chainId: number, diamond: Address, deps: Upkeep
     tierExclusion: deps.tierExclusion === true ? { ...emptyTierExclusionReport(), off: 'not reached this run' } : null,
     rewardIndex: deps.rewardIndex === true ? { ...emptyRewardIndexReport(), off: 'not reached this run' } : null,
     sanctionsFlags: deps.sanctionsFlags === true ? { ...emptySanctionsFlagReport(), off: 'not reached this run' } : null,
+    tierVersion: deps.tierVersion === true ? { ...emptyTierVersionReport(), off: 'not reached this run' } : null,
     refused: sender.refused,
     unread: sender.unread,
     stopped: null,
@@ -360,6 +397,15 @@ export async function upkeepOnce(chainId: number, diamond: Address, deps: Upkeep
         visit: deps.visit ?? 0,
         cursors: deps.cursors,
         ledger: deps.ledger,
+      });
+    }
+    if (deps.tierVersion === true) {
+      report.tierVersion = await syncTierTableVersions(diamond, sender, {
+        readClient: deps.readClient,
+        sendDeadline: deps.sendDeadline,
+        cursors: deps.cursors,
+        mirrors: deps.mirrors ?? [],
+        nowSec: deps.nowSec ?? Math.floor(Date.now() / 1000),
       });
     }
   } catch (err) {

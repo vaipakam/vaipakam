@@ -492,9 +492,11 @@ journalctl -u vaipakam-keeper -f
    `PREPAY_SALE_SANCTIONS_SYNC_ENABLED`, its tier-push retry step
    `TIER_PUSH_RETRY_ENABLED`, its tier-exclusion refresh step
    `TIER_EXCLUSION_REFRESH_ENABLED`, its reward-entry index compaction step
-   `REWARD_INDEX_COMPACT_ENABLED`, and its sanctions-flag refresh step
-   `SANCTIONS_FLAG_REFRESH_ENABLED`; none of the four has a cadence of its
-   own),
+   `REWARD_INDEX_COMPACT_ENABLED`, its sanctions-flag refresh step
+   `SANCTIONS_FLAG_REFRESH_ENABLED`, and its tier-version sync step
+   `TIER_VERSION_SYNC_ENABLED`, which pays the lane fee from the keeper key
+   under `TIER_VERSION_SYNC_MAX_FEE_WEI`; none of the steps has a cadence
+   of its own),
    `PREPAY_AUTO_LIST_ENABLED` (`prepayAutoList`, every minute),
    `PROTECTED_ACCOUNT_ENABLED` (`protectedAccount`, every minute; its
    Telegram LOCK step also needs `PROTECTED_LOCK_ENABLED`, and its owner

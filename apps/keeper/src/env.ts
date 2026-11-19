@@ -377,6 +377,15 @@ interface BaseEnv {
    *  nothing to the keeper. Read only while PROTOCOL_UPKEEP_ENABLED arms the
    *  pass. */
   SANCTIONS_FLAG_REFRESH_ENABLED?: string;
+  /** #912 — protocolUpkeep step 8: on the canonical chain, send Base's
+   *  tier-table version to each mirror whose own version is behind it. Pays
+   *  the CCIP lane fee from the keeper's key, held to
+   *  TIER_VERSION_SYNC_MAX_FEE_WEI. Read only while PROTOCOL_UPKEEP_ENABLED
+   *  arms the pass. */
+  TIER_VERSION_SYNC_ENABLED?: string;
+  /** Step 8's fee ceiling: `<chainId>=<wei>[,*=<wei>]` (`feeCeiling.ts`).
+   *  A plain var. */
+  TIER_VERSION_SYNC_MAX_FEE_WEI?: string;
   /** Seconds after which a cached tier LTV is refreshed even when its value
    *  would not change (default 7 days; the contract uses a cached tier only
    *  while it is under 14 days old). A plain var. */
@@ -629,6 +638,7 @@ export const PLAIN_VAR_KEYS = [
   'TIER_EXCLUSION_REFRESH_ENABLED',
   'REWARD_INDEX_COMPACT_ENABLED',
   'SANCTIONS_FLAG_REFRESH_ENABLED',
+  'TIER_VERSION_SYNC_ENABLED',
   'PREPAY_AUTO_LIST_ENABLED',
   'PROTECTED_ACCOUNT_ENABLED',
   'PROTECTED_LOCK_ENABLED',
@@ -658,6 +668,7 @@ export const PLAIN_VAR_KEYS = [
   'REWARD_RETURN_TRANSPORT_ENABLED',
   'REWARD_REMAINDER_RETURN_ENABLED',
   'REWARD_RETURN_TRANSPORT_MAX_FEE_WEI',
+  'TIER_VERSION_SYNC_MAX_FEE_WEI',
   'REWARD_RETURN_MIN_PART',
   'GAS_MAX_FEE_PER_GAS_WEI',
   'GAS_MAX_PRIORITY_FEE_PER_GAS_WEI',
@@ -842,6 +853,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     TIER_EXCLUSION_REFRESH_ENABLED: raw.TIER_EXCLUSION_REFRESH_ENABLED,
     REWARD_INDEX_COMPACT_ENABLED: raw.REWARD_INDEX_COMPACT_ENABLED,
     SANCTIONS_FLAG_REFRESH_ENABLED: raw.SANCTIONS_FLAG_REFRESH_ENABLED,
+    TIER_VERSION_SYNC_ENABLED: raw.TIER_VERSION_SYNC_ENABLED,
     PREPAY_AUTO_LIST_ENABLED: raw.PREPAY_AUTO_LIST_ENABLED,
     PROTECTED_ACCOUNT_ENABLED: raw.PROTECTED_ACCOUNT_ENABLED,
     PROTECTED_LOCK_ENABLED: raw.PROTECTED_LOCK_ENABLED,
@@ -871,6 +883,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_RETURN_TRANSPORT_ENABLED: raw.REWARD_RETURN_TRANSPORT_ENABLED,
     REWARD_REMAINDER_RETURN_ENABLED: raw.REWARD_REMAINDER_RETURN_ENABLED,
     REWARD_RETURN_TRANSPORT_MAX_FEE_WEI: raw.REWARD_RETURN_TRANSPORT_MAX_FEE_WEI,
+    TIER_VERSION_SYNC_MAX_FEE_WEI: raw.TIER_VERSION_SYNC_MAX_FEE_WEI,
     REWARD_RETURN_MIN_PART: raw.REWARD_RETURN_MIN_PART,
     GAS_MAX_FEE_PER_GAS_WEI: raw.GAS_MAX_FEE_PER_GAS_WEI,
     GAS_MAX_PRIORITY_FEE_PER_GAS_WEI: raw.GAS_MAX_PRIORITY_FEE_PER_GAS_WEI,

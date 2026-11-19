@@ -998,6 +998,28 @@ evidence that the migration has completed.
   of a deferral is passed for good only once the finalized chain shows that
   push delivered, superseded, or no longer owed.
 
+## Keeping mirrors on Base's tier table
+
+- Every governance change to the discount tier thresholds or discounts
+  raises Base's tier-table version. Each mirror chain keeps the version it
+  last received and judges pushed tiers against that table, so a mirror
+  behind Base applies a table Base no longer uses. Anyone may send Base's
+  current version to a mirror; without a caller nothing does. The keeper is
+  the caller.
+- It checks every hour, as a step of protocol upkeep armed on its own, and
+  only on Base. It reads Base's version and each mirror's version from that
+  mirror's own chain. A mirror that cannot be read is reported as unread,
+  never as behind or current. A mirror holding a newer version than Base is
+  reported as such. While Base has no version set, nothing is sent and the
+  report says so.
+- For a mirror behind Base it sends the version, paying the quoted
+  cross-chain fee from the keeper's own funds. That fee is held to a
+  ceiling the operator sets; a quote above it is not paid and the mirror
+  stays behind, reported with the quote and the ceiling. Once a send has
+  gone out for a version, the keeper allows the message time to arrive
+  before paying for the same version again, so a slow lane is not paid
+  twice. A newer version on Base is sent at once.
+
 ## Keeping each loan's fee-tier exclusion derived
 
 - VPFI held in one wallet's vault but owed to another (a closed loan whose
@@ -1646,9 +1668,9 @@ The master keeper switch and each duty's own arming choice are separate.
 The periodic-interest settler and grace auto-list each have their own
 disabled-by-default activation.
 Late acknowledgements, sanctions observation, reward-day
-automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, protocol upkeep, its prepay-sale sanctions sync, its tier-push retry, its tier-exclusion refresh, its reward-entry index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, collection-offer matching, vault-beacon upkeep, the hourly price checkpoints and the daily asset rankings must each
+automation, reward-day close-out, zeroed-day recovery, the return transport, the reward heartbeat and its entry close-out, protocol upkeep, its prepay-sale sanctions sync, its tier-push retry, its tier-version sync, its tier-exclusion refresh, its reward-entry index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, collection-offer matching, vault-beacon upkeep, the hourly price checkpoints and the daily asset rankings must each
 disclose whether they are armed on the selected deployment. Reward-day
-automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, protocol upkeep, its sanctions sync, its tier-push retry, its tier-exclusion refresh, its index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, collection-offer matching, vault-beacon upkeep, the hourly price checkpoints and the daily asset rankings ship disabled and require
+automation, close-out, zeroed-day recovery, the return transport, the heartbeat and its entry close-out, protocol upkeep, its sanctions sync, its tier-push retry, its tier-version sync, its tier-exclusion refresh, its index compaction and its sanctions-registry refresh, position upkeep and its backstop fill, collection-offer matching, vault-beacon upkeep, the hourly price checkpoints and the daily asset rankings ship disabled and require
 deliberate activation. Deploying their software does not prove they run, that rewards have launched, or that custody or the
 expiry horizon has been activated. The mirror's day-delivery protection is
 required by its reward role, as stated in the current tokenomics spec; it is
