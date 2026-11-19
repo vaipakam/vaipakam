@@ -72,7 +72,9 @@ one point's daily rows. Both carry two halves, never blended:
 `reference` (the outside-source term average, `not-published` until the
 rate reference's `termAverage` view is deployed) and `ownLoans` (the
 platform's loans, whatever their status, under TermAverageAndLinkGuardsDesign.md §8,
-weighted by the per-loan interest statements in `loan_interest_events` (0103), with
+weighted by the per-loan interest statements in `loan_interest_events` (0103);
+each point states `unconfirmedLeftOut`, the loans left out because the ledger
+has not confirmed their agreed terms; with
 every setting in `ownLoans.rule`). The figures are written once an hour by
 the cron's rate-curve pass into `rate_curve_daily` (0102), so a read costs
 one D1 query; the reads sit behind `RATE_CURVE_RATELIMIT` (per IP, fails

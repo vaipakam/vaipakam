@@ -93,6 +93,9 @@ export interface CurveLoanRow {
   init_rate_bps: number | null;
   init_duration_days: number | null;
   init_terms_unbacked: number | null;
+  /** The loan's current duration; places an unconfirmed loan on a point
+   *  when it carries no initiation duration at all. */
+  duration_days?: number | null;
 }
 
 /** The kinds of `loan_interest_events` row the weight reads, and the
@@ -117,6 +120,12 @@ export interface OwnTermFigure {
   p75Bps: number | null;
   /** Loans counted at this point (after every exclusion). */
   loans: number;
+  /** Loans in this point's look-back, at least the minimum age old, left
+   *  out because the ledger has not confirmed their agreed terms, so their
+   *  rate is not known. Stated beside the figure (zero included) so a gap
+   *  in the indexer's record never reads as a quiet market. Such a loan is
+   *  placed on a point by its unconfirmed duration, the best figure held. */
+  unconfirmed: number;
   lenders: number;
   borrowers: number;
 }
@@ -138,6 +147,14 @@ interface Weighted {
   borrower: string;
 }
 
+/** Whether a loan started inside `term`'s look-back and is at least the
+ *  minimum age old at `asOf`. */
+function inWindow(row: CurveLoanRow, term: CurveTerm, asOf: number): boolean {
+  return (
+    row.start_at <= asOf - OWN_LOANS_RULE.minAgeDays * 86_400 && row.start_at >= asOf - lookbackDays(term) * 86_400
+  );
+}
+
 /**
  * The loan's weighted rate as of `asOf` (unix seconds), or null when the
  * loan is not counted. Rule steps 1 and 2. `paid` is the interest paid on
@@ -155,8 +172,7 @@ export function loanWeight(
   const lender = row.lender.toLowerCase();
   const borrower = row.borrower.toLowerCase();
   if (lender === borrower) return null;
-  if (row.start_at > asOf - OWN_LOANS_RULE.minAgeDays * 86_400) return null;
-  if (row.start_at < asOf - lookbackDays(term) * 86_400) return null;
+  if (!inWindow(row, term, asOf)) return null;
   if (paid === undefined || paid <= 0n) return null;
   // Only the RATIO between loans of one asset matters, so a float is
   // precise enough for the weight.
@@ -227,7 +243,14 @@ export function ownLoansCurve(
 ): OwnTermFigure[] {
   const rule = OWN_LOANS_RULE;
   const byTerm = new Map<CurveTerm, Weighted[]>();
+  const unconfirmed = new Map<CurveTerm, number>();
   for (const row of rows) {
+    if (row.init_terms_unbacked !== 0) {
+      const d = row.init_duration_days ?? row.duration_days ?? null;
+      const t = d == null ? null : curveTermFor(d);
+      if (t !== null && inWindow(row, t, asOf)) unconfirmed.set(t, (unconfirmed.get(t) ?? 0) + 1);
+      continue;
+    }
     const term = row.init_duration_days == null ? null : curveTermFor(row.init_duration_days);
     if (term === null) continue;
     const w = loanWeight(row, term, paid.get(row.loan_id), asOf);
@@ -245,6 +268,7 @@ export function ownLoansCurve(
       termRange: TERM_RANGES[days],
       lookbackDays: lookbackDays(days),
       loans: list.length,
+      unconfirmed: unconfirmed.get(days) ?? 0,
       lenders,
       borrowers,
     };

@@ -4024,7 +4024,7 @@ The platform publishes, for each lending asset, a rate curve at five points (7, 
 - **The rule for figures built from the platform's own loans** (also governs any later ranking or recent-rates band built from them):
   - every loan counts whatever its status, open or closed, repaid, defaulted or liquidated: a status filter would move the figure for a reason that is not a rate and lean it toward loans that ended well;
   - each loan is weighted by the interest that actually reached the lender side up to that day, never by principal, so weight is only gained by paying interest (and the yield fee on it); every route that pays interest counts the same way, interest a close-out delivered counts once delivered, interest a payment left undelivered does not count, and a loan that has paid none weighs nothing;
-  - left out: loans whose rate came from a link, loans between addresses the self-trade rule would refuse, loans whose agreed terms are not confirmed, and loans younger than a minimum age (3 days);
+  - left out: loans whose rate came from a link, loans between addresses the self-trade rule would refuse, loans whose agreed terms are not confirmed, and loans younger than a minimum age (3 days); each point states how many loans in its look-back were left out because their agreed terms are not confirmed (zero included), so a gap in the platform's record never reads as a quiet market;
   - each point counts loans of a stated range of durations (up to 14 days, 15 to 60, 61 to 135, 136 to 270, over 270), and is labelled by that range, not as one exact term;
   - each point looks back over the larger of 90 days and twice its term;
   - no one wallet carries more than a fifth of a point's weight, on the lender side and on the borrower side separately;

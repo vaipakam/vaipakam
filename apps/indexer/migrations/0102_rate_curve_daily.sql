@@ -33,6 +33,10 @@ CREATE TABLE IF NOT EXISTS rate_curve_daily (
   own_loans       INTEGER NOT NULL DEFAULT 0,
   own_lenders     INTEGER NOT NULL DEFAULT 0,
   own_borrowers   INTEGER NOT NULL DEFAULT 0,
+  -- Loans in the point's look-back left out because the ledger has not
+  -- confirmed their agreed terms (so their rate is not known); stated
+  -- beside the figure so an indexer gap never reads as a quiet market.
+  own_unconfirmed INTEGER NOT NULL DEFAULT 0,
   ref_state       TEXT    NOT NULL DEFAULT 'not-published',
   ref_value_bps   INTEGER,
   ref_a24_bps     INTEGER,

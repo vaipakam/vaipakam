@@ -108,7 +108,22 @@ describe('rate curve: which loans count', () => {
     for (const e of extra.slice(0, 3)) pay.set(e.loan_id, 10_000n);
     const f = point(ownLoansCurve([...rows, ...extra], pay, NOW), 30);
     expect(f.loans).toBe(5);
+    expect(f.unconfirmed).toBe(1);
     expect(f.p75Bps).toBe(500);
+  });
+
+  it('states the unconfirmed loans it left out, per point, zero included', () => {
+    const { rows, pay } = market(5, () => 500);
+    const extra = [
+      loan({ init_terms_unbacked: 1 }),
+      loan({ init_terms_unbacked: 1, init_duration_days: null, duration_days: 100 }),
+      loan({ init_terms_unbacked: 1, start_at: NOW - 2 * DAY }), // too young
+      loan({ init_terms_unbacked: 1, start_at: NOW - 400 * DAY }), // outside the look-back
+    ];
+    const fs = ownLoansCurve([...rows, ...extra], pay, NOW);
+    expect(point(fs, 30).unconfirmed).toBe(1);
+    expect(point(fs, 90).unconfirmed).toBe(1);
+    expect(point(fs, 7).unconfirmed).toBe(0);
   });
 
   it('a loan that defaulted keeps the weight it paid', () => {
@@ -279,7 +294,7 @@ describe('rate curve against the migrated schema', () => {
     expect(body.reference.terms.every((t: any) => t.state === 'not-published' && t.valueBps === null)).toBe(true);
     expect(body.ownLoans.source).toBe('platform-loans');
     const p30 = body.ownLoans.terms.find((t: any) => t.days === 30);
-    expect(p30).toMatchObject({ state: 'shown', loans: 6, lenders: 6, borrowers: 6, p25Bps: 500, medianBps: 600 });
+    expect(p30).toMatchObject({ state: 'shown', loans: 6, lenders: 6, borrowers: 6, p25Bps: 500, medianBps: 600, unconfirmedLeftOut: 0 });
     expect(body.ownLoans.terms.find((t: any) => t.days === 7).state).toBe('withheld');
 
     const hist = await handleRateCurveHistory(

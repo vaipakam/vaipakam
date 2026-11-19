@@ -79,6 +79,7 @@ interface CurveRow {
   own_loans: number;
   own_lenders: number;
   own_borrowers: number;
+  own_unconfirmed: number;
   ref_state: string;
   ref_value_bps: number | null;
   ref_a24_bps: number | null;
@@ -134,7 +135,7 @@ export async function refreshRateCurveForChain(
   const loanRes = await db
     .prepare(
       `SELECT loan_id, lender, borrower, status, start_at, terminal_at,
-              init_rate_bps, init_duration_days, init_terms_unbacked, lending_asset
+              init_rate_bps, init_duration_days, init_terms_unbacked, duration_days, lending_asset
          FROM loans
         WHERE chain_id = ? AND start_at >= ? AND is_sale_vehicle = 0
           AND asset_type = 0 AND collateral_asset_type = 0
@@ -193,13 +194,14 @@ export async function refreshRateCurveForChain(
       `INSERT INTO rate_curve_daily
          (chain_id, asset, term_days, day, own_state, own_reason,
           own_p25_bps, own_median_bps, own_p75_bps,
-          own_loans, own_lenders, own_borrowers, ref_state, computed_at)
+          own_loans, own_lenders, own_borrowers, own_unconfirmed, ref_state, computed_at)
        SELECT json_extract(value, '$.c'), json_extract(value, '$.a'),
               json_extract(value, '$.t'), json_extract(value, '$.d'),
               json_extract(value, '$.s'), json_extract(value, '$.r'),
               json_extract(value, '$.p25'), json_extract(value, '$.p50'),
               json_extract(value, '$.p75'), json_extract(value, '$.n'),
               json_extract(value, '$.l'), json_extract(value, '$.b'),
+              json_extract(value, '$.u'),
               json_extract(value, '$.rs'), json_extract(value, '$.at')
          FROM json_each(?)
         -- WHERE true: SQLite reads ON CONFLICT after a bare SELECT's FROM
@@ -211,6 +213,7 @@ export async function refreshRateCurveForChain(
          own_p25_bps = excluded.own_p25_bps, own_median_bps = excluded.own_median_bps,
          own_p75_bps = excluded.own_p75_bps, own_loans = excluded.own_loans,
          own_lenders = excluded.own_lenders, own_borrowers = excluded.own_borrowers,
+         own_unconfirmed = excluded.own_unconfirmed,
          ref_state = excluded.ref_state, computed_at = excluded.computed_at`,
     )
     .bind(JSON.stringify(rows))
@@ -232,6 +235,7 @@ function curveRowJson(chainId: number, asset: string, day: number, f: OwnTermFig
     n: f.loans,
     l: f.lenders,
     b: f.borrowers,
+    u: f.unconfirmed,
     rs: REFERENCE_NOT_PUBLISHED,
     at: now,
   };
@@ -311,6 +315,7 @@ function ownOf(r: CurveRow) {
     loans: r.own_loans,
     lenders: r.own_lenders,
     borrowers: r.own_borrowers,
+    unconfirmedLeftOut: r.own_unconfirmed,
   };
 }
 
@@ -385,7 +390,7 @@ export async function handleRateCurve(req: Request, env: Env): Promise<Response>
           const range = { days, termRange: TERM_RANGES[days], lookbackDays: lookbackDays(days) };
           return r
             ? { ...range, ...ownOf(r) }
-            : { ...range, state: 'not-computed', reason: null, p25Bps: null, medianBps: null, p75Bps: null, loans: 0, lenders: 0, borrowers: 0 };
+            : { ...range, state: 'not-computed', reason: null, p25Bps: null, medianBps: null, p75Bps: null, loans: 0, lenders: 0, borrowers: 0, unconfirmedLeftOut: null };
         }),
       },
     });
