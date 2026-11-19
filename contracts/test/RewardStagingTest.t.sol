@@ -536,11 +536,11 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         RewardStagingDomainFacet.StagingRecordView memory r = _rec();
         assertEq(r.epochUserFresh, 0.2e18, "the reprice assigns what the pool still allows");
         assertEq(r.cappedOffFresh, 0.2e18, "and records what the cap trimmed");
-        uint256 aliceBefore = vpfi.balanceOf(alice);
+        uint256 aliceBefore = _vaultFree(alice, address(vpfi));
         _settle().resolveStagedDayPage(_key());
         _settle().resolveStagedDayPage(_key());
         assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None));
-        assertEq(vpfi.balanceOf(alice) - aliceBefore, 0.2e18, "paid what was assigned");
+        assertEq(_vaultFree(alice, address(vpfi)) - aliceBefore, 0.2e18, "paid what was assigned");
         uint256 restored;
         uint256 consumed;
         for (uint256 i; i < WIDE; ++i) {
@@ -589,7 +589,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
         m.setFlagged(alice, true);
         ProfileFacet(address(diamond)).refreshSanctionsFlag(alice);
-        uint256 aliceBefore = vpfi.balanceOf(alice);
+        uint256 aliceBefore = _vaultFree(alice, address(vpfi));
         uint256 bucketBefore = _bucket();
         uint256 heldRowBefore = _row(LibVaipakam.RewardCustodyRow.SanctionsHeld);
         uint256 share = r.reservedLiveUserFresh + r.epochUserFresh + r.reservedLiveUserRecycled + r.epochUserRecycled;
@@ -604,7 +604,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         vm.expectEmit(true, true, false, true, address(diamond));
         emit StagingDelivered(_key(), alice, share, uint8(LibVaipakam.RewardDelivery.SanctionsHeld));
         assertTrue(_settle().resolveStagedDayPage(_key()), "the last page completes once the flag is confirmed");
-        assertEq(vpfi.balanceOf(alice), aliceBefore, "nothing delivered to the flagged wallet");
+        assertEq(_vaultFree(alice, address(vpfi)), aliceBefore, "nothing delivered to the flagged wallet");
         // The set-apart share IS the claimant's: charged to the loan side as a
         // user share (a forfeit charges none), its reservation released.
         assertEq(_mut().loanSideRewardPaidRaw(LOAN, sideKey) - sidePaidBefore, share, "charged as the claimant's share");
@@ -623,7 +623,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         // Revoked: the claimant's next claim releases the held share.
         m.setFlagged(alice, false);
         assertEq(_claim(), share, "the first claim after the revocation pays it");
-        assertEq(vpfi.balanceOf(alice) - aliceBefore, share);
+        assertEq(_vaultFree(alice, address(vpfi)) - aliceBefore, share);
         (held, heldTotal) = InteractionRewardsLensFacet(address(diamond)).getSanctionsHeldReward(alice);
         assertEq(held + heldTotal, 0, "nothing left held");
     }
@@ -640,13 +640,13 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         uint8 sideKey = uint8(LibVaipakam.RewardSide.Lender);
         assertGt(_mut().loanSideRewardReservedRaw(LOAN, sideKey), 0, "fixture: reserved");
         _mut().setRewardEntryForfeitedRaw(id); // a default since the reservation
-        uint256 aliceBefore = vpfi.balanceOf(alice);
+        uint256 aliceBefore = _vaultFree(alice, address(vpfi));
         address anyone = makeAddr("anyone");
         vm.expectEmit(true, true, false, true, address(diamond));
         emit StagingRecordStale(_key(), id);
         vm.prank(anyone);
         bool done = _settle().resolveStagedDayPage(_key()); // the first page: an unwind page, not a resolution
-        assertEq(vpfi.balanceOf(alice), aliceBefore, "nothing paid on the stale split");
+        assertEq(_vaultFree(alice, address(vpfi)), aliceBefore, "nothing paid on the stale split");
         while (!done) {
             assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.Unwinding), "stale: unwinding, never resolving");
             vm.prank(anyone);
@@ -654,7 +654,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         }
         assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "closed");
         assertEq(_mut().loanSideRewardReservedRaw(LOAN, sideKey), 0, "the reservation it took is released");
-        assertEq(vpfi.balanceOf(alice), aliceBefore, "and still nothing paid");
+        assertEq(_vaultFree(alice, address(vpfi)), aliceBefore, "and still nothing paid");
     }
 
     /// @dev Codex #2308 r23 — the other lifecycle shape: an entry closed before
@@ -724,11 +724,11 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         (previewed, , ) = previewByExecution(bob);
         assertEq(previewed, NEED, "and the full amount once it released");
         assertTrue(_mut().entryExecutableNowRaw(bobEntry), "executable again once it released");
-        uint256 bobBefore = vpfi.balanceOf(bob);
+        uint256 bobBefore = _vaultFree(bob, address(vpfi));
         vm.prank(bob);
         (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(paid, NEED, "paid in full once the reservation released, not scaled");
-        assertEq(vpfi.balanceOf(bob) - bobBefore, NEED);
+        assertEq(_vaultFree(bob, address(vpfi)) - bobBefore, NEED);
     }
 
     function test_ALateChainLongerThanAPage_KeepsTheScanIncomplete() public {
@@ -872,7 +872,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         (bytes32[] memory hs, uint256 id) = _stagedAndScanned();
         _liveFresh(1e18);
         _staging().reserveStagedDay(_key());
-        uint256 aliceBefore = vpfi.balanceOf(alice);
+        uint256 aliceBefore = _vaultFree(alice, address(vpfi));
         uint256 unclassifiedBefore = _row(LibVaipakam.RewardCustodyRow.Unclassified);
 
         assertFalse(_settle().resolveStagedDayPage(_key()), "page one: 64 of 65");
@@ -893,13 +893,13 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(refs0, 0, "released");
         (uint256 lfLast, ) = _legs(hs[64]);
         assertEq(lfLast, 0, "the 65th, staged last, is the last page's");
-        assertEq(vpfi.balanceOf(alice), aliceBefore, "nothing paid between pages");
+        assertEq(_vaultFree(alice, address(vpfi)), aliceBefore, "nothing paid between pages");
         _assertConserved(hs);
 
         assertTrue(_settle().resolveStagedDayPage(_key()), "page two: the last, and the payout");
         assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "closed");
         assertEq(_row(LibVaipakam.RewardCustodyRow.Resolving), 0, "the hold is empty");
-        assertEq(vpfi.balanceOf(alice) - aliceBefore, NEED, "the day paid in full: epochs first, live the rest");
+        assertEq(_vaultFree(alice, address(vpfi)) - aliceBefore, NEED, "the day paid in full: epochs first, live the rest");
         assertEq(_mut().getArmedFreshPaidRaw(), NEED - WIDE * TINY, "the live ledger paid only the residual");
         assertEq(_mut().rewardEntryClaimNextDayRaw(id), 2, "the day persisted");
         assertEq(_mut().interactionPoolReservedRaw(), 0, "reserved converted to paid");
@@ -1049,11 +1049,11 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _settle().unwindStagedDayPage(_key());
         _settle().unwindStagedDayPage(_key());
         assertTrue(_mut().entryExecutableNowRaw(bobEntry), "executable again once it released");
-        uint256 bobBefore = vpfi.balanceOf(bob);
+        uint256 bobBefore = _vaultFree(bob, address(vpfi));
         vm.prank(bob);
         (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(paid, NEED, "paid in full once the reservation released, not trimmed to the room it left");
-        assertEq(vpfi.balanceOf(bob) - bobBefore, NEED);
+        assertEq(_vaultFree(bob, address(vpfi)) - bobBefore, NEED);
     }
 
     function test_ARecycledReservation_PausesTheExpiryClock() public {
@@ -1322,7 +1322,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
         m.setFlagged(alice, true);
         ProfileFacet(address(diamond)).refreshSanctionsFlag(alice);
-        uint256 aliceBefore = vpfi.balanceOf(alice);
+        uint256 aliceBefore = _vaultFree(alice, address(vpfi));
         _holdThenConfirm();
         vm.recordLogs();
         assertTrue(_settle().resolveStagedDayPage(_key()), "the page at the window's end completes");
@@ -1341,7 +1341,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
             }
         }
         assertEq(heldVenue, 1, "the share is set apart by the record's own payout");
-        assertEq(vpfi.balanceOf(alice), aliceBefore, "nothing delivered to the flagged wallet");
+        assertEq(_vaultFree(alice, address(vpfi)), aliceBefore, "nothing delivered to the flagged wallet");
         (uint256 held, ) = InteractionRewardsLensFacet(address(diamond)).getSanctionsHeldReward(alice);
         assertEq(held, share, "held for the claimant");
         assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "the record closed");
@@ -1412,7 +1412,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(_bucket() - bucketBefore, userFresh, "absorbed into the bucket");
         (uint256 held, ) = InteractionRewardsLensFacet(address(diamond)).getSanctionsHeldReward(alice);
         assertEq(held, 0, "nothing held");
-        assertEq(vpfi.balanceOf(alice), 0, "nothing delivered");
+        assertEq(_vaultFree(alice, address(vpfi)), 0, "nothing delivered");
         assertEq(_view().getStagingRecord(key).phase, uint8(LibVaipakam.StagingPhase.None), "closed");
         assertTrue(_mut().getRewardEntryProcessedRaw(id), "the entry settled");
     }

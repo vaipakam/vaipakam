@@ -11,7 +11,6 @@ import {LibScanPage} from "../libraries/LibScanPage.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibOfferRefund} from "../libraries/LibOfferRefund.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
-import {LibAuth} from "../libraries/LibAuth.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
@@ -199,13 +198,17 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         nonReentrant
         whenNotPaused
     {
-        LibAuth.requirePositionManager(positionToken);
+        // The token's holder of record, read from the core, retired or not:
+        // a cancel retires the offer's token, and what was held for it is
+        // still its holder's to collect.
+        address holder = LibPositionNFT.core().holderOf(positionToken);
+        if (holder == address(0) || msg.sender != LibProtectedAccount.manager(holder)) revert NotNFTOwner();
         LibVaipakam._assertNotSanctioned(msg.sender);
         if (kind == LibVaultOutflow.ERC20) tokenId = 0;
         (address creator, uint256 amount) = LibEncumbrance.releaseOfferTokenHold(positionToken, asset, tokenId);
         if (amount == 0) revert NothingHeldForOfferToken(positionToken, asset, tokenId);
         LibVaultOutflow.toOfferHolder(creator, kind, asset, tokenId, amount, 0, positionToken);
-        emit OfferRefundCollected(positionToken, LibPositionNFT.ownerOf(positionToken), asset, tokenId, amount);
+        emit OfferRefundCollected(positionToken, holder, asset, tokenId, amount);
     }
 
     /// @notice What is held for offer position token `positionToken` in

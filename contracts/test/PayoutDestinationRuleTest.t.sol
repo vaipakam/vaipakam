@@ -223,7 +223,7 @@ contract PayoutDestinationRuleTest is SetupTest {
         LibTestPositionNFT.move(address(diamond), _token(offerId), newHolder);
 
         vm.prank(lender);
-        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
+        vm.expectRevert(IVaipakamErrors.NotOfferHolder.selector);
         OfferMutateFacet(address(diamond)).setOfferAmount(offerId, 600 ether, 600 ether, type(uint64).max);
 
         uint256 holderWallet0 = _wallet(newHolder);
@@ -233,20 +233,24 @@ contract PayoutDestinationRuleTest is SetupTest {
         assertEq(_wallet(newHolder), holderWallet0, "holder wallet untouched");
     }
 
-    /// @dev #3744 — a holder's size-up is paid from its wallet into the
-    ///      creator's vault, where the offer's escrow and lien live, so a
-    ///      later cancel returns the whole escrow to the holder.
-    function test_sizeUp_afterTransfer_fundsTheEscrow() public {
+    /// @dev #3744 — a raise pulls from the creator's wallet into the
+    ///      creator's vault, so only the creator, still holding the token,
+    ///      may raise: a holder that is not the creator is refused, and so is
+    ///      the creator once the token moved. A later cancel returns the whole
+    ///      escrow to the holder's vault.
+    function test_sizeUp_afterTransfer_isRefused_andCancelPaysTheHolder() public {
         uint256 offerId = _createLenderOffer(0);
         LibTestPositionNFT.move(address(diamond), _token(offerId), newHolder);
-        uint256 holderWallet0 = _wallet(newHolder);
         vm.prank(newHolder);
+        vm.expectRevert(OfferMutateFacet.OfferEscrowRaiseByCreatorOnly.selector);
         OfferMutateFacet(address(diamond)).setOfferAmount(offerId, 1500 ether, 1500 ether, type(uint64).max);
-        assertEq(holderWallet0 - _wallet(newHolder), 500 ether, "paid by the holder");
+        vm.prank(lender);
+        vm.expectRevert(IVaipakamErrors.NotOfferHolder.selector);
+        OfferMutateFacet(address(diamond)).setOfferAmount(offerId, 1500 ether, 1500 ether, type(uint64).max);
         _pastCooldown();
         vm.prank(newHolder);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
-        assertEq(_free(newHolder), 1500 ether, "the whole escrow to the holder's vault");
+        assertEq(_free(newHolder), PRINCIPAL, "the whole escrow to the holder's vault");
     }
 
     // ─── The own-balance release ────────────────────────────────────────

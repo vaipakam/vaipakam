@@ -196,7 +196,7 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
         vm.prank(alice);
         (bool ok, ) = address(diamond).call(abi.encodeWithSelector(RewardClaimFacet.claimInteractionRewards.selector));
         assertFalse(ok, "prepared: the claim has nothing to do until the domain settles");
-        assertEq(vpfi.balanceOf(alice), 0, "and still nothing paid");
+        assertEq(_vaultFree(alice, address(vpfi)), 0, "and still nothing paid");
     }
 
     /// @dev The domain reserves day by day, pays nothing until every day is
@@ -206,18 +206,18 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
         _longScene(DAYS);
         _liveFresh(20e18);
         _prepareAll();
-        uint256 before = vpfi.balanceOf(alice);
+        uint256 before = _vaultFree(alice, address(vpfi));
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingDomainPhaseInvalid.selector, _dk(), uint8(LibVaipakam.DomainPhase.Staging)));
         _domain().resolveDomainPage(_dk()); // not before every day is reserved
         _reserveAll();
         (uint8 phase, , , , ) = _dom();
         assertEq(phase, uint8(LibVaipakam.DomainPhase.Resolving), "every day reserved: irrevocable");
-        assertEq(vpfi.balanceOf(alice), before, "and still nothing paid");
+        assertEq(_vaultFree(alice, address(vpfi)), before, "and still nothing paid");
         assertEq(_view().getStagingRecord(_key(DAYS)).phase, uint8(LibVaipakam.StagingPhase.Reserved));
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingRecordInDomain.selector, _key(1), _dk()));
         _settle().resolveStagedDayPage(_key(1)); // a domain record resolves through the domain
         _resolveAll();
-        assertEq(vpfi.balanceOf(alice) - before, uint256(DAYS) * NEED, "every day paid, once");
+        assertEq(_vaultFree(alice, address(vpfi)) - before, uint256(DAYS) * NEED, "every day paid, once");
         uint32 live;
         (phase, , , live, ) = _dom();
         assertEq(phase, uint8(LibVaipakam.DomainPhase.None), "cleared");
@@ -252,10 +252,10 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
             _view().getStagingRecord(_key(1)).pendingOverflow,
             "fixture-live: day 1's record passed more pending epochs than it tracks"
         );
-        uint256 before = vpfi.balanceOf(alice);
+        uint256 before = _vaultFree(alice, address(vpfi));
         _reserveAll();
         _resolveAll();
-        assertEq(vpfi.balanceOf(alice) - before, uint256(DAYS) * NEED, "every day paid, once");
+        assertEq(_vaultFree(alice, address(vpfi)) - before, uint256(DAYS) * NEED, "every day paid, once");
     }
 
     /// @dev A day the live sources cannot bear STOPS the reservation cursor:
@@ -265,7 +265,7 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
         _longScene(DAYS);
         _liveFresh(5e18); // 12 days' worth of 0.4
         _prepareAll();
-        uint256 before = vpfi.balanceOf(alice);
+        uint256 before = _vaultFree(alice, address(vpfi));
         uint256 calls;
         bool done;
         while (!done && calls < 64) {
@@ -281,11 +281,11 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
         assertEq(phase, uint8(LibVaipakam.DomainPhase.Reserving), "stopped in reserving");
         assertEq(_view().getStagingRecord(_key(12)).phase, uint8(LibVaipakam.StagingPhase.Reserved), "the days before stand reserved");
         assertEq(_view().getStagingRecord(_key(13)).phase, uint8(LibVaipakam.StagingPhase.Staging), "the short day waits");
-        assertEq(vpfi.balanceOf(alice), before, "nothing paid while a day is short");
+        assertEq(_vaultFree(alice, address(vpfi)), before, "nothing paid while a day is short");
         _liveFresh(20e18);
         _reserveAll();
         _resolveAll();
-        assertEq(vpfi.balanceOf(alice) - before, uint256(DAYS) * NEED, "funded: every day paid");
+        assertEq(_vaultFree(alice, address(vpfi)) - before, uint256(DAYS) * NEED, "funded: every day paid");
     }
 
     /// @dev A lifecycle change after the commit — the entry's window closed
@@ -321,7 +321,7 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
         (phase, , , live, ) = _dom();
         assertEq(phase, uint8(LibVaipakam.DomainPhase.None), "cleared");
         assertEq(live, 0);
-        assertEq(vpfi.balanceOf(alice), 0, "nothing paid");
+        assertEq(_vaultFree(alice, address(vpfi)), 0, "nothing paid");
         assertEq(_view().getStagingRecord(_key(5)).phase, uint8(LibVaipakam.StagingPhase.None), "every record gone");
     }
 
@@ -473,10 +473,10 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
     ///      and the foreign record is left exactly as it stood.
     function test_AForeignRecordOnAGapDay_IsWalkedPast_ReserveAndResolve() public {
         _gapScene();
-        uint256 before = vpfi.balanceOf(alice);
+        uint256 before = _vaultFree(alice, address(vpfi));
         _reserveAll();
         _resolveAll();
-        assertEq(vpfi.balanceOf(alice) - before, 20 * NEED, "the domain's own days, paid once");
+        assertEq(_vaultFree(alice, address(vpfi)) - before, 20 * NEED, "the domain's own days, paid once");
         (uint8 phase, , , , ) = _dom();
         assertEq(phase, uint8(LibVaipakam.DomainPhase.None), "cleared");
         assertEq(_view().getStagingRecord(_key(20)).phase, uint8(LibVaipakam.StagingPhase.Staging), "the foreign record untouched");
@@ -518,12 +518,12 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
         _prepareAll();
         for (uint256 d = 2; d <= 4; ++d) _staging().prepareStagedDay(_key(d));
         assertGt(_view().getStagingRecord(_key(2)).batchCount, 0, "fixture-live: day 2 holds a batch");
-        uint256 before = vpfi.balanceOf(alice);
+        uint256 before = _vaultFree(alice, address(vpfi));
         _reserveAll();
         assertFalse(_domain().resolveDomainPage(_dk()));
         assertEq(_resolveCursor(), 3, "day 1 rode along; day 2's batches were the call's budget");
         _resolveAll();
-        assertEq(vpfi.balanceOf(alice) - before, uint256(DAYS) * NEED, "every day paid, once");
+        assertEq(_vaultFree(alice, address(vpfi)) - before, uint256(DAYS) * NEED, "every day paid, once");
     }
 
     /// @dev A one-chunk claim is unchanged: it pays its days directly.

@@ -1333,11 +1333,11 @@ contract RewardSanctionsForfeitTest is RewardSanctionsTestBase {
         LibTestProtection.finalizeReplacement(address(diamond), bob);
         vm.warp(vm.getBlockTimestamp() + 2 days + 1); // past the cool-down
         address vault = VaultFactoryFacet(address(diamond)).getUserVaultAddress(bob);
-        uint256 wallet0 = _vaultFree(bob, address(vpfi));
+        uint256 wallet0 = vpfi.balanceOf(bob);
         uint256 vault0 = vpfi.balanceOf(vault);
         uint256 paid = _claimVault(bob);
         assertGt(paid, 0, "fixture: something to claim");
-        assertEq(_vaultFree(bob, address(vpfi)), wallet0, "nothing reached the retired wallet");
+        assertEq(vpfi.balanceOf(bob), wallet0, "nothing reached the retired wallet");
         assertEq(vpfi.balanceOf(vault) - vault0, paid, "paid into the account's vault");
     }
 

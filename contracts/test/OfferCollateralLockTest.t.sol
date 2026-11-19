@@ -167,13 +167,13 @@ contract OfferCollateralLockTest is SetupTest {
         // double-count) and the loan lien re-encumbers the backing slice.
         uint256 id = _createBorrowerOffer(3000 ether, 5000 ether);
         assertEq(_collateralLock(), 5000 ether, "locked at ceiling pre-accept");
-        uint256 walletBefore = ERC20Mock(mockCollateralERC20).balanceOf(borrower);
+        uint256 freeBefore = _free(borrower, mockCollateralERC20);
 
         _signAndAcceptOffer(lender, lenderPk, id);
 
         assertEq(_collateralLock(), 3000 ether, "aggregate == loan lien after hand-off");
         assertEq(
-            ERC20Mock(mockCollateralERC20).balanceOf(borrower) - walletBefore,
+            _free(borrower, mockCollateralERC20) - freeBefore,
             2000 ether,
             "ceiling residual refunded (hand-off didn't block it)"
         );
