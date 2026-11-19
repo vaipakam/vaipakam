@@ -68,6 +68,20 @@ The platform lets a loan's status move only along the diagram in [`ProjectDetail
 - A loan first seen part-way through its life (initiated before this indexer's records begin) has its first announcement checked against the diagram only; every later one is checked fully. `GET /health/ingest` reports, per chain, how many loans are tracked, how many from initiation, every violation counted and the oldest 50 by name.
 - `.github/workflows/ingest-health.yml` pages on any violation not listed in its `LIFECYCLE_ACKNOWLEDGED` (`chainId:txHash:logIndex`, added in a reviewed commit once investigated). This replaced the reference subgraph's drift counter, which nothing paged on.
 
+### The public rate curve (#3751)
+
+`GET /rates/curve?chainId=&asset=0x…` returns one lending asset's curve at
+7, 30, 90, 180 and 365 days, and `GET /rates/curve/history?chainId=&asset=0x…&days=30&range=30d|90d|365d`
+one point's daily rows. Both carry two halves, never blended:
+`reference` (the outside-source term average, `not-published` until the
+rate reference's `termAverage` view is deployed) and `ownLoans` (the
+platform's repaid loans under TermAverageAndLinkGuardsDesign.md §8, with
+every setting in `ownLoans.rule`). The figures are written once an hour by
+the cron's rate-curve pass into `rate_curve_daily` (0120), so a read costs
+one D1 query; the reads sit behind `RATE_CURVE_RATELIMIT` (per IP, fails
+closed). The rule lives in `src/rateCurve.ts`, the pass and reads in
+`src/rateCurveRoutes.ts`.
+
 ## Configuration
 
 Worker secrets:

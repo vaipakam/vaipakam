@@ -151,6 +151,9 @@ export interface WorkerEnv {
   // #3774 — per-IP budget on the public data feed (`/public/v1*`), fails
   // closed (`@vaipakam/lib/rateLimit`).
   PUBLIC_FEED_RATELIMIT?: RateLimitBinding;
+  // #3751 — per-IP budget on the public rate-curve reads (`/rates/curve*`),
+  // fails closed (`@vaipakam/lib/rateLimit`).
+  RATE_CURVE_RATELIMIT?: RateLimitBinding;
 
   /** Cloudflare version-metadata binding — makes "what's actually
    *  deployed?" a one-curl question (surfaced on the stats routes).
@@ -297,6 +300,8 @@ export interface Env {
   SIGNED_OFFERS_RATELIMIT?: RateLimitBinding;
   // #3774 — per-IP budget on the public data feed. Fails closed.
   PUBLIC_FEED_RATELIMIT?: RateLimitBinding;
+  // #3751 — per-IP budget on the public rate-curve reads. Fails closed.
+  RATE_CURVE_RATELIMIT?: RateLimitBinding;
 }
 
 /**
@@ -364,6 +369,8 @@ export async function resolveEnv(
     SIGNED_OFFERS_RATELIMIT: raw.SIGNED_OFFERS_RATELIMIT,
     // #3774 — the public data feed's per-IP budget.
     PUBLIC_FEED_RATELIMIT: raw.PUBLIC_FEED_RATELIMIT,
+    // #3751 — the rate-curve reads' per-IP budget.
+    RATE_CURVE_RATELIMIT: raw.RATE_CURVE_RATELIMIT,
     RPC_BASE: secrets.RPC_BASE,
     RPC_ETH: secrets.RPC_ETH,
     RPC_ARB: secrets.RPC_ARB,
