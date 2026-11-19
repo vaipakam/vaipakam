@@ -108,6 +108,16 @@ wrap_case 'with-env: the loader state does not reach the command' 0 '' \
 wrap_case 'with-env: more than one argument is refused' 2 '' \
   'RPC_X=ok' 'printf' 'ran'
 
+# No interactive mode: an interactive bash would run a prompt hook taken from
+# the loaded settings. With no command the wrapper refuses before loading.
+wrap_case 'with-env: no command is refused, and no prompt hook runs' 2 '' \
+  'PROMPT_COMMAND=touch hook'
+if [ -e "$TREE/contracts/hook" ]; then
+  fails=$((fails + 1)); echo "FAIL  a prompt hook from .env ran"
+else
+  echo "ok    no prompt hook from .env ran"
+fi
+
 # A refusal names a line, never its content: a pasted secret with a stray `=`
 # reads as a name, so neither the name nor the value may reach the terminal.
 wrap_case 'with-env: a refused line is not echoed' 1 '' \

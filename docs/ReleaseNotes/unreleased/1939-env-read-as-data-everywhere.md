@@ -9,7 +9,8 @@ still wins over the file.
 
 The mainnet multisig runbook and the interaction-days script told the operator
 to load the file by executing it in their shell. They now use a new small
-wrapper that reads the file as data and then runs the command, or opens a
-shell for a runbook section. A test covers the reader's two modes and the
+wrapper that reads the file as data and then runs the one quoted command it
+is given. It has no interactive mode, because an interactive shell would run
+prompt hooks taken from the file. A test covers the reader's two modes and the
 wrapper, including that a refused line is never printed, and runs on every
 pull request.

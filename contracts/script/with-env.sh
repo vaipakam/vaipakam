@@ -20,10 +20,14 @@ __lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 #       Runs COMMANDS in bash with the settings exported. Single-quote them, so
 #       `$NAME` is expanded by that bash, after the load, not by your shell
 #       before it.
-#   bash script/with-env.sh
-#       Opens an interactive bash holding the settings, for a runbook section
-#       of several commands. `exit` returns to your own shell, which never
-#       held them.
+#       Several commands go in the one quoted argument, separated by `&&`
+#       or newlines.
+#
+# There is deliberately NO interactive mode. An interactive bash runs prompt
+# hooks (`PROMPT_COMMAND`, `PS0`, `PS1` command substitutions, …) taken from
+# its environment, so a shell opened over the loaded settings would execute
+# whatever such a line in `.env` says. A denylist of those names can never be
+# shown complete; one non-interactive `bash -c` has none of them to run.
 #
 # A refused file stops here with a line number and no content, and nothing
 # runs.
@@ -32,8 +36,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-if [ "$#" -gt 1 ]; then
-  echo "Error: pass the commands as ONE single-quoted argument, or none for a shell." >&2
+if [ "$#" -ne 1 ]; then
+  echo "Usage: bash script/with-env.sh 'COMMANDS'  (exactly one single-quoted argument)" >&2
   exit 2
 fi
 
@@ -45,8 +49,4 @@ if ! load_env_file "$CONTRACTS_DIR/.env"; then
 fi
 unset __lenv_baseline
 
-if [ "$#" -eq 1 ]; then
-  exec bash -c "$1"
-fi
-echo "with-env: a shell holding contracts/.env (read as data). Type \`exit\` when done." >&2
-exec bash -i
+exec bash -c "$1"

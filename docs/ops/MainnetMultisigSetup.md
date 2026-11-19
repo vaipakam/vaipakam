@@ -231,21 +231,24 @@ under `.timelock`, which the handover reads.
 
 ```bash
 cd contracts
-bash script/with-env.sh   # a shell holding .env, read as data (#1939)
+bash script/with-env.sh '
 forge script script/DeployTimelock.s.sol \
-    --rpc-url $ETHEREUM_RPC_URL \
+    --rpc-url "$ETHEREUM_RPC_URL" \
     --broadcast \
     --slow
+'
 ```
 
-`with-env.sh` opens a bash that holds the settings, read from `.env` as data
-rather than executed (#1939); run this section's commands in it, and type
-`exit` when the section is done. Never `source .env` instead: that executes
-the file in a shell that holds the deploy keys.
+`with-env.sh` reads `.env` as data, never executing it, then runs the quoted
+commands with those settings (#1939). Keep the single quotes: they make the
+settings expand after the load, not in your own shell before it. Never
+`source .env` instead: that executes the file in a shell that holds the deploy
+keys.
 
-Verify the resulting Timelock on-chain, in the same shell:
+Verify the resulting Timelock on-chain:
 
 ```bash
+bash script/with-env.sh '
 TIMELOCK=$(jq -r .timelock deployments/ethereum/addresses.json)
 
 # The governance Safe proposes
@@ -260,6 +263,7 @@ cast call $TIMELOCK "MIN_DELAY_FLOOR()(uint256)" --rpc-url $ETHEREUM_RPC_URL
 cast call $TIMELOCK "hasRole(bytes32,address)(bool)" \
     0x0000000000000000000000000000000000000000000000000000000000000000 \
     $(cast wallet address $DEPLOYER_PRIVATE_KEY) --rpc-url $ETHEREUM_RPC_URL
+'
 ```
 
 ---
@@ -281,22 +285,24 @@ canceller.
 
 ```bash
 cd contracts
-bash script/with-env.sh   # a shell holding .env, read as data (#1939)
+bash script/with-env.sh '
 CHAIN_SLUG=ethereum forge script script/Handover.s.sol \
-    --rpc-url $ETHEREUM_RPC_URL \
+    --rpc-url "$ETHEREUM_RPC_URL" \
     --broadcast \
     --slow
+'
 ```
 
 After the script completes, the admin EOA cannot make any admin-gated
-call. Test it explicitly, in the same shell — this must revert with a
-missing-role error:
+call. Test it explicitly — this must revert with a missing-role error:
 
 ```bash
+bash script/with-env.sh '
 DIAMOND=$(jq -r .diamond deployments/ethereum/addresses.json)
 cast send $DIAMOND "pause()" \
     --rpc-url $ETHEREUM_RPC_URL \
     --private-key $ADMIN_PRIVATE_KEY
+'
 ```
 
 If it does NOT revert, the handover did not complete — do not proceed.
