@@ -159,7 +159,7 @@ An advance is outside the shortfall reserve, earns no usage reward on either sid
 - **Emptying the position before borrowing:** nothing may be held unclaimed, and the token must be outside its transfer wait.
 - **Borrowing against a weak loan:** the health test of a new loan, top-tier assets only, and an advance that principal alone covers.
 - **Lending to yourself through two wallets and borrowing against it:** it draws on the advance lender less than the collateral that stands behind the loan, at a worse ratio than borrowing directly, and pays every fee. No reward is earned on an advance.
-- **Moving the due date after the advance:** renewal and extension stay off.
+- **Moving the due date after the advance:** renewal and extension stay off. A renewal with another lender (`InstantMarketDesign.md` 6.1, #3763) is not a renewal by this lender: it pays the lender side in full through the order of 6.4, as a repayment does, so the advance is repaid before the loan continues with anyone.
 - **Selling the position out from under the advance:** locked.
 - **A caller choosing when to pay the advance:** it changes nothing. Interest stops when the money arrives, and the order of payment is fixed.
 - **Sell now steering to a poor source:** the seller's least binds the call, and the preview and the fill use one computation.

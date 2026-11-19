@@ -2,6 +2,8 @@
 
 Card: #3761. Owner request, 2026-11-19: make the instant market the default from the first loan on the platform, with Auto-lend and single-transaction lending on by default and a way for the user to opt out, because those are the ways a lender's or a borrower's offer is filled fastest.
 
+Amended 2026-11-19 (#3763), on the owner's second request the same day: lending and borrowing run with no end date unless the user states a period (rule 7, sections 3.6 and 4.1).
+
 Related designs: `InstantMarketDesign.md` (#3656), `FlashLendingDesign.md` (#3748), `IdleLiquidityMatchingDesign.md` section 4a (#3624, one Lend form), `AutoLendLendUntilDesign.md` (#3618, #3619), `RateAuctionDesign.md` (#3758), `LenderCashOutDesign.md` (#3760), `PayoutDestinationRuleDesign.md`.
 
 ## 1. Why
@@ -25,6 +27,7 @@ Both gaps close if a new lender lands in a slot with the fast consents unless th
 4. **One signed step.** The pre-selected choices are set in the same transaction as the slot they belong to, so the user approves them together, sees them together and cannot be left half set.
 5. **Opting out is one tap, and it is remembered.** The app keeps the user's last choice for that wallet on that device and opens the form on it next time.
 6. **A switched-off feature is stated.** Where a network's own switch is off, the form does not pre-select that choice and says that it is not available on this network.
+7. **Open-ended is the pre-selected length** (#3763). A slot has no end date, and an instant borrow asks for none once renewal is built, unless the user states a period. Before signing, the user is told what open-ended means here and what it does not (3.6, 4.1).
 
 ## 3. The Lend form
 
@@ -94,6 +97,18 @@ A consent is usable only after the minimum age the contracts already require (#3
 
 Nothing is set for a slot that exists. Its owner sees one card, "This slot can also fill instant borrows and lend for a single transaction", which opens the same review screen and needs the same signature.
 
+### 3.6 Open-ended unless the lender states a period
+
+Added 2026-11-19 (#3763). Users who have lent through pooled lending expect a position with no end date. A slot already is one, so the form opens that way and says exactly how it differs.
+
+- **No end date is the opening state.** The slot is created with no "lend until" time. **Lend for a set period** is a choice under the form's options, off as the form opens. Switching it on asks for the date, with the wording of `AutoLendLendUntilDesign.md` section 3.
+- **The longest term is still the lender's own figure** (3). It is the longest a single loan may run, not how long the slot lends. Beside the field the app says which base terms the instant market's loans run for, so a lender sees when a figure would fill no instant borrow.
+- **The review screen says what open-ended means here,** under two headings:
+  - *No end date.* The slot keeps lending its capital within the limits shown until the lender stops it. Its instant-market loans renew one base term at a time while the borrower also wants them to.
+  - *Getting funds back.* Capital the slot has not lent can be taken out at any time. Capital in a loan returns when the borrower repays, or when the loan ends: for a renewing loan that is at most one base term after the lender stops renewals, and for any other loan its own due date. Sooner is possible by a handover to another lender at face value or by a sale, where one is available at that moment. **Funds in a loan are not available on demand.**
+- **One control to stop.** A slot's card carries **Stop lending**. Its review lists what stops (new loans, renewals, re-lending), what is free now, and for each loan out the latest date it returns, with "ask for a handover" beside each loan that qualifies. It uses the slot's existing controls and adds nothing to the contracts.
+- **Capital that waits earns nothing.** The slot's card shows lent and waiting amounts side by side, and never a rate for the waiting part.
+
 ## 4. The Borrow form
 
 The form opens on **Borrow now**. The borrower states the amount, the collateral and the term. The app shows what the standing sources can fill this moment, from which and at what rate, using the instant market's preview (`InstantMarketDesign.md` section 11 names one for the borrower's entry), so what is shown is what the call does. Until that preview is built the app simulates the call itself and shows that result.
@@ -104,6 +119,19 @@ The form opens on **Borrow now**. The borrower states the amount, the collateral
 - For an amount at or above the smallest auction size, the form names a rate auction as a choice, once that is built.
 
 A posted request has pre-selected the settings that the most standing lenders on that pair accept at that moment: interest by time first among them, and no prepay listing or cadence while slots fill neither (3). The form shows the count of lenders standing ready for the request as set, and how the count changes when the borrower changes a setting. The borrower's highest rate is always stated by the borrower.
+
+### 4.1 No end date unless the borrower states a term
+
+Added 2026-11-19 (#3763). It applies once renewal is built (`InstantMarketDesign.md` section 6). Until then the form offers a stated term only, shows no end-date choice, and says that every loan ends at its due date.
+
+- **"No end date" is the opening state of Borrow now.** **Borrow for a set term** is the choice, with the base terms the instant market offers.
+- **With no end date the borrower states two figures, and neither is filled in silently:**
+  - the highest rate the loan may renew at. The app shows the rate of the fill beside the field.
+  - the amount set aside in the loan's reserve for interest at renewals (`StandingInstructionsDesign.md` section 3). The app suggests one base term's interest at the loan's rate, shown and editable. Zero is allowed, and the review then says that the first renewal will not happen unless the reserve is funded before it.
+- **"Continue with another lender if mine leaves" is pre-selected,** with its own switch (`InstantMarketDesign.md` 6.1). With it off, the loan ends at its due date when its lender stops.
+- **The review screen says what open-ended means here:** the loan renews every base term while the lender keeps lending, the reserve covers the interest and the rate stays inside the borrower's limit. A lender may end it at a renewal date. It then continues with another lender at no more than the borrower's highest rate, or, where none stands ready, the borrower has until the due date and the grace period to repay. The fee charged for each added term is stated beside it (`FeeLevelsDesign.md`).
+- **A request posted for the rest carries the same choice** where the request can renew (`InstantMarketDesign.md` 6.1, the last part). Its review says that it renews only if a lender who keeps lending fills it, and otherwise ends on its due date.
+- The reserve is the borrower's own money held for that loan. What is unused returns when the loan closes.
 
 ## 5. Launch configuration
 
@@ -120,17 +148,20 @@ Each switch stays the pause lever for its feature. Turning one on for a network 
 - **A new lender:** one form, three figures to state, a review screen that reads as a short list of what their funds may do, one signature.
 - **A lender who wants a single loan:** the same form, one link.
 - **A borrower:** the amount they can have now and its rate, before anything else.
+- **A user arriving from pooled lending:** a position with no end date on either side, and one plain statement of the difference: funds in a loan are not available on demand, and a loan can end at a renewal date.
 - **Everyone:** a vault whose free balance never moves without a step they signed.
 
 ## 7. Wording rules
 
 The app says **pre-selected**, **switch off** and **one-time offer**. It never says auto-invest, never says idle funds are put to work, never presents a suggested rate as the platform's rate, and never states a return. The instant market is never called a pool.
 
+For length the app says **no end date** and **set period** or **set term**. It never says that funds can be withdrawn at any time, never says on demand or instant withdrawal of lent funds, and never calls a slot a deposit or a savings balance.
+
 ## 8. Changes
 
 | Where | Change |
 | --- | --- |
-| Contracts | None expected. The builder confirms that the batch entry carries the slot terms, the funding, the keeper authorization and both consent setters in one transaction with the caller preserved, and that a required step that fails undoes the batch. If the flash consent's build adds its own setter, it must be callable in that batch. |
+| Contracts | None expected for the forms. One small read is added for the app, `instantPairEligible(lending, collateral)`, returning whether the instant market is on for this network and whether the pair qualifies, from the same rule the slot's setter enforces (no second copy). Continuing a loan with another lender is a contract change of its own, in `InstantMarketDesign.md` 6.1. The builder confirms that the batch entry carries the slot terms, the funding, the keeper authorization and both consent setters in one transaction with the caller preserved, and that a required step that fails undoes the batch. If the flash consent's build adds its own setter, it must be callable in that batch. |
 | Deploy | The launch configuration sets the instant market's switch, and the flash lending switch once built and audited. |
 | App (alpha05) | The Lend and Borrow forms, the review screen, the remembered choice, the card for existing slots, the line for a switched-off feature. |
 | Indexer and API | Nothing new. The count of lenders standing ready per pair and setting exists (#3319). |
@@ -156,6 +187,12 @@ The app says **pre-selected**, **switch off** and **one-time offer**. It never s
 15. A slot that lends the platform token shows "Re-lend repayments for me" off and greyed, sends no authorization, and its review screen says repayments return by the ordinary claim.
 16. A request that allows a prepay listing or carries a cadence is not shown as fillable by a slot, on the Lend review or in the Borrow form's count.
 17. With the form set to "choose one", nothing is selected on opening, the form cannot be submitted until an option is tapped, and the batch sent equals the pre-selected form's for the same choices.
+18. A slot created from the form as it opens has no "lend until" time. With "Lend for a set period" on, the slot carries the date shown on the review.
+19. The Lend review states the latest return date of the capital for the longest term and base term shown, and "Stop lending" lists each loan out with a date that equals the loan's due date on chain.
+20. Before renewal is built, the Borrow form shows no end-date choice and the batch sets no renewal limits.
+21. With renewal built, Borrow now as it opens sets the borrower's renewal limits, the reserve amount on the review and "continue with another lender" in the same transaction as the loans. With "Borrow for a set term" chosen, none of the three is set.
+22. No highest rate and no reserve amount is sent that the borrower did not see on the review.
+23. Until the pair read exists, a dry run that fails for any reason other than the two named ones shows the pair's state as not known.
 
 ## 10. Alternatives considered
 
@@ -166,6 +203,9 @@ The app says **pre-selected**, **switch off** and **one-time offer**. It never s
 5. **Always ask, with nothing selected.** Not the setting as shipped: it adds a tap before the first loan. Kept as the second form of 3.3, one setting away.
 6. **A reward for standing in a slot.** Rejected. The usage rebate already follows a user's own lending, and a reward for holding funds ready is a different promise.
 7. **Turn the switches on later, in stages.** Not chosen for the instant market, since the request is to have it from the first loan. It remains the rule for every feature whose audit phase has not finished.
+8. **Hold lenders' funds together so that lent funds can be taken out on demand.** Rejected, as in `InstantMarketDesign.md` section 13. It ends the per-user vault and shares every loss. Open-ended here is made of renewing loans between one lender and one borrower.
+9. **Open on a stated period and let the user ask for open-ended.** The state before #3763. Rejected: it is the opposite of what a user arriving from pooled lending expects, and loans would end for no reason either side wanted.
+10. **Put the difference from pooled lending in the Terms of Service only.** Rejected as the only place. A user meets it on the review screen before signing and in the key risks list. This design changes no Terms text.
 
 ## 11. Recommendation and order of work
 
@@ -175,12 +215,21 @@ Build it as an app preset over explicit, signed consents.
 2. The Borrow form's "Borrow now" first.
 3. The flash consent joins the preset when flash lending is built.
 4. The launch configuration, with the next fresh deploy.
+5. Open-ended on the Lend form (3.6) with step 1. Open-ended on the Borrow form (4.1) when renewal is built.
 
 Builders: alpha05 for the forms; the thread that owns the deploy for the configuration; the Auto-lend build thread only if step 1's batch needs a contract change.
 
 ## 12. Open items for the builder to raise, not decide silently
 
-1. Whether the funding step in the batch needs an approval the wallet must sign first, and how the review screen states a second prompt where it does.
-2. Whether a wallet that cannot send the batch (a wallet with no batch support through the app's connector) is offered the steps one by one, with the same review screen before the first.
-3. The fee the app suggests for single-transaction lending.
-4. Whether the borrower entry's preview of `InstantMarketDesign.md` section 11 is built as a view before the Borrow form opens on it, or the form ships on a simulated call first.
+Settled with the builder on 2026-11-19:
+
+- **The funding approval is a separate prompt before the batch.** A token approval cannot sit inside the batch, so the review says "2 prompts", names the spender, and asks for the exact funding amount and never an unlimited one. Where the allowance or the free vault balance already covers the funding, it says "1 prompt" and sends no approval. The slot's terms are dry-run before the approval and the whole batch again after it.
+- **No wallet batch support is needed.** The batch is the platform's own single transaction.
+- **"Borrow now" ships on a simulated call first** and moves to the preview when that is built. The figure is labelled as what this block gives, and the form simulates again right before signing.
+- **Pair eligibility has its own read** (section 8). Until it exists the app may dry-run the slot's setter, matching one named refusal for "not on for this network" and one for "pair does not qualify", and showing "not known" for anything else.
+
+Still open:
+
+1. The fee the app suggests for single-transaction lending. The line is absent, not greyed, until the flash consent's setter exists.
+2. Which of the slot's existing controls gives exactly the outcome "Stop lending" states (no new loan, no renewal, no re-lending, un-lent capital free), and what the roll step does for a slot in that state.
+3. Whether the suggested reserve amount in 4.1 should cover one base term or more.
