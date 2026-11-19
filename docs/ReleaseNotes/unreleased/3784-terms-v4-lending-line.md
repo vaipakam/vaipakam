@@ -1,4 +1,4 @@
-## Thread — Terms of Service version 4: the lending risk line
+## Thread — Terms of Service version 4: the lending risk line (PR #3784)
 
 The Terms of Service are published as version 4. One entry in the list of
 key risks changed and nothing else. The lending entry now opens by saying
