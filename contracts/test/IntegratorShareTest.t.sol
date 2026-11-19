@@ -7,6 +7,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibIntegrator} from "../src/libraries/LibIntegrator.sol";
 import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
 import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
+import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
@@ -471,6 +472,51 @@ contract IntegratorShareTest is SetupTest {
         assertEq(_vaultBal(payout), 0, "a lender's offer earns no share");
         assertEq(_treasuryBal() - t0, FEE - MATCHER);
         assertEq(reg.getIntegrator(integ).loansBrought, 0);
+    }
+
+    // ─── #3360 — the kept fee recorded on the loan is net of every share ──
+
+    function _keptFee(uint256 loanId) internal view returns (uint256) {
+        return FeeEntitlementFacet(address(diamond)).getFeeEntitlement(loanId).keptFeeOpen;
+    }
+
+    /// @dev #3360 — a direct accept through the real fee host: the matcher's
+    ///      and the integrator's shares leave the fee, so the kept fee the loan
+    ///      records is the rest, which is exactly what the treasury received.
+    function test3360_keptFee_directAccept_netOfMatcherAndIntegrator() public {
+        _register(integ, payout, 0, "Acme");
+        uint256 offerId = _lenderOffer();
+        uint256 t0 = _treasuryBal();
+        uint256 loanId = _acceptVia(offerId, integ);
+        uint256 kept = _keptFee(loanId);
+        assertEq(kept, FEE - MATCHER - SHARE_10PCT, "the matcher's and integrator's shares are not kept");
+        assertEq(kept, _treasuryBal() - t0, "kept = what the fee host received");
+    }
+
+    /// @dev #3360 — the same through the match core (OfferMatchFacet).
+    function test3360_keptFee_matchCore_netOfMatcherAndIntegrator() public {
+        _register(integ, payout, 0, "Acme");
+        ConfigFacet(address(diamond)).setPartialFillEnabled(true);
+        uint256 lo = _lenderOffer();
+        vm.prank(borrower);
+        uint256 bo = OfferCreateFacet(address(diamond)).createOffer(
+            _params(LibVaipakam.OfferType.Borrower, integ), type(uint64).max
+        );
+        LibTestTiming.waitOutTermsAge(address(diamond), bo);
+        uint256 t0 = _treasuryBal();
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchOffers(lo, bo);
+        uint256 kept = _keptFee(loanId);
+        assertEq(kept, FEE - MATCHER - SHARE_10PCT, "match core: shares are not kept");
+        assertEq(kept, _treasuryBal() - t0, "kept = what the fee host received");
+    }
+
+    /// @dev #3360 — with no integrator named, only the matcher's share leaves.
+    function test3360_keptFee_noIntegrator_onlyMatcherShareLeaves() public {
+        uint256 offerId = _lenderOffer();
+        uint256 t0 = _treasuryBal();
+        uint256 loanId = _acceptVia(offerId, address(0));
+        assertEq(_keptFee(loanId), FEE - MATCHER);
+        assertEq(_keptFee(loanId), _treasuryBal() - t0);
     }
 
     /// @dev The matcher's 1% of the above-floor part (the accepting caller is

@@ -10,6 +10,7 @@ import {LibFeeShares} from "../src/libraries/LibFeeShares.sol";
 import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
 import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
 import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
+import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
@@ -375,6 +376,19 @@ contract ReferralShareTest is SetupTest {
         assertEq(t.shareRedirected, 0);
         assertEq(t.loans, 1);
         assertTrue(ref.getReferral(borrower).hasBorrowed);
+    }
+
+    /// #3360 — the kept fee the loan records is the fee after the referral
+    /// cut, less the matcher's and the inviter's shares, paid through the real
+    /// fee host: exactly what the treasury received.
+    function test3360_keptFee_netOfCutMatcherAndInviter() public {
+        _bind();
+        uint256 offerId = _lenderOffer(30);
+        uint256 t0 = _treasuryBal();
+        uint256 loanId = _accept(offerId);
+        uint256 kept = FeeEntitlementFacet(address(diamond)).getFeeEntitlement(loanId).keptFeeOpen;
+        assertEq(kept, FEE - CUT - MATCHER - SHARE, "the inviter's share is not kept");
+        assertEq(kept, _treasuryBal() - t0, "kept = what the fee host received");
     }
 
     /// A one-year loan: fee 100, A 90, cut 9, share 9 (design section 2).

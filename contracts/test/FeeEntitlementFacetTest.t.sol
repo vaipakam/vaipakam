@@ -880,7 +880,13 @@ contract FeeEntitlementFacetTest is SetupTest {
         uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
         vm.clearMockedCalls();
         LibVaipakam.FeeEntitlement memory fe = _assertKeptFeeBound(loanId);
-        assertEq(fe.keptFeeOpen, kept, "the kept fee is the host's measured figure");
+        // The figure is the host's measured receipt, clamped to what was handed
+        // to the host: the list fee less the accepting caller's matcher share
+        // (1% of the part above the floor, so the handed amount is at least 99%
+        // of the list fee). Below that the measured figure is recorded as is.
+        assertLe(fe.keptFeeOpen, kept, "never more than the host reported");
+        assertLe(fe.keptFeeOpen, listFee, "never more than the list fee");
+        if (kept * 100 <= listFee * 99) assertEq(fe.keptFeeOpen, kept, "the kept fee is the host's measured figure");
     }
 
     /// @dev A real accept with the borrower at a fuzzed hold-discount tier:
@@ -919,6 +925,23 @@ contract FeeEntitlementFacetTest is SetupTest {
         (,,, bool keptBinds) = _feFacet().getLoanRewardCapBasis(loanId);
         assertTrue(keptBinds, "a long term leaves the kept fee lower");
         assertGt(fe.keptFeeNumeraire18, 0);
+    }
+
+    /// @dev #3360 — a fee host that reports more than it was handed can never
+    ///      raise the cap: the kept fee is clamped to the amount passed to it.
+    function test3360_OverReportedReceipt_ClampedToTheAmountPassed() public {
+        uint256 offerId = _createLenderErc20Offer();
+        (uint256 listFee,,) = FeeLevelsFacet(address(diamond)).quoteLoanInitiationFee(PRINCIPAL, 30);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(ITreasuryFeeHost.collectFeeFromVault.selector),
+            abi.encode(listFee * 1000)
+        );
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
+        vm.clearMockedCalls();
+        LibVaipakam.FeeEntitlement memory fe = _assertKeptFeeBound(loanId);
+        assertGt(fe.keptFeeOpen, 0);
+        assertLe(fe.keptFeeOpen, listFee, "never more than the fee handed to the host");
     }
 
     /// @dev A kept fee of zero gives a cap of zero: no floor, nothing paid.
