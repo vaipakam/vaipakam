@@ -31,7 +31,7 @@
  * (the oldest by last block are dropped first, and the scan row says so); the
  * route pages them newest first, {@link PAGE_SIZE} at a time.
  */
-import { decodeAbiParameters, getAddress, type Address, type Hex, type Log } from 'viem';
+import { decodeAbiParameters, getAddress, numberToHex, type Address, type Hex } from 'viem';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { slotRefusalStatus, takeCallerSlot } from '@vaipakam/lib/rateLimit';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
@@ -98,9 +98,27 @@ interface ScanRow {
   pruned: number;
 }
 
-/** The slice of a viem client a scan needs. */
+/** A log as `eth_getLogs` returns it (block number as hex), or as viem formats it. */
+export interface RawLog {
+  address: string;
+  topics: readonly string[];
+  data: Hex;
+  blockNumber: string | bigint | null;
+  removed?: boolean;
+}
+
+/**
+ * The slice of a viem client a scan needs: the raw JSON-RPC call.
+ *
+ * NOT `client.getLogs`. viem's `getLogs` builds `topics` only from an
+ * `event`/`events` ABI argument and silently drops a raw `topics` filter,
+ * so an address-less call through it asks the provider for EVERY log in the
+ * range. Measured against a public Base endpoint before this was caught: the
+ * provider answered "more than 20000 results" for a vault that had received
+ * nothing.
+ */
 export interface LogReader {
-  getLogs(args: { fromBlock: bigint; toBlock: bigint; topics: (Hex | Hex[] | null)[] } & Record<string, unknown>): Promise<Log[]>;
+  request(args: { method: 'eth_getLogs'; params: [{ fromBlock: Hex; toBlock: Hex; topics: (Hex | Hex[] | null)[] }] }): Promise<unknown>;
 }
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
@@ -114,14 +132,14 @@ function topicOf(address: string): Hex {
  * not match the event its first topic names is skipped: a contract can emit
  * the signature with any payload, and a malformed one is not an arrival.
  */
-export function arrivalsFromLogs(logs: readonly Log[], vault: string): Arrival[] {
+export function arrivalsFromLogs(logs: readonly RawLog[], vault: string): Arrival[] {
   const receiver = topicOf(vault);
   const out: Arrival[] = [];
   for (const log of logs) {
     if (log.blockNumber === null || log.removed) continue;
-    const topics = log.topics as Hex[];
+    const topics = log.topics.map((t) => t.toLowerCase()) as Hex[];
     const asset = log.address.toLowerCase();
-    const block = Number(log.blockNumber);
+    const block = Number(BigInt(log.blockNumber));
     const t0 = topics[0];
     if (t0 === TOPIC_TRANSFER) {
       if (topics[2]?.toLowerCase() !== receiver) continue;
@@ -219,13 +237,17 @@ export async function scanRanges(
     const from = scannedTo + 1;
     const to = Math.min(head, from + rangeSize - 1);
     try {
+      const read = async (topics: (Hex | Hex[] | null)[]): Promise<RawLog[]> => {
+        const out = await client.request({
+          method: 'eth_getLogs',
+          params: [{ fromBlock: numberToHex(from), toBlock: numberToHex(to), topics }],
+        });
+        if (!Array.isArray(out)) throw new Error('eth_getLogs answered without a list');
+        return out as RawLog[];
+      };
       const [fungibleOr721, multi] = await Promise.all([
-        client.getLogs({ fromBlock: BigInt(from), toBlock: BigInt(to), topics: [TOPIC_TRANSFER, null, receiver] }),
-        client.getLogs({
-          fromBlock: BigInt(from),
-          toBlock: BigInt(to),
-          topics: [[TOPIC_TRANSFER_SINGLE, TOPIC_TRANSFER_BATCH], null, null, receiver],
-        }),
+        read([TOPIC_TRANSFER, null, receiver]),
+        read([[TOPIC_TRANSFER_SINGLE, TOPIC_TRANSFER_BATCH], null, null, receiver]),
       ]);
       arrivals.push(...arrivalsFromLogs([...fungibleOr721, ...multi], row.vault));
       scannedTo = to;

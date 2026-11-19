@@ -6,7 +6,7 @@
  * ranges, as a provider does.
  */
 import { readFileSync, readdirSync } from 'node:fs';
-import { encodeAbiParameters, type Log } from 'viem';
+import { encodeAbiParameters } from 'viem';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { createSqliteD1 } from './helpers/sqliteD1';
@@ -96,6 +96,8 @@ function rpc(opts: { vault?: string } = {}) {
       const from = Number(p.fromBlock);
       const to = Number(p.toBlock);
       if (p.address !== undefined) return fail(-32602, 'unexpected address filter');
+      // The scan must filter by receiver; an unfiltered read would ask for every log.
+      if (!Array.isArray(p.topics) || p.topics.length < 3) return fail(-32602, 'unfiltered getLogs');
       if (to - from + 1 > PROVIDER_LIMIT) return fail(-32602, `eth_getLogs block range too large, max ${PROVIDER_LIMIT}`);
       ranges.push(to - from + 1);
       return ok(
@@ -279,7 +281,7 @@ describe('the vault arrivals route (#3435)', () => {
 
 describe('arrival parsing', () => {
   const log = (topics: string[], data = '0x', address = ERC20) =>
-    ({ address, topics, data, blockNumber: 5n, removed: false }) as unknown as Log;
+    ({ address, topics, data, blockNumber: '0x5', removed: false });
 
   it('keeps only logs whose receiver is the vault and whose shape matches the event', () => {
     expect(arrivalsFromLogs([log([TOPIC_TRANSFER, pad(OTHER), pad(OTHER)])], VAULT)).toEqual([]);
