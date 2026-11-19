@@ -603,6 +603,21 @@ contract ExitInstructionTest is SetupTest {
         _set(REDUCE, 1.06e18, 1.07e18, 300, false);
     }
 
+    /// @dev A sale reaching the target exactly on the risk read's figures is
+    ///      the least: whole units, 10 principal against 14 collateral at
+    ///      par, target 1.7. Selling 8 leaves 3 against 6, exactly 1.7.
+    function test_7_reduceTakesASaleReachingTheTargetExactly() public {
+        _unitLoanOf(0, 0, 8000, 10, 14);
+        _price(address(collateralAsset), 1.2e8);
+        _set(REDUCE, LEVEL, 1.7e18, 100, false);
+        _price(address(collateralAsset), 1e8);
+        LibTestCalmPair.checkpoint(address(diamond), address(collateralAsset), address(principalAsset));
+        ExitInstructionFacet.ExitPreview memory pv = _x().previewExit(LOAN);
+        assertEq(pv.skip, 0, "due");
+        assertEq(pv.form, REDUCE);
+        assertEq(pv.collateralToSell, 8, "the least sale");
+    }
+
     function test_7_reduceHoldsTheCapInWholeUnits() public {
         _wholeUnitLoan(7000);
         _set(REDUCE, 1.1e18, 1.15e18, 100, false);

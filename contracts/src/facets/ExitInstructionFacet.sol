@@ -20,8 +20,11 @@ import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibStandingInstructions} from "../libraries/LibStandingInstructions.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
+import {LibNumeraireValue} from "../libraries/LibNumeraireValue.sol";
+import {LibRiskMath} from "../libraries/LibRiskMath.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {RiskFacet} from "./RiskFacet.sol";
+import {OracleFacet} from "./OracleFacet.sol";
 import {SwapToRepayFacet} from "./SwapToRepayFacet.sol";
 import {SwapToRepayPartialFacet} from "./SwapToRepayPartialFacet.sol";
 
@@ -280,7 +283,11 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
     uint256 private constant BPS_TO_WAD = 1e14;
     /// @dev A reduction's bounds, as the sizing checks them: the tolerance,
     ///      the accrued interest (paid first), the liquidation threshold `L`
-    ///      and health factor `h` (WAD), and the opening limit (bps, 0 = none).
+    ///      and health factor `h` (WAD), the opening limit (bps, 0 = none),
+    ///      the checks the least-sale search may make, and each leg's price
+    ///      as the risk read values it (`OracleFacet.getAssetPrice`, the
+    ///      token's decimals), so a candidate is checked on the risk read's
+    ///      own figures.
     struct Reach {
         uint256 tolerance;
         uint256 interest;
@@ -289,6 +296,12 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
         uint256 h;
         uint256 capBps;
         uint256 checks;
+        uint256 cPrice;
+        uint256 pPrice;
+        uint8 cFeedDec;
+        uint8 cDec;
+        uint8 pFeedDec;
+        uint8 pDec;
     }
 
     /// @dev The most candidate sales a reduction's sizing may check on the
@@ -296,10 +309,12 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
     ///      its own bounds (`_leastSaleChecks`), and a reduction needing more
     ///      is refused when it is set, so the sizing always finds the least.
     uint256 private constant LEAST_SALE_CHECKS_MAX = 256;
-    /// @dev The health factor the risk read reports values each leg in the
-    ///      numeraire with its own rounding, which can sit a few wei of the
-    ///      1e18 scale under this plan's principal-unit figure. The plan asks
-    ///      for this much above the target so the read lands at or above it.
+    /// @dev The risk read values each leg in the numeraire with its own
+    ///      rounding, which can sit a few wei of the 1e18 scale under the
+    ///      closed form's principal-unit figure. The closed form sizes its safe
+    ///      sale for this much above the target, so that sale also passes the
+    ///      exact check on the risk read's figures. Candidates are checked
+    ///      against the target itself.
     uint256 private constant HF_READ_SLACK = 1e6;
 
     // ─── Errors ──────────────────────────────────────────────────────
@@ -708,6 +723,8 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
         (uint256 L, uint256 capBps, uint256 h, bool isCap) = _reduceBounds(loan, st.targetHf);
         p.targetIsLtvCap = isCap;
         p.targetUsed = h > type(uint64).max ? type(uint64).max : uint64(h);
+        // The candidates are checked against the target itself
+        // (`p.targetUsed`); the closed form sizes for the slack above it.
         h += HF_READ_SLACK;
 
         uint256 keep = LibVaipakam.BASIS_POINTS - uint256(p.tolerance);
@@ -755,9 +772,8 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
         // The conservative bound may ask for the whole debt where a smaller
         // sale on the route's own figures would still reach both bounds, so
         // a close is chosen only when no partial candidate below it does.
-        Reach memory b = Reach(
-            p.tolerance, interest, minPartial, L, h, capBps, Math.min(_leastSaleChecks(L, h, keep), LEAST_SALE_CHECKS_MAX)
-        );
+        Reach memory b = _reach(loan, p, interest, minPartial, L, capBps);
+        b.checks = Math.min(_leastSaleChecks(L, h, keep), LEAST_SALE_CHECKS_MAX);
         bool closeBound = repay >= owed;
         uint256 safe;
         if (closeBound) {
@@ -800,6 +816,24 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
         p.targetUsed = 0;
         p.targetIsLtvCap = false;
         _sizeClose(loan.id, loan, rate, p);
+    }
+
+    /// @dev The reduction's bounds with each leg's price as the risk read
+    ///      values it.
+    function _reach(
+        LibVaipakam.Loan storage loan,
+        Plan memory p,
+        uint256 interest,
+        uint256 minPartial,
+        uint256 L,
+        uint256 capBps
+    ) private view returns (Reach memory b) {
+        (b.tolerance, b.interest, b.minPartial, b.L, b.h, b.capBps) =
+            (p.tolerance, interest, minPartial, L, p.targetUsed, capBps);
+        (b.cPrice, b.cFeedDec) = OracleFacet(address(this)).getAssetPrice(loan.collateralAsset);
+        (b.pPrice, b.pFeedDec) = OracleFacet(address(this)).getAssetPrice(loan.principalAsset);
+        b.cDec = LibNumeraireValue.tokenDecimals(loan.collateralAsset);
+        b.pDec = LibNumeraireValue.tokenDecimals(loan.principalAsset);
     }
 
     /// @dev A reduction's bounds: the liquidation threshold `L` (WAD), the
@@ -894,7 +928,9 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
         {
             uint256 a = LibVaipakam.BASIS_POINTS * b.h * owed;
             uint256 c = LibVaipakam.BASIS_POINTS * b.L * v1;
-            if (a > c) xLo = (a - c) / (b.h * keep - LibVaipakam.BASIS_POINTS * b.L);
+            if (a > c && b.h * keep > LibVaipakam.BASIS_POINTS * b.L) {
+                xLo = (a - c) / (b.h * keep - LibVaipakam.BASIS_POINTS * b.L);
+            }
             if (b.capBps != 0 && keep > b.capBps && LibVaipakam.BASIS_POINTS * owed > b.capBps * v1) {
                 uint256 xc = (LibVaipakam.BASIS_POINTS * owed - b.capBps * v1) / (keep - b.capBps);
                 if (xc > xLo) xLo = xc;
@@ -909,9 +945,10 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
     /// @dev True when selling `sell` and repaying exactly its floor (interest
     ///      first, then principal) leaves the health factor at or above `h`
     ///      and, where the loan has an opening limit (`capBps != 0`), the
-    ///      loan-to-value at or under it. Every figure is rounded against the
-    ///      holder: the floor and the remaining collateral's value down, the
-    ///      health factor down and the loan-to-value up. A sale whose floor
+    ///      loan-to-value at or under it, on the figures the risk read and
+    ///      the partial route compute after the sale (`RiskFacet`'s health
+    ///      factor and loan-to-value over numeraire legs, debt rounded up and
+    ///      collateral down), with the floor rounded down. A sale whose floor
     ///      would retire the whole principal counts as reaching both (the
     ///      caller turns it into a close).
     function _reduceReaches(
@@ -924,11 +961,14 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
         if (floor <= b.interest) return false;
         uint256 retired = floor - b.interest;
         if (retired >= loan.principal) return true;
-        uint256 debt = loan.principal - retired;
-        uint256 value = LibFallback.toPrincipal(rate, loan.collateralAmount - sell);
-        if (value == 0) return false;
-        if (Math.mulDiv(value, b.L, debt) < b.h) return false;
-        return b.capBps == 0 || Math.mulDiv(debt, LibVaipakam.BASIS_POINTS, value, Math.Rounding.Ceil) <= b.capBps;
+        // The risk read's own figures: each leg in the numeraire (debt up,
+        // collateral down), its health factor and loan-to-value rules.
+        uint256 debtV = LibNumeraireValue.toValue(loan.principal - retired, b.pPrice, b.pFeedDec, b.pDec, true);
+        uint256 collV =
+            LibNumeraireValue.toValue(loan.collateralAmount - sell, b.cPrice, b.cFeedDec, b.cDec, false);
+        if (collV == 0) return false;
+        if (LibRiskMath.healthFactor(collV, loan.liquidationLtvBpsAtInit, debtV) < b.h) return false;
+        return b.capBps == 0 || LibRiskMath.ltvBps(debtV, collV) <= b.capBps;
     }
 
     /// @dev True when the holder's collateral top-up could run now and would
