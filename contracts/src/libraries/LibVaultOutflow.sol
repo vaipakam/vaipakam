@@ -97,20 +97,6 @@ library LibVaultOutflow {
         );
     }
 
-    /// @notice #3710 — to the WALLET of whoever holds `positionToken` of loan
-    ///         `loanId` now, on `user`'s own side (a live loan's collateral
-    ///         withdrawal). The route names no payee: the policy reads the
-    ///         holder from the token and applies the owner-payout rules
-    ///         (the protected delay, the lock, a replaced account's manager).
-    function toHolderWallet(address user, address asset, uint256 amount, uint256 loanId, uint256 positionToken, uint8 reason)
-        internal
-        returns (uint256)
-    {
-        return _go(
-            user, ERC20, asset, 0, amount, address(0), VaultOutflowTypes.OutflowClass.HolderWallet, loanId, positionToken, reason
-        );
-    }
-
     /// @notice To the vault of whoever holds `positionToken`, the OTHER side
     ///         of loan `loanId`, now.
     function toCounterparty(

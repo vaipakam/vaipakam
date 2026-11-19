@@ -313,6 +313,11 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
     ///         beside the skip, carries the attempt's own error selector so
     ///         the cause is stated, not guessed.
     uint8 internal constant SKIP_LEG_REFUSED = 9;
+    /// @notice The reserve's owner is sanctions-flagged. Only the collateral
+    ///         top-up uses it: it stands in for adding collateral, which a
+    ///         flagged holder may not do, while paying interest and repaying
+    ///         stay open so the lender is made whole.
+    uint8 internal constant SKIP_SANCTIONED = 10;
 
     /// @dev The gas the interest payment's one attempt is given: well above
     ///      a draw, a booking with open seller claims, and the credit.
@@ -394,15 +399,24 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
     ///         the reserve is the depositor's own money. An ordinary vault
     ///         payout under the outflow policy (a protected account's payout
     ///         queues behind its delay). Tier-1 sanctions-gated.
+    ///         #3246 part 2 — a RECOVERED account's standing instructions are
+    ///         dead and its owner key may be lost, so anyone may return its
+    ///         unused reserve to the account's own vault, where it stays free
+    ///         for the recovered account's sweep to the recovery address
+    ///         (RecoveryAddressClawbackDesign §4.3; the same rule as
+    ///         `LenderIntentFacet.withdrawLenderIntentCapital`).
     function withdrawLoanReserve(address account, uint256 loanId, uint8 kind, uint256 amount) external nonReentrant {
         LibPausable.requireNotPaused();
-        LibProtectedAccount.requireManager(account);
-        LibVaipakam._assertNotSanctioned(msg.sender);
+        bool recovered = LibProtectedAccount.isRecovered(account);
+        if (!recovered) {
+            LibProtectedAccount.requireManager(account);
+            LibVaipakam._assertNotSanctioned(msg.sender);
+        }
         if (amount == 0) revert LoanReserveZeroAmount();
         address asset = _reserveAsset(LibVaipakam.storageSlot().loans[loanId], kind);
         // Released BEFORE the withdraw, so the chokepoint's guard sees it free.
         uint256 left = LibEncumbrance.unlienLoanReserve(loanId, account, kind, asset, amount);
-        if (msg.sender == account) {
+        if (recovered || msg.sender == account) {
             LibVaultOutflow.toOwner(account, LibVaultOutflow.ERC20, asset, 0, amount, OutflowReason.WITHDRAW);
         } else {
             LibVaultOutflow.toAllowlisted(
@@ -509,6 +523,9 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
 
         address holder = si.owner;
         uint8 skip = _commonSkip(s, loanId, loan, holder, loan.collateralAsset);
+        // The top-up follows the manual add-collateral's Tier-1 gate: a
+        // flagged holder's loan is not strengthened from its reserve.
+        if (skip == 0 && LibVaipakam.isSanctionedAddress(holder)) skip = SKIP_SANCTIONED;
         if (skip == 0) skip = _consolidated(loanId, loan, holder);
         uint256 reserve = s.collateralReserve[loanId][holder];
         if (skip == 0 && reserve == 0) skip = SKIP_RESERVE_EMPTY;
@@ -771,6 +788,9 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
         v.consolidationPending = loan.borrower != holderNow;
         if (v.instructions.owner != address(0)) {
             v.topUpSkipNow = _commonSkip(s, loanId, loan, v.instructions.owner, loan.collateralAsset);
+            if (v.topUpSkipNow == 0 && LibVaipakam.isSanctionedAddress(v.instructions.owner)) {
+                v.topUpSkipNow = SKIP_SANCTIONED;
+            }
             v.paymentSkipNow = _commonSkip(s, loanId, loan, v.instructions.owner, loan.principalAsset);
         }
         uint256 hf;
@@ -922,7 +942,13 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
     ///      unless all of it arrives.
     function _drawPayment(uint256 loanId, address holder, address asset, uint256 amount) private {
         LibEncumbrance.unlienLoanReserve(loanId, holder, RESERVE_PAYMENT, asset, amount);
+        // Paying interest stays open to a flagged owner, as repaying does (the
+        // lender is made whole): the owner's existing vault is resolved under
+        // the move-out exemption, pinned to this payer.
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibSanctionedLock.beginMoveOut(s, holder);
         LibVaultOutflow.toDiamondExact(holder, asset, amount, loanId, OutflowReason.STANDING_INSTRUCTION);
+        LibSanctionedLock.endMoveOut(s);
     }
 
     function _skip(uint256 loanId, uint8 instruction, uint8 reason, uint256 missing) private {

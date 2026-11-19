@@ -16,6 +16,9 @@ import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {LibTestTiming} from "./helpers/LibTestTiming.sol";
@@ -129,6 +132,32 @@ contract IntegratorShareTest is SetupTest {
 
     function _treasuryBal() internal view returns (uint256) {
         return IERC20(mockERC20).balanceOf(treasury);
+    }
+
+    /// A loan repaid and settled within 7 days of opening is NOT an early
+    /// default: the integrator's public record counts only a default or a
+    /// liquidation. (Repaid -> Settled used to read as a bad end because
+    /// Settled is in the aggregate defaulted-or-settled set.)
+    function test_repaidAndSettledEarly_isNotAnEarlyDefault() public {
+        _register(integ, payout, 0, "Acme");
+        uint256 loanId = _acceptVia(_lenderOffer(), integ);
+        vm.warp(block.timestamp + 1 days);
+        ERC20Mock(mockERC20).mint(borrower, PRINCIPAL);
+        vm.startPrank(borrower);
+        IERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+        vm.stopPrank();
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimAsLender(loanId);
+        vm.prank(borrower);
+        ClaimFacet(address(diamond)).claimAsBorrower(loanId);
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
+            uint8(LibVaipakam.LoanStatus.Settled),
+            "settled"
+        );
+        assertEq(reg.getIntegrator(integ).loansEarlyDefaulted, 0, "a repaid loan is no early default");
+        assertEq(reg.getIntegrator(integ).loansBrought, 1);
     }
 
     // ── Registry ─────────────────────────────────────────────────────────

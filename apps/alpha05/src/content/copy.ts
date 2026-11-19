@@ -712,7 +712,6 @@ export const copy = {
     dryRunUnread: A('The protocol’s own check of this withdrawal could not be run, so it is not offered yet. Try again in a moment.'),
     rowAmount: B('Collateral you take back'),
     rowTo: B('Sent to'),
-    to: B('Your wallet, from your vault'),
     rowMax: B('Most you can take back now'),
     closer: A('Taking back collateral lowers the loan’s health factor and raises its loan-to-value, so it moves closer to liquidation.'),
     limitMoves: A('The protocol checks its limits again when this confirms. If prices move first and the amount no longer fits, it is refused and nothing moves.'),
@@ -720,7 +719,7 @@ export const copy = {
     pauseHolds: A('If the protocol pauses before this confirms, it is refused and nothing moves.'),
     whySummary: B('What taking back collateral does, and its limit'),
     why: C(
-      'While a loan runs, the holder of the borrower position can take back collateral above what the loan needs. The protocol works out the most that can be taken back so that the health factor stays at or above the loan’s minimum and the loan-to-value within its opening cap, and that figure moves with prices. The collateral goes from your vault to your wallet. A pause, a pending swap-to-repay order, a standing refinance request or a lender’s sale listing holds it.',
+      'While a loan runs, the holder of the borrower position can take back collateral above what the loan needs. The protocol works out the most that can be taken back so that the health factor stays at or above the loan’s minimum and the loan-to-value within its opening cap, and that figure moves with prices. The collateral stays in your vault as your own funds, free to withdraw to your wallet from your vault page. A pause, a pending swap-to-repay order, a standing refinance request or a lender’s sale listing holds it.',
       'take-back-collateral',
     ),
     stepSend: B('send the withdrawal.'),

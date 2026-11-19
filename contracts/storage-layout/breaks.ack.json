@@ -2,9 +2,21 @@
   "_readme": "Acknowledged storage-layout breaks (#1274 / #2092). An entry { baseSha256, lines, reason } accepts exactly the listed ledger lines, and only when compared against the base golden file whose sha256 it names, so it goes inert once that base changes; delete inert entries. Only CI honours an acknowledgement: it records that NO chain may be upgraded in place across the change, and the deploy-time check never reads this file. See docs/DesignsAndPlans/StorageLayoutGuardDesign.md.",
   "acks": [
     {
-      "baseSha256": "ff862b716fcf751592ee6cb6b864d4b3b37a4189bde2fbb53125fc44a381972e",
+      "baseSha256": "8c19fa0277bfcc9e39d64a189b98b6a4d8008dc1509b8444a51595cd11443328",
+      "lines": [
+        "L|vaipakam@693[address]@0[uint256]|0|0|uint256|hourlyPrice1e18[][]",
+        "M|vaipakam@693[address]|0|0|uint256|hourlyPrice1e18[]",
+        "M|vaipakam|693|0|address|hourlyPrice1e18"
+      ],
+      "reason": "#3437: an hourly price checkpoint now records the price guard and the price version it was read at, so the per-hour slot becomes a struct. Prelive; every chain takes the next fresh deploy, none is upgraded in place across this."
+    },
+    {
+      "baseSha256": "8c19fa0277bfcc9e39d64a189b98b6a4d8008dc1509b8444a51595cd11443328",
       "lines": [
         "C|vaipakam@257[address]@0[address]@0[address]|0|0|lenderIntent[][][]",
+        "C|vaipakam@707[address]|0|0|protectedManagedAccounts[]",
+        "C|vaipakam@707[address]|0|0|protectedManagedAccounts[]._inner",
+        "D|vaipakam@707[address]|0|0|protectedManagedAccounts[]._inner._values",
         "L|vaipakam@257[address]@0[address]@0[address]|0|0|bool|lenderIntent[][][].active",
         "L|vaipakam@257[address]@0[address]@0[address]|1|0|uint256|lenderIntent[][][].maxExposure",
         "L|vaipakam@257[address]@0[address]@0[address]|2|0|uint256|lenderIntent[][][].minRateBps",
@@ -17,18 +29,14 @@
         "L|vaipakam@257[address]@0[address]@0[address]|5|9|uint64|lenderIntent[][][].lendUntil",
         "L|vaipakam@258[address]@0[address]@0[address]|0|0|uint256|lenderIntentLivePrincipal[][][]",
         "L|vaipakam@260[address]@0[address]@0[address]|0|0|uint256|lenderIntentCapital[][][]",
-        "L|vaipakam@632[address]@0[address]@0[address]|0|0|bool|lenderIntentPriority[][][]"
+        "L|vaipakam@632[address]@0[address]@0[address]|0|0|bool|lenderIntentPriority[][][]",
+        "L|vaipakam@707[address]@0[]|0|0|bytes32|protectedManagedAccounts[]._inner._values[]",
+        "L|vaipakam@707[address]@1[bytes32]|0|0|uint256|protectedManagedAccounts[]._inner._positions[]",
+        "M|vaipakam@707[address]|1|0|bytes32|protectedManagedAccounts[]._inner._positions",
+        "M|vaipakam|707|0|address|protectedManagedAccounts",
+        "W|vaipakam@707[address]@0[]|32"
       ],
-      "reason": "#3626: the four per-pair lender-intent mappings gain an innermost slot key (up to eight intents per pair). Prelive; reaches a chain by fresh deploy only, no chain is upgraded in place across it."
-    },
-    {
-      "baseSha256": "8c19fa0277bfcc9e39d64a189b98b6a4d8008dc1509b8444a51595cd11443328",
-      "lines": [
-        "L|vaipakam@693[address]@0[uint256]|0|0|uint256|hourlyPrice1e18[][]",
-        "M|vaipakam@693[address]|0|0|uint256|hourlyPrice1e18[]",
-        "M|vaipakam|693|0|address|hourlyPrice1e18"
-      ],
-      "reason": "#3437: an hourly price checkpoint now records the price guard and the price version it was read at, so the per-hour slot becomes a struct. Prelive; every chain takes the next fresh deploy, none is upgraded in place across this."
+      "reason": "Batch PR 1 against main: #3626 gives the four per-pair lender-intent mappings an innermost slot key (up to eight intents per pair), and fields added to Storage ahead of protectedManagedAccounts move it from slot 707 to 721. Prelive; every chain takes the next fresh deploy, none is upgraded in place across this."
     }
   ]
 }

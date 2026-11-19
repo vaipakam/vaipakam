@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibTiming} from "./LibTiming.sol";
+import {LibProtectedAccount} from "./LibProtectedAccount.sol";
 import {LibRiskMath} from "./LibRiskMath.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {LibFacet} from "./LibFacet.sol";
@@ -63,8 +64,17 @@ library LibIntentFill {
 
     /// @dev The slot exists and its terms have stood the minimum age (#3443).
     function requireSlotLive(LibVaipakam.LenderIntent memory intent, address lender) internal view {
+        // The standing-intent fill switch stops every route that draws a
+        // slot's capital (a match, an instant borrow, a takeover), here, once.
+        if (!LibVaipakam.storageSlot().protocolCfg.lenderIntentEnabled) {
+            revert LibOfferMatchExecute.FunctionDisabled(4);
+        }
         if (!intent.active) revert LenderIntentInactive();
         LibTiming.requireIntentAged(lender, intent.termsSetAt);
+        // A slot's capital becomes a new loan commitment of its owner, so an
+        // owner who may not open one (a locked, retired or recovered
+        // account) has no live slot, on every route that draws one.
+        LibProtectedAccount.requireCanOpen(lender);
     }
 
     /// @dev The fill-level admission: smallest fill, exposure, longest term,

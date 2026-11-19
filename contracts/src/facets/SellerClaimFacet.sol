@@ -15,6 +15,7 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {SettlementLegFacet} from "./SettlementLegFacet.sol";
 
 /**
  * @title  SellerClaimFacet
@@ -345,6 +346,18 @@ contract SellerClaimFacet is DiamondReentrancyGuard, DiamondPausable {
         if (s.sellerInterestClaims[loanId].length == 0) return;
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (!_final(loan)) revert SellerClaimsNotFinal(loanId);
+        // #3669 — a lender leg the token refused at settlement waits, parked,
+        // in the payer's vault, and the claim row does not yet hold it. Move
+        // it first, as the lender claim does, so the split ranks the whole
+        // recovery and pays the sellers out of it, never out of the stored
+        // lender's unrelated balance. While the token still refuses, the
+        // claims stay open (nothing is split) and resolve on a later claim.
+        if (s.parkedLenderLeg[loanId].payer != address(0)) {
+            (bool released,) = address(this).call(
+                abi.encodeWithSelector(SettlementLegFacet.releaseParkedLeg.selector, loanId)
+            );
+            if (!released) return;
+        }
         LibVaipakam.ClaimInfo storage claim = s.lenderClaims[loanId];
         _splitAndPay(s, loanId, loan, loan.lender, claim.asset, _rowRecovery(claim), true);
     }

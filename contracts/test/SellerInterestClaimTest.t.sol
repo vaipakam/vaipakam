@@ -25,6 +25,7 @@ import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
 import {LibTestTiming} from "./helpers/LibTestTiming.sol";
 
 /// @title SellerInterestClaimTest
@@ -260,6 +261,51 @@ contract SellerInterestClaimTest is SetupTest {
         vm.prank(lender);
         vm.expectRevert(abi.encodeWithSelector(SellerClaimFacet.NothingToClaimAsSeller.selector, loanId, lender));
         SellerClaimFacet(address(diamond)).claimAsSeller(loanId);
+    }
+
+    /// @dev #3669 — a repayment whose lender leg the token refused parks it in
+    ///      the payer's vault. A seller's claim moves the parked leg first and
+    ///      only then splits, so the sellers are paid out of the recovery, not
+    ///      out of the stored lender's own balance (while the token still
+    ///      refuses, the release reverts and the claims stay open).
+    function test_parkedLeg_sellerClaimReleasesItBeforeTheSplit() public {
+        uint256 loanId = _openLoan();
+        _skip(10 days);
+        uint256 sellerGross = _accrual(PRINCIPAL, 10 days);
+        address buyer = _sell(loanId, lender, "buyer1");
+        _skip(5 days);
+
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultDepositERC20From.selector),
+            "frozen"
+        );
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+        assertEq(
+            SettlementLegFacet(address(diamond)).getParkedLenderLeg(loanId).payer, borrower, "the leg is parked"
+        );
+
+        vm.clearMockedCalls();
+        (,, LibVaipakam.SellerInterestClaim[] memory open) = _ledger(loanId);
+        assertEq(open.length, 1, "the seller's claim is open");
+
+        uint256 sellerBefore = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        SellerClaimFacet(address(diamond)).claimAsSeller(loanId);
+        assertEq(
+            SettlementLegFacet(address(diamond)).getParkedLenderLeg(loanId).payer, address(0), "released first"
+        );
+        assertEq(
+            ERC20(mockERC20).balanceOf(lender) - sellerBefore, _net(loanId, sellerGross), "the seller's net share"
+        );
+        (,, open) = _ledger(loanId);
+        assertEq(open.length, 0, "the split closed the claims");
+
+        uint256 buyerBefore = _owned(buyer, mockERC20);
+        vm.prank(buyer);
+        ClaimFacet(address(diamond)).claimAsLender(loanId);
+        assertGe(_owned(buyer, mockERC20) - buyerBefore, PRINCIPAL, "the holder is paid the rest");
     }
 
     /// @dev Codex #3387 r1 — the holder's claim runs the terminal split and

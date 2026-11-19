@@ -1,13 +1,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-// #3437 step 5 — how many earlier price guards, and earlier
-// listing conduits, one vault code may accept beside the current
-// one. A loan still on an older guard or conduit has to be moved
-// off it (the announced retirement of #3437 step 4) before a
-// vault version that no longer lists it ships.
-uint256 constant MAX_PRIOR_ENDPOINTS = 2;
-
 /**
  * @title  VaultOutflowTypes
  * @author Vaipakam Developer Team
@@ -22,6 +15,16 @@ uint256 constant MAX_PRIOR_ENDPOINTS = 2;
  *         does not add an entry point or a field.
  */
 library VaultOutflowTypes {
+    /// @notice #3437 step 5 — how many earlier price guards, and earlier
+    ///         listing conduits, one vault code may accept beside the
+    ///         current one. A loan still on an older guard or conduit has to
+    ///         be moved off it (the announced retirement of #3437 step 4)
+    ///         before a vault version that no longer lists it ships.
+    /// @dev    Declared in the library, not at file level: the static
+    ///         analyser CI runs cannot resolve a file-level constant used as
+    ///         an array length inside a library struct, and stops.
+    uint256 internal constant MAX_PRIOR_ENDPOINTS = 2;
+
     /// @notice What kind of asset moves.
     enum AssetKind {
         ERC20,
@@ -82,13 +85,6 @@ library VaultOutflowTypes {
      *           that address's own vault when it is itself a protected
      *           account. Only a clawback and a recovered account's sweep use
      *           it; it passes no payout queue.
-     *         - HolderWallet (#3710): the WALLET of whoever holds
-     *           `positionToken` of loan `ref` now, read from the token by the
-     *           policy, never named by the route. A holder that is the paying
-     *           vault's own owner is paid as an Owner payout (its delay, its
-     *           lock, a replaced account's manager); any other holder at its
-     *           wallet, or at its own vault when it has protected mode on.
-     *           ERC-20 only.
      *         - IntegratorShare: a registered integrator's share of a new
      *           loan's initiation fee (#3682), from the lender's vault into the
      *           vault of the integrator's payout account, which the Diamond
@@ -100,6 +96,10 @@ library VaultOutflowTypes {
      *           Diamond derives the inviter from that user's own binding and
      *           refuses one whose period has ended. A protected inviter is
      *           paid into its vault, as for every wallet payout.
+     *         What a loan or an open offer owes a party always lands in the
+     *         position holder's VAULT as free balance (PositionHolder); only
+     *         the owner's own withdrawal reaches a wallet (owner decision
+     *         2026-11-19, #3710).
      */
     enum OutflowClass {
         Owner,
@@ -119,7 +119,6 @@ library VaultOutflowTypes {
         PrincipalToBorrower,
         Consolidation,
         Recovery,
-        HolderWallet,
         IntegratorShare,
         ReferralShare
     }

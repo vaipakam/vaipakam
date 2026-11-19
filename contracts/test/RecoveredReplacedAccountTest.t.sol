@@ -17,6 +17,7 @@ import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {RecoveryClawbackFacet} from "../src/facets/RecoveryClawbackFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -273,5 +274,35 @@ contract RecoveredReplacedAccountTest is SetupTest {
 
     function test_b_recoveredThenReplaced_borrower() public {
         _borrowerCase(false);
+    }
+
+    // ─── Dead standing instructions ─────────────────────────────────────
+
+    /// @dev #3246 part 2 — a recovered account's unused loan reserve is not
+    ///      stranded behind its lost key: anyone returns it to the account's
+    ///      vault, where the sweep moves it to the recovery address. Before
+    ///      the recovery the same call from a stranger is refused.
+    function test_aRecoveredAccountsLoanReserveIsReleasedByAnyone_andSwept() public {
+        uint256 loanId = _openLoan();
+        deal(mockERC20, borrower, ERC20(mockERC20).balanceOf(borrower) + 3 ether);
+        vm.startPrank(borrower);
+        ERC20(mockERC20).approve(address(diamond), 3 ether);
+        StandingInstructionFacet(address(diamond)).fundLoanReserve(loanId, 0, 3 ether);
+        vm.stopPrank();
+        _protect(borrower);
+
+        vm.prank(anyone);
+        vm.expectRevert();
+        StandingInstructionFacet(address(diamond)).withdrawLoanReserve(borrower, loanId, 0, 3 ether);
+
+        _clawback(borrower, borrower);
+        uint256 recBefore = _bal(mockERC20, rec);
+        uint256 walletBefore = _bal(mockERC20, borrower);
+        vm.prank(anyone);
+        StandingInstructionFacet(address(diamond)).withdrawLoanReserve(borrower, loanId, 0, 3 ether);
+        assertEq(_bal(mockERC20, anyone), 0, "nothing to the caller");
+        _sweep(borrower);
+        assertEq(_bal(mockERC20, rec) - recBefore, 3 ether, "the reserve reaches the recovery address");
+        assertEq(_bal(mockERC20, borrower), walletBefore, "nothing to the account's wallet");
     }
 }

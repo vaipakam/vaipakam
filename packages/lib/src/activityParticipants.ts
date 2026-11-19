@@ -116,8 +116,6 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['StandingInstructionsCleared', ['owner', 'by']],
   // The wallet that paid an extension's fee for the added term.
   ['ExtensionFeeCharged', ['payer']],
-  // A payment from a wallet credited to a position holder's vault.
-  ['HolderWalletPaymentToVault', ['payer', 'holder']],
   // Settled with the reserve's repayment legs, in the holder's name.
   ['RepaymentLegsFromReserve', ['holder']],
   // #3682 / #3722 — a fee share settled for a loan: the integrator that

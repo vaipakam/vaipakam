@@ -28,6 +28,8 @@ import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {ITreasuryFeeHost} from "../src/interfaces/ITreasuryFeeHost.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
+import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {MockSwapAdapter} from "./mocks/MockSwapAdapter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
@@ -267,6 +269,30 @@ contract StandingInstructionTest is SetupTest {
         _si().runCollateralTopUp(LOAN);
     }
 
+    /// @dev The top-up stands in for adding collateral, which a flagged
+    ///      holder may not do: it is skipped by name and moves nothing.
+    function test_topUp_skippedWhileTheOwnerIsSanctioned() public {
+        _fund(borrower, COLLATERAL, 3000 ether);
+        _set(1.3e18, 1.6e18, false, false, 0);
+        _mockHf(1.2e18);
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(borrower, true);
+
+        assertEq(_view().topUpSkipNow, 10, "the view states the skip");
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit StandingInstructionFacet.StandingInstructionSkipped(LOAN, 1, 10, 0, runner);
+        vm.prank(runner);
+        _si().runCollateralTopUp(LOAN);
+        assertEq(_loan().collateralAmount, 5000 ether, "nothing moved");
+        assertEq(_view().collateralReserve, 3000 ether, "the reserve is intact");
+
+        m.setFlagged(borrower, false);
+        vm.prank(runner);
+        _si().runCollateralTopUp(LOAN);
+        assertGt(_loan().collateralAmount, 5000 ether, "runs once cleared");
+    }
+
     // ─── 3. Pay my interest ───────────────────────────────────────────
 
     function test_interest_notBeforePeriodEnd() public {
@@ -321,6 +347,20 @@ contract StandingInstructionTest is SetupTest {
         vm.expectPartialRevert(IVaipakamErrors.PeriodicSettleNotDue.selector);
         RepayPeriodicFacet(address(diamond)).settlePeriodicInterest(LOAN, 0, new LibSwap.AdapterCall[](0));
         assertEq(_loan().lastPeriodicInterestSettledAt, checkpoint0 + 30 days, "not advanced twice");
+    }
+
+    /// @dev Paying interest stays open to a flagged owner, as repaying does.
+    function test_interest_paidWhileTheOwnerIsSanctioned() public {
+        _fund(borrower, PAYMENT, 50 ether);
+        _set(0, 0, true, false, 0);
+        vm.warp(startTs + 30 days);
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(borrower, true);
+        uint64 checkpoint0 = _loan().lastPeriodicInterestSettledAt;
+        vm.prank(runner);
+        _si().runInterestPayment(LOAN);
+        assertEq(_loan().lastPeriodicInterestSettledAt, checkpoint0 + 30 days, "the period closed");
     }
 
     function test_interest_partialPayment_saleSellsOnlyTheRest() public {
@@ -388,6 +428,19 @@ contract StandingInstructionTest is SetupTest {
         _si().runDueRepayment(LOAN);
         assertEq(uint256(_loan().status), uint256(LibVaipakam.LoanStatus.Repaid), "repaid in full");
         assertEq(_view().paymentReserve, 0, "drew exactly what it charged");
+    }
+
+    /// @dev Repaying from the reserve stays open to a flagged owner.
+    function test_repay_paidWhileTheOwnerIsSanctioned() public {
+        _set(0, 0, false, true, 1 hours);
+        vm.warp(startTs + 90 days - 1 hours);
+        _fund(borrower, PAYMENT, _view().repayDue);
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(borrower, true);
+        vm.prank(runner);
+        _si().runDueRepayment(LOAN);
+        assertEq(uint256(_loan().status), uint256(LibVaipakam.LoanStatus.Repaid), "repaid in full");
     }
 
     function test_repay_onePlanForTheDueDate() public {

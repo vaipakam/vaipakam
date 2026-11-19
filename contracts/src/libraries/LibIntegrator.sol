@@ -58,19 +58,25 @@ library LibIntegrator {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.IntegratorEntry storage e = s.integrators[integrator];
         if (e.status == LibVaipakam.IntegratorStatus.None) return;
-        s.loanIntegrator[loanId] = integrator;
+        s.loanIntegrator[loanId] = LibVaipakam.LoanIntegratorRecord({
+            integrator: integrator,
+            openedAt: uint64(block.timestamp)
+        });
         e.loansBrought += 1;
     }
 
     /// @notice A loan reached default or liquidation: if an integrator
     ///         brought it and it opened less than
     ///         {LibVaipakam.INTEGRATOR_EARLY_DEFAULT_WINDOW} ago, that
-    ///         integrator's early-default count rises once.
+    ///         integrator's early-default count rises once. Measured from
+    ///         the opening recorded with the integrator, never from
+    ///         `loan.startTime`, which an extension moves to the new term.
     function onLoanBadEnd(LibVaipakam.Loan storage loan) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address integrator = s.loanIntegrator[loan.id];
+        LibVaipakam.LoanIntegratorRecord storage rec = s.loanIntegrator[loan.id];
+        address integrator = rec.integrator;
         if (integrator == address(0)) return;
-        if (block.timestamp >= uint256(loan.startTime) + LibVaipakam.INTEGRATOR_EARLY_DEFAULT_WINDOW) return;
+        if (block.timestamp >= uint256(rec.openedAt) + LibVaipakam.INTEGRATOR_EARLY_DEFAULT_WINDOW) return;
         LibVaipakam.IntegratorEntry storage e = s.integrators[integrator];
         if (e.status != LibVaipakam.IntegratorStatus.None) e.loansEarlyDefaulted += 1;
     }

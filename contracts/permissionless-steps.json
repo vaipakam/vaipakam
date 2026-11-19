@@ -17,9 +17,17 @@
       "class": "user",
       "why": "the holder's own ERC-20 approval"
     },
+    "AggregatorAdapterImplementation.deposit(uint256,address)": {
+      "class": "user",
+      "why": "a depositor puts its own assets into the adapter for shares (refused until the adapter's principal has accepted the current Terms); it serves the depositor alone, so no keeper is owed"
+    },
     "AggregatorAdapterImplementation.initialize(address,address,address,address,uint16,address,string,string,uint256,uint256,uint16,uint32,uint256)": {
       "class": "init",
       "why": "the deployment, or the Diamond's factory, initializes each proxy once in the transaction that creates it"
+    },
+    "AggregatorAdapterImplementation.mint(uint256,address)": {
+      "class": "user",
+      "why": "as deposit, sized in shares: the depositor's own assets for its own shares; no keeper is owed"
     },
     "AggregatorAdapterImplementation.transfer(address,uint256)": {
       "class": "user",
@@ -146,6 +154,11 @@
       "flag": "HELD_RECOMMIT_ENABLED",
       "evidence": "apps/keeper/src/matcher.ts"
     },
+    "LenderIntentFacet.withdrawLenderIntentCapital(address,address,address,uint8,uint256)": {
+      "class": "gap",
+      "issue": "#3246",
+      "why": "the account's manager withdraws its own un-lent intent capital; for a RECOVERED account anyone may return it to the account's vault, where the recovered account's sweep moves it to the recovery address. The keeper pass is to be built, disarmed, with the protected-account work"
+    },
     "MarketLedgerFacet.rollMarketLedger(address,address,uint256)": {
       "class": "user",
       "why": "housekeeping a lender or app may run before a slot write after a long quiet gap; no keeper is owed because no figure depends on it: reads subtract the unrolled days themselves (Declared and Available) and every slot write rolls its own asset and pair"
@@ -245,7 +258,7 @@
       "flag": "KEEPER_ENABLED",
       "evidence": "apps/keeper/src/matcher.ts"
     },
-    "RecoveryClawbackFacet.sweepRecovered(address,(uint8,address,uint256)[])": {
+    "RecoveryClawbackFacet.sweepRecovered(address,struct:VaultOutflowTypes.ClawbackAsset[])": {
       "class": "gap",
       "issue": "#3246",
       "why": "moves a recovered account's free balance on to the recovery address its own record names (a payout that reached it after the clawback); the keeper pass is to be built, disarmed, with the protected-account work"
@@ -847,6 +860,11 @@
       "issue": "#3681",
       "why": "pays an ended period's unpaid interest from the holder's own payment reserve through the shared interest booking; anyone may call it once the instruction is due, and a skipped run says why by event. No keeper pass backs it yet; the pass ships disarmed with the keeper follow-up of #3681"
     },
+    "StandingInstructionFacet.withdrawLoanReserve(address,uint256,uint8,uint256)": {
+      "class": "gap",
+      "issue": "#3246",
+      "why": "the account's manager withdraws its own unused loan reserve; for a RECOVERED account anyone may return it to the account's vault, where the recovered account's sweep moves it to the recovery address. The keeper pass is to be built, disarmed, with the protected-account work"
+    },
     "SwapToRepayIntentFacet.cancelExpiredIntent(uint256)": {
       "class": "keeper",
       "pass": "expiredTeardown",
@@ -858,6 +876,26 @@
       "pass": "protocolUpkeep",
       "flag": "PROTOCOL_UPKEEP_ENABLED",
       "evidence": "apps/keeper/src/protocolUpkeep.ts"
+    },
+    "VaultRecovery.cancelRecoveryAddress(struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultRecovery.clawback(struct:VaultOutflowTypes.ClawbackAsset[],struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultRecovery.clearRecoveryAddress(struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultRecovery.requestRecoveryAddress(address,struct:VaultProtectionBase.Auth,struct:VaultProtectionBase.Auth)": {
+      "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
+      "class": "gated"
+    },
+    "VaultRecovery.settleRecoveryAddress()": {
+      "class": "user",
+      "why": "tidies the account's own record by writing a recovery address that has come into force; nothing depends on it (the address counts from its time on), so no keeper is owed. Runs only inside a vault (onlyDelegateCall)"
     },
     "VPFIDiscountFacet.pokeMyTier()": {
       "class": "user",
@@ -961,7 +999,7 @@
       "flag": "PROTECTED_ACCOUNT_ENABLED",
       "evidence": "apps/keeper/src/protectedAccount.ts"
     },
-    "VaultProtection.addAllowlisted(address,struct:VaultProtection.Auth)": {
+    "VaultProtection.addAllowlisted(address,struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
@@ -969,15 +1007,15 @@
       "class": "user",
       "why": "a key voids its own next signature nonce for a purpose, through the vault (a direct call to this code is refused)"
     },
-    "VaultProtection.cancelAllowlisted(address,struct:VaultProtection.Auth)": {
+    "VaultProtection.cancelAllowlisted(address,struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
-    "VaultProtection.cancelSetting(uint8,struct:VaultProtection.Auth)": {
+    "VaultProtection.cancelSetting(uint8,struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
-    "VaultProtection.enable(uint32,struct:VaultProtection.Auth)": {
+    "VaultProtection.enable(uint32,struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
@@ -1005,35 +1043,35 @@
       "flag": "PROTECTED_ACCOUNT_ENABLED",
       "evidence": "apps/keeper/src/protectedAccount.ts"
     },
-    "VaultProtection.lock(struct:VaultProtection.Auth)": {
+    "VaultProtection.lock(struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
-    "VaultProtection.removeAllowlisted(address,struct:VaultProtection.Auth)": {
+    "VaultProtection.removeAllowlisted(address,struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
-    "VaultProtection.replacement(uint8,address,struct:VaultProtection.Auth)": {
+    "VaultProtection.replacement(uint8,address,struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
-    "VaultProtection.requestDisable(struct:VaultProtection.Auth)": {
+    "VaultProtection.requestDisable(struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
-    "VaultProtection.requestUnlock(struct:VaultProtection.Auth)": {
+    "VaultProtection.requestUnlock(struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
-    "VaultProtection.setDelay(uint32,struct:VaultProtection.Auth)": {
+    "VaultProtection.setDelay(uint32,struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
-    "VaultProtection.signerChange(uint8,address,struct:VaultProtection.Auth)": {
+    "VaultProtection.signerChange(uint8,address,struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },
-    "VaultProtection.verifyDestination(address,address,struct:VaultProtection.Auth)": {
+    "VaultProtection.verifyDestination(address,address,struct:VaultProtectionBase.Auth)": {
       "gate": "refuses every direct call (onlyDelegateCall: it runs only inside a vault, through the vault's protect); there the write is authorized by its key alone, by a direct call from that key or the key's EIP-712 signature (ERC-1271 for a contract wallet) bound to the chain, the vault, the key's next nonce for the purpose and an expiry",
       "class": "gated"
     },

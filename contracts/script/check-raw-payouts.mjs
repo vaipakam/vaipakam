@@ -53,6 +53,7 @@ export const ALLOWED = [
   { site: 'src/facets/TreasuryFacet.sol:TreasuryFacet.remitBuyback', count: 2, reason: `${MESSENGER_FEE} ${CALLER_REFUND}` },
   { site: 'src/facets/ProtocolBroadcastFacet.sol:ProtocolBroadcastFacet.deliverTierPush', count: 1, reason: CALLER_REFUND },
   { site: 'src/facets/ProtocolBroadcastFacet.sol:ProtocolBroadcastFacet._deliverLane', count: 1, reason: MESSENGER_FEE },
+  { site: 'src/facets/ProtocolBroadcastFacet.sol:ProtocolBroadcastFacet.broadcastTierTableVersionTo', count: 1, reason: MESSENGER_FEE },
   { site: 'src/facets/ProtocolBroadcastFacet.sol:ProtocolBroadcastFacet.withdrawBudget', count: 1, reason: 'Admin withdrawal of the protocol broadcast budget (native gas the protocol funded itself), to an address the admin names; no user funds.' },
   { site: 'src/facets/VaultFactoryFacet.sol:VaultFactoryFacet.vaultCreditFromDiamondERC20', count: 1, reason: 'Into a user VAULT (the credit path the policy and LibDelivery use), never a wallet.' },
   { site: 'src/facets/VaultFactoryFacet.sol:VaultFactoryFacet.vaultDepositERC721', count: 1, reason: 'A deposit INTO the user\'s own vault, never out of the protocol.' },

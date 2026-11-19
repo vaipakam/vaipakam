@@ -41,6 +41,8 @@ import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
+import {LibTestGuard} from "./helpers/LibTestGuard.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
@@ -708,19 +710,45 @@ contract PartialWithdrawalFacetTest is Test {
         assertEq(r, uint64(block.timestamp) + 120, "the set long wait applies to the holder's own token");
     }
 
-    /// @dev #3710 — the payee is read from the borrower token: the borrower
-    ///      who holds it and owns the paying vault is paid at its wallet.
-    function testHolderWallet_PaysTheHoldersWallet() public {
-        uint256 before = ERC20Mock(mockCollateralERC20).balanceOf(borrower);
-        vm.prank(borrower);
-        PartialWithdrawalFacet(address(diamond)).partialWithdrawCollateral(activeLoanId, 30 ether);
-        assertEq(ERC20Mock(mockCollateralERC20).balanceOf(borrower), before + 30 ether, "paid to the holder's wallet");
+    /// @dev The depository getter (VaultDepositoryFacet), read by the
+    ///      #3710 release tests.
+    function _cutDepository() internal {
+        IDiamondCut.FacetCut[] memory c = new IDiamondCut.FacetCut[](1);
+        c[0] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(VaultDepositoryFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getVaultDepositoryFacetSelectors()
+        });
+        IDiamondCut(address(diamond)).diamondCut(c, address(0), "");
     }
 
-    /// @dev #3710 / #3568 — a protected holder's withdrawal is its own Owner
-    ///      payout: nothing reaches the wallet before the delay.
-    function testHolderWallet_ProtectedHolderWaitsItsDelay() public {
-        // The payout queue (VaultPayoutFacet), which the gate self-calls.
+    /// @dev #3710 (owner decision 2026-11-19) — the released collateral lands
+    ///      in the borrower token holder's vault as free balance; nothing
+    ///      reaches a wallet. The holder owns the paying vault, so nothing
+    ///      moves: the lien drops and the amount becomes its own.
+    function testVaultRelease_StaysInTheHoldersVaultAsFree() public {
+        _cutDepository();
+        address v = VaultFactoryFacet(address(diamond)).getUserVaultAddress(borrower);
+        uint256 walletBefore = ERC20Mock(mockCollateralERC20).balanceOf(borrower);
+        uint256 vaultBefore = ERC20Mock(mockCollateralERC20).balanceOf(v);
+        uint256 freeBefore = VaultDepositoryFacet(address(diamond)).getDepositoryHolding(borrower, mockCollateralERC20, 0);
+        vm.prank(borrower);
+        PartialWithdrawalFacet(address(diamond)).partialWithdrawCollateral(activeLoanId, 30 ether);
+        assertEq(ERC20Mock(mockCollateralERC20).balanceOf(borrower), walletBefore, "nothing reached the wallet");
+        assertEq(ERC20Mock(mockCollateralERC20).balanceOf(v), vaultBefore, "nothing left the vault");
+        assertEq(
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(borrower, mockCollateralERC20, 0),
+            freeBefore + 30 ether,
+            "the released amount is the holder's free balance"
+        );
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        assertEq(loan.collateralAmount, COLLATERAL - 30 ether, "the loan's collateral fell");
+    }
+
+    /// @dev #3710 / #3568 — a protected holder's release is not a payout:
+    ///      nothing is queued and nothing reaches the wallet; leaving the
+    ///      vault later is its own withdrawal, under its delay.
+    function testVaultRelease_ProtectedHolderIsNotQueued() public {
         IDiamondCut.FacetCut[] memory pay = new IDiamondCut.FacetCut[](1);
         pay[0] = IDiamondCut.FacetCut({
             facetAddress: ArtifactDeploy.deploy(type(VaultPayoutFacet).name),
@@ -735,10 +763,10 @@ contract PartialWithdrawalFacetTest is Test {
         assertEq(ERC20Mock(mockCollateralERC20).balanceOf(borrower), before, "nothing reached the wallet");
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.collateralAmount, COLLATERAL - 30 ether, "the loan's collateral fell");
-        assertEq(VaultPayoutFacet(address(diamond)).getPendingPayoutIds(borrower).length, 1, "queued behind the delay");
+        assertEq(VaultPayoutFacet(address(diamond)).getPendingPayoutIds(borrower).length, 0, "no payout queued");
     }
 
-    // ─── #3710 3.3 — the wallet step is isolated; a refusal pays the vault ──
+    // ─── #3710 — another holder is paid into its own vault ────────────────
     //
     // The withdrawal route consolidates a transferred side first, so its
     // payee is normally the paying vault's own owner. The other-holder branch
@@ -746,11 +774,10 @@ contract PartialWithdrawalFacetTest is Test {
     // held by `newHolder`, and the borrower's vault holds free collateral.
 
     address internal newHolder = makeAddr("newHolder");
-    bool internal expectFallbackEvent;
 
-    function _payOtherHolder() internal returns (uint256 toWallet, uint256 toVault, uint256 tokenId) {
-        tokenId = LoanFacet(address(diamond)).getLoanDetails(activeLoanId).borrowerTokenId;
-        // Free collateral in the borrower's vault (outside the lien).
+    function testVaultRelease_AnotherHolderIsPaidIntoItsVault() public {
+        _cutDepository();
+        uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(activeLoanId).borrowerTokenId;
         ERC20Mock(mockCollateralERC20).mint(borrower, 30 ether);
         vm.prank(borrower);
         ERC20Mock(mockCollateralERC20).approve(address(diamond), 30 ether);
@@ -760,12 +787,9 @@ contract PartialWithdrawalFacetTest is Test {
         LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
 
         (uint256 n0,,) = VaipakamNFTFacet(address(diamond)).positionState(tokenId);
-        if (expectFallbackEvent) {
-            vm.expectEmit(true, true, true, true, address(diamond));
-            emit VaultOutflowFacet.HolderWalletPaymentToVault(
-                borrower, newHolder, mockCollateralERC20, 30 ether, 30 ether, activeLoanId, tokenId
-            );
-        }
+        // A vault move runs only inside the Diamond's guard, as every caller
+        // holds it.
+        LibTestGuard.hold(address(diamond));
         vm.prank(address(diamond));
         VaultOutflowFacet(address(diamond)).vaultOutflowArgs(
             borrower,
@@ -774,55 +798,23 @@ contract PartialWithdrawalFacetTest is Test {
             0,
             30 ether,
             address(0),
-            uint8(VaultOutflowTypes.OutflowClass.HolderWallet),
+            uint8(VaultOutflowTypes.OutflowClass.PositionHolder),
             activeLoanId,
             tokenId,
             19 // PARTIAL_WITHDRAWAL
         );
+        LibTestGuard.release(address(diamond));
         (uint256 n1, uint64 b1, uint64 r1) = VaipakamNFTFacet(address(diamond)).positionState(tokenId);
-        // The same marks however the payment lands: one value-out, this
-        // block, the short wait (no guarded action is running here).
         assertEq(n1, n0 + 1, "one value-out");
         assertEq(b1, uint64(block.number), "value left in this block");
         assertEq(r1, uint64(block.timestamp) + 60, "the short wait");
-        toWallet = ERC20Mock(mockCollateralERC20).balanceOf(newHolder);
         address v = VaultFactoryFacet(address(diamond)).getUserVaultAddress(newHolder);
-        toVault = v == address(0) ? 0 : ERC20Mock(mockCollateralERC20).balanceOf(v);
-    }
-
-    function testHolderWallet_AnotherHolderIsPaidAtItsWallet() public {
-        (uint256 toWallet, uint256 toVault,) = _payOtherHolder();
-        assertEq(toWallet, 30 ether, "paid at the wallet");
-        assertEq(toVault, 0, "nothing to a vault");
-    }
-
-    /// @dev A token whose receiver hook refuses the payment.
-    function testHolderWallet_ReceiverHookRefusesThenVaultIsCredited() public {
-        vm.mockCallRevert(
-            mockCollateralERC20,
-            abi.encodeCall(ERC20.transfer, (newHolder, 30 ether)),
-            abi.encodeWithSignature("Error(string)", "hook refused")
+        assertEq(ERC20Mock(mockCollateralERC20).balanceOf(newHolder), 0, "nothing at the wallet");
+        assertEq(ERC20Mock(mockCollateralERC20).balanceOf(v), 30 ether, "the whole amount in the holder's vault");
+        assertEq(
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(newHolder, mockCollateralERC20, 0),
+            30 ether,
+            "as its free balance"
         );
-        expectFallbackEvent = true;
-        (uint256 toWallet, uint256 toVault,) = _payOtherHolder();
-        assertEq(toWallet, 0, "nothing at the wallet");
-        assertEq(toVault, 30 ether, "the whole amount in the holder's vault");
-    }
-
-    /// @dev A token that blocks the holder's address (reverts without data).
-    function testHolderWallet_BlockedAddressThenVaultIsCredited() public {
-        vm.mockCallRevert(mockCollateralERC20, abi.encodeCall(ERC20.transfer, (newHolder, 30 ether)), "");
-        (uint256 toWallet, uint256 toVault,) = _payOtherHolder();
-        assertEq(toWallet, 0, "nothing at the wallet");
-        assertEq(toVault, 30 ether, "the whole amount in the holder's vault");
-    }
-
-    /// @dev A short delivery (the token reports success and moves nothing):
-    ///      the wallet step is undone and the whole amount goes to the vault.
-    function testHolderWallet_ShortDeliveryIsUndoneThenVaultIsCredited() public {
-        vm.mockCall(mockCollateralERC20, abi.encodeCall(ERC20.transfer, (newHolder, 30 ether)), abi.encode(true));
-        (uint256 toWallet, uint256 toVault,) = _payOtherHolder();
-        assertEq(toWallet, 0, "nothing at the wallet");
-        assertEq(toVault, 30 ether, "the whole amount in the holder's vault");
     }
 }

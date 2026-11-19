@@ -25,7 +25,7 @@
  * without this list, reaching the page hands them everything else on it.
  */
 import { decodeFunctionData, toFunctionSelector, type AbiFunction } from 'viem';
-import { DIAMOND_ABI_VIEM, VaultProtectionABI } from '@vaipakam/contracts/abis';
+import { DIAMOND_ABI_VIEM, VaultProtectionABI, VaultRecoveryABI } from '@vaipakam/contracts/abis';
 
 /**
  * Writes that must work whatever the Terms say.
@@ -194,7 +194,7 @@ export const EXIT_WRITES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * #3379 B2 — the VaultProtection calls a `protect(bytes)` write may carry
+ * #3379 B2 — the VaultProtection (and VaultRecovery) calls a `protect(bytes)` write may carry
  * without accepted Terms: the same writes the Diamond's retired protected-mode
  * entries had on this list (a lock, an unlock request, removing a payout
  * address, a cancellation, turning protection on, applying matured settings),
@@ -216,13 +216,23 @@ const PROTECT_EXITS: Readonly<Record<string, { at: number; action: number } | nu
   signerChange: { at: 0, action: 4 },
   // `replacement(uint8 action, …)`: 3 = cancel the proposal.
   replacement: { at: 0, action: 3 },
+  // VaultRecovery, carried by the same `protect(bytes)`: cancelling a pending
+  // recovery-address change protects the account (requesting, clearing or
+  // settling one stays gated).
+  cancelRecoveryAddress: null,
 };
+
+/** The vault calls `protect(bytes)` carries: protection and recovery. */
+const PROTECT_ABI = [
+  ...(VaultProtectionABI as readonly unknown[]),
+  ...(VaultRecoveryABI as readonly unknown[]),
+] as AbiFunction[];
 
 /** Whether `data`, the argument of a vault's `protect(bytes)`, is an exit. */
 function isProtectExit(data: unknown): boolean {
   if (typeof data !== 'string' || data.length < 10) return false;
   try {
-    const inner = decodeFunctionData({ abi: VaultProtectionABI as readonly unknown[] as AbiFunction[], data: data as `0x${string}` });
+    const inner = decodeFunctionData({ abi: PROTECT_ABI, data: data as `0x${string}` });
     const rule = PROTECT_EXITS[inner.functionName];
     if (rule === undefined) return false;
     if (rule === null) return true;

@@ -492,8 +492,12 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
                 totalDue
             );
 
-            // The rental's two legs leave the repayer's prepay through the
-            // settlement host (SettlementLegFacet.payRentalLegs): the treasury
+            // The rental's two legs leave the prepay through the settlement
+            // host (SettlementLegFacet.payRentalLegs), sourced from the STORED
+            // `loan.borrower`'s vault, where the prepay was deposited at
+            // origination, never from `msg.sender`'s: after a protected-account
+            // replacement the caller is the borrower's manager, whose own vault
+            // holds no prepay (the same rule as the rental preclose, #574). The treasury
             // share (#2440 accrued as it arrived, #3669 parked when refused)
             // and the lender's share, exact, into the stored lender's vault
             // behind the receive-side exemption (#821), so a flagged party on
@@ -501,7 +505,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             LibFacet.crossFacetCall(
                 abi.encodeCall(
                     SettlementLegFacet.payRentalLegs,
-                    (loanId, msg.sender, loan.prepayAsset, treasuryShare, lenderShare)
+                    (loanId, loan.borrower, loan.prepayAsset, treasuryShare, lenderShare)
                 ),
                 VaultDepositFailed.selector
             );
@@ -922,16 +926,18 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // lien (the prepay pool is drained by this very mechanism,
             // not protected by a lien), so no decrement here.
 
-            // #3629 — the lender's prepay share moves from the payer's own
-            // rental prepay vault into the STORED `loan.lender`'s vault, held
-            // for the lender position's claim. The host arms the from-side
+            // #3629 — the lender's prepay share moves from the STORED
+            // `loan.borrower`'s vault (where the rental prepay lives; after a
+            // protected-account replacement `msg.sender` is the manager, whose
+            // vault holds none of it) into the STORED `loan.lender`'s vault,
+            // held for the lender position's claim. The host arms the from-side
             // move-out exemption so a borrower flagged after init can still
             // service the partial rental (Tier-2 stays open).
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     EncumbranceMutateFacet.holdActiveLenderFromVault.selector,
                     loan.id,
-                    msg.sender,
+                    loan.borrower,
                     loan.prepayAsset,
                     lenderShare
                 ),
@@ -943,9 +949,9 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // borrower flagged after init can still service the partial rental.
             // #1383 — a yield-fee discount can drive `treasuryShare` to 0 on the
             // VPFI-payment path; the fee leg skips a zero amount.
-            LibSanctionedLock.beginMoveOut(LibVaipakam.storageSlot(), msg.sender);
+            LibSanctionedLock.beginMoveOut(LibVaipakam.storageSlot(), loan.borrower);
             // #2440 — the treasury accrues what reached it.
-            LibFacet.vaultFeeToTreasury(msg.sender, loan.prepayAsset, treasuryShare);
+            LibFacet.vaultFeeToTreasury(loan.borrower, loan.prepayAsset, treasuryShare);
             LibSanctionedLock.endMoveOut(LibVaipakam.storageSlot());
 
             // Pass-2 D1 (#1188) — keep `durationDays` immutable (fixed
@@ -967,7 +973,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultSetRentalUser.selector,
                     loan.id,
-                    msg.sender, // Still renter
+                    loan.borrower, // Still the stored renter (not a manager calling for it)
                     newExpires
                 ),
                 NFTRenterUpdateFailed.selector

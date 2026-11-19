@@ -1416,7 +1416,7 @@ contract LoanFacetTest is Test {
     //
     // Piece B (docs/DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md
     // §4.2): when `ConfigFacet.setDepthTieredLtvEnabled(true)`,
-    // `LoanFacet._checkInitialLtvAndHf` caps init-LTV at
+    // `LibNewLoanRisk.requireAdmissible` caps init-LTV at
     // `min(assetRiskParams.loanInitMaxLtvBps, cfgTierMaxInitLtvBps(
     // getEffectiveLiquidityTier(collateral)))` (50% / 60% / 65% by
     // default) and relaxes the HF floor from `≥ 1.5e18` to `≥ 1e18` —

@@ -322,7 +322,7 @@ library LibOfferMatch {
     ///         compute the concrete (amount, rateBps, reqCollateral)
     ///         the resulting loan would carry. Pure of side effects;
     ///         no state writes. The synthetic init-gate check mirrors
-    ///         `LoanFacet._checkInitialLtvAndHf` — `HF >= 1.5e18` while
+    ///         `LibNewLoanRisk.requireAdmissible` — `HF >= 1.5e18` while
     ///         `depthTieredLtvEnabled` is off (`MatchError.HFTooLow` on
     ///         fail), the per-tier LTV cap when it's on (`MatchError.LtvAboveTier`)
     ///         — so a bot can filter pairs the binding gate would revert
@@ -334,7 +334,7 @@ library LibOfferMatch {
     ///         when `B.amountMax == 0` (GTC default), derive the ceiling
     ///         from `maxLendingForLtvCap(collateralAmountMax, init-LTV cap)`
     ///         using the SAME effective init-LTV cap that
-    ///         `LoanFacet._checkInitialLtvAndHf` consults at admission.
+    ///         `LibNewLoanRisk.requireAdmissible` consults at admission.
     ///
     ///         The Phase 1 borrower single-fill rule (offer becomes
     ///         `accepted = true` after one match, destroying the unused
@@ -778,7 +778,7 @@ library LibOfferMatch {
         }
 
         // Synthetic init-gate check at the matched (amount, reqCollateral)
-        // — must mirror `LoanFacet._checkInitialLtvAndHf` so a bot's
+        // — must mirror `LibNewLoanRisk.requireAdmissible` so a bot's
         // preview never admits a pair the binding gate would revert, nor
         // refuses one it would admit. #2956 — it runs under the SAME rule as
         // the binding gate ({LibInitRiskGate.applies}) on the same live
@@ -788,7 +788,7 @@ library LibOfferMatch {
         // {RiskPreviewFacet.initRiskBounds}: under depth-tiered LTV the
         // effective init-LTV cap = min(per-asset ceiling,
         // tierMaxInitLtvBps[effectiveTier(collateral)]) read from the
-        // autonomous tier-LTV cache, as `LoanFacet._checkInitialLtvAndHf`
+        // autonomous tier-LTV cache, as `LibNewLoanRisk.requireAdmissible`
         // does (a Tier-0 collateral ⇒ cap 0 ⇒ floor `type(uint256).max` ⇒
         // no positive amount works); otherwise (the default) HF >= the
         // admission floor via `LibRiskMath.minCollateralForLending`. A floor

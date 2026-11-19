@@ -3083,7 +3083,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev Selectors for `VaultOutflowFacet` (#3205 part 2) — the one vault
     ///      outflow policy host, reached only by self-call.
     function _getVaultOutflowSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](6);
         s[0] = VaultOutflowFacet.vaultOutflow.selector;
         s[1] = VaultOutflowFacet.vaultGrant.selector;
         s[2] = VaultOutflowFacet.vaultCloseGrant.selector;
@@ -3094,8 +3094,6 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[4] = VaultOutflowFacet.vaultOutflowArgs.selector;
         // The compact Diamond-transient ERC-20 entry (forced sales, pulls).
         s[5] = VaultOutflowFacet.vaultOutflowToDiamondERC20.selector;
-        // #3710 — the isolated wallet step of a holder's-wallet payout.
-        s[6] = VaultOutflowFacet.holderWalletAttempt.selector;
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {

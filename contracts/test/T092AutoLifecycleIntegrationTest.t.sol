@@ -3,6 +3,8 @@ pragma solidity ^0.8.29;
 
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {SetupTest} from "./SetupTest.t.sol";
+import {LibTestProtection} from "./helpers/LibTestProtection.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
@@ -1735,11 +1737,14 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
     ///         draw is stated in the event.
     function test_2814_extension_drawsTheReserveFirst_atTheViewsCharge() public {
         uint256 loanId = _setupExtendableLoan();
-        (address asset, uint256 reserved, uint256 otherFree, uint256 chargeNow, ) =
+        (address asset, uint256 reserved, uint256 otherFree, uint256 quoted, ) =
             _f().getExtendFunding(loanId, borrower);
         assertEq(asset, mockERC20, "the principal asset");
         assertEq(reserved, EXTEND_RESERVE, "the deposit is reserved");
         assertEq(otherFree, 0, "the reserve is not free balance");
+        // #3649 — the quote includes the largest added initiation fee the
+        // caps admit; the interest charge is the rest.
+        uint256 chargeNow = quoted - _extensionFeeBound(loanId);
         assertGt(chargeNow, 0, "interest is owed");
         vm.expectEmit(true, true, false, true, address(diamond));
         emit AutoLifecycleFacet.ExtendChargeDrawn(
@@ -1784,16 +1789,61 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         uint256 loanId = _setupExtendableLoan();
         (, , , uint256 chargeNow, uint256 chargeAtEnd) = _f().getExtendFunding(loanId, borrower);
         assertGt(chargeAtEnd, chargeNow, "later costs more (interest and late fee)");
+        uint256 bound = _extensionFeeBound(loanId);
         (, uint64 closesAt) = _f().getAutoExtendWindow(loanId);
         vm.warp(closesAt);
         (, , , uint256 chargeThen, ) = _f().getExtendFunding(loanId, borrower);
         assertEq(chargeThen, chargeAtEnd, "the view's ceiling is the charge at the grace end");
+        chargeAtEnd -= bound;
         vm.expectEmit(true, true, false, true, address(diamond));
         emit AutoLifecycleFacet.ExtendChargeDrawn(
             loanId, borrower, mockERC20, chargeAtEnd, 0, EXTEND_RESERVE - chargeAtEnd
         );
         vm.prank(borrower);
         _f().extendLoanInPlace(loanId, 500, 30);
+    }
+
+    /// @dev #3649 — the largest added initiation fee the caps admit: the fee
+    ///      at the latest end both sides allow, within the borrower's fee cap.
+    function _extensionFeeBound(uint256 loanId) internal view returns (uint256) {
+        LibVaipakam.AutoExtendCaps memory b = _s().getAutoExtendBorrowerCaps(loanId);
+        LibVaipakam.AutoExtendCaps memory l = _s().getAutoExtendLenderCaps(loanId);
+        uint256 end = l.maxNewExpiry < b.maxNewExpiry ? l.maxNewExpiry : b.maxNewExpiry;
+        (, uint256 fee, , ) = FeeLevelsFacet(address(diamond)).quoteExtensionFee(loanId, end);
+        return fee < b.maxExtensionFee ? fee : b.maxExtensionFee;
+    }
+
+    /// @notice #3649 — the funding quote includes the largest added fee the
+    ///         caps admit, and never more than the borrower's fee cap.
+    function test_3649_fundingQuote_includesTheAddedFeeWithinTheCap() public {
+        uint256 loanId = _setupExtendableLoan();
+        uint256 bound = _extensionFeeBound(loanId);
+        assertGt(bound, 0, "the caps admit added term");
+        (, , , uint256 withFee, ) = _f().getExtendFunding(loanId, borrower);
+        LibVaipakam.AutoExtendCaps memory b = _s().getAutoExtendBorrowerCaps(loanId);
+        vm.prank(borrower);
+        _s().setAutoExtendBorrowerCaps(loanId, true, b.minRateBps, b.maxRateBps, b.maxNewExpiry, 1);
+        (, , , uint256 capped, ) = _f().getExtendFunding(loanId, borrower);
+        assertEq(withFee - capped, bound - 1, "the bound is held to the borrower's fee cap");
+    }
+
+    /// @notice #3344 — a protected holder may spend only its Ready balance on
+    ///         an extension, so the funding view counts no more of its free
+    ///         balance than that: free funds outside Ready do not read as
+    ///         extension cover the execution would then refuse.
+    function test_3344_fundingQuote_countsOnlyReadyForAProtectedHolder() public {
+        uint256 loanId = _buildActiveLoan();
+        ERC20Mock(mockERC20).mint(borrower, 5 ether);
+        vm.startPrank(borrower);
+        ERC20(mockERC20).approve(address(diamond), 5 ether);
+        VaultDepositoryFacet(address(diamond)).depositToVault(uint8(LibVaipakam.AssetType.ERC20), mockERC20, 0, 5 ether);
+        vm.stopPrank();
+        (, , uint256 freeBefore, , ) = _f().getExtendFunding(loanId, borrower);
+        assertGe(freeBefore, 5 ether, "fixture: free balance counts while unprotected");
+
+        LibTestProtection.enable(address(diamond), borrower, 2 days);
+        (, , uint256 freeAfter, , ) = _f().getExtendFunding(loanId, borrower);
+        assertEq(freeAfter, 0, "no Ready balance, so nothing beyond the reserve can fund it");
     }
 
     /// @notice #2814 — unused reserve goes back to the depositor's wallet, and

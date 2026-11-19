@@ -2156,17 +2156,6 @@
   },
   {
     "type": "error",
-    "name": "ProtectedVaultLocked",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "RateShortfallTooHigh",
     "inputs": []
   },
@@ -4493,11 +4482,6 @@
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "TooManyPendingRows",
-    "inputs": []
   },
   {
     "type": "error",
