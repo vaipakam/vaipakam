@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
@@ -44,6 +45,9 @@ import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
 contract GovernorDualAccumulatorTest is SetupTest {
     /// @dev Mirror of the library signal, for `vm.expectEmit`.
     event RewardEntryExpiryBegun(uint256 indexed entryId, address indexed user);
+    /// @dev Mirrors of the library's terminal signals (#1789).
+    event RewardEntryExpired(uint256 indexed entryId, address indexed user, uint256 total, uint256 recycled);
+    event RewardEntryRetiredEmpty(uint256 indexed entryId);
 
     MockRewardMessenger internal messenger;
     VPFIToken internal vpfi;
@@ -3589,5 +3593,141 @@ contract GovernorDualAccumulatorTest is SetupTest {
             )
         );
         _agg().setGovernorCommitArmedFromDay(today + 3);
+    }
+
+    // ─── #1789: an entry whose expiry began always ends visibly ─────────
+
+    /// @dev Count the `RewardEntryExpired` rows for `id` in recorded logs and
+    ///      return the last one's totals.
+    function _expiredRows(Vm.Log[] memory logs, uint256 id)
+        internal
+        pure
+        returns (uint256 n, uint256 total, uint256 recycled)
+    {
+        bytes32 sig = keccak256("RewardEntryExpired(uint256,address,uint256,uint256)");
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics[0] == sig && uint256(logs[i].topics[1]) == id) {
+                ++n;
+                (total, recycled) = abi.decode(logs[i].data, (uint256, uint256));
+            }
+        }
+    }
+
+    /// @dev Forfeit after removal: the first expiry chunk crosses the removal
+    ///      point and credits the legacy leg; the loan then forfeits and the
+    ///      forfeit sweep finishes the entry. The forfeit's terminal now also
+    ///      emits the expiry's terminal row, once, carrying what the expiry
+    ///      chunks had actually moved.
+    function test1789_ForfeitAfterRemoval_EmitsTerminalExpired() public {
+        _canonicalLedgerRaw();
+        _cfg().setRewardClaimHorizonDays(180);
+        _armAndFinalize(5, 700 ether);
+        uint256 id = _seedEntry(alice, 92, 4, 6);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        _mut().setInteractionPoolPaidOut(0);
+        _sweeper().sweepExpiredInteractionRewards(ids);
+        _accrueExec(ids, 180 days + 90 days - 7 days);
+        vm.warp(vm.getBlockTimestamp() + 7 days);
+        uint256 first = _sweeper().sweepExpiredInteractionRewards(ids);
+        assertGt(first, 0, "LIVE: the first expiry chunk credited");
+        assertTrue(_mut().getRewardEntryExpiryBegunRaw(id), "LIVE: removal began");
+        assertFalse(_mut().getRewardEntryProcessedRaw(id), "LIVE: a tail is still owed");
+
+        _mut().setRewardEntryForfeitedRaw(id);
+        _mut().setLoanActiveLenderEntryId(92, id);
+        vm.recordLogs();
+        for (uint256 k; k < 8 && !_mut().getRewardEntryProcessedRaw(id); ++k) {
+            _facet().sweepForfeitedInteractionRewards(92);
+        }
+        assertTrue(_mut().getRewardEntryProcessedRaw(id), "the forfeit terminalized the entry");
+        (uint256 n, uint256 total,) = _expiredRows(vm.getRecordedLogs(), id);
+        assertEq(n, 1, "exactly one terminal expiry row");
+        assertEq(total, first, "carrying what the expiry chunks moved, not the forfeited tail");
+    }
+
+    /// @dev Expiry, empty remaining window: a removed entry whose cursor
+    ///      already sits at its end has nothing left to settle. The sweep
+    ///      retires it with the terminal expiry row instead of leaving it
+    ///      unprocessed forever.
+    function test1789_RemovedEntryWithEmptyRemainder_Terminalizes() public {
+        _canonicalLedgerRaw();
+        _cfg().setRewardClaimHorizonDays(180);
+        _armAndFinalize(5, 700 ether);
+        uint256 id = _seedEntry(alice, 94, 4, 6);
+        _mut().setRewardEntryExpiryBegunRaw(id, true);
+        _mut().setRewardEntryClaimNextDayRaw(id, 6);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        vm.recordLogs();
+        _sweeper().sweepExpiredInteractionRewards(ids);
+        assertTrue(_mut().getRewardEntryProcessedRaw(id), "retired");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        (uint256 n,,) = _expiredRows(logs, id);
+        assertEq(n, 1, "with its terminal expiry row");
+        assertEq(_retiredRows(logs, id), 1, "through the one empty-window retirement");
+        _sweeper().sweepExpiredInteractionRewards(ids); // idempotent
+    }
+
+    function _retiredRows(Vm.Log[] memory logs, uint256 id) internal pure returns (uint256 n) {
+        bytes32 sig = keccak256("RewardEntryRetiredEmpty(uint256)");
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics[0] == sig && uint256(logs[i].topics[1]) == id) ++n;
+        }
+    }
+
+    /// @dev Expiry sweep, empty window, NOT removed: the pricing core answers
+    ///      "empty", so the sweep retires the entry with
+    ///      {RewardEntryRetiredEmpty} and no expiry row (no removal began).
+    function test1789_SweepRetiresEmptyWindow() public {
+        _canonicalLedgerRaw();
+        _cfg().setRewardClaimHorizonDays(180);
+        _armAndFinalize(5, 700 ether);
+        uint256 id = _seedEntry(alice, 95, 4, 6);
+        _mut().setRewardEntryClaimNextDayRaw(id, 6);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        vm.recordLogs();
+        _sweeper().sweepExpiredInteractionRewards(ids);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertTrue(_mut().getRewardEntryProcessedRaw(id), "retired");
+        assertEq(_retiredRows(logs, id), 1, "RewardEntryRetiredEmpty");
+        (uint256 n,,) = _expiredRows(logs, id);
+        assertEq(n, 0, "no expiry row: removal never began");
+    }
+
+    /// @dev Expiry sweep, window not yet priceable (its days are not final):
+    ///      "not priced" alone never retires. The entry is left untouched.
+    function test1789_SweepLeavesUnpriceableEntryUntouched() public {
+        _canonicalLedgerRaw();
+        _cfg().setRewardClaimHorizonDays(180);
+        _armAndFinalize(5, 700 ether);
+        uint256 id = _seedEntry(alice, 97, 4, 40); // days through 39 are not final
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        vm.recordLogs();
+        _sweeper().sweepExpiredInteractionRewards(ids);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertFalse(_mut().getRewardEntryProcessedRaw(id), "left unprocessed");
+        assertFalse(_mut().getRewardEntryExpiryBegunRaw(id), "no removal begun");
+        assertEq(_retiredRows(logs, id), 0, "not retired");
+        (uint256 n,,) = _expiredRows(logs, id);
+        assertEq(n, 0, "no expiry row");
+    }
+
+    /// @dev Forfeit, armed branch, empty window: a forfeited armed entry
+    ///      whose cursor sits at its end is retired, not rescanned forever.
+    function test1789_ForfeitArmedEmptyWindow_Retires() public {
+        _canonicalLedgerRaw();
+        _armAndFinalize(5, 700 ether);
+        uint256 id = _seedEntry(alice, 96, 5, 6);
+        _mut().setRewardEntryClaimNextDayRaw(id, 6);
+        _mut().setRewardEntryForfeitedRaw(id);
+        _mut().setLoanActiveLenderEntryId(96, id);
+        vm.expectEmit(true, false, false, false);
+        emit RewardEntryRetiredEmpty(id);
+        (uint256 swept, ) = _facet().sweepForfeitedInteractionRewards(96);
+        assertEq(swept, 0, "nothing moves");
+        assertTrue(_mut().getRewardEntryProcessedRaw(id), "the entry is retired");
     }
 }
