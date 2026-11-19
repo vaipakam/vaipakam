@@ -34,7 +34,7 @@ export const OUTAGE_REFRESH_SECONDS = 120;
  * The Diamond's latest sequencer outage window as the snapshot holds it.
  * `unknown` when it was never read, the read is older than
  * {@link OUTAGE_MAX_AGE_SECONDS}, the value does not parse, or the database
- * predates migration 0104: a consumer then serves the grace end unmoved and
+ * predates migration 0106: a consumer then serves the grace end unmoved and
  * SAYS an outage may have moved it.
  */
 export type SequencerOutageRead =
@@ -119,7 +119,7 @@ export function outageReadOf(
 
 /**
  * Read the snapshot. `nowSec` judges the outage read's age. HTTP handlers run
- * ahead of the schema gate, so a database without migration 0104 is read
+ * ahead of the schema gate, so a database without migration 0106 is read
  * with the earlier statement and reports the outage as `pre-migration`.
  */
 export async function readLoanClockSnapshot(

@@ -93,5 +93,5 @@
   "0094_signed_offer_set.sql",
   "0095_activity_participants.sql",
   "0096_drop_shared_keeper_runner_lease.sql",
-  "0104_sequencer_outage_window.sql"
+  "0106_sequencer_outage_window.sql"
 ]

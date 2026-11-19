@@ -189,7 +189,7 @@ describe('loan routes on the loan clock (#2808)', () => {
   });
 
   it('still serves deadlines on a database the outage migration has not reached (#3525)', async () => {
-    const h = harness(FILES.filter((f) => f !== '0104_sequencer_outage_window.sql'));
+    const h = harness(FILES.filter((f) => f !== '0106_sequencer_outage_window.sql'));
     h.seedLoan(1);
     h.db
       .prepare(

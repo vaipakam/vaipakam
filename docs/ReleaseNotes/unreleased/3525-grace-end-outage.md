@@ -14,7 +14,7 @@ one source. Every caller must pass the window, so none can leave it out by
 accident.
 
 The indexer re-reads the window every two minutes into its configuration
-snapshot (migration 0104). The loan routes serve the moved grace end, say
+snapshot (migration 0106). The loan routes serve the moved grace end, say
 whether an outage moved it, and say when the window is unknown: never read,
 more than ten minutes old, or a database without the migration. The calendar
 sweep holds the "grace has ended" notice until the moved end has passed, and

@@ -709,7 +709,7 @@ export async function maybeRefreshSequencerOutage(opts: {
       .run();
   } catch (err) {
     // A bounded description, not the error: a transport failure carries the
-    // RPC URL. An unmigrated database lands here too, until 0104 applies.
+    // RPC URL. An unmigrated database lands here too, until 0106 applies.
     console.error(
       `[configSnapshot] sequencer outage window read failed for chain ${opts.chainId} (the stored read ages): ${describeFailure(err)}`,
     );
