@@ -490,7 +490,28 @@ if [ -z "${ETH_GAS_PRICE:-}" ]; then
     export ETH_GAS_PRICE=1000000000
   fi
 fi
-if [ -n "${ETH_GAS_PRICE:-}" ]; then echo "  gas price pinned for this run: ${ETH_GAS_PRICE} wei"; fi
+# FreshDeployHardeningPlan lesson 8 — pinning only the gas price is not
+# enough on BNB testnet: forge sends EIP-1559 transactions, takes the pin as
+# the MAX fee, and offered a 1 wei priority tip, which the node (minimum tip
+# 0.1 gwei) refused; the first CCIP wiring run sent nothing. So a pinned price
+# pins the tip too: `<SLUG>_PRIORITY_GAS_PRICE_WEI` in .env, else the pinned
+# price itself (max fee = tip, the legacy price). forge and cast both read
+# ETH_PRIORITY_GAS_PRICE; one already in the environment wins.
+_priority_var="${CCIP_SLUG}_PRIORITY_GAS_PRICE_WEI"
+if [ -n "${ETH_GAS_PRICE:-}" ] && [ -z "${ETH_PRIORITY_GAS_PRICE:-}" ]; then
+  if [ -n "${!_priority_var:-}" ]; then
+    export ETH_PRIORITY_GAS_PRICE="${!_priority_var}"
+  else
+    export ETH_PRIORITY_GAS_PRICE="$ETH_GAS_PRICE"
+  fi
+fi
+if [ -n "${ETH_GAS_PRICE:-}" ]; then
+  echo "  gas price pinned for this run: ${ETH_GAS_PRICE} wei (priority tip ${ETH_PRIORITY_GAS_PRICE:-unset} wei)"
+fi
+if [ -n "${ETH_PRIORITY_GAS_PRICE:-}" ] && [ -n "${ETH_GAS_PRICE:-}" ] && [ "$ETH_PRIORITY_GAS_PRICE" -gt "$ETH_GAS_PRICE" ] 2>/dev/null; then
+  echo "Error: the priority tip (${ETH_PRIORITY_GAS_PRICE} wei) is above the pinned max fee (${ETH_GAS_PRICE} wei)." >&2
+  exit 1
+fi
 if [ -z "$RPC" ]; then
   echo "Error: \$$RPC_VAR not set in .env." >&2
   exit 1
@@ -710,6 +731,100 @@ reconcile_unrecorded_archives() {
   done
 }
 
+# FreshDeployHardeningPlan lesson 1 — a broadcast can land a FAILED
+# transaction and carry on (on Arbitrum Sepolia a diamond cut ran out of gas,
+# leaving a half-built Diamond that later steps built on). After every
+# broadcast, read the run's receipts and stop at the first failed one, naming
+# it, before any later step builds on it.
+# Seconds since the epoch when this run started: a broadcast record older than
+# this is a previous run's (read by require_broadcast_ok).
+DEPLOY_RUN_STARTED_AT=$(date +%s)
+require_broadcast_ok() {
+  local script_file="$1"
+  local run="$CONTRACTS_DIR/broadcast/$script_file/$CHAIN_ID/run-latest.json"
+  if [ ! -f "$run" ]; then
+    echo "ERROR: no broadcast record for $script_file at $run; cannot confirm its transactions landed" >&2
+    exit 1
+  fi
+  # A run that broadcast nothing (an idempotent re-run) writes no new record,
+  # so a record older than this deploy run is a previous run's: nothing to
+  # check now. forge stamps the record in milliseconds.
+  local stamped
+  stamped=$(jq -r '.timestamp // 0' "$run")
+  if [ "$stamped" -gt 100000000000 ] 2>/dev/null; then stamped=$((stamped / 1000)); fi
+  if [ "$stamped" -lt "$DEPLOY_RUN_STARTED_AT" ] 2>/dev/null; then
+    echo "  · $script_file broadcast nothing in this run"
+    return 0
+  fi
+  local failed
+  failed=$(jq -r '[.receipts // [] | to_entries[] | select((.value.status // "0x1") != "0x1") | "#\(.key + 1) \(.value.transactionHash)"] | join("; ")' "$run")
+  if [ -n "$failed" ]; then
+    echo "ERROR: $script_file broadcast a FAILED transaction on chain $CHAIN_ID: $failed" >&2
+    echo "       Stop here: nothing later may build on it. Inspect it with 'cast receipt <hash> --rpc-url \$$RPC_VAR'." >&2
+    exit 1
+  fi
+  local sent got
+  sent=$(jq '[.transactions // [] | .[]] | length' "$run")
+  got=$(jq '[.receipts // [] | .[]] | length' "$run")
+  if [ "$got" -lt "$sent" ]; then
+    echo "ERROR: $script_file sent $sent transaction(s) but only $got receipt(s) are recorded on chain $CHAIN_ID; confirm every one landed before continuing" >&2
+    exit 1
+  fi
+  echo "  ✓ $script_file: $got transaction(s), every receipt succeeded"
+}
+
+# FreshDeployHardeningPlan lesson 3 — the artifact keys a fresh deploy carries
+# forward: records of contracts and wallets that do not belong to the Diamond.
+# Everything else in addresses.json is the Diamond's and is written anew.
+CARRY_FORWARD_KEYS=(keeperAddress sanctionsList sanctionsDelistingTimelock sanctionsOracleStandIn sanctionsClearanceAttestor)
+
+# Save the carried keys the current artifact holds (non-empty only) beside it.
+save_carry_forward_records() {
+  local deploy_dir="$1"
+  local src="$deploy_dir/addresses.json"
+  local out="$deploy_dir/.carry-forward.json"
+  [ -f "$src" ] || return 0
+  local keys_json
+  keys_json=$(printf '%s\n' "${CARRY_FORWARD_KEYS[@]}" | jq -R . | jq -s .)
+  if ! jq --argjson keys "$keys_json" \
+      'with_entries(select(.key as $k | $keys | index($k)) | select(.value != null and .value != ""))' \
+      "$src" > "$out"; then
+    echo "ERROR: could not save the records to carry forward from $src" >&2
+    exit 1
+  fi
+  echo "  saved $(jq 'length' "$out") record(s) to carry into the new artifact: $(jq -r 'keys | join(", ")' "$out")"
+}
+
+# Merge the saved records into the new artifact, then remove the save. A key
+# the new deploy already wrote keeps the deploy's own value, and is reported.
+merge_carry_forward_records() {
+  local deploy_dir="$1"
+  local saved="$deploy_dir/.carry-forward.json"
+  local dst="$deploy_dir/addresses.json"
+  [ -f "$saved" ] || return 0
+  [ -f "$dst" ] || { echo "ERROR: no new artifact at $dst to carry the saved records into (kept at $saved)" >&2; exit 1; }
+  local k carried=""
+  for k in $(jq -r 'keys[]' "$saved"); do
+    if [ -n "$(jq -r --arg k "$k" '.[$k] // empty' "$dst")" ]; then
+      echo "  carry-forward: $k was written by this deploy; kept the new value"
+    else
+      carried="${carried:+$carried, }$k"
+    fi
+  done
+  local tmp
+  tmp=$(mktemp)
+  if ! jq --slurpfile saved "$saved" \
+      'reduce ($saved[0] | to_entries[]) as $e (.; if (.[$e.key] // "") == "" then .[$e.key] = $e.value else . end)' \
+      "$dst" > "$tmp"; then
+    rm -f "$tmp"
+    echo "ERROR: could not merge the saved records into $dst (kept at $saved)" >&2
+    exit 1
+  fi
+  mv "$tmp" "$dst"
+  echo "  ✓ carried forward into the new artifact: ${carried:-nothing}"
+  rm -f "$saved"
+}
+
 archive_chain_state() {
   local chain_slug="$1"
   local deploy_dir="$CONTRACTS_DIR/deployments/$chain_slug"
@@ -729,10 +844,21 @@ archive_chain_state() {
 
   mkdir -p "$archive"
 
+  # FreshDeployHardeningPlan lesson 3 — records that do not belong to the
+  # Diamond outlive it, so a fresh deploy carries them into the new artifact
+  # instead of archiving them away: the keeper wallet the app reads, and the
+  # standalone sanctions contracts (the rehearsal list, its delisting
+  # timelock, the oracle stand-in, the clearance attestor) the sanctions
+  # services read from the bundle. Saved here, merged back by
+  # merge_carry_forward_records once the new artifact exists.
+  save_carry_forward_records "$deploy_dir"
+
   # Move every chain-state file/dir we know about. The `2>/dev/null`
   # tolerates missing entries (e.g. .history/ may not exist on a
-  # half-failed deploy).
-  for entry in addresses.json deployment_source.json storage-layout.json storage-layout.anchor.json .markers .history; do
+  # half-failed deploy). reward-custody-activated.json records the OLD
+  # Diamond's custody activation (lesson 3): left behind, it would claim the
+  # new Diamond was already activated.
+  for entry in addresses.json deployment_source.json storage-layout.json storage-layout.anchor.json reward-custody-activated.json .markers .history; do
     if [ -e "$deploy_dir/$entry" ]; then
       mv "$deploy_dir/$entry" "$archive/" 2>/dev/null || true
     fi
@@ -1028,10 +1154,12 @@ EOF
   export VAIPAKAM_LIVE_PUBLICATION_TOKEN="$LIVE_PUB_TOKEN"
   echo "[2] DeployDiamond.s.sol"
   forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --ffi --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
+  require_broadcast_ok DeployDiamond.s.sol
 
   echo
   echo "[3] DeployTimelock.s.sol"
   forge script script/DeployTimelock.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
+  require_broadcast_ok DeployTimelock.s.sol
 
   # [3a] The LaunchGate (#945): the stateless contract a Timelock launch batch
   # calls to re-check readiness inside its execution. Deterministic address,
@@ -1039,6 +1167,7 @@ EOF
   echo
   echo "[3a] DeployLaunchGate.s.sol"
   forge script script/DeployLaunchGate.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
+  require_broadcast_ok DeployLaunchGate.s.sol
 
   # [3a'] The feed registry (#2880): the Diamond's oracle prices every asset
   # but WETH through it, so it lands before the mock rig registers feeds into
@@ -1046,6 +1175,7 @@ EOF
   echo
   echo "[3a'] DeployFeedRegistry.s.sol"
   forge script script/DeployFeedRegistry.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
+  require_broadcast_ok DeployFeedRegistry.s.sol
 
   # [3b] Canonical VPFI token — MUST land BEFORE DeployCrosschain. On the
   # canonical chain (Base / Base Sepolia) DeployCrosschain's canonical branch
@@ -1069,6 +1199,7 @@ EOF
     echo "[3b] DeployVPFIToken.s.sol  (canonical VPFI — before crosschain)"
     VPFI_TOKEN_FRESH="$FRESH" \
       forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --ffi --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
+      require_broadcast_ok DeployVPFIToken.s.sol
   fi
 
   # DeployCrosschain.s.sol deploys the whole T-068 CCIP stack for this
@@ -1084,6 +1215,7 @@ EOF
   echo
   echo "[4] DeployCrosschain.s.sol  (CCIP cross-chain stack)"
   forge script script/DeployCrosschain.s.sol --rpc-url "$RPC" --ffi --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
+  require_broadcast_ok DeployCrosschain.s.sol
 
   # ── Master-flag flip (testnet ergonomics) ───────────────────────
   # The matching kill switch (`partialFillEnabled`) defaults `false`
@@ -1126,6 +1258,10 @@ EOF
   echo
   echo "✓ contracts phase done."
   snapshot_addresses "post-contracts"
+  # FreshDeployHardeningPlan lesson 3 — the records a --fresh run saved
+  # (keeper wallet, standalone sanctions contracts) go into the new artifact
+  # before it is recorded as published below.
+  merge_carry_forward_records "$DEPLOY_DIR"
   # #1566 (Codex #2070 r20 P1) — the live artifact was written by forge, outside
   # the manifest lock. Record its publication under the lock so a census that is
   # holding the lock through its own publication can tell that a Diamond went
@@ -1276,6 +1412,7 @@ EOF
   echo "deploy-testnet.sh — ccip-wire  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
   forge script script/ConfigureCcip.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
+  require_broadcast_ok ConfigureCcip.s.sol
   mark_phase_done "ccip-wire"
 }
 
@@ -1362,11 +1499,13 @@ EOF
       echo "  [aggregators] 0x/1inch already registered ($MARKERS_DIR/swap-adapters-aggregators.done) — skipping to avoid a duplicate pair."
     else
       forge script script/DeploySwapAdapters.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
+      require_broadcast_ok DeploySwapAdapters.s.sol
       date +"%Y-%m-%dT%H:%M:%S%z" > "$MARKERS_DIR/swap-adapters-aggregators.done"
     fi
   fi
   if [ -n "$_univ3_router" ]; then
     forge script script/DeployUniV3Adapter.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
+    require_broadcast_ok DeployUniV3Adapter.s.sol
   fi
   mark_phase_done "swap-adapters"
 }
@@ -1400,6 +1539,7 @@ phase_testnet_mocks() {
   echo "═══════════════════════════════════════════════════════════════"
   snapshot_addresses "pre-testnet-mocks"
   forge script script/DeployTestnetMocks.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
+  require_broadcast_ok DeployTestnetMocks.s.sol
   mark_phase_done "testnet-mocks"
   echo "  ✓ mock rig recorded under .testnetMocks — run --phase configure next"
 }
@@ -1486,6 +1626,7 @@ EOF
   SKIP_VPFI=0 CONFIGURE_VPFI_PEG="${CONFIGURE_VPFI_PEG_OPT:-0}" \
     forge script script/DiamondConfigSpell.s.sol \
     --rpc-url "$RPC" --broadcast --slow
+  require_broadcast_ok DiamondConfigSpell.s.sol
 
   # #946 — the sanctions screen is part of configuring a chain, not an
   # operator's memory. Until it is set every wallet reads as unsanctioned;
@@ -1494,6 +1635,7 @@ EOF
   # refuses to unpause a Diamond without it.
   forge script script/ConfigureSanctionsOracle.s.sol \
     --rpc-url "$RPC" --broadcast --slow
+  require_broadcast_ok ConfigureSanctionsOracle.s.sol
 
   mark_phase_done "configure"
 }
