@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { QUEUE_PAGE_LIMIT, SAFE_EXECUTION_FAILURE, SAFE_EXECUTION_SUCCESS, SAFE_GATEWAY, accountExecution, awaitAccountTx, nextQueuePage, readQueuedTo, safeStatus, queuedTo, walletKindFromCode, type AccountTxStatus } from './accountWallet';
+import { awaitAccountSignature, isPendingSignature, preparedSignature, safeMessageHash, QUEUE_PAGE_LIMIT, SAFE_EXECUTION_FAILURE, SAFE_EXECUTION_SUCCESS, SAFE_GATEWAY, accountExecution, awaitAccountTx, nextQueuePage, readQueuedTo, safeStatus, queuedTo, walletKindFromCode, type AccountTxStatus } from './accountWallet';
 
 const CHAIN = ('0x' + 'c'.repeat(64)) as `0x${string}`;
 const ID = ('0x' + 'd'.repeat(64)) as `0x${string}`;
@@ -140,5 +140,37 @@ describe('accountExecution (the call inside a mined wallet transaction)', () => 
     expect(accountExecution([unindexed(SAFE_EXECUTION_SUCCESS, ID, OTHER)], SAFE, ID)).toBe('unrecorded');
     expect(accountExecution([{ address: SAFE, topics: ['0x' + '1'.repeat(64)], data: ID }], SAFE, ID)).toBe('unrecorded');
     expect(accountExecution([], SAFE, ID)).toBe('unrecorded');
+  });
+});
+
+describe('a Safe signature its owners have not finished approving (#3770)', () => {
+  const SAFE = ('0x' + '5a'.repeat(20)) as `0x${string}`;
+  const H = ('0x' + '11'.repeat(32)) as `0x${string}`;
+  it('reads an empty answer as a proposal, not a signature', () => {
+    expect(isPendingSignature('0x')).toBe(true);
+    expect(isPendingSignature(('0x' + 'ab'.repeat(65)) as `0x${string}`)).toBe(false);
+  });
+  it('keys the message by the Safe, the network and the hash', () => {
+    expect(safeMessageHash(1, SAFE, H)).not.toBe(safeMessageHash(2, SAFE, H));
+    expect(safeMessageHash(1, SAFE, H)).toMatch(/^0x[0-9a-f]{64}$/);
+  });
+  it('takes the prepared signature only once the message is confirmed', () => {
+    expect(preparedSignature({ status: 'NEEDS_CONFIRMATION', preparedSignature: null })).toEqual({ kind: 'pending' });
+    expect(preparedSignature({ status: 'CONFIRMED', preparedSignature: '0xabcd' })).toEqual({ kind: 'valid', signature: '0xabcd' });
+    expect(() => preparedSignature({})).toThrow();
+  });
+  it('waits through pending and failed reads, and stops when the wallet moves', async () => {
+    let n = 0;
+    const read = async () => {
+      n++;
+      if (n === 1) throw new Error('down');
+      return n < 3 ? ({ kind: 'pending' } as const) : ({ kind: 'valid', signature: '0xbeef' } as const);
+    };
+    await expect(awaitAccountSignature([read], () => {}, async () => {})).resolves.toBe('0xbeef');
+    await expect(
+      awaitAccountSignature([async () => ({ kind: 'pending' }) as const], () => {
+        throw new Error('moved');
+      }, async () => {}),
+    ).rejects.toThrow('moved');
   });
 });

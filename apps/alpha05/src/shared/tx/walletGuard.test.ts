@@ -5,19 +5,21 @@ const calls = vi.hoisted(() => ({
   signTypedData: vi.fn(async () => '0xsig'),
   signMessage: vi.fn(async () => '0xsig'),
   writeContract: vi.fn(async () => '0xhash'),
+  readContract: vi.fn(async () => '0x1626ba7e'),
 }));
 vi.mock('wagmi/actions', () => ({
   getAccount: vi.fn(() => wallet.account),
   signTypedData: calls.signTypedData,
   signMessage: calls.signMessage,
   writeContract: calls.writeContract,
+  readContract: calls.readContract,
   getPublicClient: vi.fn(() => ({ getCode: async () => wallet.code })),
   getConnectorClient: vi.fn(async () => {
     throw new Error('no estimate');
   }),
 }));
 
-const { signMessage, signTypedData, writeContract } = calls;
+const { signMessage, signTypedData, writeContract, readContract } = calls;
 import { sendWrite } from './send';
 import { AccountWithoutCode } from './accountWallet';
 import { liveIdentity, sendReviewed, signMessageFor, signTypedDataFor, WalletMoved } from './walletGuard';
@@ -50,6 +52,18 @@ describe('#3770: an account wallet must be a contract on the network in use', ()
     wallet.code = '0x6080';
     await signMessageFor(config, 84532, { account: A, message: 'm' });
     expect(signMessage).toHaveBeenCalledOnce();
+  });
+  it('waits for a Safe proposal to be signed before returning, and never for a key wallet', async () => {
+    wallet.account = safeWallet();
+    wallet.code = '0x6080';
+    signMessage.mockResolvedValueOnce('0x');
+    // The Safe answers that the message is signed on chain: EIP-1271 checks
+    // it with an empty signature.
+    await expect(signMessageFor(config, 84532, { account: A, message: 'm' })).resolves.toBe('0x');
+    expect(readContract).toHaveBeenCalledOnce();
+    wallet.account = { status: 'connected', address: A, chainId: 84532 };
+    await expect(signMessageFor(config, 84532, { account: A, message: 'm' })).resolves.toBe('0xsig');
+    expect(readContract).toHaveBeenCalledOnce();
   });
   it('a failed precheck stops the send before the record and the prompt', async () => {
     const save = vi.fn();

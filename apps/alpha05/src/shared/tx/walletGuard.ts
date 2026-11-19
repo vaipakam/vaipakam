@@ -5,9 +5,9 @@
  * the call (wagmi's own account state), never the page's last render, so a
  * switch the page has not re-rendered for yet is still caught.
  */
-import type { TypedData } from 'viem';
+import { hashMessage, hashTypedData, type TypedData, type TypedDataDefinition } from 'viem';
 import type { Config } from 'wagmi';
-import { requireAccountCode } from './accountWallet';
+import { requireAccountCode, settleAccountSignature } from './accountWallet';
 import { getAccount, signMessage, signTypedData, type SignMessageParameters, type SignTypedDataParameters } from 'wagmi/actions';
 
 type Hex = `0x${string}`;
@@ -45,7 +45,10 @@ export function assertLiveWallet(config: Config, chainId: number, account: Hex):
 
 /**
  * The only way this app asks the wallet for a typed-data signature: refused,
- * with no prompt, unless the wallet is `account` on `chainId` now.
+ * with no prompt, unless the wallet is `account` on `chainId` now. A Safe
+ * whose other owners still have to approve answers with a proposal, not a
+ * signature (#3770); this waits until the wallet completes it, so no step
+ * goes ahead on an empty signature, and stops if the wallet moves.
  */
 export async function signTypedDataFor<const typedData extends TypedData | Record<string, unknown>, primaryType extends keyof typedData | 'EIP712Domain'>(
   config: Config,
@@ -54,14 +57,17 @@ export async function signTypedDataFor<const typedData extends TypedData | Recor
 ): Promise<Hex> {
   assertLiveWallet(config, chainId, parameters.account);
   await requireAccountCode(config, chainId, parameters.account);
-  return signTypedData(config, parameters as SignTypedDataParameters<typedData, primaryType>);
+  const signature = await signTypedData(config, parameters as SignTypedDataParameters<typedData, primaryType>);
+  const hash = () => hashTypedData(parameters as unknown as TypedDataDefinition);
+  return settleAccountSignature(config, chainId, parameters.account, signature.length <= 2 ? hash() : '0x', signature, () => assertLiveWallet(config, chainId, parameters.account));
 }
 
 /** The same for a plain message signature. */
 export async function signMessageFor(config: Config, chainId: number, parameters: SignMessageParameters & { account: Hex }): Promise<Hex> {
   assertLiveWallet(config, chainId, parameters.account);
   await requireAccountCode(config, chainId, parameters.account);
-  return signMessage(config, parameters);
+  const signature = await signMessage(config, parameters);
+  return settleAccountSignature(config, chainId, parameters.account, signature.length <= 2 ? hashMessage(parameters.message) : '0x', signature, () => assertLiveWallet(config, chainId, parameters.account));
 }
 
 /**
