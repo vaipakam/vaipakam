@@ -358,6 +358,20 @@ contract StandingInstructionTest is SetupTest {
         assertEq(_loan().lastPeriodicInterestSettledAt, checkpoint0 + 30 days, "not advanced twice");
     }
 
+    /// @dev Paying interest stays open to a flagged owner, as repaying does.
+    function test_interest_paidWhileTheOwnerIsSanctioned() public {
+        _fund(borrower, PAYMENT, 50 ether);
+        _set(0, 0, true, false, 0);
+        vm.warp(startTs + 30 days);
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(borrower, true);
+        uint64 checkpoint0 = _loan().lastPeriodicInterestSettledAt;
+        vm.prank(runner);
+        _si().runInterestPayment(LOAN);
+        assertEq(_loan().lastPeriodicInterestSettledAt, checkpoint0 + 30 days, "the period closed");
+    }
+
     function test_interest_partialPayment_saleSellsOnlyTheRest() public {
         _fund(borrower, PAYMENT, 3 ether);
         _set(0, 0, true, false, 0);
@@ -423,6 +437,19 @@ contract StandingInstructionTest is SetupTest {
         _si().runDueRepayment(LOAN);
         assertEq(uint256(_loan().status), uint256(LibVaipakam.LoanStatus.Repaid), "repaid in full");
         assertEq(_view().paymentReserve, 0, "drew exactly what it charged");
+    }
+
+    /// @dev Repaying from the reserve stays open to a flagged owner.
+    function test_repay_paidWhileTheOwnerIsSanctioned() public {
+        _set(0, 0, false, true, 1 hours);
+        vm.warp(startTs + 90 days - 1 hours);
+        _fund(borrower, PAYMENT, _view().repayDue);
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(borrower, true);
+        vm.prank(runner);
+        _si().runDueRepayment(LOAN);
+        assertEq(uint256(_loan().status), uint256(LibVaipakam.LoanStatus.Repaid), "repaid in full");
     }
 
     function test_repay_onePlanForTheDueDate() public {

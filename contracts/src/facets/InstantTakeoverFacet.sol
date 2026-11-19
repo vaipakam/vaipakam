@@ -10,6 +10,8 @@ import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibAuth} from "../libraries/LibAuth.sol";
+import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibInterestLedger} from "../libraries/LibInterestLedger.sol";
 import {LibLoan} from "../libraries/LibLoan.sol";
 import {LibIntentFill} from "../libraries/LibIntentFill.sol";
@@ -114,14 +116,29 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
         if (!s.loanLentRecord[loanId].instant || loan.useFullTermInterest) {
             revert InstantLoanNotEligible(loanId);
         }
-        SaleExitVerdictFacet(address(this)).requireSaleExitOpen(
-            loanId, msg.sender, SaleExitVerdictFacet.SaleRoute.Direct
-        );
+        address holder = LibPositionNFT.ownerOf(loan.lenderTokenId);
+        {
+            // The holder starts it, or a keeper holding the holder's
+            // early-withdrawal mandate for this loan (InstantMarketDesign §7).
+            // The proceeds always reach the holder's vault, so the direct-sale
+            // exit rule is read for the holder; the keeper is screened itself.
+            address actor = msg.sender;
+            if (
+                actor != holder &&
+                LibAuth.keeperMayActFor(actor, LibVaipakam.KEEPER_ACTION_INIT_EARLY_WITHDRAW, loanId, holder)
+            ) {
+                LibVaipakam._assertNotSanctioned(actor);
+                LibServiceCapacity.chargeKeeper(); // one keeper action (#1219)
+                actor = holder;
+            }
+            SaleExitVerdictFacet(address(this)).requireSaleExitOpen(
+                loanId, actor, SaleExitVerdictFacet.SaleRoute.Direct
+            );
+        }
         {
             uint256 held = s.heldForLender[loanId];
             if (held != 0) revert InstantTakeoverHeld(loanId, held);
         }
-        address holder = LibPositionNFT.ownerOf(loan.lenderTokenId);
         address borrowerNow = LibPositionNFT.ownerOf(loan.borrowerTokenId);
         if (incoming == holder || incoming == borrowerNow) revert InstantTakeoverSameParty(incoming);
         _admitTakeover(s, loan, incoming, slot);
@@ -170,6 +187,9 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.LenderIntent memory intent =
             s.lenderIntent[incoming][loan.principalAsset][loan.collateralAsset][slot];
         LibIntentFill.requireSlotLive(intent, incoming);
+        // A paused asset opens no new exposure, as on every other slot fill.
+        LibFacet.requireAssetNotPaused(loan.principalAsset);
+        LibFacet.requireAssetNotPaused(loan.collateralAsset);
         {
             LibVaipakam.InstantSlot memory consent =
                 s.instantSlot[incoming][loan.principalAsset][loan.collateralAsset][slot];

@@ -101,6 +101,8 @@ Pledging a position on an outside platform therefore needs nothing from this pla
 
 ## 8. Later stage: pledging a position inside the platform
 
+**Replaced on 2026-11-19 by `LenderCashOutDesign.md` (#3760).** The owner asked for borrowing against a loan to be designed now. That design does not pledge the position: it gives an advance that is repaid first from what the position receives, with no value set on the position, no health rule and no hand-over of the token. Part A's refusal stays as it is. The sketch below is kept as the record of what was considered.
+
 Not built now. It stacks one loan's risk on another, and it should follow a working sale market. Recorded here so that the flows are known when it is taken up, and so Part A's refusal is lifted deliberately.
 
 - **Only a lender position, only on a loan whose two assets are top tier.** A borrower position is never pledged: its worth is the first thing a price fall removes.

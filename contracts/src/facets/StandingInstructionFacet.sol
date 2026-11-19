@@ -940,7 +940,13 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
     ///      unless all of it arrives.
     function _drawPayment(uint256 loanId, address holder, address asset, uint256 amount) private {
         LibEncumbrance.unlienLoanReserve(loanId, holder, RESERVE_PAYMENT, asset, amount);
+        // Paying interest stays open to a flagged owner, as repaying does (the
+        // lender is made whole): the owner's existing vault is resolved under
+        // the move-out exemption, pinned to this payer.
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibSanctionedLock.beginMoveOut(s, holder);
         LibVaultOutflow.toDiamondExact(holder, asset, amount, loanId, OutflowReason.STANDING_INSTRUCTION);
+        LibSanctionedLock.endMoveOut(s);
     }
 
     function _skip(uint256 loanId, uint8 instruction, uint8 reason, uint256 missing) private {

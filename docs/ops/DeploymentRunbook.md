@@ -2482,7 +2482,7 @@ the deploy-script pre-flight will refuse to proceed otherwise.
   has no canonical WETH, and the `weth` the Diamond prices against is
   priced by an ETH/USD feed, so WBNB there would be mispriced. The mock
   rig (`deploy-testnet.sh bnb-testnet --phase testnet-mocks`, i.e.
-  `DeployTestnetMocks.s.sol`) requires `BNB_TESTNET_WETH`, set in
+  `DeployTestnetMocks.s.sol`) requires `BNB_TESTNET_WETH_ADDRESS`, set in
   `contracts/.env` (the runner's `.env` load replaces a shell export), and the live
   Diamond uses the stand-in `0x6D874ff9a55517c61cECE2936B8F457a3ad9102d`.
   This bullet used to say the retired `DeployTestnetLiquidityMocks`

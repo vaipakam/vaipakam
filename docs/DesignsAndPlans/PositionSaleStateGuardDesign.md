@@ -1,6 +1,6 @@
 # Position sale state guard
 
-Status: design, approved for build by the secured-vault thread. Card: #3710. Reviewed 2026-11-17: the builder's confirmations and route table are in sections 3.2, 3.5 and 7, and section 3.9 records the approval rule of #3721.
+Status: design, approved for build by the secured-vault thread. Card: #3710. Reviewed 2026-11-17: the builder's confirmations and route table are in sections 3.2, 3.5 and 7, and section 3.9 records the approval rule of #3721. Revised 2026-11-19: section 3.3 pays the holder's vault, not the holder's wallet (`PayoutDestinationRuleDesign.md`).
 
 A position token can be sold on any marketplace. Its price depends on the
 loan behind it: how much collateral backs a borrower position, how much is
@@ -121,52 +121,42 @@ Two proofs ship with it:
 
 ### 3.3 The payee of a live-loan payout is read from the token
 
+**Revised 2026-11-19** (owner decision, `PayoutDestinationRuleDesign.md`):
+the holder is paid into their vault, not at their wallet. The earlier version
+of this section added a payout "to the holder of a named position token, at
+their wallet", with an isolated wallet step and a fallback into the holder's
+vault when the wallet refused the token. That payout, its fallback and the
+`HolderWalletPaymentToVault` event are removed before they merge.
+
 A collateral withdrawal checks that the caller holds the borrower position
-token, and then pays by one of three routes chosen in the withdrawal's own
+token, and then paid by one of three routes chosen in the withdrawal's own
 code: the caller's wallet when the caller is also the original borrower, an
 allowlisted address for a retired protected account, the holder's vault
-otherwise. The check and the payment are two steps, and the first route names
-the original borrower as payee.
+otherwise. The check and the payment were two steps, and the first route
+named the original borrower as payee.
 
-The outflow policy gains one payout for this: **to the holder of a named
-position token, at their wallet**. The policy reads the holder from the token
-itself and pays that holder under the same rules as any owner payout (the
-protected-mode delay, the lock, the allowlisted address of a retired
-protected account). The calling route passes the loan and the token, never a
-payee. The withdrawal uses it for every case, and its three-way choice is
-deleted. A route can then no more pay the wrong party than it can skip the
+The withdrawal now uses the outflow policy's existing position-holder payout
+for every case, and its three-way choice is deleted. The policy reads the
+holder from the token itself and releases the collateral into that holder's
+vault as free balance. The calling route passes the loan and the token, never
+a payee. A route can then no more pay the wrong party than it can skip the
 mark.
 
-**A wallet the token refuses.** A token may refuse a recipient: some
-ERC-20-compatible tokens call a hook on the receiver, and some block
-addresses. The wallet payment is therefore one isolated step. If it fails, or
-delivers less than was sent, that step is undone and the whole amount is
-credited to the holder's own vault instead, in the same transaction, with an
-event saying so. The holder is the caller of the withdrawal, so a vault
-created for them here is created by their own act. A holder can therefore
-always take surplus collateral out of a loan, as a holder paid into their
-vault could before this change, and the amount reaches a wallet later by an
-ordinary vault withdrawal.
+When the holder owns the vault the collateral sits in, which is the normal
+case because the withdrawal first consolidates a transferred borrower side
+into the caller's vault, nothing moves: the lien drops and the holder's free
+balance rises. The holder takes it to a wallet with an ordinary vault
+withdrawal, in the same transaction if they choose the "and withdraw" option
+of the payout design, and that withdrawal is where a protected account's
+delay and lock apply.
 
-As built, the wallet step is one self-call that reverts unless the whole
-amount arrived, and the redirect emits `HolderWalletPaymentToVault` with the
-paying vault, the holder, the asset, the amount, what the wallet step
-delivered, the loan and the position token. The marks are taken before the
-payment, so they are the same whichever way the amount went.
-
-Through the partial collateral withdrawal this branch is close to
-unreachable today. The withdrawal first consolidates a transferred borrower
-side into the caller's vault, so the payee is normally the owner of the
-paying vault and is paid as an owner. Consolidation is skipped in three cases
-only: a loan waiting in fallback custody and a rental, both of which the
-withdrawal refuses, and a sanctioned holder, whom this payout refuses. The
-payout and its fallback therefore stand for any later route that pays a
-holder who does not own the paying vault, and the tests drive the policy
-directly.
+No token is pushed at a wallet, so a token that calls a hook on the receiver
+or blocks an address cannot stop a holder from taking surplus collateral out
+of a loan, and no fallback is needed.
 
 This gives what a claim step would give, that only the token's holder can
 receive a loan's collateral, in one transaction and with nothing parked in
-between.
+between. The marks are taken before the release, exactly as before.
 
 ### 3.4 A refresh signal for marketplaces
 
@@ -244,7 +234,7 @@ app shows the state number.
 - **No claim step for a live loan.** Claims exist for amounts created when a
   loan ends, collected later by whoever then holds the position. A live
   holder is checked at the call, and section 3.3 makes the payee follow the
-  token. A claim would add a transaction, and a seller could collect it just
+  token, into that holder's vault. A claim would add a transaction, and a seller could collect it just
   before selling, so it would need the same wait and state number anyway.
 - **No delay on moves from a protected vault into protocol positions.** That
   is the Ready-balance decision of 2026-11-08 and is unchanged.
@@ -404,9 +394,9 @@ amounts.
 
 - **A. The outflow policy.** Every outflow whose class names a loan marks both
   of its tokens and raises their state numbers: a payout to a position holder,
-  to a counterparty, to a holder's wallet, to a matched counterparty, to claim
-  custody, to a prior seller, and to a liquidation buyer. A consolidation is
-  excluded. For the first three, the payee's token also takes the long wait
+  to a counterparty, to a matched counterparty, to claim custody, to a prior
+  seller, and to a liquidation buyer. A consolidation is excluded. For the
+  first two, the payee's token also takes the long wait
   when the caller of the guarded action holds it. The caller is recorded by
   the reentrancy guard for the length of the call.
 - **B. The one writer of a loan's collateral amount.** A reduction marks. A
@@ -432,7 +422,7 @@ amounts.
 
 | Route | What leaves which position | Seam |
 | --- | --- | --- |
-| Partial collateral withdrawal | Collateral leaves the borrower side | A (to the holder's wallet: long wait on the borrower token when the holder calls), B |
+| Partial collateral withdrawal | Collateral leaves the borrower side | A (to the holder's vault as free balance: long wait on the borrower token when the holder calls), B |
 | Add collateral, the standing top-up | Nothing; collateral rises | B, refresh only |
 | Repayment, partial or full | The lender is paid; principal falls | A, C. A full repayment changes status, which refreshes |
 | Standing interest payment and due-date repayment | The reserve pays the lender | A, C |
@@ -454,17 +444,9 @@ amounts.
 | Offer change, match, cancel, direct accept | The offer's token changes | F, E |
 | Payout to a prior seller | Paid to that seller | A |
 
-**The holder's-wallet payout when the holder does not own the paying vault.**
-The holder is screened for sanctions as an owner payout is. The class is
-ERC-20 only. A plain ERC-20 transfer calls no hook on the receiver, but the
-platform admits ERC-20-compatible tokens that do, and tokens that block
-addresses, so a delivery to the wallet can fail; the fallback of section 3.3
-credits the holder's own vault when it does (built; tested for a receiver
-hook that refuses, a blocked address and a short delivery). A protected
-holder is credited to its own vault by the policy's redirect. The vault
-accepts the class only for the token's current holder or that holder's own
-vault, never for its own owner, which is the owner payout. Section 3.3 states
-why the withdrawal rarely reaches this case.
+**The holder's-wallet payout is removed** (2026-11-19, section 3.3). The
+partial collateral withdrawal uses the position-holder payout, which pays a
+vault and needs no wallet step, no fallback and no ERC-20-only restriction.
 
 **Raw transfers outside the policy.** The static check of section 3.8 lists
 each with its reason (29 sites as built): cross-chain messenger fees, which

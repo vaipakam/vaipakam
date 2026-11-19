@@ -47,7 +47,7 @@ All commands run from `contracts/`.
 | Quirk | Action |
 |---|---|
 | Broadcast mode: `--slow` through the runner; `--legacy` only for a direct `forge script` that hangs | `deploy-testnet.sh` broadcasts every phase with `--slow` and pins `ETH_GAS_PRICE` to 1 gwei on this chain (#2548): the hang it fixed came from forge estimating a 1-wei gas price, which left a transaction unmined. That runner completed the 2026-10-18 fresh deploy and the 2026-10-22 `testnet-mocks` phase with `--slow`. An older note here said the Alchemy endpoint hung past 1h under `--slow`; if you invoke `forge script` directly against that endpoint and see it, `--legacy` is the workaround. Do not edit the runner's flags for it: a hung phase leaves its marker unwritten, so check the broadcast receipts before any re-run, because a re-run of `testnet-mocks` deploys a second rig. |
-| The Diamond's **WETH is a mock stand-in, never WBNB** | The `weth` the Diamond prices against is priced by an ETH/USD feed, so WBNB there would be mispriced. BNB Testnet has no canonical WETH: `DeployTestnetMocks.s.sol` requires `BNB_TESTNET_WETH` (no default) and the live Diamond uses `0x6D874ff9a55517c61cECE2936B8F457a3ad9102d`, "Wrapped Ether (bnb-testnet stand-in)". (Before 2026-10-22 this row said the retired `DeployTestnetLiquidityMocks` wired WBNB; that path is gone — see §2.) |
+| The Diamond's **WETH is a mock stand-in, never WBNB** | The `weth` the Diamond prices against is priced by an ETH/USD feed, so WBNB there would be mispriced. BNB Testnet has no canonical WETH: `DeployTestnetMocks.s.sol` requires `BNB_TESTNET_WETH_ADDRESS` (no default) and the live Diamond uses `0x6D874ff9a55517c61cECE2936B8F457a3ad9102d`, "Wrapped Ether (bnb-testnet stand-in)". (Before 2026-10-22 this row said the retired `DeployTestnetLiquidityMocks` wired WBNB; that path is gone — see §2.) |
 | Buy adapter is **native-BNB** mode | `vpfiBuyPaymentToken = 0x0`. Users pay in tBNB; the canonical Base receiver still quotes the rate in wei-per-VPFI on its side. |
 | Funding floor | Deployer EOA needs ≥0.3 tBNB before §1; admin EOA needs ≥0.05 tBNB for handover + config + peer-wire txs. Faucets: <https://www.bnbchain.org/en/testnet-faucet>, <https://testnet.bnbchain.org/faucet-smart>. |
 
@@ -114,7 +114,7 @@ exactly as in the Base Sepolia runbook §1.
 The faucet and oracle mock rig is the same one Base Sepolia and Arbitrum
 Sepolia run: `DeployTestnetMocks.s.sol`, through the repo's runner. Run it
 **before** `--phase configure`, which adopts the rig's oracle wiring.
-`BNB_TESTNET_WETH` is required on this chain (there is no canonical WETH)
+`BNB_TESTNET_WETH_ADDRESS` is required on this chain (there is no canonical WETH)
 and must be the mock stand-in, not WBNB. Set it in `contracts/.env`, not on
 the command line: the runner loads `.env` after it starts, and a value there
 replaces one exported by the shell, so a stale `.env` entry would win over a
@@ -123,8 +123,8 @@ on this chain (see the broadcast-mode quirk above).
 
 ```bash
 # contracts/.env must hold:
-#   BNB_TESTNET_WETH=0x6D874ff9a55517c61cECE2936B8F457a3ad9102d
-grep '^BNB_TESTNET_WETH=' .env   # expect exactly that one line
+#   BNB_TESTNET_WETH_ADDRESS=0x6D874ff9a55517c61cECE2936B8F457a3ad9102d
+grep '^BNB_TESTNET_WETH_ADDRESS=' .env   # expect exactly that one line
 bash script/deploy-testnet.sh bnb-testnet --phase testnet-mocks
 ```
 
