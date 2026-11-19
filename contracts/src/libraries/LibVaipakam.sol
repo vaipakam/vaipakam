@@ -8981,6 +8981,14 @@ library LibVaipakam {
         ///      `isAggregatorAdapter` (the adapter's principal is fixed at its
         ///      initialize, so the two cannot drift). Appended — append-only.
         mapping(address => address) adapterPrincipal;
+        /// @dev #1856 — when `user`'s latest tier push was committed
+        ///      (`ProtocolBroadcastFacet._commit`), beside the committed
+        ///      tuple in `lastEffectiveTier` and its siblings. An unchanged,
+        ///      non-zero tuple is committed again once this is
+        ///      `TIER_PUSH_RENEWAL_AGE_SEC` old, so a steady holding can renew
+        ///      a mirror cache before the mirror's maximum age retires it.
+        ///      Written only there. Base-only. Appended — append-only.
+        mapping(address => uint40) lastTierCommitSec;
     }
 
     /// @notice #3344 — a protected account's Ready settings. See
@@ -12555,16 +12563,6 @@ library LibVaipakam {
             : RewardRole.Unconfigured;
     }
 
-    /// @notice Read-through helper: true iff the configured oracle
-    ///         reports `who` as currently sanctioned. Returns false
-    ///         when no oracle is configured (the gate is disabled)
-    ///         OR when the oracle call reverts (fail-open on
-    ///         infrastructure failure — the alternative would brick
-    ///         every interaction on the chain whenever the oracle has
-    ///         an outage, which would over-react to an availability
-    ///         issue).
-    ///
-    /// ─── Sanctions enforcement policy (Phase 1, retail deploy) ───
     /// @notice #903 — the chain this deployment takes Base's reward word
     ///         from, by kind of traffic.
     ///         - A Mirror takes both kinds (tier traffic and the day
@@ -12615,6 +12613,16 @@ library LibVaipakam {
         }
     }
 
+    /// @notice Read-through helper: true iff the configured oracle
+    ///         reports `who` as currently sanctioned. Returns false
+    ///         when no oracle is configured (the gate is disabled)
+    ///         OR when the oracle call reverts (fail-open on
+    ///         infrastructure failure — the alternative would brick
+    ///         every interaction on the chain whenever the oracle has
+    ///         an outage, which would over-react to an availability
+    ///         issue).
+    ///
+    /// ─── Sanctions enforcement policy (Phase 1, retail deploy) ───
     ///
     /// The retail deploy may have a sanctions oracle configured (on
     /// mainnets, Vaipakam's own `SanctionsList`, #2443). When set, the gate splits the
@@ -13163,6 +13171,20 @@ library LibVaipakam {
     ///      the current holding never reaches further back than this.
     uint8 internal constant TWA_RING_DAYS = 30;
     uint32 internal constant DEFAULT_MIRROR_TIER_MAX_AGE_SEC = 5_184_000; // 60 days
+    /// @dev The bounds `ConfigFacet.setMirrorTierMaxAgeSec` enforces (30 and
+    ///      180 days). Named so the renewal age below is pinned against the
+    ///      lower one (#1856).
+    uint32 internal constant MIN_MIRROR_TIER_MAX_AGE_SEC = 2_592_000; // 30 days
+    uint32 internal constant MAX_MIRROR_TIER_MAX_AGE_SEC = 15_552_000; // 180 days
+    /// @dev #1856 — how old a delivered non-zero tier push may be before an
+    ///      unchanged tuple is owed again as a renewal. Half the LOWEST
+    ///      maximum age a mirror may be configured with
+    ///      (`MIN_MIRROR_TIER_MAX_AGE_SEC`), so a holder whose tier has
+    ///      not moved can always renew with at least 15 days to spare, on
+    ///      every mirror whatever its configuration. A renewal extends a
+    ///      discount, so like any raise it goes out on the caller's value
+    ///      (`ProtocolBroadcastFacet._budgetPays`), at most once per this age.
+    uint32 internal constant TIER_PUSH_RENEWAL_AGE_SEC = 15 days;
 
     function cfgTwaRecentDaysEffective() internal view returns (uint8) {
         uint8 v = storageSlot().cfgTwaRecentDays;

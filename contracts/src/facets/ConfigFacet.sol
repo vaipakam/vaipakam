@@ -2684,7 +2684,10 @@ contract ConfigFacet is DiamondAccessControl {
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
-        if (newValue < 2_592_000 || newValue > 15_552_000) {
+        if (
+            newValue < LibVaipakam.MIN_MIRROR_TIER_MAX_AGE_SEC
+                || newValue > LibVaipakam.MAX_MIRROR_TIER_MAX_AGE_SEC
+        ) {
             revert InvalidMirrorTierMaxAgeSec(newValue);
         }
         LibVaipakam.storageSlot().cfgMirrorTierMaxAgeSec = newValue;
