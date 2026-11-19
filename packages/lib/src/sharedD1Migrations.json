@@ -92,5 +92,6 @@
   "0093_delete_pre_3327_signed_offers.sql",
   "0094_signed_offer_set.sql",
   "0095_activity_participants.sql",
-  "0096_drop_shared_keeper_runner_lease.sql"
+  "0096_drop_shared_keeper_runner_lease.sql",
+  "0102_rate_curve_daily.sql"
 ]
