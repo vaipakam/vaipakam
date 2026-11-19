@@ -742,13 +742,16 @@ DEPLOY_RUN_STARTED_AT=$(date +%s)
 require_broadcast_ok() {
   local script_file="$1"
   local run="$CONTRACTS_DIR/broadcast/$script_file/$CHAIN_ID/run-latest.json"
+  # forge writes a broadcast record only when it broadcast something, and a
+  # script that fails exits non-zero (set -e stops the run before this). So no
+  # record, or one older than this deploy run (a previous run's), means the
+  # script sent nothing now: a verified no-op such as an idempotent re-run or
+  # DeployLaunchGate finding its deterministic address already deployed.
+  # forge stamps the record in milliseconds.
   if [ ! -f "$run" ]; then
-    echo "ERROR: no broadcast record for $script_file at $run; cannot confirm its transactions landed" >&2
-    exit 1
+    echo "  · $script_file broadcast nothing in this run"
+    return 0
   fi
-  # A run that broadcast nothing (an idempotent re-run) writes no new record,
-  # so a record older than this deploy run is a previous run's: nothing to
-  # check now. forge stamps the record in milliseconds.
   local stamped
   stamped=$(jq -r '.timestamp // 0' "$run")
   if [ "$stamped" -gt 100000000000 ] 2>/dev/null; then stamped=$((stamped / 1000)); fi
@@ -784,14 +787,30 @@ save_carry_forward_records() {
   local src="$deploy_dir/addresses.json"
   local out="$deploy_dir/.carry-forward.json"
   [ -f "$src" ] || return 0
-  local keys_json
+  local keys_json tmp
   keys_json=$(printf '%s\n' "${CARRY_FORWARD_KEYS[@]}" | jq -R . | jq -s .)
+  tmp=$(mktemp)
   if ! jq --argjson keys "$keys_json" \
       'with_entries(select(.key as $k | $keys | index($k)) | select(.value != null and .value != ""))' \
-      "$src" > "$out"; then
+      "$src" > "$tmp"; then
+    rm -f "$tmp"
     echo "ERROR: could not save the records to carry forward from $src" >&2
     exit 1
   fi
+  # A save still pending means an earlier --fresh stopped before its merge, so
+  # the artifact being archived now is that run's partial one and may lack the
+  # records. Never overwrite the pending save: keep every record it holds and
+  # add only keys it does not have (Codex #3749 r1).
+  if [ -f "$out" ]; then
+    echo "  a carry-forward save from an interrupted --fresh run is pending; keeping its records"
+    if ! jq -s '.[1] + .[0]' "$out" "$tmp" > "$tmp.merged"; then
+      rm -f "$tmp" "$tmp.merged"
+      echo "ERROR: could not combine the pending carry-forward save $out with $src" >&2
+      exit 1
+    fi
+    mv "$tmp.merged" "$tmp"
+  fi
+  mv "$tmp" "$out"
   echo "  saved $(jq 'length' "$out") record(s) to carry into the new artifact: $(jq -r 'keys | join(", ")' "$out")"
 }
 
