@@ -419,6 +419,57 @@ export function reportSpend(budget: TickBudget, at: string): void {
   );
 }
 
+/** What was spent between two readings of one counter: `later - earlier`. */
+export function spentSince(later: Spend, earlier: Spend): Spend {
+  return {
+    external: later.external - earlier.external,
+    internal: later.internal - earlier.internal,
+    d1Queries: later.d1Queries - earlier.d1Queries,
+  };
+}
+
+/**
+ * Say what the scan's tail actually cost, beside the reserve held back for it
+ * (#2221). `SCAN_TAIL_RESERVE` was set as a starting value; this line is the
+ * evidence it is re-tuned from, so the next figure is measured, not argued.
+ *
+ * `fixed` is the part the reserve is meant to cover (the cursor write, the
+ * market-summary sweep, the notification insert, the protocol-config refresh
+ * and the watermark stamps). The reconciliation pass and the calendar sweep
+ * run inside the same stretch but gate themselves on what is left, so they
+ * are reported apart and are not part of `fixed`: counting them would size
+ * the reserve to whatever happened to be free.
+ *
+ * A DELTA, so attributable only where one chain owns the counter: the ingest
+ * DO's alarm (scope "chain ingest DO alarm"). On the legacy cron path the
+ * passes share one counter and run concurrently, so a figure there may carry
+ * another chain's requests; read the DO lines to tune.
+ */
+export function reportScanTail(
+  budget: TickBudget,
+  at: string,
+  figures: { fixed: Spend; reconcile: Spend; calendar: Spend; reserve: Cost; scanStopped: boolean },
+): void {
+  const { fixed, reconcile, calendar, reserve, scanStopped } = figures;
+  // eslint-disable-next-line no-console
+  console.log(
+    `[scanTail] ${JSON.stringify({
+      scope: budget.label,
+      at,
+      fixedExternal: fixed.external,
+      fixedInternal: fixed.internal,
+      fixedD1Queries: fixed.d1Queries,
+      reserveExternal: reserve.external,
+      reserveD1Queries: reserve.d1Queries,
+      reconcileExternal: reconcile.external,
+      reconcileD1Queries: reconcile.d1Queries,
+      calendarExternal: calendar.external,
+      calendarD1Queries: calendar.d1Queries,
+      scanStopped,
+    })}`,
+  );
+}
+
 // ── The wrappers ──────────────────────────────────────────────────────────
 //
 // The wrapped types are PASS-THROUGH GENERICS rather than a local restatement

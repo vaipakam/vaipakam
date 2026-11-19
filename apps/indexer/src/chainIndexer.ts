@@ -140,6 +140,8 @@ import {
   meterD1,
   meterEnv,
   reportSpend,
+  reportScanTail,
+  spentSince,
   spent,
   affords,
   holdBack,
@@ -241,8 +243,11 @@ const MAX_RANGE_PER_CALL = 5_000n;
  * lanes ask `affords` per unit), so a reserve that turns out short costs a
  * deferred notification or watermark, which the archive replay already
  * recovers, never the cursor: the cursor write is the first request after the
- * scan core and the reserve always covers it. Re-tune it from the spend every
- * pass reports at its exit, not from a recount.
+ * scan core and the reserve always covers it. Re-tune it from the `[scanTail]`
+ * line every pass logs (`reportScanTail`): its `fixed*` figures are what this
+ * reserve covers, measured, with the self-gated reconciliation and calendar
+ * spend reported apart. Read the ingest DO's lines, where one chain owns the
+ * counter. Not from a recount.
  */
 export const SCAN_TAIL_RESERVE: Cost = { external: 3, d1Queries: 15 };
 
@@ -2933,6 +2938,9 @@ async function runChainPass(
   } finally {
     release(budget);
   }
+  // #2221 — the tail starts here: what follows is what SCAN_TAIL_RESERVE was
+  // held back for, and its cost is reported at the end (`reportScanTail`).
+  const tailStart = spent(budget);
   // Every block below the one that stopped is finished, and so is every block
   // between the last finished one and it, since those carry no logs of ours.
   const scannedThrough = stoppedAt === null ? windowTo : stoppedAt - 1n;
@@ -3007,6 +3015,7 @@ async function runChainPass(
   // separately (see the reply on that thread).
   // Likewise unconditional: `scanTo === head` was this path's copy of the
   // same precondition, and the pass now owns it (#2211 r2 `4011201404`).
+  const reconcileStart = spent(budget);
   const reconcileOutcome: ReconcilePassOutcome = await _runLoanReconcilePass({
     env,
     chain,
@@ -3017,6 +3026,7 @@ async function runChainPass(
     budget: reconcileBudget,
     tickBudget: budget,
   });
+  const reconcileSpend = spentSince(spent(budget), reconcileStart);
   const reconciledLoanIds = reconcileOutcome.established
     ? reconcileOutcome.repairedLoanIds
     : [];
@@ -3071,6 +3081,7 @@ async function runChainPass(
   // rather than re-tested here: `scanTo !== head` is one of the ways a tick
   // fails to establish the live set, and an unsettled head is another that
   // this condition could not see (#2211 r1 `4011103056`).
+  const calendarStart = spent(budget);
   const cal = await _sweepCalendarIfEstablished(
     env,
     chainId,
@@ -3079,6 +3090,7 @@ async function runChainPass(
     reconcileOutcome,
     Number(settledHead.timestamp),
   );
+  const calendarSpend = spentSince(spent(budget), calendarStart);
 
   // #1213 PR 2b (Codex #1300 r1) — the "notifications complete" watermark
   // for OTHER writers of the notifications table (today: the keeper's
@@ -3136,6 +3148,18 @@ async function runChainPass(
   // #3411 part 2 — the pending lane, only once this pass reached the settled
   // head with every block processed (see `refreshPendingLane`). Before the heal
   // lanes, which spend what is left of the budget by design.
+  {
+    // The tail ends here: the pending lane and the heal lanes below spend
+    // what is left by design and are not what the reserve covers.
+    const whole = spentSince(spent(budget), tailStart);
+    reportScanTail(budget, `chain ${chainId} scan tail`, {
+      fixed: spentSince(spentSince(whole, reconcileSpend), calendarSpend),
+      reconcile: reconcileSpend,
+      calendar: calendarSpend,
+      reserve: SCAN_TAIL_RESERVE,
+      scanStopped: stoppedAt !== null,
+    });
+  }
   const pendingChanged =
     stoppedAt === null && scanTo === head
       ? await refreshPendingLane(env, client, chainId, diamond, scanTo, budget)

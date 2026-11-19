@@ -16,8 +16,10 @@ import {
   meterFetch,
   overspent,
   plus,
+  reportScanTail,
   reportSpend,
   spendD1Queries,
+  spentSince,
   spendExternal,
   spendInternal,
   spent,
@@ -527,5 +529,49 @@ describe('holdBack — the floor the scan core works above (#2221)', () => {
     await send('https://a.invalid');
     expect(overspent(budget)).toBe(true);
     expect(isRefusing(budget)).toBe(false);
+  });
+});
+
+describe('reportScanTail — the evidence SCAN_TAIL_RESERVE is tuned from (#2221)', () => {
+  it('reports the fixed tail apart from the self-gated lanes, beside the reserve', () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const budget = createBudget('chain ingest DO alarm');
+      spendExternal(budget, 10);
+      spendD1Queries(budget, 20);
+      const start = spent(budget);
+      spendExternal(budget, 4);
+      spendInternal(budget, 6);
+      spendD1Queries(budget, 9);
+      const whole = spentSince(spent(budget), start);
+      expect(whole).toEqual({ external: 4, internal: 6, d1Queries: 9 });
+      const reconcile = { external: 1, internal: 2, d1Queries: 3 };
+      const calendar = { external: 0, internal: 1, d1Queries: 1 };
+      reportScanTail(budget, 'chain 97 scan tail', {
+        fixed: spentSince(spentSince(whole, reconcile), calendar),
+        reconcile,
+        calendar,
+        reserve: { external: 3, d1Queries: 15 },
+        scanStopped: false,
+      });
+      const line = String(log.mock.calls[0]?.[0]);
+      expect(line.startsWith('[scanTail] ')).toBe(true);
+      expect(JSON.parse(line.slice(line.indexOf('{')))).toEqual({
+        scope: 'chain ingest DO alarm',
+        at: 'chain 97 scan tail',
+        fixedExternal: 3,
+        fixedInternal: 3,
+        fixedD1Queries: 5,
+        reserveExternal: 3,
+        reserveD1Queries: 15,
+        reconcileExternal: 1,
+        reconcileD1Queries: 3,
+        calendarExternal: 0,
+        calendarD1Queries: 1,
+        scanStopped: false,
+      });
+    } finally {
+      log.mockRestore();
+    }
   });
 });
