@@ -1,6 +1,7 @@
 /**
  * Lend: fast paths as the default (#3761, `DefaultPathsDesign.md` §3, matrix
- * row "Default paths"). The Lend page opens on Auto-lend, pre-selected; its
+ * row "Default paths"), open-ended unless the lender states a period (#3763,
+ * §3.6; renewal shown as not available yet until it is built). The Lend page opens on Auto-lend, pre-selected; its
  * form carries each pre-selected choice as its own switch: re-lending
  * repayments through the platform's keeper, interest by time, and the
  * instant market's three consents. A choice the network cannot take is off
@@ -49,8 +50,11 @@ test('the Lend form opens on Auto-lend with its choices pre-selected, each off w
   await expect(page.getByTestId('autolend-relend')).not.toBeChecked();
   // Interest by time is pre-selected.
   await expect(page.getByTestId('autolend-prorata')).toBeChecked();
+  // Renewal is not built yet: a line, not a switch (#3763).
+  await expect(page.getByTestId('autolend-renewal')).toHaveCount(0);
+  await expect(page.getByTestId('autolend-renewal-hint')).toContainText('Not available yet');
   // The instant market's switch is off on this network: each consent is off and says so.
-  for (const k of ['fills', 'renewal', 'takeover']) {
+  for (const k of ['fills', 'takeover']) {
     await expect(page.getByTestId(`autolend-${k}`)).toBeDisabled();
     await expect(page.getByTestId(`autolend-${k}`)).not.toBeChecked();
     await expect(page.getByTestId(`autolend-${k}-hint`)).toContainText('Not available on this network now');
@@ -61,6 +65,10 @@ test('the Lend form opens on Auto-lend with its choices pre-selected, each off w
   await expect(more).toContainText('Advances on loans');
   await expect(more).toContainText('Buying existing loans');
   for (const k of ['moreAuction', 'moreAdvance', 'moreBuy']) await expect(page.getByTestId(`autolend-${k}`)).toBeDisabled();
+  // No end date unless the lender chooses a set period (#3763).
+  await expect(page.getByTestId('autolend-setPeriod')).not.toBeChecked();
+  await expect(page.getByTestId('autolend-lendUntil')).toHaveCount(0);
+  await expect(page.getByTestId('autolend-setPeriod-hint')).toContainText('No end date');
   await fitsWidth(page);
 
   // The review states each choice as the batch carries it.
@@ -75,6 +83,13 @@ test('the Lend form opens on Auto-lend with its choices pre-selected, each off w
   await expect(receipt).toContainText('Fill instant borrows');
   await expect(receipt).toContainText('Off: not available on this network now');
   await expect(receipt).toContainText('comes back to you as a claim instead of being lent again');
+  await expect(receipt).toContainText('Renew loans this slot made');
+  await expect(receipt).toContainText('Not available yet: loans end on their due dates');
+  // What open-ended means here, and that no date of return is promised.
+  const sections = page.getByTestId('receipt-section');
+  await expect(sections.nth(0)).toContainText('No end date');
+  await expect(sections.nth(1)).toContainText('Getting funds back');
+  await expect(sections.nth(1)).toContainText('no date of return is promised');
   await fitsWidth(page);
 });
 

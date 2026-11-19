@@ -28,6 +28,7 @@ import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
 import { pageHandoff } from '../../routes/pageMap';
 import { setupCall, setupLogs, type AutoLendDraft } from './autoLend';
+import { useWorldRail } from '../reads/world/WorldRailContext';
 import { autoLendReceipt, presetLegs, readAutoLendReview, reviewBlockers, reviewKey, type AutoLendReview } from './autoLendReview';
 import { AUTOLEND_KEY } from './AutoLendForm';
 import { presetLogs } from './preset';
@@ -68,6 +69,7 @@ export function AutoLendSetup({ draft, chain, own, meta, terms, onEdit, onClose,
   const config = useConfig();
   const { mode } = useMode();
   const diamond = chain.diamondAddress;
+  const world = useWorldRail();
   const account = own.account;
   const identity = reviewIdentity(own);
   const { caps } = useCapabilities();
@@ -196,7 +198,7 @@ export function AutoLendSetup({ draft, chain, own, meta, terms, onEdit, onClose,
   const mounted = useMounted();
   const load = async () => {
     try {
-      const next = await readAutoLendReview(own, diamond, draft, identity);
+      const next = await readAutoLendReview(own, diamond, draft, identity, world.indexer);
       if (!mounted.current) return;
       setLoadError(null);
       setReview(next);
@@ -211,7 +213,7 @@ export function AutoLendSetup({ draft, chain, own, meta, terms, onEdit, onClose,
     chainId: chain.chainId,
     active: onReview,
     review,
-    read: (before) => readAutoLendReview(own, diamond, before.draft, before.identity),
+    read: (before) => readAutoLendReview(own, diamond, before.draft, before.identity, world.indexer),
     sameSubject: (a, b) => a.draft === b.draft,
     changed: (before, next) => reviewKey(before) !== reviewKey(next),
     setReview,
@@ -233,7 +235,7 @@ export function AutoLendSetup({ draft, chain, own, meta, terms, onEdit, onClose,
       setDone(null);
       setRiskOpen(null);
       let live = true;
-      readAutoLendReview(own, diamond, draft, identity).then(
+      readAutoLendReview(own, diamond, draft, identity, world.indexer).then(
         (next) => {
           if (!live) return;
           setLoadError(null);
@@ -257,7 +259,10 @@ export function AutoLendSetup({ draft, chain, own, meta, terms, onEdit, onClose,
     let next: AutoLendReview;
     let nowTerms: TermsState;
     try {
-      [next, nowTerms] = await Promise.all([readAutoLendReview(own, diamond, review.draft, review.identity), own.read((c) => readTerms(c, diamond, account)).then((x) => x.value)]);
+      [next, nowTerms] = await Promise.all([
+        readAutoLendReview(own, diamond, review.draft, review.identity, world.indexer),
+        own.read((c) => readTerms(c, diamond, account)).then((x) => x.value),
+      ]);
     } catch (e) {
       return { kind: 'unreadable', reason: refusalFromError(e).reason };
     }

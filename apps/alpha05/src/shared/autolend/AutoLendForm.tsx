@@ -20,7 +20,8 @@ import {
   type AutoLendField,
   type AutoLendInput,
 } from './autoLend';
-import { loadRemembered, openingPreset, readPresetFacts, regainKey, saveRemembered, type LendPreset } from './preset';
+import { loadRemembered, openingPreset, readPresetFacts, readRollRunner, regainKey, saveRemembered, type LendPreset } from './preset';
+import { useWorldRail } from '../reads/world/WorldRailContext';
 import { PresetChoices } from './PresetChoices';
 
 type Hex = `0x${string}`;
@@ -70,18 +71,19 @@ export function AutoLendForm({ chain, own, lending, collateral, meta, onReview, 
   const leave = (f: AutoLendField) => setTouched((t) => ({ ...t, [f]: true }));
 
   const diamond = chain.diamondAddress;
+  const world = useWorldRail();
   const reads = useOwnRead(['autolend', 'form', lending.toLowerCase()], async (c) => {
     const [maxDays, funds] = await Promise.all([readMaxDurationDays(c, diamond), readWalletFunds(c, lending, own.account, diamond)]);
     return { maxDays: Number(maxDays), balance: funds.balance };
   });
   const factsRead = useOwnRead(
     ['autolend', 'preset', lending.toLowerCase(), collateral.toLowerCase()],
-    (c) => readPresetFacts(c, diamond, own.account, chain.chainId, lending, collateral, FIRST_SLOT),
+    async (c) => readPresetFacts(c, diamond, own.account, chain.chainId, lending, collateral, FIRST_SLOT, await readRollRunner(world.indexer, chain.chainId, diamond)),
     { enabled: !isChange },
   );
   const facts = factsRead.data;
   const [storedPreset, setPreset] = useStoredValue<LendPreset>(`${flowKey}:preset`);
-  const preset: LendPreset = { ...(storedPreset ?? openingPreset(remembered?.preset ?? null, facts?.relend ?? null)), proRata: input.proRata };
+  const preset: LendPreset = { ...(storedPreset ?? openingPreset(remembered?.preset ?? null, facts?.relend ?? null, facts?.roll ?? null)), proRata: input.proRata };
   const [confirmed, setConfirmed] = useStoredValue<string>(`${flowKey}:keeperConfirm`);
   const decimals = meta?.[lending.toLowerCase()]?.decimals ?? null;
   const symbol = assetName(lending, meta);
@@ -169,21 +171,32 @@ export function AutoLendForm({ chain, own, lending, collateral, meta, onReview, 
       {field('rate', text('autoLend.rateLabel'), text('autoLend.rateHint'), input.rate, (v) => set({ rate: v }))}
       {field('ltv', text('autoLend.ltvLabel'), text('autoLend.ltvHint'), input.ltv, (v) => set({ ltv: v }))}
       {field('days', text('autoLend.daysLabel'), format('autoLend.daysHint', { max: String(maxDays ?? '…') }), input.days, (v) => set({ days: v }), 'numeric')}
-      <FormField label={text('autoLend.untilLabel')} hint={text('autoLend.untilHint')} error={errorText('lendUntil', errors.lendUntil)}>
-        {({ id, describedBy, invalid }) => (
-          <input
-            id={id}
-            type="date"
-            min={today}
-            aria-describedby={describedBy}
-            aria-invalid={invalid}
-            value={input.lendUntil}
-            onChange={(e) => set({ lendUntil: e.target.value })}
-            onBlur={() => leave('lendUntil')}
-            data-testid="autolend-lendUntil"
-          />
-        )}
-      </FormField>
+      <div className="field field-check">
+        <label>
+          <input type="checkbox" checked={input.setPeriod} onChange={(e) => set({ setPeriod: e.target.checked })} data-testid="autolend-setPeriod" />
+          <span>{text('autoLend.setPeriodLabel')}</span>
+        </label>
+        <p className="tier-a field-hint" data-testid="autolend-setPeriod-hint">
+          {text(input.setPeriod ? 'autoLend.setPeriodHint' : 'autoLend.noEndHint')}
+        </p>
+      </div>
+      {input.setPeriod && (
+        <FormField label={text('autoLend.untilLabel')} hint={text('autoLend.untilHint')} error={errorText('lendUntil', errors.lendUntil)}>
+          {({ id, describedBy, invalid }) => (
+            <input
+              id={id}
+              type="date"
+              min={today}
+              aria-describedby={describedBy}
+              aria-invalid={invalid}
+              value={input.lendUntil}
+              onChange={(e) => set({ lendUntil: e.target.value })}
+              onBlur={() => leave('lendUntil')}
+              data-testid="autolend-lendUntil"
+            />
+          )}
+        </FormField>
+      )}
       {isChange ? (
         <div className="field field-check">
           <label>

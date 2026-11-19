@@ -48,8 +48,12 @@ import {
   type PresetFacts,
   type PresetLogs,
   AUTO_ROLL,
+  RENEWAL_BUILT,
+  readRollRunner,
 } from './preset';
 import type { LegOutcome } from '../tx/outcome';
+import type { IndexerClient } from '../reads/world/indexerClient';
+import { takeoverRouted } from '../capability/routes';
 
 type Hex = `0x${string}`;
 type Copy = Pick<CopyAccess, 'text' | 'format'>;
@@ -59,6 +63,9 @@ export interface AutoLendReview {
   /** The wallet and network the review was read under (`reviewIdentity`). */
   identity: string;
   readAt: number;
+  /** #3763: whether the takeover at face value is deployed here, so the
+   *  review names a handover as a way to get funds back. */
+  handover: boolean;
   facts: SetupFacts;
   /** For a change, the record it replaces, as read with the facts: the most
    *  at once and smallest loan kept when none is typed, and the fill
@@ -138,8 +145,9 @@ async function readRiskNeed(own: OwnStateClient, diamond: Hex, lending: Hex, col
   return null;
 }
 
-export async function readAutoLendReview(own: OwnStateClient, diamond: Hex, draft: AutoLendDraft, identity: string): Promise<AutoLendReview> {
+export async function readAutoLendReview(own: OwnStateClient, diamond: Hex, draft: AutoLendDraft, identity: string, indexer: IndexerClient): Promise<AutoLendReview> {
   const account = own.account;
+  const rollRunner = await readRollRunner(indexer, own.chainId, diamond);
   const facts = (await own.read((c) => readSetupFacts(c, diamond, account, draft.lending, draft.collateral, draft.slot))).value;
   const fund = draft.parsed.fund;
   const approvalSteps =
@@ -154,9 +162,9 @@ export async function readAutoLendReview(own: OwnStateClient, diamond: Hex, draf
         ).length;
   const base = draft.change ? facts.record : null;
   const minFill = resolvedMinFill(draft.parsed, facts.floor, base);
-  const [risk, preset, instantRecord, ltvCap] = await Promise.all([
+  const [risk, preset, instantRecord, ltvCap, handover] = await Promise.all([
     readRiskNeed(own, diamond, draft.lending, draft.collateral),
-    own.read((c) => readPresetFacts(c, diamond, account, own.chainId, draft.lending, draft.collateral, draft.slot)).then((x) => x.value),
+    own.read((c) => readPresetFacts(c, diamond, account, own.chainId, draft.lending, draft.collateral, draft.slot, rollRunner)).then((x) => x.value),
     draft.change
       ? own
           .read((c) => readInstantSlot(c, diamond, account, draft.lending, draft.collateral, draft.slot, facts.blockNumber))
@@ -169,6 +177,10 @@ export async function readAutoLendReview(own: OwnStateClient, diamond: Hex, draf
           .read((c) => readLtvCap(c, diamond, draft.lending, draft.collateral, minFill, draft.parsed.maxInitLtvBps, facts.blockNumber))
           .then((x) => x.value)
           .catch(() => null),
+    own
+      .read((c) => takeoverRouted(c, diamond))
+      .then((x) => x.value)
+      .catch(() => false),
   ]);
   const capBlock = ltvCapBlock(ltvCap);
   const blocks = capBlock === null ? setupBlocks(draft, facts) : [...setupBlocks(draft, facts), capBlock];
@@ -204,6 +216,7 @@ export async function readAutoLendReview(own: OwnStateClient, diamond: Hex, draf
     draft,
     identity,
     readAt: Date.now(),
+    handover,
     facts,
     base,
     minFill,
@@ -232,6 +245,7 @@ export function reviewKey(r: AutoLendReview): string {
     r.posture,
     r.risk ?? '',
     r.roll,
+    r.handover,
     r.ltvCap === null ? 'x' : r.ltvCap.kind === 'cap' ? `${r.ltvCap.fits}:${r.ltvCap.approxBps}` : r.ltvCap.kind,
     r.blocks.map((b) => b.kind).join(','),
     r.facts.minTermsAgeSec,
@@ -382,7 +396,9 @@ export function autoLendReceipt(r: AutoLendReview, meta: TokenMetaMap | null, co
   else if (matcher === 'absent') consequences.push(text('autoLend.loseServiceOff'));
   else if (matcher === 'unknown') consequences.push(text('autoLend.loseServiceUnknown'));
   const title = base === null ? 'autoLend.receiptTitle' : base.active ? 'autoLend.changeTitle' : 'autoLend.startTitle';
-  return { title: text(title), rows, consequences, prompts: r.approvalSteps + 1, readAt: r.readAt };
+  // #3763: what open-ended means here, for a new Auto-lend and a change alike.
+  const sections = openEndedSections(d, r.handover, copy);
+  return { title: text(title), rows, consequences, sections, prompts: r.approvalSteps + 1, readAt: r.readAt };
 }
 
 /** #3761 — the receipt rows for the lender's choices: each stated as the
@@ -435,7 +451,7 @@ export function presetRows(r: AutoLendReview, copy: Copy): ReceiptRow[] {
       }
     };
     rows.push(row('autoLend.rowFills', instant(e.fills, chosen.fills), true));
-    rows.push(row('autoLend.rowRenewal', instant(e.renewal, chosen.renewal), true));
+    rows.push(row('autoLend.rowRenewal', RENEWAL_BUILT ? instant(e.renewal, chosen.renewal) : text('autoLend.renewalNotYetRow'), true));
     rows.push(row('autoLend.rowTakeover', instant(e.takeover, chosen.takeover), true));
   } else if (r.instantRecord !== null) {
     rows.push(row('autoLend.rowInstantChange', text(anyInstant(e) ? 'autoLend.instantResent' : r.instantCleared ? 'autoLend.instantCleared' : 'autoLend.instantNone'), true));
@@ -452,14 +468,36 @@ export function presetConsequences(r: AutoLendReview, copy: Copy): ReceiptText[]
   if (e.relend === 'granted' && s.kind === 'grant' && s.regain.length > 0) {
     out.push(format('autoLend.loseRelendRegain', { list: s.regain.map((g) => regainLine(g, copy)).join('; ') }));
   }
+  // #3763 rule 7: a permission given or held is not a runner.
+  if ((e.relend === 'granted' || e.relend === 'given') && r.preset.roll !== 'running') {
+    out.push(text(r.preset.roll === 'unknown' ? 'autoLend.loseRelendRunUnknown' : 'autoLend.loseRelendNoRun'));
+  }
   if (anyInstant(e)) {
     out.push(text('autoLend.loseInstantWhat'));
     if (e.takeover) out.push(text('autoLend.loseTakeover'));
-    if (!e.renewal) out.push(text('autoLend.loseRenewalOff'));
+    if (RENEWAL_BUILT && !e.renewal) out.push(text('autoLend.loseRenewalOff'));
     out.push(text('autoLend.loseInstantReady'));
   }
   if (r.instantCleared) out.push(text('autoLend.loseInstantCleared'));
   return out;
+}
+
+/** #3763 — what open-ended means here, under its two headings (§3.6),
+ *  stated on the review before signing. `handover` where the takeover at
+ *  face value is deployed on this network. */
+export function openEndedSections(draft: AutoLendDraft, handover: boolean, copy: Copy): { title: string; body: string[] }[] {
+  const { text, format } = copy;
+  const length =
+    draft.parsed.lendUntilDate === null
+      ? { title: text('autoLend.openEndedTitle'), body: [text('autoLend.openEndedBody')] }
+      : { title: format('autoLend.setPeriodTitle', { date: draft.parsed.lendUntilDate }), body: [format('autoLend.setPeriodBody', { date: draft.parsed.lendUntilDate })] };
+  return [
+    length,
+    {
+      title: text('autoLend.fundsBackTitle'),
+      body: [text('autoLend.fundsBackBody'), text(handover ? 'autoLend.fundsBackSooner' : 'autoLend.fundsBackSoonerSale'), text('autoLend.fundsBackNoPromise')],
+    },
+  ];
 }
 
 /** One keeper approval switching access back on restores, in plain words. */

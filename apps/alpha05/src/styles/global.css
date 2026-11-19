@@ -868,6 +868,19 @@ dd.value-unknown > .icon {
   background: var(--surface-sunken);
   overflow-wrap: anywhere;
 }
+/* #3763 — a review's titled statements (what "no end date" means here,
+   how funds come back): plain text under a small heading. */
+.receipt-section {
+  margin: 12px 0 8px;
+  overflow-wrap: anywhere;
+}
+.receipt-section h4 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+}
+.receipt-section p {
+  margin: 0 0 6px;
+}
 .legs {
   list-style: none;
   padding: 0;

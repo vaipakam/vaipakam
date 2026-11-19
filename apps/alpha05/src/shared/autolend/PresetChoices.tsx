@@ -1,6 +1,6 @@
 import { useCopy } from '../copy/useCopy';
 import { actionsIn } from '../keepers/keepers';
-import { instantOff, regainKey, type InstantOff, type LendPreset, type PresetFacts } from './preset';
+import { instantOff, regainKey, RENEWAL_BUILT, type InstantOff, type LendPreset, type PresetFacts } from './preset';
 
 interface PresetChoicesProps {
   preset: LendPreset;
@@ -53,6 +53,12 @@ export function PresetChoices({ preset, facts, failed, confirmed, onPreset, onCo
   else if (relend.kind === 'no-keeper') relendHint = text('autoLend.relendHintNoKeeper');
   else if (!preset.relend) relendHint = text('autoLend.relendHintOff');
   else relendHint = relend.regain.length > 0 ? text('autoLend.relendRegainLead') : format('autoLend.relendHint', { keeper: facts?.keeper ?? '' });
+  // #3763 rule 7: the permission is not the run. Where the platform's keeper
+  // is not running the roll step, the line says who must submit it.
+  const runnerLine =
+    relend !== null && (relend.kind === 'grant' || relend.kind === 'given') && facts !== null && facts.roll !== 'running'
+      ? text(facts.roll === 'unknown' ? 'autoLend.relendRunUnknown' : 'autoLend.relendRunNot')
+      : null;
   const regain = relend !== null && relend.kind === 'grant' && preset.relend ? relend.regain : [];
   const listKey = regain.length > 0 ? regainKey(regain) : null;
 
@@ -80,6 +86,11 @@ export function PresetChoices({ preset, facts, failed, confirmed, onPreset, onCo
           <p className="tier-a field-hint" data-testid="autolend-relend-hint">
             {relendHint}
           </p>
+          {runnerLine !== null && (
+            <p className="tier-a field-hint" data-testid="autolend-relend-runner">
+              {runnerLine}
+            </p>
+          )}
           {listKey !== null && (
             <>
               <ul className="autolend-regain" data-testid="autolend-regain">
@@ -114,7 +125,17 @@ export function PresetChoices({ preset, facts, failed, confirmed, onPreset, onCo
           </p>
         </div>
         {instantSwitch('fills', text('autoLend.fillsLabel'), text('autoLend.fillsHint'))}
-        {instantSwitch('renewal', text('autoLend.renewalLabel'), text('autoLend.renewalHint'))}
+        {RENEWAL_BUILT ? (
+          instantSwitch('renewal', text('autoLend.renewalLabel'), text('autoLend.renewalHint'))
+        ) : (
+          // Renewal is not built yet: a line, not a switch, and nothing sent.
+          <div className="field field-check" data-testid="autolend-renewal-line">
+            <p className="tier-b">{text('autoLend.renewalLabel')}</p>
+            <p className="tier-a field-hint" data-testid="autolend-renewal-hint">
+              {text('autoLend.renewalNotYet')}
+            </p>
+          </div>
+        )}
         {instantSwitch('takeover', text('autoLend.takeoverLabel'), text('autoLend.takeoverHint'))}
       </fieldset>
       <fieldset className="autolend-more" data-testid="autolend-more">

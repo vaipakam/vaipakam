@@ -54,12 +54,15 @@ export const DEFAULT_SPLIT = 10n;
 /** What the lender types. Text, kept as typed, so a navigation away and
  *  back keeps it. `exposure` and `minFill` are Advanced: empty means the
  *  default (the funded amount; a tenth of it, at least the network's
- *  minimum). `lendUntil` is a calendar date (`YYYY-MM-DD`) or empty. */
+ *  minimum). `lendUntil` is a calendar date (`YYYY-MM-DD`), read only while
+ *  `setPeriod` is on: a slot has no end date unless the lender states one
+ *  (#3763, `DefaultPathsDesign.md` §3.6). */
 export interface AutoLendInput {
   amount: string;
   rate: string;
   ltv: string;
   days: string;
+  setPeriod: boolean;
   lendUntil: string;
   proRata: boolean;
   exposure: string;
@@ -71,6 +74,8 @@ export const DEFAULT_AUTOLEND_INPUT: AutoLendInput = {
   rate: '',
   ltv: '60',
   days: '30',
+  // #3763: open-ended unless the lender chooses a set period.
+  setPeriod: false,
   lendUntil: '',
   // #3761: interest by time is pre-selected; the form's switch carries it.
   proRata: true,
@@ -123,8 +128,9 @@ export function parseAutoLend(
   const days = parseDays(input.days, maxDays);
   if (!days.ok) errors.days = days.error;
   let lendUntilDate: string | null = null;
-  const d = input.lendUntil.trim();
-  if (d !== '') {
+  const d = input.setPeriod ? input.lendUntil.trim() : '';
+  if (input.setPeriod && d === '') errors.lendUntil = 'date';
+  else if (d !== '') {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || Number.isNaN(Date.parse(`${d}T00:00:00Z`))) errors.lendUntil = 'date';
     else if (d <= today) errors.lendUntil = 'past';
     else lendUntilDate = d;
@@ -564,6 +570,7 @@ export function inputFromIntent(
     rate: bpsText(i.minRateBps),
     ltv: bpsText(BigInt(i.maxInitLtvBps)),
     days: String(i.maxDurationDays),
+    setPeriod: i.lendUntil !== 0n,
     lendUntil: i.lendUntil === 0n ? '' : localToday(new Date(Number(i.lendUntil) * 1000)),
     proRata: i.acceptsProRata,
     exposure: formatUnits(i.maxExposure, decimals),

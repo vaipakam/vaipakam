@@ -31,6 +31,8 @@ import { isRevert } from '../tx/simulate';
 import { VPFITokenFacetABI } from '@vaipakam/contracts/abis';
 import { changeCall, networkKeeper, PROFILE_ABI, MAX_KEEPERS, readKeeperSettings, type KeeperChange, type KeeperGrant, type KeeperSettings } from '../keepers/keepers';
 import type { BatchStep } from '../tx/batch';
+import { readKeeperSteps, ROLL_STEP, runnerState, type RunnerState } from '../keepers/keeperSteps';
+import type { IndexerClient } from '../reads/world/indexerClient';
 
 type Hex = `0x${string}`;
 
@@ -48,8 +50,17 @@ export interface LendPreset {
   takeover: boolean;
 }
 
-/** The form as shipped: every choice pre-selected. */
-export const PRESELECTED: LendPreset = { relend: true, proRata: true, fills: true, renewal: true, takeover: true };
+/**
+ * Whether the protocol can renew a loan yet (#3763). Until renewal is built
+ * the slot's renewal consent would change no loan, so the form shows the line
+ * as not available yet, never pre-selects it and never sends it; every loan
+ * reads "It does not renew". When renewal ships, existing slots are offered
+ * it through the existing-slot card (§3.5) and their owners sign it then.
+ */
+export const RENEWAL_BUILT = false;
+
+/** The form as shipped: every available choice pre-selected. */
+export const PRESELECTED: LendPreset = { relend: true, proRata: true, fills: true, renewal: RENEWAL_BUILT, takeover: true };
 
 /** Whether the instant market can take this pair's slot on this network.
  *  `unknown` is any reading the app cannot name: the switches stay off and
@@ -102,17 +113,23 @@ export function regainKey(regain: readonly KeeperGrant[]): string {
     .join(',');
 }
 
-/** Whether the re-lend line opens pre-selected: everywhere it can be given,
- *  except where switching access on would bring other approvals back. */
-export function relendPreselected(state: RelendState): boolean {
-  return state.kind === 'grant' && state.regain.length === 0;
+/** Whether the re-lend line opens pre-selected: where it can be given, the
+ *  platform's keeper runs the roll step on this network (#3763 rule 7: the
+ *  permission is not the run), and switching access on would bring no other
+ *  approval back. */
+export function relendPreselected(state: RelendState, roll: RunnerState): boolean {
+  return state.kind === 'grant' && state.regain.length === 0 && roll === 'running';
 }
 
 /** The choices the form opens on: the lender's remembered choices, or the
- *  pre-selected ones, with the re-lend line off where it may not open on. */
-export function openingPreset(remembered: LendPreset | null, state: RelendState | null): LendPreset {
+ *  pre-selected ones, with the re-lend line off where it may not open on.
+ *  While the facts are being read (`state === null`) the line keeps its
+ *  choice; the form re-opens on the facts once they arrive. */
+export function openingPreset(remembered: LendPreset | null, state: RelendState | null, roll: RunnerState | null = null): LendPreset {
   const base = remembered ?? PRESELECTED;
-  return { ...base, relend: base.relend && (state === null || state.kind === 'given' || relendPreselected(state)) };
+  const may =
+    state === null || state.kind === 'given' || (roll !== null && relendPreselected(state, roll)) || (roll === null && state.kind === 'grant' && state.regain.length === 0);
+  return { ...base, relend: base.relend && may, renewal: RENEWAL_BUILT && base.renewal };
 }
 
 /** Why an instant-market switch is off whatever the lender chose; null when
@@ -164,7 +181,7 @@ export function effectivePreset(p: LendPreset, state: RelendState, availability:
       }
       break;
   }
-  return { proRata: p.proRata, fills: instant && p.fills, renewal: instant && p.renewal, takeover: instant && p.takeover, keeper, relend };
+  return { proRata: p.proRata, fills: instant && p.fills, renewal: RENEWAL_BUILT && instant && p.renewal, takeover: instant && p.takeover, keeper, relend };
 }
 
 /** A change of an existing slot's terms: setting the terms clears the
@@ -184,7 +201,7 @@ export function changeEffective(
   const none = { proRata, fills: false, renewal: false, takeover: false, keeper: [], relend };
   if (record === null || !anyInstant(record)) return { effective: none, cleared: false };
   if (!proRata || availability === 'market-off' || availability === 'pair-not-eligible') return { effective: none, cleared: true };
-  return { effective: { ...none, fills: record.fills, renewal: record.renewal, takeover: record.takeover }, cleared: false };
+  return { effective: { ...none, fills: record.fills, renewal: RENEWAL_BUILT && record.renewal, takeover: record.takeover }, cleared: false };
 }
 
 /** Whether any instant-market consent is on. */
@@ -277,11 +294,27 @@ export interface PresetFacts {
   instant: InstantAvailability;
   /** The platform's keeper on this network, from the deployment record. */
   keeper: Hex | null;
+  /** Whether that keeper runs the roll step on this network (#3763 rule 7). */
+  roll: RunnerState;
+}
+
+/** The roll step's runner state for this network's Diamond; never throws. */
+export async function readRollRunner(indexer: IndexerClient, chainId: number, diamond: Hex): Promise<RunnerState> {
+  return runnerState(await readKeeperSteps(indexer, chainId), ROLL_STEP, diamond);
 }
 
 /** Reads the facts through one client. Each part that cannot be read reads
  *  as unknown (never thrown), so the form still opens and says so. */
-export async function readPresetFacts(c: PublicClient, diamond: Hex, account: Hex, chainId: number, lending: Hex, collateral: Hex, slot: number): Promise<PresetFacts> {
+export async function readPresetFacts(
+  c: PublicClient,
+  diamond: Hex,
+  account: Hex,
+  chainId: number,
+  lending: Hex,
+  collateral: Hex,
+  slot: number,
+  roll: RunnerState,
+): Promise<PresetFacts> {
   const keeper = networkKeeper(chainId);
   const [vpfi, settings, instant] = await Promise.all([
     (c.readContract({ address: diamond, abi: VPFI_TOKEN, functionName: 'getVPFIToken' }) as Promise<Hex>).then(
@@ -291,14 +324,14 @@ export async function readPresetFacts(c: PublicClient, diamond: Hex, account: He
     readKeeperSettings(c, diamond, account).catch(() => null),
     readInstantAvailability(c, diamond, account, lending, collateral, slot),
   ]);
-  return { relend: relendState(settings, keeper, vpfi), instant, keeper };
+  return { relend: relendState(settings, keeper, vpfi), instant, keeper, roll };
 }
 
 /** A key for the facts, so a review that read different ones says so. */
 export function presetFactsKey(f: PresetFacts): string {
   const r = f.relend;
   const relend = r.kind === 'grant' ? `grant:${r.changes.map((c) => JSON.stringify(c)).join(';')}:${regainKey(r.regain)}` : r.kind;
-  return `${relend}|${f.instant}`;
+  return `${relend}|${f.instant}|${f.roll}`;
 }
 
 /** The line a remembered choice is kept under, per wallet and network. */

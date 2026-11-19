@@ -4871,8 +4871,14 @@ export const copy = {
     ltvHint: B("Each loan's collateral is sized from this ceiling at the prices when it is filled."),
     daysLabel: B('Longest loan term, days'),
     daysHint: B('From 1 to {{max}} days.'),
-    untilLabel: B('Lend until (optional)'),
+    untilLabel: B('Lend until'),
     untilHint: B('No new loan will be agreed to run past the end of this day.'),
+    // #3763 — open-ended unless the lender states a period (DefaultPathsDesign.md §3.6).
+    setPeriodLabel: B('Lend for a set period'),
+    setPeriodHint: A('Pick the last day. No new loan will be agreed to run past it; loans already out run to their own due dates.'),
+    noEndHint: A(
+      'No end date: this Auto-lend keeps lending within your limits until you stop it. The longest term above is the longest one loan may run, not how long this Auto-lend lends.',
+    ),
     proRataLabel: B('Interest by time: also lend to borrowers who pay only for the time borrowed'),
     proRataHint: A(
       'On such a loan you earn interest only for the time the money is lent. Such a borrower may also repay in parts; a part repaid early is paid to whoever holds the lender position and leaves Auto-lend.',
@@ -4887,6 +4893,12 @@ export const copy = {
     relendHintUnknown: A('Your keeper settings could not be read, so this stays off. Open the form again to retry.'),
     relendHintNoKeeper: A("This network names no platform keeper, so each repayment waits for you as a claim until you lend it again or collect it."),
     relendHintOff: A('Switched off: each repayment waits for you as a claim until you lend it again or collect it.'),
+    relendRunNot: A(
+      "The platform's keeper is not re-lending repayments on this network now. With this on, a repayment is lent again only when you or someone else submits it, from this Auto-lend's card on Positions.",
+    ),
+    relendRunUnknown: A(
+      "Whether the platform's keeper re-lends repayments on this network now is not known. With this on, a repayment is lent again only when you or someone else submits it, from this Auto-lend's card on Positions.",
+    ),
     relendRegainLead: A('Your keeper access is switched off. Switching it on brings back every keeper you approved, with the actions each holds:'),
     relendRegainConfirm: B('I confirm switching keeper access back on for all of them'),
     regainLine: B('{{keeper}}: {{actions}}'),
@@ -4895,6 +4907,7 @@ export const copy = {
     fillsLabel: B('Fill instant borrows'),
     fillsHint: A('A borrower may borrow from this Auto-lend in one step, on a loan inside your limits.'),
     renewalLabel: B('Renew loans this slot made'),
+    renewalNotYet: B('Not available yet: every loan this Auto-lend makes ends on its due date.'),
     renewalHint: A("Switched off, this slot's instant-market loans stop renewing and fall due on their own due dates."),
     takeoverLabel: B("Take over other lenders' loans at face value"),
     takeoverHint: A('This slot may pay another lender the principal outstanding to take over an instant-market loan that fits your limits.'),
@@ -4923,6 +4936,7 @@ export const copy = {
     relendNoKeeper: B('Not offered: this network names no platform keeper'),
     rowFills: B('Fill instant borrows'),
     rowRenewal: B('Renew loans this slot made'),
+    renewalNotYetRow: B('Not available yet: loans end on their due dates'),
     rowTakeover: B("Take over other lenders' loans at face value"),
     instantOn: B('Pre-selected: on'),
     instantSwitchedOff: B('Switched off'),
@@ -4938,6 +4952,24 @@ export const copy = {
     loseInstantWhat: A('This Auto-lend fills instant borrows with or without partial repayment. It does not fill a request that allows a prepay listing or carries an interest cadence.'),
     loseTakeover: A('With takeover on, it may pay another lender the principal outstanding to take over an instant-market loan that fits your limits. The borrower signs nothing.'),
     loseRenewalOff: A("Renewal is switched off: this Auto-lend's instant-market loans stop renewing and fall due on their own due dates."),
+    loseRelendNoRun: A(
+      "The platform's keeper is not re-lending repayments on this network now: a repayment is lent again only when you or someone else submits it, from this Auto-lend's card on Positions. Until then it waits as a claim.",
+    ),
+    loseRelendRunUnknown: A(
+      "Whether the platform's keeper re-lends repayments on this network now is not known: a repayment may be lent again only when you or someone else submits it, from this Auto-lend's card on Positions.",
+    ),
+    // #3763 — what open-ended means here (DefaultPathsDesign.md §3.6), before signing.
+    openEndedTitle: B('No end date'),
+    openEndedBody: A('This Auto-lend keeps lending its capital within the limits shown until you stop it. Each loan it makes is a fixed-rate loan for its own term, and does not renew.'),
+    setPeriodTitle: B('Lending until {{date}}'),
+    setPeriodBody: A('No new loan is agreed to run past the end of {{date}}. Loans already out run to their own due dates.'),
+    fundsBackTitle: B('Getting funds back'),
+    fundsBackBody: A(
+      'Capital this Auto-lend has not lent can be taken out at any time. Capital in a loan is repaid by the borrower, at any time or by the loan’s due date. A due date is when repayment is owed, not when funds come back: that still depends on the borrower repaying, the grace period, and a close-out if the loan defaults, which can take longer and can return less than was lent.',
+    ),
+    fundsBackSooner: A('Sooner is possible by a handover to another lender at face value or by a sale, where one is available at that moment.'),
+    fundsBackSoonerSale: A('Sooner is possible by a sale, where one is available at that moment.'),
+    fundsBackNoPromise: A('Funds in a loan are not available on demand, and no date of return is promised.'),
     loseInstantReady: A('The instant-market choices are ready a few seconds after this lands, not at once.'),
     loseInstantCleared: A("Setting new terms clears this Auto-lend's instant-market choices, and these terms cannot carry them again (interest by time is off, or the pair is no longer available)."),
     blockKeeperList: A('Confirm the list of keepers whose access switches back on, or switch re-lending off.'),

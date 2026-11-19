@@ -3,6 +3,8 @@ import { decodeFunctionData, encodeEventTopics, encodeAbiParameters, type Log } 
 import { PROFILE_ABI, type KeeperSettings } from '../keepers/keepers';
 import { autoLendDraft, INTENT, setupCall, setupSteps, type ParsedAutoLend } from './autoLend';
 import { lendConsentForm } from './consentForm';
+import { openEndedSections } from './autoLendReview';
+import { copyEntry } from '../copy/useCopy';
 import {
   AUTO_ROLL,
   INSTANT,
@@ -40,13 +42,16 @@ describe('relendState (#3761 §3.2)', () => {
       ],
       regain: [],
     });
-    expect(relendPreselected(s)).toBe(true);
+    expect(relendPreselected(s, 'running')).toBe(true);
+    // #3763 rule 7: the permission is not the run.
+    expect(relendPreselected(s, 'not-running')).toBe(false);
+    expect(relendPreselected(s, 'unknown')).toBe(false);
   });
 
   it('adds the roll to what the keeper holds, removing nothing, and leaves access as it is when on', () => {
     const s = relendState(settings(true, [{ keeper: KEEPER, actions: 1 << 6 }]), KEEPER, false);
     expect(s).toEqual({ kind: 'grant', changes: [{ kind: 'actions', keeper: KEEPER, actions: (1 << 6) | AUTO_ROLL }], regain: [] });
-    expect(relendPreselected(s)).toBe(true);
+    expect(relendPreselected(s, 'running')).toBe(true);
   });
 
   it('is given when access is on and the keeper already holds the roll', () => {
@@ -58,7 +63,7 @@ describe('relendState (#3761 §3.2)', () => {
     expect(s.kind).toBe('grant');
     if (s.kind !== 'grant') return;
     expect(s.regain).toEqual([{ keeper: OTHER, actions: 1 << 0 }]);
-    expect(relendPreselected(s)).toBe(false);
+    expect(relendPreselected(s, 'running')).toBe(false);
   });
 
   it('is never offered for the platform token, and unknown when anything is unread', () => {
@@ -84,6 +89,18 @@ describe('openingPreset', () => {
     const regain = relendState(settings(false, [{ keeper: OTHER, actions: 1 }]), KEEPER, false);
     expect(openingPreset(null, regain).relend).toBe(false);
   });
+  it('opens on re-lending only where the keeper runs the roll step (#3763 rule 7)', () => {
+    const grant = relendState(settings(true, []), KEEPER, false);
+    expect(openingPreset(null, grant, 'running').relend).toBe(true);
+    expect(openingPreset(null, grant, 'not-running').relend).toBe(false);
+    expect(openingPreset(null, grant, 'unknown').relend).toBe(false);
+    // An existing permission is shown as given, whatever the runner.
+    expect(openingPreset(null, { kind: 'given' }, 'not-running').relend).toBe(true);
+  });
+  it('never opens on renewal until renewal is built (#3763)', () => {
+    expect(PRESELECTED.renewal).toBe(false);
+    expect(openingPreset({ ...PRESELECTED, renewal: true }, null).renewal).toBe(false);
+  });
 });
 
 describe('effectivePreset (#3761 §3.1)', () => {
@@ -91,7 +108,9 @@ describe('effectivePreset (#3761 §3.1)', () => {
 
   it('carries every choice where the market takes the pair', () => {
     const e = effectivePreset(PRESELECTED, grant, 'available', null);
-    expect(e).toMatchObject({ fills: true, renewal: true, takeover: true, relend: 'granted' });
+    expect(e).toMatchObject({ fills: true, renewal: false, takeover: true, relend: 'granted' });
+    // Renewal is never sent until it is built, whatever was chosen.
+    expect(effectivePreset({ ...PRESELECTED, renewal: true }, grant, 'available', null).renewal).toBe(false);
     expect(e.keeper).toHaveLength(2);
   });
 
@@ -167,7 +186,7 @@ describe('the one batch (#3761 §3.4)', () => {
     const calls = (call.args as unknown as [{ callData: Hex; allowFailure: boolean }[]])[0];
     expect(calls.every((c) => c.allowFailure === false)).toBe(true);
     const instant = decodeFunctionData({ abi: INSTANT, data: calls[2]!.callData });
-    expect(instant.args).toEqual([USDC, WETH, 0, true, true, true, true, 99n]);
+    expect(instant.args).toEqual([USDC, WETH, 0, true, false, true, true, 99n]);
     const approve = decodeFunctionData({ abi: PROFILE_ABI, data: calls[3]!.callData });
     expect(approve.args).toEqual([KEEPER, AUTO_ROLL]);
   });
@@ -217,5 +236,21 @@ describe('remembered choice and the consent form', () => {
     expect(lendConsentForm(undefined)).toBe('preselected');
     expect(lendConsentForm('choose')).toBe('choose');
     expect(lendConsentForm('other')).toBe('preselected');
+  });
+});
+
+describe('openEndedSections (#3763 §3.6)', () => {
+  const copy = { text: (k: string) => k, format: (k: string, v: Record<string, string>) => `${k}#${v.date ?? ''}` } as never;
+  const parsedWith = (lendUntilDate: string | null) => ({ ...autoLendDraft(USDC, WETH, parsed, false, 0, PRESELECTED, null), parsed: { ...parsed, lendUntilDate } });
+  it('states no end date, then how funds come back, never promising a date of return', () => {
+    const s = openEndedSections(parsedWith(null), true, copy);
+    expect(s.map((x) => x.title)).toEqual(['autoLend.openEndedTitle', 'autoLend.fundsBackTitle']);
+    expect(s[1]!.body).toEqual(['autoLend.fundsBackBody', 'autoLend.fundsBackSooner', 'autoLend.fundsBackNoPromise']);
+  });
+  it('names the set period where chosen, and leaves the handover out where the takeover is not deployed', () => {
+    const s = openEndedSections(parsedWith('2027-03-01'), false, copy);
+    expect(s[0]!.title).toBe('autoLend.setPeriodTitle#2027-03-01');
+    expect(s[1]!.body).toContain('autoLend.fundsBackSoonerSale');
+    expect(copyEntry('autoLend.fundsBackSoonerSale').text).not.toMatch(/handover/);
   });
 });
