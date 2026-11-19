@@ -800,6 +800,15 @@ const copySource = {
     unlinkProtectionUnknown:
       'Nothing was changed: we could not check just now whether this wallet has protected mode on. Try again in a few minutes.',
     toggleRepayDue: 'Message me before an interest payment comes due',
+    // #3434 — every movement out of the vault, by the owner's choice; the
+    // default follows protected mode. Position-token approvals (#3721) are
+    // always sent and have no switch.
+    vaultOutflowLabel: 'Message me when something leaves my vault',
+    vaultOutflowDefault: 'While protected mode is on (default)',
+    vaultOutflowOn: 'Always',
+    vaultOutflowOff: 'Never',
+    vaultOutflowNote:
+      'Each message says what left, how much, where it went and why. Approvals of your position tokens are always sent to the channels you linked.',
     toggleRisky: 'Message me if my loan gets risky',
     riskyOffNote:
       'Even switched off, you’ll still be warned right before a loan would be liquidated.',

@@ -112,6 +112,14 @@ describe('what a settings save is signed over (#2754)', () => {
     ).toBe(buildAlertSettingsMessage(WALLET, 84532, change, 1));
   });
 
+  it('carries the vault outflow choice into the signed change (#3434)', () => {
+    const of = (v: unknown) => settingsChangeOf(parsePutThresholds({ wallet: WALLET, chain_id: 84532, notify_vault_outflow: v })!);
+    expect(of(true)).toEqual({ vaultOutflowAlerts: 'on' });
+    expect(of(false)).toEqual({ vaultOutflowAlerts: 'off' });
+    expect(of(null)).toEqual({ vaultOutflowAlerts: 'default' });
+    expect(parsePutThresholds({ wallet: WALLET, chain_id: 84532, notify_vault_outflow: 'on' })).toBeNull();
+  });
+
   it('refuses a Push value other than the opt-in, and non-finite bands', () => {
     expect(parsePutThresholds({ wallet: WALLET, chain_id: 84532, push_channel: 'x' })).toBeNull();
     expect(parsePutThresholds({ ...FULL, warn_hf: Infinity })).toBeNull();

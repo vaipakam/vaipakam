@@ -47,6 +47,7 @@ import {
   unlinkTelegram,
   type AlertPrefs,
   type TelegramLink,
+  type VaultOutflowChoice,
 } from '../data/alerts';
 
 export function AlertsCard() {
@@ -114,7 +115,7 @@ export function AlertsCard() {
 
   async function persist(
     next: AlertPrefs,
-    opts?: { dueDateChanged?: boolean; bandsChanged?: boolean },
+    opts?: { dueDateChanged?: boolean; bandsChanged?: boolean; vaultOutflowChanged?: boolean },
   ) {
     // `prefs` is the direction baseline and is required, not optional —
     // every caller below is inside the branch that renders only once it
@@ -150,6 +151,7 @@ export function AlertsCard() {
       const push = await saveAlertPrefs(address, chainId, next, {
         dueDateChanged: opts?.dueDateChanged,
         bandsChanged: opts?.bandsChanged,
+        vaultOutflowChanged: opts?.vaultOutflowChanged,
         signMessage: (message) => signMessageAsync({ message }),
       });
       // #2251 — the agent stores a NEW Push opt-in only where it can send,
@@ -438,6 +440,28 @@ export function AlertsCard() {
               style={{ marginTop: 3 }}
             />
             <span style={{ flex: 1 }}>{copy.alerts.toggleRepayDue}</span>
+          </label>
+          {/* #3434 — every movement out of the vault, with the default that
+              follows protected mode. Position-token approvals are always
+              sent and have no switch; the note says so. */}
+          <label className="stack" style={{ gap: 4 }}>
+            <span>{copy.alerts.vaultOutflowLabel}</span>
+            <select
+              value={prefs.vaultOutflow}
+              disabled={busy}
+              onChange={(e) =>
+                void persist(
+                  { ...prefs, vaultOutflow: e.target.value as VaultOutflowChoice },
+                  { vaultOutflowChanged: true },
+                )
+              }
+              data-testid="alerts-vault-outflow"
+            >
+              <option value="default">{copy.alerts.vaultOutflowDefault}</option>
+              <option value="on">{copy.alerts.vaultOutflowOn}</option>
+              <option value="off">{copy.alerts.vaultOutflowOff}</option>
+            </select>
+            <span className="muted">{copy.alerts.vaultOutflowNote}</span>
           </label>
           <label className="cluster" style={{ alignItems: 'flex-start' }}>
             <input

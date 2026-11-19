@@ -14,6 +14,7 @@ import {
   type OwnerAlertDeps,
 } from '../src/ownerAlerts';
 import { createSqliteD1 } from '../../indexer/test/helpers/sqliteD1';
+import { upsertThresholds, OptOutStorageUnavailableError } from '../src/db';
 
 const DIR = new URL('../../indexer/migrations/', import.meta.url);
 const MIGRATIONS = readdirSync(DIR)
@@ -181,5 +182,30 @@ describe('alertOf / renderAlert / wants', () => {
     expect(wants(o, s(null, true))).toBe(true);
     expect(wants(o, s(0, true))).toBe(false);
     expect(wants(o, s(1, false))).toBe(true);
+  });
+});
+
+describe('the vault outflow choice is stored (#3434)', () => {
+  it('stores on, off and back to the default, and leaves it alone when absent', async () => {
+    const h = createSqliteD1(MIGRATIONS);
+    const read = () => (h.db.prepare('SELECT notify_vault_outflow AS v FROM user_thresholds').get() as { v: number | null }).v;
+    const save = (o?: 'on' | 'off' | 'default') =>
+      upsertThresholds(h.d1 as D1Database, { wallet: OWNER, chain_id: CHAIN.id, ...(o ? { notify_vault_outflow: o } : {}) });
+    await save('on');
+    expect(read()).toBe(1);
+    await save();
+    expect(read()).toBe(1);
+    await save('off');
+    expect(read()).toBe(0);
+    await save('default');
+    expect(read()).toBeNull();
+  });
+
+  it('refuses the whole save before migration 0110, storing nothing', async () => {
+    const h = createSqliteD1(MIGRATIONS.slice(0, -1).filter((m) => !m.includes('notify_vault_outflow')));
+    await expect(
+      upsertThresholds(h.d1 as D1Database, { wallet: OWNER, chain_id: CHAIN.id, notify_vault_outflow: 'on' }),
+    ).rejects.toBeInstanceOf(OptOutStorageUnavailableError);
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM user_thresholds').get()).toEqual({ n: 0 });
   });
 });

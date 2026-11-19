@@ -2013,3 +2013,12 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 
 **Gap.** No Anvil spec: the e2e indexer stub does not serve these rows. The Telegram and push delivery of the same alert is the agent's (#3721 / #3434) and is live-only.
 
+<a id="cov-3721-3434-owner-alerts-on-linked-channels"></a>
+### #3721 / #3434 owner alerts on linked channels
+
+**Journey.** The agent's `runOwnerAlerts` pass walks the indexer's settled `Approval`, `ApprovalForAll` and `VaultOutflow` events per chain from `owner_alert_cursor` (migration 0110). Approvals go to every owner with a linked Telegram chat or Push opt-in. Outflows go to an owner whose `notify_vault_outflow` is 1, or is unset while their latest `ProtectionApplied` left protected mode on. The alerts card's select sends `notify_vault_outflow` (true, false, or null for the default) only on the save that changed it, inside the signed settings message, whose new line appears only when set. Switching to Always, or from Never to the default, counts as enrolment for the Terms gate.
+
+**Tier.** Unit: `apps/agent/test/ownerAlerts.test.ts` (first pass sends no history, delivery on both rails then once only, the outflow choice and protected default including a retired protection, the request allowance and resume, the stale skip, rendering, the stored choice and its pre-migration refusal); `apps/agent/test/putThresholds.test.ts` (parse and signed change); `packages/lib/src/alertsMessage.test.ts` (the message line); `src/data/alerts.test.ts` (wire shape and enrolment).
+
+**Gap.** Live-only: real Telegram and Push delivery needs the deployed agent and its rails.
+

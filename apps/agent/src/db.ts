@@ -86,6 +86,9 @@ type ThresholdsUpsert = Omit<
   locale?: string | null;
   /** #1033 — optional; absent keeps the historical opted-in state. */
   notify_maturity_approaching?: boolean;
+  /** #3434 — optional; absent keeps the stored choice. `default` stores
+   *  NULL: on while protected mode is on, off otherwise. */
+  notify_vault_outflow?: 'on' | 'off' | 'default';
 };
 
 /** What a BANDLESS upsert's INSERT arm writes when no row exists —
@@ -168,6 +171,36 @@ async function upsertThresholdsLegacy(
 /** Upsert a user's thresholds. Called from the frontend settings page
  *  via the HTTP handler. */
 export async function upsertThresholds(
+  db: D1Database,
+  t: ThresholdsUpsert,
+): Promise<void> {
+  // #3434 — the outflow choice needs migration 0110's column. HTTP handlers
+  // are not schema-gated, so before it lands the column is asked for FIRST,
+  // and a save carrying the choice is refused whole (the same 503 an opt-out
+  // gets in the 0027 window) rather than half-stored.
+  if (t.notify_vault_outflow !== undefined) {
+    try {
+      await db.prepare(`SELECT notify_vault_outflow FROM user_thresholds LIMIT 0`).all();
+    } catch (err) {
+      if (/no such column/i.test(String(err))) throw new OptOutStorageUnavailableError();
+      throw err;
+    }
+  }
+  await upsertThresholdsRow(db, t);
+  // Written once the row exists.
+  if (t.notify_vault_outflow !== undefined) {
+    await db
+      .prepare(`UPDATE user_thresholds SET notify_vault_outflow = ? WHERE wallet = ? AND chain_id = ?`)
+      .bind(
+        t.notify_vault_outflow === 'default' ? null : t.notify_vault_outflow === 'on' ? 1 : 0,
+        t.wallet.toLowerCase(),
+        t.chain_id,
+      )
+      .run();
+  }
+}
+
+async function upsertThresholdsRow(
   db: D1Database,
   t: ThresholdsUpsert,
 ): Promise<void> {

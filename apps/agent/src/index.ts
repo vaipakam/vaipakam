@@ -710,6 +710,7 @@ export function settingsChangeOf(parsed: PutThresholdsBody): AlertSettingsChange
       ? { dueDateReminders: parsed.notify_maturity_approaching }
       : {}),
     ...(parsed.push_channel ? { pushAlerts: true as const } : {}),
+    ...(parsed.notify_vault_outflow !== undefined ? { vaultOutflowAlerts: parsed.notify_vault_outflow } : {}),
   };
 }
 
@@ -1265,6 +1266,10 @@ interface PutThresholdsBody {
    *  boolean in the body; absent means opted in (the historical
    *  behaviour, and what rows created before the column carry). */
   notify_maturity_approaching?: boolean;
+  /** #3434 — vault outflow alerts. The body carries `true`, `false`, or
+   *  `null` (back to the default: on while protected mode is on); absent
+   *  means no change. */
+  notify_vault_outflow?: 'on' | 'off' | 'default';
 }
 
 export function parsePutThresholds(x: unknown): PutThresholdsBody | null {
@@ -1311,6 +1316,19 @@ export function parsePutThresholds(x: unknown): PutThresholdsBody | null {
     if (b[k] !== undefined && !Number.isFinite(b[k])) return null;
   }
   if (!Number.isSafeInteger(b.chain_id) || (b.chain_id as number) <= 0) return null;
+  // #3434 — a present value must be one of the three; anything else is a bad
+  // request rather than a silent "no change".
+  if (b.notify_vault_outflow !== undefined && b.notify_vault_outflow !== null && typeof b.notify_vault_outflow !== 'boolean') {
+    return null;
+  }
+  const outflow =
+    b.notify_vault_outflow === undefined
+      ? undefined
+      : b.notify_vault_outflow === null
+        ? ('default' as const)
+        : b.notify_vault_outflow
+          ? ('on' as const)
+          : ('off' as const);
   const push = b.push_channel === 'subscribed' ? 'subscribed' : null;
   return {
     wallet: b.wallet,
@@ -1330,6 +1348,7 @@ export function parsePutThresholds(x: unknown): PutThresholdsBody | null {
       typeof b.notify_maturity_approaching === 'boolean'
         ? b.notify_maturity_approaching
         : undefined,
+    ...(outflow !== undefined ? { notify_vault_outflow: outflow } : {}),
   };
 }
 

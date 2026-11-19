@@ -35,6 +35,17 @@ function recordingSigner() {
   };
 }
 
+describe('addsAlertOptIn — the vault outflow choice (#3434)', () => {
+  const at = (vaultOutflow: 'default' | 'on' | 'off') => ({ ...DEFAULT_PREFS, vaultOutflow });
+  it('treats switching it on, or leaving off for the default, as enrolment', () => {
+    expect(addsAlertOptIn(at('default'), at('on'))).toBe(true);
+    expect(addsAlertOptIn(at('off'), at('default'))).toBe(true);
+    expect(addsAlertOptIn(at('on'), at('off'))).toBe(false);
+    expect(addsAlertOptIn(at('default'), at('off'))).toBe(false);
+    expect(addsAlertOptIn(at('on'), at('default'))).toBe(false);
+  });
+});
+
 describe('addsAlertOptIn', () => {
   it('does not call switching a lane off an enrolment', () => {
     // The round-8 defect exactly: fresh preferences have BOTH lanes on,
@@ -148,6 +159,20 @@ describe('saveAlertPrefs wire shape (#2000)', () => {
     expect(bodies[0]!.alert_hf).toBeUndefined();
     expect(bodies[0]!.critical_hf).toBeUndefined();
     expect(bodies[0]!.notify_maturity_approaching).toBe(true);
+  });
+
+  it('sends the vault outflow choice only on the save that changed it, signed (#3434)', async () => {
+    const bodies = stubAgent();
+    const signer = recordingSigner();
+    await saveAlertPrefs(WALLET, 84532, { ...DEFAULT_PREFS, vaultOutflow: 'on' }, { signMessage: signer.signMessage });
+    expect(bodies[0]!).not.toHaveProperty('notify_vault_outflow');
+    for (const [choice, wire] of [['on', true], ['off', false], ['default', null]] as const) {
+      await saveAlertPrefs(WALLET, 84532, { ...DEFAULT_PREFS, vaultOutflow: choice }, {
+        vaultOutflowChanged: true,
+        signMessage: signer.signMessage,
+      });
+      expect(bodies.at(-1)!.notify_vault_outflow).toBe(wire);
+    }
   });
 
   it('sends the REAL bands when the lane was switched on or tuned', async () => {

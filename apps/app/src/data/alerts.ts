@@ -217,13 +217,21 @@ export interface AlertPrefs extends AlertBands {
    *  COALESCE-preserved on later saves, so enabling sticks and there
    *  is no unset path through /thresholds today. */
   pushEnabled: boolean;
+  /** #3434 — "message me when something leaves my vault": `default` is on
+   *  while the wallet's protected mode is on and off otherwise; `on` and
+   *  `off` are the owner's own choice. Like `repayDue`, this records what
+   *  the user chose on this device; the agent has no read-back. */
+  vaultOutflow: VaultOutflowChoice;
 }
+
+export type VaultOutflowChoice = 'default' | 'on' | 'off';
 
 export const DEFAULT_PREFS: AlertPrefs = {
   repayDue: true,
   risky: true,
   telegramLinked: false,
   pushEnabled: false,
+  vaultOutflow: 'default',
   ...DEFAULT_BANDS,
 };
 
@@ -276,7 +284,13 @@ const OPT_IN_FLAGS = ['repayDue', 'risky', 'telegramLinked', 'pushEnabled'] as c
  * writes anything the user did not touch.
  */
 export function addsAlertOptIn(prev: AlertPrefs, next: AlertPrefs): boolean {
-  return OPT_IN_FLAGS.some((flag) => next[flag] && !prev[flag]);
+  return OPT_IN_FLAGS.some((flag) => next[flag] && !prev[flag]) || addsOutflowOptIn(prev.vaultOutflow, next.vaultOutflow);
+}
+
+/** #3434 — the outflow choice in the same terms: `on` from anything else
+ *  enrols, and so does leaving `off` for the default, which can send. */
+function addsOutflowOptIn(prev: VaultOutflowChoice, next: VaultOutflowChoice): boolean {
+  return (next === 'on' && prev !== 'on') || (next === 'default' && prev === 'off');
 }
 
 /** The agent re-validates warn > alert > critical > 1.00 and rejects
@@ -365,6 +379,9 @@ export interface SaveAlertPrefsOptions {
    *  bands mean "no change" and the agent preserves the stored
    *  values (server defaults only when no record exists at all). */
   bandsChanged?: boolean;
+  /** #3434 — send the vault outflow choice; like the due-date flag, only on
+   *  the save that changed it. */
+  vaultOutflowChanged?: boolean;
   /** Wallet signer — required on EVERY save (#2754): the agent stores
    *  nothing that is not signed over a message naming exactly what the
    *  save changes. */
@@ -412,6 +429,7 @@ export async function saveAlertPrefs(
       ...(opts.dueDateChanged ? { dueDateReminders: prefs.repayDue } : {}),
       // One-way by backend design (COALESCE): only sent when enabling.
       ...(withPush && prefs.pushEnabled ? { pushAlerts: true as const } : {}),
+      ...(opts.vaultOutflowChanged ? { vaultOutflowAlerts: prefs.vaultOutflow } : {}),
     };
     const issuedAt = Math.floor(Date.now() / 1000);
     const signature = await opts.signMessage(
@@ -431,6 +449,12 @@ export async function saveAlertPrefs(
         ? { notify_maturity_approaching: change.dueDateReminders }
         : {}),
       ...(change.pushAlerts ? { push_channel: 'subscribed' } : {}),
+      ...(change.vaultOutflowAlerts !== undefined
+        ? {
+            notify_vault_outflow:
+              change.vaultOutflowAlerts === 'default' ? null : change.vaultOutflowAlerts === 'on',
+          }
+        : {}),
       issuedAt,
       signature,
     });

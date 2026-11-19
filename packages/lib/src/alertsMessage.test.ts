@@ -103,8 +103,18 @@ describe('buildAlertSettingsMessage (#2754)', () => {
       { dueDateReminders: true },
       { dueDateReminders: false },
       { pushAlerts: true as const },
+      { vaultOutflowAlerts: 'on' as const },
+      { vaultOutflowAlerts: 'off' as const },
+      { vaultOutflowAlerts: 'default' as const },
     ].map((change) => buildAlertSettingsMessage(WALLET, 84532, change, 1));
     expect(new Set(msgs).size).toBe(msgs.length);
+  });
+
+  it('adds the vault outflow line only when the save sets it (#3434)', () => {
+    expect(buildAlertSettingsMessage(WALLET, 84532, {}, 1)).not.toContain('Vault outflow');
+    expect(buildAlertSettingsMessage(WALLET, 84532, { vaultOutflowAlerts: 'default' }, 1)).toContain(
+      'Push alerts: unchanged\nVault outflow alerts: on while protected mode is on (default)\n\nWallet:',
+    );
   });
 });
 

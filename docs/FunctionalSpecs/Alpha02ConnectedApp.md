@@ -3266,6 +3266,23 @@ by the extension card even though the contract permits it.
   unrelated change.
 - If no alert backend is configured, the app states that alerts are unavailable
   and sends nothing.
+- An owner is told on the channels they linked whenever a position token of
+  theirs is approved for transfer (one token to an address, or every token to
+  an operator), naming the token and the address and saying that the address
+  can move the position and its payouts. This alert has no switch: an approval
+  the owner did not make is what it exists to catch (#3721).
+- An owner can choose to be told about every movement out of their vault:
+  what left, how much, where it went, why, and the loan or offer it belongs to.
+  The choice is Always, Never, or the default, which is on while the owner's
+  protected mode is on and off otherwise (#3434). An amount is stated in whole
+  units only when the token's own decimals could be read, and otherwise in the
+  token's smallest unit, said so; no name or symbol the token supplies is put
+  in a message.
+- These two alerts are sent once and are not retried when a channel fails;
+  an event that reaches the alert service more than a day late is not
+  announced as news; and the alert service starts from the newest event when
+  it first runs, so history is never sent. They are in English until the
+  alert copy is translated.
 - The alerts card states what this browser knows about the link: when no link was
   made from this browser, it says so, and says that a link made on another device
   would not show here — rather than implying the wallet is linked nowhere. It
