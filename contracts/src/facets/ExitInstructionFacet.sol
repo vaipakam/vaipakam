@@ -738,24 +738,34 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
         if (minPartial == 0) minPartial = 1;
         if (repay < interest + minPartial) repay = interest + minPartial;
 
-        if (repay >= owed) {
-            // It would retire the whole principal: close instead.
+        // The conservative bound may ask for the whole debt where a smaller
+        // sale on the route's own figures would still reach both bounds, so
+        // a close is chosen only when no partial candidate below it does.
+        Reach memory b = Reach(p.tolerance, interest, minPartial, L, h, capBps);
+        bool closeBound = repay >= owed;
+        uint256 safe;
+        if (closeBound) {
+            (bool ok, uint256 atOwed,) = LibSaleSizing.sizeSaleAtRate(rate, owed, loan.collateralAmount, p.tolerance);
+            safe = ok ? atOwed : loan.collateralAmount;
+        } else {
+            bool covers;
+            (covers, safe,) = LibSaleSizing.sizeSaleAtRate(rate, repay, loan.collateralAmount, p.tolerance);
+            // The bound guarantees both checks at the floor; the second is
+            // the route's own figures, kept as a guard against any drift.
+            if (!covers || !_reduceReaches(loan, rate, safe, b)) {
+                p.skip = LibStandingInstructions.SKIP_CANNOT_COVER;
+                return;
+            }
+        }
+        uint256 sell = _leastReach(loan, rate, b, safe);
+        if (closeBound && sell == safe) {
+            // No partial sale reaches the bounds: close instead.
             p.form = LibVaipakam.EXIT_FORM_CLOSE;
             p.targetUsed = 0;
             p.targetIsLtvCap = false;
             _sizeClose(loan.id, loan, rate, p);
             return;
         }
-        (bool covers, uint256 sell,) =
-            LibSaleSizing.sizeSaleAtRate(rate, repay, loan.collateralAmount, p.tolerance);
-        // The bound above guarantees both checks at the floor; the second is
-        // the route's own figures, kept as a guard against any drift.
-        Reach memory b = Reach(p.tolerance, interest, minPartial, L, h, capBps);
-        if (!covers || !_reduceReaches(loan, rate, sell, b)) {
-            p.skip = LibStandingInstructions.SKIP_CANNOT_COVER;
-            return;
-        }
-        sell = _leastReach(loan, rate, b, sell);
         uint256 floor = LibSaleSizing.floorAtRate(rate, sell, p.tolerance);
         if (LibFallback.toPrincipal(rate, sell) >= owed) {
             // The sale's oracle value would cover the whole debt; the partial

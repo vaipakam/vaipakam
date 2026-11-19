@@ -508,6 +508,20 @@ contract ExitInstructionTest is SetupTest {
         assertGe(_hf(), 1.5e18, "target reached");
     }
 
+    /// @dev Coarse units: the conservative bound asks for the whole debt, yet
+    ///      a smaller sale reaches both bounds, so the loan stays open.
+    function test_7_reduceStaysPartialWhenTheBoundAsksForAll() public {
+        _unitLoanOf(0, 0, 8000, 7, 7);
+        _price(address(collateralAsset), 2e8);
+        _set(REDUCE, 1.4e18, 1.5e18, 100, false);
+        _price(address(collateralAsset), 1.5e8);
+        LibTestCalmPair.checkpoint(address(diamond), address(collateralAsset), address(principalAsset));
+        ExitInstructionFacet.ExitPreview memory pv = _x().previewExit(LOAN);
+        assertEq(pv.skip, 0, "due");
+        assertEq(pv.form, REDUCE, "stays a reduction");
+        assertEq(pv.collateralToSell, 4, "the least sale");
+    }
+
     function test_7_reduceHoldsTheCapInWholeUnits() public {
         _wholeUnitLoan(7000);
         _set(REDUCE, 1.1e18, 1.15e18, 100, false);
