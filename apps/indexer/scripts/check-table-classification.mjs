@@ -95,7 +95,6 @@ const CLASSIFICATION = {
     class: 'born-off-chain',
     reason: 'pre-grace warning dedupe (FK child of user_thresholds; archived since #1480)',
   },
-  telegram_links: { class: 'born-off-chain', reason: 'user Telegram chat links' },
   support_tickets: { class: 'born-off-chain', reason: 'durable user support requests (#1040)' },
 
   // replay-derived (the §6 clear list)
@@ -253,9 +252,6 @@ const CLASSIFICATION = {
   // until its request could no longer pass the agent's age check (about
   // eleven minutes). Nothing in it is worth restoring: an archived row has
   // long expired.
-  protected_lock_readiness: { class: 'replay-derived', reason: 'the keeper\'s Telegram LOCK heartbeat (#3088), rewritten every run; a restored row could promise a lock no keeper will make, and clearing it costs at most a minute of the agent sending owners to the app' },
-  alert_channel_changes: { class: 'replay-derived', reason: 'pending removals of a Telegram alert chat under protected mode (#3246); clearing one only cancels a pending change and so keeps the chat linked now, the safe direction, and the owner asks again' },
-  protected_lock_requests: { class: 'replay-derived', reason: 'Telegram LOCK requests (#3088), each acted on within an hour and dropped after a day; an archived copy is always expired, and the keeper keeps its progress on the row, so a cleared table loses nothing it would act on' },
   signed_request_use: { class: 'replay-derived', reason: 'one-time-use marks for signed alert requests, each kept ~11 minutes; an archived copy is always expired' },
   push_rail_status: { class: 'replay-derived', reason: "the keeper's Push rail readiness, republished every watcher run; a restored copy would vouch for a stale configuration" },
   recycle_backing_snapshot: { class: 'replay-derived', reason: 'periodic snapshot of live contract state; re-captured by the scheduled pass, and a restored copy would republish a stale backing verdict' },

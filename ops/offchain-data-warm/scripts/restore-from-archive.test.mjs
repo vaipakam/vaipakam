@@ -69,11 +69,10 @@ function outDir() {
 const LIVE_COLUMNS = {
   user_thresholds: [
     'wallet', 'chain_id', 'warn_hf', 'alert_hf', 'critical_hf',
-    'tg_chat_id', 'push_channel', 'created_at', 'updated_at',
+    'push_channel', 'created_at', 'updated_at',
     'locale', 'notify_maturity_approaching', 'last_test_alert_at',
   ],
   notify_state: ['wallet', 'chain_id', 'loan_id', 'last_band', 'last_hf_milli', 'last_sent_ts'],
-  telegram_links: ['code', 'wallet', 'chain_id', 'expires_at'],
   diag_errors: [
     'id', 'recorded_at', 'client_at', 'fingerprint', 'area', 'flow', 'step',
     'error_type', 'error_name', 'error_selector', 'error_message',
@@ -94,7 +93,7 @@ const LIVE_COLUMNS = {
 function utRow(overrides = {}) {
   return {
     wallet: '0xa', chain_id: 8453, warn_hf: 1.5, alert_hf: 1.2, critical_hf: 1.05,
-    tg_chat_id: null, push_channel: null, created_at: 1, updated_at: 1,
+    push_channel: null, created_at: 1, updated_at: 1,
     locale: 'en', notify_maturity_approaching: 1, last_test_alert_at: 0,
     ...overrides,
   };
@@ -114,7 +113,6 @@ function baselineArchive() {
       'notify_state', LIVE_COLUMNS.notify_state,
       [{ wallet: '0xa', chain_id: 8453, loan_id: 1, last_band: 'healthy', last_hf_milli: 0, last_sent_ts: 0 }],
     ),
-    tableFixture('telegram_links', LIVE_COLUMNS.telegram_links, []),
   ];
 }
 
@@ -624,6 +622,37 @@ test('recycle_day_backfill is retired: an older archive carrying it EMPTY still 
   assert.equal(current.find((e) => e.name === 'recycle_day_backfill'), undefined);
 });
 
+test('telegram_links is superseded: an older archive carrying it WITH rows converts, and imports nothing for it (#3572)', () => {
+  const dir = outDir();
+  const links = tableFixture(
+    'telegram_links', ['code', 'wallet', 'chain_id', 'expires_at'],
+    [{ code: '123456', wallet: '0xa', chain_id: 8453, expires_at: 1 }],
+  );
+  const entries = convertD1({ version: 1, d1: { archive: [...baselineArchive(), links] } }, dir);
+  assert.equal(entries.find((e) => e.name === 'telegram_links'), undefined);
+  assert.equal(existsSync(path.join(dir, 'd1', 'telegram_links.sql')), false);
+  // An archive from after migration 0112 no longer carries it, and that
+  // is not a missing baseline table.
+  const current = convertD1({ version: 1, d1: { archive: baselineArchive() } }, outDir());
+  assert.equal(current.find((e) => e.name === 'telegram_links'), undefined);
+});
+
+test('user_thresholds.tg_chat_id is retired: an older archive restores into today\'s schema without it (#3572)', () => {
+  const dir = outDir();
+  const tables = baselineArchive();
+  const ut = tables.find((t) => t.name === 'user_thresholds');
+  ut.schema = [...ut.schema, { cid: ut.schema.length, name: 'tg_chat_id', type: 'TEXT', notnull: 0, pk: 0 }];
+  ut.rows = ut.rows.map((r) => ({ ...r, tg_chat_id: '987654321' }));
+  const entries = convertD1({ version: 1, d1: { archive: tables } }, dir);
+  const entry = entries.find((e) => e.name === 'user_thresholds');
+  assert.ok(entry, 'user_thresholds is still imported');
+  assert.equal(entry.rowCount, 1);
+  const sql = readFileSync(entry.file, 'utf8');
+  assert.doesNotMatch(sql, /tg_chat_id/);
+  assert.doesNotMatch(sql, /987654321/);
+  assert.match(sql, /"push_channel"/);
+});
+
 test('recycle_day_backfill is retired: an archive carrying ROWS for it is refused (#2937)', () => {
   // No writer ever produced a row, so one is unexplained: refused like any
   // other shape the backup cannot produce, before any batch is written.
@@ -671,8 +700,8 @@ test('recycle_day_backfill is retired: an archive carrying ROWS for it is refuse
 test('duplicate archived primary keys are rejected before any batch is emitted (r12)', () => {
   // Single-column key.
   const dup = tableFixture(
-    'telegram_links', ['code'],
-    [{ code: '111111' }, { code: '111111' }],
+    'diag_errors', ['id'],
+    [{ id: '111111' }, { id: '111111' }],
   );
   assert.throws(() => tableToSql(dup), /duplicate primary key/);
 
@@ -695,7 +724,7 @@ test('duplicate archived primary keys are rejected before any batch is emitted (
 
   // A known table whose schema lacks its trusted key column cannot be
   // verified at all — fatal, not skipped.
-  const noKey = tableFixture('telegram_links', ['wallet'], [{ wallet: '0xa' }]);
+  const noKey = tableFixture('diag_errors', ['wallet'], [{ wallet: '0xa' }]);
   assert.throws(() => tableToSql(noKey), /lacks primary-key/);
 
   // Unknown tables (re-derivable tier) still use the archived
@@ -777,14 +806,14 @@ test('an archived schema that omits a live column is rejected (r13)', () => {
   const dir = outDir();
   const tables = baselineArchive();
   const ut = tables.find((t) => t.name === 'user_thresholds');
-  // Drop tg_chat_id from schema AND rows — internally consistent, and
+  // Drop push_channel from schema AND rows — internally consistent, and
   // without the check it converts to valid SQL that silently NULLs
-  // every chat id (no more Telegram alerts).
-  ut.schema = ut.schema.filter((c) => c.name !== 'tg_chat_id');
-  ut.rows = ut.rows.map(({ tg_chat_id: _drop, ...rest }) => rest);
+  // every push channel (no more push alerts).
+  ut.schema = ut.schema.filter((c) => c.name !== 'push_channel');
+  ut.rows = ut.rows.map(({ push_channel: _drop, ...rest }) => rest);
   assert.throws(
     () => convertD1({ version: 1, d1: { archive: tables } }, dir),
-    /omits live column\(s\) tg_chat_id/,
+    /omits live column\(s\) push_channel/,
   );
 
   // Extra archived columns are allowed — a newer-era archive must not
@@ -885,7 +914,7 @@ test('an empty or baseline-incomplete d1.archive is truncated, not small', () =>
 
 test('duplicate table entries are rejected, not last-writer-wins', () => {
   const dir = outDir();
-  const dup = [...baselineArchive(), tableFixture('telegram_links', ['wallet'], [{ wallet: '0xb' }])];
+  const dup = [...baselineArchive(), tableFixture('diag_errors', ['wallet'], [{ wallet: '0xb' }])];
   assert.throws(() => convertD1({ version: 1, d1: { archive: dup } }, dir), /exactly once/);
 });
 

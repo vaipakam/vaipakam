@@ -98,6 +98,23 @@ const CONTRACT_STEPS = new Map([
       statements: ['DROP TABLE IF EXISTS KEEPER_RUNNER_LEASE'],
     },
   ],
+  [
+    'apps/indexer/migrations/0112_drop_shared_telegram_tables.sql',
+    {
+      issue: '#3572',
+      why:
+        "Drops the shared Telegram tables and user_thresholds.tg_chat_id that 0091 emptied " +
+        "after #1722 moved them into the agent's Durable Object; the keeper release now " +
+        'serving and every Worker name none of them (checked 2026-11-19).',
+      statements: [
+        'DROP TABLE IF EXISTS TELEGRAM_LINKS',
+        'DROP TABLE IF EXISTS ALERT_CHANNEL_CHANGES',
+        'DROP TABLE IF EXISTS PROTECTED_LOCK_REQUESTS',
+        'DROP TABLE IF EXISTS PROTECTED_LOCK_READINESS',
+        'ALTER TABLE USER_THRESHOLDS DROP COLUMN TG_CHAT_ID',
+      ],
+    },
+  ],
 ]);
 
 const problems = [];

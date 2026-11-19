@@ -98,7 +98,6 @@ export const BORN_OFF_CHAIN_TABLES = new Set([
   'user_thresholds',
   'notify_state',
   'pre_grace_notify_state', // archived since #1480; absent from older archives
-  'telegram_links',
   'support_tickets',
   // #2197 (migration 0065) — loan rows proven absent on chain and withdrawn
   // from publication. A replay cannot recreate them, so the archive is the
@@ -149,6 +148,40 @@ export const RETIRED_ARCHIVE_TABLES = new Map([
   ],
 ]);
 
+/**
+ * Tables the backup used to export that were SUPERSEDED rather than never
+ * written: they did hold rows once, and an archive from before the change
+ * may still carry them. Unlike RETIRED_ARCHIVE_TABLES, archived rows are
+ * expected here, so they are skipped with a count instead of refused. Their
+ * state lives elsewhere now and the live schema has no table to put them in.
+ */
+export const SUPERSEDED_ARCHIVE_TABLES = new Map([
+  [
+    'telegram_links',
+    'Telegram link handshake codes, moved into the agent\'s own Durable Object by #1722 ' +
+      '(migration 0091 emptied the shared copy) and dropped from the shared database by ' +
+      'migration 0112 (#3572). Each code expired within minutes of being issued, and owners ' +
+      'link Telegram again from the app',
+  ],
+]);
+
+/**
+ * Columns a born-off-chain table used to carry and no longer does, each with
+ * why. An archive from before the drop still names them; they are taken out
+ * of that table's schema and every row before anything else looks at it, so
+ * the archive restores into today's schema. Values in them are discarded.
+ */
+export const RETIRED_ARCHIVE_COLUMNS = {
+  user_thresholds: new Map([
+    [
+      'tg_chat_id',
+      'the shared copy of an owner\'s Telegram chat, superseded by the agent\'s Durable Object ' +
+        '(#1722, emptied by migration 0091) and dropped by migration 0112 (#3572). Restoring it ' +
+        'would send alerts to a chat its owner may have removed since',
+    ],
+  ]),
+};
+
 // FK children of user_thresholds (ON DELETE CASCADE). Replacing the
 // parent destroys live child rows, so an archive that carries the
 // parent but not a child cannot be applied without silent child loss.
@@ -167,7 +200,6 @@ const BASELINE_TABLES = [
   'diag_legal_hold_audit',
   'user_thresholds',
   'notify_state',
-  'telegram_links',
 ];
 // Era-gated: absent from archives older than their rollout — warn.
 // (pre_grace_notify_state's era gap is warned about by the cascade
@@ -184,7 +216,7 @@ const ERA_GATED_TABLES = {
 // an archive whose schema OMITS a nullable/defaulted column — together
 // with its rows — converts to perfectly valid SQL that completes and
 // silently NULLs that column for every row after the replace-DELETE
-// (e.g. dropping user_thresholds.tg_chat_id disables every Telegram
+// (e.g. dropping user_thresholds.push_channel disables every push
 // alert). The archived schema must therefore CONTAIN at least these
 // columns (a superset is fine: a newer-era archive with added columns
 // either matches a migrated live schema or fails loudly at import).
@@ -195,12 +227,11 @@ const ERA_GATED_TABLES = {
 const REQUIRED_TABLE_COLUMNS = {
   user_thresholds: [
     'wallet', 'chain_id', 'warn_hf', 'alert_hf', 'critical_hf',
-    'tg_chat_id', 'push_channel', 'created_at', 'updated_at',
+    'push_channel', 'created_at', 'updated_at',
     'locale', 'notify_maturity_approaching', 'last_test_alert_at',
   ],
   notify_state: ['wallet', 'chain_id', 'loan_id', 'last_band', 'last_hf_milli', 'last_sent_ts'],
   pre_grace_notify_state: ['wallet', 'chain_id', 'loan_id', 'last_sent_ts'],
-  telegram_links: ['code', 'wallet', 'chain_id', 'expires_at'],
   diag_errors: [
     'id', 'recorded_at', 'client_at', 'fingerprint', 'area', 'flow', 'step',
     'error_type', 'error_name', 'error_selector', 'error_message',
@@ -247,7 +278,6 @@ const TRUSTED_PRIMARY_KEYS = {
   user_thresholds: ['wallet', 'chain_id'],
   notify_state: ['wallet', 'chain_id', 'loan_id'],
   pre_grace_notify_state: ['wallet', 'chain_id', 'loan_id'],
-  telegram_links: ['code'],
   diag_errors: ['id'],
   support_tickets: ['ticket_id'],
   diag_legal_holds: ['wallet_hash'],
@@ -559,9 +589,18 @@ export function assertVersion(archive) {
 function dropRetiredTables(tables) {
   const kept = [];
   for (const table of tables) {
+    const superseded = SUPERSEDED_ARCHIVE_TABLES.get(table?.name);
+    if (superseded !== undefined) {
+      const count = Array.isArray(table.rows) ? table.rows.length : 0;
+      console.warn(
+        `ℹ archive carries superseded table ${table.name} (${count} row${count === 1 ? '' : 's'}) — ` +
+          `skipped: no batch is emitted and nothing is imported (${superseded}).`,
+      );
+      continue;
+    }
     const why = RETIRED_ARCHIVE_TABLES.get(table?.name);
     if (why === undefined) {
-      kept.push(table);
+      kept.push(dropRetiredColumns(table));
       continue;
     }
     const rows = table.rows;
@@ -578,6 +617,35 @@ function dropRetiredTables(tables) {
     );
   }
   return kept;
+}
+
+/**
+ * The table with its retired columns (RETIRED_ARCHIVE_COLUMNS) taken out of
+ * the schema and of every row, announced once. A row that is not an object
+ * is left for tableToBatch's own shape check to refuse.
+ */
+function dropRetiredColumns(table) {
+  const retired = RETIRED_ARCHIVE_COLUMNS[table?.name];
+  if (!retired || !Array.isArray(table.schema)) return table;
+  const present = table.schema.map((c) => c?.name).filter((n) => retired.has(n));
+  if (present.length === 0) return table;
+  for (const col of present) {
+    console.warn(
+      `ℹ archive's ${table.name} carries retired column ${col} — dropped from the schema and ` +
+        `every row before import (${retired.get(col)}).`,
+    );
+  }
+  const strip = (row) => {
+    if (row === null || typeof row !== 'object' || Array.isArray(row)) return row;
+    const copy = { ...row };
+    for (const col of present) delete copy[col];
+    return copy;
+  };
+  return {
+    ...table,
+    schema: table.schema.filter((c) => !retired.has(c?.name)),
+    rows: Array.isArray(table.rows) ? table.rows.map(strip) : table.rows,
+  };
 }
 
 export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db' } = {}) {
@@ -617,7 +685,9 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
     const nameList = tables.map((t) => t?.name);
     const names = new Set(nameList);
     for (const t of names) {
-      const retired = database === ARCHIVE_DATABASE && RETIRED_ARCHIVE_TABLES.has(t);
+      const retired =
+        database === ARCHIVE_DATABASE &&
+        (RETIRED_ARCHIVE_TABLES.has(t) || SUPERSEDED_ARCHIVE_TABLES.has(t));
       if (!allowed.has(t) && !retired) {
         fail(
           `archive names table ${JSON.stringify(t)} which the backup never exports to this ` +

@@ -85,8 +85,8 @@ const ARCHIVE_TABLES_REQUIRED = [
   'diag_errors',
   'diag_legal_holds',
   'diag_legal_hold_audit',
-  // User-supplied / user-derived state (HF alert thresholds,
-  // notification dedupe state, Telegram chat links). Born off chain,
+  // User-supplied / user-derived state (HF alert thresholds and
+  // notification dedupe state). Born off chain,
   // losing them = user-visible breakage on restore.
   'user_thresholds',
   'notify_state',
@@ -97,7 +97,8 @@ const ARCHIVE_TABLES_REQUIRED = [
   // unrecoverable and users got duplicate pre-grace warnings after
   // every restore (#1480, found in #1450 r30).
   'pre_grace_notify_state',
-  'telegram_links',
+  // telegram_links left the archive with migration 0112 (#3572): the
+  // Telegram link state lives in the agent's Durable Object since #1722.
   // signed_offers is HYBRID (#1481): EIP-712 offers users POSTed to the
   // book, which exist nowhere on chain until filled, with a status the
   // indexer projects from chain events. Its migration (0033) is applied on

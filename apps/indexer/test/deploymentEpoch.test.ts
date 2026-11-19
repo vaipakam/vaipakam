@@ -113,7 +113,7 @@ describe('listChainScopedTables', () => {
     // User-owned tables DO carry chain_id — which is exactly why the keep
     // list exists; the default would otherwise reset them.
     expect(tables).toContain('user_thresholds');
-    expect(tables).toContain('telegram_links');
+    expect(tables).toContain('support_tickets');
     // Sorted, no duplicates — the reset batch is one statement per table.
     expect(tables).toEqual([...new Set(tables)].sort());
   });

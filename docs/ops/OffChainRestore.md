@@ -750,8 +750,8 @@ then deploy.
    > passes are NOT behind `KEEPER_ENABLED` (only the signing passes are), so
    > `runWatcher` / `runPreGraceWatcher` begin messaging users off
    > half-imported `user_thresholds` and `notify_state`; and the agent's
-   > retention passes begin pruning `diag_errors` / `support_tickets` /
-   > expired `telegram_links` while those tables are still being imported one
+   > retention passes begin pruning `diag_errors` / `support_tickets`
+   > while those tables are still being imported one
    > at a time — deleting restored rows before §4's manifest row-count check
    > can even see them.
    >
@@ -1458,7 +1458,7 @@ For each table:
    **`vaipakam-warm` tables** (born-off-chain and hybrid): `diag_errors`,
    `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`,
    `notify_state`, `pre_grace_notify_state` (absent from pre-#1480
-   archives), `telegram_links`, `support_tickets`,
+   archives), `support_tickets`,
    `loan_orphans` (absent from pre-#2197 archives) and `signed_offers`
    (absent from pre-#1481 archives).
 
@@ -1683,9 +1683,6 @@ DELETE FROM webhook_deliveries; \
 DELETE FROM prenotify_pass; \
 DELETE FROM push_rail_status; \
 DELETE FROM signed_request_use; \
-DELETE FROM protected_lock_requests; \
-DELETE FROM protected_lock_readiness; \
-DELETE FROM alert_channel_changes; \
 DELETE FROM asset_ranking; \
 DELETE FROM asset_ranking_run; \
 DELETE FROM indexer_deployment; \
@@ -1728,16 +1725,6 @@ before the clear could be presented once more until its signature ages out.
 Every such request is one its wallet did sign, for the action it names, and
 the agent's per-IP write limit still applies.
 
-`protected_lock_requests` (#3088) holds the Telegram `LOCK` requests the
-agent recorded for the keeper. The keeper acts on a request within an hour
-or answers it as expired, and drops one older than a day without a message,
-so an archived copy holds nothing it would still act on. The keeper keeps its
-progress on each row (`handled_at`), not in a cursor of its own, so a cleared
-table cannot leave new requests below a stale position. Clearing it has one
-stated cost: a `LOCK` sent in the last minute or so before the clear, not yet
-handled, is lost, and the owner gets no answer for it; the owner can send it
-again or lock from the app.
-
 `asset_ranking` and `asset_ranking_run` (#3446) hold the public market-cap
 rankings the app's asset trust tiers read, and the keeper's record of each
 day's fetch. Nothing in them is born here: with the run record empty, every
@@ -1746,34 +1733,18 @@ on its next hourly run (it must be armed). Until then the app shows no tier,
 and its own-risk warning, for every asset. Keeping a restored copy would show
 tiers no fetch has checked.
 
-`alert_channel_changes` (#3246) holds the pending removals of a Telegram
-alert chat under protected mode. Clearing it only cancels a pending change,
-which keeps the chat linked now: the safe direction, since the change it
-cancels is the one that could silence a protected account's alerts. Its
-stated cost: an owner whose unlink or chat move was pending must ask again,
-and is not told that the earlier request was dropped.
-
-**Telegram links are no longer in this database (#1722).** Since migration
-`0091` the agent keeps every Telegram link, pending alert-chat change and
-`LOCK` request in its own Durable Object (`TelegramState`), and the shared
-copies above (`telegram_links`, `alert_channel_changes`,
-`protected_lock_requests` and `user_thresholds.tg_chat_id`) are empty until a
-later migration drops them. Nothing in this runbook restores that state: it is
-recovered through the Durable Object storage's own point-in-time restore (30
-days), described in `apps/agent/README.md`. One step follows from it: an
-archive taken BEFORE `0091` still carries the old copies, and importing one
-puts chat ids back where the keeper's old code reads them. After importing
-such an archive, run the four statements of
-`apps/indexer/migrations/0091_telegram_state_moved.sql` again against the
-shared database, so no chat the owner has since removed receives an alert.
-
-`protected_lock_readiness` (#3088) is the keeper's heartbeat for the
-Telegram `LOCK` step: it says, per chain, when a keeper able to sign last
-worked the requests, and the agent records a `LOCK` only while that is
-recent. Like `push_rail_status`, the keeper rewrites it every run, so
-clearing it costs at most a minute in which the agent tells an owner to lock
-from the app instead. Keeping it would let a restored row promise a lock that
-no keeper may now make.
+**Telegram links are no longer in this database (#1722, #3572).** Since
+migration `0091` the agent keeps every Telegram link, pending alert-chat change
+and `LOCK` request in its own Durable Object (`TelegramState`), and migration
+`0112` dropped the shared copies (`telegram_links`, `alert_channel_changes`,
+`protected_lock_requests`, `protected_lock_readiness` and
+`user_thresholds.tg_chat_id`). Nothing in this runbook restores that state: it
+is recovered through the Durable Object storage's own point-in-time restore
+(30 days), described in `apps/agent/README.md`. An archive taken before `0112`
+still names `telegram_links` and `user_thresholds.tg_chat_id`; the converter
+skips the table and strips the column, saying so for each, so the archive
+restores into today's schema and no removed chat is put back. There is no
+longer a step to re-run `0091` after an import.
 
 What the pre-notify lane has examined in its current pass (#2230) lives on
 the `loans` rows themselves, in the `prenotify_examined_*` columns, so
