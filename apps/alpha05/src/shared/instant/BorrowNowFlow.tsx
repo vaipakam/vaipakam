@@ -4,6 +4,7 @@ import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useMode } from '../../app/ModeContext';
 import { useCopy } from '../copy/useCopy';
+import { formatBps } from '../ui/format';
 import { refusalFromData, refusalFromError, StatedRefusal } from '../eligibility/refusal';
 import { GUIDE_ORIGIN, guideUrl } from '../help/guide';
 import { assetName, exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
@@ -23,7 +24,7 @@ import { useTrackedTx } from '../tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
 import { pageHandoff } from '../../routes/pageMap';
-import { borrowNowCall, borrowNowLogs, coverage, instantRequest, planFrom, planOf, restOf, type BorrowNowReview, type BorrowNowTerms } from './borrowNow';
+import { borrowNowCall, borrowNowLogs, coverage, instantRequest, planFrom, planOf, restOf, type BorrowNowReview, type BorrowNowTerms, type SourceChoice, type SourceEstimate } from './borrowNow';
 import { borrowNowBlocker, borrowNowReceipt } from './borrowNowReceipt';
 import { borrowNowKey, readBorrowNowReview } from './borrowNowReview';
 import { BORROW_NOW_KEY } from './BorrowNowForm';
@@ -356,6 +357,7 @@ export function BorrowNowFlow({ terms, chain, own, meta, termsState, onEdit, onR
         ready: consented && blocker === null && review.risk === null,
         node: (
           <div className="accept-gate">
+            <SourceChoiceLines choice={review.choice} />
             {blocker !== null && (
               <Notice tone={review.state.kind === 'needs-approval' ? 'warn' : 'danger'} tier="A">
                 {blocker}
@@ -503,6 +505,29 @@ export function BorrowNowFlow({ terms, chain, own, meta, termsState, onEdit, onR
           </p>
         </section>
       )}
+    </div>
+  );
+}
+
+/** BorrowingDesign §12: how many lenders the chosen list uses and the rate
+ *  across them, beside what the other order would change. Estimated from
+ *  the read, and said so; the plan above is the protocol's own answer. */
+function SourceChoiceLines({ choice }: { choice: SourceChoice | undefined }) {
+  const { text, format } = useCopy();
+  if (!choice) return null;
+  const line = (e: SourceEstimate) => ({ lenders: String(e.lenders), low: formatBps(e.lowBps), high: formatBps(e.highBps), across: formatBps(e.acrossBps) });
+  const other = choice.other;
+  return (
+    <div data-testid="borrownow-choice" data-order={choice.order.kind} data-lenders={choice.chosen?.lenders ?? 0}>
+      <p className="tier-b">{choice.chosen ? format('borrowNow.choiceChosen', line(choice.chosen)) : text('borrowNow.choiceNone')}</p>
+      {other.estimate && (
+        <p className="tier-b" data-testid="borrownow-choice-other">
+          {other.order.kind === 'fewest-lenders'
+            ? format('borrowNow.choiceOtherFewest', { ...line(other.estimate), spread: formatBps(other.order.spreadBps) })
+            : format('borrowNow.choiceOtherBest', line(other.estimate))}
+        </p>
+      )}
+      <p className="tier-b">{text('borrowNow.choiceEstimate')}</p>
     </div>
   );
 }

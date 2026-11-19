@@ -8,6 +8,8 @@ An Auto-lend slot now shows its record from the index: how much of the last peri
 
 The cash-out, takeover and instant-borrow reviews now read the protocol's own previews: whether a takeover or a direct sale would be accepted and what each side receives, including any held amount that moves with a sale, and what an instant borrow would give from each source and which sources it would skip, stated as not binding. Late-fee figures in what-if and the accept review come from the protocol's late-fee schedule. Two new refusals have plain words.
 
+Borrow now also asks how the lenders are chosen: best rate, the cheapest first, or fewest lenders within a rate difference the borrower states, which means fewer loans and less gas at a rate that can be a little higher. The review says how many lenders the list uses and the rate across them, and what the other choice would change, estimated from what was read; it recommends neither (the borrowing design, PR #3809, section 12).
+
 Advances #3770; builds on the protocol previews from #3786.
 
 > Caveat: the e2e with real multi-signature wallet contracts on the CI chain, the approve-and-deposit batch, the signed order's cancel note, the adopt resume re-screen and the request-key Telegram link are still to come under #3770; no multi-signature link to Telegram ships before the request key is in.

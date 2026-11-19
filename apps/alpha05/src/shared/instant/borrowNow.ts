@@ -115,10 +115,87 @@ export function offerCandidate(offerId: bigint, o: StoredOffer, lending: Hex, co
   return { source: { kind: 1, owner: ZERO, slot: 0, offerId }, rateBps: o.interestRateBps, room };
 }
 
-/** Cheapest first; among equal rates, the most room first; at most the
- *  number the protocol reads. Each fill is priced at its own source's rate. */
-export function orderSources(cands: readonly Candidate[]): Candidate[] {
-  return [...cands].sort((a, b) => (a.rateBps !== b.rateBps ? (a.rateBps < b.rateBps ? -1 : 1) : a.room > b.room ? -1 : a.room < b.room ? 1 : 0)).slice(0, MAX_SOURCES);
+/**
+ * How the source list is built (BorrowingDesign §12). `best-rate`: cheapest
+ * first, so each part of the amount takes the lowest rate standing.
+ * `fewest-lenders`: among the sources within `spreadBps` of the cheapest,
+ * the largest first, so fewer lenders (fewer loans, less gas) cover the
+ * amount at a rate up to that much higher; the rest follow cheapest first.
+ * The app states both and recommends neither.
+ */
+export type SourceOrder = { kind: 'best-rate' } | { kind: 'fewest-lenders'; spreadBps: bigint };
+
+export const BEST_RATE: SourceOrder = { kind: 'best-rate' };
+
+/** Terms kept in the browser by an earlier build carry no order: read them
+ *  as best rate, the order every earlier build used. */
+export function withOrder(t: BorrowNowTerms): BorrowNowTerms {
+  return t.order && (t.order.kind === 'best-rate' || t.order.kind === 'fewest-lenders') ? t : { ...t, order: BEST_RATE };
+}
+
+const byRate = (a: Candidate, b: Candidate) => (a.rateBps !== b.rateBps ? (a.rateBps < b.rateBps ? -1 : 1) : a.room > b.room ? -1 : a.room < b.room ? 1 : 0);
+const byRoom = (a: Candidate, b: Candidate) => (a.room !== b.room ? (a.room > b.room ? -1 : 1) : a.rateBps < b.rateBps ? -1 : a.rateBps > b.rateBps ? 1 : 0);
+
+/** The sources in the chosen order, at most the number the protocol reads.
+ *  Each fill is priced at its own source's rate. */
+export function orderSources(cands: readonly Candidate[], order: SourceOrder = BEST_RATE): Candidate[] {
+  const cheap = [...cands].sort(byRate);
+  if (order.kind === 'best-rate' || cheap.length === 0) return cheap.slice(0, MAX_SOURCES);
+  const ceiling = cheap[0]!.rateBps + order.spreadBps;
+  const within = cheap.filter((c) => c.rateBps <= ceiling).sort(byRoom);
+  const beyond = cheap.filter((c) => c.rateBps > ceiling);
+  return [...within, ...beyond].slice(0, MAX_SOURCES);
+}
+
+/** What a list would give if every source lent all the room the app read,
+ *  in order, up to `amount`: how many lenders, and the lowest, highest and
+ *  amount-weighted rates across them. An estimate from the read only; the
+ *  protocol decides each fill, and the review's figures come from it. */
+export interface SourceEstimate {
+  lenders: number;
+  covered: bigint;
+  lowBps: bigint;
+  highBps: bigint;
+  /** The rate across the fills, weighted by amount, rounded down. */
+  acrossBps: bigint;
+}
+
+export function estimateFills(ordered: readonly Candidate[], amount: bigint): SourceEstimate | null {
+  let left = amount;
+  let lenders = 0;
+  let low: bigint | null = null;
+  let high = 0n;
+  let weighted = 0n;
+  for (const c of ordered) {
+    if (left === 0n) break;
+    const take = c.room < left ? c.room : left;
+    if (take === 0n) continue;
+    left -= take;
+    lenders += 1;
+    if (low === null || c.rateBps < low) low = c.rateBps;
+    if (c.rateBps > high) high = c.rateBps;
+    weighted += take * c.rateBps;
+  }
+  const covered = amount - left;
+  if (lenders === 0 || low === null) return null;
+  return { lenders, covered, lowBps: low, highBps: high, acrossBps: weighted / covered };
+}
+
+/** The chosen list's estimate beside the other order's, so the review can
+ *  say what choosing the other way would change. */
+export interface SourceChoice {
+  order: SourceOrder;
+  chosen: SourceEstimate | null;
+  other: { order: SourceOrder; estimate: SourceEstimate | null };
+}
+
+export function sourceChoice(cands: readonly Candidate[], amount: bigint, order: SourceOrder, otherSpreadBps: bigint): SourceChoice {
+  const otherOrder: SourceOrder = order.kind === 'best-rate' ? { kind: 'fewest-lenders', spreadBps: otherSpreadBps } : BEST_RATE;
+  return {
+    order,
+    chosen: estimateFills(orderSources(cands, order), amount),
+    other: { order: otherOrder, estimate: estimateFills(orderSources(cands, otherOrder), amount) },
+  };
 }
 
 /** What the borrower states, parsed. */
@@ -130,6 +207,8 @@ export interface BorrowNowTerms {
   termDays: number;
   maxRateBps: bigint;
   allowsPartialRepay: boolean;
+  /** How the source list is built (BorrowingDesign §12). */
+  order: SourceOrder;
 }
 
 export interface InstantBorrowRequest {
@@ -296,11 +375,20 @@ export interface BorrowNowInput {
   days: string;
   rate: string;
   allowsPartialRepay: boolean;
+  /** How the source list is built, and for fewest lenders the rate
+   *  difference above the cheapest the borrower accepts, in percent. */
+  order: SourceOrder['kind'];
+  spread: string;
 }
 
-export const DEFAULT_BORROW_NOW: BorrowNowInput = { amount: '', collateral: '', days: '30', rate: '', allowsPartialRepay: true };
+/** The rate difference offered for fewest lenders until the borrower
+ *  states one, in percent. It recommends nothing: best rate is the default. */
+export const DEFAULT_SPREAD = '0.5';
+export const DEFAULT_SPREAD_BPS = 50n;
 
-export type BorrowNowField = 'amount' | 'collateral' | 'days' | 'rate';
+export const DEFAULT_BORROW_NOW: BorrowNowInput = { amount: '', collateral: '', days: '30', rate: '', allowsPartialRepay: true, order: 'best-rate', spread: DEFAULT_SPREAD };
+
+export type BorrowNowField = 'amount' | 'collateral' | 'days' | 'rate' | 'spread';
 export type BorrowNowError = ParseError | 'high' | 'empty' | 'invalid' | 'zero';
 
 export function parseBorrowNow(
@@ -319,10 +407,15 @@ export function parseBorrowNow(
   if (!days.ok) errors.days = days.error;
   const rate = parseRateBps(input.rate);
   if (!rate.ok) errors.rate = rate.error;
-  if (!amount.ok || !coll.ok || !days.ok || !rate.ok) return { ok: false, errors };
+  // The spread is read only when it is used, so a stale entry never blocks
+  // a best-rate borrow.
+  const spread = input.order === 'fewest-lenders' ? parseRateBps(input.spread) : null;
+  if (spread !== null && !spread.ok) errors.spread = spread.error;
+  if (!amount.ok || !coll.ok || !days.ok || !rate.ok || (spread !== null && !spread.ok)) return { ok: false, errors };
+  const order: SourceOrder = spread !== null && spread.ok ? { kind: 'fewest-lenders', spreadBps: spread.value } : BEST_RATE;
   return {
     ok: true,
-    terms: { lending, collateral, amount: amount.value, collateralOffered: coll.value, termDays: days.value, maxRateBps: rate.value, allowsPartialRepay: input.allowsPartialRepay },
+    terms: { lending, collateral, amount: amount.value, collateralOffered: coll.value, termDays: days.value, maxRateBps: rate.value, allowsPartialRepay: input.allowsPartialRepay, order },
   };
 }
 
@@ -366,6 +459,8 @@ export interface BorrowNowReview {
   approvalSteps: number;
   /** The wallet and network the review was read under (`reviewIdentity`). */
   identity: string;
+  /** The chosen list's estimate beside the other order's (§12). */
+  choice: SourceChoice;
   /** The risk-access step a fill on the pair would refuse without, if any. */
   risk: RiskNeed | null;
   /** The loan initiation fee's term rule, or null when it could not be read

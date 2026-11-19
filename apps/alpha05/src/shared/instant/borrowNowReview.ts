@@ -20,6 +20,9 @@ import {
   instantRequest,
   offerCandidate,
   orderSources,
+  sourceChoice,
+  DEFAULT_SPREAD_BPS,
+  withOrder,
   planFrom,
   previewBorrowCall,
   previewFrom,
@@ -32,6 +35,7 @@ import {
   type BorrowNowTerms,
   type Candidate,
   type InstantSource,
+  type SourceChoice,
 } from './borrowNow';
 
 type Hex = `0x${string}`;
@@ -49,7 +53,7 @@ const OFFER_PAGE = 20;
  *  Auto-lend list up to its view cap, the pair's first offers), so
  *  `complete` is false when either list is longer than what was read: the
  *  review then never says no lender can take the borrow. */
-export async function readSources(c: PublicClient, diamond: Hex, t: BorrowNowTerms, borrower: Hex): Promise<{ sources: InstantSource[]; complete: boolean }> {
+export async function readSources(c: PublicClient, diamond: Hex, t: BorrowNowTerms, borrower: Hex): Promise<{ sources: InstantSource[]; complete: boolean; choice: SourceChoice }> {
   const [intents, offers] = await Promise.all([readLenderIntents(c, diamond), readPairOfferIds(c, diamond, t.lending, t.collateral, OFFER_PAGE)]);
   const slots = slotCandidates(intents.intents, t.lending, t.collateral, intents.at, borrower, t.termDays, t.maxRateBps);
   let unread = 0;
@@ -66,7 +70,13 @@ export async function readSources(c: PublicClient, diamond: Hex, t: BorrowNowTer
   const found = [...consented, ...fromOffers].filter((x): x is Candidate => x !== null);
   if (found.length === 0 && unread > 0) throw new Error(`${unread} borrow source(s) could not be read`);
   const complete = BigInt(intents.scanned) >= intents.total && BigInt(offers.ids.length) >= offers.total;
-  return { sources: orderSources(found).map((x) => x.source), complete };
+  return { sources: orderSources(found, t.order).map((x) => x.source), complete, choice: sourceChoice(found, t.amount, t.order, spreadForOther(t)) };
+}
+
+/** The spread the other order is estimated at: the borrower's own when
+ *  fewest lenders is chosen (best rate needs none), else the default. */
+function spreadForOther(t: BorrowNowTerms): bigint {
+  return t.order.kind === 'fewest-lenders' ? t.order.spreadBps : DEFAULT_SPREAD_BPS;
 }
 
 /** The collateral the vault can supply now, as the instant fill draws it:
@@ -111,7 +121,8 @@ export async function askPlan(
   throw new Error(asked.reason);
 }
 
-export async function readBorrowNowReview(own: OwnStateClient, diamond: Hex, t: BorrowNowTerms, identity: string): Promise<BorrowNowReview> {
+export async function readBorrowNowReview(own: OwnStateClient, diamond: Hex, given: BorrowNowTerms, identity: string): Promise<BorrowNowReview> {
+  const t = withOrder(given);
   const account = own.account;
   const [config, found, free, allowance, walletHas, risk, lif] = await Promise.all([
     own.read((c) => readInstantConfig(c, diamond)).then((x) => x.value),
@@ -125,7 +136,7 @@ export async function readBorrowNowReview(own: OwnStateClient, diamond: Hex, t: 
       () => null,
     ),
   ]);
-  const { sources, complete: searchComplete } = found;
+  const { sources, complete: searchComplete, choice } = found;
   const fromVault = free < t.collateralOffered ? free : t.collateralOffered;
   const walletPart = t.collateralOffered - fromVault;
   const approvalNeeded = walletPart > 0n && allowance < walletPart;
@@ -135,7 +146,7 @@ export async function readBorrowNowReview(own: OwnStateClient, diamond: Hex, t: 
     ? (await allowanceSteps({ accepts: (amount) => own.read((c) => tokenAcceptsApproval(c, t.collateral, account, diamond, amount)).then((x) => x.value) }, allowance, walletPart))
         .length
     : 0;
-  const base = { terms: t, sources, searchComplete, walletPart, allowance, approvalNeeded, approvalSteps, identity, risk, lif, readAt: Date.now() };
+  const base = { terms: t, sources, searchComplete, choice, walletPart, allowance, approvalNeeded, approvalSteps, identity, risk, lif, readAt: Date.now() };
   if (!config.enabled) return { ...base, state: { kind: 'market-off' } };
   if (sources.length === 0) return { ...base, state: { kind: searchComplete ? 'no-source' : 'none-found' } };
   // A wallet short of the whole collateral may still cover a part fill: each
