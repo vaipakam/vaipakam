@@ -56,6 +56,8 @@ contract OfferParallelSaleFacetTest is SetupTest {
     address internal borrowerVaultAddr;
 
     uint256 internal constant OFFER_ID = 7_777;
+    /// @dev #3744 — the offer's own position token; its holder acts on it.
+    uint256 internal constant OFFER_TOKEN_ID = 977_777;
     uint256 internal constant COLLATERAL_TOKEN_ID = 42;
     uint256 internal constant PRINCIPAL_AMOUNT = 100 ether;
     uint256 internal constant DURATION_DAYS = 30;
@@ -124,6 +126,7 @@ contract OfferParallelSaleFacetTest is SetupTest {
     function _baseOffer() internal view returns (LibVaipakam.Offer memory o) {
         o.id = OFFER_ID;
         o.creator = borrowerHolder;
+        o.positionTokenId = OFFER_TOKEN_ID;
         o.offerType = LibVaipakam.OfferType.Borrower;
         o.assetType = LibVaipakam.AssetType.ERC20;
         o.collateralAssetType = LibVaipakam.AssetType.ERC721;
@@ -150,6 +153,9 @@ contract OfferParallelSaleFacetTest is SetupTest {
 
     function _scaffoldOffer(LibVaipakam.Offer memory o) internal {
         TestMutatorFacet(address(diamond)).setOffer(OFFER_ID, o);
+        // #3744 — the offer's token, held by its creator, as a posted offer's is.
+        // A re-scaffold finds it minted already.
+        try TestMutatorFacet(address(diamond)).mintNFTRaw(o.creator, OFFER_TOKEN_ID) {} catch {}
     }
 
     function _scaffoldDefaultOffer() internal {
@@ -201,7 +207,7 @@ contract OfferParallelSaleFacetTest is SetupTest {
         _scaffoldDefaultOffer();
 
         vm.prank(nonCreator);
-        vm.expectRevert(IVaipakamErrors.NotOfferCreator.selector);
+        vm.expectRevert(IVaipakamErrors.NotOfferHolder.selector);
         OfferParallelSaleFacet(address(diamond)).postParallelSaleListing(
             uint96(OFFER_ID), SAFE_ASK, conduitKey, _emptyFeeLegs()
         );
@@ -412,7 +418,7 @@ contract OfferParallelSaleFacetTest is SetupTest {
         _scaffoldDefaultOffer();
 
         vm.prank(nonCreator);
-        vm.expectRevert(IVaipakamErrors.NotOfferCreator.selector);
+        vm.expectRevert(IVaipakamErrors.NotOfferHolder.selector);
         OfferParallelSaleFacet(address(diamond)).releaseParallelSaleLock(uint96(OFFER_ID));
     }
 

@@ -7,6 +7,7 @@ import {LibTiming} from "../libraries/LibTiming.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibCollateralSet} from "../libraries/LibCollateralSet.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
+import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibIntentFill} from "../libraries/LibIntentFill.sol";
 import {LibOfferMatchExecute} from "../libraries/LibOfferMatchExecute.sol";
@@ -129,8 +130,6 @@ contract CollectionOfferFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
     /// @notice A reduction must leave at least one loan and fewer than are
     ///         left now (to withdraw the offer whole, cancel it).
     error CollectionReductionInvalid(uint16 loansLeft, uint16 requested);
-    /// @notice Only the offer's lender (its account manager) may do this.
-    error NotCollectionOfferLender();
 
     /// @notice #3328 — what a borrower presents to fill a signed collection
     ///         offer: the token, its Listed-set proof (empty otherwise), and
@@ -228,7 +227,7 @@ contract CollectionOfferFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
     /// @notice Lower the loans a collection offer still funds to
     ///         `loansLeft`; the released principal goes to the vault of the
     ///         holder of the offer's position token as free balance (#3744,
-    ///         payout rule 2026-11-19). For that holder's account manager.
+    ///         payout rule 2026-11-19). For that holder only.
     ///         At least one loan must stay; to withdraw the offer whole,
     ///         cancel it.
     function reduceCollectionLoans(uint256 offerId, uint16 loansLeft) external nonReentrant whenNotPaused {
@@ -236,7 +235,9 @@ contract CollectionOfferFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
         LibVaipakam.CollectionOffer storage c = s.collectionOffer[offerId];
         LibVaipakam.Offer storage p = s.offers[offerId];
         if (c.set.kind == LibVaipakam.CollateralSetKind.None) revert NotCollectionOffer(offerId);
-        if (!LibOfferRefund.managedBy(p, msg.sender)) revert NotCollectionOfferLender();
+        // #3744 — the offer's escrow follows its token: its holder lowers it,
+        // and the released principal pays that holder.
+        LibAuth.requireOfferHolder(p);
         TakeFailure open = _openFailure(s, offerId, p);
         if (open != TakeFailure.None) revert CollectionTakeRefused(offerId, 0, open);
         uint16 left = c.loans - c.filled;

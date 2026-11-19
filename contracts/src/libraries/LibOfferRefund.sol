@@ -3,7 +3,6 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibPositionNFT} from "./LibPositionNFT.sol";
-import {LibProtectedAccount} from "./LibProtectedAccount.sol";
 import {LibRevert} from "./LibRevert.sol";
 
 /// @dev The refund host's entry, for the self-call encoding.
@@ -54,12 +53,5 @@ library LibOfferRefund {
         uint256 token = offer.positionTokenId;
         if (token != 0) h = LibPositionNFT.core().holderOf(token);
         if (h == address(0)) h = offer.creator;
-    }
-
-    /// @notice Whether `caller` manages the holder of `offer`'s position
-    ///         token: the holder's own wallet, or its controller once a
-    ///         protected-account replacement retired it.
-    function managedBy(LibVaipakam.Offer storage offer, address caller) internal view returns (bool) {
-        return caller == LibProtectedAccount.manager(holder(offer));
     }
 }

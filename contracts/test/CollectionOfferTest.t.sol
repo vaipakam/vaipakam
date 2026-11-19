@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {LibTestPayout} from "./helpers/LibTestPayout.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {CollectionOfferFacet} from "../src/facets/CollectionOfferFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";

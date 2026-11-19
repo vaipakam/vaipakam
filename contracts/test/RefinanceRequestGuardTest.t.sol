@@ -5,6 +5,7 @@ import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {LibPositionNFT} from "../src/libraries/LibPositionNFT.sol";
 import {SetupTest} from "./SetupTest.t.sol";
+import {LibTestPayout} from "./helpers/LibTestPayout.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {AutoLifecycleSettingsFacet} from "../src/facets/AutoLifecycleSettingsFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -678,6 +679,8 @@ contract RefinanceRequestGuardTest is SetupTest {
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY + 1); // past the cancel cooldown
         vm.prank(makeAddr("offsetCleaner"));
         OfferCancelFacet(address(diamond)).cancelOffer(offsetOfferId);
+        // #3744 — the refund lands in the vault as free balance; withdraw it.
+        LibTestPayout.withdrawAllFree(address(diamond), creator);
 
         assertEq(ERC20(mockERC20).balanceOf(creator), creatorWallet + deposited, "the creator gets back exactly the offset principal");
         assertEq(ERC20(mockCollateralERC20).balanceOf(creator), creatorCollateral, "no collateral reaches the creator");

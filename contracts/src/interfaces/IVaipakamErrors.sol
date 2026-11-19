@@ -116,7 +116,9 @@ interface IVaipakamErrors {
     ///         listing, or a live swap-to-repay intent). Eager hooks skip these
     ///         silently; the explicit caller gets this revert.
     error ConsolidationNotAllowed();
-    error NotOfferCreator();
+    /// @notice #3744 — the caller does not hold the offer's position token
+    ///         (or a retired account is involved); see `LibAuth.requireOfferHolder`.
+    error NotOfferHolder();
     error InvalidAddress();
     error InvalidAmount();
     /// @notice A governance-tunable parameter setter rejected the

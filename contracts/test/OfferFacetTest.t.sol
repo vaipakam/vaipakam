@@ -6,6 +6,7 @@ import {LibTestCollateralCut} from "./helpers/LibTestCollateralCut.sol";
 import {LibTestTermsCut} from "./helpers/LibTestTermsCut.sol";
 import {LibTestProtectedCut} from "./helpers/LibTestProtectedCut.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {LibTestSettlementLeg} from "./helpers/LibTestSettlementLeg.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
@@ -286,6 +287,7 @@ contract OfferFacetTest is Test {
         // Initialize vault implementation
         vm.prank(owner);
         LibTestVaultBeacon.install(address(diamond), address(this));
+        LibTestVaultBeacon.installDepository(address(diamond));
         LibTestPositionNFT.install(address(diamond), address(this));
 
         // Mock balances/approvals
@@ -466,7 +468,7 @@ contract OfferFacetTest is Test {
         // #3205 — the facet's whole routed surface, as `HelperTest` cuts it:
         // `initializeNFT` records the PositionNFT core and the core calls
         // back `checkPositionTransfer` on every transfer.
-        selectors = new bytes4[](14);
+        selectors = new bytes4[](15);
         selectors[0] = VaipakamNFTFacet.mintNFT.selector;
         selectors[1] = VaipakamNFTFacet.updateNFTStatus.selector;
         selectors[2] = VaipakamNFTFacet.retirePosition.selector;
@@ -481,6 +483,8 @@ contract OfferFacetTest is Test {
         selectors[11] = VaipakamNFTFacet.checkPositionTransfer.selector;
         selectors[12] = VaipakamNFTFacet.retireTerminalOfferTokens.selector;
         selectors[13] = VaipakamNFTFacet.isPositionRouteDead.selector;
+        // #3744 — an offer refund marks the offer's token through this host.
+        selectors[14] = VaipakamNFTFacet.markOfferPositions.selector;
         return selectors;
     }
 
@@ -986,14 +990,16 @@ contract OfferFacetTest is Test {
         );
 
         uint256 balanceBefore = ERC20(mockERC20).balanceOf(user1);
-        console.log("User balanceBefore: ", balanceBefore);
+        uint256 freeBefore = VaultDepositoryFacet(address(diamond)).getDepositoryHolding(user1, mockERC20, 0);
 
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(user1);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 
-        assertEq(ERC20(mockERC20).balanceOf(user1), balanceBefore + 1000); // Released
+        // #3744 — released into user1's vault as its free balance.
+        assertEq(ERC20(mockERC20).balanceOf(user1), balanceBefore);
+        assertEq(VaultDepositoryFacet(address(diamond)).getDepositoryHolding(user1, mockERC20, 0), freeBefore + 1000);
     }
 
     /// @dev Verifies cancelOffer emits the rich `OfferCanceledDetails`
@@ -1664,8 +1670,9 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 
-        // NFT returned to user1
-        assertEq(MockRentableNFT721(mockNft721).ownerOf(1), user1);
+        // #3744 — the NFT stays in user1's vault as its free holding.
+        assertEq(MockRentableNFT721(mockNft721).ownerOf(1), lenderVault);
+        assertEq(VaultDepositoryFacet(address(diamond)).getDepositoryHolding(user1, mockNft721, 1), 1);
     }
 
     /// @dev Covers cancelOffer for Borrower ERC20 offer
@@ -1769,8 +1776,9 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 
-        // NFT collateral returned to user
-        assertEq(collateralNft.ownerOf(42), user2);
+        // #3744 — the NFT collateral stays in the vault, free.
+        assertEq(collateralNft.ownerOf(42), vault);
+        assertEq(VaultDepositoryFacet(address(diamond)).getDepositoryHolding(user2, address(collateralNft), 42), 1);
     }
 
     /// @dev Covers cancelOffer for ERC-20 loan with ERC-1155 collateral.
@@ -1828,8 +1836,9 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
 
-        // ERC-1155 collateral returned to user
-        assertEq(collateral1155.balanceOf(user2, 7), 10);
+        // #3744 — the ERC-1155 collateral stays in the vault, free.
+        assertEq(collateral1155.balanceOf(vault, 7), 10);
+        assertEq(VaultDepositoryFacet(address(diamond)).getDepositoryHolding(user2, address(collateral1155), 7), 10);
     }
 
     /// @dev Covers Borrower offer acceptOffer path (lender = msg.sender, borrower = creator)

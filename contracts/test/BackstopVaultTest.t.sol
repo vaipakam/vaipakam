@@ -604,7 +604,7 @@ contract BackstopVaultTest is SetupTest {
     function test_setOfferBackstopEligible_notCreator_reverts() public {
         (uint256 offerId, ) = _postBorrowerOffer(base + 7 days);
         vm.prank(makeAddr("notCreator"));
-        vm.expectRevert(BackstopFacet.NotOfferCreator.selector);
+        vm.expectRevert(IVaipakamErrors.NotOfferHolder.selector);
         BackstopFacet(address(diamond)).setOfferBackstopEligible(
             offerId,
             base + 2 days

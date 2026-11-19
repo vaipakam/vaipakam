@@ -5,9 +5,9 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {LibScanPage} from "../libraries/LibScanPage.sol";
-// #195 — `LibAuth.requireOfferCreator` is replaced by an inline access
-// gate that admits the creator OR any caller against an expired offer;
-// see `cancelOffer` for the full rule.
+// #195 / #3744 — an inline access gate admits the manager of the offer
+// token's holder OR any caller against an expired offer; see
+// `cancelOffer` for the full rule.
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibOfferRefund} from "../libraries/LibOfferRefund.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
@@ -301,9 +301,9 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // clear it, leaving the position's new holder encumbered.
         bool routeDead = _vehicleRouteDead(s, offerId) || LibProtectedAccount.isRecovered(creator)
             || LibProtectedAccount.isRecovered(holder);
-        if (!byHolder && !LibVaipakam.isOfferExpired(offer) && !routeDead) {
-            revert NotCreatorOrNotExpired(holder, offer.expiresAt);
-        }
+        // The offer's own state is refused first: a filled or sold offer
+        // has no live token to authorise against, and its caller should see
+        // why rather than an authority refusal.
         if (offer.accepted) revert OfferAlreadyAccepted();
         // T-086 Round-8 (#358) Codex round-2 P1 #1 — block cancel of a
         // sold offer. The §19.4 Scenario A terminal already marked the
@@ -316,6 +316,13 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // terminal is final; subsequent cancel attempts MUST revert.
         if (s.offerConsumedBySale[offerId]) {
             revert OfferAlreadyConsumedBySale(uint96(offerId));
+        }
+        // #3744 — the right to cancel follows the offer's token: the manager
+        // of whoever holds it (the creator while it still does). The refunds
+        // below pay that holder, from the creator's vault where the escrow
+        // sits ({LibVaultOutflow.toOfferHolder}).
+        if (!byHolder && !LibVaipakam.isOfferExpired(offer) && !routeDead) {
+            revert NotCreatorOrNotExpired(holder, offer.expiresAt);
         }
 
         // ── Cancel cooldown (#664) ──────────────────────────────────

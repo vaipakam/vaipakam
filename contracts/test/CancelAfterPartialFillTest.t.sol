@@ -4,6 +4,8 @@ pragma solidity ^0.8.29;
 import {OfferBookFacet} from "../src/facets/OfferBookFacet.sol";
 import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {SetupTest} from "./SetupTest.t.sol";
+import {LibTestPayout} from "./helpers/LibTestPayout.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
@@ -345,6 +347,8 @@ contract CancelAfterPartialFillTest is SetupTest {
         uint256 lenderFree0 = _vaultFree(lender, mockERC20);
         vm.prank(lender);
         OfferCancelFacet(address(diamond)).cancelOffer(lenderOfferId);
+        // #3744 — the refund lands in the vault; the lender withdraws it.
+        LibTestPayout.withdrawAllFree(address(diamond), lender);
 
         // Refund check: `amountMax - amountFilled = 10_000 - 5_000 =
         // 5_000` is released into the lender's free vault balance
@@ -462,6 +466,8 @@ contract CancelAfterPartialFillTest is SetupTest {
         uint256 borrowerFree0 = _vaultFree(borrower, mockCollateralERC20);
         vm.prank(borrower);
         OfferCancelFacet(address(diamond)).cancelOffer(borrowerOfferId);
+        // #3744 — the refund lands in the vault; the borrower withdraws it.
+        LibTestPayout.withdrawAllFree(address(diamond), borrower);
 
         // The 4_500 refund is released into the borrower's free vault
         // balance (payout rule); the 500 in the vault is the live loan's

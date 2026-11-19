@@ -8,6 +8,7 @@ import {LibOfferBounds} from "../libraries/LibOfferBounds.sol";
 import {LibOfferShape} from "../libraries/LibOfferShape.sol";
 import {LibVaultOutflow} from "../libraries/LibVaultOutflow.sol";
 import {LibOfferRefund} from "../libraries/LibOfferRefund.sol";
+import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibCadenceAdmission} from "../libraries/LibCadenceAdmission.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -47,8 +48,9 @@ import {ProfileFacet} from "./ProfileFacet.sol";
  *             union of deltas, emits a single `OfferModified` event.
  *
  *         Invariants enforced on every entry point:
- *           - msg.sender manages the holder of the offer's position
- *             token (#3744; `NotNFTOwner`).
+ *           - msg.sender holds the offer's position token (`NotOfferHolder`,
+ *             #3744); a raise of the escrow also needs the creator
+ *             (`OfferEscrowRaiseByCreatorOnly`).
  *           - !offer.accepted (`OfferAlreadyAccepted`).
  *           - Range invariants identical to {OfferCreateFacet} so the
  *             post-mutation offer satisfies the same shape any
@@ -160,7 +162,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     /**
      * @notice Update the principal range (`amount` floor + `amountMax`
      *         ceiling) on an unaccepted offer the caller created.
-     * @dev    Reverts: NotOfferCreator, OfferAlreadyAccepted,
+     * @dev    Reverts: NotOfferHolder, OfferAlreadyAccepted,
      *         AmountMustBePositive, AmountMaxMustBePositive,
      *         InvalidAmountRange, ModifyBelowFilledFloor,
      *         SanctionedAddress, plus per-asset pause reverts.
@@ -222,7 +224,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
      *         `interestRateBpsMax` ceiling) on an unaccepted offer the
      *         caller created.
      * @dev    Never moves vaulted funds — rate is metadata, not an
-     *         escrow-pulled quantity. Reverts: NotOfferCreator,
+     *         escrow-pulled quantity. Reverts: NotOfferHolder,
      *         OfferAlreadyAccepted, InvalidRateRange,
      *         InterestRateAboveCeiling, SanctionedAddress, plus
      *         per-asset pause reverts.
@@ -251,7 +253,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
      * @notice Update the collateral range (`collateralAmount` floor +
      *         `collateralAmountMax` ceiling) on an unaccepted offer
      *         the caller created.
-     * @dev    Reverts: NotOfferCreator, OfferAlreadyAccepted,
+     * @dev    Reverts: NotOfferHolder, OfferAlreadyAccepted,
      *         CollateralMustBePositive, CollateralAmountMaxMustBePositive,
      *         InvalidCollateralAmountRange, LenderCollateralRangeNotAllowed,
      *         CollateralMutationUnsupportedForShape, ModifyBelowFilledFloor,
@@ -473,8 +475,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     ///      the sanctions policy.
     function _assertMutableBy(LibVaipakam.Offer storage offer) private view {
         if (offer.creator == address(0)) revert InvalidOffer();
-        // #3744 — the offer is edited by the holder of its position token.
-        if (!LibOfferRefund.managedBy(offer, msg.sender)) revert NotNFTOwner();
+        LibAuth.requireOfferHolder(offer);
         if (offer.accepted) revert OfferAlreadyAccepted();
         // #3328 — a collection offer's terms are fixed; it changes only by
         // lowering its loans (`reduceCollectionLoans`) or by cancel.
@@ -570,6 +571,12 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     ///         when a live parallel-sale Seaport listing is bound to
     ///         the offer. Borrower must release the lock first.
     error OfferLockedByParallelSale();
+
+    /// @notice #3744 — only the offer's creator, still holding its token, may
+    ///         raise the escrow (it is pulled into the creator's vault). The
+    ///         token's other holders may lower it, change its terms, or
+    ///         cancel it.
+    error OfferEscrowRaiseByCreatorOnly();
 
     /// @dev #2749 — the offer-shape rules are {LibOfferShape}'s, the same
     ///      definition `createOffer` applies, so the edited offer satisfies
@@ -829,13 +836,14 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // `collateralAmountMax`, so storage-only update is correct.
     }
 
-    /// @dev Generic ERC-20 escrow delta. A grow pulls the difference from
-    ///      the caller's wallet into the CREATOR's vault, where the offer's
-    ///      escrow and its lien live (the caller is the holder's manager,
-    ///      which may be another account since #3744). A shrink returns the
-    ///      difference to the vault of the holder of the offer's position
-    ///      token, as free balance (`LibOfferRefund`, payout rule
-    ///      2026-11-19).
+    /// @dev Generic ERC-20 vault delta on the offer's escrow, which sits in
+    ///      the CREATOR's vault. A raise pulls the difference from the
+    ///      creator's wallet into that vault, so only the creator, still
+    ///      holding the offer's token, may raise it (#3744: anyone else
+    ///      would be funding someone else's vault). A cut returns the
+    ///      difference to the vault of whoever holds the offer's token now,
+    ///      as free balance ({LibOfferRefund}: held for the token when that
+    ///      vault cannot be paid), the same rule a cancel follows.
     function _pullOrRefundErc20(
         uint256 offerId,
         LibVaipakam.Offer storage offer,
@@ -844,6 +852,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         uint256 newAmount
     ) private {
         if (newAmount > oldAmount) {
+            if (msg.sender != offer.creator) revert OfferEscrowRaiseByCreatorOnly();
             LibFacet.crossFacetCall(
                 abi.encodeCall(
                     VaultFactoryFacet.vaultDepositERC20From, (msg.sender, offer.creator, token, newAmount - oldAmount)

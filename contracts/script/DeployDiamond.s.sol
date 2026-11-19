@@ -3068,11 +3068,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// @dev Selectors for `OfferBookFacet` (#3242) — the offer book's entry step and its bounds.
     function _getOfferBookSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](5);
         s[0] = OfferBookFacet.openOfferOnBook.selector;
         s[1] = OfferBookFacet.requireOfferValueAdmitted.selector;
         s[2] = OfferBookFacet.getOfferBookBounds.selector;
         s[3] = OfferBookFacet.getMinOfferAmount.selector;
+        s[4] = OfferBookFacet.requireOfferHolder.selector;
     }
 
     /// @dev Selectors for `SaleFloorFacet` (#3359) — the forced-sale floor

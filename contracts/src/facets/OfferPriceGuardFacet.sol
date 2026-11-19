@@ -148,7 +148,7 @@ contract OfferPriceGuardFacet is DiamondPausable, IVaipakamErrors {
         LibVaipakam.Offer storage o = s.offers[offerId];
         if (o.creator == address(0)) revert InvalidOffer();
         if (o.accepted) revert OfferAlreadyAccepted();
-        LibAuth.requireOfferCreator(o);
+        LibAuth.requireOfferHolder(o);
         if (maxMoveBps == 0) {
             LibOfferPriceGuard.clear(s, offerId);
             return;

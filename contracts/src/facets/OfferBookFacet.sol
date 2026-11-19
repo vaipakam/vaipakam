@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibTerms} from "../libraries/LibTerms.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibRiskMath} from "../libraries/LibRiskMath.sol";
 import {LibOfferAdmission} from "../libraries/LibOfferAdmission.sol";
@@ -125,6 +126,22 @@ contract OfferBookFacet is IVaipakamErrors {
      */
     function getMinOfferAmount(address lendingAsset) external view returns (bool binds, uint256 amount) {
         return LibOfferAdmission.minAdmittedAmount(lendingAsset);
+    }
+
+    /**
+     * @notice #3744 — reverts `NotOfferHolder` unless `caller` may act on
+     *         open offer `offerId`: change its terms or escrow, stage it, or
+     *         choose its keepers. That is whoever holds the offer's position
+     *         token, since the offer's value follows its token (a fill gives
+     *         the creator side to that holder), while it still manages itself
+     *         and the offer's creator does too. A cancel follows the same
+     *         token but is also open to the holder's controller and, once the
+     *         offer is expired, to anyone.
+     * @dev    The one runtime copy of the rule ({LibAuth.offerHolderRule});
+     *         every facet reaches it through {LibAuth.requireOfferHolder}.
+     */
+    function requireOfferHolder(uint256 offerId, address caller) external view {
+        if (!LibAuth.offerHolderRule(LibVaipakam.storageSlot().offers[offerId], caller)) revert NotOfferHolder();
     }
 
     /// @dev Emits `OfferCreatedDetails`. Moved verbatim from

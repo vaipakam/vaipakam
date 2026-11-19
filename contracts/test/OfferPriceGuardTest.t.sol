@@ -163,7 +163,7 @@ contract OfferPriceGuardTest is SetupTest {
     function test_Set_OnlyTheCreator_OnAnOpenOffer_InRange() public {
         uint256 offerId = _lenderOffer();
         vm.prank(borrower);
-        vm.expectRevert(IVaipakamErrors.NotOfferCreator.selector);
+        vm.expectRevert(IVaipakamErrors.NotOfferHolder.selector);
         OfferPriceGuardFacet(address(diamond)).setOfferPriceGuard(offerId, 500);
 
         vm.prank(lender);

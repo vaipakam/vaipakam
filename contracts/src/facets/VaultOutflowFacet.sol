@@ -268,6 +268,11 @@ contract VaultOutflowFacet is IVaipakamErrors {
                 o.class_ == VaultOutflowTypes.OutflowClass.PositionHolder
                     || o.class_ == VaultOutflowTypes.OutflowClass.Counterparty
             ) LibPositionNFT.markHolderMove(o.positionToken);
+        } else if (o.class_ == VaultOutflowTypes.OutflowClass.OfferHolder) {
+            // #3744 — an offer refund takes value out of the offer's own
+            // token: its state number goes up and it waits (the long wait
+            // when the caller holds it), before a cancel retires it.
+            LibPositionNFT.markOfferValueOut(o.ref);
         }
         address payeeOwner = _resolveRecipient(user, o);
         // A listing's lot moving into the vault's own escrow stays under its

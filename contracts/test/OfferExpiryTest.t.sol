@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -143,6 +144,11 @@ contract OfferExpiryTest is SetupTest {
     }
 
     // ─── createOffer bounds ─────────────────────────────────────────
+
+    /// @dev #3744 — an offer's refund is its holder's free vault balance.
+    function _free(address who, address token) internal view returns (uint256) {
+        return VaultDepositoryFacet(address(diamond)).getDepositoryHolding(who, token, 0);
+    }
 
     function testCreateOfferGtcDefaultPreservesLegacyBehaviour() public {
         uint256 id = _createLender(0);
@@ -395,8 +401,8 @@ contract OfferExpiryTest is SetupTest {
 
         // Snapshot the lender's wallet balance before warp + clear so
         // we can compare the principal-refund destination.
-        uint256 lenderBalBefore = ERC20Mock(mockERC20).balanceOf(lender);
-        uint256 cleanerBalBefore = ERC20Mock(mockERC20).balanceOf(borrower);
+        uint256 lenderBalBefore = _free(lender, mockERC20);
+        uint256 cleanerBalBefore = _free(borrower, mockERC20);
 
         vm.warp(uint256(deadline) + 1);
 
@@ -406,8 +412,8 @@ contract OfferExpiryTest is SetupTest {
 
         // The lender (creator) receives the full pre-vaulted principal
         // back; the cleaner sees no asset flow.
-        uint256 lenderBalAfter = ERC20Mock(mockERC20).balanceOf(lender);
-        uint256 cleanerBalAfter = ERC20Mock(mockERC20).balanceOf(borrower);
+        uint256 lenderBalAfter = _free(lender, mockERC20);
+        uint256 cleanerBalAfter = _free(borrower, mockERC20);
 
         assertEq(
             lenderBalAfter - lenderBalBefore,
@@ -427,12 +433,12 @@ contract OfferExpiryTest is SetupTest {
 
         vm.warp(uint256(deadline) + 1);
 
-        uint256 balBefore = ERC20Mock(mockERC20).balanceOf(lender);
+        uint256 balBefore = _free(lender, mockERC20);
 
         vm.prank(lender);
         OfferCancelFacet(address(diamond)).cancelOffer(id);
 
-        uint256 balAfter = ERC20Mock(mockERC20).balanceOf(lender);
+        uint256 balAfter = _free(lender, mockERC20);
         assertEq(balAfter - balBefore, 1000 ether, "creator self-cancel refunds in full");
     }
 

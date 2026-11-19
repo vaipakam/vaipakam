@@ -150,7 +150,6 @@ contract BackstopFacet is
     error BackstopIntentInactive();
     error NotBackstopLoan();
     error ZeroAmount();
-    error NotOfferCreator();
     error OfferNotBorrowerType();
     error InvalidBackstopDeadline();
     error OfferNotBackstopEligible();
@@ -389,7 +388,7 @@ contract BackstopFacet is
         LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage o = s.offers[offerId];
-        LibAuth.requireOfferCreator(o);
+        LibAuth.requireOfferHolder(o);
         if (o.offerType != LibVaipakam.OfferType.Borrower) {
             revert OfferNotBorrowerType();
         }

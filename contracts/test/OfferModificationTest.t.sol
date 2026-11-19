@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibOfferShape} from "../src/libraries/LibOfferShape.sol";
 import {SetupTest} from "./SetupTest.t.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -128,6 +129,11 @@ contract OfferModificationTest is SetupTest {
 
     // ─── setOfferRate (no delta on any shape) ───────────────────────
 
+    /// @dev #3744 — an offer's refund is its holder's free vault balance.
+    function _free(address who, address token) internal view returns (uint256) {
+        return VaultDepositoryFacet(address(diamond)).getDepositoryHolding(who, token, 0);
+    }
+
     function testSetOfferRateHappyPath() public {
         uint256 id = _createLender();
         vm.prank(lender);
@@ -155,7 +161,7 @@ contract OfferModificationTest is SetupTest {
     function testSetOfferRateRevertsNotCreator() public {
         uint256 id = _createLender();
         vm.prank(borrower);
-        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
+        vm.expectRevert(IVaipakamErrors.NotOfferHolder.selector);
         _mutate().setOfferRate(id, 700, 900, type(uint64).max);
     }
 
@@ -165,7 +171,7 @@ contract OfferModificationTest is SetupTest {
         uint256 id = _createLender();
         address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
 
-        uint256 walletBefore = ERC20Mock(mockERC20).balanceOf(lender);
+        uint256 freeBefore = _free(lender, mockERC20);
         uint256 vaultBefore = ERC20Mock(mockERC20).balanceOf(lenderVault);
 
         // Shrink amountMax from 1000 → 600. Delta = 400 returns to wallet.
@@ -173,14 +179,14 @@ contract OfferModificationTest is SetupTest {
         _mutate().setOfferAmount(id, 500 ether, 600 ether, type(uint64).max);
 
         assertEq(
-            ERC20Mock(mockERC20).balanceOf(lender) - walletBefore,
+            _free(lender, mockERC20) - freeBefore,
             400 ether,
-            "lender wallet refunded delta"
+            "the delta is the lender's free vault balance"
         );
         assertEq(
-            vaultBefore - ERC20Mock(mockERC20).balanceOf(lenderVault),
-            400 ether,
-            "vault released delta"
+            ERC20Mock(mockERC20).balanceOf(lenderVault),
+            vaultBefore,
+            "the delta stays in the vault, free (#3744)"
         );
         LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(id);
         assertEq(o.amount, 500 ether);
@@ -234,7 +240,7 @@ contract OfferModificationTest is SetupTest {
     function testSetOfferAmountRevertsNotCreator() public {
         uint256 id = _createLender();
         vm.prank(borrower);
-        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
+        vm.expectRevert(IVaipakamErrors.NotOfferHolder.selector);
         _mutate().setOfferAmount(id, 500 ether, 600 ether, type(uint64).max);
     }
 
@@ -255,7 +261,7 @@ contract OfferModificationTest is SetupTest {
         uint256 id = _createBorrower();
         address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
 
-        uint256 walletBefore = ERC20Mock(mockCollateralERC20).balanceOf(borrower);
+        uint256 freeBefore = _free(borrower, mockCollateralERC20);
         uint256 vaultBefore = ERC20Mock(mockCollateralERC20).balanceOf(borrowerVault);
 
         // Shrink collateralAmountMax 5000 → 3000. Delta = 2000 returns.
@@ -263,14 +269,14 @@ contract OfferModificationTest is SetupTest {
         _mutate().setOfferCollateral(id, 2000 ether, 3000 ether, type(uint64).max);
 
         assertEq(
-            ERC20Mock(mockCollateralERC20).balanceOf(borrower) - walletBefore,
+            _free(borrower, mockCollateralERC20) - freeBefore,
             2000 ether,
-            "borrower wallet refunded delta"
+            "the delta is the borrower's free vault balance"
         );
         assertEq(
-            vaultBefore - ERC20Mock(mockCollateralERC20).balanceOf(borrowerVault),
-            2000 ether,
-            "vault released delta"
+            ERC20Mock(mockCollateralERC20).balanceOf(borrowerVault),
+            vaultBefore,
+            "the delta stays in the vault, free (#3744)"
         );
         LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(id);
         assertEq(o.collateralAmount, 2000 ether);
@@ -360,7 +366,7 @@ contract OfferModificationTest is SetupTest {
         uint256 id = _createLender();
         address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
 
-        uint256 walletBefore = ERC20Mock(mockERC20).balanceOf(lender);
+        uint256 freeBefore = _free(lender, mockERC20);
         uint256 vaultBefore = ERC20Mock(mockERC20).balanceOf(lenderVault);
 
         // Change all three field clusters in one tx.
@@ -380,14 +386,14 @@ contract OfferModificationTest is SetupTest {
 
         // amountMax shrunk by 200 → refund 200 to wallet.
         assertEq(
-            ERC20Mock(mockERC20).balanceOf(lender) - walletBefore,
+            _free(lender, mockERC20) - freeBefore,
             200 ether,
             "amount delta refunded"
         );
         assertEq(
-            vaultBefore - ERC20Mock(mockERC20).balanceOf(lenderVault),
-            200 ether,
-            "vault released amount delta"
+            ERC20Mock(mockERC20).balanceOf(lenderVault),
+            vaultBefore,
+            "the delta stays in the vault, free (#3744)"
         );
 
         LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(id);

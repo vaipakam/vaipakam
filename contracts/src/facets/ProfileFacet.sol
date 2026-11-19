@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibProtectedAccount} from "../libraries/LibProtectedAccount.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
@@ -392,16 +393,17 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     /// @param offerId The offer whose flag was updated.
     /// @param keeper The specific keeper being enabled or disabled.
     /// @param enabled New flag value.
-    /// @param owner The offer's creator (#3719).
+    /// @param owner The account that set it: the holder of the offer's
+    ///              token (#3719, #3744), the creator while it holds it.
     /// @custom:event-category state-change/offer-mutation
     event OfferKeeperEnabled(uint256 indexed offerId, address indexed keeper, bool enabled, address owner);
 
     /**
      * @notice Enable or disable a specific `keeper` for `offerId` (Phase 6).
      *
-     * @dev Pre-acceptance counterpart to {setLoanKeeperEnabled}. Creator-
-     *      only; reverts {InvalidOffer} / {OfferAlreadyAccepted} /
-     *      {NotNFTOwner} as applicable. Flags latch into
+     * @dev Pre-acceptance counterpart to {setLoanKeeperEnabled}. The
+     *      holder of the offer's token only (#3744); reverts {InvalidOffer} /
+     *      {OfferAlreadyAccepted} / {NotOfferHolder} as applicable. Flags latch into
      *      `loanKeeperEnabled[loanId][keeper]` at {OfferFacet.acceptOffer}
      *      via the creator's approved-keepers list; post-acceptance each
      *      NFT holder edits the loan-level flag via {setLoanKeeperEnabled}.
@@ -420,8 +422,10 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
         LibVaipakam.Offer storage offer = s.offers[offerId];
         if (offer.creator == address(0)) revert InvalidOffer();
         if (offer.accepted) revert OfferAlreadyAccepted();
-        // #3526 — refused to a creator a replacement retired.
-        if (msg.sender != offer.creator || LibProtectedAccount.manager(msg.sender) != msg.sender) revert NotNFTOwner();
+        // #3744 — the offer's keepers carry onto the loan side its token's
+        // holder takes at fill, so that holder chooses them (#3526: never a
+        // retired account).
+        LibAuth.requireOfferHolder(offer);
         s.offerKeeperEnabled[offerId][keeper] = enabled;
         emit OfferKeeperEnabled(offerId, keeper, enabled, msg.sender);
     }

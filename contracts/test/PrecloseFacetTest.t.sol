@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {LibTestCollateralCut} from "./helpers/LibTestCollateralCut.sol";
 import {LibTestTermsCut} from "./helpers/LibTestTermsCut.sol";
 import {LibTestClaimViewCut} from "./helpers/LibTestClaimViewCut.sol";
@@ -400,6 +401,7 @@ contract PrecloseFacetTest is Test {
         AccessControlFacet(address(diamond)).initializeAccessControl();
         AdminFacet(address(diamond)).unpause();
         LibTestVaultBeacon.install(address(diamond), address(this));
+        LibTestVaultBeacon.installDepository(address(diamond));
         LibTestPositionNFT.install(address(diamond), address(this));
         LibTestVaultBeacon.setTreasury(address(diamond), address(diamond));
         AdminFacet(address(diamond)).setZeroExProxy(mockZeroExProxy);
@@ -2078,6 +2080,8 @@ contract PrecloseFacetTest is Test {
             VaultFactoryFacet(address(diamond)).getUserVaultAddress(lender);
         uint256 lenderVaultBefore = ERC20(mockERC20).balanceOf(lenderVault);
         uint256 borrowerWalletBefore = ERC20(mockERC20).balanceOf(borrower);
+        uint256 borrowerFreeBefore =
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(borrower, mockERC20, 0);
 
         vm.prank(borrower);
         uint256 newOfferId = PrecloseOffsetFacet(address(diamond)).offsetWithNewOffer(
@@ -2089,6 +2093,12 @@ contract PrecloseFacetTest is Test {
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         vm.prank(borrower);
         OfferCancelFacet(address(diamond)).cancelOffer(newOfferId);
+        // #3744 — the refund lands in the borrower's vault as free balance;
+        // the borrower withdraws exactly that refund.
+        uint256 refund =
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(borrower, mockERC20, 0) - borrowerFreeBefore;
+        vm.prank(borrower);
+        VaultDepositoryFacet(address(diamond)).withdrawFromVault(borrower, 0, mockERC20, 0, refund, borrower);
 
         assertEq(
             ERC20(mockERC20).balanceOf(lenderVault),
