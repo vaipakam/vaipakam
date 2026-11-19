@@ -73,10 +73,10 @@ export function PayerNotice({
       <p className="tier-a" data-testid="payer-returns-to">
         {format('payer.returnsTo', { holder })}
       </p>
-      <p className="tier-b" data-testid="payer-part">
+      <p className="tier-a" data-testid="payer-part">
         {allowsPartialRepay ? format('payer.partOnlyHolder', { holder }) : text('payer.partNever')}
       </p>
-      <p className="tier-b">{text('payer.noRight')}</p>
+      <p className="tier-a">{text('payer.noRight')}</p>
       {moved !== false && (
         <label className="choice" data-testid="payer-confirm">
           <input type="checkbox" checked={confirmed} onChange={(e) => onConfirm(e.target.checked)} />
