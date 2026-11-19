@@ -9,12 +9,12 @@ const PAYER = '0x00000000000000000000000000000000000000a3' as const;
 
 function repaidLog(address: `0x${string}`, loanId: bigint, newStatus: number): Log {
   const topics = encodeEventTopics({ abi: RepayFacetABI as Abi, eventName: 'LoanRepaid', args: { loanId, repayer: PAYER } });
-  const data = encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint8' }], [1n, 0n, 0n, 0n, newStatus]);
+  const data = encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint8' }, { type: 'uint256' }], [1n, 0n, 0n, 0n, newStatus, 0n]);
   return { address, topics, data } as unknown as Log;
 }
 
 function partialLog(address: `0x${string}`, loanId: bigint, newPrincipal: bigint): Log {
-  const topics = encodeEventTopics({ abi: RepayFacetABI as Abi, eventName: 'PartialRepaid', args: { loanId } });
+  const topics = encodeEventTopics({ abi: RepayFacetABI as Abi, eventName: 'PartialRepaid', args: { loanId, payer: PAYER } });
   const data = encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }], [5n, newPrincipal, 0n]);
   return { address, topics, data } as unknown as Log;
 }

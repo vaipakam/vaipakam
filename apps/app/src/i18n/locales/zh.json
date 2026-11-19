@@ -2741,6 +2741,7 @@
         "LoanReserveWithdrawn": "贷款储备已取出",
         "ExtendChargeDrawn": "延期费用已支付",
         "InterestPaidFromReserve": "已从贷款储备支付利息",
+        "InterestPaidFromWallet": "已支付利息",
         "DueRepaymentRun": "已从贷款储备还款",
         "CollateralTopUpRun": "已从贷款储备补充抵押品",
         "StandingInstructionsSet": "已设置常设指令",

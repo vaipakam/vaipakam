@@ -2741,6 +2741,7 @@
         "LoanReserveWithdrawn": "Kreditreserve abgehoben",
         "ExtendChargeDrawn": "Verlängerungsgebühr bezahlt",
         "InterestPaidFromReserve": "Zinsen aus der Kreditreserve gezahlt",
+        "InterestPaidFromWallet": "Zinsen gezahlt",
         "DueRepaymentRun": "Aus der Kreditreserve zurückgezahlt",
         "CollateralTopUpRun": "Sicherheit aus der Kreditreserve aufgestockt",
         "StandingInstructionsSet": "Daueraufträge festgelegt",

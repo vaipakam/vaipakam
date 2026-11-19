@@ -2741,6 +2741,7 @@
         "LoanReserveWithdrawn": "대출 적립금 출금됨",
         "ExtendChargeDrawn": "연장 비용 지급됨",
         "InterestPaidFromReserve": "대출 적립금에서 이자 지급됨",
+        "InterestPaidFromWallet": "이자 지급됨",
         "DueRepaymentRun": "대출 적립금으로 상환됨",
         "CollateralTopUpRun": "대출 적립금에서 담보 보충됨",
         "StandingInstructionsSet": "상시 지시 설정됨",

@@ -2741,6 +2741,7 @@
         "LoanReserveWithdrawn": "लोन रिज़र्व निकाला गया",
         "ExtendChargeDrawn": "विस्तार शुल्क चुकाया गया",
         "InterestPaidFromReserve": "लोन रिज़र्व से ब्याज चुकाया गया",
+        "InterestPaidFromWallet": "ब्याज चुकाया गया",
         "DueRepaymentRun": "लोन रिज़र्व से चुकाया गया",
         "CollateralTopUpRun": "लोन रिज़र्व से collateral बढ़ाया गया",
         "StandingInstructionsSet": "स्थायी निर्देश सेट किए गए",
