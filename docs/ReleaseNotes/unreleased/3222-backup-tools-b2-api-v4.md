@@ -1,4 +1,4 @@
-## Backup tools — Backblaze API version 4, one shared client (PR #<n>)
+## Backup tools — Backblaze API version 4, one shared client (PR #3794)
 
 The off-chain backup tools now sign in and call Backblaze on its native API
 version 4. A key made with today's Backblaze command line is refused by the
