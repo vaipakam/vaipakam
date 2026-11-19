@@ -233,7 +233,7 @@ export function VaultPage() {
                 </section>
               )}
               {book.loans.data !== null && (slots.data !== null || slots.state === 'failed') && (
-                <BalanceLines lines={balanceLines(data.rows, slots.data, lent)} meta={meta} slotsError={slots.data === null ? (slots.error ?? '') : null} slotsPartial={slots.data !== null && !slots.data.complete} />
+                <BalanceLines lines={balanceLines(data.rows, slots.data, { loans: lent, complete: book.loans.data.complete })} meta={meta} slotsError={slots.data === null ? (slots.error ?? '') : null} slotsPartial={slots.data !== null && !slots.data.complete} />
               )}
               <section className="home-section" aria-labelledby="vault-holdings">
                 <h2 id="vault-holdings">{text('vault.holdingsTitle')}</h2>
@@ -418,6 +418,7 @@ function BalanceLines({
       <p className="tier-b">{text('vault.balancesLead')}</p>
       {slotsError !== null && <p className="tier-a">{format('vault.balancesSlotsFailed', { reason: slotsError })}</p>}
       {slotsPartial && <p className="tier-a">{text('vault.balancesSlotsPartial')}</p>}
+      {lines.some((l) => l.inLoansPartial) && <p className="tier-a">{text('vault.balancesLoansPartial')}</p>}
       <ul className="rows">
         {lines.map((l) => {
           const key = l.asset.toLowerCase();
@@ -439,7 +440,7 @@ function BalanceLines({
                   )}
                 </dd>
                 <dt className="tier-b">{text('vault.rowInLoans')}</dt>
-                <dd data-testid={`vault-in-loans-${key}`}>{amount(l.inLoans)}</dd>
+                <dd data-testid={`vault-in-loans-${key}`}>{l.inLoansPartial ? format('vault.waitingAtLeast', { amount: amount(l.inLoans) }) : amount(l.inLoans)}</dd>
               </dl>
               {l.waiting !== null && l.waiting > 0n && <p className="tier-b">{text('vault.waitingNote')}</p>}
             </li>

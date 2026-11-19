@@ -1459,6 +1459,7 @@ export const copy = {
     balancesSlotsFailed: A('Your Auto-lend capital could not be read ({{reason}}), so how much waits in it is shown as unknown.'),
     balancesSlotsPartial: A('Not every Auto-lend slot could be listed, so each waiting figure is the least that waits, not the total.'),
     waitingAtLeast: B('At least {{amount}}'),
+    balancesLoansPartial: A('Not every position could be read, so each in-loans figure is the least that is lent, not the total.'),
     holdingsTitle: B('What it holds'),
     empty: B('Nothing this page can find is in your vault.'),
     colCounted: B('In your vault'),
