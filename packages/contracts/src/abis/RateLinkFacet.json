@@ -1,0 +1,548 @@
+[
+  {
+    "type": "function",
+    "name": "WARN_FAR_ABOVE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "WARN_FAR_BELOW",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "admitOfferRate",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "acknowledged",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "linkWritten",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "warnings",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "checkRateWrite",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "termDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "rateBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "acknowledged",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "warnings",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getRateReference",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "linkedFloor",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "termDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "marginBps",
+        "type": "int16",
+        "internalType": "int16"
+      },
+      {
+        "name": "typedFloor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "rateBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "loanRateWarnings",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "warnings",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "matchRate",
+    "inputs": [
+      {
+        "name": "p",
+        "type": "tuple",
+        "internalType": "struct RateLinkFacet.PairRates",
+        "components": [
+          {
+            "name": "asset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "termDays",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "lenderFloor",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "lenderMax",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "lenderKind",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "lenderMargin",
+            "type": "int16",
+            "internalType": "int16"
+          },
+          {
+            "name": "borrowerFloor",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "borrowerMax",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "borrowerKind",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "borrowerMargin",
+            "type": "int16",
+            "internalType": "int16"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "rateBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "refusal",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "fromLink",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "offerCheckedRate",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "checked",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "rateBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "offerRateBounds",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "termDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "loBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "hiBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "refusal",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "originationRate",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "bookedRateBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "rateBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "fromLink",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "rateLinkBound",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "termDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "marginBps",
+        "type": "int16",
+        "internalType": "int16"
+      },
+      {
+        "name": "lenderSide",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "boundBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "refusal",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "rateWarnings",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "termDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "rateBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "warnings",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "band",
+        "type": "tuple",
+        "internalType": "struct IRateReference.Band",
+        "components": [
+          {
+            "name": "available",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "termAverage1e18",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "outside",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "above",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "distanceBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "requireLinkAdmissible",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "marginBps",
+        "type": "int16",
+        "internalType": "int16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "view"
+  },
+  {
+    "type": "error",
+    "name": "RateBeyondAcceptorLimit",
+    "inputs": [
+      {
+        "name": "rateBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limitBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RateFarFromTermAverage",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "termDays",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "rateBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "averageBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "above",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RateLinkInvalid",
+    "inputs": [
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "marginBps",
+        "type": "int256",
+        "internalType": "int256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RateLinkNoReference",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RateLinkNotOffered",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RateLinkUnavailable",
+    "inputs": [
+      {
+        "name": "refusal",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  }
+]

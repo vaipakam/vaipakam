@@ -161,6 +161,17 @@ library LibIntentFill {
         // repayment shape, already checked against the slot in {admitFill}.
         p.useFullTermInterest = useFullTermInterest;
         p.allowsPartialRepay = allowsPartialRepay;
+        {
+            // #3635 A — the slice carries the slot's market link, so the
+            // match core reads the slot's effective floor for this fill's
+            // term. The band was checked on the slot's floor when the slot
+            // was set; the slice is that write, not a new one.
+            LibVaipakam.LenderIntent storage intent =
+                LibVaipakam.storageSlot().lenderIntent[lender][lendingAsset][collateralAsset][slot];
+            p.linkKind = intent.linkKind;
+            p.linkMarginBps = intent.linkMarginBps;
+            p.rateFarFromAverageAcknowledged = true;
+        }
         sliceOfferId = materialize(p, lender);
     }
 

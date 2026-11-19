@@ -529,6 +529,12 @@ contract OfferAcceptFacet is
         // #3682 — the integrator the acceptor named; the charge reads it only
         // when the acceptor is the borrower (a lender's offer).
         s.acceptAckIntegrator = terms.integrator;
+        // #3635 A / #3713 — the signed rate limit (read only for a linked
+        // offer) and the band acknowledgement, for the origination check in
+        // `RateLinkFacet.originationRate`. Read only while `acceptAckActive`,
+        // so neither needs clearing.
+        s.acceptAckRateLimitBps = terms.interestRateBps;
+        s.acceptAckRateFarAck = terms.rateFarFromAverageAcknowledged;
     }
 
     /// @dev Equality-bind every loan-affecting `AcceptTerms` field against the
@@ -583,7 +589,11 @@ contract OfferAcceptFacet is
             if (t.collateralAmount != o.collateralAmount) revert OfferTermsMismatch(7);
             if (t.durationDays != o.durationDays) revert OfferTermsMismatch(9);
         }
-        if (t.interestRateBps != roleRate) revert OfferTermsMismatch(8);
+        // #3635 A — on a rate-linked offer the signed rate is the acceptor's
+        // limit, not an equality: the endpoint follows the reference, and
+        // `RateLinkFacet.originationRate` refuses the accept when it is worse
+        // for the acceptor than this limit.
+        if (o.linkKind == 0 && t.interestRateBps != roleRate) revert OfferTermsMismatch(8);
         if (t.tokenId != o.tokenId) revert OfferTermsMismatch(10);
         if (t.collateralTokenId != o.collateralTokenId) revert OfferTermsMismatch(11);
         if (t.quantity != o.quantity) revert OfferTermsMismatch(12);

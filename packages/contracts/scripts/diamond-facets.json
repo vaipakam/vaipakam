@@ -137,7 +137,8 @@
     "RewardEraFacet",
     "ServiceCapacityFacet",
     "OfferMatchIntentFacet",
-    "DiamondCutFacet"
+    "DiamondCutFacet",
+    "RateLinkFacet"
   ],
   "proxy": [
     "VaipakamDiamond"
@@ -165,6 +166,7 @@
     "PriceGuard",
     "VaipakamVaultImplementation",
     "VaultProtection",
-    "VaultRecovery"
+    "VaultRecovery",
+    "RateReference"
   ]
 }

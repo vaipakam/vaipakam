@@ -54,7 +54,7 @@ contract InstantTakeoverTest is InstantMarketBase {
         vm.prank(who);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, 0, maxExposure, rateBps, MAX_INIT_LTV_BPS,
-            maxDays, MIN_FILL, false, 0, true, true, type(uint64).max
+            maxDays, MIN_FILL, false, 0, true, true, LibVaipakam.IntentRateTerms(0, 0, false), type(uint64).max
         );
         ERC20Mock(mockERC20).mint(who, maxExposure);
         vm.prank(who);

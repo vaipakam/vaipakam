@@ -190,7 +190,7 @@ describe('the setup call', () => {
     expect(steps.map((s) => s.allowFailure)).toEqual([false, false]);
     const set = decodeFunctionData({ abi: INTENT, data: steps[0]!.callData });
     expect(set.functionName).toBe('setLenderIntent');
-    expect(set.args).toEqual([USDC, WETH, 0, 1000n * E6, 800n, 6000, 30, 100n * E6, false, d.lendUntil, true, true, 99n]);
+    expect(set.args).toEqual([USDC, WETH, 0, 1000n * E6, 800n, 6000, 30, 100n * E6, false, d.lendUntil, true, true, { linkKind: 0, linkMarginBps: 0, rateFarFromAverageAcknowledged: false }, 99n]);
     const fund = decodeFunctionData({ abi: INTENT, data: steps[1]!.callData });
     expect(fund).toEqual({ functionName: 'fundLenderIntent', args: [USDC, WETH, 0, 1000n * E6] });
     // The batch ABI names the steps' errors, so a step's revert decodes.

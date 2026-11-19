@@ -60,6 +60,7 @@ import {FeeLevelsFacet} from "../src/facets/FeeLevelsFacet.sol";
 import {SettlementLegFacet} from "../src/facets/SettlementLegFacet.sol";
 import {RecoveryClawbackFacet} from "../src/facets/RecoveryClawbackFacet.sol";
 import {CollateralConcentrationFacet} from "../src/facets/CollateralConcentrationFacet.sol";
+import {RateLinkFacet} from "../src/facets/RateLinkFacet.sol";
 import {CollateralLienFacet} from "../src/facets/CollateralLienFacet.sol";
 import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.sol";
 import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
@@ -692,7 +693,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](137);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](138);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -1308,6 +1309,12 @@ contract SetupTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(ReferralFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getReferralFacetSelectors()
+        });
+        // #3635 A / #3713 — the rate link and the warning band.
+        cuts[137] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(RateLinkFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRateLinkFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).

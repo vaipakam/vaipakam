@@ -6868,6 +6868,7 @@ const copySource = {
       InterestPaymentAttemptFailed: 'Interest payment from reserve did not go through',
       IntentCalmCheckSet: 'Auto-lend price check changed',
       LenderIntentIntegratorNamed: 'Auto-lend integrator named',
+      LenderIntentRateTermsSet: 'Auto-lend rate link set',
       IntegratorShareSettled: 'Integrator fee share settled',
       ReferralShareSettled: 'Referral fee share settled',
       InviterBound: 'Invitation accepted',

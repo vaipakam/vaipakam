@@ -2695,6 +2695,7 @@ export const copy = {
       LenderIntentCapitalWithdrawn: B('Funds were withdrawn from an auto-lend standing order.'),
       LenderIntentFunded: B('Funds were added to an auto-lend standing order.'),
       LenderIntentIntegratorNamed: B('An integrator was named on an auto-lend standing order.'),
+      LenderIntentRateTermsSet: B('The market link or the rate warning on an auto-lend standing order was set.'),
       LenderIntentPrioritySet: B('An auto-lend standing order’s priority changed.'),
       LenderIntentSet: B('An auto-lend standing order was set.'),
       LenderPaymentHeld: B('A payment on an open loan was held for the lender position.'),

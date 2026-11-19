@@ -2752,6 +2752,7 @@
         "InterestPaymentAttemptFailed": "从储备金支付利息未能完成",
         "IntentCalmCheckSet": "Auto-lend 价格检查已更改",
         "LenderIntentIntegratorNamed": "已指定 Auto-lend 集成方",
+        "LenderIntentRateTermsSet": "已设置 Auto-lend 利率挂钩",
         "IntegratorShareSettled": "集成方手续费分成已结算",
         "ReferralShareSettled": "推荐手续费分成已结算",
         "InviterBound": "已接受邀请",

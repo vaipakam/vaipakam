@@ -138,6 +138,7 @@ import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.s
 import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
 import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
 import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
+import {RateLinkFacet} from "../src/facets/RateLinkFacet.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {LibTestVaultBeacon} from "./helpers/LibTestVaultBeacon.sol";
@@ -1121,6 +1122,24 @@ contract HelperTest {
         selectors = new bytes4[](2);
         selectors[0] = StandingOfferCheckFacet.checkAgainstRequest.selector;
         selectors[1] = StandingOfferCheckFacet.checkForAmount.selector;
+    }
+
+    function getRateLinkFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](14);
+        selectors[0] = RateLinkFacet.getRateReference.selector;
+        selectors[1] = RateLinkFacet.rateLinkBound.selector;
+        selectors[2] = RateLinkFacet.offerRateBounds.selector;
+        selectors[3] = RateLinkFacet.rateWarnings.selector;
+        selectors[4] = RateLinkFacet.checkRateWrite.selector;
+        selectors[5] = RateLinkFacet.offerCheckedRate.selector;
+        selectors[6] = RateLinkFacet.admitOfferRate.selector;
+        selectors[7] = RateLinkFacet.originationRate.selector;
+        selectors[8] = RateLinkFacet.loanRateWarnings.selector;
+        selectors[9] = RateLinkFacet.requireLinkAdmissible.selector;
+        selectors[10] = bytes4(keccak256("WARN_FAR_ABOVE()"));
+        selectors[11] = bytes4(keccak256("WARN_FAR_BELOW()"));
+        selectors[12] = RateLinkFacet.matchRate.selector;
+        selectors[13] = RateLinkFacet.linkedFloor.selector;
     }
 
     function getReferralFacetSelectors() public pure returns (bytes4[] memory selectors) {

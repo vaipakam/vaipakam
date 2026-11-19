@@ -544,8 +544,10 @@ library LibOfferCreate {
         // (the value floor and the per-wallet open-offer cap, both read from
         // the row just written), records the offer in the active index and
         // announces it ({OfferCreated} then {OfferCreatedDetails}, unchanged).
+        // It also admits the rate terms (#3635 A, #3713): the link, and the
+        // warning band on the checked rate with the creator's acknowledgement.
         // A refusal reverts this whole create.
-        OfferBookFacet(address(this)).openOfferOnBook(offerId, route);
+        OfferBookFacet(address(this)).openOfferOnBook(offerId, route, params.rateFarFromAverageAcknowledged);
     }
 
     /**
@@ -775,6 +777,11 @@ library LibOfferCreate {
         // #3682 — the integrator the creator named: paid a share only on a
         // borrower's offer, attribution only on a lender's (#3719).
         offer.integrator = params.integrator;
+        // #3635 A — the market link on the rate limit; admitted (and the
+        // band checked on the offer's checked rate) where the offer enters
+        // the book, `OfferBookFacet.openOfferOnBook`.
+        offer.linkKind = params.linkKind;
+        offer.linkMarginBps = params.linkMarginBps;
         // #1347 — the creator's Full VPFI tariff opt-in (`Offer.creatorFull` /
         // `creatorMaxCStar` / `creatorAllowFullDowngrade`) is NOT a
         // `CreateOfferParams` field: it is authorized post-create by the creator

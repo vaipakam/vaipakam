@@ -111,7 +111,10 @@ contract RefinanceRequestGuardTest is SetupTest {
             expiresAt: expiresAt,
             fillMode: fillMode,
             refinanceTargetLoanId: targetLoanId,
-            useFullTermInterest: false
+            useFullTermInterest: false,
+            linkKind: 0,
+            linkMarginBps: 0,
+            rateFarFromAverageAcknowledged: false
         });
     }
 

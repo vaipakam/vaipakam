@@ -66,11 +66,11 @@ contract InstantMarketFacet is DiamondReentrancyGuard, DiamondPausable, DiamondA
     /// @param riskAndTermsConsent The borrower's consent to the loan terms.
     /// @param rateFarFromAverageAcknowledged The borrower's own statement that
     ///        it accepts a fixed rate far from the term average
-    ///        (TermAverageAndLinkGuardsDesign §6.4, #3713). It will be required
-    ///        for a fixed-rate instant borrow whose rate is outside the band
-    ///        around the term average, and is never needed inside it. Until the
-    ///        shared term-average check (#3635 part A) lands it is carried but
-    ///        NOT enforced: no borrow is refused or allowed because of it.
+    ///        (TermAverageAndLinkGuardsDesign §6.4, #3713). Each fill's actual
+    ///        rate is checked against the band around the term average for
+    ///        `termDays`; a fill outside it without this flag is refused like
+    ///        any other refusing source (skipped and reported). It is never
+    ///        needed inside the band, and one flag covers every fill.
     struct InstantBorrowRequest {
         address lendingAsset;
         address collateralAsset;
@@ -369,6 +369,7 @@ contract InstantMarketFacet is DiamondReentrancyGuard, DiamondPausable, DiamondA
         fr.collRemaining = req.collateralOffered;
         fr.amountWanted = req.amountWanted;
         fr.collateralOffered = req.collateralOffered;
+        fr.rateFarFromAverageAcknowledged = req.rateFarFromAverageAcknowledged;
     }
 
     function _maxFills(LibVaipakam.InstantMarketConfig storage c) private view returns (uint8) {

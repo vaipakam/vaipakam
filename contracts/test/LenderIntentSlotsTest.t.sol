@@ -65,7 +65,7 @@ contract LenderIntentSlotsTest is SetupTest {
         vm.prank(lender);
         _intents().setLenderIntent(
             mockERC20, mockCollateralERC20, slot, MAX_EXPOSURE, floorBps, MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL,
-            false, 0, false, true, type(uint64).max
+            false, 0, false, true, LibVaipakam.IntentRateTerms(0, 0, false), type(uint64).max
         );
     }
 
@@ -128,7 +128,10 @@ contract LenderIntentSlotsTest is SetupTest {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: true
+                useFullTermInterest: true,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );
@@ -271,7 +274,7 @@ contract LenderIntentSlotsTest is SetupTest {
         );
         _intents().setLenderIntent(
             mockERC20, mockCollateralERC20, top + 1, MAX_EXPOSURE, LOW_FLOOR, MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL,
-            false, 0, false, true, type(uint64).max
+            false, 0, false, true, LibVaipakam.IntentRateTerms(0, 0, false), type(uint64).max
         );
     }
 

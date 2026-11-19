@@ -2752,6 +2752,7 @@
         "InterestPaymentAttemptFailed": "El pago de intereses desde la reserva no se completó",
         "IntentCalmCheckSet": "Comprobación de precio de Auto-lend cambiada",
         "LenderIntentIntegratorNamed": "Integrador de Auto-lend indicado",
+        "LenderIntentRateTermsSet": "Vínculo de tasa de Auto-lend definido",
         "IntegratorShareSettled": "Parte de la comisión del integrador liquidada",
         "ReferralShareSettled": "Parte de la comisión por referido liquidada",
         "InviterBound": "Invitación aceptada",

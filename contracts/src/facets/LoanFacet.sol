@@ -31,6 +31,7 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {CollateralConcentrationFacet} from "./CollateralConcentrationFacet.sol";
 import {OfferPreviewFacet} from "./OfferPreviewFacet.sol";
+import {RateLinkFacet} from "./RateLinkFacet.sol";
 import {LibOfferPriceGuard} from "../libraries/LibOfferPriceGuard.sol";
 
 
@@ -140,6 +141,13 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // platform's alert can name the door the user came through. What its
         // share became is stated by `OfferAcceptFeeFacet.IntegratorShareSettled`.
         address integrator;
+        // #3719 / #3713 — the warnings this loan opened with, derived by the
+        // contract (never a caller input): bit 1 its rate is far above the
+        // term average for its term, bit 2 far below. Bit 0 is reserved for
+        // the collateral-concentration warning (#3685), which nothing sets yet.
+        uint8 warnings;
+        // #3635 A — a maker's market link set the rate this loan opened at.
+        bool rateFromLink;
     }
 
     /// @notice Companion to {LoanInitiated} — full self-sufficient
@@ -514,10 +522,15 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
                 if (chargedFor != loanId) revert AcceptChargeLoanMismatch(chargedFor, loanId);
                 delete st.acceptChargeLoanId;
             }
+            // #3719 / #3713 — the warnings the loan opened with, from the
+            // rate-link host, before the integrator record so a warned loan
+            // counts on the integrator's public record.
+            d.warnings = RateLinkFacet(address(this)).loanRateWarnings(loanId);
+            d.rateFromLink = loan.rateFromLink;
             address integrator = st.acceptIntegratorPending;
             if (integrator != address(0)) {
                 delete st.acceptIntegratorPending;
-                LibIntegrator.recordLoan(loanId, integrator);
+                LibIntegrator.recordLoan(loanId, integrator, d.warnings != 0);
                 d.integrator = integrator;
             }
         }
@@ -1080,6 +1093,12 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             // matcher stamped by the legacy `_acceptOffer` post-init
             // hook (already in PR3-A).
         }
+        // #3635 A / #3713 — the rate through its one host: a direct accept of
+        // a rate-linked offer opens at the offer's effective endpoint, a match
+        // keeps its rate, and a taker step is band-checked on the actual rate
+        // with its acknowledgement.
+        (loan.interestRateBps, loan.rateFromLink) =
+            RateLinkFacet(address(this)).originationRate(offerId, loan.interestRateBps);
     }
 
     function _copyAssetFields(

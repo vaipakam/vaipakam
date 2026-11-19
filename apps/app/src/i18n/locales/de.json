@@ -2752,6 +2752,7 @@
         "InterestPaymentAttemptFailed": "Zinszahlung aus der Reserve nicht durchgeführt",
         "IntentCalmCheckSet": "Auto-lend-Preisprüfung geändert",
         "LenderIntentIntegratorNamed": "Auto-lend-Integrator benannt",
+        "LenderIntentRateTermsSet": "Auto-lend-Zinsbindung festgelegt",
         "IntegratorShareSettled": "Gebührenanteil des Integrators abgerechnet",
         "ReferralShareSettled": "Empfehlungs-Gebührenanteil abgerechnet",
         "InviterBound": "Einladung angenommen",

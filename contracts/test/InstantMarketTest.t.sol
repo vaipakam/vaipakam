@@ -72,7 +72,7 @@ abstract contract InstantMarketBase is SetupTest {
         vm.prank(who);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, 0, maxExposure, rateBps, MAX_INIT_LTV_BPS,
-            TERM, MIN_FILL, false, 0, true, true, type(uint64).max
+            TERM, MIN_FILL, false, 0, true, true, LibVaipakam.IntentRateTerms(0, 0, false), type(uint64).max
         );
         ERC20Mock(mockERC20).mint(who, maxExposure);
         vm.prank(who);
@@ -310,7 +310,7 @@ contract InstantMarketTest is InstantMarketBase {
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, 0, 1000 ether, 500, MAX_INIT_LTV_BPS,
-            TERM, MIN_FILL, false, 0, true, true, type(uint64).max
+            TERM, MIN_FILL, false, 0, true, true, LibVaipakam.IntentRateTerms(0, 0, false), type(uint64).max
         );
         vm.prank(lender);
         vm.expectRevert(
@@ -329,7 +329,7 @@ contract InstantMarketTest is InstantMarketBase {
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, 0, 1000 ether, 500, MAX_INIT_LTV_BPS,
-            TERM, MIN_FILL, false, 0, false, true, type(uint64).max
+            TERM, MIN_FILL, false, 0, false, true, LibVaipakam.IntentRateTerms(0, 0, false), type(uint64).max
         );
         vm.prank(lender);
         vm.expectRevert(InstantMarketFacet.InstantSlotNeedsProRata.selector);
@@ -341,7 +341,7 @@ contract InstantMarketTest is InstantMarketBase {
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, 0, 1000 ether, 400, MAX_INIT_LTV_BPS,
-            TERM, MIN_FILL, false, 0, true, true, type(uint64).max
+            TERM, MIN_FILL, false, 0, true, true, LibVaipakam.IntentRateTerms(0, 0, false), type(uint64).max
         );
         assertFalse(
             InstantMarketFacet(address(diamond)).getInstantSlot(lender, mockERC20, mockCollateralERC20, 0).fills,
@@ -403,7 +403,10 @@ contract InstantMarketTest is InstantMarketBase {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: fullTerm
+                useFullTermInterest: fullTerm,
+                linkKind: 0,
+                linkMarginBps: 0,
+                rateFarFromAverageAcknowledged: false
             }),
             type(uint64).max
         );

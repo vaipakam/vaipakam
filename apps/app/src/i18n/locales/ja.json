@@ -2752,6 +2752,7 @@
         "InterestPaymentAttemptFailed": "準備金からの利息支払いが完了しませんでした",
         "IntentCalmCheckSet": "Auto-lend の価格チェックを変更",
         "LenderIntentIntegratorNamed": "Auto-lend のインテグレーターを指定",
+        "LenderIntentRateTermsSet": "Auto-lend の金利連動を設定",
         "IntegratorShareSettled": "インテグレーターの手数料分を精算",
         "ReferralShareSettled": "紹介の手数料分を精算",
         "InviterBound": "招待を承認",

@@ -2752,6 +2752,7 @@
         "InterestPaymentAttemptFailed": "இருப்பிலிருந்து வட்டி செலுத்துதல் நிறைவடையவில்லை",
         "IntentCalmCheckSet": "Auto-lend விலைச் சரிபார்ப்பு மாற்றப்பட்டது",
         "LenderIntentIntegratorNamed": "Auto-lend ஒருங்கிணைப்பாளர் குறிப்பிடப்பட்டார்",
+        "LenderIntentRateTermsSet": "Auto-lend வட்டி இணைப்பு அமைக்கப்பட்டது",
         "IntegratorShareSettled": "ஒருங்கிணைப்பாளர் கட்டணப் பங்கு தீர்க்கப்பட்டது",
         "ReferralShareSettled": "பரிந்துரைக் கட்டணப் பங்கு தீர்க்கப்பட்டது",
         "InviterBound": "அழைப்பு ஏற்கப்பட்டது",

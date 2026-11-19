@@ -1094,6 +1094,15 @@
     "StandingInstructionFacet.previewInterestPayment(uint256)": {
       "class": "user",
       "why": "a keeper's eth_call preview of the pay-my-interest instruction: it always reverts with the skip reason it would record, so it changes nothing and no keeper is owed"
+    },
+    "RateReference.update(address)": {
+      "class": "gap",
+      "issue": "#3337",
+      "why": "folds every live series' sources into the asset's reference, index and checkpoints; no one chooses the value (the median of agreeing sources, stepped and capped by the series). Unrun, the series goes stale and every read reports it unavailable: a market-linked limit cannot be used and no band is asked for, never a wrong figure. The keeper's hourly pass is to call it for every asset with a live or pending series, shipped disarmed"
+    },
+    "RateReference.executeChange(enum:IRateReference.Kind,bytes32)": {
+      "class": "user",
+      "why": "governance applies a change it proposed (a setting, a series opening, an unmute) once the reference's own delay has passed; a change nobody executes leaves the current state in place"
     }
   }
 }

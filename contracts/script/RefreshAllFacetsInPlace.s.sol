@@ -107,6 +107,7 @@ import {LenderIntentViewFacet} from "../src/facets/LenderIntentViewFacet.sol";
 import {IntegratorFacet} from "../src/facets/IntegratorFacet.sol";
 import {StandingOfferCheckFacet} from "../src/facets/StandingOfferCheckFacet.sol";
 import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
+import {RateLinkFacet} from "../src/facets/RateLinkFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
@@ -377,7 +378,8 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // selectors move hosts, so the Replace cut repoints them.
     // 133 -> 136: IntegratorFacet (#3682), StandingOfferCheckFacet (#3720)
     // and ReferralFacet (#3722). Their selectors are new (Adds).
-    uint256 public constant EXPECTED_FACETS = 136;
+    // 136 -> 137: RateLinkFacet (#3635 A, #3713). Its selectors are new.
+    uint256 public constant EXPECTED_FACETS = 137;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1523,6 +1525,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             _getStandingOfferCheckSelectors()
         );
         items[135] = Item("referralFacet", ArtifactDeploy.deploy(type(ReferralFacet).name), _getReferralSelectors());
+        items[136] = Item("rateLinkFacet", ArtifactDeploy.deploy(type(RateLinkFacet).name), _getRateLinkSelectors());
         items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

@@ -1101,7 +1101,10 @@ contract FallbackCustodyTest is CustodyInvariantBase {
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
             refinanceTargetLoanId: 0,
-            useFullTermInterest: false
+            useFullTermInterest: false,
+            linkKind: 0,
+            linkMarginBps: 0,
+            rateFarFromAverageAcknowledged: false
         });
         vm.prank(lender_);
         uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(p, type(uint64).max);

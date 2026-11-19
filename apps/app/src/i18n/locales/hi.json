@@ -2752,6 +2752,7 @@
         "InterestPaymentAttemptFailed": "रिज़र्व से ब्याज भुगतान पूरा नहीं हुआ",
         "IntentCalmCheckSet": "Auto-lend मूल्य जाँच बदली गई",
         "LenderIntentIntegratorNamed": "Auto-lend इंटीग्रेटर नामित",
+        "LenderIntentRateTermsSet": "Auto-lend दर लिंक सेट",
         "IntegratorShareSettled": "इंटीग्रेटर का शुल्क हिस्सा निपटाया गया",
         "ReferralShareSettled": "रेफ़रल शुल्क हिस्सा निपटाया गया",
         "InviterBound": "आमंत्रण स्वीकार किया गया",

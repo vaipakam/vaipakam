@@ -332,7 +332,7 @@ contract CollectionOfferFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
         loanId = abi.decode(
             LibFacet.crossFacetCallReturn(
                 abi.encodeWithSelector(
-                    OfferMatchFacet.matchCoreInternal.selector, slice, borrowerOfferId, msg.sender
+                    OfferMatchFacet.matchCoreInternal.selector, slice, borrowerOfferId, uint256(0), msg.sender
                 ),
                 bytes4(0)
             ),
@@ -468,6 +468,11 @@ contract CollectionOfferFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
         q.allowsPrepayListing = p.allowsPrepayListing;
         q.useFullTermInterest = p.useFullTermInterest;
         q.lifecycleFlex = p.lifecycleFlex;
+        // #3635 A — the parent's market link; the band was checked on the
+        // parent's floor when it was posted, so the slice is not a new write.
+        q.linkKind = p.linkKind;
+        q.linkMarginBps = p.linkMarginBps;
+        q.rateFarFromAverageAcknowledged = true;
     }
 
     function _afterFill(LibVaipakam.Storage storage s, uint256 offerId, uint256 tokenId, uint256 slice, uint256 loanId)

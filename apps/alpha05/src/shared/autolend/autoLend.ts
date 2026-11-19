@@ -249,6 +249,10 @@ export function setupSteps(draft: AutoLendDraft, minFill: bigint, consent: boole
         draft.lendUntil,
         p.acceptsProRata,
         consent,
+        // #3635 A / #3713 — this app sets no market link and does not ask for
+        // the far-from-average confirmation yet: a floor outside the band is
+        // refused by name, a re-set of the same floor needs none.
+        { linkKind: 0, linkMarginBps: 0, rateFarFromAverageAcknowledged: false },
         validUntil,
       ],
     },
