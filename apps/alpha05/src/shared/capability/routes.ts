@@ -2,8 +2,10 @@
  * Whether this network's Diamond routes a function, from its own loupe.
  * Used where a surface states a route only where it exists (#3763: the
  * takeover at face value is named as a way to get funds back only where it
- * is deployed). A read that fails answers `false`: the surface then names
- * fewer routes, never one that may not be there.
+ * is deployed). A loupe that answers "no facet" is `false`; a read that
+ * fails is thrown, never read as "not deployed", so the own rail tries its
+ * next source and a caller that cannot read it states the read as unknown
+ * (Codex #3767 r13: an unread takeover must not hide a face-value route).
  */
 import { toFunctionSelector, type Abi, type AbiFunction, type PublicClient } from 'viem';
 import { DiamondLoupeFacetABI, InstantTakeoverFacetABI } from '@vaipakam/contracts/abis';
@@ -19,12 +21,8 @@ export function selectorOf(abi: Abi, name: string): Hex {
 }
 
 export async function routesSelector(c: PublicClient, diamond: Hex, selector: Hex): Promise<boolean> {
-  try {
-    const at = (await c.readContract({ address: diamond, abi: DiamondLoupeFacetABI as Abi, functionName: 'facetAddress', args: [selector] })) as Hex;
-    return at.toLowerCase() !== ZERO;
-  } catch {
-    return false;
-  }
+  const at = (await c.readContract({ address: diamond, abi: DiamondLoupeFacetABI as Abi, functionName: 'facetAddress', args: [selector] })) as Hex;
+  return at.toLowerCase() !== ZERO;
 }
 
 /** Whether the Diamond routes `selector`, telling a loupe that answers "no

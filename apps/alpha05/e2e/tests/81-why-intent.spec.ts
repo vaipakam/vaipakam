@@ -40,13 +40,16 @@ async function checkpoint(sc: Scenario, assets: Hex[]): Promise<void> {
   expect((await sc.pub.waitForTransactionReceipt({ hash })).status).toBe('success');
 }
 
-/** An Auto-lend lending WETH against tLIQ from 5% a year, for up to 30 days, with 0.5 WETH waiting. */
+/** An Auto-lend lending WETH against tLIQ from 5% a year, for up to 30 days,
+ *  with 0.5 WETH waiting. It accepts interest for the time borrowed, as the
+ *  harness's requests pay, so the protocol's first refusal of the request
+ *  below is its rate and not its interest terms. */
 async function autoLend(sc: Scenario, tliq: Hex): Promise<void> {
   await sc.diamondWrite('admin', 'setPartialFillEnabled', [true]);
   await sc.diamondWrite('admin', 'setLenderIntentEnabled', [true]);
   await sc.write('lender', WETH, WETH_ABI, 'deposit', [], parseEther('1'));
   await sc.write('lender', WETH, erc20Abi, 'approve', [sc.diamond, parseEther('0.5')]);
-  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, 0, parseEther('1'), 500n, 5000, 30, parseEther('0.01'), false, 0n, false, true, await txDeadline(sc)]);
+  await sc.diamondWrite('lender', 'setLenderIntent', [WETH, tliq, 0, parseEther('1'), 500n, 5000, 30, parseEther('0.04'), false, 0n, true, true, await txDeadline(sc)]);
   await sc.diamondWrite('lender', 'fundLenderIntent', [WETH, tliq, 0, parseEther('0.5')]);
 }
 

@@ -326,8 +326,12 @@ export type BorrowNowState =
   | { kind: 'plan'; plan: BorrowNowPlan }
   /** The instant market's switch is off on this network. */
   | { kind: 'market-off' }
-  /** No standing source on the pair could take this borrow. */
+  /** No standing source on the pair could take this borrow (every source
+   *  on the network was searched). */
   | { kind: 'no-source' }
+  /** None of the sources the bounded search read could take it, and more
+   *  exist that it did not read: not known to be none. */
+  | { kind: 'none-found' }
   /** The wallet holds less collateral than its part. */
   | { kind: 'short-collateral'; have: bigint; need: bigint }
   /** The figure needs the approval in place and the token's allowance could
@@ -341,6 +345,9 @@ export type BorrowNowState =
 export interface BorrowNowReview {
   terms: BorrowNowTerms;
   sources: InstantSource[];
+  /** Whether the source search read every source on the network (false when
+   *  a list was longer than the view reads: a fill may exist beyond it). */
+  searchComplete: boolean;
   state: BorrowNowState;
   /** The collateral the wallet supplies (the rest comes from the vault's
    *  free balance), and the approval that needs. */
@@ -379,4 +386,18 @@ export function restRequestInput(t: BorrowNowTerms, rest: { amount: bigint; coll
     fullTerm: false,
     allowsPartialRepay: t.allowsPartialRepay,
   };
+}
+
+/**
+ * The most the borrow can take from the wallet: the split between vault and
+ * wallet is worked out again when the call runs, so if the vault's free
+ * collateral drops before then, more comes from the wallet, up to what the
+ * approval allows (the allowance the approval sets, or the one already
+ * given), and never more than the collateral offered. The receipt states it
+ * as the binding figure and the review key carries it, so any change to it
+ * asks for a new confirmation.
+ */
+export function walletDrawCeiling(r: Pick<BorrowNowReview, 'approvalNeeded' | 'walletPart' | 'allowance' | 'terms'>): bigint {
+  const allowanceAfter = r.approvalNeeded ? r.walletPart : r.allowance;
+  return allowanceAfter < r.terms.collateralOffered ? allowanceAfter : r.terms.collateralOffered;
 }

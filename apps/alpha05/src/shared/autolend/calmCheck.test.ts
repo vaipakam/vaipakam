@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunctionData, type Log } from 'viem';
 import { CALM, calmCheckCall, calmLogs, calmPaused, calmStatusOf } from './calmCheck';
-import { calmConsequences } from './autoLendReview';
+import { calmConsequences, calmRowValue } from './autoLendReview';
 
 type Hex = `0x${string}`;
 const USDC: Hex = '0x00000000000000000000000000000000000000a1';
@@ -55,5 +55,18 @@ describe('calmConsequences', () => {
   it('keeps a switched-off pause as it is, and says when it could not be read', () => {
     expect(calmConsequences('off', copy)).toEqual(['autoLend.calmSetupKept#autoLend.calmRowOff', 'autoLend.calmLoseOff']);
     expect(calmConsequences(null, copy)).toEqual(['autoLend.calmSetupUnread']);
+  });
+});
+
+describe('the receipt pause row (Codex round 8 on #3767)', () => {
+  const c = { text: (k: string) => k, format: (k: string) => k } as never;
+  it('is unknown on a change whose setting could not be read, never "On"', () => {
+    expect(calmRowValue(null, true, c)).toEqual({ kind: 'unknown', why: 'autoLend.calmRowUnread' });
+  });
+  it('is On for a new Auto-lend, which starts with it on', () => {
+    expect(calmRowValue(null, false, c)).toEqual({ kind: 'text', text: 'autoLend.calmRowOn' });
+  });
+  it('says Off where the owner switched it off', () => {
+    expect(calmRowValue('off', true, c)).toEqual({ kind: 'text', text: 'autoLend.calmRowOff' });
   });
 });

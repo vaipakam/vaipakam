@@ -3,7 +3,7 @@ import { encodeAbiParameters, encodeErrorResult, encodeEventTopics, type Abi, ty
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import type { StoredOffer } from '../offers/acceptTerms';
 import type { IntentSummary } from '../offers/intents';
-import { buyOfferCandidate, cashLogs, getCashKey, handoverCandidates, routeState, type CashLoan, type GetCash } from './getCash';
+import { buyOfferCandidate, cashLogs, getCashKey, searchedAll, handoverCandidates, routeState, type CashLoan, type GetCash } from './getCash';
 
 type Hex = `0x${string}`;
 const USDC: Hex = '0x00000000000000000000000000000000000000a1';
@@ -141,5 +141,37 @@ describe('getCashKey', () => {
     expect(getCashKey(base)).not.toBe(getCashKey({ ...base, sale: { kind: 'ready', offerId: 1n, rateBps: 900n, net: 980n, shortfall: 20n, held: 0n } }));
     // A part repayment since the page loaded lowers what the handover pays.
     expect(getCashKey(base)).not.toBe(getCashKey({ ...base, principal: 900n }));
+  });
+  it('changes when a route found nothing but the search was bounded', () => {
+    const base: GetCash = {
+      direct: { kind: 'open' },
+      listing: { kind: 'open' },
+      reach: 'yes',
+      handover: { kind: 'none', complete: true, refusals: [] },
+      sale: { kind: 'none', complete: true },
+      principal: 1000n,
+      readAt: 0,
+    };
+    expect(getCashKey(base)).not.toBe(getCashKey({ ...base, sale: { kind: 'none', complete: false } }));
+  });
+});
+
+describe('searchedAll', () => {
+  const none = (h: boolean, s: boolean): GetCash => ({
+    direct: { kind: 'open' },
+    listing: { kind: 'open' },
+    reach: 'yes',
+    handover: { kind: 'none', complete: h, refusals: [] },
+    sale: { kind: 'none', complete: s },
+    principal: 1000n,
+    readAt: 0,
+  });
+  it('says none only when every search that found nothing was complete', () => {
+    expect(searchedAll(none(true, true))).toBe(true);
+    expect(searchedAll(none(false, true))).toBe(false);
+    expect(searchedAll(none(true, false))).toBe(false);
+  });
+  it('does not count a route that found something', () => {
+    expect(searchedAll({ ...none(true, false), sale: { kind: 'ready', offerId: 1n, rateBps: 900n, net: 990n, shortfall: 10n, held: 0n } })).toBe(true);
   });
 });

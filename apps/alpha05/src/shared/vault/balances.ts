@@ -47,6 +47,17 @@ export interface BalanceLine {
   /** True when not every slot could be listed, so `waiting` is a floor. */
   waitingPartial: boolean;
   inLoans: bigint;
+  /** True when the wallet's positions were not all read (the scan stopped
+   *  at its limit), so `inLoans` is a floor, possibly zero for a token
+   *  whose loans lie past it. */
+  inLoansPartial: boolean;
+}
+
+/** The loans the wallet lent, as read: `complete` false when the position
+ *  scan stopped before the end. */
+export interface LentRead {
+  loans: readonly LentLoan[];
+  complete: boolean;
 }
 
 /** The wallet's slots as read: every one, or a partial list (`complete`
@@ -68,15 +79,16 @@ export async function readSlotCapital(c: PublicClient, diamond: Hex, account: He
  * The three lines, one per ERC-20 token any of them names, in the order the
  * tokens first appear (the vault's rows first). A token with all three at
  * zero is left out. Unread slots leave every waiting figure unknown, and a
- * partial slot list marks each as a floor.
+ * partial slot list marks each as a floor; a partial position read marks
+ * each in-loans figure as a floor the same way.
  */
-export function balanceLines(rows: readonly Pick<HoldingRow, 'standard' | 'asset' | 'withdrawable'>[], slots: SlotRead, lent: readonly LentLoan[]): BalanceLine[] {
+export function balanceLines(rows: readonly Pick<HoldingRow, 'standard' | 'asset' | 'withdrawable'>[], slots: SlotRead, lent: LentRead): BalanceLine[] {
   const lines: BalanceLine[] = [];
   const at = (asset: Hex): BalanceLine => {
     const key = asset.toLowerCase();
     let hit = lines.find((l) => l.asset.toLowerCase() === key);
     if (!hit) {
-      hit = { asset, free: 0n, waiting: slots === null ? null : 0n, waitingPartial: slots !== null && !slots.complete, inLoans: 0n };
+      hit = { asset, free: 0n, waiting: slots === null ? null : 0n, waitingPartial: slots !== null && !slots.complete, inLoans: 0n, inLoansPartial: !lent.complete };
       lines.push(hit);
     }
     return hit;
@@ -91,6 +103,6 @@ export function balanceLines(rows: readonly Pick<HoldingRow, 'standard' | 'asset
     const l = at(s.lendingAsset);
     l.waiting = (l.waiting ?? 0n) + s.availableCapital;
   }
-  for (const loan of lent) if (loan.assetType === ASSET_ERC20 && loan.principal > 0n) at(loan.principalAsset).inLoans += loan.principal;
+  for (const loan of lent.loans) if (loan.assetType === ASSET_ERC20 && loan.principal > 0n) at(loan.principalAsset).inLoans += loan.principal;
   return lines.filter((l) => l.free === null || l.free > 0n || (l.waiting !== null && l.waiting > 0n) || l.inLoans > 0n);
 }

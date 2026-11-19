@@ -10,6 +10,7 @@ import {
   listingCall,
   quoteListing,
   readGetCash,
+  searchedAll,
   takeoverCall,
   type CashLoan,
   type GetCash as GetCashRead,
@@ -195,8 +196,8 @@ export function GetCash(props: GetCashProps) {
             </div>
           )}
           {read !== null && read.direct.kind === 'open' && read.handover.kind !== 'ready' && read.sale.kind !== 'ready' && (
-            <div data-testid="get-cash-now-none">
-              <p className="tier-a">{text('getCash.nowNone')}</p>
+            <div data-testid="get-cash-now-none" data-searched={searchedAll(read) ? 'all' : 'some'}>
+              <p className="tier-a">{text(searchedAll(read) ? 'getCash.nowNone' : 'getCash.nowNoneFound')}</p>
               {read.handover.kind === 'none' &&
                 read.handover.refusals.map((r, n) => (
                   <p key={n} className="tier-b">
@@ -404,10 +405,10 @@ function CashFlow(props: GetCashProps & { route: Route; read: GetCashRead | null
     const g = await readGetCash(own, diamond, loan);
     if (g.direct.kind === 'closed') throw new StatedRefusal({ ...g.direct.refusals[0]!, reason: format('getCash.refused', { reason: g.direct.refusals[0]!.reason }) });
     if (route === 'handover') {
-      if (g.handover.kind !== 'ready') throw new StatedRefusal({ code: 'NoHandover', reason: text('getCash.nowNone'), reopensAt: null, remedy: null });
+      if (g.handover.kind !== 'ready') throw new StatedRefusal({ code: 'NoHandover', reason: text(searchedAll(g) ? 'getCash.nowNone' : 'getCash.nowNoneFound'), reopensAt: null, remedy: null });
       return { route: 'handover', owner: g.handover.owner, slot: g.handover.slot, receives: g.handover.receives };
     }
-    if (g.sale.kind !== 'ready') throw new StatedRefusal({ code: 'NoBuyOffer', reason: text('getCash.nowNone'), reopensAt: null, remedy: null });
+    if (g.sale.kind !== 'ready') throw new StatedRefusal({ code: 'NoBuyOffer', reason: text(searchedAll(g) ? 'getCash.nowNone' : 'getCash.nowNoneFound'), reopensAt: null, remedy: null });
     // The sale is bound to the net and the held amount its preview showed.
     return { route: 'sale', offerId: g.sale.offerId, rateBps: g.sale.rateBps, net: g.sale.net, maxHeld: g.sale.held, principal: g.principal };
     // eslint-disable-next-line react-hooks/exhaustive-deps

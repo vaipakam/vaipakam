@@ -417,7 +417,7 @@ export function BorrowNowFlow({ terms, chain, own, meta, termsState, onEdit, onR
             {blocker === null && !consented && <p className="tier-b">{text('accept.consentNeeded')}</p>}
             {onReviewPhase && (
               <p className="actions">
-                {(cover !== 'all' || review.state.kind === 'market-off' || review.state.kind === 'no-source') && review.state.kind !== 'needs-approval' && (
+                {(cover !== 'all' || review.state.kind === 'market-off' || review.state.kind === 'no-source' || review.state.kind === 'none-found') && review.state.kind !== 'needs-approval' && (
                   <button type="button" className="btn" onClick={requestAll} data-testid="borrownow-request-all">
                     {text(plan === null ? 'borrowNow.chooseRequest' : 'borrowNow.chooseAll')}
                   </button>
