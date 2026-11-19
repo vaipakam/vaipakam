@@ -148,6 +148,9 @@ export interface WorkerEnv {
   // budget (`@vaipakam/lib/rateLimit`, fails closed).
   FRONTEND_ORIGIN?: string;
   WS_SUBSCRIBE_RATELIMIT?: RateLimitBinding;
+  // #3774 — per-IP budget on the public data feed (`/public/v1*`), fails
+  // closed (`@vaipakam/lib/rateLimit`).
+  PUBLIC_FEED_RATELIMIT?: RateLimitBinding;
 
   /** Cloudflare version-metadata binding — makes "what's actually
    *  deployed?" a one-curl question (surfaced on the stats routes).
@@ -292,6 +295,8 @@ export interface Env {
   // (`@vaipakam/lib/rateLimit`, #2756): a deployment without it refuses
   // every post, so `wrangler.jsonc` declares it.
   SIGNED_OFFERS_RATELIMIT?: RateLimitBinding;
+  // #3774 — per-IP budget on the public data feed. Fails closed.
+  PUBLIC_FEED_RATELIMIT?: RateLimitBinding;
 }
 
 /**
@@ -357,6 +362,8 @@ export async function resolveEnv(
     OPENSEA_API_KEY: secrets.OPENSEA_API_KEY,
     // #1131 — pass through the signed-offer book rate-limit binding.
     SIGNED_OFFERS_RATELIMIT: raw.SIGNED_OFFERS_RATELIMIT,
+    // #3774 — the public data feed's per-IP budget.
+    PUBLIC_FEED_RATELIMIT: raw.PUBLIC_FEED_RATELIMIT,
     RPC_BASE: secrets.RPC_BASE,
     RPC_ETH: secrets.RPC_ETH,
     RPC_ARB: secrets.RPC_ARB,

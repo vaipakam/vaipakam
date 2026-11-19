@@ -4014,6 +4014,14 @@ These helpers support data-freshness checks, exportable transparency views, and 
 
 All functions are pure `view` functions (zero gas for callers when invoked via RPC) and multicall-friendly, so dashboards can batch reads in a single round-trip.
 
+### Public Data Feed (#3774)
+
+- **A Stated, Versioned Subset Of The Indexer Is Public:** The platform publishes a fixed list of read-only routes over its indexer for anyone to use: the open offer book, loans and their states, the agreed rates of filled loans by market, and the totals the transparency page shows. The list is versioned. Within a version a route is never removed or reshaped and no field changes meaning; such a change is a new version served beside the old one. The feed answers each route with the same read the app uses, never a second copy of it.
+- **Every Answer States How Fresh It Is And What It Leaves Out:** Each answer carries the block the indexer had reached on that chain when the read began (every record at or below it is included), where its figures come from, and what they leave out. An answer from a chain the indexer has not yet scanned says so instead of naming a block.
+- **No Figure Is Presented As The Platform's Rate:** Every answer carries a notice that its figures are records of what happened on chain, and that none is the platform's rate, a benchmark, advice or an offer.
+- **Nothing Private Is Served:** The feed serves only chain-derived records. Nothing the platform keeps privately for a wallet (goals, alert settings, watched loans, a chat link) is ever served, and the per-wallet convenience reads that exist to serve one wallet's own page are not part of it. A path outside the list is refused.
+- **Stated Limits, Failing Closed:** The feed states its per-caller request limit and refuses beyond it. If the limit cannot be applied, the feed refuses rather than serving without one.
+
 ### Off-Chain Data Services
 
 - **A Service That Cannot Reach Its Data Says So:** The platform's off-chain data services — the ones that record alert preferences, signed offers, support requests, diagnostics records and legal holds — must never answer from a database they are not certain of. When such a service is deliberately held off its database, every entry point refuses: a caller receives a temporary-unavailable answer that states plainly that nothing they sent was recorded and that nothing read back would be current, and background work declines to start rather than half-running. A refusal a user can act on is better product than an error that leaves them unable to tell a rejected write from a half-applied one.

@@ -75,6 +75,7 @@ import {
 import { handleApiIndex } from './apiIndex';
 import { handleIngestHealth } from './healthRoutes';
 import { handleAssetRankings } from './assetRankings';
+import { handlePublicFeed, handlePublicFeedPreflight, isPublicFeedPath } from './publicFeed';
 import { handleConfigSnapshot } from './configSnapshot';
 import {
   resolveEnv,
@@ -705,6 +706,15 @@ export default {
         const byId = url.pathname.match(/^\/loans\/(\d+)$/);
         if (byId) return handleLoanById(req, resolved, byId[1]);
       }
+      return new Response('Not found', { status: 404 });
+    }
+
+    // ─── /public/v1* ────────────────────────────────────────────
+    // #3774 — the public data feed: a versioned, documented subset of the
+    // reads above, each wrapped with its block and its sources (publicFeed.ts).
+    if (isPublicFeedPath(url.pathname)) {
+      if (req.method === 'OPTIONS') return handlePublicFeedPreflight();
+      if (req.method === 'GET') return handlePublicFeed(req, resolved);
       return new Response('Not found', { status: 404 });
     }
 

@@ -31,6 +31,15 @@ const API_INDEX = {
     chainParam:
       "Most endpoints accept ?chainId=<id> (e.g. 84532 for Base Sepolia); omitting it defaults to Base mainnet (8453). Amounts are decimal strings in the asset's smallest unit unless a field says otherwise.",
   },
+  // #3774 — the stable, documented subset for callers outside the
+  // platform. The endpoints below serve the app and may change with it;
+  // build on the feed instead.
+  publicFeed: {
+    path: '/public/v1',
+    description:
+      'A versioned subset of these reads for integrators: each answer is wrapped with the block the indexer had reached, where its figures come from and what they leave out. Rate-limited per IP (120 a minute). GET /public/v1 lists the routes.',
+    docs: 'https://github.com/vaipakam/vaipakam/blob/main/docs/PublicDataFeed.md',
+  },
   endpoints: [
     { method: 'GET', path: '/offers/stats', description: 'Open-offer counts and totals per chain.' },
     { method: 'GET', path: '/offers/active', description: 'The live offer book (paginated).' },
