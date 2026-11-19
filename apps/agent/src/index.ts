@@ -15,6 +15,9 @@
  *   - `runPeriodicPreNotify`     — push borrowers (priority) and
  *                                  lenders (courtesy) before the
  *                                  next interest-payment checkpoint.
+ *   - `runOwnerAlerts`           — position-token approvals and vault
+ *                                  outflows to their owners (#3721,
+ *                                  #3434).
  *   - `pruneOldDiagErrors`       — diagnostics retention prune.
  *   - `pruneOldSupportTickets`   — support-ticket retention prune: the
  *                                  only thing that deletes a ticket
@@ -112,6 +115,7 @@ import {
 } from '@vaipakam/lib/d1Maintenance';
 import { createSchemaGate, schemaDeclineNotice } from '@vaipakam/lib/d1SchemaGate';
 import { runPeriodicPreNotify } from './periodicPreNotify';
+import { runOwnerAlerts } from './ownerAlerts';
 import { decidePushOptIn, handlePushStatus, servicePushStatus } from './pushRail';
 import { handle1inchQuote, handleQuoteReadiness } from './quoteProxy';
 import { slotRefusal, takeCallerSlot } from './rateLimit';
@@ -260,6 +264,16 @@ export default {
       runPeriodicPreNotify(resolved).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[agent] runPeriodicPreNotify pass failed:', redactedError(err));
+      }),
+    );
+    // #3721 / #3434 — owner alerts: position-token approvals to every owner
+    // with a linked channel, vault outflows to owners who chose them (on by
+    // default while protected mode is on). Reads the indexer's settled
+    // events; see `ownerAlerts.ts` for what it does not promise.
+    ctx.waitUntil(
+      runOwnerAlerts(resolved).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[agent] runOwnerAlerts pass failed:', redactedError(err));
       }),
     );
     ctx.waitUntil(

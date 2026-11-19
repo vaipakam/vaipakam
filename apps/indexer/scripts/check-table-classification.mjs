@@ -105,6 +105,11 @@ const CLASSIFICATION = {
   oracle_snapshot_state: { class: 'replay-derived', reason: 'chain-read snapshots' },
   liquidity_confidence: { class: 'replay-derived', reason: 'chain-read derivation' },
   indexer_cursor: { class: 'replay-derived', reason: 'replay watermark(s)' },
+  owner_alert_cursor: {
+    class: 'replay-derived',
+    reason:
+      "the agent's owner-alert position (#3721 / #3434); an empty table restarts at the newest event, so a replay is never sent as news",
+  },
   indexer_chain_anchor: {
     class: 'replay-derived',
     reason: 'the reorg guard\'s anchor (#3411): the block the scan cursor last advanced to and its hash; cleared with the cursor, and the replay anchors again as it advances',

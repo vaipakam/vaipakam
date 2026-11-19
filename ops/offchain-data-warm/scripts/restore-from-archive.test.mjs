@@ -70,7 +70,7 @@ const LIVE_COLUMNS = {
   user_thresholds: [
     'wallet', 'chain_id', 'warn_hf', 'alert_hf', 'critical_hf',
     'tg_chat_id', 'push_channel', 'created_at', 'updated_at',
-    'locale', 'notify_maturity_approaching', 'last_test_alert_at',
+    'locale', 'notify_maturity_approaching', 'last_test_alert_at', 'notify_vault_outflow',
   ],
   notify_state: ['wallet', 'chain_id', 'loan_id', 'last_band', 'last_hf_milli', 'last_sent_ts'],
   telegram_links: ['code', 'wallet', 'chain_id', 'expires_at'],
@@ -95,7 +95,7 @@ function utRow(overrides = {}) {
   return {
     wallet: '0xa', chain_id: 8453, warn_hf: 1.5, alert_hf: 1.2, critical_hf: 1.05,
     tg_chat_id: null, push_channel: null, created_at: 1, updated_at: 1,
-    locale: 'en', notify_maturity_approaching: 1, last_test_alert_at: 0,
+    locale: 'en', notify_maturity_approaching: 1, last_test_alert_at: 0, notify_vault_outflow: null,
     ...overrides,
   };
 }
