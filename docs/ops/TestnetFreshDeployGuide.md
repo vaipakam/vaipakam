@@ -180,16 +180,17 @@ Keys and accounts:
 - Oracle/rig: `<PREFIX>_WETH_ADDRESS`, `<PREFIX>_ETH_USD_FEED`,
   `<PREFIX>_SEQUENCER_UPTIME_FEED`, `VPFI_STABLE_FEED_SYMBOLS` +
   `<PREFIX>_<SYM>_FEED`, `<PREFIX>_PAA_QUOTE_ASSETS`,
-  `<PREFIX>_UNISWAP_V3_FACTORY`; the mock rig reads `BASE_SEPOLIA_WETH`,
-  `ARB_SEPOLIA_WETH`, `BNB_TESTNET_WETH` (BNB: **must be the mock WETH stand-in,
-  never WBNB**; `.env.example` carries both `BNB_TESTNET_WETH` and
-  `BNB_TESTNET_WETH_ADDRESS` — keep them equal; BNBTestnetDeploy.md "Chain-specific
-  quirks"; hardening lesson 8). Optional `FAUCET_*` reuse vars
+  `<PREFIX>_UNISWAP_V3_FACTORY`; the mock rig reads the same
+  `<PREFIX>_WETH_ADDRESS` (one name everywhere since the hardening fix of
+  lesson 8; BNB: **must be the mock WETH stand-in, never WBNB**, and has no
+  default; BNBTestnetDeploy.md "Chain-specific quirks"). Optional `FAUCET_*` reuse vars
   (DeployTestnetMocks.s.sol).
 - BNB only: `BNB_TESTNET_UNISWAP_V3_ROUTER` (**required** by `swap-adapters` on
   97). `INITIAL_SETTLERS` is ignored on 97 and unused on Base/Arb Sepolia (no 0x
   backend there).
-- Optional gas: `<SLUG>_GAS_PRICE_WEI` (BNB defaults to 1 gwei),
+- Optional gas: `<SLUG>_GAS_PRICE_WEI` (BNB defaults to 1 gwei) and
+  `<SLUG>_PRIORITY_GAS_PRICE_WEI` (defaults to the pinned price whenever a
+  price is pinned, so BNB's 0.1 gwei minimum tip is met; hardening lesson 8),
   `FORGE_GAS_MULTIPLIER` (default 130).
 - Vault endpoints (optional, defaults baked in): `VAULT_SEAPORT`,
   `VAULT_ORDER_PROTOCOL`, `VAULT_LISTING_CONDUIT_KEY` — also immutables in the
@@ -198,12 +199,10 @@ Keys and accounts:
 - `INTERACTION_LAUNCH_TIMESTAMP` (+ optional `INTERACTION_CAP_VPFI_PER_ETH`) for
   `SetInteractionLaunch.s.sol` — the SAME value on every chain.
 - `REWARD_CUSTODY_PAUSE_EPOCH` (+ the `REWARD_CUSTODY_*` answers, all zero on a
-  fresh Diamond) for `ActivateRewardCustody.s.sol`; on a mirror also the
-  CHAIN-PREFIXED `<PREFIX>_VPFI_TOKEN_ADDRESS` (`ARB_SEPOLIA_VPFI_TOKEN_ADDRESS`,
-  `BNB_TESTNET_VPFI_TOKEN_ADDRESS`) = the mirror's `.vpfiMirror`. The bare
-  `VPFI_TOKEN_ADDRESS` is NOT read: `Deployments.readVpfiToken()` falls back
-  from `.vpfiToken` to `_legacyEnvAddress`, which reads only the prefixed name
-  (hardening lesson 5).
+  fresh Diamond) for `ActivateRewardCustody.s.sol`. A mirror needs no token
+  variable: `Deployments.readVpfiToken()` reads `.vpfiToken`, else the
+  mirror's `.vpfiMirror` (hardening lesson 5, fixed), and only then the
+  prefixed `<PREFIX>_VPFI_TOKEN_ADDRESS`.
 - `REHEARSAL_ALLOW_CHAIN_ID` — ONLY for rehearsal flow scripts against a
   rehearsal Diamond (never the live one; §8).
 - `ETHERSCAN_API_KEY` — only if verifying sources.
@@ -335,16 +334,17 @@ its own record"). Commit both files with the deploy.
    `packages/contracts/scripts/archive-manifest.mjs`). The indexer seeds retired
    Diamonds from this committed file (CLAUDE.md "A fresh Diamond ... is a new
    indexer EPOCH"). It must be committed with the deploy.
-4. **Save what `--fresh` throws away** (FreshDeployHardeningPlan lessons 3 & 6).
-   Before archiving, copy from each current `addresses.json` the keys that are
-   not Diamond artifacts but are read by off-chain services:
-   `keeperAddress` (only manual key; DeploymentRunbook "Auto-lend keeper
-   address"), `sanctionsList`, `sanctionsDelistingTimelock`,
-   `sanctionsClearanceAttestor`, `sanctionsOracleStandIn` (present on the live
-   artifacts). Also note `reward-custody-activated.json` in each chain dir is
-   **not** moved by `archive_chain_state` (only `addresses.json`,
-   `deployment_source.json`, `storage-layout*.json`, `.markers`, `.history`
-   are) — move it aside by hand so it does not describe the old Diamond.
+4. **What `--fresh` keeps and archives** (FreshDeployHardeningPlan lesson 3,
+   fixed). The contracts phase carries the records that are not the Diamond's
+   into the new artifact by itself: `keeperAddress`, `sanctionsList`,
+   `sanctionsDelistingTimelock`, `sanctionsOracleStandIn` and
+   `sanctionsClearanceAttestor` (`CARRY_FORWARD_KEYS` in `deploy-testnet.sh`;
+   the run prints what it saved and what it carried). It archives
+   `reward-custody-activated.json` with the rest of the old chain state, so
+   the new Diamond is never described as already activated. A
+   `.carry-forward.json` left in a chain directory means the merge did not
+   run; the deploy names it. Lesson 6's operating settings are still manual
+   (item 5).
 5. **Record the old operating settings** to restore later (§5.6): read them
    from the archived Diamonds (precedent ReleaseNotes-2026-11-04).
 
@@ -528,12 +528,12 @@ messenger/buyback receiver; mirror `setRewardRemittanceReceiver`. Base:
 `VaipakamRewardMessenger.setBroadcastDestinations`. Mirror:
 `VPFIMirrorToken.setTokenPool`.
 
-BNB trap: the node refuses a priority tip < 0.1 gwei; the script pins only the
-gas price, and the precedent's first BNB ccip-wire sent nothing (hardening
-lesson 8). If it hangs, set a priority fee for the run (e.g.
-`ETH_PRIORITY_GAS_PRICE`) — **UNVERIFIED** env name — or run the forge command
-directly with `--legacy` (BNBTestnetDeploy.md quirks table). Check receipts
-before re-running.
+BNB: the node refuses a priority tip under 0.1 gwei. The precedent's first BNB
+ccip-wire sent nothing because only the gas price was pinned. Since the
+hardening fix of lesson 8, a pinned gas price pins the tip too
+(`ETH_PRIORITY_GAS_PRICE`, which forge and cast read; `<SLUG>_PRIORITY_GAS_PRICE_WEI`
+overrides it), and the run prints both. Every broadcast is followed by a
+receipt check that stops at the first failed transaction (lesson 1).
 
 ### 4.3 Verification (CcipCutoverRunbook §9 + DeploymentRunbook `verify` row)
 
@@ -622,9 +622,7 @@ cd contracts
 # 1. read the live pause epoch (pauseTransitions from LibPausable's slot);
 #    the script's preflight refuses a mismatch and names it. Read method:
 #    UNVERIFIED — the refusal message is the practical check.
-# On a mirror, also export the CHAIN-PREFIXED token variable (the bare
-# VPFI_TOKEN_ADDRESS is not read), e.g. on Arbitrum Sepolia:
-#   ARB_SEPOLIA_VPFI_TOKEN_ADDRESS=$(jq -r .vpfiMirror deployments/arb-sepolia/addresses.json)
+# On a mirror the script reads the artifact's .vpfiMirror itself (lesson 5).
 REWARD_CUSTODY_PAUSE_EPOCH=<live epoch> \
   forge script script/ActivateRewardCustody.s.sol --rpc-url "$<RPC_VAR>" --broadcast --slow
 # 2. after the transactions confirm:
@@ -931,7 +929,7 @@ markers (lines 333–416) — read both halves.
 - [ ] `.env` complete (§1.2); Secrets Store RPCs present; accounts funded.
 - [ ] `bash script/build-and-regress.sh` green (chunks); `predeploy-check.sh` green.
 - [ ] Owner OK: orphan prior Diamonds; drain Base remittances (nonce/reservations settled); keeper remit flags disarmed.
-- [ ] Saved `keeperAddress`, sanctions record keys, old settings; moved `reward-custody-activated.json` aside.
+- [ ] Recorded the old operating settings (§2.4 item 5); `--fresh` carries `keeperAddress` and the sanctions records and archives `reward-custody-activated.json` itself.
 - [ ] `preflight` ×3.
 - [ ] `contracts --fresh` Base, Arb, BNB; paused; treasury; clean stamp.
 - [ ] `.env`: `BASE_REWARD_DEPLOYMENT`, `MIRROR_REWARD_DEPLOYMENTS`, `REWARD_EXPECTED_SOURCE_CHAIN_IDS`, lane lists.
@@ -998,12 +996,14 @@ markers (lines 333–416) — read both halves.
 13. **DeploymentRunbook "0. Pre-flight"** says `forge build` / `forge test`
     bare — contradicts CLAUDE.md (viaIR ceiling; use `--skip test` and
     `run-regression.sh`).
-14. **`--fresh` does not archive `reward-custody-activated.json`**, nor carry
-    `keeperAddress` / standalone sanctions keys (hardening lesson 3).
-15. **Mirror custody activation** reads `.vpfiToken`, which a mirror lacks
-    (hardening lesson 5, still unfixed: `Deployments.readVpfiToken`).
-16. **BNB priority tip** not pinned (hardening lesson 8, still unfixed: no
-    priority setting in `deploy-testnet.sh`).
+14. **Fixed:** `--fresh` now archives `reward-custody-activated.json` and
+    carries `keeperAddress` and the standalone sanctions keys (hardening
+    lesson 3).
+15. **Fixed:** mirror custody activation reads the mirror's `.vpfiMirror`
+    through `Deployments.readVpfiToken` (hardening lesson 5).
+16. **Fixed:** a pinned gas price pins the priority tip too, and the mock
+    rig reads the same `<PREFIX>_WETH_ADDRESS` as the oracle (hardening
+    lesson 8).
 17. **`SetInteractionLaunch.s.sol` header** says `<CHAIN>_DIAMOND_ADDRESS` is
     required; the code reads the artifact (`Deployments.readDiamond()`).
 18. **`docs/ops/KeeperMachine.md`** carried unresolved git conflict markers

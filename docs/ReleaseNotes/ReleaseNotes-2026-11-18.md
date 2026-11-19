@@ -1,3 +1,10 @@
+# Release Notes — 2026-11-18
+
+One change reached main on this day. The Terms of Service are published as
+version 3, with a reworded software risk line. Version 2 stays readable, and
+wallets are asked to accept the new version only once the owner configures it
+on each network.
+
 ## Thread — Terms of Service version 3: the software risk line (PR #3738)
 
 The Terms of Service are published as version 3. One sentence changed and
@@ -19,3 +26,6 @@ A version becomes the one a network asks for only when the owner configures
 it there, and that step is separate and has not been taken by this change.
 
 > Caveat: until version 3 is configured on a network, that network still asks for version 2, whose pinned text ends the line the old way, while the app's key-risk list already shows the new sentence.
+
+_Committed 2026-11-18 03:23 UTC (0d01919d9)._
+<!-- assembled-fragment: 3738-terms-v3-risk-line-wording.md sha256=03e9377a5d3afdea0a90a56a8e165623e9c62b1e8552a4e322087402e1a2021e -->

@@ -117,9 +117,10 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  *            redeploy fresh every run anyway)
  *
  *        Optional WETH override (else the canonical per-chain address):
- *          - one of BASE_SEPOLIA_WETH / SEPOLIA_WETH / ARB_SEPOLIA_WETH /
- *            OP_SEPOLIA_WETH / ANVIL_WETH.
- *          - BNB Testnet (97) has NO default: BNB_TESTNET_WETH is
+ *          - one of BASE_SEPOLIA_WETH_ADDRESS / SEPOLIA_WETH_ADDRESS /
+ *            ARB_SEPOLIA_WETH_ADDRESS / OP_SEPOLIA_WETH_ADDRESS (the one
+ *            WETH name the oracle and price guard read too) / ANVIL_WETH.
+ *          - BNB Testnet (97) has NO default: BNB_TESTNET_WETH_ADDRESS is
  *            REQUIRED and must be a bridged/mock WETH — WBNB is not
  *            WETH and would be mispriced by the ETH/USD feed.
  *
@@ -730,16 +731,16 @@ contract DeployTestnetMocks is Script {
     }
 
     function _wethFor(uint256 cid) private view returns (address) {
-        if (cid == 84532) return vm.envOr("BASE_SEPOLIA_WETH", BASE_WETH_DEFAULT);
-        if (cid == 11155111) return vm.envOr("SEPOLIA_WETH", SEPOLIA_WETH_DEFAULT);
+        if (cid == 84532) return vm.envOr("BASE_SEPOLIA_WETH_ADDRESS", BASE_WETH_DEFAULT);
+        if (cid == 11155111) return vm.envOr("SEPOLIA_WETH_ADDRESS", SEPOLIA_WETH_DEFAULT);
         // BNB Testnet: WBNB is NOT WETH — the guard's `Weth` entry is the
         // bridged-WETH oracle reference and the mock ETH/USD feed would
         // price WBNB as ETH. There is no canonical bridged WETH on 97,
         // so REQUIRE an explicit address (a bridged/mock WETH the
         // operator controls) instead of silently defaulting to WBNB.
-        if (cid == 97) return vm.envAddress("BNB_TESTNET_WETH");
-        if (cid == 421614) return vm.envOr("ARB_SEPOLIA_WETH", ARB_SEPOLIA_WETH_DEFAULT);
-        if (cid == 11155420) return vm.envOr("OP_SEPOLIA_WETH", OP_SEPOLIA_WETH_DEFAULT);
+        if (cid == 97) return vm.envAddress("BNB_TESTNET_WETH_ADDRESS");
+        if (cid == 421614) return vm.envOr("ARB_SEPOLIA_WETH_ADDRESS", ARB_SEPOLIA_WETH_DEFAULT);
+        if (cid == 11155420) return vm.envOr("OP_SEPOLIA_WETH_ADDRESS", OP_SEPOLIA_WETH_DEFAULT);
         // Anvil (31337): no canonical WETH — env-supplied, else reuse a
         // mock WETH a prior run persisted to `.weth` (keeps re-runs
         // idempotent), else zero sentinel → run() deploys one inline.

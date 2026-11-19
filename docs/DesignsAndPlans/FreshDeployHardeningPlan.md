@@ -1,7 +1,12 @@
 # Fresh testnet deploy — lessons and hardening plan
 
 Status: proposal, from the all-waves fresh deploy of 3–4 November 2026
-(Base Sepolia and Arbitrum Sepolia, then BNB testnet). Nothing here is built
+(Base Sepolia and Arbitrum Sepolia, then BNB testnet). Partly built: the
+receipt check of lesson 1, the carried records and the archived custody stamp
+of lesson 3, the mirror token read of lesson 5 and the priority tip and single
+WETH name of lesson 8 are in `deploy-testnet.sh` and the scripts it runs. The
+explicit diamond-cut gas limits of lesson 1, the `recover` phase, the topology
+file, the `settings` phase and the gate reuse of lesson 10 are not built
 yet. Each lesson names what happened, what it cost, and the script change
 that removes it. The last section proposes one root change that covers most
 of them.
