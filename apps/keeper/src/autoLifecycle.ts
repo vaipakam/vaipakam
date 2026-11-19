@@ -52,6 +52,12 @@
  *      Diamond predating the view skip the pre-check was removed once every
  *      chain was fresh-deployed with it, #2952.)
  *
+ *   7b. Within the borrower's fee limit (#3649 stage 2): an extension adds
+ *      initiation fee for the term it adds (`quoteExtensionFee`), refused
+ *      above the borrower cap's `maxExtensionFee`. The term is shortened to
+ *      the longest one the limit admits, and named in the line; a loan whose
+ *      one-day fee is already above it is skipped with both figures.
+ *
  *   8. Soft per-tick cap so one rogue chain can't burn the keeper's
  *      gas budget.
  *
@@ -78,6 +84,7 @@ import {
   AdminFacetABI,
   AutoLifecycleFacetABI,
   AutoLifecycleSettingsFacetABI,
+  FeeLevelsFacetABI,
   MetricsFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
@@ -96,6 +103,8 @@ const AUTO_LIFECYCLE_ABI: Abi = AutoLifecycleFacetABI as Abi;
 /** #3410 — the consent and caps readers, split out of AutoLifecycleFacet. */
 const AUTO_LIFECYCLE_SETTINGS_ABI: Abi = AutoLifecycleSettingsFacetABI as Abi;
 const METRICS_ABI: Abi = MetricsFacetABI as Abi;
+/** #3649 — the extension's added initiation fee (`quoteExtensionFee`). */
+const FEE_LEVELS_ABI: Abi = FeeLevelsFacetABI as Abi;
 
 /** Pagination size for `getActiveLoansPaginated`. */
 const SCAN_PAGE = 200n;
@@ -172,6 +181,43 @@ interface ExtendCaps {
   maxRateBps: bigint;
   maxNewExpiry: bigint;
   setter: Address;
+  /** #3649 — the borrower's limit on the added initiation fee one extension
+   *  may charge, in the lending asset (the lender's side carries 0). */
+  maxExtensionFee: bigint;
+}
+
+/**
+ * #3649 stage 2 — the longest extension, at most `days`, whose added
+ * initiation fee is within the borrower's limit `cap`, or why there is none.
+ * `feeFor(d)` is the fee an extension of `d` days would charge now
+ * (`quoteExtensionFee`, after the holder's discount); it does not fall as
+ * the term grows, so the longest fitting term is found by halving. A fee that
+ * cannot be read throws, and the loan waits for the next run. Exported for
+ * tests.
+ */
+export async function fitExtensionFee(
+  feeFor: (days: bigint) => Promise<bigint>,
+  days: bigint,
+  cap: bigint,
+): Promise<{ days: bigint; fee: bigint } | string> {
+  const full = await feeFor(days);
+  if (full <= cap) return { days, fee: full };
+  const one = await feeFor(1n);
+  if (one > cap) return `the added initiation fee of even a one-day extension (${one}) is above the borrower's limit of ${cap}`;
+  let lo = 1n; // fits
+  let loFee = one;
+  let hi = days; // does not fit
+  while (hi - lo > 1n) {
+    const mid = (lo + hi) / 2n;
+    const fee = await feeFor(mid);
+    if (fee <= cap) {
+      lo = mid;
+      loFee = fee;
+    } else {
+      hi = mid;
+    }
+  }
+  return { days: lo, fee: loFee };
 }
 
 /**
@@ -364,8 +410,6 @@ async function tryExtend(
     console.log(`[keeper] autoLifecycle loan=${loanIdBig} not extended: ${fit}`);
     return false;
   }
-  const newDurationDays = fit;
-
   // #2738 — only inside the window. Read after the caps: most loans carry
   // no consent and never reach this read.
   const outside = await readContractWindow(publicClient, diamond, loanIdBig, nowSec);
@@ -380,6 +424,38 @@ async function tryExtend(
   if (unfunded !== null) {
     console.log(`[keeper] autoLifecycle loan=${loanIdBig} not extended: ${unfunded}`);
     return false;
+  }
+
+  // #3649 stage 2 — the extension adds initiation fee for the term it adds,
+  // refused above the borrower's limit (ExtensionFeeAboveCap). Shorten the
+  // term to the longest one the limit admits rather than send a refusal.
+  // (The funding check above already counts the fee, bounded by the limit.)
+  let fitted: { days: bigint; fee: bigint } | string;
+  try {
+    fitted = await fitExtensionFee(
+      async (days) => {
+        const [, fee] = (await publicClient.readContract({
+          address: diamond,
+          abi: FEE_LEVELS_ABI,
+          functionName: 'quoteExtensionFee',
+          args: [loanIdBig, nowSec + days * SECONDS_PER_DAY],
+        })) as readonly [bigint, bigint, bigint, bigint];
+        return fee;
+      },
+      fit,
+      borrowerCaps.maxExtensionFee,
+    );
+  } catch (err) {
+    console.log(`[keeper] autoLifecycle loan=${loanIdBig} not extended: extension fee unread — ${redactedError(err, { stack: false })}`);
+    return false;
+  }
+  if (typeof fitted === 'string') {
+    console.log(`[keeper] autoLifecycle loan=${loanIdBig} not extended: ${fitted}`);
+    return false;
+  }
+  const newDurationDays = fitted.days;
+  if (newDurationDays < fit) {
+    console.log(`[keeper] autoLifecycle loan=${loanIdBig} extension shortened to ${newDurationDays} days: ${fit} days would add an initiation fee above the borrower's limit of ${borrowerCaps.maxExtensionFee}`);
   }
 
   // Submit `extendLoanInPlace`. Contract reverts on every safety
@@ -397,7 +473,7 @@ async function tryExtend(
       account: wallet.account ?? null,
     } as never);
     console.log(
-      `[keeper] autoLifecycle extended loan=${loanIdBig} rate=${newRateBps}bps days=${newDurationDays} tx=${hash}`,
+      `[keeper] autoLifecycle extended loan=${loanIdBig} rate=${newRateBps}bps days=${newDurationDays} extension-fee=${fitted.fee} tx=${hash}`,
     );
     return true;
   } catch (err) {

@@ -408,6 +408,12 @@ evidence that the migration has completed.
   principal asset must cover what the extension would charge now. A loan
   that falls short is skipped with the three figures named, and a loan whose
   funding cannot be read waits for the next run.
+- An extension adds initiation fee for the term it adds, and the borrower
+  sets the most one extension may add. The keeper never sends an extension
+  whose added fee is above that limit. It shortens the term to the longest
+  one whose fee the limit admits, and says so; when even a one-day
+  extension's fee is above the limit, the loan is skipped with both figures
+  named. A fee that cannot be read holds the loan for the next run.
 
 ### Required deployment capabilities
 
