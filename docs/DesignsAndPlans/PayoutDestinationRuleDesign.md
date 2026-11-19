@@ -141,11 +141,11 @@ A payment in this table to an address that has protected mode on is credited to 
 
 #3744 (owner decision 2026-11-18) makes an open offer's refund and its cancel and edit rights follow the holder of the offer's position NFT. It was written to pay "the same way #3710 pays live-loan payouts", meaning the holder's wallet. Under this rule it pays the holder's vault, by the offer-holder payout of section 4.1. The rest of #3744 stands.
 
-### 4.8 Paying from the vault (follow-on, its own card)
+### 4.8 Paying from the vault (follow-on, #3746)
 
 Once everything lands in the vault, a user will want to use that balance without a round trip through the wallet. Today only two steps can: a vault-backed signed offer and the instant market's collateral. Posting an offer, accepting one, adding collateral, repaying, funding a reserve and funding Auto-lend take wallet money only. A borrower who left the principal in the vault cannot repay from it.
 
-The follow-on: every step that takes a user's money takes a stated amount from free vault balance and the rest from the wallet, through one funding helper that replaces the two private copies. A protected account can spend only its Ready balance, as today. This is not part of the decision of 2026-11-19. It is recommended, filed as its own card, and can follow the payout work.
+The follow-on: every step that takes a user's money takes a stated amount from free vault balance and the rest from the wallet, through one funding helper that replaces the two private copies. A protected account can spend only its Ready balance, as today. This is not part of the decision of 2026-11-19. It is recommended, filed as #3746 for the owner to decide, and can follow the payout work.
 
 ### 4.9 Stated positions on four routes
 
@@ -231,7 +231,7 @@ Build the rule as decided: every release into free balance through the outflow p
 
 ## 10. Build notes
 
-**Order.** (1) The own-balance release, the batch figure and `withdrawCredited`. (2) Rows 9 to 18 moved onto the releases, the holder's-wallet payout deleted, the build check added with two hosts. (3) #3744 on the offer-holder payout. (4) Rewards, salary and the VPFI exit. (5) The app's two verbs, the balance view and the "also withdraw" option. (6) Paying from the vault, as its own card.
+**Order.** (1) The own-balance release, the batch figure and `withdrawCredited`. (2) Rows 9 to 18 moved onto the releases, the holder's-wallet payout deleted, the build check added with two hosts. (3) #3744 on the offer-holder payout. (4) Rewards, salary and the VPFI exit. (5) The app's two verbs, the balance view and the "also withdraw" option. (6) Paying from the vault (#3746), if the owner agrees.
 
 **Facets that change together.** `VaultOutflowFacet` and `LibVaultOutflow` with every facet in table 3.2; `MulticallFacet` and `VaultDepositoryFacet` for the batch figure; `LibDepositoryLedger` is inlined widely, so this is a fresh-deploy change like the rest of the batch.
 
