@@ -317,7 +317,20 @@ library Deployments {
     function readDiamond()         internal view returns (address) { return _readAddr(".diamond",         "DIAMOND_ADDRESS"); }
     function readVaultImpl()      internal view returns (address) { return _readAddr(".vaultImpl",      "VAULT_IMPL_ADDRESS"); }
     function readTimelock()        internal view returns (address) { return _readAddr(".timelock",        "TIMELOCK_ADDRESS"); }
-    function readVpfiToken()       internal view returns (address) { return _readAddr(".vpfiToken",       "VPFI_TOKEN_ADDRESS"); }
+    /// @notice The chain's VPFI token: the canonical `.vpfiToken`, else on a
+    ///         mirror chain its `.vpfiMirror` (FreshDeployHardeningPlan
+    ///         lesson 5: a mirror records its VPFI under that key, and a
+    ///         mirror's reward-custody activation stopped for want of a
+    ///         hand-passed address), else the legacy `<PREFIX>VPFI_TOKEN_ADDRESS`
+    ///         env fallback, which reverts when unset. A chain carries one of
+    ///         the two keys, never both (the omit-keys policy).
+    function readVpfiToken() internal view returns (address) {
+        address token = _tryReadAddr(".vpfiToken");
+        if (token != address(0)) return token;
+        token = _tryReadAddr(".vpfiMirror");
+        if (token != address(0)) return token;
+        return _readAddr(".vpfiToken", "VPFI_TOKEN_ADDRESS");
+    }
 
     /// @notice Optional read of `.vpfiToken` from the ARTIFACT ONLY — never the
     ///         legacy env fallback, and never reverts. Returns address(0) when
