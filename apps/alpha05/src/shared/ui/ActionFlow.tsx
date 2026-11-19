@@ -312,7 +312,14 @@ export function ActionFlow({
           {senderNote}
           <p className="tier-b with-icon" role="status">
             <Icon meaning="pending" />
-            {text('flow.submitted')} {txLink(phase.hash)}
+            {phase.viaAccount ? (
+              // #3770 — a contract wallet's own id has no explorer page.
+              <span data-testid="flow-via-account">{format('flow.submittedAccount', { id: phase.hash })}</span>
+            ) : (
+              <>
+                {text('flow.submitted')} {txLink(phase.hash)}
+              </>
+            )}
           </p>
           {stepNote}
           {heldNotice}
@@ -351,7 +358,7 @@ export function ActionFlow({
         <div className="action-flow" data-phase="receipt-unknown">
           {senderNote}
           <Notice tone="warn" tier="A">
-            {format('flow.receiptUnknown', { reason: phase.message })} {txLink(phase.hash)}
+            {format('flow.receiptUnknown', { reason: phase.message })} {phase.viaAccount ? format('flow.accountId', { id: phase.hash }) : txLink(phase.hash)}
           </Notice>
           {heldNotice}
           <p className="actions">
