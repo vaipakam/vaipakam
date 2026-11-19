@@ -147,8 +147,11 @@ describe('getCashKey', () => {
       reach: 'not-instant',
       handover: { kind: 'out-of-reach', why: 'not-instant' },
       sale: { kind: 'ready', offerId: 1n, rateBps: 900n, net: 990n },
+      principal: 1000n,
       readAt: 0,
     };
     expect(getCashKey(base)).not.toBe(getCashKey({ ...base, sale: { kind: 'ready', offerId: 1n, rateBps: 900n, net: 980n } }));
+    // A part repayment since the page loaded lowers what the handover pays.
+    expect(getCashKey(base)).not.toBe(getCashKey({ ...base, principal: 900n }));
   });
 });

@@ -186,7 +186,7 @@ export function GetCash(props: GetCashProps) {
           {read !== null && read.direct.kind === 'open' && read.handover.kind !== 'ready' && read.sale.kind === 'ready' && (
             <div data-testid="get-cash-sale" data-net={read.sale.net.toString()} data-offer={read.sale.offerId.toString()}>
               <p className="tier-a">{format('getCash.saleValue', { rate: formatBps(read.sale.rateBps), amount: amount(read.sale.net) })}</p>
-              {read.sale.net < loan.principal && <p className="tier-a">{format('getCash.saleCost', { cost: amount(loan.principal - read.sale.net) })}</p>}
+              {read.sale.net < read.principal && <p className="tier-a">{format('getCash.saleCost', { cost: amount(read.principal - read.sale.net) })}</p>}
               <p className="tier-a">{text('getCash.interestStays')}</p>
               <button type="button" className="btn btn-primary" onClick={() => setRoute('sale')} data-testid="get-cash-sale-go">
                 {text('getCash.saleGo')}
@@ -337,12 +337,12 @@ interface ListChoice {
 /** The figures a route's review was built from, read again before signing. */
 export type Plan =
   | { route: 'handover'; owner: Hex; slot: number; receives: bigint }
-  | { route: 'sale'; offerId: bigint; rateBps: bigint; net: bigint; maxHeld: bigint }
+  | { route: 'sale'; offerId: bigint; rateBps: bigint; net: bigint; maxHeld: bigint; principal: bigint }
   | { route: 'list'; rateBps: bigint; days: number; minNet: bigint; maxHeld: bigint };
 
 function planKey(p: Plan): string {
   if (p.route === 'handover') return `h:${p.owner}:${p.slot}:${p.receives}`;
-  if (p.route === 'sale') return `s:${p.offerId}:${p.net}:${p.maxHeld}`;
+  if (p.route === 'sale') return `s:${p.offerId}:${p.net}:${p.maxHeld}:${p.principal}`;
   return `l:${p.rateBps}:${p.days}:${p.minNet}:${p.maxHeld}`;
 }
 
@@ -403,7 +403,7 @@ function CashFlow(props: GetCashProps & { route: Route; read: GetCashRead | null
     if (g.sale.kind !== 'ready') throw new StatedRefusal({ code: 'NoBuyOffer', reason: text('getCash.nowNone'), reopensAt: null, remedy: null });
     const held = v.heldForLender;
     if (held === null) throw new StatedRefusal({ code: 'HeldUnread', reason: text('frozen.reservedUnread'), reopensAt: null, remedy: null });
-    return { route: 'sale', offerId: g.sale.offerId, rateBps: g.sale.rateBps, net: g.sale.net, maxHeld: held };
+    return { route: 'sale', offerId: g.sale.offerId, rateBps: g.sale.rateBps, net: g.sale.net, maxHeld: held, principal: g.principal };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route, list, own, diamond, loanId, v.heldForLender]);
 
@@ -557,7 +557,7 @@ export function cashReceipt(p: Plan, loan: CashLoan, meta: TokenMetaMap | null, 
       { label: text('getCash.rowOffer'), value: { kind: 'text', text: format('getCash.offerValue', { id: p.offerId.toString(), rate: formatBps(p.rateBps) }) }, binding: true },
       { label: text('getCash.rowReceive'), value: { kind: 'amount', asset: loan.lending, amount: p.net }, binding: true },
       { label: text('getCash.rowWhere'), value: { kind: 'text', text: text('getCash.whereVault') }, binding: true },
-      { label: text('getCash.rowCost'), value: { kind: 'text', text: exact(loan.principal > p.net ? loan.principal - p.net : 0n) }, binding: true },
+      { label: text('getCash.rowCost'), value: { kind: 'text', text: exact(p.principal > p.net ? p.principal - p.net : 0n) }, binding: true },
       { label: text('getCash.rowEarned'), value: { kind: 'text', text: text('getCash.earnedValue') }, binding: false },
     );
     if (p.maxHeld > 0n) rows.push({ label: text('getCash.rowMaxHeld'), value: { kind: 'amount', asset: loan.lending, amount: p.maxHeld }, binding: true });

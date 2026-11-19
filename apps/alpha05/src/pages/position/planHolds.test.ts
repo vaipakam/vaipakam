@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { planHolds, type Plan } from './GetCash';
 
 const list: Plan = { route: 'list', rateBps: 900n, days: 7, minNet: 1000n, maxHeld: 50n };
-const sale: Plan = { route: 'sale', offerId: 3n, rateBps: 900n, net: 1000n, maxHeld: 50n };
+const sale: Plan = { route: 'sale', offerId: 3n, rateBps: 900n, net: 1000n, maxHeld: 50n, principal: 1100n };
 const handover: Plan = { route: 'handover', owner: '0x00000000000000000000000000000000000000aa', slot: 1, receives: 1000n };
 
 describe('planHolds', () => {

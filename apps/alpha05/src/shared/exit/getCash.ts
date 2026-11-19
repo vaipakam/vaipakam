@@ -23,6 +23,7 @@ import {
   EarlyWithdrawalFacetABI,
   InstantMarketFacetABI,
   InstantTakeoverFacetABI,
+  LoanFacetABI,
   RiskPreviewFacetABI,
   SaleExitVerdictFacetABI,
 } from '@vaipakam/contracts/abis';
@@ -45,6 +46,7 @@ export const DIRECT_SALE = EarlyWithdrawalDirectFacetABI as Abi;
 export const LISTING = EarlyWithdrawalFacetABI as Abi;
 const INSTANT = InstantMarketFacetABI as Abi;
 const PREVIEW = RiskPreviewFacetABI as Abi;
+const LOAN = LoanFacetABI as Abi;
 
 const MAX = (1n << 256n) - 1n;
 /** How many of the pair's offers and slots are looked at as counterparties. */
@@ -98,6 +100,8 @@ export interface GetCash {
   reach: HandoverReach;
   handover: Handover;
   sale: DirectSale;
+  /** The principal outstanding when read (the page's figure can be older). */
+  principal: bigint;
   readAt: number;
 }
 
@@ -247,7 +251,17 @@ async function readDirectSale(own: OwnStateClient, diamond: Hex, loan: CashLoan)
   return { kind: 'none' };
 }
 
-export async function readGetCash(own: OwnStateClient, diamond: Hex, loan: CashLoan): Promise<GetCash> {
+/** The principal outstanding now. The handover pays exactly this, so it is
+ *  read with the routes, never taken from the page: a part repayment since
+ *  the page loaded lowers it, and the review key then shows the change. */
+export async function readPrincipalNow(c: PublicClient, diamond: Hex, loanId: bigint): Promise<bigint> {
+  const d = (await c.readContract({ address: diamond, abi: LOAN, functionName: 'getLoanDetails', args: [loanId] })) as { principal: bigint };
+  return d.principal;
+}
+
+export async function readGetCash(own: OwnStateClient, diamond: Hex, page: CashLoan): Promise<GetCash> {
+  const principal = (await own.read((c) => readPrincipalNow(c, diamond, page.loanId))).value;
+  const loan: CashLoan = { ...page, principal };
   const [verdict, reach] = await Promise.all([
     own
       .read(
@@ -266,7 +280,7 @@ export async function readGetCash(own: OwnStateClient, diamond: Hex, loan: CashL
     reach !== 'yes' ? Promise.resolve<Handover>({ kind: 'out-of-reach', why: reach }) : open ? readHandover(own, diamond, loan) : Promise.resolve<Handover>({ kind: 'none' }),
     open ? readDirectSale(own, diamond, loan) : Promise.resolve<DirectSale>({ kind: 'none' }),
   ]);
-  return { direct, listing, reach, handover, sale, readAt: Date.now() };
+  return { direct, listing, reach, handover, sale, principal, readAt: Date.now() };
 }
 
 /** What a listing at this rate and expiry records: the least the lender
@@ -285,7 +299,7 @@ export function getCashKey(g: GetCash): string {
   const r = (s: RouteState) => (s.kind === 'open' ? 'open' : `closed:${s.reopensAt}:${s.refusals.map((x) => x.code).join(',')}`);
   const h = g.handover.kind === 'ready' ? `${g.handover.owner}:${g.handover.slot}:${g.handover.receives}` : g.handover.kind;
   const s = g.sale.kind === 'ready' ? `${g.sale.offerId}:${g.sale.net}` : 'none';
-  return [r(g.direct), r(g.listing), g.reach, h, s].join('|');
+  return [r(g.direct), r(g.listing), g.reach, h, s, g.principal].join('|');
 }
 
 /** What a transaction of this door did, from its own logs: the handover's
