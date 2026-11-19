@@ -70,6 +70,19 @@ describe('transition', () => {
     const p = transition(submitted, { type: 'superseded', submittedHash: HASH, minedHash: OTHER, reason: 'cancelled', blockNumber: 4n, unwound });
     expect(p).toMatchObject({ kind: 'superseded', unwound });
   });
+  it('ends an account wallet step that never ran as superseded, with no mined hash, only for an account flow', () => {
+    const via = transition({ kind: 'signing' }, { type: 'submitted', hash: HASH, at: 1, viaAccount: true });
+    const unwound = [{ status: 'done' as const, label: 'Approval put back' }];
+    for (const reason of ['account-cancelled', 'account-failed'] as const) {
+      const p = transition(via, { type: 'superseded', submittedHash: HASH, minedHash: null, reason, blockNumber: null, unwound });
+      expect(p).toEqual({ kind: 'superseded', submittedHash: HASH, minedHash: null, reason, blockNumber: null, unwound, landed: [] });
+    }
+    const plain = transition({ kind: 'signing' }, { type: 'submitted', hash: HASH, at: 1 });
+    expect(() => transition(plain, { type: 'superseded', submittedHash: HASH, minedHash: null, reason: 'account-cancelled', blockNumber: null })).toThrow(IllegalTransition);
+    // A wallet cancel or replacement always names the transaction that mined.
+    expect(() => transition(via, { type: 'superseded', submittedHash: HASH, minedHash: null, reason: 'cancelled', blockNumber: null })).toThrow(IllegalTransition);
+    expect(() => transition(via, { type: 'superseded', submittedHash: HASH, minedHash: OTHER, reason: 'account-failed', blockNumber: 3n })).toThrow(IllegalTransition);
+  });
   it('refuses a different mined hash that is not a reprice', () => {
     const submitted = transition({ kind: 'signing' }, { type: 'submitted', hash: HASH, at: 1 });
     expect(() => transition(submitted, { type: 'mined', submittedHash: HASH, hash: OTHER, repriced: false, blockNumber: 1n, reverted: false })).toThrow(IllegalTransition);

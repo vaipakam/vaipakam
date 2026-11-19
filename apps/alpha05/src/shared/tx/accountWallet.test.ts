@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SAFE_EXECUTION_FAILURE, SAFE_EXECUTION_SUCCESS, accountExecution, awaitAccountTx, safeStatus, queuedTo, walletKindFromCode, type AccountTxStatus } from './accountWallet';
+import { QUEUE_PAGE_LIMIT, SAFE_EXECUTION_FAILURE, SAFE_EXECUTION_SUCCESS, SAFE_GATEWAY, accountExecution, awaitAccountTx, nextQueuePage, readQueuedTo, safeStatus, queuedTo, walletKindFromCode, type AccountTxStatus } from './accountWallet';
 
 const CHAIN = ('0x' + 'c'.repeat(64)) as `0x${string}`;
 const ID = ('0x' + 'd'.repeat(64)) as `0x${string}`;
@@ -82,6 +82,43 @@ describe('queuedTo', () => {
   });
   it('refuses a shape it does not know rather than reading it as empty', () => {
     expect(() => queuedTo({}, D)).toThrow();
+  });
+});
+
+describe('readQueuedTo (following the queue pages)', () => {
+  const D = '0x00000000000000000000000000000000000000dd' as const;
+  const S = '0x00000000000000000000000000000000000000aa' as const;
+  const tx = (id: string) => ({ type: 'TRANSACTION', transaction: { id, txInfo: { to: { value: D } } } });
+  const respond = (body: unknown) => ({ ok: true, status: 200, json: async () => body }) as unknown as Response;
+  it('follows next pages on the gateway and counts every entry', async () => {
+    const pages = [
+      { results: [tx('a')], next: `${SAFE_GATEWAY}/page2` },
+      { results: [tx('b'), tx('c')], next: null },
+    ];
+    let i = 0;
+    const read = await readQueuedTo(1, S, D, (async () => respond(pages[i++])) as unknown as typeof fetch);
+    expect(read).toEqual({ entries: [expect.objectContaining({ id: 'a' }), expect.objectContaining({ id: 'b' }), expect.objectContaining({ id: 'c' })], partial: false });
+  });
+  it('says partial when it stops at the page limit', async () => {
+    let calls = 0;
+    const read = await readQueuedTo(1, S, D, (async () => {
+      calls++;
+      return respond({ results: [tx(String(calls))], next: `${SAFE_GATEWAY}/more` });
+    }) as unknown as typeof fetch);
+    expect(calls).toBe(QUEUE_PAGE_LIMIT);
+    expect(read.partial).toBe(true);
+    expect(read.entries).toHaveLength(QUEUE_PAGE_LIMIT);
+  });
+  it('never follows a next page off the gateway, and says partial', async () => {
+    const urls: string[] = [];
+    const read = await readQueuedTo(1, S, D, (async (u: string) => {
+      urls.push(u);
+      return respond({ results: [tx('a')], next: 'https://elsewhere.example/page2' });
+    }) as unknown as typeof fetch);
+    expect(urls).toHaveLength(1);
+    expect(read.partial).toBe(true);
+    expect(nextQueuePage({ next: 7 })).toBe('foreign');
+    expect(nextQueuePage({})).toBe(null);
   });
 });
 

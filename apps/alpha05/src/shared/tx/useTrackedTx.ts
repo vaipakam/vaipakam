@@ -158,7 +158,11 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
         );
         store.update(key, (e) => ({ ...e, note: null }));
         if (end.kind === 'ended') {
-          apply({ type: 'receipt-unknown', hash, message: text(end.reason === 'cancelled' ? 'flow.accountCancelled' : 'flow.accountFailed') });
+          // It never ran, so nothing of it took effect: the flow's
+          // clean-up runs and is shown, with any earlier step that did.
+          const landed = await readLandedBefore(ctx);
+          const unwound = await cleanUpAfterNoEffect(ctx);
+          apply({ type: 'superseded', submittedHash: hash, minedHash: null, reason: end.reason === 'cancelled' ? 'account-cancelled' : 'account-failed', blockNumber: null, unwound, landed });
           return;
         }
         chainHash = end.hash;

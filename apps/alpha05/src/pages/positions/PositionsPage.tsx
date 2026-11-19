@@ -74,7 +74,12 @@ export function PositionsPage() {
         <>
           <OwnStamp reads={[book.read]} />
           {emptyAll ? (
-            <p className="tier-b home-empty">{format('positions.empty', { chain: book.chain.name })}</p>
+            <>
+              <p className="tier-b home-empty">{format('positions.empty', { chain: book.chain.name })}</p>
+              {/* Goals are the wallet's own records, kept whether or not it
+                  holds a loan, so an empty loan list never hides them. */}
+              {address && <GoalsSection read={book.loans} meta={meta} chainId={book.chain.chainId} wallet={address} />}
+            </>
           ) : (
             <>
               <div className="segment positions-side" role="group" aria-label={text('positions.filterLabel')} data-testid="positions-side">

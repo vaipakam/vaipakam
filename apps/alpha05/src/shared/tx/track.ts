@@ -23,7 +23,7 @@ export type TxEvent =
   /** `submittedHash` names the transaction this flow sent; `hash` the one
    *  that mined. They may differ only with `repriced`. */
   | { type: 'mined'; submittedHash: `0x${string}`; hash: `0x${string}`; repriced: boolean; blockNumber: bigint; reverted: boolean }
-  | { type: 'superseded'; submittedHash: `0x${string}`; minedHash: `0x${string}`; reason: SupersededReason; blockNumber: bigint; unwound?: readonly LegOutcome[]; landed?: readonly LegOutcome[] }
+  | { type: 'superseded'; submittedHash: `0x${string}`; minedHash: `0x${string}` | null; reason: SupersededReason; blockNumber: bigint | null; unwound?: readonly LegOutcome[]; landed?: readonly LegOutcome[] }
   | { type: 'measured'; hash: `0x${string}`; outcome: MeasuredOutcome }
   | { type: 'receipt-unknown'; hash: `0x${string}`; message: string }
   /** Track a `receipt-unknown` hash again: back to `submitted`, in flight. */
@@ -74,7 +74,11 @@ export function transition(phase: TxPhase, event: TxEvent): TxPhase {
       const via = phase.viaAccount === true ? { viaAccount: true as const } : {};
       const mined = minedFrom(phase.hash, event, phase.viaAccount === true);
       if (mined) return mined;
-      if (event.type === 'superseded' && event.submittedHash === phase.hash && event.minedHash !== phase.hash) {
+      // A mined replacement names another hash; an account wallet's own
+      // ending names none, and only an account wallet's flow may end so.
+      const accountEnd = event.type === 'superseded' && event.minedHash === null && phase.viaAccount === true && (event.reason === 'account-cancelled' || event.reason === 'account-failed');
+      const minedOther = event.type === 'superseded' && event.minedHash !== null && event.minedHash !== phase.hash && event.reason !== 'account-cancelled' && event.reason !== 'account-failed';
+      if (event.type === 'superseded' && event.submittedHash === phase.hash && (accountEnd || minedOther)) {
         return {
           kind: 'superseded',
           submittedHash: event.submittedHash,

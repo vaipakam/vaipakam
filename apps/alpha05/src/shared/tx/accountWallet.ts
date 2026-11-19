@@ -217,11 +217,47 @@ export function queuedTo(page: unknown, to: Hex): QueuedToTarget[] {
   return out;
 }
 
-/** Reads the wallet's queue on `chainId` and keeps what calls `to`. */
-export async function readQueuedTo(chainId: number, safe: Hex, to: Hex, fetcher: typeof fetch = fetch): Promise<QueuedToTarget[]> {
-  const res = await fetcher(`${SAFE_GATEWAY}/v1/chains/${chainId}/safes/${safe}/transactions/queued`);
-  if (!res.ok) throw new Error(`queue read ${res.status}`);
-  return queuedTo(await res.json(), to);
+/** The most queue pages one read follows before it stops and says so. */
+export const QUEUE_PAGE_LIMIT = 10;
+
+/** What one read of the wallet's queue found: the entries calling the
+ *  target, and whether pages were left unread (the count is then a floor). */
+export interface QueuedToRead {
+  entries: QueuedToTarget[];
+  partial: boolean;
+}
+
+/** The next page the gateway names, kept only while it stays on the gateway
+ *  itself; anything else ends the walk (and the read is then partial). */
+export function nextQueuePage(page: unknown): string | null | 'foreign' {
+  const next = (page as { next?: unknown })?.next;
+  if (next === null || next === undefined) return null;
+  if (typeof next !== 'string') return 'foreign';
+  try {
+    return new URL(next).origin === new URL(SAFE_GATEWAY).origin ? next : 'foreign';
+  } catch {
+    return 'foreign';
+  }
+}
+
+/** Reads the wallet's queue on `chainId` and keeps what calls `to`,
+ *  following the gateway's pages up to `QUEUE_PAGE_LIMIT`. A walk that stops
+ *  before the last page says it is partial rather than reporting a count it
+ *  has not read. */
+export async function readQueuedTo(chainId: number, safe: Hex, to: Hex, fetcher: typeof fetch = fetch): Promise<QueuedToRead> {
+  let url: string = `${SAFE_GATEWAY}/v1/chains/${chainId}/safes/${safe}/transactions/queued`;
+  const entries: QueuedToTarget[] = [];
+  for (let pages = 0; pages < QUEUE_PAGE_LIMIT; pages++) {
+    const res = await fetcher(url);
+    if (!res.ok) throw new Error(`queue read ${res.status}`);
+    const page: unknown = await res.json();
+    entries.push(...queuedTo(page, to));
+    const next = nextQueuePage(page);
+    if (next === null) return { entries, partial: false };
+    if (next === 'foreign') return { entries, partial: true };
+    url = next;
+  }
+  return { entries, partial: true };
 }
 
 /** A contract wallet ended a step before it reached the network. */

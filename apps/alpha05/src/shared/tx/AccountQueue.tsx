@@ -4,8 +4,9 @@
  * wallet's own queue and says how many of its pending transactions call
  * the platform on this network, so a step sent from another device or
  * another owner is not out of sight. It states what the queue says; it
- * never marks anything done (only a receipt on chain does), and a queue it
- * cannot read is said to be unread, not empty.
+ * never marks anything done (only a receipt on chain does), a queue it
+ * cannot read is said to be unread, not empty, and a queue longer than the
+ * pages it reads is said to be partial, its count a floor.
  */
 import { useQuery } from '@tanstack/react-query';
 import { useAccount } from 'wagmi';
@@ -35,11 +36,12 @@ export function AccountQueue() {
         </Notice>
       </div>
     );
-  if (!q.data || q.data.length === 0) return null;
+  if (!q.data || (q.data.entries.length === 0 && !q.data.partial)) return null;
+  const count = String(q.data.entries.length);
   return (
-    <div data-testid="account-queue" data-state="pending">
+    <div data-testid="account-queue" data-state={q.data.partial ? 'partial' : 'pending'}>
       <Notice tone="info" tier="A">
-        {format('flow.queuePending', { count: String(q.data.length), chain: chain!.name })}
+        {q.data.partial ? format('flow.queuePartial', { count, chain: chain!.name }) : format('flow.queuePending', { count, chain: chain!.name })}
       </Notice>
     </div>
   );

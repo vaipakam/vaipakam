@@ -5,10 +5,11 @@ import { getSupportedChain } from '../../chain/chains';
 import { hasPublicQueue } from '../../chain/publicQueue';
 import { WhyLink } from '../help/WhyLink';
 import { useTxStore } from '../tx/txStore';
-import { useCopy } from '../copy/useCopy';
+import { useCopy, type CopyKey } from '../copy/useCopy';
 import type { Refusal } from '../eligibility/types';
 import type { FinishCard as FinishCardModel, Receipt as ReceiptModel } from '../receipt/types';
 import { useReceiptAddendum, withAddendum } from '../receipt/addendum';
+import type { SupersededReason } from '../tx/outcome';
 import type { TrackedTx } from '../tx/useTrackedTx';
 import { FinishCard } from './FinishCard';
 import { Icon } from './Icon';
@@ -96,6 +97,16 @@ export interface ActionFlowProps {
  * retried silently: a receipt that cannot be read keeps its hash on screen
  * and offers "Check again", and nothing new is offered until it is resolved.
  */
+/** The line a superseded flow shows, per reason: a wallet's cancel or
+ *  replacement names the transaction that mined instead; an account wallet's
+ *  own ending names none, since nothing reached the network. */
+const SUPERSEDED_KEY: Record<SupersededReason, CopyKey> = {
+  cancelled: 'flow.cancelled',
+  replaced: 'flow.replaced',
+  'account-cancelled': 'flow.accountCancelled',
+  'account-failed': 'flow.accountFailed',
+};
+
 export function ActionFlow({
   tx,
   identity,
@@ -376,7 +387,7 @@ export function ActionFlow({
         <div className="action-flow" data-phase="superseded">
           {senderNote}
           <Notice tone="warn" tier="A">
-            {text(phase.reason === 'cancelled' ? 'flow.cancelled' : 'flow.replaced')} {txLink(phase.minedHash)}
+            {text(SUPERSEDED_KEY[phase.reason])} {phase.minedHash !== null && txLink(phase.minedHash)}
           </Notice>
           {(phase.unwound ?? []).map((leg) => (
             <Notice key={leg.label} tone={leg.status === 'done' ? 'ok' : 'warn'} tier="A">

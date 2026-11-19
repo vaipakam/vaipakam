@@ -24,13 +24,17 @@ export type TxPhase =
    *  run the intended action: `cancelled` (the nonce was spent on an empty
    *  self-transfer) or `replaced` (a different call took its place). The
    *  intended effects are not measured, because they cannot have happened
-   *  through this flow; both hashes are kept so the page can say so. */
+   *  through this flow; both hashes are kept so the page can say so.
+   *  #3770: an account wallet's owners can also end its transaction before
+   *  it ever reaches the network (`account-cancelled`, `account-failed`);
+   *  nothing mined then, so `minedHash` and `blockNumber` are null, and the
+   *  flow's clean-up and earlier steps are read and shown the same way. */
   | {
       kind: 'superseded';
       submittedHash: `0x${string}`;
-      minedHash: `0x${string}`;
+      minedHash: `0x${string}` | null;
       reason: SupersededReason;
-      blockNumber: bigint;
+      blockNumber: bigint | null;
       /** What the flow's clean-up put back or took back (or could not),
        *  one leg per step that had something standing; empty when there
        *  was nothing to undo. */
@@ -47,7 +51,7 @@ export type TxPhase =
   /** The wallet refused or failed before anything was submitted. */
   | { kind: 'failed'; message: string };
 
-export type SupersededReason = 'cancelled' | 'replaced';
+export type SupersededReason = 'cancelled' | 'replaced' | 'account-cancelled' | 'account-failed';
 
 export type LegOutcome =
   | { status: 'done'; label: string }
