@@ -7,7 +7,7 @@ import { erc20Abi, type PublicClient, type StateOverride } from 'viem';
 import type { OwnStateClient } from '../../chain/ownRail';
 import { refusalFromError } from '../eligibility/refusal';
 import { readLenderIntents } from '../offers/intents';
-import { METRICS, readOffer, readPairOfferIds, readVault, tokenAcceptsApproval } from '../offers/reads';
+import { METRICS, READY_BALANCE, readOffer, readPairOfferIds, readVault, tokenAcceptsApproval } from '../offers/reads';
 import { readInstantSlot } from '../autolend/preset';
 import { readRiskNeed } from '../risk/riskNeed';
 import { allowanceSteps } from '../tx/approval';
@@ -59,13 +59,19 @@ export async function readSources(c: PublicClient, diamond: Hex, t: BorrowNowTer
   return orderSources([...consented, ...fromOffers].filter((x): x is Candidate => x !== null)).map((x) => x.source);
 }
 
-/** The collateral the vault can supply now: its free balance of the asset. */
+/** The collateral the vault can supply now, as the instant fill draws it:
+ *  the free balance, capped by what the account may spend at once (all of
+ *  it, or a protected account's Ready balance, #3344). */
 export async function readFreeCollateral(c: PublicClient, diamond: Hex, account: Hex, asset: Hex): Promise<bigint> {
   const vault = (await readVault(c, diamond, account)) as Hex;
   if (vault.toLowerCase() === ZERO) return 0n;
   const held = (await c.readContract({ address: asset, abi: erc20Abi, functionName: 'balanceOf', args: [vault] })) as bigint;
   if (held === 0n) return 0n;
-  return (await c.readContract({ address: diamond, abi: METRICS, functionName: 'getFreeBalance', args: [account, asset, 0n, held] })) as bigint;
+  const [free, spendable] = await Promise.all([
+    c.readContract({ address: diamond, abi: METRICS, functionName: 'getFreeBalance', args: [account, asset, 0n, held] }) as Promise<bigint>,
+    c.readContract({ address: diamond, abi: READY_BALANCE, functionName: 'readySpendable', args: [account, asset] }) as Promise<bigint>,
+  ]);
+  return spendable < free ? spendable : free;
 }
 
 /** What `borrowInstant` gives in this block, asked with `minTotal` 0 so the
@@ -117,14 +123,20 @@ export async function readBorrowNowReview(own: OwnStateClient, diamond: Hex, t: 
   const base = { terms: t, sources, walletPart, allowance, approvalNeeded, approvalSteps, identity, risk, readAt: Date.now() };
   if (!config.enabled) return { ...base, state: { kind: 'market-off' } };
   if (sources.length === 0) return { ...base, state: { kind: 'no-source' } };
-  if (walletHas < walletPart) return { ...base, state: { kind: 'short-collateral', have: walletHas, need: walletPart } };
+  // A wallet short of the whole collateral may still cover a part fill: each
+  // fill draws only its own share, so the simulation decides, and the
+  // shortfall is the answer only where it refuses.
+  const short = walletHas < walletPart ? ({ kind: 'short-collateral', have: walletHas, need: walletPart } as const) : null;
   let override: StateOverride | undefined;
   if (approvalNeeded) {
     const found = await own.read((c) => findAllowanceOverride(c, t.collateral, account, diamond, walletPart)).then((x) => x.value);
-    if (found === null) return { ...base, state: { kind: 'needs-approval' } };
+    // Without a way to ask before the approval exists, the approval comes
+    // first, unless the wallet holds none of the collateral at all.
+    if (found === null) return { ...base, state: short !== null && walletHas === 0n ? short : { kind: 'needs-approval' } };
     override = found;
   }
-  return { ...base, state: await askPlan(own, diamond, t, sources, override) };
+  const state = await askPlan(own, diamond, t, sources, override);
+  return { ...base, state: short !== null && state.kind !== 'plan' ? short : state };
 }
 
 /** What a review shows, as one key: a re-read that differs is a change. */

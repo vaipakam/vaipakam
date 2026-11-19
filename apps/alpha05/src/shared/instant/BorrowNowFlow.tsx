@@ -72,6 +72,12 @@ export function BorrowNowFlow({ terms, chain, own, meta, termsState, onEdit, onR
   const diamond = chain.diamondAddress;
   const account = own.account;
   const identity = reviewIdentity(own);
+  // The connected identity as of the latest render, for the checks an async
+  // step makes after its own awaits.
+  const liveIdentity = useRef(identity);
+  useEffect(() => {
+    liveIdentity.current = identity;
+  }, [identity]);
   const flowKey = BORROW_NOW_KEY;
   const [review, setReview] = useStoredValue<BorrowNowReview>(`${flowKey}:review`);
   const [consentFor, setConsentFor] = useStoredValue<number>(`${flowKey}:consent`);
@@ -288,11 +294,23 @@ export function BorrowNowFlow({ terms, chain, own, meta, termsState, onEdit, onR
   // the wallet's part on its own, then read the review again.
   const approveFirst = async () => {
     if (!review) return;
+    // The approval is a write of its own, outside the flow's identity guard:
+    // it is sent only for the wallet the review was read for.
+    const reviewedFor = review.identity;
+    if (liveIdentity.current !== reviewedFor) {
+      clear();
+      return;
+    }
     const token = review.terms.collateral;
     setApproving(text('flow.reading'));
     try {
       const io = allowanceIo(token, (amount) => setApproving(format('borrowNow.stepApprove', { amount: exact(token, amount) })));
       const prior = await readAllowance(token);
+      if (liveIdentity.current !== reviewedFor) {
+        setApproving(null);
+        clear();
+        return;
+      }
       if (prior < review.walletPart) await approveExactly(io, token, review.walletPart, prior);
       setApproving(null);
       await load();

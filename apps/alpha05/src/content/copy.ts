@@ -4483,6 +4483,7 @@ export const copy = {
     openForValue: B('{{days}} days, or to the due date if sooner'),
     rowMaxHeld: B('Set aside for you that moves to the buyer, at most'),
     loseLoan: A('The loan stops being yours: its later interest goes to the new lender, after what you earned is paid.'),
+    loseRewards: A("If rewards are running on this network and this loan has counted usage rewards for you, you give them up: handing on the loan closes your reward entry for it as forfeited, so it pays you nothing, including days already counted. The app cannot read that amount."),
     loseFirst: A('Another transaction can reach this counterparty first. Then this one stops and nothing moves.'),
     loseListing: A('Nothing moves until a buyer accepts. Until then the loan stays yours, and it can fill at any moment while open.'),
     loseListingFloor: A('If the loan changes before a buyer accepts so that you would receive less than shown, the sale is refused.'),

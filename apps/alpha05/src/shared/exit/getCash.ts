@@ -205,7 +205,10 @@ async function readDirectSale(own: OwnStateClient, diamond: Hex, loan: CashLoan)
         ),
     ),
   );
-  let best: DirectSale = { kind: 'none' };
+  // The probe asks for more than any sale pays, so the sale refuses with the
+  // net it would pay; that refusal comes before the buyer's own checks, so a
+  // net alone does not show the sale completes.
+  const quoted: { offerId: bigint; rateBps: bigint; net: bigint }[] = [];
   for (const x of offers) {
     if (x === null || !buyOfferCandidate(x.o, loan, own.account)) continue;
     const asked = await askThrough(own, async (c) =>
@@ -213,10 +216,18 @@ async function readDirectSale(own: OwnStateClient, diamond: Hex, loan: CashLoan)
     );
     if (asked.kind !== 'reverted') continue;
     const net = netFromProbe(asked.error);
-    if (net === null) continue;
-    if (best.kind === 'none' || net > best.net) best = { kind: 'ready', offerId: x.id, rateBps: x.o.interestRateBps, net };
+    if (net !== null) quoted.push({ offerId: x.id, rateBps: x.o.interestRateBps, net });
   }
-  return best;
+  // Best net first; the first whose whole sale completes at that net is the
+  // one offered, so an offer that cannot complete never hides one that can.
+  quoted.sort((a, b) => (a.net === b.net ? 0 : a.net > b.net ? -1 : 1));
+  for (const q of quoted) {
+    const asked = await askThrough(own, async (c) =>
+      c.simulateContract({ address: diamond, ...directSaleCall(loan.loanId, q.offerId, q.net, MAX, await chainValidUntil(c)), account: own.account }),
+    );
+    if (asked.kind === 'answered') return { kind: 'ready', ...q };
+  }
+  return { kind: 'none' };
 }
 
 export async function readGetCash(own: OwnStateClient, diamond: Hex, loan: CashLoan): Promise<GetCash> {

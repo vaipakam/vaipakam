@@ -534,6 +534,10 @@ function CashFlow(props: GetCashProps & { route: Route; read: GetCashRead | null
 }
 
 /** The review of one route: what moves, where, and what the lender gives up. */
+// `getCash.loseRewards` states the deployed rule: every hand-on of a lender
+// position closes the outgoing lender's reward entry as forfeited. #3670
+// (decided, not yet built) splits the entry at the sale day instead; the
+// line changes when that reaches the contracts.
 export function cashReceipt(p: Plan, loan: CashLoan, meta: TokenMetaMap | null, copy: CopyAccess): Receipt {
   const { text, format } = copy;
   const exact = (x: bigint) => exactTokenAmount(x, loan.lending, meta, format);
@@ -547,7 +551,7 @@ export function cashReceipt(p: Plan, loan: CashLoan, meta: TokenMetaMap | null, 
       { label: text('getCash.rowFee'), value: { kind: 'text', text: text('getCash.feeNone') }, binding: true },
       { label: text('getCash.rowEarned'), value: { kind: 'text', text: text('getCash.earnedValue') }, binding: false },
     );
-    consequences.push(text('getCash.loseLoan'), text('getCash.loseFirst'));
+    consequences.push(text('getCash.loseLoan'), text('getCash.loseRewards'), text('getCash.loseFirst'));
   } else if (p.route === 'sale') {
     rows.push(
       { label: text('getCash.rowOffer'), value: { kind: 'text', text: format('getCash.offerValue', { id: p.offerId.toString(), rate: formatBps(p.rateBps) }) }, binding: true },
@@ -557,7 +561,7 @@ export function cashReceipt(p: Plan, loan: CashLoan, meta: TokenMetaMap | null, 
       { label: text('getCash.rowEarned'), value: { kind: 'text', text: text('getCash.earnedValue') }, binding: false },
     );
     if (p.maxHeld > 0n) rows.push({ label: text('getCash.rowMaxHeld'), value: { kind: 'amount', asset: loan.lending, amount: p.maxHeld }, binding: true });
-    consequences.push(text('getCash.loseLoan'), text('getCash.loseFirst'));
+    consequences.push(text('getCash.loseLoan'), text('getCash.loseRewards'), text('getCash.loseFirst'));
   } else {
     rows.push(
       { label: text('getCash.rowRate'), value: { kind: 'text', text: formatBps(p.rateBps) }, binding: true },
@@ -567,7 +571,7 @@ export function cashReceipt(p: Plan, loan: CashLoan, meta: TokenMetaMap | null, 
       { label: text('getCash.rowEarned'), value: { kind: 'text', text: text('getCash.earnedValue') }, binding: false },
     );
     if (p.maxHeld > 0n) rows.push({ label: text('getCash.rowMaxHeld'), value: { kind: 'amount', asset: loan.lending, amount: p.maxHeld }, binding: true });
-    consequences.push(text('getCash.loseListing'), text('getCash.loseListingFloor'), text('getCash.loseLoan'));
+    consequences.push(text('getCash.loseListing'), text('getCash.loseListingFloor'), text('getCash.loseLoan'), text('getCash.loseRewards'));
   }
   const title = text(p.route === 'handover' ? 'getCash.handoverTitle' : p.route === 'sale' ? 'getCash.saleTitle' : 'getCash.listingTitle');
   return { title, rows, consequences, prompts: 1, readAt: Date.now() };
