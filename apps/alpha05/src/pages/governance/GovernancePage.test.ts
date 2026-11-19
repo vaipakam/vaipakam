@@ -68,7 +68,9 @@ describe('GovernanceView', () => {
     const out = html({ queue: ready(queue([])) });
     expect(out).toContain('Nothing is queued on Base Sepolia.');
     expect(out).toContain('Read at block 123456');
-    expect(out).toContain('A change queued now must wait at least 2 days; each change below shows its own wait.');
+    expect(out).toContain(
+      'A change queued now waits at least 7 days. Only lifting a pause, or an urgent fix the pause wallet has approved by its id, may wait 2 days instead.',
+    );
   });
 
   it('marks the last answer as old when a re-read failed', () => {

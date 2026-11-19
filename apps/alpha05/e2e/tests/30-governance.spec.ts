@@ -51,7 +51,9 @@ test('the footer reaches the governance page, which lists the queued batch and t
   await expect(page.getByText('waits in the governance timelock before it can run')).toBeVisible();
 
   await expect(page.getByTestId('governance-read-at')).toBeVisible({ timeout: 60_000 });
-  await expect(page.getByText('A change queued now must wait at least 1 h; each change below shows its own wait.')).toBeVisible();
+  await expect(page.getByTestId('governance-waits')).toHaveText(
+    'A change queued now waits at least 7 days. Only lifting a pause, or an urgent fix the pause wallet has approved by its id, may wait 1 h instead. Each change below shows its own wait.',
+  );
   await expect(page.getByText('2 changes queued.')).toBeVisible();
   await expect(page.getByTestId('governance-empty')).toHaveCount(0);
 

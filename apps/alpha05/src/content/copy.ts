@@ -7307,6 +7307,9 @@ export const copy = {
     readAt: B('Read at block {{block}}, {{time}}.'),
     rereadFailed: A('The latest re-read failed ({{reason}}). What is shown is the queue as of the block above, not now.'),
     minDelay: B('A change queued now must wait at least {{delay}}; each change below shows its own wait.'),
+    waits: B(
+      'A change queued now waits at least {{standard}}. Only lifting a pause, or an urgent fix the pause wallet has approved by its id, may wait {{restart}} instead. Each change below shows its own wait.',
+    ),
     count: B('{{count}} changes queued.'),
     noExpiry: A(
       'A queued change stays runnable until it is run or cancelled; it does not expire. A canceller can still cancel it until then. Once it has run, it is part of the protocol and this queue no longer lists it.',
