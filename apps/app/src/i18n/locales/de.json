@@ -1747,7 +1747,9 @@
       "rowLent": "Kreditgeberposition · {{amount}} zu Beginn verliehen",
       "rowBorrowedAmountUnknown": "Kreditnehmerposition · der zu Beginn geliehene Betrag ist nicht verfügbar",
       "rowLentAmountUnknown": "Kreditgeberposition · der zu Beginn verliehene Betrag ist nicht verfügbar",
-      "owedInternalMatched": "Nichts — das interne Matching hat diesen Kredit geschlossen. Er ist abgewickelt, sobald seine Claims eingelöst sind."
+      "owedInternalMatched": "Nichts — das interne Matching hat diesen Kredit geschlossen. Er ist abgewickelt, sobald seine Claims eingelöst sind.",
+      "fallbackGateOpensAt": "Ein Verkauf wurde nicht abgeschlossen. Die Abwicklung in Sachwerten kann ab {{time}} beginnen.",
+      "fallbackGateOpenNow": "Ein Verkauf wurde nicht abgeschlossen. Scheitert auch der nächste Verkauf, kann der Kredit in die Abwicklung in Sachwerten übergehen."
     },
     "powerSurface": {
       "body": "Diese Seite zeigt die offenen Angebote für ein Paar nebeneinander und lässt Sie Ihren eigenen Zins festlegen. Lieber Schritt für Schritt? Die Seiten Leihen und Verleihen erledigen dasselbe mit Erklärungen.",
@@ -4062,9 +4064,6 @@
       "rateLender": "Niedrigster Zinssatz, den Sie akzeptieren (% pro Jahr)",
       "latestEnd": "Spätestes neues Enddatum",
       "latestEndHint": "Bis zum Ende dieses Tages gerechnet: {{at}}.",
-      "extensionFee": "Eine Verlängerung bis zu diesem Datum erhöht Ihre Abschlussgebühr für die hinzukommende Laufzeit um {{fee}}, entnommen aus Ihrer Vault. Das ist das Höchste, was Ihre Grenzen zulassen; steigt die Gebühr darüber, findet die Verlängerung erst statt, wenn Sie neue Grenzen speichern.",
-      "extensionFeeNone": "Eine Verlängerung bis zu diesem Datum fügt keine Abschlussgebühr hinzu: Die Laufzeit ist bereits bezahlt.",
-      "extensionFeeUnknown": "Die zusätzliche Abschlussgebühr für dieses Datum konnte nicht gelesen werden, daher können die Grenzen noch nicht gespeichert werden.",
       "extensionFee": "Eine Verlängerung bis zu diesem Datum erhöht Ihre Kreditbearbeitungsgebühr für die zusätzliche Laufzeit um {{fee}}, entnommen aus Ihrem Vault. Das ist das Höchste, was Ihre Limits zulassen; steigt die Gebühr darüber, findet die Verlängerung erst statt, wenn Sie neue Limits speichern.",
       "extensionFeeNone": "Eine Verlängerung bis zu diesem Datum fügt keine Bearbeitungsgebühr hinzu: Die Laufzeit ist bereits bezahlt.",
       "extensionFeeUnknown": "Die zusätzliche Bearbeitungsgebühr für dieses Datum konnte nicht gelesen werden, daher können die Limits noch nicht gespeichert werden.",

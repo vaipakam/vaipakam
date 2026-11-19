@@ -1747,7 +1747,9 @@
       "rowLent": "Lending position · शुरुआत में {{amount}} lend किया गया",
       "rowBorrowedAmountUnknown": "Borrowing position · शुरुआत में borrow किया गया amount उपलब्ध नहीं है",
       "rowLentAmountUnknown": "Lending position · शुरुआत में lend किया गया amount उपलब्ध नहीं है",
-      "owedInternalMatched": "कुछ नहीं — internal matching ने यह loan बंद कर दिया। इसके claims collect होते ही यह settle हो जाता है।"
+      "owedInternalMatched": "कुछ नहीं — internal matching ने यह loan बंद कर दिया। इसके claims collect होते ही यह settle हो जाता है।",
+      "fallbackGateOpensAt": "एक बिक्री पूरी नहीं हुई। वस्तु के रूप में निपटान {{time}} पर खुल सकता है।",
+      "fallbackGateOpenNow": "एक बिक्री पूरी नहीं हुई। अगर अगली बिक्री भी विफल होती है, तो ऋण वस्तु के रूप में निपटान में जा सकता है।"
     },
     "powerSurface": {
       "body": "यह पेज एक जोड़ी के खुले offers साथ-साथ दिखाता है और आपको अपनी दर तय करने देता है। कदम-दर-कदम चलना पसंद है? Borrow और Lend पेज यही काम समझाते हुए करते हैं।",
@@ -4062,9 +4064,6 @@
       "rateLender": "आप जो सबसे कम दर स्वीकार करते हैं (% प्रति वर्ष)",
       "latestEnd": "सबसे देर की नई समाप्ति तिथि",
       "latestEndHint": "उस दिन के अंत तक गिना गया: {{at}}।",
-      "extensionFee": "उस तिथि तक विस्तार करने पर, जोड़ी गई अवधि के लिए, आपके ऋण आरंभ शुल्क में {{fee}} जुड़ता है, जो आपके vault से लिया जाता है। यह आपकी सीमाओं में अधिकतम संभव राशि है; अगर शुल्क इससे ऊपर जाता है, तो विस्तार तब तक नहीं होता जब तक आप नई सीमाएँ सहेज न लें।",
-      "extensionFeeNone": "उस तिथि तक विस्तार करने पर कोई आरंभ शुल्क नहीं जुड़ता: वह अवधि पहले ही चुकाई जा चुकी है।",
-      "extensionFeeUnknown": "उस तिथि के लिए जुड़ने वाला आरंभ शुल्क पढ़ा नहीं जा सका, इसलिए सीमाएँ अभी सहेजी नहीं जा सकतीं।",
       "extensionFee": "उस तारीख तक extension से अतिरिक्त अवधि के लिए आपकी loan initiation fee में {{fee}} जुड़ जाता है, जो आपके vault से लिया जाता है। यह आपकी limits के अनुसार सबसे अधिक राशि है; अगर fee इससे ऊपर जाती है, तो नई limits सेव करने तक extension नहीं होगा।",
       "extensionFeeNone": "उस तारीख तक extension से कोई initiation fee नहीं जुड़ती: यह अवधि पहले से भुगतान की हुई है।",
       "extensionFeeUnknown": "उस तारीख की अतिरिक्त initiation fee पढ़ी नहीं जा सकी, इसलिए limits अभी सेव नहीं की जा सकतीं।",

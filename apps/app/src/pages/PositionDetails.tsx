@@ -34,6 +34,7 @@ import { FEE_MODE_FULL, FEE_MODE_HOLD_ONLY, useFeeEntitlement } from '../data/ta
 import { VPFI_DECIMALS } from '../data/vpfi';
 import { useLoanRisk, healthView, liquidationPriceText } from '../data/risk';
 import { formatRemaining, useGraceSeconds } from '../data/grace';
+import { fallbackGateNotice, readFallbackGate } from '../data/fallbackGate';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import {
   assertErc20BalanceLive,
@@ -58,6 +59,7 @@ import { ensureAllowance, useTokenBalance, useTokenMeta, trackApproval } from '.
 import {
   formatBpsAsPercent,
   formatDate,
+  formatDateTime,
   formatDurationDays,
   formatExactSpan,
   formatTokenAmountExact,
@@ -1035,6 +1037,26 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       return { live, calcDue, chainNow: latestBlock.timestamp, saleLock };
     },
   });
+
+  // #3538 — a failed forced sale is undone and recorded; the chain says
+  // when settlement in kind can open. Read for every viewer of an open
+  // loan, with the chain's time beside it so the notice judges "now" the
+  // way the gate does.
+  const fallbackGate = useQuery({
+    queryKey: ['fallbackGate', readChain.chainId, loan.data?.loanId],
+    enabled: Boolean(readClient) && Boolean(loan.data) && effectivelyActive && !loanIsRental,
+    staleTime: 30_000,
+    refetchInterval: tipAware('fallbackGate', 60_000, Boolean(readChain.wsUrl)),
+    queryFn: async () => {
+      const [gate, latestBlock] = await Promise.all([
+        readFallbackGate(readClient!, readChain.diamondAddress, BigInt(loan.data!.loanId)),
+        readClient!.getBlock({ blockTag: 'latest' }),
+      ]);
+      return fallbackGateNotice(gate, latestBlock.timestamp);
+    },
+  });
+  const fallbackNotice =
+    effectivelyActive && !loanIsRental ? (fallbackGate.data ?? { kind: 'none' as const }) : { kind: 'none' as const };
 
   /** Did the advanced-only strategy read answer during the CURRENT
    *  enabled period?
@@ -3121,6 +3143,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       ) : showFallbackCureBanner ? (
         <div className="banner banner-danger" role="alert">
           <span className="banner-body">{copy.positions.fallbackCureBorrower}</span>
+        </div>
+      ) : null}
+
+      {fallbackNotice.kind !== 'none' ? (
+        <div className="banner banner-warn" role="status">
+          <span className="banner-body">
+            {fallbackNotice.kind === 'opensAt'
+              ? copy.positions.fallbackGateOpensAt(formatDateTime(fallbackNotice.opensAt))
+              : copy.positions.fallbackGateOpenNow}
+          </span>
         </div>
       ) : null}
 

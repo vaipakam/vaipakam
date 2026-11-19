@@ -4779,6 +4779,15 @@ const copySource = {
     // Codex #1166 r2 — fallback_pending is the post-grace failed-
     // default state: the cure (full repayment) is still accepted, but
     // only until the lender finalizes the default.
+    // #3538 — a forced sale whose routes all failed is undone and recorded;
+    // settlement in kind opens only once an earlier failure is old enough.
+    // The time is the chain's own (getFallbackGate).
+    fallbackGateOpensAt: tmpl(
+      `A sale did not complete. Settlement in kind can open at {{time}}.`,
+      ['time'],
+    ),
+    fallbackGateOpenNow:
+      'A sale did not complete. If the next sale also fails, the loan can move to settlement in kind.',
     fallbackCureBorrower:
       'This loan is past its grace period and a default is being settled. You can still repay in full to cure it and get your collateral back — but only until the lender finalizes the default, which can happen at any moment.',
     // UX-001 — a loan that is already over must never show a live

@@ -53,6 +53,9 @@ export const TIP_ROOTS = [
   // Past-due/grace banner terms (Codex #1228 r1 P3): a keeper extension
   // restamping the terms must reach the banner.
   'graceBannerTerms',
+  // The failed-sale gate (#3538): a forced sale by anyone records a failure
+  // and the chain clock opens settlement in kind, with no own-wallet action.
+  'fallbackGate',
   // Desk crossable band: a stale band shows an executable match that
   // is not one (§4.1.2 / the r5 table split).
   'deskPreviewMatch',

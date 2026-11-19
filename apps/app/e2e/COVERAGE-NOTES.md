@@ -2004,3 +2004,12 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 
 **Gap.** No Anvil spec announces a change yet. It needs the admin to publish v1 and announce v2 on the fork; the spec should assert the notice, accept v2 from it, and see the notice go quiet.
 
+## A failed forced sale on the loan page (#3538)
+<a id="cov-a-failed-forced-sale-on-the-loan-page-3538"></a>
+
+**Journey.** Since #3743 a terminal forced sale whose listed routes all fail is undone and recorded, and only a failed sale made once an earlier failure is old enough moves the loan into settlement in kind. The loan page reads `ForcedSalePreviewFacet.getFallbackGate` for every viewer of an open, non-rental loan, beside the chain's time, once a minute and on each new block (the `fallbackGate` tip root). With a failure recorded it says "A sale did not complete. Settlement in kind can open at <time>", the time being the chain's `fallbackOpensAt`; once that time has passed it says the next failed sale can move the loan there. A Diamond without the gate shows nothing, and a failed read shows nothing rather than claiming no sale failed.
+
+**Tier.** Unit: `src/data/fallbackGate.test.ts` pins the notice (no record, running span, span passed) and the read (answer, a Diamond without the getter, a failed read).
+
+**Gap.** No Anvil spec: recording a failure needs a forced sale whose every route fails on the fork, which the harness does not stage yet.
+

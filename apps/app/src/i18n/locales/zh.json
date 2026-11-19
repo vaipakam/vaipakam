@@ -1747,7 +1747,9 @@
       "rowLent": "出借头寸 · 起始借出 {{amount}}",
       "rowBorrowedAmountUnknown": "借款头寸 · 起始借入金额暂不可用",
       "rowLentAmountUnknown": "出借头寸 · 起始借出金额暂不可用",
-      "owedInternalMatched": "无 — 内部撮合已结束这笔贷款。其领取完成后即结算。"
+      "owedInternalMatched": "无 — 内部撮合已结束这笔贷款。其领取完成后即结算。",
+      "fallbackGateOpensAt": "一次出售未能完成。实物结算最早可在 {{time}} 开始。",
+      "fallbackGateOpenNow": "一次出售未能完成。如果下一次出售也失败，该贷款可能转入实物结算。"
     },
     "powerSurface": {
       "body": "本页并排显示一个交易对的开放报价，并让你设定自己的利率。想一步步操作？“借款”和“出借”页面会带着说明完成同样的事。",
@@ -4062,8 +4064,6 @@
       "rateLender": "您接受的最低利率（年化 %）",
       "latestEnd": "最晚的新到期日",
       "latestEndHint": "计算到当天结束：{{at}}。",
-      "extensionFee": "展期至该日期会为新增的期限在您的贷款发起费上增加 {{fee}}，从您的金库中扣除。这是您的限额允许的最高金额；如果费用超过此额，在您保存新的限额之前不会展期。",
-      "extensionFeeNone": "展期至该日期不会增加发起费：该期限已经付过。",
       "extensionFee": "延期到该日期会为新增期限在您的贷款发起费上增加 {{fee}}，从您的 vault 中扣除。这是您的限额允许的最高金额；如果费用超过此金额，在您保存新的限额之前不会延期。",
       "extensionFeeNone": "延期到该日期不会增加发起费：该期限已付费。",
       "extensionFeeUnknown": "无法读取该日期的新增发起费，因此暂时无法保存限额。",
