@@ -69,6 +69,7 @@
 
 import { readFileSync } from 'node:fs';
 import { assertPolicyCeilings } from './lifecycle-policy.mjs';
+import { authorize, call, soleBucket } from './lib/b2-native.mjs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -135,16 +136,6 @@ const fmt = (rules) =>
     )
     .join('\n');
 
-async function b2(url, init = {}) {
-  const res = await fetch(url, init);
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    // B2's own message is safe to surface — it never echoes the app key.
-    throw new Error(`${init.method ?? 'GET'} ${new URL(url).pathname}: ${body.code ?? res.status} ${body.message ?? ''}`.trim());
-  }
-  return body;
-}
-
 async function main() {
   // PARSING IS ALSO DEFERRED FOR print MODE (#1471 r10). An UNPARSEABLE
   // declaration is the most likely state while repairing one, and it broke
@@ -205,13 +196,10 @@ async function main() {
   // and the failure reads as a permissions problem rather than a name mismatch.
   if (process.env.BUCKET_NAME) declared.bucket = process.env.BUCKET_NAME;
 
-  const auth = await b2('https://api.backblazeb2.com/b2api/v3/b2_authorize_account', {
-    headers: {
-      Authorization: `Basic ${Buffer.from(`${keyId}:${appKey}`).toString('base64')}`,
-    },
-  });
-  const api = auth.apiInfo.storageApi;
-  const token = auth.authorizationToken;
+  // Signed in through the shared module (#3032), on B2 API version 4
+  // (#3222), so the endpoint pinning and the reading of a key's scope are
+  // the same as every other B2 script's.
+  const auth = await authorize(keyId, appKey);
 
   // REFUSE THE MASTER KEY (#1471 r9). The README spends a page justifying which
   // key each mode needs, and nothing enforced it — the sibling setup script
@@ -221,9 +209,9 @@ async function main() {
   // `deleteFiles`, `deleteBuckets` and `bypassGovernance` in hand. A document
   // cannot prevent that; this can.
   //
-  // `writeKeys` is the master-only capability the setup script keys off, and an
-  // account-wide key (no `bucketId`) is the other half of that signature.
-  const caps = api.capabilities || [];
+  // `writeKeys` is the master-only capability the setup script keys off, and
+  // `deleteBuckets` is refused with it: neither belongs to this task.
+  const caps = auth.capabilities;
   if (caps.includes('writeKeys') || caps.includes('deleteBuckets')) {
     console.error(
       'Refusing to run: the supplied key looks like the MASTER key ' +
@@ -241,22 +229,22 @@ async function main() {
 
   // A bucket-restricted key MUST scope b2_list_buckets, or B2 returns a bare
   // `unauthorized` that reads like a bad credential rather than a bad call.
-  const bucketId = api.bucketId;
-  const qs = new URLSearchParams({ accountId: auth.accountId });
-  if (bucketId) qs.set('bucketId', bucketId);
-  else if (declared.bucket) qs.set('bucketName', declared.bucket);
+  // A key confined to exactly one bucket names it; a key confined to several,
+  // or to none, does not, and then the declared name is the target.
+  const sole = soleBucket(auth);
+  const listQuery = { accountId: auth.accountId };
+  if (sole.ok) listQuery.bucketId = sole.bucket.id;
+  else if (declared.bucket) listQuery.bucketName = declared.bucket;
   else {
     console.error(
       'No bucket to inspect: the declaration is unreadable, BACKBLAZE_BUCKET is ' +
-        'unset, and this key is account-wide so its scope does not identify one. ' +
+        `unset, and this key's scope does not identify one (${sole.reason}). ` +
         'Export BACKBLAZE_BUCKET, or use the bucket-scoped read-only key.',
     );
     process.exit(2);
   }
 
-  const listed = await b2(`${api.apiUrl}/b2api/v3/b2_list_buckets?${qs}`, {
-    headers: { Authorization: token },
-  });
+  const listed = await call(auth, 'b2_list_buckets', listQuery);
   // APPLY REQUIRES A DECLARED BUCKET (#1471 r12). r11 let print mode fall back
   // to the scoped key's only bucket, which is right for a read — but the same
   // relaxation reached the write path, where "whichever bucket this key can
@@ -376,21 +364,15 @@ async function main() {
   console.log('  to:');
   console.log(fmt(want));
 
-  await b2(`${api.apiUrl}/b2api/v3/b2_update_bucket`, {
-    method: 'POST',
-    headers: { Authorization: token, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      accountId: auth.accountId,
-      bucketId: bucket.bucketId,
-      lifecycleRules: want,
-    }),
+  await call(auth, 'b2_update_bucket', {
+    accountId: auth.accountId,
+    bucketId: bucket.bucketId,
+    lifecycleRules: want,
   });
 
   // Read back rather than trusting the write — the whole point of codifying
   // this is not to have to take the provider's word for the live state.
-  const after = await b2(`${api.apiUrl}/b2api/v3/b2_list_buckets?${qs}`, {
-    headers: { Authorization: token },
-  });
+  const after = await call(auth, 'b2_list_buckets', listQuery);
   // NO `?? []` here (#1471 r9). The guard ~80 lines above hard-exits on an
   // absent `lifecycleRules` precisely because absent means "cannot read them",
   // not "none are set" — and coercing to an empty set on the READBACK path
