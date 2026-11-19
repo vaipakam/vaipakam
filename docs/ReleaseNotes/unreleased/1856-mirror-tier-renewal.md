@@ -11,7 +11,9 @@ The canonical chain now renews an unchanged, non-zero tier once its last
 commit is fifteen days old, half the shortest maximum age a mirror may
 use. The user's next tier-pushing action, or a tier poke, commits the same
 tier again, and each mirror lane whose last delivery is that old is owed
-it. Before that age an unchanged tier still sends nothing, and tier zero
+it. A lane last delivered before that commit is owed it too, however
+recent the delivery: otherwise a lane paid for late could let a renewal
+pass it by and go unrenewed until close to its mirror's maximum age. Before that age an unchanged tier still sends nothing, and tier zero
 is never renewed, because a mirror already treats a stale entry as no
 discount.
 

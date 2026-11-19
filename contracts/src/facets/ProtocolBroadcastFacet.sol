@@ -480,7 +480,7 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.TierLanePush storage lane = s.tierLanePush[p.user][dst];
         if (lane.nonce >= p.nonce) return callerFunds;
 
-        if (_sameEffect(lane, p)) {
+        if (_sameEffect(lane, p, s.lastTierCommitSec[p.user])) {
             lane.nonce = p.nonce;
             emit TierPushLaneSettled(p.user, dst, p.nonce);
             return callerFunds;
@@ -547,10 +547,22 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
     ///      An identical tuple delivered longer ago than that is a renewal the
     ///      lane is owed (#1856): the mirror ages its cache from the delivery,
     ///      and only a new message restarts that clock.
-    function _sameEffect(LibVaipakam.TierLanePush storage lane, Push memory p) private view returns (bool) {
+    ///      An identical tuple delivered BEFORE `commitSec` (the user's latest
+    ///      commit, `lastTierCommitSec`) is owed too. `_commit` ages a renewal
+    ///      from the commit and this test ages it from the delivery; without
+    ///      this clause a lane delivered late (after the commit) and then
+    ///      offered a renewal committed inside its window would settle with
+    ///      no send, and the next renewal could not be committed until about
+    ///      when the mirror's cache expires. So a commit made after a lane's
+    ///      last send is always delivered to it.
+    function _sameEffect(LibVaipakam.TierLanePush storage lane, Push memory p, uint40 commitSec)
+        private
+        view
+        returns (bool)
+    {
         if (p.tier == 0 && p.bps == 0 && lane.tier == 0 && lane.bps == 0) return true;
         return lane.tier == p.tier && lane.bps == p.bps && lane.tierExpirySec == p.expiry
-            && lane.tierTableVersion == p.version
+            && lane.tierTableVersion == p.version && lane.sentAt >= commitSec
             && block.timestamp < uint256(lane.sentAt) + LibVaipakam.TIER_PUSH_RENEWAL_AGE_SEC;
     }
 
@@ -679,7 +691,7 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
             LibVaipakam.TierLanePush storage lane = s.tierLanePush[user][dsts[i]];
             lanes[i].destChainId = dsts[i];
             lanes[i].delivered = lane;
-            lanes[i].owed = lane.nonce < p.nonce && !_sameEffect(lane, p);
+            lanes[i].owed = lane.nonce < p.nonce && !_sameEffect(lane, p, s.lastTierCommitSec[user]);
             if (lanes[i].owed) lanes[i].budgetPays = _budgetPays(lane, p);
         }
     }
