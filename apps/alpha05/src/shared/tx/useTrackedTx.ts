@@ -24,7 +24,7 @@ import { useConfig } from 'wagmi';
 import { getPublicClient } from 'wagmi/actions';
 import type { ReplacementReason, TransactionReceipt } from 'viem';
 import { announceOwnChange } from '../reads/signals';
-import { AccountWithoutCode, accountExecution, accountTxReader, awaitAccountTx, requireAccountCode } from './accountWallet';
+import { AccountWithoutCode, accountExecution, accountTxReader, awaitAccountTx, requireAccountCode, sendsAccountTxIds } from './accountWallet';
 import { useCopy } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
 import { cleanUpAfterEffect, cleanUpAfterNoEffect } from './cleanUp';
@@ -230,13 +230,20 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
 
   const run = useCallback(
     async (frozen: Frozen) => {
+      // A Safe returns its own id, not a chain hash (#3770). Which kind the
+      // send returns is taken from the wallet that sends it, read after the
+      // identity check and right before the prompt, never after the wait.
+      let viaAccount = false;
       const hash = await sendReviewed({
         frozen,
         liveIdentity: () => liveIdentity(config),
         apply,
         save: (f) => store.update(key, (e) => ({ ...e, frozen: f, note: null })),
         send: opts.send,
-        precheck: () => requireAccountCode(config, opts.chainId, opts.account),
+        precheck: async () => {
+          await requireAccountCode(config, opts.chainId, opts.account);
+          viaAccount = sendsAccountTxIds(config);
+        },
         failure: (e) =>
           e instanceof WalletMoved ? text('flow.walletMoved') : e instanceof AccountWithoutCode ? text('flow.accountNoCode') : refusalFromError(e).reason,
       });
@@ -253,8 +260,6 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
       };
       // The send's own steps are over; a clean-up after the hash names its own.
       store.update(key, (e) => ({ ...e, submission: ctx, note: null }));
-      // A Safe returns its own id, not a chain hash (#3770).
-      const viaAccount = (await accountTxReader(config).catch(() => null)) !== null;
       apply({ type: 'submitted', hash, at: Date.now(), viaAccount });
       await track(hash, ctx, viaAccount);
     },

@@ -102,6 +102,14 @@ interface SafeSdkLike {
   txs: { getBySafeTxHash(id: string): Promise<SafeTxDetails> };
 }
 
+/** Whether the connected wallet is a Safe opened as a Safe App, whose sends
+ *  return its own transaction ids rather than chain hashes. Read before the
+ *  send, so the id is recorded by the wallet that sent it even when the
+ *  connection changes while the prompt is open. */
+export function sendsAccountTxIds(config: Config): boolean {
+  return getAccount(config).connector?.id === 'safe';
+}
+
 /** The reader for the connected wallet when it is a Safe opened as a Safe
  *  App; null for any other wallet, whose sends return chain hashes. */
 export async function accountTxReader(config: Config): Promise<AccountTxReader | null> {
