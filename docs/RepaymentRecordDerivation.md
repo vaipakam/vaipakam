@@ -50,7 +50,7 @@ A payment made by another address counts for the holder.
 | `loans.repaidAfterDue` | a full `LoanRepaid` after its `lateFeeFrom`; without `lateFeeFrom`, one that paid a late fee |
 | `loans.repaidBySale` | `SwapToRepayExecuted`, `SwapToRepayIntentFilled`, `PrepayCollateralSaleSettled` |
 | `loans.refinanced` | `LoanRefinanced` on the old loan. Counted once, here, and not also as repaid |
-| `loans.liquidated` | `HFLiquidationTriggered`, `LiquidationDiscounted`, a `LiquidationFallback` with no default event in its transaction, or a fully matched internal liquidation |
+| `loans.liquidated` | `HFLiquidationTriggered`, `LiquidationDiscounted`, a `LiquidationFallback` with no default event in its transaction, or a fully matched internal liquidation (its `LoanStatusChanged` edge to InternalMatched) |
 | `loans.defaulted` | `LoanDefaulted`, or `LoanFallbackPending` |
 | `loans.unclassified` | a closed loan the rules above cannot place, or a full repayment after the original due date with no late fee and no `lateFeeFrom` |
 | `loans.openNow` | open loans whose borrower position the address holds now |

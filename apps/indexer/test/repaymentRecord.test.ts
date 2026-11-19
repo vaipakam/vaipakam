@@ -110,7 +110,7 @@ describe('how each loan closed', () => {
     loan(7); event(7, 'LoanRefinanced', T0 + 7 * DAY, { oldLoanId: '7' });        // refinance
     loan(8, { status: 'defaulted' }); event(8, 'HFLiquidationTriggered', T0 + 8 * DAY);
     loan(9, { status: 'defaulted' }); event(9, 'LoanDefaulted', T0 + 40 * DAY, { newStatus: 2 });
-    loan(10, { status: 'internal_matched' });
+    loan(10, { status: 'internal_matched' }); event(10, 'LoanStatusChanged', T0 + 9 * DAY, { from: 0, to: 5 });
     loan(11, { status: 'active' });
     const r = await read();
     expect(r.loans).toEqual({
