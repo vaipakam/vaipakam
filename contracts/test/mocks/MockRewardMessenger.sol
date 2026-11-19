@@ -414,12 +414,20 @@ contract MockRewardMessenger is IRewardMessenger {
         );
     }
 
-    /// @dev #903 — a correctly bound messenger receives a broadcast only
-    ///      from the Base the mirror answers to; the mock stamps that
-    ///      chain, read from the Diamond's own day-broadcast rule.
+    /// @notice #903 — the source chain this mock stamps on a broadcast it
+    ///         delivers, as a real messenger stamps the authenticated source.
+    ///         An explicit test setting, never read from the system under
+    ///         test (reading the Diamond's own rule would make every delivery
+    ///         pass the check it is meant to exercise). Defaults to Base
+    ///         mainnet, the canonical chain these suites configure.
+    uint256 public baseSourceChainId = 8453;
+
+    function setBaseSourceChainId(uint256 v) external {
+        baseSourceChainId = v;
+    }
+
     function _baseSource() private view returns (uint256) {
-        (, uint32 daySource) = RewardReporterFacet(diamond).getRewardBaseSourceChainId();
-        return daySource;
+        return baseSourceChainId;
     }
 
     // ─── #1434 P2-w3 — compensation-quote surface ─────────────────────────
