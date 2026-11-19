@@ -293,6 +293,11 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
     /// @dev The most candidate sales a reduction's sizing checks on the
     ///      route's rounded figures before keeping its conservative bound.
     uint256 private constant LEAST_SALE_CHECKS = 64;
+    /// @dev The health factor the risk read reports values each leg in the
+    ///      numeraire with its own rounding, which can sit a few wei of the
+    ///      1e18 scale under this plan's principal-unit figure. The plan asks
+    ///      for this much above the target so the read lands at or above it.
+    uint256 private constant HF_READ_SLACK = 1e6;
 
     // ─── Errors ──────────────────────────────────────────────────────
 
@@ -701,6 +706,7 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
             if (hAtCap > h) (h, p.targetIsLtvCap) = (hAtCap, true);
         }
         p.targetUsed = h > type(uint64).max ? type(uint64).max : uint64(h);
+        h += HF_READ_SLACK;
 
         uint256 keep = LibVaipakam.BASIS_POINTS - uint256(p.tolerance);
         (uint256 interest,) = LibEntitlement.splitSettledInterest(
@@ -712,9 +718,9 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
             // V' = V - u - 1: the collateral's value less the rounding slack.
             uint256 value = LibFallback.toPrincipal(rate, loan.collateralAmount);
             uint256 slack = Math.mulDiv(1, rate.den, rate.num, Math.Rounding.Ceil) + 1;
-            // Below `hk > L` (h·keep > 10000·L) or `keep > cap`, selling more
-            // never reaches the bound.
-            if (value <= slack || h * keep <= LibVaipakam.BASIS_POINTS * L || (capBps != 0 && keep <= capBps)) {
+            // Below `hk > L` (h·keep > 10000·L) selling more never reaches
+            // the health factor.
+            if (value <= slack || h * keep <= LibVaipakam.BASIS_POINTS * L) {
                 p.skip = LibStandingInstructions.SKIP_CANNOT_COVER;
                 return;
             }
@@ -723,8 +729,13 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
             uint256 need = h * keep * owed;
             uint256 have = L * keep * value;
             if (need > have) repay = Math.ceilDiv(need - have, h * keep - LibVaipakam.BASIS_POINTS * L);
-            // Opening limit: R·10000·(K - c) >= K·(10000·owed - c·V').
-            if (capBps != 0 && LibVaipakam.BASIS_POINTS * owed > capBps * value) {
+            // Opening limit: R·10000·(K - c) >= K·(10000·owed - c·V'). Where
+            // the limit is at or above the keep (`K <= c`, as with no
+            // per-asset ceiling) it gives no lower bound: a sale lowers the
+            // loan-to-value only while it is under the keep, and above the
+            // keep it can only cap the sale from above, which the route's own
+            // figures below hold.
+            if (capBps != 0 && keep > capBps && LibVaipakam.BASIS_POINTS * owed > capBps * value) {
                 uint256 rCap = Math.ceilDiv(
                     keep * (LibVaipakam.BASIS_POINTS * owed - capBps * value),
                     LibVaipakam.BASIS_POINTS * (keep - capBps)
@@ -837,7 +848,7 @@ contract ExitInstructionFacet is DiamondAccessControl, DiamondReentrancyGuard {
             uint256 a = LibVaipakam.BASIS_POINTS * b.h * owed;
             uint256 c = LibVaipakam.BASIS_POINTS * b.L * v1;
             if (a > c) xLo = (a - c) / (b.h * keep - LibVaipakam.BASIS_POINTS * b.L);
-            if (b.capBps != 0 && LibVaipakam.BASIS_POINTS * owed > b.capBps * v1) {
+            if (b.capBps != 0 && keep > b.capBps && LibVaipakam.BASIS_POINTS * owed > b.capBps * v1) {
                 uint256 xc = (LibVaipakam.BASIS_POINTS * owed - b.capBps * v1) / (keep - b.capBps);
                 if (xc > xLo) xLo = xc;
             }

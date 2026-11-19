@@ -522,6 +522,23 @@ contract ExitInstructionTest is SetupTest {
         assertEq(pv.collateralToSell, 4, "the least sale");
     }
 
+    /// @dev An opening limit at or above the keep (no per-asset ceiling)
+    ///      does not stop a reduction the target can reach.
+    function test_7_reduceRunsUnderANonbindingCap() public {
+        _unitLoan(18, 18, 10_000);
+        _set(REDUCE, LEVEL, 1.3e18, 100, false);
+        _fall();
+        ExitInstructionFacet.ExitPreview memory pv = _x().previewExit(LOAN);
+        assertEq(pv.skip, 0, "due");
+        assertEq(pv.form, REDUCE);
+        adapter1.setTokenPrice(address(collateralAsset), 68);
+        adapter1.setTokenPrice(address(principalAsset), 100);
+        adapter1.setOutputMultiplierBps(9900);
+        vm.prank(runner);
+        _x().runReduce(LOAN, _routes(1), type(uint64).max);
+        assertGe(_hf(), 1.3e18, "target reached");
+    }
+
     function test_7_reduceHoldsTheCapInWholeUnits() public {
         _wholeUnitLoan(7000);
         _set(REDUCE, 1.1e18, 1.15e18, 100, false);
