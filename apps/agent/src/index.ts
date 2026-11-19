@@ -18,6 +18,8 @@
  *   - `runOwnerAlerts`           — position-token approvals and vault
  *                                  outflows to their owners (#3721,
  *                                  #3434).
+ *   - `runDelegationWatch`       — EIP-7702 delegation changes on linked
+ *                                  owner wallets (#3434).
  *   - `pruneOldDiagErrors`       — diagnostics retention prune.
  *   - `pruneOldSupportTickets`   — support-ticket retention prune: the
  *                                  only thing that deletes a ticket
@@ -116,6 +118,7 @@ import {
 import { createSchemaGate, schemaDeclineNotice } from '@vaipakam/lib/d1SchemaGate';
 import { runPeriodicPreNotify } from './periodicPreNotify';
 import { runOwnerAlerts } from './ownerAlerts';
+import { runDelegationWatch } from './delegationWatch';
 import { decidePushOptIn, handlePushStatus, servicePushStatus } from './pushRail';
 import { handle1inchQuote, handleQuoteReadiness } from './quoteProxy';
 import { slotRefusal, takeCallerSlot } from './rateLimit';
@@ -274,6 +277,14 @@ export default {
       runOwnerAlerts(resolved).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[agent] runOwnerAlerts pass failed:', redactedError(err));
+      }),
+    );
+    // #3434 part 2 — tell an owner when their wallet gains, changes or loses
+    // an EIP-7702 delegation. Warns only; nothing is blocked.
+    ctx.waitUntil(
+      runDelegationWatch(resolved).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[agent] runDelegationWatch pass failed:', redactedError(err));
       }),
     );
     ctx.waitUntil(

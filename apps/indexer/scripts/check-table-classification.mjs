@@ -105,6 +105,11 @@ const CLASSIFICATION = {
   oracle_snapshot_state: { class: 'replay-derived', reason: 'chain-read snapshots' },
   liquidity_confidence: { class: 'replay-derived', reason: 'chain-read derivation' },
   indexer_cursor: { class: 'replay-derived', reason: 'replay watermark(s)' },
+  owner_delegation: {
+    class: 'replay-derived',
+    reason:
+      "the agent's last EIP-7702 reading of each watched wallet (#3434); an empty table re-reads every wallet, and a wallet found delegated is told once more",
+  },
   owner_alert_cursor: {
     class: 'replay-derived',
     reason:

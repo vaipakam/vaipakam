@@ -1653,6 +1653,7 @@ DELETE FROM activity_events; \
 DELETE FROM activity_participants; \
 DELETE FROM activity_participants_state; \
 DELETE FROM owner_alert_cursor; \
+DELETE FROM owner_delegation; \
 DELETE FROM loan_participants; \
 DELETE FROM loan_lifecycle_state; \
 DELETE FROM loan_lifecycle_violation; \

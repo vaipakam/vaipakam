@@ -6,6 +6,7 @@
     "asset_ranking_run": "the last ranking fetch per source and token chain (#3446); describes the public list above, not a Diamond",
     "diag_errors": "frontend error captures \u2014 the page's own diagnostics, keyed by chain only for filtering; nothing in them is a chain object",
     "loan_orphans": "the operator's record of loan rows withdrawn because the chain had no such loan (#2197); each entry names the Diamond it is about and nothing reads it against live ids, and a replay cannot recreate it, so a redeploy must not erase it",
+    "owner_delegation": "what each watched owner wallet's code said at the agent's last EIP-7702 check (#3434); the wallet's state on that chain, not a projection of any Diamond, so a fresh Diamond must not re-announce every delegation",
     "support_tickets": "durable user support requests (#1040); user content, and a ticket about a retired Diamond is still the user's ticket",
     "telegram_links": "user Telegram chat links, keyed by chain for the user's own subscriptions; a redeploy must not unlink anyone",
     "user_thresholds": "user-supplied HF alert thresholds, keyed by chain for the user's own alerts; the deploy script's purge excluded it by name for the same reason"

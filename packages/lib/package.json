@@ -66,6 +66,10 @@
       "types": "./src/rpcIdentity.ts",
       "default": "./src/rpcIdentity.ts"
     },
+    "./delegation7702": {
+      "types": "./src/delegation7702.ts",
+      "default": "./src/delegation7702.ts"
+    },
     "./multicall": {
       "types": "./src/multicall.ts",
       "default": "./src/multicall.ts"
