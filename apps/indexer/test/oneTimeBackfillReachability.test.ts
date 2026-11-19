@@ -81,6 +81,22 @@ describe('one-time backfills are reachable on every exit path', () => {
     });
   }
 
+  // #2835 — the per-block ledger writers no longer run these checks
+  // themselves; they rely on the prologue. So each writer's call must sit
+  // AFTER the prologue (never inside it, which would run it before the
+  // checks or outside the block loop).
+  for (const writer of ['applyRewardLoopLedger(', 'applyRecycleDaySeries(']) {
+    it(`${writer.slice(0, -1)} is called only after the one-time checks`, () => {
+      const p = prologue();
+      const start = SOURCE.indexOf(PASS_FN);
+      const callAt = SOURCE.indexOf(`await ${writer}`, start);
+      expect(callAt, `${writer} call not found in the pass`).toBeGreaterThan(
+        start + p.length,
+      );
+      expect(p).not.toContain(writer);
+    });
+  }
+
   it('the prologue really does precede the first early return', () => {
     // Guards the guard: if the slice above ever stopped ending at the
     // FIRST return, the assertions would pass vacuously against the

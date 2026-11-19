@@ -31,6 +31,8 @@ import { indexerPositionFlowReader } from '../../shared/offers/positionFlow';
 import { LendChoice } from '../../shared/autolend/LendChoice';
 import { useWorldRail } from '../../shared/reads/world/WorldRailContext';
 import { AUTOLEND_KEY, AutoLendForm } from '../../shared/autolend/AutoLendForm';
+import { lendConsentForm } from '../../shared/autolend/consentForm';
+import { loadRemembered, rememberRuns, type LendPreset } from '../../shared/autolend/preset';
 import { AutoLendSetup } from '../../shared/autolend/AutoLendSetup';
 import { readLendChoice, type LendChoiceFacts } from '../../shared/autolend/lendChoice';
 import type { AutoLendDraft, AutoLendInput } from '../../shared/autolend/autoLend';
@@ -101,6 +103,18 @@ export function LendPage() {
   const [autoDraft, setAutoDraft] = useStoredValue<AutoLendDraft>(`${AUTOLEND_KEY}:draft`);
   const [pendingAuto, setPendingAuto] = useStoredValue<AutoLendDraft>(`${AUTOLEND_KEY}:pending`);
   const [, setAutoTyped] = useStoredValue<AutoLendInput>(`${AUTOLEND_KEY}:input`);
+  const [, setAutoPreset] = useStoredValue<LendPreset>(`${AUTOLEND_KEY}:preset`);
+  const [, setAutoConfirm] = useStoredValue<string>(`${AUTOLEND_KEY}:keeperConfirm`);
+  /** #3761 — the form this deployment asks with, and the choice it opens on:
+   *  the lender's last one on this device, else Auto-lend (pre-selected), or
+   *  nothing in the "choose one" form. */
+  const consentForm = lendConsentForm();
+  const rememberedRuns = own && walletChain ? (loadRemembered(walletChain.chainId, own.account)?.runs ?? null) : null;
+  const openingRuns = runs ?? rememberedRuns ?? (consentForm === 'choose' ? null : 'keep');
+  const chooseRuns = (r: 'once' | 'keep') => {
+    setRuns(r);
+    if (own && walletChain) rememberRuns(walletChain.chainId, own.account, r);
+  };
 
   const suggested = chain ? suggestedAssets(chain) : [];
   const [pairByChain, setPairByChain] = useState<Record<number, { lending: Hex | null; collateral: Hex | null }>>({});
@@ -221,18 +235,36 @@ export function LendPage() {
             </p>
           )}
           <LendChoice
-            runs={runs ?? 'once'}
-            onRuns={setRuns}
+            runs={openingRuns}
+            form={consentForm}
+            onRuns={chooseRuns}
             facts={lendChoice.data}
             failed={lendChoice.state === 'failed'}
             disabled={takeDisabled || offerPair === null || armContext !== null}
-            onOpen={(chosen) => (chosen === 'keep' ? setAutoComposing(true) : setComposing(true))}
+            onOpen={(chosen) => {
+              chooseRuns(chosen);
+              if (chosen === 'keep') setAutoComposing(true);
+              else setComposing(true);
+            }}
           />
         </section>
       )}
       {autoComposing === true && autoDraft === null && !termsOpen && walletChain && own && offerPair && (
         <section className="borrow-section" aria-labelledby="autolend-form-title">
-          <AutoLendForm chain={walletChain} own={own} lending={offerPair.lending} collateral={offerPair.collateral} meta={meta} onReview={reviewAuto} onCancel={() => setAutoComposing(null)} />
+          <AutoLendForm
+            chain={walletChain}
+            own={own}
+            lending={offerPair.lending}
+            collateral={offerPair.collateral}
+            meta={meta}
+            onReview={reviewAuto}
+            onCancel={() => setAutoComposing(null)}
+            onOneTime={() => {
+              setAutoComposing(null);
+              chooseRuns('once');
+              setComposing(true);
+            }}
+          />
         </section>
       )}
       {autoDraft !== null && walletChain && own && (
@@ -252,6 +284,8 @@ export function LendPage() {
               setAutoComposing(null);
               if (recorded) {
                 setAutoTyped(null);
+                setAutoPreset(null);
+                setAutoConfirm(null);
                 lendChoice.refetch();
               }
             }}

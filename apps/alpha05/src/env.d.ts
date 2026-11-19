@@ -12,4 +12,7 @@ interface ImportMetaEnv {
   readonly VITE_RPC_PROXY_ORIGIN?: string;
   readonly VITE_WALLETCONNECT_PROJECT_ID?: string;
   readonly VITE_DEFAULT_CHAIN_ID?: string;
+  /** #3761 — how the Lend form asks: `choose` shows two options with neither
+   *  selected; anything else (the default) opens on the pre-selected one. */
+  readonly VITE_LEND_CONSENT_FORM?: string;
 }

@@ -75,6 +75,7 @@ const backing = (over: Record<string, unknown> = {}) => {
     holderBalance: '0',
     holderAttributed: '0',
     blockNumber: '12345678',
+    blockSettled: true,
     diamond: '0xd89f0000000000000000000000000000000000ab',
     unavailableReason: null,
     asOf: '2026-08-03T00:00:00.000Z',
@@ -230,6 +231,7 @@ describe('parseBacking — a bad backing block withholds only itself', () => {
     ['a malformed holder balance', { holderBalance: '-5' }],
     ['a non-boolean custody flag', { custodyActivated: 1 }],
     ['a non-boolean holder-known flag', { holderBalanceKnown: 'true' }],
+    ['a non-boolean block-settled flag (#2210)', { blockSettled: 1 }],
   ])('%s withholds the block as malformed', (_why, over) => {
     expect(parseBacking(backing(over))).toEqual({
       kind: 'withheld',
@@ -605,5 +607,24 @@ describe('fetchers — one GET path, validated', () => {
     );
     expect(p).not.toBeNull();
     expect(p?.cumulative).toBeNull();
+  });
+});
+
+describe('parseBacking — whether the block was settled (#2210)', () => {
+  it.each([
+    [true, true],
+    [false, false],
+    [null, null],
+  ])('blockSettled %s is carried as %s', (raw, want) => {
+    const v = parseBacking(backing({ blockSettled: raw }));
+    expect(v.kind).toBe('published');
+    if (v.kind !== 'published') return;
+    expect(v.backing.blockSettled).toBe(want);
+  });
+
+  it('a body without the field is malformed, never read as settled or as not recorded', () => {
+    const b = backing();
+    delete b.blockSettled;
+    expect(parseBacking(b)).toEqual({ kind: 'withheld', reason: { kind: 'malformed' } });
   });
 });

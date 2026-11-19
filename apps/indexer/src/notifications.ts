@@ -198,6 +198,8 @@ export const NOTIF_DELIBERATELY_NOT_HANDLED: Readonly<Record<string, string>> = 
   DueRepaymentRun: '#3681 — companion of LoanRepaid in the same transaction, which carries the loan_repaid row',
   RepaymentLegsFromReserve: "#3681 — companion of the reserve repayment's LoanRepaid, which carries the row",
   InterestPaymentBooked: 'companion of InterestPaidFromReserve or the periodic sale, which carry the user-facing meaning',
+  LoanInterestPaid: '#3755 — companion statement of the interest inside a repayment, settlement or sale whose own event carries the row; the lending totals read it',
+  LoanInterestUndelivered: '#3755 — companion statement of interest a payment left undelivered; the payment event carries the row and the lending totals read it',
   IntentCalmCheckSet: "a lender intent slot's own setting, changed by its owner; no inbox row",
   // ── #3752 exit before liquidation ──────────────────────────────────
   ExitInstructionSet: "#3752 — the owner's own settings change; the app shows them, no inbox row",

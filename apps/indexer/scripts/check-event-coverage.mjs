@@ -42,6 +42,10 @@ const CHAIN_INDEXER = join(REPO_ROOT, 'apps', 'indexer', 'src', 'chainIndexer.ts
  *  is a conscious decision; removing the corresponding contract event
  *  later just makes the allowlist entry dead (harmless). */
 const DELIBERATELY_NOT_HANDLED = {
+  LoanInterestPaid:
+    '#3755 — the per-loan interest a settlement paid; no loans-row field changes yet. The indexer change that records it per loan (and moves the #3751 rate band onto it) removes this entry',
+  LoanInterestUndelivered:
+    '#3755 — the take-back counterpart of LoanInterestPaid; handled together with it, so this entry goes with that one',
   IntentCalmCheckSet:
     "a lender intent slot's calm-price setting; the indexer models no per-slot settings, and the app reads the slot from the contract",
   StandingInstructionsSet:

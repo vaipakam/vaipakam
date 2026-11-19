@@ -1082,6 +1082,17 @@
   },
   {
     "type": "error",
+    "name": "NumeraireScaleUnsupported",
+    "inputs": [
+      {
+        "name": "decimalsSum",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "PositionNFTNotSet",
     "inputs": []
   },
@@ -1109,6 +1120,11 @@
   {
     "type": "error",
     "name": "PriceReadOutOfGas",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PriceZero",
     "inputs": []
   },
   {

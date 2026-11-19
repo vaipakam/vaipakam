@@ -6,6 +6,8 @@
  * swallowed one and never an invented reason (RB-FUNDS).
  */
 import { FRIENDLY_ERROR_MESSAGES, KNOWN_ERROR_SELECTORS, extractRevertName, extractRevertSelector, humanizeErrorName } from '@vaipakam/lib/decodeContractError';
+import { decodeErrorResult, type Hex } from 'viem';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { copy } from '../../content/copy';
 import type { Refusal } from './types';
 
@@ -79,4 +81,26 @@ export function revertArgs(err: unknown): readonly unknown[] | null {
     node = n.cause;
   }
   return null;
+}
+
+/**
+ * A refusal the protocol returned as data rather than as a revert: the
+ * ABI-encoded custom error a verdict view lists (`saleExitVerdict`), with
+ * the earliest time it can lift (0 = it needs a decision, or never). Read
+ * with the combined Diamond ABI, so every error a facet declares is named.
+ */
+export function refusalFromData(data: Hex, reopensAt: bigint): Refusal {
+  const lifts = reopensAt === 0n ? null : Number(reopensAt);
+  let name: string | null = null;
+  try {
+    name = decodeErrorResult({ abi: DIAMOND_ABI_VIEM, data }).errorName;
+  } catch {
+    name = null;
+  }
+  if (name) {
+    const friendly = FRIENDLY_ERROR_MESSAGES[name] ?? humanizeErrorName(name);
+    return { code: name, reason: `The protocol refuses this for now: ${friendly}`, reopensAt: lifts, remedy: null };
+  }
+  const selector = data.slice(0, 10);
+  return { code: selector, reason: `The protocol refuses this for a reason this build cannot name (${selector}).`, reopensAt: lifts, remedy: null };
 }

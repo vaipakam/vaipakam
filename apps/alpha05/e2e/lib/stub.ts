@@ -101,6 +101,13 @@ export async function setRankings(
   if (!res.ok) throw new Error(`stub refused rankings: ${res.status} ${await res.text()}`);
 }
 
+/** Store a rate curve or history answer in the index's shape (#3751), or
+ *  make both rate routes refuse with `status` (`null` lifts it). */
+export async function setRates(control: { curve?: unknown; history?: unknown; status?: number | null }): Promise<void> {
+  const res = await fetch(`${STUB_ORIGIN}/__stub/rates`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(control) });
+  if (!res.ok) throw new Error(`stub refused rates: ${res.status} ${await res.text()}`);
+}
+
 /** Post a signed order to the stand-in offer book, as the app or a taker
  *  posts it to the indexer: `{ chainId, order, signature }`. Returns the
  *  book's status and answer. */

@@ -7,11 +7,17 @@
  * job needs and is confined to one bucket. Checking that once, here, with one
  * allowlist rule, is what keeps the two callers from disagreeing about it.
  *
- * The older scripts in this folder (`setup-backblaze.mjs`,
- * `find-archive-baselines.mjs`) still carry their own copies of `authorize`
- * and the POST helper; moving them onto this module is #3032, kept apart so
- * this change does not alter two scripts it cannot test against a live
- * account.
+ * Every B2 script in this folder signs in and calls through this module
+ * (#3032): the watcher, the ledger setup, the decrypt tool, the archive
+ * bucket setup, the baseline finder and the lifecycle applier.
+ *
+ * API VERSION 4 (#3222). A key made by today's B2 CLI (`b2 key create
+ * --bucket …`) is refused by the version 3 sign-in, while every older key
+ * still signs in on version 4, so version 4 is the only one here. Its
+ * sign-in reports a key's bucket restriction as a LIST of buckets
+ * (`allowed.buckets`), never as one bucket id, and its key calls take and
+ * return `bucketIds`. The version lives in one constant, so no call can
+ * drift onto another.
  *
  * Every endpoint comes from B2's own authorize response, and every host is
  * pinned to Backblaze before it is called, so a tampered response cannot
@@ -20,7 +26,9 @@
 
 import { createHash } from 'node:crypto';
 
-const AUTHORIZE_URL = 'https://api.backblazeb2.com/b2api/v3/b2_authorize_account';
+/** The one B2 native API version every call here uses. */
+export const API_VERSION = 'v4';
+const AUTHORIZE_URL = `https://api.backblazeb2.com/b2api/${API_VERSION}/b2_authorize_account`;
 
 /**
  * A Backblaze host, by name, over https. Anything else is refused before it is
@@ -49,9 +57,14 @@ function pinned(url, what) {
 /**
  * Authorize a key and report what it can do.
  *
+ * `buckets` is the key's bucket restriction as B2 states it: `null` for a key
+ * that may reach every bucket in the account, otherwise the buckets it is
+ * confined to, each `{id, name}`. A key may be confined to several.
+ *
  * @returns {Promise<{token: string, apiUrl: string, downloadUrl: string,
- *   accountId: string, capabilities: string[], bucketId: string | null,
- *   bucketName: string | null, namePrefix: string | null}>}
+ *   s3ApiUrl: string | null, accountId: string, capabilities: string[],
+ *   buckets: {id: string, name: string | null}[] | null,
+ *   namePrefix: string | null}>}
  */
 export async function authorize(keyId, appKey, io = {}) {
   if (!keyId || !appKey) throw new Error('a B2 key id and application key are required');
@@ -83,17 +96,64 @@ export async function authorize(keyId, appKey, io = {}) {
     throw new Error(`b2_authorize_account failed: ${res.status} ${(await res.text()).slice(0, 300)}`);
   }
   const data = await res.json();
-  const api = data.apiInfo?.storageApi ?? {};
+  const api = data.apiInfo?.storageApi;
+  const allowed = api?.allowed;
+  // The version 4 shape, and only it. A response without
+  // `storageApi.allowed` is not one this module can read a key's authority
+  // from, so it is refused rather than read as "no restriction".
+  if (!api || !allowed || !Array.isArray(allowed.capabilities)) {
+    throw new Error('b2_authorize_account answered without apiInfo.storageApi.allowed; cannot tell what this key may do');
+  }
+  if (allowed.buckets != null && !Array.isArray(allowed.buckets)) {
+    throw new Error('b2_authorize_account answered with a bucket restriction that is not a list');
+  }
   return {
     token: data.authorizationToken,
-    apiUrl: pinned(api.apiUrl ?? data.apiUrl, 'apiUrl'),
-    downloadUrl: pinned(api.downloadUrl ?? data.downloadUrl, 'downloadUrl'),
-    accountId: data.accountId ?? api.accountId,
-    capabilities: api.capabilities ?? data.allowed?.capabilities ?? [],
-    bucketId: api.bucketId ?? data.allowed?.bucketId ?? null,
-    bucketName: api.bucketName ?? data.allowed?.bucketName ?? null,
-    namePrefix: api.namePrefix ?? data.allowed?.namePrefix ?? null,
+    apiUrl: pinned(api.apiUrl, 'apiUrl'),
+    downloadUrl: pinned(api.downloadUrl, 'downloadUrl'),
+    s3ApiUrl: api.s3ApiUrl ?? null,
+    accountId: data.accountId,
+    capabilities: allowed.capabilities,
+    buckets: allowed.buckets == null ? null : allowed.buckets.map((b) => ({ id: b.id, name: b.name ?? null })),
+    namePrefix: allowed.namePrefix ?? null,
   };
+}
+
+/**
+ * The one bucket a key is confined to, or why it is not confined to exactly
+ * one. A key that may reach every bucket, or several, is not the
+ * least-authority key any job here runs on.
+ */
+export function soleBucket(auth) {
+  if (auth.buckets == null) return { ok: false, reason: 'it may reach every bucket in the account' };
+  if (auth.buckets.length !== 1) return { ok: false, reason: `it is confined to ${auth.buckets.length} buckets, not one` };
+  return { ok: true, bucket: auth.buckets[0] };
+}
+
+/** True for the account's master key: it may mint keys and reach every bucket. */
+export function isMasterKey(auth) {
+  return auth.capabilities.includes('writeKeys') && auth.buckets == null;
+}
+
+/**
+ * How a listed key (a `b2_list_keys` entry) differs from the scope a setup
+ * script would create it with: exactly one bucket, exactly these
+ * capabilities, no name prefix. Empty when it matches. Both setup scripts
+ * reuse an existing key only when this is empty, so they share one rule.
+ */
+export function keyScopeDrift(key, { bucketId, capabilities }) {
+  const out = [];
+  const ids = key.bucketIds ?? null;
+  if (!(Array.isArray(ids) && ids.length === 1 && ids[0] === bucketId)) {
+    out.push(`buckets ${ids == null ? 'all' : `[${ids.join(', ')}]`}, expected [${bucketId}]`);
+  }
+  const live = [...(key.capabilities ?? [])].sort();
+  const want = [...capabilities].sort();
+  if (live.join(',') !== want.join(',')) {
+    out.push(`capabilities [${live.join(', ')}], expected [${want.join(', ')}]`);
+  }
+  if (key.namePrefix) out.push(`name prefix "${key.namePrefix}", expected none`);
+  return out;
 }
 
 /**
@@ -119,16 +179,17 @@ export function requireScope(auth, { label, bucket, allowed, required }) {
   if (missing.length > 0) {
     throw new Error(`the ${label} key is missing required capabilities: ${missing.join(', ')}`);
   }
-  if (!auth.bucketId) {
-    throw new Error(`the ${label} key is not confined to one bucket; use a key scoped to ${bucket}`);
+  const sole = soleBucket(auth);
+  if (!sole.ok) {
+    throw new Error(`the ${label} key is not confined to one bucket (${sole.reason}); use a key scoped to ${bucket} alone`);
   }
-  if (auth.bucketName !== bucket) {
-    throw new Error(`the ${label} key is scoped to ${auth.bucketName ?? 'an unnamed bucket'}, not ${bucket}`);
+  if (sole.bucket.name !== bucket) {
+    throw new Error(`the ${label} key is scoped to ${sole.bucket.name ?? 'an unnamed bucket'}, not ${bucket}`);
   }
   if (auth.namePrefix) {
     throw new Error(`the ${label} key is restricted to the name prefix "${auth.namePrefix}" and cannot see the whole bucket`);
   }
-  return auth.bucketId;
+  return sole.bucket.id;
 }
 
 export const ATTEMPTS = 3;
@@ -169,18 +230,31 @@ async function send(url, init, { fetchImpl = fetch, sleep = realSleep, retry = f
  * The native calls that read, or that leave the same state however often they
  * run, and so are retried. Creating a bucket or a key is not on it.
  */
-const IDEMPOTENT = new Set(['b2_list_file_versions', 'b2_get_upload_url', 'b2_update_file_retention', 'b2_list_buckets', 'b2_list_keys']);
+const IDEMPOTENT = new Set(['b2_list_file_versions', 'b2_get_upload_url', 'b2_update_file_retention', 'b2_list_buckets', 'b2_list_keys', 'b2_update_bucket']);
 
-/** One native API call. A non-2xx answer throws with B2's own message and its status. */
+/**
+ * One native API call. A non-2xx answer throws with B2's own message, its
+ * status and, when B2 names one, its error `code` (such as
+ * `duplicate_key_name`), so a caller can tell a refusal it expects from any
+ * other.
+ */
 export async function call(auth, endpoint, body, io = {}) {
   const res = await send(
-    `${auth.apiUrl}/b2api/v3/${endpoint}`,
+    `${auth.apiUrl}/b2api/${API_VERSION}/${endpoint}`,
     { method: 'POST', headers: { Authorization: auth.token, 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
     { ...io, retry: IDEMPOTENT.has(endpoint) },
   );
   if (!res.ok) {
-    const err = new Error(`${endpoint} failed: ${res.status} ${(await res.text()).slice(0, 300)}`);
+    const text = await res.text().catch(() => '<no body>');
+    let code;
+    try {
+      code = JSON.parse(text)?.code;
+    } catch {
+      code = undefined;
+    }
+    const err = new Error(`${endpoint} failed: ${res.status} ${text.slice(0, 300)}`);
     err.status = res.status;
+    if (typeof code === 'string') err.code = code;
     throw err;
   }
   return res.json();
@@ -227,7 +301,7 @@ export async function listAllVersions(auth, bucketId, prefix, { pageCap = LIST_P
 }
 
 async function download(auth, fileId, io) {
-  const url = `${auth.downloadUrl}/b2api/v3/b2_download_file_by_id?fileId=${encodeURIComponent(fileId)}`;
+  const url = `${auth.downloadUrl}/b2api/${API_VERSION}/b2_download_file_by_id?fileId=${encodeURIComponent(fileId)}`;
   const res = await send(pinned(url, 'download URL'), { headers: { Authorization: auth.token } }, { ...io, retry: true });
   if (!res.ok) {
     throw new Error(`download of ${fileId} failed: ${res.status} ${(await res.text()).slice(0, 300)}`);

@@ -1748,6 +1748,22 @@
   },
   {
     "type": "error",
+    "name": "PositionMoveNotOpen",
+    "inputs": [
+      {
+        "name": "holder",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "readyAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ProposalPending",
     "inputs": [
       {

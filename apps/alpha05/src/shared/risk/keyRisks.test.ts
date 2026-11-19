@@ -21,6 +21,9 @@ describe('key risks (#3661)', () => {
     expect(KEY_RISKS).toHaveLength(6);
     expect(copyEntry(KEY_RISKS[0]!).text).toMatch(/^You can lose some or all of your funds/);
     expect(copyEntry('keyRisks.lend').text).toContain('If it cannot be sold, you receive the collateral itself');
+    // Terms version 4 (owner decision 2026-11-19): the lending line states
+    // the lock-up first, and the list stays at six.
+    expect(copyEntry('keyRisks.lend').text).toMatch(/^If you lend: your funds stay in the loan until the borrower repays, and you cannot withdraw them before that\./);
     expect(MORE_RISKS.map((k) => copyEntry(k).text).join(' ')).toContain('Tax on what you do here is your own responsibility');
   });
 });

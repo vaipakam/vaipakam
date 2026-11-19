@@ -44,6 +44,8 @@ test('a lender posts an offer in parts: the whole amount locked, the smallest pa
   await connectWallet(page);
   await page.getByTestId('pick-lending').locator('select').selectOption(WETH);
   await page.getByTestId('pick-collateral').locator('select').selectOption(tliq);
+  // #3761: the Lend form opens on Auto-lend; this flow posts a one-time offer.
+  await page.getByTestId('lend-choice-once').check();
   await page.getByTestId('lend-offer-open').click();
   await expect(page.getByTestId('request-duration')).toContainText('30 days', { timeout: 60_000 });
 
@@ -130,6 +132,8 @@ test('parts set in Advanced still apply in Basic, which says so and clears them'
   await connectWallet(page);
   await page.getByTestId('pick-lending').locator('select').selectOption(WETH);
   await page.getByTestId('pick-collateral').locator('select').selectOption(tliq);
+  // #3761: the Lend form opens on Auto-lend; this flow posts a one-time offer.
+  await page.getByTestId('lend-choice-once').check();
   await page.getByTestId('lend-offer-open').click();
   await page.getByTestId('request-range').check();
   await page.getByTestId('lend-offer-part').fill('0.01');
