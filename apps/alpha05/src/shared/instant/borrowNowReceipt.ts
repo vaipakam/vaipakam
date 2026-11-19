@@ -11,7 +11,7 @@ import { assetName, exactTokenAmount, tokenAmount, type TokenMetaMap } from '../
 import { loanRiskKey } from '../risk/keyRisks';
 import { formatBps } from '../ui/format';
 import { lifFeeOf, lifRateText } from '../offers/initiationFee';
-import { coverage, planOf, restOf, type BorrowNowReview } from './borrowNow';
+import { coverage, planOf, restOf, walletDrawCeiling, type BorrowNowReview } from './borrowNow';
 
 type Hex = `0x${string}`;
 
@@ -99,12 +99,9 @@ export function borrowNowReceipt(r: BorrowNowReview, diamond: Hex, meta: TokenMe
       });
     }
   }
-  // The split between vault and wallet is worked out again when the call
-  // runs: if the vault's free collateral drops before then, more comes from
-  // the wallet, up to what the approval allows. So the planned wallet part
-  // is an estimate, and the binding figure is that ceiling.
-  const allowanceAfter = r.approvalNeeded ? r.walletPart : r.allowance;
-  const walletMost = allowanceAfter < t.collateralOffered ? allowanceAfter : t.collateralOffered;
+  // The planned wallet part is an estimate; the binding figure is the
+  // ceiling the call can draw (walletDrawCeiling).
+  const walletMost = walletDrawCeiling(r);
   if (r.walletPart > 0n) rows.push({ label: text('borrowNow.rowFromWallet'), value: { kind: 'amount', asset: t.collateral, amount: r.walletPart }, binding: false });
   if (walletMost > 0n) rows.push({ label: text('borrowNow.rowWalletMost'), value: { kind: 'amount', asset: t.collateral, amount: walletMost }, binding: true, movesOut: true });
   rows.push(

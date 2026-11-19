@@ -350,3 +350,17 @@ export function restRequestInput(t: BorrowNowTerms, rest: { amount: bigint; coll
     allowsPartialRepay: t.allowsPartialRepay,
   };
 }
+
+/**
+ * The most the borrow can take from the wallet: the split between vault and
+ * wallet is worked out again when the call runs, so if the vault's free
+ * collateral drops before then, more comes from the wallet, up to what the
+ * approval allows (the allowance the approval sets, or the one already
+ * given), and never more than the collateral offered. The receipt states it
+ * as the binding figure and the review key carries it, so any change to it
+ * asks for a new confirmation.
+ */
+export function walletDrawCeiling(r: Pick<BorrowNowReview, 'approvalNeeded' | 'walletPart' | 'allowance' | 'terms'>): bigint {
+  const allowanceAfter = r.approvalNeeded ? r.walletPart : r.allowance;
+  return allowanceAfter < r.terms.collateralOffered ? allowanceAfter : r.terms.collateralOffered;
+}

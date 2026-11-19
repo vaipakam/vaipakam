@@ -23,6 +23,7 @@ import {
   planFrom,
   readInstantConfig,
   slotCandidates,
+  walletDrawCeiling,
   type BorrowNowReview,
   type BorrowNowState,
   type BorrowNowTerms,
@@ -158,5 +159,5 @@ export function borrowNowKey(r: BorrowNowReview): string {
   const s = r.state;
   const state = s.kind === 'plan' ? `plan:${s.plan.total}:${s.plan.collateralLocked}:${s.plan.fills.map((f) => `${f.amount}@${f.rateBps}`).join(',')}` : s.kind;
   const lif = r.lif === null ? 'lif?' : `lif:${r.lif.baseBps}:${r.lif.baseTermDays}:${r.lif.yearlyBps}:${r.lif.yearDays}`;
-  return [state, r.walletPart, r.approvalSteps, r.sources.length, r.searchComplete ? 'all' : 'some', r.risk ?? '', lif].join('|');
+  return [state, r.walletPart, walletDrawCeiling(r), r.approvalSteps, r.sources.length, r.searchComplete ? 'all' : 'some', r.risk ?? '', lif].join('|');
 }
