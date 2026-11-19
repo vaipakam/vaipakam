@@ -148,7 +148,8 @@ Keys and accounts:
   equal the proposer). Required by `phase_preflight` and `DeployTimelock`
   (GovernanceRunbook "1. Deploy the Timelock"). `PAUSER_ADDRESS` is also the
   feed-registry guardian at deploy (DeployDiamond.s.sol `setPriceGuardInputs`).
-- `TIMELOCK_MIN_DELAY` (optional; testnet floor 1h, default 48h),
+- `TIMELOCK_MIN_DELAY` (optional; testnet floor 1h, default 48h; the restart wait),
+  `TIMELOCK_STANDARD_DELAY` (optional; default 7 days, never below the restart wait),
   `TIMELOCK_EXECUTOR` (leave unset = open execution).
 - `KEEPER_ADDRESS`, `WATCHER_ADDRESS`, `NOTIF_BILLER_ADDRESS` — bot EOAs;
   required only by the `handover` phase. `KEEPER_BOT_OWNER` (same EOA as the
@@ -726,7 +727,7 @@ handover** on any testnet ("Both remain owned by the admin key; there was no
 governance handover, as on every testnet"), and CcipCutoverRunbook §4 says
 "Testnet rehearsals stay deployer/admin-owned — no governance handover".
 `deploy-testnet.sh` nevertheless carries `handover` / `handover-gate`, and
-GovernanceRunbook "Testnet rehearsal" walks it with `TIMELOCK_MIN_DELAY=3600`.
+GovernanceRunbook "Testnet rehearsal" walks it with `TIMELOCK_MIN_DELAY=3600` and `TIMELOCK_STANDARD_DELAY=3600`.
 **Recommendation: skip it** on the live testnets (after it, every setting —
 including §5 — needs a Timelock proposal; the keeper/bot roles must then be
 granted by the handover itself).

@@ -614,7 +614,7 @@ cast send $BASE_SEPOLIA_DIAMOND_ADDRESS "closeDay()" \
 
 Only run after smoke tests (§11) pass. After this step, every admin setter — `OracleAdminFacet.*`, `VaultAdminFacet.*`, role grants, `OwnershipFacet.transferOwnership` — must be scheduled through the `TimelockController` with a minimum 48h delay. (There is no `AdminFacet.setTreasury` since #3569: the treasury moves only by new vault code on the `VaultBeacon`, see [UpgradeSafety.md](UpgradeSafety.md), "Moving the treasury".)
 
-Populate `.env`: `TIMELOCK_PROPOSER` (governance multi-sig address), `PAUSER_ADDRESS` (the Pauser multi-sig; it becomes the Timelock's independent canceller), `EMERGENCY_REVOKER_ADDRESS` (the governance multi-sig), `TIMELOCK_EXECUTOR=0x0000000000000000000000000000000000000000` (open execution after delay), `TIMELOCK_MIN_DELAY=172800` (48h).
+Populate `.env`: `TIMELOCK_PROPOSER` (governance multi-sig address), `PAUSER_ADDRESS` (the Pauser multi-sig; it becomes the Timelock's independent canceller), `EMERGENCY_REVOKER_ADDRESS` (the governance multi-sig), `TIMELOCK_EXECUTOR=0x0000000000000000000000000000000000000000` (open execution after delay), `TIMELOCK_MIN_DELAY=172800` (48h, restarts and approved urgent fixes), `TIMELOCK_STANDARD_DELAY=604800` (7 days, everything else).
 
 **Deploy the timelock:**
 ```bash

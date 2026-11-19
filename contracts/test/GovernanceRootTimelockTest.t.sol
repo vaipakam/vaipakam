@@ -69,7 +69,7 @@ contract GovernanceRootTimelockTest is Test {
         executors[0] = address(0);
         address[] memory cancellers = new address[](1);
         cancellers[0] = pauserSafe;
-        timelock = new VaipakamTimelock(DELAY, proposers, executors, cancellers);
+        timelock = new VaipakamTimelock(DELAY, DELAY, address(0), proposers, executors, cancellers, new address[](0));
 
         _handover();
         handoverState = vm.snapshotState();

@@ -896,7 +896,7 @@ contract LaunchTest is Test {
         proposers[0] = PROPOSER;
         address[] memory executors = new address[](1);
         executors[0] = address(0);
-        tl = new VaipakamTimelock(2 days, proposers, executors, new address[](0));
+        tl = new VaipakamTimelock(2 days, 2 days, address(0), proposers, executors, new address[](0), new address[](0));
     }
 
     function _schedule(VaipakamTimelock tl, address registry, uint64 epoch) internal {
@@ -2516,7 +2516,8 @@ contract LaunchTest is Test {
         targets[0] = address(tl);
         targets[1] = address(tl);
         bytes[] memory payloads = new bytes[](2);
-        payloads[0] = abi.encodeCall(tl.updateDelay, (2 days));
+        // The standard wait rises first: the restart wait may never exceed it.
+        payloads[0] = abi.encodeCall(tl.updateStandardDelay, (3 days));
         payloads[1] = abi.encodeCall(tl.updateDelay, (3 days));
         vm.prank(PROPOSER);
         tl.scheduleBatch(targets, new uint256[](2), payloads, bytes32(0), bytes32("two"), 2 days);

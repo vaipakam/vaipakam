@@ -236,6 +236,9 @@ ac.hasRole(EMERGENCY_REVOKER_ROLE, deployerEOA) == false
 timelock.hasRole(CANCELLER_ROLE, pauserSafe)    == true    // independent veto
 timelock.hasRole(DEFAULT_ADMIN_ROLE, deployerEOA) == false  // self-administered
 timelock.MIN_DELAY_FLOOR()                      >= 172800  // any non-testnet chain
+timelock.STANDARD_DELAY_FLOOR()                 >= 604800  // production: every non-restart op
+timelock.standardDelay()                        >= 604800
+timelock.hasRole(URGENT_APPROVER_ROLE, pauserSafe) == true // approves one urgent fix by id
 
 // VPFIToken (canonical only)
 Ownable2Step(vpfiToken).owner()                 == timelock
@@ -2947,7 +2950,7 @@ Before mainnet:
   as the intended mainnet ones (via CreateCall).
 - Walk the **per-chain handover** steps 1–6 above (Deploy the Timelock →
   Readback verification) end-to-end against each testnet Diamond with
-  `TIMELOCK_MIN_DELAY=3600` (1h) to compress the rehearsal.
+  `TIMELOCK_MIN_DELAY=3600` and `TIMELOCK_STANDARD_DELAY=3600` (1h) to compress the rehearsal.
 - Confirm `GovernanceHandover.t.sol` passes against each testnet fork
   before re-deploying with the 48h mainnet delay.
 

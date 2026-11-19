@@ -202,6 +202,11 @@ Optional knobs:
 ```bash
 TIMELOCK_MIN_DELAY=172800   # default 48h; any non-testnet chain refuses less.
                             # Also the permanent floor (MIN_DELAY_FLOOR).
+                            # Only restarts and urgent fixes the Pauser Safe
+                            # approved may use it.
+TIMELOCK_STANDARD_DELAY=604800  # default 7 days; mainnet refuses less. Every
+                            # other operation waits this. Permanent floor
+                            # STANDARD_DELAY_FLOOR.
 TIMELOCK_EXECUTOR=0x0000000000000000000000000000000000000000
                             # default open-execute; set to a Safe to gate
                             # execution as well as proposing (see §F.3)
@@ -257,8 +262,12 @@ cast call $TIMELOCK "hasRole(bytes32,address)(bool)" \
 # The Pauser Safe can cancel (#938)
 cast call $TIMELOCK "hasRole(bytes32,address)(bool)" \
     $(cast keccak "CANCELLER_ROLE") $PAUSER_ADDRESS --rpc-url $ETHEREUM_RPC_URL
-# The floor is the deploy-time delay
+# The floors are the deploy-time delays (48h restart, 7 days standard)
 cast call $TIMELOCK "MIN_DELAY_FLOOR()(uint256)" --rpc-url $ETHEREUM_RPC_URL
+cast call $TIMELOCK "STANDARD_DELAY_FLOOR()(uint256)" --rpc-url $ETHEREUM_RPC_URL
+# The Pauser Safe approves urgent fixes, and is not a proposer
+cast call $TIMELOCK "hasRole(bytes32,address)(bool)" \
+    $(cast keccak "URGENT_APPROVER_ROLE") $PAUSER_ADDRESS --rpc-url $ETHEREUM_RPC_URL
 # Nobody but the Timelock administers it: the deployer must print false
 cast call $TIMELOCK "hasRole(bytes32,address)(bool)" \
     0x0000000000000000000000000000000000000000000000000000000000000000 \
@@ -390,7 +399,7 @@ saves the front-run surface, costs you DoS resilience.
 Before any mainnet broadcast in steps D–F, **fully rehearse on a
 testnet** with a fresh Diamond and throwaway Safes (two distinct
 1-of-1 Safes are enough). Run steps D and E exactly as above against
-the testnet RPC, with `TIMELOCK_MIN_DELAY=3600` so the accepts in F.1
+the testnet RPC, with `TIMELOCK_MIN_DELAY=3600` and `TIMELOCK_STANDARD_DELAY=3600` so the accepts in F.1
 land in an hour. Then:
 
 - confirm the admin EOA is locked out (the `pause()` call in E reverts);

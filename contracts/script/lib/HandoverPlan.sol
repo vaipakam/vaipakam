@@ -43,6 +43,8 @@ library HandoverPlan {
     bytes32 internal constant PROPOSER_ROLE = keccak256("PROPOSER_ROLE");
     bytes32 internal constant EXECUTOR_ROLE = keccak256("EXECUTOR_ROLE");
     bytes32 internal constant CANCELLER_ROLE = keccak256("CANCELLER_ROLE");
+    /// @dev The timelock role that approves one exact urgent fix (the Pauser Safe).
+    bytes32 internal constant URGENT_APPROVER_ROLE = keccak256("URGENT_APPROVER_ROLE");
 
     /// @notice The Diamond roles that go to the Timelock besides the role
     ///         root: every action that should wait out the review window.
@@ -337,4 +339,49 @@ library HandoverPlan {
         all[n] = Target({label: label, addr: addr, kind: kind, required: required, guardian: guardian});
         return n + 1;
     }
+
+    // ── The timelock's restart list ────────────────────────────────────────
+
+    /// @notice Why `timelock`'s restart list does not fit `diamond`, or ""
+    ///         when it does. The list is (target, selector) pairs: the target
+    ///         must be this Diamond, and the Diamond must route every
+    ///         selector, so the 48-hour route can only ever reach a call that
+    ///         exists on the contract the handover gives the timelock (design
+    ///         ruling on #3828). One statement, read by `DeployTimelock`,
+    ///         `Handover` and `HandoverGate`.
+    function restartListProblem(address timelock, address diamond) internal view returns (string memory) {
+        if (diamond == address(0)) return "no Diamond to check the timelock's restart list against";
+        address target = IRestartList(timelock).RESTART_TARGET();
+        if (target != diamond) {
+            return string.concat(
+                "timelock RESTART_TARGET ", CHEATS.toString(target), " is not the Diamond ", CHEATS.toString(diamond)
+            );
+        }
+        bytes4[] memory sels = IRestartList(timelock).restartSelectors();
+        for (uint256 i = 0; i < sels.length; ++i) {
+            address facet;
+            try IRestartLoupe(diamond).facetAddress(sels[i]) returns (address f) {
+                facet = f;
+            } catch {
+                return "the Diamond's loupe (facetAddress) cannot be read";
+            }
+            if (facet == address(0)) {
+                return string.concat(
+                    "the Diamond does not route restart selector ", CHEATS.toString(abi.encodePacked(sels[i]))
+                );
+            }
+        }
+        return "";
+    }
+}
+
+/// @dev The timelock's restart list, as `restartListProblem` reads it.
+interface IRestartList {
+    function RESTART_TARGET() external view returns (address);
+    function restartSelectors() external pure returns (bytes4[] memory);
+}
+
+/// @dev The one loupe read `restartListProblem` needs.
+interface IRestartLoupe {
+    function facetAddress(bytes4 selector) external view returns (address);
 }

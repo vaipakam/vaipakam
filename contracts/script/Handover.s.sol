@@ -362,6 +362,12 @@ contract Handover is Script {
         // named here could revoke but never queue a repair, while an
         // unverified multisig controlled every delayed action (Codex #2642
         // r3). Refuse before the admin gives anything up.
+        // The Pauser Safe is also the one urgent approver: an urgent fix waits
+        // only the restart delay when it approved that exact operation.
+        require(
+            ITimelockRoles(c.timelock).hasRole(HandoverPlan.URGENT_APPROVER_ROLE, c.pauserSafe),
+            "timelock does not grant URGENT_APPROVER_ROLE to PAUSER_ADDRESS - redeploy it with DeployTimelock"
+        );
         require(
             ITimelockRoles(c.timelock).hasRole(HandoverPlan.PROPOSER_ROLE, c.governanceSafe),
             "timelock does not grant PROPOSER_ROLE to EMERGENCY_REVOKER_ADDRESS - the Governance Safe must be TIMELOCK_PROPOSER"
@@ -376,9 +382,23 @@ contract Handover is Script {
         uint256 tlDelay = ITimelockRoles(c.timelock).getMinDelay();
         uint256 tlFloor = ITimelockRoles(c.timelock).MIN_DELAY_FLOOR();
         require(tlFloor > 0, "timelock has a zero MIN_DELAY_FLOOR - redeploy it with DeployTimelock");
+        // The 48-hour restart route reaches only this Diamond, and only calls
+        // it routes (design ruling on #3828).
+        string memory restartProblem = HandoverPlan.restartListProblem(c.timelock, c.diamond);
+        require(bytes(restartProblem).length == 0, string.concat("timelock restart list: ", restartProblem));
         if (Deployments.requiresProductionGovernance()) {
-            require(tlDelay >= 48 hours, "timelock delay < 48h on a production chain");
+            require(tlDelay >= 48 hours, "timelock restart delay < 48h on a production chain");
             require(tlFloor >= 48 hours, "timelock MIN_DELAY_FLOOR < 48h on a production chain");
+            // Owner decision 2026-11-19 (option A): every change but a restart
+            // or a Pauser-approved urgent fix waits at least 7 days.
+            require(
+                ITimelockRoles(c.timelock).STANDARD_DELAY_FLOOR() >= 7 days,
+                "timelock STANDARD_DELAY_FLOOR < 7 days on a production chain"
+            );
+            require(
+                ITimelockRoles(c.timelock).standardDelay() >= 7 days,
+                "timelock standard delay < 7 days on a production chain"
+            );
         }
     }
 
@@ -603,6 +623,8 @@ interface IAccessControl {
 interface ITimelockRoles {
     function getMinDelay() external view returns (uint256);
     function MIN_DELAY_FLOOR() external view returns (uint256);
+    function standardDelay() external view returns (uint256);
+    function STANDARD_DELAY_FLOOR() external view returns (uint256);
     function hasRole(bytes32 role, address account) external view returns (bool);
 }
 
