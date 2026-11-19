@@ -229,6 +229,28 @@ test('recycling account: an older reading shows its missing figures as predating
   await expect(page.getByText(copy.recycling.backedYesHolder)).toHaveCount(0);
 });
 
+test('recycling account: the block behind the reading says whether the chain confirmed it (#2210)', async ({
+  page,
+}) => {
+  const finality = page.getByTestId('recycling-block-finality');
+  await openAnalytics(page);
+  await expect(finality).toHaveText(copy.recycling.blockFinalitySettled);
+  await expect(page.getByTestId('recycling-block-finality-note')).toHaveCount(0);
+
+  await useBackingVariant(page, 'estimated-block');
+  await openAnalytics(page);
+  // Still published with its block, and never presented as confirmed.
+  await expect(finality).toHaveText(copy.recycling.blockFinalityEstimated);
+  await expect(page.getByTestId('recycling-block-finality-note')).toHaveText(
+    copy.recycling.blockFinalityEstimatedNote,
+  );
+
+  await useBackingVariant(page, 'older-reading');
+  await openAnalytics(page);
+  await expect(finality).toHaveText(copy.recycling.blockFinalityUnknown);
+  await expect(page.getByTestId('recycling-block-finality-note')).toHaveCount(0);
+});
+
 test('recycling account: a not-determinable verdict carries its reason', async ({ page }) => {
   await useBackingVariant(page, 'holder-unknown');
   await openAnalytics(page);
