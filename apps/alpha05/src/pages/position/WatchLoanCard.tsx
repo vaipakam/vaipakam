@@ -1,9 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useConfig } from 'wagmi';
-import { signMessage } from 'wagmi/actions';
-import { AGENT, AgentUnavailable, type AgentClient } from '../../shared/alerts/agentClient';
-import { isUserRejection, nextIssuedAt } from '../../shared/alerts/useAlertAction';
+import { AGENT, type AgentClient } from '../../shared/alerts/agentClient';
+import { useSignedRequest, type SignedRoute, type SignedRun } from '../../shared/alerts/useSignedRequest';
 import {
   knownAfter,
   readKnownWatch,
@@ -21,13 +19,9 @@ import { useCopy } from '../../shared/copy/useCopy';
 import { formatUtc } from '../../shared/ui/format';
 
 type Hex = `0x${string}`;
+type Run = SignedRun<WatchAnswer>;
 
-type Run =
-  | { phase: 'idle' }
-  | { phase: 'signing' | 'sending' }
-  | { phase: 'answered'; answer: WatchAnswer }
-  | { phase: 'declined' }
-  | { phase: 'unreachable'; message: string };
+const ROUTE: SignedRoute<WatchAction, WatchAnswer> = { message: watchMessage, path: watchPath, body: watchBody, read: readWatchAnswer };
 
 /**
  * #3769 — alerts for a running loan the reader holds neither side of
@@ -39,39 +33,21 @@ type Run =
  */
 export function WatchLoanCard({ loanId, chainId, wallet, client = AGENT }: { loanId: bigint; chainId: number; wallet: Hex; client?: AgentClient }) {
   const { text, format } = useCopy();
-  const config = useConfig();
   const [known, setKnown] = useState<KnownWatch | null>(() => readKnownWatch(chainId, wallet, loanId));
-  const [run, setRun] = useState<Run>({ phase: 'idle' });
-  const busy = run.phase === 'signing' || run.phase === 'sending';
+  const { run, busy, send: sendSigned, off } = useSignedRequest(ROUTE, chainId, wallet, client);
 
   const send = async (action: WatchAction) => {
     if (busy) return;
-    setRun({ phase: 'signing' });
-    const issuedAt = nextIssuedAt();
-    let signature: Hex;
-    try {
-      signature = await signMessage(config, { account: wallet, message: watchMessage(action, wallet, chainId, issuedAt) });
-    } catch (e) {
-      setRun(isUserRejection(e) ? { phase: 'declined' } : { phase: 'unreachable', message: (e as Error).message });
-      return;
-    }
-    setRun({ phase: 'sending' });
-    try {
-      const res = await client.request('POST', watchPath(action), watchBody(action, wallet, chainId, issuedAt, signature));
-      const answer = readWatchAnswer(action, res.status, res.data);
-      const next = knownAfter(action, answer, Math.floor(Date.now() / 1000));
-      if (next) {
-        writeKnownWatch(chainId, wallet, loanId, next);
-        setKnown(next);
-      }
-      setRun({ phase: 'answered', answer });
-    } catch (e) {
-      setRun({ phase: 'unreachable', message: e instanceof AgentUnavailable ? e.message : (e as Error).message });
+    const answer = await sendSigned(action);
+    if (answer === null) return;
+    const next = knownAfter(action, answer, Math.floor(Date.now() / 1000));
+    if (next) {
+      writeKnownWatch(chainId, wallet, loanId, next);
+      setKnown(next);
     }
   };
 
   const tooBig = !watchable(loanId);
-  const off = client.origin === null;
 
   return (
     <section className="home-section position-watch" aria-labelledby="position-watch" data-testid="watch-loan-card">
