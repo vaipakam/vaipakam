@@ -11,7 +11,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PublicClient } from 'viem';
 import { copy } from '../content/copy';
-import { lifFeeOf, type LifTerms } from '../lib/initiationFee';
 import { AssetType, LoanStatus } from '../lib/types';
 
 const DAY = 86_400n;
@@ -30,7 +29,9 @@ const reads = vi.hoisted(() => ({
   /** When set, the bound as the contract would size it at a request
    *  expiry — so a test can see the clock move it (#3311). */
   boundAt: null as null | ((expiresAt: bigint) => bigint),
-  route: 'permit' as 'permit' | 'approval',
+  /** The new loan's net principal the contract measures the wallet's
+   *  share against (#3042): the request amount less its initiation fee. */
+  netPrincipal: 0n,
   quoteArgs: [] as Array<Record<string, unknown>>,
   sanctioned: false,
   discovery: { kind: 'none' } as Record<string, unknown>,
@@ -44,23 +45,18 @@ vi.mock('../contracts/loanLive', () => ({
   readLoanLive: vi.fn(async () => reads.live),
   loanEndTimeOf: (live: { endTime: bigint }) => live.endTime,
 }));
-// #1558 — the payoff figures and the route come from the contract; the
-// quote reader is stubbed so the plan's use of them is what is pinned.
+// #1558 — the payoff figures come from the contract; the quote reader is
+// stubbed so the plan's use of them is what is pinned.
 vi.mock('../contracts/refinancePayoffPermit', () => ({
-  readPayoffRoute: vi.fn(async () => reads.route),
   readPayoffQuote: vi.fn(async (a: Record<string, unknown>) => {
     reads.quoteArgs.push(a);
     const bound = reads.boundAt ? reads.boundAt(a.expiresAt as bigint) : reads.bound;
     return {
-      route: a.route,
       payoff: reads.payoff,
       bound,
       // #3042 — the wallet's share today: the payoff less the new loan's
-      // net principal, by the real rule over the mocked payoff.
-      topUp:
-        reads.payoff -
-        ((a.requestAmount as bigint) -
-          lifFeeOf(a.requestAmount as bigint, a.lifTerms as LifTerms, a.termDays as number)),
+      // net principal, as the contract sizes it.
+      topUp: reads.payoff - reads.netPrincipal,
       growth: bound > reads.payoff ? bound - reads.payoff : 0n,
       lastFillable: (a.expiresAt as bigint) - 1n,
       permit: null,
@@ -155,7 +151,8 @@ beforeEach(() => {
   reads.payoff = 1_010_000n;
   reads.bound = 1_010_000n;
   reads.boundAt = null;
-  reads.route = 'permit';
+  // 1,000,000 asked for, less the 0.2% initiation fee.
+  reads.netPrincipal = 998_000n;
   reads.quoteArgs = [];
   reads.sanctioned = false;
   reads.discovery = { kind: 'none' };
@@ -190,9 +187,8 @@ describe('checkRefinanceRequest', () => {
     expect(plan.expiryGraceClamped).toBe(false);
   });
 
-  it('sizes the payoff from the contract for the request’s own expiry, on the route the Diamond routes', async () => {
+  it('sizes the payoff from the contract for the request’s own expiry', async () => {
     const plan = (await checkRefinanceRequest(ctx, LOAN, TERMS, FEES)) as RefinanceRequestReady;
-    expect(plan.route).toBe('permit');
     expect(plan.bound).toBe(1_010_000n);
     // The permit expires with the request: its last fillable moment.
     expect(plan.permitDeadline).toBe(plan.requestExpiry - 1n);
@@ -202,16 +198,7 @@ describe('checkRefinanceRequest', () => {
       chainNow: reads.now,
       expiresAt: plan.requestExpiry,
       graceSeconds: 3n * DAY,
-      route: 'permit',
-      // #3042 — what sizes the wallet's share: the request asks for the
-      // old principal, at the live fee rule and the request's term (#3649).
-      requestAmount: reads.live.principal,
-      lifTerms: FEES.lifTerms,
-      termDays: TERMS.durationDays,
     });
-    reads.route = 'approval';
-    const bridge = (await checkRefinanceRequest(ctx, LOAN, TERMS, FEES)) as RefinanceRequestReady;
-    expect(bridge.route).toBe('approval');
   });
 
   it('plans no guardrail write when the caps already cover the request', async () => {
@@ -329,16 +316,6 @@ describe('checkRefinanceRequest at a reviewed request (#3311)', () => {
       requestExpiry: review.requestExpiry,
     })) as RefinanceRequestReady;
     expect(reviewedBoundMoved(shrunk, review)).toBe(false);
-  });
-
-  it('refuses a payoff route that changed', async () => {
-    const review = (await checkRefinanceRequest(ctx, LOAN, TERMS, FEES)) as RefinanceRequestReady;
-    reads.route = 'approval';
-    const send = (await checkRefinanceRequest(ctx, LOAN, TERMS, FEES, {
-      requestExpiry: review.requestExpiry,
-    })) as RefinanceRequestReady;
-    expect(send.bound).toBe(review.bound);
-    expect(reviewedBoundMoved(send, review)).toBe(true);
   });
 
   it('forces a re-review once the review is older than the stated chain-time age', async () => {
@@ -463,15 +440,6 @@ describe('planRefinanceForBatch', () => {
     expect(await planRefinanceForBatch(ctx, LOAN, TERMS, FEES, reviewed)).toMatchObject({
       kind: 'refused',
       reason: copy.refinance.reviewStale(10),
-    });
-  });
-
-  it('leaves out a loan whose payoff route changed since the review', async () => {
-    const reviewed = (await planRefinanceForBatch(ctx, LOAN, TERMS, FEES)) as Ready;
-    reads.route = 'approval';
-    expect(await planRefinanceForBatch(ctx, LOAN, TERMS, FEES, reviewed)).toMatchObject({
-      kind: 'refused',
-      reason: copy.batchRefinance.changedSinceReview,
     });
   });
 

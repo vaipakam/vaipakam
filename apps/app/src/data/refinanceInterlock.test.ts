@@ -4,7 +4,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RefinanceDiscovery } from './refinanceDiscovery';
 import {
-  cancelRevokesApproval,
   liveRefinanceVerdict,
   postRefinanceVerdict,
   ownScanUnresolved,
@@ -246,13 +245,5 @@ describe('repayRefinanceDecision (r4/r5) — every confirm re-checks', () => {
     expect(repayRefinanceDecision('pending', 'open').proceed).toBe(true);
     expect(repayRefinanceDecision('pending', 'unchecked').proceed).toBe(true);
     expect(repayRefinanceDecision('unchecked', 'capped').proceed).toBe(true);
-  });
-});
-
-
-describe('cancelRevokesApproval (#2429 r3)', () => {
-  it('never revokes the shared approval when cancelling a leftover; revokes for the loan\'s own request', () => {
-    expect(cancelRevokesApproval({ untakeable: true })).toBe(false);
-    expect(cancelRevokesApproval({ untakeable: false })).toBe(true);
   });
 });

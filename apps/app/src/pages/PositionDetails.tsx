@@ -4782,7 +4782,6 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             refi.permitAttach?.offerId === refi.offerId ? refi.permitAttach : null
           }
           onPermitAttach={refi.reportPermitAttach}
-          principalAsset={row.lendingAsset as `0x${string}`}
           principalMeta={principal ?? undefined}
           busy={busy}
           setBusy={setBusy}

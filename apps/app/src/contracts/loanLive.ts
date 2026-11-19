@@ -6,13 +6,11 @@
  */
 import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
-import { lifFeeOf, type LifTerms } from '../lib/initiationFee';
 import {
   interestTermEnd,
   pausedSecondsBetween,
   proRataInterestSeconds,
   readPauseLog,
-  settlementInterestAt,
   type PauseLog,
 } from '@vaipakam/lib/loanClock';
 
@@ -129,105 +127,6 @@ export function loanEndTimeOf(live: LoanLive, at: bigint = live.readAtTimestamp)
 export function remainingInterestSecondsOf(live: LoanLive, at: bigint): bigint {
   const end = interestTermEnd(live, live.pauseLog, at);
   return end > at ? end - at : 0n;
-}
-
-/** Mirrors LibVaipakam.calculateLateFee for ERC-20 loans: 0 at or
- *  before the EFFECTIVE maturity, then 1% of principal + 0.5% per WHOLE
- *  day late, capped at 5%. Both the repay and the #1189 preclose/refinance
- *  grace-window paths charge exactly this. */
-export function lateFeeAt(live: LoanLive, ts: bigint): bigint {
-  const endTime = loanEndTimeOf(live, ts);
-  if (ts <= endTime) return 0n;
-  const daysLate = (ts - endTime) / 86_400n;
-  let feeBps = 100n + daysLate * 50n;
-  if (feeBps > 500n) feeBps = 500n;
-  return (live.principal * feeBps) / 10_000n;
-}
-
-/** The refinance old-lender payoff AS OF `asOf` (chain time). The
- *  facet pays `settlementInterestNet(oldLoan, now)` + the #1189
- *  grace-window late fee, and that settlement interest is
- *  `max(seconds since the interest clock, the full-term minimum)`
- *  (#3169: to the second) — i.e. the full-term floor in term, but PAST
- *  maturity it keeps accruing with elapsed time (Codex #1256 r1).
- *  This mirror applies the full-term minimum in BOTH interest modes
- *  (exact for full-term loans; over-covers a pro-rata loan — the pull
- *  only shrinks) and stays gross of `interestSettled` (again
- *  over-covers only). ONE definition — the review quote, the pending
- *  watch, and the funding checks must never drift apart. */
-export function refinancePayoffOf(live: LoanLive, asOf: bigint): bigint {
-  const interest = settlementInterestAt(
-    { ...live, interestAccrualStart: interestAccrualStartOf(live), useFullTermInterest: true },
-    live.pauseLog,
-    asOf,
-  );
-  return live.principal + interest + lateFeeAt(live, asOf);
-}
-
-/** #3042 — what a refinance accept costs the holder's WALLET at `asOf`:
- *  the payoff minus the new loan's net principal (its principal less the
- *  borrower's initiation fee), which is the old loan's interest (and any
- *  late fee) plus the new loan's initiation fee. On a netting Diamond the
- *  net principal pays the old lender directly and only this is pulled; on
- *  a Diamond that predates the netting (the approval route's bridge) the
- *  net principal reaches the wallet first and the whole payoff is pulled,
- *  so this is still the wallet's net cost and the spare balance it needs.
- *  The permit route reads the contract's own figure instead.
- *
- *  The fee is taken under the LIVE initiation-fee term rule at the
- *  request's own term (#3649), with no discount,
- *  so this is the MOST the accept can pull: a borrower hold-tier discount
- *  only lowers the fee, which raises the net principal and lowers the
- *  pull. A governance raise of the fee rate after posting raises the
- *  pull above an approval made before it; the pending card recomputes
- *  this with the live rate and asks for a fresh approval. */
-export function refinanceWalletPullOf(
-  live: LoanLive,
-  opts: { requestAmount: bigint; lifTerms: LifTerms; termDays: number },
-  asOf: bigint,
-): bigint {
-  const fee = lifFeeOf(opts.requestAmount, opts.lifTerms, opts.termDays);
-  const netPrincipal = opts.requestAmount - fee;
-  const payoff = refinancePayoffOf(live, asOf);
-  // The contract refuses a net principal above the old lender's due, and
-  // the request amount never exceeds the old principal, so this cannot go
-  // negative; clamp anyway rather than approve a negative figure.
-  return payoff > netPrincipal ? payoff - netPrincipal : 0n;
-}
-
-/** The standing-approval target for a refinance request on the APPROVAL
- *  route only: the payoff at the LAST moment the request is still
- *  fillable — the earlier of its own expiry and the end of the loan's
- *  grace window (a lender can accept any time up to then, and the
- *  accept-time pull includes the late fee AND the still-accruing grace
- *  interest AT THAT TIME, #1189/#1236). Approving only today's
- *  figure would strand an otherwise-valid request the moment the
- *  loan crosses maturity; approving this bound keeps the approval
- *  exact against the maximum the contract can ever pull for THIS
- *  request. `expiresAt === 0` means no offer-level expiry — the
- *  grace end alone bounds it.
- *
- *  It is the WHOLE payoff, not the wallet's share, because the approval
- *  route exists only for a Diamond deployed before #1558 (the bridge
- *  #3074 removes), and such a Diamond also predates #3042: the new
- *  principal reaches the borrower's wallet first and the payoff is then
- *  pulled back out of it in full. The permit route's bound is the
- *  contract's own `walletShareBy`. */
-export function refinanceApprovalOf(
-  live: LoanLive,
-  opts: { expiresAt: bigint; graceSeconds: bigint },
-): bigint {
-  // The effective grace end at the snapshot. A pause that begins later moves
-  // it, and the contract's pull with it — an intrinsic race this bound cannot
-  // see; the request then needs a fresh approval, never a short-paid lender.
-  const graceEnd = loanEndTimeOf(live) + opts.graceSeconds;
-  // acceptOffer rejects at ts >= expiresAt, so the last fillable
-  // moment under the offer's own clock is expiresAt - 1.
-  const lastFillable =
-    opts.expiresAt > 0n && opts.expiresAt - 1n < graceEnd
-      ? opts.expiresAt - 1n
-      : graceEnd;
-  return refinancePayoffOf(live, lastFillable);
 }
 
 /** Mirror LibVaipakam.SECONDS_PER_YEAR / BASIS_POINTS. */
