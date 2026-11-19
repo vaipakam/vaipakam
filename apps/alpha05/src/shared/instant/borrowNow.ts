@@ -26,6 +26,7 @@ import { decodeEventLog, formatUnits, type Abi, type Log, type PublicClient } fr
 import { InstantMarketFacetABI } from '@vaipakam/contracts/abis';
 import type { StoredOffer } from '../offers/acceptTerms';
 import type { RiskNeed } from '../risk/riskAccess';
+import type { LifTerms } from '../offers/initiationFee';
 import { intentTermDays, type IntentSummary } from '../offers/intents';
 import { DEFAULT_INPUT, parseAmount, parseDays, parseRateBps, type ParseError, type PostInput } from '../post/postModel';
 
@@ -316,6 +317,9 @@ export interface BorrowNowReview {
   identity: string;
   /** The risk-access step a fill on the pair would refuse without, if any. */
   risk: RiskNeed | null;
+  /** The loan initiation fee's term rule, or null when it could not be read
+   *  (the fee is then stated as unknown, never as zero). */
+  lif: LifTerms | null;
   readAt: number;
 }
 

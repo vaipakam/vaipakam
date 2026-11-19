@@ -10,6 +10,7 @@ import { readLenderIntents } from '../offers/intents';
 import { METRICS, READY_BALANCE, readOffer, readPairOfferIds, readVault, tokenAcceptsApproval } from '../offers/reads';
 import { readInstantSlot } from '../autolend/preset';
 import { readRiskNeed } from '../risk/riskNeed';
+import { readLifTerms } from '../offers/initiationFee';
 import { allowanceSteps } from '../tx/approval';
 import { findAllowanceOverride } from '../tx/allowanceOverride';
 import { chainValidUntil } from '../tx/deadline';
@@ -36,27 +37,27 @@ const ZERO = '0x0000000000000000000000000000000000000000';
 const OFFER_PAGE = 20;
 
 /** The standing sources for this borrow, cheapest first. A source the read
- *  cannot place is left out; the protocol judges every source it is given. */
+ *  cannot place is left out while others remain; the protocol judges every
+ *  source it is given. When none remains and a source could not be read,
+ *  the answer is unknown, not "no source", so the read throws and the
+ *  review offers a retry instead of saying nothing is available. */
 export async function readSources(c: PublicClient, diamond: Hex, t: BorrowNowTerms, borrower: Hex): Promise<InstantSource[]> {
   const [intents, offers] = await Promise.all([readLenderIntents(c, diamond), readPairOfferIds(c, diamond, t.lending, t.collateral, OFFER_PAGE)]);
   const slots = slotCandidates(intents.intents, t.lending, t.collateral, intents.at, borrower, t.termDays, t.maxRateBps);
+  let unread = 0;
+  const failed = () => {
+    unread += 1;
+    return null;
+  };
   const consented = await Promise.all(
-    slots.map((s) =>
-      readInstantSlot(c, diamond, s.source.owner, t.lending, t.collateral, s.source.slot).then(
-        (r) => (r.fills ? s : null),
-        () => null,
-      ),
-    ),
+    slots.map((s) => readInstantSlot(c, diamond, s.source.owner, t.lending, t.collateral, s.source.slot).then((r) => (r.fills ? s : null), failed)),
   );
   const fromOffers = await Promise.all(
-    offers.ids.map((id) =>
-      readOffer(c, diamond, id).then(
-        (o) => offerCandidate(id, o, t.lending, t.collateral, borrower, t.maxRateBps, t),
-        () => null,
-      ),
-    ),
+    offers.ids.map((id) => readOffer(c, diamond, id).then((o) => offerCandidate(id, o, t.lending, t.collateral, borrower, t.maxRateBps, t), failed)),
   );
-  return orderSources([...consented, ...fromOffers].filter((x): x is Candidate => x !== null)).map((x) => x.source);
+  const found = [...consented, ...fromOffers].filter((x): x is Candidate => x !== null);
+  if (found.length === 0 && unread > 0) throw new Error(`${unread} borrow source(s) could not be read`);
+  return orderSources(found).map((x) => x.source);
 }
 
 /** The collateral the vault can supply now, as the instant fill draws it:
@@ -103,13 +104,17 @@ export async function askPlan(
 
 export async function readBorrowNowReview(own: OwnStateClient, diamond: Hex, t: BorrowNowTerms, identity: string): Promise<BorrowNowReview> {
   const account = own.account;
-  const [config, sources, free, allowance, walletHas, risk] = await Promise.all([
+  const [config, sources, free, allowance, walletHas, risk, lif] = await Promise.all([
     own.read((c) => readInstantConfig(c, diamond)).then((x) => x.value),
     own.read((c) => readSources(c, diamond, t, account)).then((x) => x.value),
     own.read((c) => readFreeCollateral(c, diamond, account, t.collateral)).then((x) => x.value),
     own.read((c) => c.readContract({ address: t.collateral, abi: erc20Abi, functionName: 'allowance', args: [account, diamond] }) as Promise<bigint>).then((x) => x.value),
     own.read((c) => c.readContract({ address: t.collateral, abi: erc20Abi, functionName: 'balanceOf', args: [account] }) as Promise<bigint>).then((x) => x.value),
     readRiskNeed(own, diamond, t.lending, t.collateral),
+    own.read((c) => readLifTerms(c, diamond)).then(
+      (x) => x.value,
+      () => null,
+    ),
   ]);
   const fromVault = free < t.collateralOffered ? free : t.collateralOffered;
   const walletPart = t.collateralOffered - fromVault;
@@ -120,7 +125,7 @@ export async function readBorrowNowReview(own: OwnStateClient, diamond: Hex, t: 
     ? (await allowanceSteps({ accepts: (amount) => own.read((c) => tokenAcceptsApproval(c, t.collateral, account, diamond, amount)).then((x) => x.value) }, allowance, walletPart))
         .length
     : 0;
-  const base = { terms: t, sources, walletPart, allowance, approvalNeeded, approvalSteps, identity, risk, readAt: Date.now() };
+  const base = { terms: t, sources, walletPart, allowance, approvalNeeded, approvalSteps, identity, risk, lif, readAt: Date.now() };
   if (!config.enabled) return { ...base, state: { kind: 'market-off' } };
   if (sources.length === 0) return { ...base, state: { kind: 'no-source' } };
   // A wallet short of the whole collateral may still cover a part fill: each
@@ -143,5 +148,6 @@ export async function readBorrowNowReview(own: OwnStateClient, diamond: Hex, t: 
 export function borrowNowKey(r: BorrowNowReview): string {
   const s = r.state;
   const state = s.kind === 'plan' ? `plan:${s.plan.total}:${s.plan.collateralLocked}:${s.plan.fills.map((f) => `${f.amount}@${f.rateBps}`).join(',')}` : s.kind;
-  return [state, r.walletPart, r.approvalSteps, r.sources.length, r.risk ?? ''].join('|');
+  const lif = r.lif === null ? 'lif?' : `lif:${r.lif.baseBps}:${r.lif.baseTermDays}:${r.lif.yearlyBps}:${r.lif.yearDays}`;
+  return [state, r.walletPart, r.approvalSteps, r.sources.length, r.risk ?? '', lif].join('|');
 }

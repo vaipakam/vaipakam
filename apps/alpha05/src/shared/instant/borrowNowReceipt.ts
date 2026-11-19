@@ -10,6 +10,7 @@ import { figured, textValue, type Receipt, type ReceiptRow, type ReceiptText } f
 import { assetName, exactTokenAmount, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { loanRiskKey } from '../risk/keyRisks';
 import { formatBps } from '../ui/format';
+import { lifFeeOf, lifRateText } from '../offers/initiationFee';
 import { coverage, planOf, restOf, type BorrowNowReview } from './borrowNow';
 
 type Hex = `0x${string}`;
@@ -60,9 +61,29 @@ export function borrowNowReceipt(r: BorrowNowReview, diamond: Hex, meta: TokenMe
           collateral: amt(t.collateral, f.collateral, exact),
         }),
       );
-      rows.push({ label: format('borrowNow.rowLoan', { n: String(i + 1) }), value: textValue(line), binding: true });
+      // What this block gives, per source: the call binds the least it
+      // borrows and the highest rate, not these parts.
+      rows.push({ label: format('borrowNow.rowLoan', { n: String(i + 1) }), value: textValue(line), binding: false });
     });
     rows.push({ label: text('borrowNow.rowLeast'), value: { kind: 'amount', asset: t.lending, amount: plan.total }, binding: true });
+    rows.push({ label: text('borrowNow.rowMaxRate'), value: { kind: 'text', text: format('borrowNow.maxRateValue', { rate: formatBps(t.maxRateBps) }) }, binding: true });
+    // The fee each loan's own amount pays, at the list rate for the term
+    // (rounded down per loan, as charged); a discount can only lower it.
+    if (r.lif === null) {
+      rows.push({ label: text('borrowNow.rowFee'), value: { kind: 'unknown', why: text('borrowNow.feeUnknown') }, binding: false });
+      rows.push({ label: text('borrowNow.rowNet'), value: { kind: 'unknown', why: text('borrowNow.netUnknown') }, binding: false });
+    } else {
+      const lif = r.lif;
+      const fee = plan.fills.reduce((sum, f) => sum + lifFeeOf(f.amount, lif, t.termDays), 0n);
+      rows.push({
+        label: text('borrowNow.rowFee'),
+        value: textValue(
+          figured((exact) => format('borrowNow.feeValue', { amount: amt(t.lending, fee, exact), rate: lifRateText(lif, t.termDays), days: String(t.termDays) })),
+        ),
+        binding: false,
+      });
+      rows.push({ label: text('borrowNow.rowNet'), value: { kind: 'amount', asset: t.lending, amount: plan.total - fee }, binding: false });
+    }
     rows.push({ label: text('borrowNow.rowLocked'), value: { kind: 'amount', asset: t.collateral, amount: plan.collateralLocked }, binding: true });
     if (coverage(plan, t.amount) === 'part') {
       const rest = restOf(t, plan);
