@@ -3790,6 +3790,29 @@ export const copy = {
     optionFixed: A('An open offer’s repayment options cannot be changed. To close this gap, cancel the offer and post a new one with the other option.'),
     hint: B('Why isn’t it matching?'),
   },
+  // #1208 — "what happens if" on a loan review: illustrations for this loan.
+  whatIf: {
+    title: B('What happens if (an illustration, not a forecast)'),
+    priceHolds: A(
+      'If the collateral price falls {{fall}}%, the loan-to-value goes from {{now}}% to {{after}}%, still below the {{liq}}% at which liquidation starts.',
+    ),
+    priceLiquidated: A(
+      'If the collateral price falls {{fall}}%, the loan-to-value goes from {{now}}% to {{after}}%, past the {{liq}}% at which liquidation starts, so the loan can be liquidated.',
+    ),
+    priceRoom: A('At the start, liquidation begins after a fall of about {{fall}}% with the borrowed asset’s price unchanged; interest owed raises the ratio over time.'),
+    priceIlliquid: A('A price fall does not liquidate this loan: one of its assets has no protocol price, so no price-based liquidation applies.'),
+    priceUnread: A('What a price fall does to this loan could not be read, so it is not shown.'),
+    lateBorrower: A(
+      'If you repay after the due date, a late fee is added. Once the grace period of {{span}} ends, anyone can start the default, which settles the loan from your collateral.',
+    ),
+    lateLender: A(
+      'If the borrower repays after the due date, a late fee is added for you. Once the grace period of {{span}} ends, anyone can start the default, which settles the loan from the collateral.',
+    ),
+    earlyFullBorrower: A('If you repay early, the whole term’s interest, {{full}}, is still owed. The initiation fee is not returned.'),
+    earlyProRataBorrower: A('If you repay halfway through the term, you pay about {{half}} in interest instead of {{full}}. The initiation fee is not returned.'),
+    earlyFullLender: A('If the borrower repays early, the whole term’s interest, {{full}}, is still owed to you, before the protocol’s share.'),
+    earlyProRataLender: A('If the borrower repays halfway through the term, you receive about {{half}} in interest instead of {{full}}, before the protocol’s share.'),
+  },
   whyIntent: {
     title: B('Why isn’t this Auto-lend lending?'),
     lead: A(

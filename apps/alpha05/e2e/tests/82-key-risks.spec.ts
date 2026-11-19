@@ -2,7 +2,8 @@
  * Key risks (#3661, RB-KEY-RISKS): the short key-risk list is shown with
  * the Terms before the wallet accepts them; every review that opens a loan
  * carries the one "If things go wrong" line for its side and for how the
- * loan settles, linked to the risk page; and the risk page is reachable
+ * loan settles, linked to the risk page, and a "what happens if" section
+ * (#1208); and the risk page is reachable
  * from the footer with no wallet. Runs on the desktop and the phone
  * project; the chain is reverted after each test.
  */
@@ -75,6 +76,15 @@ test('a borrower’s review states what happens to their collateral if things go
   await expect(line).toContainText('If things go wrong:', { timeout: 60_000 });
   await expect(line).toContainText('Your collateral can be sold if its value falls too far against the loan or you repay late, and you may lose it.');
   await expect(line.getByRole('link', { name: 'All key risks' })).toHaveAttribute('href', '/risks');
+  // #1208 — the same review says what a 30% price fall, a late and an early
+  // repayment would do to this loan, as an illustration.
+  const whatIf = page
+    .locator(`.accept-offer[data-offer-id="${offerId}"]`)
+    .getByTestId('receipt-section')
+    .filter({ hasText: 'What happens if (an illustration, not a forecast)' });
+  await expect(whatIf).toContainText('If the collateral price falls 30%, the loan-to-value goes from');
+  await expect(whatIf).toContainText('If you repay after the due date, a late fee is added.');
+  await expect(whatIf).toContainText('The initiation fee is not returned.');
   expect(flags.sentTransactions).toBe(sent);
   await fitsWidth(page);
 });

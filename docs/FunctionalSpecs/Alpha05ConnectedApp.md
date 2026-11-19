@@ -649,6 +649,17 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   both liquid and illiquid outcomes because liquidity is checked at fill.
   The public Key risks page also covers depegs, delayed or wrong prices, local
   tax and law responsibility, and third-party wallets and networks.
+- Taking an offer, for either side, shows "What happens if" under the
+  side's downside line, labelled an illustration and not a forecast, with
+  amounts for this loan: what a 30% fall in the collateral price does to the
+  loan-to-value against the liquidation threshold the loan would carry, and
+  roughly how far the price can fall before liquidation starts (or that no
+  price-based liquidation applies, or that the figure could not be read); a
+  late repayment (a late fee, then the default once the grace period for
+  this term ends); and an early repayment (the whole term's interest still
+  owed, or about half the interest halfway through a pro-rata loan, with the
+  initiation fee not returned). The late fee's amount is shown once the
+  protocol publishes its schedule.
 - A published Terms version takes effect for acceptance only after it is
   configured on the network. Earlier frozen versions remain unchanged.
   Version 3 rewords the software and network risk line, which now ends

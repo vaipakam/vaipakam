@@ -16,6 +16,7 @@ import { formatBps, formatSpan } from '../ui/format';
 import { cadenceText, needsApproval, promptCount, valueRows, ZERO, ZERO_HASH, type AcceptReview } from './acceptReview';
 import { sourceLabel } from './acceptSource';
 import { loanRiskKey, settlementOf } from '../risk/keyRisks';
+import { whatIfSection } from '../whatIf/whatIf';
 
 type Hex = `0x${string}`;
 
@@ -123,6 +124,19 @@ export function lenderReceipt(r: AcceptReview, meta: TokenMetaMap | null, copy: 
     rows,
     consequences,
     ifWrong: text(loanRiskKey('lender', settlementOf(r.lendingClass, r.collateralClass))),
+    sections: [
+      whatIfSection(
+        {
+          side: 'lender',
+          price: r.priceRisk,
+          interest: f.interest,
+          interestText: (a) => tokenAmount(a, lending, meta, format),
+          fullTermInterest: o.useFullTermInterest,
+          graceSeconds: r.graceSeconds,
+        },
+        copy,
+      ),
+    ],
     prompts: promptCount(r),
     readAt: r.readAt,
   };
