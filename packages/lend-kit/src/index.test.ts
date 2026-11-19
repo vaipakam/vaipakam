@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
-import { borrowAgainstLink, KitLinkError, kitLink, lendLink, parseKitParams, rentLink, SHARE_RULE } from './index';
+import { afterEach, describe, expect, it } from 'vitest';
+import { borrowAgainstLink, KitLinkError, kitLink, lendLink, openKit, parseKitParams, rentLink, SHARE_RULE } from './index';
 
 const APP = 'https://alpha05.vaipakam.com';
 const NFT = '0x1111111111111111111111111111111111111111' as const;
@@ -44,5 +44,41 @@ describe('#3773 kit links', () => {
   it('carries no signing code and reads no key', () => {
     const src = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
     for (const word of ['signTypedData', 'signMessage', 'privateKey', 'sendTransaction', 'eth_sign', 'mnemonic']) expect(src).not.toContain(word);
+  });
+});
+
+describe('openKit', () => {
+  const g = globalThis as { open?: unknown };
+  const before = g.open;
+  afterEach(() => {
+    g.open = before;
+  });
+
+  it('opens a blank tab, cuts its opener and follows the link from inside it without a referrer', () => {
+    const clicked: { href: string; rel: string }[] = [];
+    const tab = {
+      opener: 'integrator' as unknown,
+      document: {
+        body: { appendChild: (n: unknown) => n },
+        createElement: () => {
+          const a = { href: '', rel: '', click: () => clicked.push({ href: a.href, rel: a.rel }) };
+          return a;
+        },
+      },
+    };
+    const calls: unknown[][] = [];
+    g.open = (...args: unknown[]) => {
+      calls.push(args);
+      return tab;
+    };
+    expect(openKit('https://app.example/kit?v=1')).toBe(true);
+    expect(calls).toEqual([['', '_blank']]);
+    expect(tab.opener).toBeNull();
+    expect(clicked).toEqual([{ href: 'https://app.example/kit?v=1', rel: 'noopener noreferrer' }]);
+  });
+
+  it('says false only when the browser blocked the tab', () => {
+    g.open = () => null;
+    expect(openKit('https://app.example/kit')).toBe(false);
   });
 });

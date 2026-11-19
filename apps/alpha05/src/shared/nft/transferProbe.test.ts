@@ -32,10 +32,14 @@ describe('#3433 the test move of a pledged NFT', () => {
     expect(asProtocol.account).toBe(diamond);
   });
 
-  it('moves an ERC-721 to the protocol when the post opens the vault; an ERC-1155 is not asked without a vault', () => {
+  it('moves an ERC-721 to the protocol when the post opens the vault; an ERC-1155 is asked only into a vault, as the protocol', () => {
     expect(probeCall(input({ vault: ZERO }))!.to).toBe(diamond);
-    expect(probeCall(input({ standard: 'erc1155', vault: ZERO }))).toBeNull();
-    expect(probeCall(input({ standard: 'erc1155', quantity: 3n }))!.call).toMatchObject({ functionName: 'safeTransferFrom', args: [holder, vault, 7n, 3n, '0x'] });
+    expect(probeCall(input({ standard: 'erc1155', vault: ZERO, protocolMayMove: true }))).toBeNull();
+    // The vault's receive hook refuses a holder's own delivery, so before the approval nothing is asked.
+    expect(probeCall(input({ standard: 'erc1155', quantity: 3n }))).toBeNull();
+    const asProtocol = probeCall(input({ standard: 'erc1155', quantity: 3n, protocolMayMove: true }))!;
+    expect(asProtocol.account).toBe(diamond);
+    expect(asProtocol.call).toMatchObject({ functionName: 'safeTransferFrom', args: [holder, vault, 7n, 3n, '0x'] });
   });
 
   it('reads a refusal as the token’s answer and an outage as unread', async () => {

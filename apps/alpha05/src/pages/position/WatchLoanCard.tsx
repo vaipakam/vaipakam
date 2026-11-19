@@ -86,14 +86,15 @@ export function WatchLoanCard({ loanId, chainId, wallet, client = AGENT }: { loa
 function RunLine({ run }: { run: Run }) {
   const { text, format } = useCopy();
   if (run.phase === 'idle') return null;
-  if (run.phase === 'signing' || run.phase === 'sending') {
+  if (run.phase === 'checking' || run.phase === 'signing' || run.phase === 'sending') {
     return (
       <p className="tier-b" role="status" data-testid="watch-run">
-        {text(run.phase === 'signing' ? 'watch.signing' : 'watch.sending')}
+        {text(run.phase === 'sending' ? 'watch.sending' : 'watch.signing')}
       </p>
     );
   }
   if (run.phase === 'declined') return <p className="tier-b" data-testid="watch-run">{text('watch.declined')}</p>;
+  if (run.phase === 'not-offered') return <p className="tier-a" data-testid="watch-run" data-offered="false">{text('watch.notOffered')}</p>;
   if (run.phase === 'unreachable') return <p className="tier-a" data-testid="watch-run">{format('watch.unreachable', { reason: run.message })}</p>;
   if (run.phase !== 'answered') return null;
   const a = run.answer;

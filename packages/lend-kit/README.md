@@ -35,7 +35,7 @@ const link = borrowAgainstLink('https://alpha05.vaipakam.com', {
 });
 
 // A button in your page:
-if (!openKit(link)) showLinkToCopy(link); // a blocked pop-up: show the link instead
+if (!openKit(link)) showLinkToCopy(link); // false only when the browser blocked the tab
 ```
 
 ## The link alone

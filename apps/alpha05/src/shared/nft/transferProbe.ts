@@ -12,8 +12,10 @@
  * itself (which catches a token that cannot move at all; the protocol's own
  * move is then tested by the dry run after the approval). The test moves the
  * token to the poster's vault, or for an ERC-721 to the protocol when the
- * post opens the vault. An ERC-1155 move calls the receiver's hook, so it is
- * tested only into a vault that exists.
+ * post opens the vault. An ERC-1155 move calls the vault's receive hook,
+ * which accepts a delivery only from the protocol, so it is tested only into
+ * a vault that exists and only once the protocol may move it; before that
+ * the dry run after the approval is the test.
  */
 import { parseAbi, type PublicClient } from 'viem';
 import type { OwnStateClient } from '../../chain/ownRail';
@@ -32,7 +34,8 @@ export type TransferProbe =
   | { kind: 'moves'; by: 'protocol' | 'holder'; blockNumber: bigint }
   | { kind: 'refused'; by: 'protocol' | 'holder'; reason: string; blockNumber: bigint }
   | { kind: 'unread'; reason: string }
-  /** Not asked: the wallet does not hold it, or an ERC-1155 has no vault yet. */
+  /** Not asked: the wallet does not hold it, or an ERC-1155 has no vault
+   *  yet or no approval yet (the vault refuses a holder's own delivery). */
   | { kind: 'not-asked' };
 
 export interface ProbeInput {
@@ -53,7 +56,7 @@ export interface ProbeInput {
 /** The call the test makes, or null when there is none to make. */
 export function probeCall(p: ProbeInput): { by: 'protocol' | 'holder'; account: Hex; to: Hex; call: Parameters<PublicClient['simulateContract']>[0] } | null {
   const noVault = ZERO.test(p.vault);
-  if (p.standard === 'erc1155' && noVault) return null;
+  if (p.standard === 'erc1155' && (noVault || !p.protocolMayMove)) return null;
   const to = noVault ? p.diamond : p.vault;
   const by = p.protocolMayMove ? 'protocol' : 'holder';
   const account = by === 'protocol' ? p.diamond : p.holder;

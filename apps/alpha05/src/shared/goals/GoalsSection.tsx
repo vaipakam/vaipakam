@@ -303,14 +303,15 @@ function NewGoal({ live, slots, meta, busy, onSave }: { live: LiveLoans | null; 
 function RunLine({ run }: { run: SignedRun<GoalAnswer> }) {
   const { text, format } = useCopy();
   if (run.phase === 'idle') return null;
-  if (run.phase === 'signing' || run.phase === 'sending') {
+  if (run.phase === 'checking' || run.phase === 'signing' || run.phase === 'sending') {
     return (
       <p className="tier-b" role="status" data-testid="goals-run">
-        {text(run.phase === 'signing' ? 'goals.signing' : 'goals.sending')}
+        {text(run.phase === 'sending' ? 'goals.sending' : 'goals.signing')}
       </p>
     );
   }
   if (run.phase === 'declined') return <p className="tier-b" data-testid="goals-run">{text('goals.declined')}</p>;
+  if (run.phase === 'not-offered') return <p className="tier-a" data-testid="goals-run" data-offered="false">{text('goals.notOffered')}</p>;
   if (run.phase === 'unreachable') return <p className="tier-a" data-testid="goals-run">{format('goals.unreachable', { reason: run.message })}</p>;
   if (run.phase !== 'answered') return null;
   const a = run.answer;

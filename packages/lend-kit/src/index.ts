@@ -157,14 +157,33 @@ export const borrowAgainstLink = (appOrigin: string, r: Omit<BorrowRequest, 'act
 export const lendLink = (appOrigin: string, r: Omit<LendRequest, 'action'>) => kitLink(appOrigin, { action: 'lend', ...r });
 export const rentLink = (appOrigin: string, r: Omit<RentRequest, 'action'>) => kitLink(appOrigin, { action: 'rent', ...r });
 
+/** The parts of a window `openKit` uses; structural so it needs no DOM types. */
+interface KitWindow {
+  opener: unknown;
+  document: { createElement(tag: 'a'): { href: string; rel: string; click(): void }; body: { appendChild(n: unknown): unknown } | null };
+}
+
 /**
- * Opens a kit link in a new tab, with no handle back to the opener, so the
- * integrator's page cannot reach into the review. Returns false when the
- * browser blocked the window (the integrator then shows the link itself).
+ * Opens a kit link in a new tab. Returns false only when the browser
+ * blocked the window (the integrator then shows the link itself).
+ *
+ * A window opened with `noopener` comes back as no handle even when it
+ * opened, so the tab is opened blank, its handle back to the opener is cut
+ * before anything loads, and the link is followed from inside it with
+ * `noopener noreferrer`: the review never has a handle on the integrator's
+ * page, and the integrator's address is not sent as the referrer. The app's
+ * own opener policy also separates it from a cross-origin opener on load.
  */
 export function openKit(link: string): boolean {
-  const w = globalThis.open?.(link, '_blank', 'noopener,noreferrer');
-  return w !== null && w !== undefined;
+  const w = globalThis.open?.('', '_blank') as unknown as KitWindow | null | undefined;
+  if (w === null || w === undefined) return false;
+  w.opener = null;
+  const a = w.document.createElement('a');
+  a.href = link;
+  a.rel = 'noopener noreferrer';
+  w.document.body?.appendChild(a);
+  a.click();
+  return true;
 }
 
 /** Reads a kit link's query. Throws a {@link KitLinkError} naming the first

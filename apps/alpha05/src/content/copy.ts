@@ -575,6 +575,7 @@ export const copy = {
     sending: B('Sending to the alert service…'),
     declined: B('The wallet did not sign, so nothing was sent.'),
     unreachable: A('The alert service could not be asked, so nothing is known to have changed: {{reason}}'),
+    notOffered: A('The alert service this build uses does not keep goals yet, so nothing was signed or sent.'),
   },
   give: {
     cardTitle: B('Give this loan'),
@@ -644,6 +645,7 @@ export const copy = {
     sending: B('Sending to the alert service…'),
     declined: B('The wallet did not sign, so nothing was sent.'),
     unreachable: A('The alert service could not be asked, so nothing is known to have changed: {{reason}}'),
+    notOffered: A('The alert service this build uses does not keep watches yet, so nothing was signed or sent.'),
     notSetUp: A('Alerts are not set up in this build, so nothing is sent outside this app.'),
     tooBig: A('This loan’s number is too large for the alert service, so it cannot be watched.'),
     knownWatching: A('From this browser, you started watching this loan on {{at}}. A change made on another device would not show here.'),

@@ -8,8 +8,28 @@ type Hex = `0x${string}`;
 
 /** Where one signed request to the alert service stands. `declined`: the
  *  wallet refused to sign, and nothing was sent. `unreachable`: the service
- *  could not be asked, and nothing is known to have changed. */
-export type SignedRun<A> = { phase: 'idle' } | { phase: 'signing' | 'sending' } | { phase: 'answered'; answer: A } | { phase: 'declined' } | { phase: 'unreachable'; message: string };
+ *  could not be asked, and nothing is known to have changed. `not-offered`:
+ *  the service this build uses has no such route, so no signature was asked
+ *  for and nothing was sent. */
+export type SignedRun<A> =
+  | { phase: 'idle' }
+  | { phase: 'checking' | 'signing' | 'sending' }
+  | { phase: 'answered'; answer: A }
+  | { phase: 'declined' }
+  | { phase: 'not-offered' }
+  | { phase: 'unreachable'; message: string };
+
+/**
+ * Whether the alert service offers a route, asked before any signature: an
+ * empty POST reaches a route's own payload check (an answer naming its
+ * error), while a service without the route answers its generic 404 with no
+ * JSON body. Only that 404 reads as not offered; anything else lets the
+ * signed request go ahead and be read as usual.
+ */
+export async function routeOffered(client: AgentClient, path: string): Promise<boolean> {
+  const res = await client.request('POST', path, {});
+  return !(res.status === 404 && (res.data === null || typeof res.data.error !== 'string'));
+}
 
 /** How one kind of signed request is built and read. */
 export interface SignedRoute<Action, Answer> {
@@ -29,10 +49,20 @@ export interface SignedRoute<Action, Answer> {
 export function useSignedRequest<Action, Answer>(route: SignedRoute<Action, Answer>, chainId: number, wallet: Hex, client: AgentClient = AGENT) {
   const config = useConfig();
   const [run, setRun] = useState<SignedRun<Answer>>({ phase: 'idle' });
-  const busy = run.phase === 'signing' || run.phase === 'sending';
+  const busy = run.phase === 'checking' || run.phase === 'signing' || run.phase === 'sending';
 
   const send = useCallback(
     async (action: Action): Promise<Answer | null> => {
+      setRun({ phase: 'checking' });
+      try {
+        if (!(await routeOffered(client, route.path(action)))) {
+          setRun({ phase: 'not-offered' });
+          return null;
+        }
+      } catch (e) {
+        setRun({ phase: 'unreachable', message: e instanceof AgentUnavailable ? e.message : (e as Error).message });
+        return null;
+      }
       setRun({ phase: 'signing' });
       const issuedAt = nextIssuedAt();
       let signature: Hex;
