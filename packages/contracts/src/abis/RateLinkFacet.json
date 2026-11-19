@@ -544,5 +544,21 @@
         "internalType": "uint8"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "RateRangeEmpty",
+    "inputs": [
+      {
+        "name": "floorBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "ceilingBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   }
 ]

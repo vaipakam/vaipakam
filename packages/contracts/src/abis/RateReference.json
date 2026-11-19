@@ -2149,6 +2149,27 @@
   },
   {
     "type": "error",
+    "name": "SeriesNotWarm",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "lastUpdate",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "holding",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SeriesPendingForAsset",
     "inputs": [
       {

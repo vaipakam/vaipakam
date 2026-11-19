@@ -1381,7 +1381,10 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   its sources, its update interval, its spacing, step, tolerance and ceiling.
   A series never changes; a new configuration is a new series, proposed by the
   owner and opened only after the reference's delay (7 to 14 days on a
-  production chain), and at proposal its sources must already agree. Up to
+  production chain), and at proposal its sources must already agree. Its
+  starting figure is updated through the delay like any other, and it opens
+  only if it was kept current: its last update agreed and is within the
+  staleness limit, so a figure nobody refreshed is never opened as fresh. Up to
   three series of an asset may be live at once so loans on an older series
   keep it. A source may be muted at once by the owner or the guardian; a mute
   holds every series that lists it, and an unmute waits the delay.
@@ -1403,7 +1406,9 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   term average, plus a signed margin. The link only tightens the typed limit:
   a lender's effective floor is the higher of its typed floor and the linked
   rate (rounded up), a borrower's effective ceiling the lower of its typed
-  ceiling and the linked rate (rounded down). The window the link reads follows
+  ceiling and the linked rate (rounded down). The opposite typed bound still
+  binds: when the linked rate crosses it, no rate is acceptable and every fill
+  of the offer, a direct accept included, is refused by name. The window the link reads follows
   the loan's term (24 hours up to 30 days, 7 days up to a year, 30 days beyond).
   A link can only be written for an asset the reference covers, never on a
   rental, a loan-sale offer or a refinance request, and a link change is a

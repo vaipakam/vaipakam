@@ -320,6 +320,33 @@ contract RateReferenceTest is Test {
         assertEq(_ref(), 5 * PCT);
     }
 
+    /// A pending series opens only when it was kept current through the
+    /// delay: an untouched proposal-time figure is not stamped fresh.
+    function test_Start_OpenRefusedUntilTheSeriesIsWarm() public {
+        vm.prank(owner);
+        uint32 id = rr.proposeSeries(ASSET, _cfg(3));
+        _warp(3 hours + 1); // past the staleness limit with no update
+        vm.expectRevert(
+            abi.encodeWithSelector(RateReference.SeriesNotWarm.selector, id, uint64(now_ - 3 hours - 1), false)
+        );
+        rr.executeChange(IRateReference.Kind.OpenSeries, bytes32(uint256(uint160(ASSET))));
+
+        // A disagreeing read leaves it holding: still refused.
+        src[0].setRate(ASSET, 20 * PCT);
+        src[1].setRate(ASSET, 40 * PCT);
+        rr.update(ASSET);
+        vm.expectRevert(abi.encodeWithSelector(RateReference.SeriesNotWarm.selector, id, uint64(now_), true));
+        rr.executeChange(IRateReference.Kind.OpenSeries, bytes32(uint256(uint160(ASSET))));
+
+        // An agreeing update warms it, and it opens.
+        src[0].setRate(ASSET, 5 * PCT);
+        src[1].setRate(ASSET, 5 * PCT);
+        _warp(15 minutes);
+        rr.update(ASSET);
+        rr.executeChange(IRateReference.Kind.OpenSeries, bytes32(uint256(uint160(ASSET))));
+        assertEq(rr.newestSeries(ASSET), id);
+    }
+
     function test_Start_FewerThanThreeSourcesRefused() public {
         IRateReference.SeriesConfig memory c = _cfg(2);
         vm.prank(owner);

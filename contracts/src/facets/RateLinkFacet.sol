@@ -51,6 +51,9 @@ contract RateLinkFacet {
     ///         window this loan's term reads, 2 a term over 30 days while the
     ///         reference is unusual or not known).
     error RateLinkUnavailable(uint8 refusal);
+    /// @notice A linked bound crossed the offer's unlinked opposite bound:
+    ///         its effective range is empty, so no rate is acceptable now.
+    error RateRangeEmpty(uint256 floorBps, uint256 ceilingBps);
     /// @notice A direct accept of a rate-linked offer: the offer's effective
     ///         endpoint now (`rateBps`) is worse for the acceptor than the
     ///         rate they signed (`limitBps`): above it on a lender's offer,
@@ -161,7 +164,9 @@ contract RateLinkFacet {
 
     /// @notice The effective rate bounds of a stored offer now: the typed
     ///         range tightened by its link, and why the link cannot be used
-    ///         (0 when it can or the offer has none). A lender's floor is the
+    ///         (0 when it can or the offer has none; 1 or 2 a link refusal;
+    ///         3 when the linked bound crosses the unlinked opposite bound,
+    ///         leaving no acceptable rate). A lender's floor is the
     ///         higher of its typed floor and the linked rate; a borrower's
     ///         ceiling the lower of its typed ceiling and the linked rate.
     ///         `termDays` is the term of the loan the fill would open.
@@ -183,6 +188,9 @@ contract RateLinkFacet {
         } else if (bound < hiBps) {
             hiBps = bound;
         }
+        // The link only tightens: the unlinked opposite bound still binds, so
+        // a link that crosses it leaves no rate the offer accepts.
+        if (loBps > hiBps) refusal = NO_OVERLAP;
     }
 
     /// @notice Where `rateBps` for `termDays` sits against the warning band,
@@ -296,6 +304,7 @@ contract RateLinkFacet {
         } else if (o.linkKind != 0) {
             bool lender = o.offerType == LibVaipakam.OfferType.Lender;
             (uint256 lo, uint256 hi, uint8 refusal) = offerRateBounds(offerId, o.durationDays);
+            if (refusal == NO_OVERLAP) revert RateRangeEmpty(lo, hi);
             if (refusal != 0) revert RateLinkUnavailable(refusal);
             rateBps = lender ? lo : hi;
             fromLink = true;

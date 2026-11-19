@@ -199,6 +199,7 @@ export const NOTIF_DELIBERATELY_NOT_HANDLED: Readonly<Record<string, string>> = 
   RepaymentLegsFromReserve: "#3681 — companion of the reserve repayment's LoanRepaid, which carries the row",
   InterestPaymentBooked: 'companion of InterestPaidFromReserve or the periodic sale, which carry the user-facing meaning',
   IntentCalmCheckSet: "a lender intent slot's own setting, changed by its owner; no inbox row",
+  LenderIntentRateTermsSet: "a lender intent slot's own market link and warnings, set by its owner (#3635 A); no inbox row",
   // ── General safety nets — the SPECIFIC event carries the notification ─
   // #1782 — emitted by `LibLifecycle.transition` for EVERY status edge, so it
   // fires alongside whichever specific terminal event applies. Mapping it would

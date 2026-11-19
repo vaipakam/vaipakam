@@ -102,10 +102,11 @@ contract RateLinkTest is SetupTest {
         OfferCreateFacet(address(diamond)).createOffer(p, type(uint64).max);
     }
 
-    /// @dev A lender offer linked to the reference + 1 point, typed floor 3%.
+    /// @dev A lender offer linked to the reference + 1 point, typed range
+    ///      3% to 8%.
     function _linkedLender() internal returns (uint256 offerId) {
         ref.setLinked(4e16, 0); // 4% -> linked floor 5%
-        LibVaipakam.CreateOfferParams memory p = _params(LibVaipakam.OfferType.Lender, 300, 300);
+        LibVaipakam.CreateOfferParams memory p = _params(LibVaipakam.OfferType.Lender, 300, 800);
         p.linkKind = uint8(IRateReference.LinkKind.Reference);
         p.linkMarginBps = 100;
         offerId = _create(lender, p);
@@ -232,7 +233,7 @@ contract RateLinkTest is SetupTest {
         uint256 offerId = _linkedLender();
         (uint256 lo, uint256 hi, uint8 refusal) = link.offerRateBounds(offerId, 30);
         assertEq(lo, 500, "the link lifts the floor");
-        assertEq(hi, 300);
+        assertEq(hi, 800);
         assertEq(refusal, 0);
         ref.setLinked(1e16, 0); // a link below the typed floor never loosens it
         (lo,,) = link.offerRateBounds(offerId, 30);
@@ -284,6 +285,24 @@ contract RateLinkTest is SetupTest {
         (LibAcceptTerms.AcceptTerms memory t, bytes memory sig) = _terms(offerId, 600, false);
         vm.prank(borrower);
         vm.expectRevert(abi.encodeWithSelector(RateLinkFacet.RateLinkUnavailable.selector, uint8(1)));
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, t, sig);
+    }
+
+    /// The link only tightens: a linked floor above the typed maximum leaves
+    /// no acceptable rate, and a direct accept is refused rather than opened
+    /// above the maker's own ceiling.
+    function test_directAccept_refusedWhenTheLinkCrossesTheTypedMax() public {
+        _install();
+        uint256 offerId = _linkedLender();
+        ref.setLinked(9e16, 0); // 9% -> linked floor 10%, above the 8% max
+        (uint256 lo, uint256 hi, uint8 refusal) = link.offerRateBounds(offerId, 30);
+        assertEq(lo, 1000);
+        assertEq(hi, 800);
+        assertEq(refusal, 3, "an empty range is reported");
+
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig) = _terms(offerId, 2000, true);
+        vm.prank(borrower);
+        vm.expectRevert(abi.encodeWithSelector(RateLinkFacet.RateRangeEmpty.selector, 1000, 800));
         OfferAcceptFacet(address(diamond)).acceptOffer(offerId, t, sig);
     }
 

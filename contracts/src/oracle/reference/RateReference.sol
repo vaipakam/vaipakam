@@ -166,6 +166,7 @@ contract RateReference is IRateReference, Ownable2Step {
     error TooManyLiveSeries(address asset, uint256 live, uint256 max);
     error NoStartingReference(address asset, Outcome outcome);
     error NoReference(address asset);
+    error SeriesNotWarm(uint32 seriesId, uint64 lastUpdate, bool holding);
     error SeriesNotLive(uint32 seriesId);
     error NoOpenLoans(uint32 seriesId);
     error WindowOutOfRange(uint256 window);
@@ -454,10 +455,17 @@ contract RateReference is IRateReference, Ownable2Step {
     /// @dev Open a pending series: it becomes the asset's newest, its index
     ///      starts at zero, and the previous newest's index and held time
     ///      now are kept so a long window may continue into it.
+    ///      The pending series must have been kept current through the
+    ///      delay (#3782 review): its last update agreed and is within the
+    ///      staleness limit. Otherwise opening would stamp an old reading as
+    ///      fresh, since the index starts from this moment.
     function _openSeries(address asset, uint32 id) private {
         if (pendingSeries[asset] != id) revert InvalidChange(Kind.OpenSeries, _w(asset), bytes32(uint256(id)));
         _requireLiveRoom(asset);
         Series storage s = _series[id];
+        if (s.holding || block.timestamp - s.lastUpdate > _staleAfter(id)) {
+            revert SeriesNotWarm(id, s.lastUpdate, s.holding);
+        }
         uint32 prev = newestSeries[asset];
         if (prev != 0) {
             Series storage p = _series[prev];

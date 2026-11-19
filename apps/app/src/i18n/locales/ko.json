@@ -2752,6 +2752,7 @@
         "InterestPaymentAttemptFailed": "준비금에서 이자 지급이 완료되지 않음",
         "IntentCalmCheckSet": "Auto-lend 가격 확인 변경",
         "LenderIntentIntegratorNamed": "Auto-lend 통합사 지정",
+        "LenderIntentRateTermsSet": "Auto-lend 금리 연동 설정",
         "IntegratorShareSettled": "통합사 수수료 몫 정산",
         "ReferralShareSettled": "추천 수수료 몫 정산",
         "InviterBound": "초대 수락",

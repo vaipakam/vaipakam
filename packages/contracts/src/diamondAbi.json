@@ -3239,5 +3239,6 @@
 {"type":"error","name":"RateLinkInvalid","inputs":[{"name":"kind","type":"uint8","internalType":"uint8"},{"name":"marginBps","type":"int256","internalType":"int256"}]},
 {"type":"error","name":"RateLinkNoReference","inputs":[{"name":"asset","type":"address","internalType":"address"}]},
 {"type":"error","name":"RateLinkNotOffered","inputs":[]},
+{"type":"error","name":"RateRangeEmpty","inputs":[{"name":"floorBps","type":"uint256","internalType":"uint256"},{"name":"ceilingBps","type":"uint256","internalType":"uint256"}]},
 {"type":"error","name":"FunctionDoesNotExist","inputs":[]}
 ]

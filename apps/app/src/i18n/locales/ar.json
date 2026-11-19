@@ -2752,6 +2752,7 @@
         "InterestPaymentAttemptFailed": "لم يكتمل دفع الفائدة من الاحتياطي",
         "IntentCalmCheckSet": "تم تغيير فحص السعر في Auto-lend",
         "LenderIntentIntegratorNamed": "تم تحديد مُدمِج Auto-lend",
+        "LenderIntentRateTermsSet": "تم تعيين ربط سعر Auto-lend",
         "IntegratorShareSettled": "تمت تسوية حصة رسوم المُدمِج",
         "ReferralShareSettled": "تمت تسوية حصة رسوم الإحالة",
         "InviterBound": "تم قبول الدعوة",
