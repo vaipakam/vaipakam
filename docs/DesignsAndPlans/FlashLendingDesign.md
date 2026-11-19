@@ -57,7 +57,8 @@ A new facet, `FlashLoanFacet`, with one entry:
 - **Sources** are slots named off-chain, cheapest first: `(owner, collateralAsset, slot)`. At most the instant market's fill bound (default 8, governed 2 to 16).
 - **A slot may be named once.** The entry refuses a list that names the same slot twice, before it selects anything. A slot's un-lent capital is the most that one flash loan may take from that slot, and the sum taken from one owner's vault is never more than the sum of the un-lent capital of that owner's named slots, each counted once. Without this a repeated slot would be counted again and the loan would reach balances its owner never offered: free balance, collateral, a reserve.
 - **Each source lends at its own fee**, as an instant borrow fills each slot at its own price. A slot asking more than `maxFeeBps` is skipped.
-- **A slot that is not live, or lacks the consent, is skipped and reported**, never reverted on. The amount taken from a slot is the least of what is still needed and the slot's un-lent capital. A slot left with less than its smallest fill to give is skipped.
+- **A slot that is not live, or lacks the consent, is skipped and reported**, never reverted on. The amount taken from a slot is the least of what is still needed and the slot's un-lent capital.
+- **A slot's smallest fill does not apply to a flash draw.** That minimum exists so a slot is not broken into dust loans and dust positions. A flash draw opens no loan and no position, and is whole again when the call ends, so any amount may be drawn. The fee is rounded up to the asset's smallest unit and is never zero, so no draw is free.
 - **The amount is exact.** If the sources together give less than `amount`, the call reverts. A flash borrower needs a known figure.
 - **Screens:** the platform is not paused, the asset is not paused, the caller is unflagged (the new-business sanctions screen) and current on the Terms. The caller is never a source's owner (no self-lending).
 - **The callback** is the borrower callback of the single-transaction lending standard (ERC-3156), so a contract written for that standard needs no change to its callback: the receiver is called with the initiator (itself), the asset, the total amount, the total fee and its own `data`, and must return the interface's fixed acknowledgement value. A wrong value reverts.
@@ -142,7 +143,8 @@ A flash loan is not a payout. Nothing is owed to anyone and the vault ends whole
 | Master switch | off | on or off |
 | Most sources in one call | the instant market's fill bound (8) | 2 to 16 |
 | A slot's fee | set by the owner | 1 to 100 basis points, governed |
-| Smallest amount from a slot | the slot's smallest fill | the slot's own |
+| Smallest amount from a slot | none (4.2) | not a setting |
+| Smallest fee on a draw | one unit of the asset, rounded up | not a setting |
 
 Turning the master switch off stops new flash loans at once. There is nothing to wind down.
 
@@ -171,7 +173,7 @@ Turning the master switch off stops new flash loans at once. There is nothing to
 15. A direct `flashOut` from a test Diamond that never repays reverts on the vault's own check (layer 2 without layer 1).
 16. `transferOut`, `grantAllowance` and `swapOut` on a vault inside a flash revert.
 17. A slot without the consent, with a consent younger than the minimum age, above the borrower's fee limit, of a locked, replaced or flagged owner, or of an aggregator adapter, is skipped and reported.
-18. Sources that together fall short of the amount revert.
+18. Sources that together fall short of the amount revert. A request below a slot's smallest fill, and a last remainder below it, are both drawn, and each pays a fee of at least one unit.
 19. A caller that is flagged, not current on the Terms, not a contract, or a source's owner is refused.
 20. A token that delivers less than it sends reverts at the vault's delivery measure, including when the receiver holds enough of its own to repay in full. An asset switched off for flash lending is refused while the instant market still lends it.
 21. A donation to a vault during the call ends as the owner's free balance.
