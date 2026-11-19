@@ -66,10 +66,14 @@ import {
   defaultGraceSeconds as defaultGraceSecondsRule,
   graceSecondsFromBuckets,
   loanDeadlines,
+  NO_SEQUENCER_OUTAGE,
+  outageMoved,
+  type SequencerOutageWindow,
   pausedSecondsAt,
   pauseLogFromJson,
   type PauseLog,
 } from '@vaipakam/lib/loanClock';
+import { outageReadOf } from '@vaipakam/lib/loanClockSnapshot';
 import {
   insertNotificationRows,
   recipientFor,
@@ -277,6 +281,11 @@ export function planCalendarRows(
    *  both clocks — the sweep does not plan while one has not — so each
    *  loan's credit is the same at either clock. Empty = never paused. */
   pauseLog: PauseLog = [],
+  /** #3525 — the Diamond's latest sequencer outage window; `null` when it
+   *  is not known, which withholds `grace_ended` (a grace end inside the
+   *  window moves to its end on-chain, and the row is never retracted).
+   *  Defaults to no outage for callers that plan without one. */
+  outage: SequencerOutageWindow | null = NO_SEQUENCER_OUTAGE,
 ): NotifRow[] {
   const rows: NotifRow[] = [];
   for (const loan of loans) {
@@ -288,6 +297,7 @@ export function planCalendarRows(
         0n,
         pauseLog,
         BigInt(nowSec),
+        NO_SEQUENCER_OUTAGE, // the due date never moves for an outage
       ).maturity,
     );
     const parties: LoanParties = {
@@ -304,6 +314,13 @@ export function planCalendarRows(
       const from = maturity + m.fromOffset(loan.duration_days, graceBuckets);
       const to = maturity + m.toOffset(loan.duration_days, graceBuckets);
       if (clockNow < from || clockNow >= to) continue;
+      if (m.kind === 'grace_ended') {
+        // #3525 — the contract's grace end moves to the end of an outage
+        // window it falls in; "grace has ended" waits for the moved end.
+        if (outage === null) continue;
+        const graceEnd = maturity + effectiveGraceSeconds(loan.duration_days, graceBuckets);
+        if (clockNow <= Number(outageMoved(BigInt(graceEnd), outage))) continue;
+      }
       const sides: ('lender' | 'borrower')[] =
         m.recipients === 'both' ? ['lender', 'borrower'] : ['borrower'];
       const seen = new Set<string>();
@@ -552,10 +569,17 @@ export async function sweepCalendarNotifications(
     // default (Codex #1298 r1).
     const cfg = await db
       .prepare(
-        `SELECT grace_buckets_json, pause_intervals_json FROM protocol_config WHERE chain_id = ?`,
+        `SELECT grace_buckets_json, pause_intervals_json,
+                sequencer_outage_json, sequencer_outage_read_at
+         FROM protocol_config WHERE chain_id = ?`,
       )
       .bind(chainId)
-      .first<{ grace_buckets_json: string | null; pause_intervals_json: string | null }>();
+      .first<{
+        grace_buckets_json: string | null;
+        pause_intervals_json: string | null;
+        sequencer_outage_json: string | null;
+        sequencer_outage_read_at: number | null;
+      }>();
     // UNKNOWN vs DEFINITIVE (Codex #1298 r5): a missing row or a NULL
     // column means the schedule was never successfully read (pre-0039
     // row, or the isolated getGraceBuckets read is still failing) — on
@@ -748,6 +772,15 @@ export async function sweepCalendarNotifications(
       );
     }
     if (eligible.length === 0) return EMPTY_SWEEP;
+    // #3525 — the sequencer outage window, for `grace_ended` only (an
+    // outage moves the grace end, never the due date). Unknown or stale
+    // withholds that one milestone: it is never retracted.
+    const outage = outageReadOf(cfg, nowSec);
+    if (!outage.known) {
+      console.warn(
+        `[calendarNotifications] sequencer outage window ${outage.reason} for chain ${chainId} — grace_ended withheld this tick`,
+      );
+    }
     const rows = planCalendarRows(
       chainId,
       eligible,
@@ -756,6 +789,7 @@ export async function sweepCalendarNotifications(
       graceBuckets,
       chainNowSec,
       pauseLog,
+      outage.known ? outage.window : null,
     );
     if (rows.length === 0) return EMPTY_SWEEP;
     const inserted = await insertNotificationRows(db, rows);

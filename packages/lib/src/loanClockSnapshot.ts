@@ -14,7 +14,32 @@
  * pause log are not unknown: they are the chain's definitive "no buckets" and
  * "never paused" (or a Diamond without the loan clock).
  */
-import { pauseLogFromJson, type GraceBucket, type PauseLog } from './loanClock';
+import {
+  outageWindowFromJson,
+  pauseLogFromJson,
+  type GraceBucket,
+  type PauseLog,
+  type SequencerOutageWindow,
+} from './loanClock';
+
+/** How old a stored sequencer outage read may be and still be applied
+ *  (#3525). The chain pass re-reads it every {@link OUTAGE_REFRESH_SECONDS};
+ *  this leaves room for a few missed passes. */
+export const OUTAGE_MAX_AGE_SECONDS = 600;
+
+/** How often the indexer's chain pass re-reads the outage window. */
+export const OUTAGE_REFRESH_SECONDS = 120;
+
+/**
+ * The Diamond's latest sequencer outage window as the snapshot holds it.
+ * `unknown` when it was never read, the read is older than
+ * {@link OUTAGE_MAX_AGE_SECONDS}, the value does not parse, or the database
+ * predates migration 0104: a consumer then serves the grace end unmoved and
+ * SAYS an outage may have moved it.
+ */
+export type SequencerOutageRead =
+  | { known: true; window: SequencerOutageWindow; readAt: number }
+  | { known: false; reason: 'unread' | 'stale' | 'damaged' | 'pre-migration' };
 
 /** The narrow D1 surface the reader needs. */
 export interface D1FirstLike {
@@ -28,6 +53,8 @@ export interface LoanClockSnapshot {
   pauseLog: PauseLog;
   /** The block both were read at. */
   sourceBlock: number;
+  /** The sequencer outage window (#3525), read on its own cadence. */
+  outage: SequencerOutageRead;
 }
 
 export type LoanClockSnapshotRead =
@@ -68,23 +95,59 @@ function parse(text: string): unknown {
   }
 }
 
+type SnapshotRow = {
+  grace_buckets_json: string | null;
+  pause_intervals_json: string | null;
+  source_block: number;
+  sequencer_outage_json?: string | null;
+  sequencer_outage_read_at?: number | null;
+};
+
+export function outageReadOf(
+  row: Pick<SnapshotRow, 'sequencer_outage_json' | 'sequencer_outage_read_at'>,
+  nowSec: number,
+): SequencerOutageRead {
+  if (row.sequencer_outage_json === undefined) return { known: false, reason: 'pre-migration' };
+  if (row.sequencer_outage_json === null || row.sequencer_outage_read_at == null) {
+    return { known: false, reason: 'unread' };
+  }
+  const window = outageWindowFromJson(parse(row.sequencer_outage_json));
+  if (window === null) return { known: false, reason: 'damaged' };
+  if (nowSec - row.sequencer_outage_read_at > OUTAGE_MAX_AGE_SECONDS) return { known: false, reason: 'stale' };
+  return { known: true, window, readAt: row.sequencer_outage_read_at };
+}
+
+/**
+ * Read the snapshot. `nowSec` judges the outage read's age. HTTP handlers run
+ * ahead of the schema gate, so a database without migration 0104 is read
+ * with the earlier statement and reports the outage as `pre-migration`.
+ */
 export async function readLoanClockSnapshot(
   db: D1FirstLike,
   chainId: number,
+  nowSec: number = Math.floor(Date.now() / 1000),
 ): Promise<LoanClockSnapshotRead> {
-  let row: {
-    grace_buckets_json: string | null;
-    pause_intervals_json: string | null;
-    source_block: number;
-  } | null;
+  let row: SnapshotRow | null;
   try {
-    row = await db
-      .prepare(
-        `SELECT grace_buckets_json, pause_intervals_json, source_block
-         FROM protocol_config WHERE chain_id = ?`,
-      )
-      .bind(chainId)
-      .first();
+    try {
+      row = await db
+        .prepare(
+          `SELECT grace_buckets_json, pause_intervals_json, source_block,
+                  sequencer_outage_json, sequencer_outage_read_at
+           FROM protocol_config WHERE chain_id = ?`,
+        )
+        .bind(chainId)
+        .first();
+    } catch (err) {
+      if (!/no such column/i.test(String(err))) throw err;
+      row = await db
+        .prepare(
+          `SELECT grace_buckets_json, pause_intervals_json, source_block
+           FROM protocol_config WHERE chain_id = ?`,
+        )
+        .bind(chainId)
+        .first();
+    }
   } catch (err) {
     if (/no such column/i.test(String(err))) return { known: false, reason: 'pre-migration' };
     throw err;
@@ -95,5 +158,8 @@ export async function readLoanClockSnapshot(
   const graceBuckets = graceBucketsFromJson(parse(row.grace_buckets_json));
   const pauseLog = pauseLogFromJson(parse(row.pause_intervals_json));
   if (graceBuckets === null || pauseLog === null) return { known: false, reason: 'damaged' };
-  return { known: true, snapshot: { graceBuckets, pauseLog, sourceBlock: row.source_block } };
+  return {
+    known: true,
+    snapshot: { graceBuckets, pauseLog, sourceBlock: row.source_block, outage: outageReadOf(row, nowSec) },
+  };
 }

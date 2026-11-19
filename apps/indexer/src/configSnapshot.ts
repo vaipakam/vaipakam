@@ -39,7 +39,13 @@ import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
  *  raw selector, or viem's generic wording. Tested, never printed (#2759). */
 const MISSING_SELECTOR =
   /function.*(does not exist|not found)|FunctionNotFound|FunctionDoesNotExist|0xa9ad62f8/i;
-import { pauseLogToJson, readPauseLog } from '@vaipakam/lib/loanClock';
+import {
+  outageWindowToJson,
+  pauseLogToJson,
+  readPauseLog,
+  readSequencerOutageWindow,
+} from '@vaipakam/lib/loanClock';
+import { OUTAGE_REFRESH_SECONDS } from '@vaipakam/lib/loanClockSnapshot';
 import type { Env } from './env';
 import { jsonResponse } from './offerRoutes';
 import { chainNotServed } from './servedChain';
@@ -650,6 +656,63 @@ export async function maybeRefreshProtocolConfig(opts: {
         /* stale-marking is best-effort */
       }
     }
+  }
+}
+
+/** When this isolate last read each chain's outage window (#3525). Memory
+ *  only: a fresh isolate reads once on its first pass, which costs one call. */
+const outageReadAt = new Map<number, number>();
+
+/** Test hook: forget the per-isolate read times. */
+export function _resetOutageRefresh(): void {
+  outageReadAt.clear();
+}
+
+/**
+ * #3525 — keep the snapshot's sequencer outage window current. A grace end
+ * inside the latest outage or its recovery window moves to the window's end
+ * on-chain (#3410), and the window moves with the uptime feed, not with any
+ * Diamond event, so it is re-read on a short cadence
+ * ({@link OUTAGE_REFRESH_SECONDS}) instead of the config refresh's
+ * event-or-backstop rule. The read is the Diamond's own
+ * `getSequencerOutageWindow`, so the outage rule has one source.
+ *
+ * Fail-open, like the config refresh: a failed read writes nothing, the
+ * stored read ages, and the routes then say the grace end may have moved.
+ * A chain with no `protocol_config` row yet gets its window on the first
+ * pass after the config refresh creates the row.
+ */
+export async function maybeRefreshSequencerOutage(opts: {
+  env: Env;
+  chainId: number;
+  client: PublicClient;
+  diamond: Address;
+  headBlock: bigint;
+  nowSec?: number;
+}): Promise<void> {
+  const now = opts.nowSec ?? Math.floor(Date.now() / 1000);
+  const last = outageReadAt.get(opts.chainId);
+  if (last !== undefined && now - last < OUTAGE_REFRESH_SECONDS) return;
+  outageReadAt.set(opts.chainId, now);
+  try {
+    const window = await readSequencerOutageWindow({
+      client: opts.client,
+      diamond: opts.diamond,
+      blockNumber: opts.headBlock,
+    });
+    await opts.env.DB.prepare(
+      `UPDATE protocol_config
+          SET sequencer_outage_json = ?1, sequencer_outage_read_at = ?2
+        WHERE chain_id = ?3`,
+    )
+      .bind(JSON.stringify(outageWindowToJson(window)), now, opts.chainId)
+      .run();
+  } catch (err) {
+    // A bounded description, not the error: a transport failure carries the
+    // RPC URL. An unmigrated database lands here too, until 0104 applies.
+    console.error(
+      `[configSnapshot] sequencer outage window read failed for chain ${opts.chainId} (the stored read ages): ${describeFailure(err)}`,
+    );
   }
 }
 

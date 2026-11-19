@@ -17,6 +17,7 @@ import { type Env } from './env';
 import {
   graceSecondsFromBuckets,
   loanDeadlines,
+  NO_SEQUENCER_OUTAGE,
   pauseInForceAt,
 } from '@vaipakam/lib/loanClock';
 import { readLoanClockSnapshot, type LoanClockSnapshotRead } from '@vaipakam/lib/loanClockSnapshot';
@@ -156,9 +157,10 @@ interface LoanClockView {
 }
 
 async function loanClockView(env: Env, chainId: number): Promise<LoanClockView> {
+  const now = Math.floor(Date.now() / 1000);
   return {
-    read: await readLoanClockSnapshot(env.DB, chainId),
-    nowSec: BigInt(Math.floor(Date.now() / 1000)),
+    read: await readLoanClockSnapshot(env.DB, chainId, now),
+    nowSec: BigInt(now),
   };
 }
 
@@ -181,13 +183,17 @@ function deadlinesJson(row: LoanRow, clock: LoanClockView): Record<string, unkno
   if (!clock.read.known) return { available: false, reason: clock.read.reason };
   // An unhealed stub has no real clock yet (start_time 0).
   if (row.start_time <= 0) return { available: false, reason: 'loan-not-indexed' };
-  const { graceBuckets, pauseLog } = clock.read.snapshot;
+  const { graceBuckets, pauseLog, outage } = clock.read.snapshot;
   const durationDays = BigInt(row.duration_days);
+  // #3525 — a grace end inside the latest sequencer outage window moves to
+  // the window's end on-chain. An unknown window moves nothing here, and
+  // the response says the grace end may be later than served.
   const d = loanDeadlines(
     { startTime: BigInt(row.start_time), durationDays },
     graceSecondsFromBuckets(graceBuckets, durationDays),
     pauseLog,
     clock.nowSec,
+    outage.known ? outage.window : NO_SEQUENCER_OUTAGE,
   );
   return {
     available: true,
@@ -196,6 +202,19 @@ function deadlinesJson(row: LoanRow, clock: LoanClockView): Record<string, unkno
     maturity: Number(d.maturity),
     graceEnd: Number(d.graceEnd),
     pauseInForce: pauseInForceAt(pauseLog, clock.nowSec),
+    // #3525 — whether a sequencer outage moved `graceEnd`, and the window
+    // it was judged against. `sequencerOutage: null` means the window is
+    // not known to this indexer (`sequencerOutageUnknown` says why): an
+    // outage may then have moved the grace end later than `graceEnd`.
+    graceEndMovedByOutage: d.graceEndMovedByOutage,
+    sequencerOutage: outage.known
+      ? {
+          downAt: Number(outage.window.downAt),
+          windowEnd: Number(outage.window.windowEnd),
+          readAt: outage.readAt,
+        }
+      : null,
+    ...(outage.known ? {} : { sequencerOutageUnknown: outage.reason }),
     asOf: Number(clock.nowSec),
   };
 }

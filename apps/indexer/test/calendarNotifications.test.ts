@@ -198,6 +198,26 @@ describe('planCalendarRows (pure window + dedup logic)', () => {
     expect(caughtUp.map((r) => r.kind)).toEqual(['grace_ended', 'grace_ended']);
   });
 
+  it('waits for a grace end a sequencer outage moved, and withholds grace_ended without the window (#3525)', () => {
+    const loan = maturingIn(13, -3 * DAY - 60); // 60s past the unmoved grace end
+    const graceEnd = NOW - 60;
+    // The grace end fell inside an outage whose recovery window ends in 10
+    // minutes: on-chain it moved there, so "grace has ended" must wait.
+    const w = { downAt: BigInt(graceEnd - 300), windowEnd: BigInt(NOW + 600) };
+    const moved = planCalendarRows(CHAIN, [loan], NOW, HEAD, null, NOW, [], w);
+    expect(moved.filter((r) => r.kind === 'grace_ended')).toHaveLength(0);
+    const after = planCalendarRows(CHAIN, [loan], NOW + 601, HEAD, null, NOW + 601, [], w);
+    expect(after.map((r) => r.kind)).toEqual(['grace_ended', 'grace_ended']);
+    // An outage that began after the grace end moves nothing.
+    const later = { downAt: BigInt(NOW - 30), windowEnd: BigInt(NOW + 600) };
+    expect(planCalendarRows(CHAIN, [loan], NOW, HEAD, null, NOW, [], later).map((r) => r.kind)).toEqual([
+      'grace_ended',
+      'grace_ended',
+    ]);
+    // Unknown window: withheld, since the row is never retracted.
+    expect(planCalendarRows(CHAIN, [loan], NOW, HEAD, null, NOW, [], null)).toHaveLength(0);
+  });
+
   it('times grace_ended against the CONFIGURED schedule, not the default', () => {
     const buckets: GraceBucketJson[] = [{ maxDurationDays: '0', graceSeconds: String(10 * DAY) }];
     // 4 days past due: past the default 3d grace, but inside a 10d one.
@@ -277,15 +297,32 @@ function seedLoan(
  *  '[]' = the definitive no-buckets state (default schedule); a JSON
  *  array = governance buckets; without a populated row the sweep
  *  defers rather than guess. */
-function seedGraceConfig(h: SqliteD1, bucketsJson = '[]', pauseLogJson: string | null = '[]') {
+function seedGraceConfig(
+  h: SqliteD1,
+  bucketsJson = '[]',
+  pauseLogJson: string | null = '[]',
+  /** #3525 — the snapshotted sequencer outage window; '0'/'0' = none. */
+  outageJson: string | null = NO_OUTAGE_JSON,
+) {
   h.db
     .prepare(
       `INSERT INTO protocol_config
          (chain_id, bundle_json, grace_buckets_json, pause_intervals_json,
+          sequencer_outage_json, sequencer_outage_read_at,
           source_block, updated_at)
-       VALUES (?, '[]', ?, ?, 1, ?)`,
+       VALUES (?, '[]', ?, ?, ?, ?, 1, ?)`,
     )
-    .run(CHAIN, bucketsJson, pauseLogJson, NOW);
+    .run(CHAIN, bucketsJson, pauseLogJson, outageJson, outageJson === null ? null : NOW, NOW);
+}
+
+const NO_OUTAGE_JSON = JSON.stringify({ downAt: '0', windowEnd: '0' });
+
+/** #3525 — the chain pass re-reads the outage window every couple of
+ *  minutes; a test that sweeps days later stamps the read it would have. */
+function stampOutage(h: SqliteD1, at: number, outageJson = NO_OUTAGE_JSON) {
+  h.db
+    .prepare(`UPDATE protocol_config SET sequencer_outage_json = ?, sequencer_outage_read_at = ? WHERE chain_id = ?`)
+    .run(outageJson, at, CHAIN);
 }
 
 describe('sweepCalendarNotifications (over the migrated schema)', () => {
@@ -557,12 +594,15 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
       .prepare(
         `INSERT INTO protocol_config
            (chain_id, bundle_json, grace_buckets_json, pause_intervals_json,
+            sequencer_outage_json, sequencer_outage_read_at,
             source_block, updated_at)
-         VALUES (?, '[]', ?, '[]', 1, ?)`,
+         VALUES (?, '[]', ?, '[]', ?, ?, 1, ?)`,
       )
       .run(
         CHAIN,
         JSON.stringify([{ maxDurationDays: '0', graceSeconds: String(45 * DAY) }]),
+        NO_OUTAGE_JSON,
+        NOW,
         NOW,
       );
     await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
@@ -675,6 +715,20 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
     expect(rowsInDb(h)).toHaveLength(3);
   });
 
+  it('withholds grace_ended while the snapshot`s outage read is stale or missing (#3525)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedGraceConfig(h, '[]', '[]', null);
+    seedLoan(h, 22, NOW - 4 * DAY - 30 * DAY, 30); // 1d past a 3d grace
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD, new Set(), NOW);
+    expect(rowsInDb(h).filter((r) => r.kind === 'grace_ended')).toHaveLength(0);
+    stampOutage(h, NOW - 3_600); // an hour old: stale
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD, new Set(), NOW);
+    expect(rowsInDb(h).filter((r) => r.kind === 'grace_ended')).toHaveLength(0);
+    stampOutage(h, NOW);
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD, new Set(), NOW);
+    expect(rowsInDb(h).filter((r) => r.kind === 'grace_ended')).toHaveLength(2);
+  });
+
   it('emits grace_ended to both parties once grace has closed, then goes quiet (#2463 follow-up)', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedGraceConfig(h);
@@ -684,6 +738,7 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
     // Three days later grace has closed. The loan ALREADY carries both
     // parties' grace_entered rows, so a lender probe keyed on a fixed
     // 'grace_entered' would read as satisfied and drop it from the window.
+    stampOutage(h, NOW + 3 * DAY);
     await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW + 3 * DAY, HEAD + 5, new Set(), NOW + 3 * DAY);
     const ended = rowsInDb(h).filter((r) => r.kind === 'grace_ended');
     expect(ended.map((r) => r.recipient).sort()).toEqual([LENDER, BORROWER].sort());
@@ -737,6 +792,7 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
     expect(rowsInDb(h).map((r) => r.kind)).toEqual(['grace_entered', 'grace_entered']);
     // Wall time is now past grace; the chain is not. Nothing new.
     const later = NOW + DAY + 60;
+    stampOutage(h, later);
     await sweepCalendarNotifications(h.d1 as never, CHAIN, later, HEAD + 5, new Set(), later - 120);
     expect(rowsInDb(h)).toHaveLength(2);
     // The chain catches up.

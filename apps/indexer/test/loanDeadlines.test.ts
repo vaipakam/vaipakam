@@ -30,6 +30,9 @@ type Deadlines = {
   maturity?: number;
   graceEnd?: number;
   pauseInForce?: boolean;
+  graceEndMovedByOutage?: boolean;
+  sequencerOutage?: { downAt: number; windowEnd: number; readAt: number } | null;
+  sequencerOutageUnknown?: string;
   asOf?: number;
 };
 
@@ -49,15 +52,22 @@ function harness(files = FILES) {
            30, '0', '0', '1', '2', '0xa', '0xb', 500, ?, 0, 0, 0)`,
       )
       .run(CHAIN, loanId, status, START);
-  const seedClock = (grace: string | null, pauseLog: string | null) =>
+  const seedClock = (
+    grace: string | null,
+    pauseLog: string | null,
+    // #3525 — the sequencer outage window and when it was read.
+    outage: string | null = JSON.stringify({ downAt: '0', windowEnd: '0' }),
+    outageReadAt: number | null = NOW,
+  ) =>
     h.db
       .prepare(
         `INSERT INTO protocol_config
            (chain_id, bundle_json, grace_buckets_json, pause_intervals_json,
+            sequencer_outage_json, sequencer_outage_read_at,
             source_block, updated_at)
-         VALUES (?, '[]', ?, ?, 1, ?)`,
+         VALUES (?, '[]', ?, ?, ?, ?, 1, ?)`,
       )
-      .run(CHAIN, grace, pauseLog, NOW);
+      .run(CHAIN, grace, pauseLog, outage, outageReadAt, NOW);
   const byId = async (loanId: number) =>
     (await (
       await handleLoanById(new Request(`https://idx/loans/${loanId}?chainId=${CHAIN}`), env, String(loanId))
@@ -95,11 +105,38 @@ describe('loan routes on the loan clock (#2808)', () => {
       maturity: START + 32 * DAY,
       graceEnd: START + 32 * DAY + 3 * DAY, // 30-day loan: 3 days' default grace
       pauseInForce: false,
+      graceEndMovedByOutage: false,
+      sequencerOutage: { downAt: 0, windowEnd: 0, readAt: NOW },
       asOf: NOW,
     });
     // The list routes date every loan at the same instant, the same way.
     const list = await h.active();
     expect(list.loans[0].deadlines).toEqual(d);
+  });
+
+  it('moves a grace end inside the sequencer outage window to its end (#3525)', async () => {
+    const h = harness();
+    const unmoved = START + 32 * DAY + 3 * DAY;
+    h.seedClock('[]', CLOSED, JSON.stringify({ downAt: String(unmoved - 60), windowEnd: String(unmoved + 3_600) }));
+    h.seedLoan(1);
+    const d = (await h.byId(1)).deadlines!;
+    expect(d.graceEnd).toBe(unmoved + 3_600);
+    expect(d.graceEndMovedByOutage).toBe(true);
+    expect(d.maturity).toBe(START + 32 * DAY); // the due date never moves
+  });
+
+  it('says the outage window is unknown when its read is stale or missing (#3525)', async () => {
+    const h = harness();
+    h.seedClock('[]', CLOSED, JSON.stringify({ downAt: '0', windowEnd: '0' }), NOW - 3_600);
+    h.seedLoan(1);
+    const d = (await h.byId(1)).deadlines!;
+    expect(d.sequencerOutage).toBeNull();
+    expect(d.sequencerOutageUnknown).toBe('stale');
+    expect(d.graceEnd).toBe(START + 35 * DAY);
+    const h2 = harness();
+    h2.seedClock('[]', CLOSED, null, null);
+    h2.seedLoan(1);
+    expect((await h2.byId(1)).deadlines!.sequencerOutageUnknown).toBe('unread');
   });
 
   it('honours the snapshotted governance grace schedule', async () => {
@@ -149,6 +186,21 @@ describe('loan routes on the loan clock (#2808)', () => {
       )
       .run(CHAIN, NOW);
     expect((await h.byId(1)).deadlines).toEqual({ available: false, reason: 'pre-migration' });
+  });
+
+  it('still serves deadlines on a database the outage migration has not reached (#3525)', async () => {
+    const h = harness(FILES.filter((f) => f !== '0104_sequencer_outage_window.sql'));
+    h.seedLoan(1);
+    h.db
+      .prepare(
+        `INSERT INTO protocol_config (chain_id, bundle_json, grace_buckets_json,
+           pause_intervals_json, source_block, updated_at) VALUES (?, '[]', '[]', ?, 1, ?)`,
+      )
+      .run(CHAIN, CLOSED, NOW);
+    const d = (await h.byId(1)).deadlines!;
+    expect(d.available).toBe(true);
+    expect(d.graceEnd).toBe(START + 35 * DAY);
+    expect(d.sequencerOutageUnknown).toBe('pre-migration');
   });
 
   it('omits deadlines for a loan that is no longer Active', async () => {

@@ -95,7 +95,7 @@ import {
 import { ceilingOf } from './signedOfferEip712';
 import { indexerPublishPrepayListing } from './openseaPublish';
 import { recordPositionMove } from './positionFlowMoves';
-import { maybeRefreshProtocolConfig } from './configSnapshot';
+import { maybeRefreshProtocolConfig, maybeRefreshSequencerOutage } from './configSnapshot';
 import {
   collectPushHints,
   pushHintStats,
@@ -2501,6 +2501,7 @@ async function runChainPass(
       blockNumber: lastBlock,
       headBlock: head,
     });
+    await maybeRefreshSequencerOutage({ env, chainId, client, diamond, headBlock: head });
     // #1213 PR 2 (Codex #1298 r1) — the calendar sweep is TIME-driven
     // for the same reason: a loan enters its T-7d/T-1d/grace window by
     // clock alone, with no new block or log. This caught-up path is
@@ -3051,6 +3052,9 @@ async function runChainPass(
     blockNumber: scanTo,
     headBlock: head,
   });
+  // #3525 — the sequencer outage window the loan routes move a grace end
+  // by. Its own short cadence: the feed moves it without a Diamond event.
+  await maybeRefreshSequencerOutage({ env, chainId, client, diamond, headBlock: head });
 
   // #1213 PR 2 — the TIME-derived calendar rows (maturity T-7d / T-1d,
   // grace entered): no event fires when a due date approaches, so a

@@ -129,6 +129,36 @@ export function graceSecondsFromBuckets(
   return buckets[buckets.length - 1].graceSeconds;
 }
 
+/**
+ * #3410 / #3525 — the latest L2 sequencer outage and its recovery window, as
+ * `LoanClockFacet.getSequencerOutageWindow` reports it. A grace end that falls
+ * inside `[downAt, windowEnd)` moves to `windowEnd` on-chain, so a borrower
+ * who could not send a repayment during the outage can still repay in the
+ * recovery window. The due date does NOT move: an outage changes when a
+ * deadline may be enforced, not the loan's term. Both are zero on a network
+ * with no sequencer feed (an L1), where nothing moves.
+ *
+ * Off-chain readers take this window from the Diamond, never from the feed,
+ * so the outage rule has one source: the contract's own read of it.
+ */
+export interface SequencerOutageWindow {
+  /** When the latest outage began. */
+  downAt: bigint;
+  /** The end of its recovery window; in the future while the sequencer is
+   *  down or recovering. */
+  windowEnd: bigint;
+}
+
+/** No outage to account for: a network without a sequencer feed, or a
+ *  Diamond that predates #3410. Moves nothing. */
+export const NO_SEQUENCER_OUTAGE: SequencerOutageWindow = { downAt: 0n, windowEnd: 0n };
+
+/** `LibLoanClock.outageMoved`: `deadline`, moved to the window's end when it
+ *  falls inside the window; unchanged otherwise. */
+export function outageMoved(deadline: bigint, w: SequencerOutageWindow): bigint {
+  return deadline >= w.downAt && deadline < w.windowEnd ? w.windowEnd : deadline;
+}
+
 /** The deadlines an Active loan is held to at a given moment — the shape of
  *  `LoanClockFacet.getLoanDeadlines`. */
 export interface LoanDeadlines {
@@ -140,8 +170,11 @@ export interface LoanDeadlines {
   /** The effective due date: the late fee runs past it. */
   maturity: bigint;
   /** The effective grace end: past it the loan may be defaulted and may no
-   *  longer be repaid. */
+   *  longer be repaid. Moved by a sequencer outage window it falls in. */
   graceEnd: bigint;
+  /** Whether a sequencer outage moved the grace end (#3525), so a surface
+   *  can say why it is later than the due date plus the grace period. */
+  graceEndMovedByOutage: boolean;
 }
 
 /**
@@ -150,18 +183,24 @@ export interface LoanDeadlines {
  * `startTime` is the loan's CURRENT start: an in-place extension or an
  * obligation handover resets it on-chain, and the credit then counts only the
  * pauses after the new start. `graceSeconds` is the grace for the loan's
- * duration ({@link graceSecondsFromBuckets}).
+ * duration ({@link graceSecondsFromBuckets}). `outage` is the Diamond's
+ * latest sequencer outage window (#3525): a caller that has none to apply
+ * passes {@link NO_SEQUENCER_OUTAGE} and says so where it shows the date. It
+ * is required, so no caller leaves it out by accident.
  */
 export function loanDeadlines(
   loan: { startTime: bigint; durationDays: bigint },
   graceSeconds: bigint,
   log: PauseLog,
   at: bigint,
+  outage: SequencerOutageWindow,
 ): LoanDeadlines {
   const originalMaturity = loan.startTime + loan.durationDays * DAY;
   const pauseCredit = pausedSecondsBetween(log, loan.startTime, at);
   const maturity = originalMaturity + pauseCredit;
-  return { originalMaturity, pauseCredit, maturity, graceEnd: maturity + graceSeconds };
+  const unmoved = maturity + graceSeconds;
+  const graceEnd = outageMoved(unmoved, outage);
+  return { originalMaturity, pauseCredit, maturity, graceEnd, graceEndMovedByOutage: graceEnd !== unmoved };
 }
 
 /**
@@ -174,7 +213,8 @@ export function loanMaturity(
   log: PauseLog,
   at: bigint,
 ): bigint {
-  return loanDeadlines(loan, 0n, log, at).maturity;
+  // The due date never moves for an outage, so no window is needed here.
+  return loanDeadlines(loan, 0n, log, at, NO_SEQUENCER_OUTAGE).maturity;
 }
 
 /** A periodic-interest period, as the contract tracks it. */
@@ -411,4 +451,46 @@ export async function readPauseLog(opts: {
     if (page.length === 0 || from >= total) break;
   }
   return log;
+}
+
+/** The window as stored and served off-chain: decimal strings. */
+export type SequencerOutageJson = { downAt: string; windowEnd: string };
+
+export function outageWindowToJson(w: SequencerOutageWindow): SequencerOutageJson {
+  return { downAt: w.downAt.toString(), windowEnd: w.windowEnd.toString() };
+}
+
+/** Parse a stored or served window; null for anything malformed (an unknown
+ *  window, never "no outage"). */
+export function outageWindowFromJson(json: unknown): SequencerOutageWindow | null {
+  if (typeof json !== 'object' || json === null) return null;
+  const { downAt, windowEnd } = json as Record<string, unknown>;
+  if (![downAt, windowEnd].every((v) => typeof v === 'string' && /^\d+$/.test(v))) return null;
+  return { downAt: BigInt(downAt as string), windowEnd: BigInt(windowEnd as string) };
+}
+
+/**
+ * Read the Diamond's latest sequencer outage window (#3525). A Diamond that
+ * does not route `getSequencerOutageWindow` predates #3410 and never moves a
+ * grace end for an outage, so that is definitively {@link NO_SEQUENCER_OUTAGE}.
+ * Every other failure throws: "could not read" is not "no outage", and a
+ * caller that turned it into one would show a moved grace end as passed.
+ */
+export async function readSequencerOutageWindow(opts: {
+  client: PublicClient;
+  diamond: Address;
+  blockNumber?: bigint;
+}): Promise<SequencerOutageWindow> {
+  try {
+    const [downAt, windowEnd] = (await opts.client.readContract({
+      address: opts.diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getSequencerOutageWindow',
+      blockNumber: opts.blockNumber,
+    })) as readonly [bigint, bigint];
+    return { downAt, windowEnd };
+  } catch (err) {
+    if (isFunctionDoesNotExistRevert(err)) return NO_SEQUENCER_OUTAGE;
+    throw err;
+  }
 }

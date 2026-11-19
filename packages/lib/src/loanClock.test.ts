@@ -6,6 +6,11 @@ import {
   graceSecondsFromBuckets,
   interestTermEnd,
   loanDeadlines,
+  NO_SEQUENCER_OUTAGE,
+  outageMoved,
+  outageWindowFromJson,
+  outageWindowToJson,
+  readSequencerOutageWindow,
   minimumInterestSeconds,
   proRataInterestSeconds,
   settlementInterestAt,
@@ -64,25 +69,51 @@ describe('pauseInForceAt', () => {
 describe('loanDeadlines', () => {
   const loan = { startTime: 500_000n, durationDays: 30n };
   it('moves the due date and grace end by the pauses since the start', () => {
-    const d = loanDeadlines(loan, 3n * DAY, LOG, 2_500_000n);
+    const d = loanDeadlines(loan, 3n * DAY, LOG, 2_500_000n, NO_SEQUENCER_OUTAGE);
     expect(d.originalMaturity).toBe(500_000n + 30n * DAY);
     expect(d.pauseCredit).toBe(DAY + 7_200n);
     expect(d.maturity).toBe(d.originalMaturity + DAY + 7_200n);
     expect(d.graceEnd).toBe(d.maturity + 3n * DAY);
   });
   it('credits only the pauses after a reset start', () => {
-    const d = loanDeadlines({ startTime: 1_500_000n, durationDays: 30n }, 0n, LOG, 2_500_000n);
+    const d = loanDeadlines({ startTime: 1_500_000n, durationDays: 30n }, 0n, LOG, 2_500_000n, NO_SEQUENCER_OUTAGE);
     expect(d.pauseCredit).toBe(7_200n);
   });
   it('is the original schedule when the protocol was never paused', () => {
-    const d = loanDeadlines(loan, DAY, [], 9_000_000n);
+    const d = loanDeadlines(loan, DAY, [], 9_000_000n, NO_SEQUENCER_OUTAGE);
     expect(d.maturity).toBe(d.originalMaturity);
     expect(d.pauseCredit).toBe(0n);
   });
   it('gives the same due date through loanMaturity', () => {
     expect(loanMaturity(loan, LOG, 2_500_000n)).toBe(
-      loanDeadlines(loan, 3n * DAY, LOG, 2_500_000n).maturity,
+      loanDeadlines(loan, 3n * DAY, LOG, 2_500_000n, NO_SEQUENCER_OUTAGE).maturity,
     );
+  });
+});
+
+describe('the sequencer outage window (#3410 / #3525)', () => {
+  const loan = { startTime: 500_000n, durationDays: 30n };
+  const unmoved = loanDeadlines(loan, 3n * DAY, [], 9_000_000n, NO_SEQUENCER_OUTAGE).graceEnd;
+  it('moves a grace end inside the window to its end, and says so', () => {
+    const w = { downAt: unmoved - 100n, windowEnd: unmoved + 3_600n };
+    const d = loanDeadlines(loan, 3n * DAY, [], 9_000_000n, w);
+    expect(d.graceEnd).toBe(unmoved + 3_600n);
+    expect(d.graceEndMovedByOutage).toBe(true);
+    expect(d.maturity).toBe(loan.startTime + 30n * DAY); // the due date never moves
+  });
+  it('leaves a grace end at the window end, or before the outage, unchanged', () => {
+    expect(outageMoved(1_000n, { downAt: 500n, windowEnd: 1_000n })).toBe(1_000n);
+    expect(outageMoved(499n, { downAt: 500n, windowEnd: 1_000n })).toBe(499n);
+    expect(outageMoved(500n, { downAt: 500n, windowEnd: 1_000n })).toBe(1_000n);
+    const d = loanDeadlines(loan, 3n * DAY, [], 9_000_000n, NO_SEQUENCER_OUTAGE);
+    expect(d.graceEndMovedByOutage).toBe(false);
+  });
+  it('round-trips the stored window and refuses a malformed one', () => {
+    const w = { downAt: 12n, windowEnd: 2n ** 70n };
+    expect(outageWindowFromJson(outageWindowToJson(w))).toEqual(w);
+    expect(outageWindowFromJson({ downAt: '1' })).toBeNull();
+    expect(outageWindowFromJson({ downAt: '-1', windowEnd: '2' })).toBeNull();
+    expect(outageWindowFromJson(null)).toBeNull();
   });
 });
 
@@ -214,6 +245,27 @@ function revertError(inner: Record<string, unknown>): Error {
   err.walk = (fn) => (fn(node) ? node : null);
   return err;
 }
+
+describe('readSequencerOutageWindow (#3525)', () => {
+  const diamond = '0x0000000000000000000000000000000000000001' as const;
+  const client = (impl: () => Promise<unknown>) => ({ readContract: impl }) as never;
+  it('returns the Diamond\'s window', async () => {
+    await expect(readSequencerOutageWindow({ client: client(async () => [5n, 9n]), diamond })).resolves.toEqual({
+      downAt: 5n,
+      windowEnd: 9n,
+    });
+  });
+  it('reads a Diamond without the getter as no outage, and throws on anything else', async () => {
+    const missing = client(async () => {
+      throw revertError({ data: { errorName: 'FunctionDoesNotExist' } });
+    });
+    await expect(readSequencerOutageWindow({ client: missing, diamond })).resolves.toEqual(NO_SEQUENCER_OUTAGE);
+    const down = client(async () => {
+      throw new Error('rpc down');
+    });
+    await expect(readSequencerOutageWindow({ client: down, diamond })).rejects.toThrow('rpc down');
+  });
+});
 
 describe('readPauseLog', () => {
   const diamond = '0x0000000000000000000000000000000000000001' as const;

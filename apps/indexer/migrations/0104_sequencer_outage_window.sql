@@ -1,0 +1,22 @@
+-- #3525 — snapshot the Diamond's latest L2 sequencer outage window beside
+-- the loan clock.
+--
+-- Since #3410 a loan's grace end that falls inside the latest sequencer
+-- outage or its recovery window moves to the window's end on-chain
+-- (`LibLoanClock.graceEnd`), and `LoanClockFacet.getSequencerOutageWindow`
+-- reports the window. The loan routes are pure D1, so the window rides the
+-- `protocol_config` row. It changes without any Diamond event (the uptime
+-- feed moves it), so the indexer's chain pass re-reads it on a short cadence
+-- rather than on events, and stamps when it read it.
+--
+--   sequencer_outage_json — {"downAt":"…","windowEnd":"…"}, decimal
+--     strings. {"downAt":"0","windowEnd":"0"} = the network has no sequencer
+--     feed, or the Diamond predates #3410: nothing moves. NULL = not read
+--     yet: unknown, and the routes say a grace end may have moved.
+--   sequencer_outage_read_at — the unix time of that read. The routes treat
+--     an old read as unknown.
+--
+-- Additive: two NULLable columns; the deployed code neither reads nor
+-- writes them.
+ALTER TABLE protocol_config ADD COLUMN sequencer_outage_json TEXT;
+ALTER TABLE protocol_config ADD COLUMN sequencer_outage_read_at INTEGER;
