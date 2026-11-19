@@ -47,7 +47,7 @@ interface Salt {
   tx: Hex;
 }
 
-function fakeChain(opts: { pending: { id: Hex; eta: bigint; ready: boolean }[]; scheduled: Scheduled[]; salts?: Salt[]; minDelay?: bigint; done?: Hex[]; standard?: { current: bigint; floor: bigint } }) {
+function fakeChain(opts: { pending: { id: Hex; eta: bigint; ready: boolean }[]; scheduled: Scheduled[]; salts?: Salt[]; minDelay?: bigint; done?: Hex[]; standard?: { current: bigint; floor: bigint }; failRead?: string }) {
   const calls = { getLogs: 0, getBlock: 0, ranges: [] as [bigint, bigint][] };
   const client = {
     async getBlock(args: { blockNumber?: bigint; blockTag?: string }) {
@@ -56,12 +56,14 @@ function fakeChain(opts: { pending: { id: Hex; eta: bigint; ready: boolean }[]; 
       return { number: n, timestamp: tsOf(n) };
     },
     async readContract(args: { functionName: string; args?: readonly unknown[] }) {
+      if (opts.failRead === args.functionName) throw new Error(`read ${args.functionName} failed`);
       if (args.functionName === 'getPendingProposalsCount') return BigInt(opts.pending.length);
       if (args.functionName === 'getMinDelay') return opts.minDelay ?? MIN_DELAY;
       if (args.functionName === 'MIN_DELAY_FLOOR') return FLOOR;
-      // A timelock without the standard wait (#3828) answers neither read.
-      if (opts.standard && args.functionName === 'standardDelay') return opts.standard.current;
-      if (opts.standard && args.functionName === 'STANDARD_DELAY_FLOOR') return opts.standard.floor;
+      // The standard wait (#3828); by default equal to the restart wait, so
+      // the one-wait cases below search exactly as before.
+      if (args.functionName === 'standardDelay') return (opts.standard ?? { current: opts.minDelay ?? MIN_DELAY }).current;
+      if (args.functionName === 'STANDARD_DELAY_FLOOR') return opts.standard?.floor ?? FLOOR;
       if (args.functionName === 'isOperationDone') return (opts.done ?? []).includes((args.args as [Hex])[0]);
       if (args.functionName === 'getPendingProposals') {
         const [offset, limit] = args.args as [number, number];
@@ -259,10 +261,11 @@ describe('readGovernanceQueue', () => {
     expect(q.operations[0].details.kind === 'proved' && q.operations[0].details.scheduledBlock).toBe(block);
   });
 
-  it('states no standard delay for a timelock with one wait', async () => {
-    const { client } = fakeChain({ pending: [], scheduled: [] });
-    const q = await readGovernanceQueue(client, TIMELOCK, { maxLogRange: 2000, fromBlock: 0n });
-    expect(q.standardDelay).toBeNull();
+  it('fails the read, never guessing a wait, when a standard-wait read fails', async () => {
+    for (const name of ['standardDelay', 'STANDARD_DELAY_FLOOR']) {
+      const { client } = fakeChain({ pending: [], scheduled: [], standard: TWO_WAITS, failRead: name });
+      await expect(readGovernanceQueue(client, TIMELOCK, { maxLogRange: 2000, fromBlock: 0n })).rejects.toThrow(name);
+    }
   });
 
   it('does not take a cancelled earlier scheduling of the same calls for the live one', async () => {

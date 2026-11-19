@@ -73,12 +73,9 @@ export function GovernanceView({
             {format('governance.rereadFailed', { reason: queue.error })}
           </Notice>
         )}
-        {/* Two waits (#3828): a timelock that states its standard wait gets
-            both, with the exceptions named; one predating it has one. */}
+        {/* The timelock's two waits (#3828), with the exceptions named. */}
         <p className="tier-b" data-testid="governance-waits">
-          {q.standardDelay === null
-            ? format('governance.minDelay', { delay: formatSpan(Number(q.minDelay)) })
-            : format('governance.waits', { standard: formatSpan(Number(q.standardDelay)), restart: formatSpan(Number(q.minDelay)) })}
+          {format('governance.waits', { standard: formatSpan(Number(q.standardDelay)), restart: formatSpan(Number(q.minDelay)) })}
         </p>
         {q.operations.length === 0 ? (
           <p className="tier-b" data-testid="governance-empty">

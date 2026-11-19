@@ -122,9 +122,8 @@ export interface GovernanceQueue {
   /** The timelock's current minimum delay, in seconds: the wait of a call
    *  on its restart list (#3828). */
   minDelay: bigint;
-  /** The wait every other change needs, in seconds (#3828), or null when
-   *  the timelock answers no such read (one predating the two waits). */
-  standardDelay: bigint | null;
+  /** The wait every other change needs, in seconds (#3828). */
+  standardDelay: bigint;
   operations: QueuedOperation[];
 }
 
@@ -278,10 +277,10 @@ async function tryWindow(
  *  `MIN_DELAY_FLOOR`) for a call on its restart list or an urgent fix, and
  *  the standard delay (never below `STANDARD_DELAY_FLOOR`) for everything
  *  else. Each wait has its current value and the floor it was deployed
- *  with; null where the timelock has no standard wait. */
+ *  with. */
 interface TimelockDelays {
   restart: { current: bigint; floor: bigint };
-  standard: { current: bigint; floor: bigint } | null;
+  standard: { current: bigint; floor: bigint };
 }
 
 /** Find and prove what one queued operation will do. */
@@ -328,7 +327,7 @@ async function detailsFor(
     // from each floor: the restart floor covers every operation, the
     // standard floor reaches the long waits within the same budget.
     const at = (delay: bigint) => firstBlockAtOrAfter(client, op.eta > delay ? op.eta - delay : 0n, opts.fromBlock, head);
-    const waits = delays.standard ? [delays.standard, delays.restart] : [delays.restart];
+    const waits = [delays.standard, delays.restart];
     for (const w of waits) {
       const d = await attempt(clip(await at(w.current)));
       if (d) return d;
@@ -372,18 +371,16 @@ export async function readGovernanceQueue(
   ) =>
     client.readContract({ address: timelock, abi: GOVERNANCE_TIMELOCK_READ_ABI, functionName, args, blockNumber } as never) as Promise<T>;
 
-  const [count, minDelay, floor] = await Promise.all([
+  // Both waits (#3828) are read like every other value: a failed read fails
+  // the whole read, which the caller states, never a guessed wait.
+  const [count, minDelay, floor, standardDelay, standardFloor] = await Promise.all([
     read<bigint>('getPendingProposalsCount'),
     read<bigint>('getMinDelay'),
     read<bigint>('MIN_DELAY_FLOOR'),
+    read<bigint>('standardDelay'),
+    read<bigint>('STANDARD_DELAY_FLOOR'),
   ]);
-  // The standard wait (#3828). A timelock that predates it answers neither
-  // read; it then has one wait, and the result says so (null) rather than
-  // inventing one.
-  const standard = await Promise.all([read<bigint>('standardDelay'), read<bigint>('STANDARD_DELAY_FLOOR')]).then(
-    ([current, standardFloor]) => ({ current, floor: standardFloor }),
-    () => null,
-  );
+  const standard = { current: standardDelay, floor: standardFloor };
   const pageSize = opts.pageSize ?? 50;
   const pending: { id: Hex; eta: bigint; ready: boolean }[] = [];
   for (let offset = 0; BigInt(offset) < count; offset += pageSize) {
@@ -408,7 +405,7 @@ export async function readGovernanceQueue(
     timelock,
     block: { number: blockNumber, timestamp: latest.timestamp },
     minDelay,
-    standardDelay: standard?.current ?? null,
+    standardDelay,
     operations,
   };
 }
