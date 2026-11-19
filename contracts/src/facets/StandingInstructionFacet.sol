@@ -394,15 +394,24 @@ contract StandingInstructionFacet is DiamondAccessControl, DiamondReentrancyGuar
     ///         the reserve is the depositor's own money. An ordinary vault
     ///         payout under the outflow policy (a protected account's payout
     ///         queues behind its delay). Tier-1 sanctions-gated.
+    ///         #3246 part 2 — a RECOVERED account's standing instructions are
+    ///         dead and its owner key may be lost, so anyone may return its
+    ///         unused reserve to the account's own vault, where it stays free
+    ///         for the recovered account's sweep to the recovery address
+    ///         (RecoveryAddressClawbackDesign §4.3; the same rule as
+    ///         `LenderIntentFacet.withdrawLenderIntentCapital`).
     function withdrawLoanReserve(address account, uint256 loanId, uint8 kind, uint256 amount) external nonReentrant {
         LibPausable.requireNotPaused();
-        LibProtectedAccount.requireManager(account);
-        LibVaipakam._assertNotSanctioned(msg.sender);
+        bool recovered = LibProtectedAccount.isRecovered(account);
+        if (!recovered) {
+            LibProtectedAccount.requireManager(account);
+            LibVaipakam._assertNotSanctioned(msg.sender);
+        }
         if (amount == 0) revert LoanReserveZeroAmount();
         address asset = _reserveAsset(LibVaipakam.storageSlot().loans[loanId], kind);
         // Released BEFORE the withdraw, so the chokepoint's guard sees it free.
         uint256 left = LibEncumbrance.unlienLoanReserve(loanId, account, kind, asset, amount);
-        if (msg.sender == account) {
+        if (recovered || msg.sender == account) {
             LibVaultOutflow.toOwner(account, LibVaultOutflow.ERC20, asset, 0, amount, OutflowReason.WITHDRAW);
         } else {
             LibVaultOutflow.toAllowlisted(

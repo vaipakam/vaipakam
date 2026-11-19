@@ -3452,6 +3452,15 @@ library LibVaipakam {
         Suspended
     }
 
+    /// @dev #3682 — the integrator credited on a loan and when the loan
+    ///      opened. `openedAt` is the origination time, fixed when the loan
+    ///      is recorded and never moved by an extension or a handover, so the
+    ///      early-default window is always measured from opening.
+    struct LoanIntegratorRecord {
+        address integrator;
+        uint64 openedAt;
+    }
+
     /// @dev #3682 / #3720 — one registered integrator, keyed by its id (the
     ///      address a borrower names). `rateBps` 0 ⇒ the default rate.
     ///      `payout` is the account whose platform vault receives the share.
@@ -8918,9 +8927,10 @@ library LibVaipakam {
         mapping(address => address) integratorOfAddress;
         /// @dev #3682 / #3722 — the shared fee-share settings.
         FeeShareConfig feeShareCfg;
-        /// @dev #3682 — the integrator credited on loan id, for its public
-        ///      record. Written once at acceptance.
-        mapping(uint256 => address) loanIntegrator;
+        /// @dev #3682 — the integrator credited on loan id and the loan's
+        ///      opening time, for its public record. Written once at
+        ///      acceptance.
+        mapping(uint256 => LoanIntegratorRecord) loanIntegrator;
         /// @dev #3682 — the integrator the BORROWER named on a direct accept
         ///      of a lender's offer, from its signed accept terms. Written on
         ///      every direct accept entry and read only while

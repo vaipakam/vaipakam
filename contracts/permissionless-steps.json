@@ -860,6 +860,11 @@
       "issue": "#3681",
       "why": "pays an ended period's unpaid interest from the holder's own payment reserve through the shared interest booking; anyone may call it once the instruction is due, and a skipped run says why by event. No keeper pass backs it yet; the pass ships disarmed with the keeper follow-up of #3681"
     },
+    "StandingInstructionFacet.withdrawLoanReserve(address,uint256,uint8,uint256)": {
+      "class": "gap",
+      "issue": "#3246",
+      "why": "the account's manager withdraws its own unused loan reserve; for a RECOVERED account anyone may return it to the account's vault, where the recovered account's sweep moves it to the recovery address. The keeper pass is to be built, disarmed, with the protected-account work"
+    },
     "SwapToRepayIntentFacet.cancelExpiredIntent(uint256)": {
       "class": "keeper",
       "pass": "expiredTeardown",
