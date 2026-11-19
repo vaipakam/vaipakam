@@ -32,6 +32,7 @@ import { CONFIG, RISK_PREVIEW } from '../offers/reads';
 import { readIntentGates, type IntentGate } from '../offers/intents';
 import { batchCall, type BatchStep } from '../tx/batch';
 import { parseAmount, parseDays, parseRateBps, type ParseError } from '../post/postModel';
+import { presetSteps, type EffectivePreset, type LendPreset } from './preset';
 
 type Hex = `0x${string}`;
 
@@ -71,7 +72,8 @@ export const DEFAULT_AUTOLEND_INPUT: AutoLendInput = {
   ltv: '60',
   days: '30',
   lendUntil: '',
-  proRata: false,
+  // #3761: interest by time is pre-selected; the form's switch carries it.
+  proRata: true,
   exposure: '',
   minFill: '',
 };
@@ -187,6 +189,13 @@ export interface AutoLendDraft {
    *  a stopped or ended one again) rather than a new setup: the protocol
    *  replaces the recorded terms in place, and money may be added or not. */
   change: boolean;
+  /** #3761 — the choices the lender made on the form (a new setup); null for
+   *  a change, which sends again the instant-market consents the slot had
+   *  (setting the terms clears them) and touches no keeper permission. */
+  preset: LendPreset | null;
+  /** The keeper list the lender confirmed (`regainKey`), where switching
+   *  keeper access back on would bring other approvals back; else null. */
+  relendConfirmed: string | null;
 }
 
 /** The slot a new setup takes. Several Auto-lends on one pair (#3626) are
@@ -194,8 +203,16 @@ export interface AutoLendDraft {
  *  setup takes the first. */
 export const FIRST_SLOT = 0;
 
-export function autoLendDraft(lending: Hex, collateral: Hex, parsed: ParsedAutoLend, change = false, slot = FIRST_SLOT): AutoLendDraft {
-  return { lending, collateral, slot, parsed, lendUntil: parsed.lendUntilDate === null ? 0n : lendUntilSeconds(parsed.lendUntilDate), change };
+export function autoLendDraft(
+  lending: Hex,
+  collateral: Hex,
+  parsed: ParsedAutoLend,
+  change = false,
+  slot = FIRST_SLOT,
+  preset: LendPreset | null = null,
+  relendConfirmed: string | null = null,
+): AutoLendDraft {
+  return { lending, collateral, slot, parsed, lendUntil: parsed.lendUntilDate === null ? 0n : lendUntilSeconds(parsed.lendUntilDate), change, preset, relendConfirmed };
 }
 
 /** The exposure cap the protocol records: the typed cap, else, for a change,
@@ -226,11 +243,20 @@ export function resolvedMinFill(p: ParsedAutoLend, floor: bigint | null, base: I
 }
 
 /** The setup's steps, as sent: set the terms, then fund them (a change that
- *  adds nothing sends the terms alone). The terms carry the lender's consent
+ *  adds nothing sends the terms alone), then the steps the lender's choices
+ *  add (#3761: the instant-market consents, the keeper's roll permission),
+ *  all in the one batch, every step required. The terms carry the lender's consent
  *  (the review's checkbox, the same gate every offer posting carries) and the
  *  transaction deadline. A change keeps the recorded fill restriction
  *  (`requiresKeeperAuth`, which this app never sets) as it is. */
-export function setupSteps(draft: AutoLendDraft, minFill: bigint, consent: boolean, validUntil: bigint, base: IntentRecord | null = null): BatchStep[] {
+export function setupSteps(
+  draft: AutoLendDraft,
+  minFill: bigint,
+  consent: boolean,
+  validUntil: bigint,
+  base: IntentRecord | null = null,
+  effective: EffectivePreset | null = null,
+): BatchStep[] {
   const p = draft.parsed;
   const steps: BatchStep[] = [
     {
@@ -254,16 +280,19 @@ export function setupSteps(draft: AutoLendDraft, minFill: bigint, consent: boole
     },
   ];
   if (p.fund > 0n) steps.push({ abi: INTENT, functionName: 'fundLenderIntent', args: [draft.lending, draft.collateral, draft.slot, p.fund] });
+  if (effective !== null) steps.push(...presetSteps(effective, draft.lending, draft.collateral, draft.slot, validUntil));
   return steps;
 }
 
-/** The setup as one contract call (the batch), or the terms alone, which the
- *  review dry-runs while the wallet's approval does not yet cover the
- *  funding: the terms' verdict is known before any prompt, and the whole
- *  batch is dry-run again once the approval is in place. */
-export function setupCall(draft: AutoLendDraft, minFill: bigint, validUntil: bigint, base: IntentRecord | null, termsOnly = false) {
-  const steps = setupSteps(draft, minFill, true, validUntil, base);
-  if (termsOnly || steps.length === 1) return { abi: INTENT, functionName: steps[0]!.functionName, args: steps[0]!.args };
+/** The setup as one contract call (the batch), or the batch without its
+ *  funding, which the review dry-runs while the wallet's approval does not
+ *  yet cover the funding: the verdict on the terms and the choices is known
+ *  before any prompt, and the whole batch is dry-run again once the approval
+ *  is in place. */
+export function setupCall(draft: AutoLendDraft, minFill: bigint, validUntil: bigint, base: IntentRecord | null, termsOnly = false, effective: EffectivePreset | null = null) {
+  const all = setupSteps(draft, minFill, true, validUntil, base, effective);
+  const steps = termsOnly ? all.filter((s) => s.functionName !== 'fundLenderIntent') : all;
+  if (steps.length === 1) return { abi: steps[0]!.abi, functionName: steps[0]!.functionName, args: steps[0]!.args };
   return batchCall(steps);
 }
 
@@ -392,7 +421,13 @@ export type SetupBlock =
   | { kind: 'ltvClosed' }
   /** The smallest loan is above the most at once (a change that keeps the
    *  recorded most at once). */
-  | { kind: 'minAboveExposure'; minFill: bigint };
+  | { kind: 'minAboveExposure'; minFill: bigint }
+  /** #3761 — re-lending would switch keeper access back on for other
+   *  approvals, and the lender has not confirmed that list as it stands. */
+  | { kind: 'keeperList' }
+  /** #3761 — a change, and the slot's instant-market consents could not be
+   *  read, so they could not be sent again with the new terms. */
+  | { kind: 'instantUnread' };
 
 /** The money set aside and not lent once the step lands: what waits now
  *  (for a change) plus what it adds. */

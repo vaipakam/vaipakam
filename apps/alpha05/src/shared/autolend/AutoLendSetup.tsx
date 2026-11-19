@@ -28,8 +28,9 @@ import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
 import { pageHandoff } from '../../routes/pageMap';
 import { setupCall, setupLogs, type AutoLendDraft } from './autoLend';
-import { autoLendReceipt, readAutoLendReview, reviewBlockers, reviewKey, type AutoLendReview } from './autoLendReview';
+import { autoLendReceipt, presetLegs, readAutoLendReview, reviewBlockers, reviewKey, type AutoLendReview } from './autoLendReview';
 import { AUTOLEND_KEY } from './AutoLendForm';
+import { presetLogs } from './preset';
 
 type Hex = `0x${string}`;
 
@@ -129,7 +130,7 @@ export function AutoLendSetup({ draft, chain, own, meta, terms, onEdit, onClose,
       let dry: Awaited<ReturnType<typeof askAfter>>;
       try {
         const deadline = await readValidUntil(own);
-        call = setupCall(r.draft, minFill, deadline, r.base);
+        call = setupCall(r.draft, minFill, deadline, r.base, false, r.effective);
         dry = await askAfter(own, approvedAt, (c, blockNumber) => c.simulateContract({ address: diamond, ...call, account, blockNumber }));
       } catch (e) {
         return stop(format('flow.unreadable', { reason: refusalFromError(e).reason }));
@@ -163,6 +164,8 @@ export function AutoLendSetup({ draft, chain, own, meta, terms, onEdit, onClose,
       } else {
         legs.push({ status: 'not-done', label: text(d.change ? 'autoLend.legChanged' : 'autoLend.legNotSet'), reason: text('autoLend.notSet') });
       }
+      // #3761 — the choices the batch carried, each read from its own log.
+      legs.push(...presetLegs(presetLogs(receipt.logs, diamond, account, d.lending, d.collateral, d.slot, review.preset.keeper), review.effective, copy));
       const fund = d.parsed.fund;
       // A change that adds nothing moves nothing.
       if (fund === 0n) return legs;

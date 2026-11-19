@@ -201,6 +201,29 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   names current protection, priceability, recorded reference, and checkpoint
   requirements; adding a guard later leaves the offer fillable until it lands.
   Missing hourly coverage blocks fills, and an unsupported deployment says so.
+- Lend opens on lending continuously (Auto-lend) as the pre-selected choice,
+  with one link to a one-time offer instead; a deployment may instead ask
+  the lender to choose between "Lend continuously (recommended)" and "Lend
+  once" with neither selected. The device remembers the last choice per
+  wallet and network. The form pre-selects, each as its own switch:
+  re-lending repayments through the platform's keeper (the roll action only,
+  added to what that keeper already holds), interest by time, and the
+  instant market's fills, renewal and takeover consents. A switch the
+  contracts would refuse is off and greyed with its reason: the instant
+  consents need interest by time, the market on for the network and an
+  eligible pair (an unreadable answer is "not known", never a guess);
+  re-lending is never offered for the platform token, is stated as given
+  where it already is, and is not pre-selected where keeper access is off
+  with other keepers approved, where switching it on lists every keeper and
+  the actions it would regain and needs that list confirmed. Rate auction
+  bids, advances and buying existing loans stay visible and off. The slot's
+  terms, funding and every chosen consent go in one transaction with every
+  step required, and the review states each choice as sent, what a slot
+  fills (no prepay listing or interest cadence) and that the instant
+  choices are ready a few seconds after landing. Changing a slot's terms
+  sends its instant consents again in the same transaction, or states them
+  cleared when the new terms cannot carry them. Free vault balance is never
+  lent by any of this.
 - A newly posted or edited offer waits the protocol's minimum terms age
   before fill. The review shows the configured wait and remaining chain time,
   offers no signing step while blocked, and refreshes each block. An unread

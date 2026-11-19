@@ -60,11 +60,10 @@ test('a lender sets up Auto-lend: one choice, an exact approval, terms and fundi
   const { page, flags } = await launchWallet('lender');
   await openPair(page, tliq);
 
-  // One question, two answers; the one-time offer is the default.
+  // One question, two answers; Auto-lend is pre-selected (#3761).
   const choice = page.getByTestId('lend-choice');
   await expect(choice).toHaveAttribute('data-autolend', 'open', { timeout: 60_000 });
-  await expect(page.getByTestId('lend-choice-once')).toBeChecked();
-  await page.getByTestId('lend-choice-keep').check();
+  await expect(page.getByTestId('lend-choice-keep')).toBeChecked();
   await page.getByTestId('lend-offer-open').click();
 
   const form = page.getByTestId('autolend-form');

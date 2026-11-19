@@ -9,7 +9,19 @@ import { assetName, tokenAmount, type TokenMetaMap } from '../reads/tokens';
 import { useOwnRead } from '../reads/useOwnRead';
 import { useStoredValue } from '../tx/txStore';
 import { FormField } from '../ui/FormField';
-import { autoLendDraft, DEFAULT_AUTOLEND_INPUT, localToday, parseAutoLend, type AutoLendDraft, type AutoLendError, type AutoLendField, type AutoLendInput } from './autoLend';
+import {
+  autoLendDraft,
+  DEFAULT_AUTOLEND_INPUT,
+  FIRST_SLOT,
+  localToday,
+  parseAutoLend,
+  type AutoLendDraft,
+  type AutoLendError,
+  type AutoLendField,
+  type AutoLendInput,
+} from './autoLend';
+import { loadRemembered, openingPreset, readPresetFacts, regainKey, saveRemembered, type LendPreset } from './preset';
+import { PresetChoices } from './PresetChoices';
 
 type Hex = `0x${string}`;
 
@@ -30,6 +42,8 @@ interface AutoLendFormProps {
   /** A change of an Auto-lend already on the pair, in its slot: the form
    *  opens on its recorded limits (`initial`), and adding money is optional. */
   change?: { initial: AutoLendInput; restart: boolean; slot: number };
+  /** #3761 — the one link from the form to a one-time offer (a new setup). */
+  onOneTime?: () => void;
 }
 
 /**
@@ -41,12 +55,14 @@ interface AutoLendFormProps {
  * is checked against the network's live maximum. The typed form is kept,
  * so a navigation away or a review closed to change a figure keeps it.
  */
-export function AutoLendForm({ chain, own, lending, collateral, meta, onReview, onCancel, flowKey = AUTOLEND_KEY, change }: AutoLendFormProps) {
+export function AutoLendForm({ chain, own, lending, collateral, meta, onReview, onCancel, flowKey = AUTOLEND_KEY, change, onOneTime }: AutoLendFormProps) {
   const { text, format } = useCopy();
   const { isAdvanced } = useMode();
-  const [stored, setStored] = useStoredValue<AutoLendInput>(`${flowKey}:input`);
-  const input = stored ?? change?.initial ?? DEFAULT_AUTOLEND_INPUT;
   const isChange = change !== undefined;
+  // #3761 — the lender's last choices on this device, else the pre-selected.
+  const [remembered] = useState(() => (isChange ? null : loadRemembered(chain.chainId, own.account)));
+  const [stored, setStored] = useStoredValue<AutoLendInput>(`${flowKey}:input`);
+  const input = stored ?? change?.initial ?? { ...DEFAULT_AUTOLEND_INPUT, proRata: remembered?.preset.proRata ?? DEFAULT_AUTOLEND_INPUT.proRata };
   const set = (patch: Partial<AutoLendInput>) => setStored({ ...input, ...patch });
   const [touched, setTouched] = useState<Partial<Record<AutoLendField, boolean>>>({});
   const [asked, setAsked] = useState(false);
@@ -58,6 +74,15 @@ export function AutoLendForm({ chain, own, lending, collateral, meta, onReview, 
     const [maxDays, funds] = await Promise.all([readMaxDurationDays(c, diamond), readWalletFunds(c, lending, own.account, diamond)]);
     return { maxDays: Number(maxDays), balance: funds.balance };
   });
+  const factsRead = useOwnRead(
+    ['autolend', 'preset', lending.toLowerCase(), collateral.toLowerCase()],
+    (c) => readPresetFacts(c, diamond, own.account, chain.chainId, lending, collateral, FIRST_SLOT),
+    { enabled: !isChange },
+  );
+  const facts = factsRead.data;
+  const [storedPreset, setPreset] = useStoredValue<LendPreset>(`${flowKey}:preset`);
+  const preset: LendPreset = { ...(storedPreset ?? openingPreset(remembered?.preset ?? null, facts?.relend ?? null)), proRata: input.proRata };
+  const [confirmed, setConfirmed] = useStoredValue<string>(`${flowKey}:keeperConfirm`);
   const decimals = meta?.[lending.toLowerCase()]?.decimals ?? null;
   const symbol = assetName(lending, meta);
   const maxDays = reads.data?.maxDays ?? null;
@@ -91,7 +116,15 @@ export function AutoLendForm({ chain, own, lending, collateral, meta, onReview, 
   const confirm = () => {
     setAsked(true);
     if (!parsed || !parsed.ok) return;
-    onReview(autoLendDraft(lending, collateral, parsed.parsed, isChange, change?.slot));
+    if (isChange) {
+      onReview(autoLendDraft(lending, collateral, parsed.parsed, true, change.slot));
+      return;
+    }
+    // The keeper list counts as confirmed only as it reads now.
+    const r = facts?.relend;
+    const list = r && r.kind === 'grant' && r.regain.length > 0 ? regainKey(r.regain) : null;
+    saveRemembered(chain.chainId, own.account, { runs: 'keep', preset });
+    onReview(autoLendDraft(lending, collateral, parsed.parsed, false, FIRST_SLOT, preset, list !== null && confirmed === list ? list : null));
   };
 
   const field = (f: AutoLendField, label: string, hint: string, value: string, onChange: (v: string) => void, mode: 'decimal' | 'numeric' = 'decimal') => (
@@ -151,13 +184,27 @@ export function AutoLendForm({ chain, own, lending, collateral, meta, onReview, 
           />
         )}
       </FormField>
-      <div className="field field-check">
-        <label>
-          <input type="checkbox" checked={input.proRata} onChange={(e) => set({ proRata: e.target.checked })} data-testid="autolend-prorata" />
-          <span>{text('autoLend.proRataLabel')}</span>
-        </label>
-        <p className="tier-a field-hint">{text('autoLend.proRataHint')}</p>
-      </div>
+      {isChange ? (
+        <div className="field field-check">
+          <label>
+            <input type="checkbox" checked={input.proRata} onChange={(e) => set({ proRata: e.target.checked })} data-testid="autolend-prorata" />
+            <span>{text('autoLend.proRataLabel')}</span>
+          </label>
+          <p className="tier-a field-hint">{text('autoLend.proRataHint')}</p>
+        </div>
+      ) : (
+        <PresetChoices
+          preset={preset}
+          facts={facts}
+          failed={factsRead.state === 'failed'}
+          confirmed={confirmed}
+          onPreset={(next) => {
+            setPreset(next);
+            if (next.proRata !== input.proRata) set({ proRata: next.proRata });
+          }}
+          onConfirm={setConfirmed}
+        />
+      )}
       {isAdvanced && (
         <fieldset className="advanced-set" data-testid="autolend-advanced">
           <legend>{text('autoLend.advancedTitle')}</legend>
@@ -178,6 +225,13 @@ export function AutoLendForm({ chain, own, lending, collateral, meta, onReview, 
           {text('autoLend.cancel')}
         </button>
       </p>
+      {!isChange && onOneTime && (
+        <p>
+          <button type="button" className="btn btn-link" onClick={onOneTime} data-testid="autolend-one-time">
+            {text('autoLend.oneTimeLink')}
+          </button>
+        </p>
+      )}
     </form>
   );
 }
