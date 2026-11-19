@@ -7,6 +7,7 @@
  */
 import type { TypedData } from 'viem';
 import type { Config } from 'wagmi';
+import { requireAccountCode } from './accountWallet';
 import { getAccount, signMessage, signTypedData, type SignMessageParameters, type SignTypedDataParameters } from 'wagmi/actions';
 
 type Hex = `0x${string}`;
@@ -52,12 +53,14 @@ export async function signTypedDataFor<const typedData extends TypedData | Recor
   parameters: SignTypedDataParameters<typedData, primaryType> & { account: Hex },
 ): Promise<Hex> {
   assertLiveWallet(config, chainId, parameters.account);
+  await requireAccountCode(config, chainId, parameters.account);
   return signTypedData(config, parameters as SignTypedDataParameters<typedData, primaryType>);
 }
 
 /** The same for a plain message signature. */
 export async function signMessageFor(config: Config, chainId: number, parameters: SignMessageParameters & { account: Hex }): Promise<Hex> {
   assertLiveWallet(config, chainId, parameters.account);
+  await requireAccountCode(config, chainId, parameters.account);
   return signMessage(config, parameters);
 }
 
@@ -74,10 +77,19 @@ export async function sendReviewed<F extends { identity: string }>(o: {
   save: (frozen: F) => void;
   send: () => Promise<Hex>;
   failure: (e: unknown) => string;
+  /** Checks after the identity and before the record and the prompt; a
+   *  throw stops the send (#3770: an account wallet's code on the network). */
+  precheck?: () => Promise<void>;
 }): Promise<Hex | null> {
   o.apply({ type: 'sign' });
   if (o.liveIdentity() !== o.frozen.identity.toLowerCase()) {
     o.apply({ type: 'failed', message: o.failure(new WalletMoved(o.frozen.identity, o.liveIdentity())) });
+    return null;
+  }
+  try {
+    await o.precheck?.();
+  } catch (e) {
+    o.apply({ type: 'failed', message: o.failure(e) });
     return null;
   }
   o.save(o.frozen);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { awaitAccountTx, safeStatus, type AccountTxStatus } from './accountWallet';
+import { awaitAccountTx, safeStatus, queuedTo, walletKindFromCode, type AccountTxStatus } from './accountWallet';
 
 const CHAIN = ('0x' + 'c'.repeat(64)) as `0x${string}`;
 const ID = ('0x' + 'd'.repeat(64)) as `0x${string}`;
@@ -51,5 +51,36 @@ describe('awaitAccountTx', () => {
     const end = await awaitAccountTx({ status }, ID, () => {}, (e) => unread.push(e), async () => {});
     expect(end).toEqual({ kind: 'executed', hash: CHAIN });
     expect(unread).toHaveLength(1);
+  });
+});
+
+describe('walletKindFromCode', () => {
+  it('reads no code as a key wallet, a 7702 delegation as a key wallet, and other code as a contract', () => {
+    expect(walletKindFromCode(undefined)).toBe('key');
+    expect(walletKindFromCode('0x')).toBe('key');
+    expect(walletKindFromCode(`0xef0100${'ab'.repeat(20)}`)).toBe('delegated-key');
+    expect(walletKindFromCode('0x608060405234')).toBe('contract');
+    expect(walletKindFromCode(`0xef0100${'ab'.repeat(21)}`)).toBe('contract');
+  });
+});
+
+describe('queuedTo', () => {
+  const D = '0x00000000000000000000000000000000000000dd' as const;
+  it('keeps the queued transactions that call the target, with their approvals', () => {
+    const page = {
+      results: [
+        { type: 'LABEL', label: 'Next' },
+        { type: 'TRANSACTION', transaction: { id: 'a', txInfo: { to: { value: D.toUpperCase().replace('0X', '0x') } }, executionInfo: { confirmationsSubmitted: 1, confirmationsRequired: 2 } } },
+        { type: 'TRANSACTION', transaction: { id: 'b', txInfo: { to: { value: '0x00000000000000000000000000000000000000ee' } } } },
+        { type: 'TRANSACTION', transaction: { id: 'c', txInfo: { to: { value: D } } } },
+      ],
+    };
+    expect(queuedTo(page, D)).toEqual([
+      { id: 'a', confirmed: 1, required: 2 },
+      { id: 'c', confirmed: null, required: null },
+    ]);
+  });
+  it('refuses a shape it does not know rather than reading it as empty', () => {
+    expect(() => queuedTo({}, D)).toThrow();
   });
 });

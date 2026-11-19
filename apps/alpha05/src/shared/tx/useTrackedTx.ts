@@ -24,7 +24,7 @@ import { useConfig } from 'wagmi';
 import { getPublicClient } from 'wagmi/actions';
 import type { ReplacementReason, TransactionReceipt } from 'viem';
 import { announceOwnChange } from '../reads/signals';
-import { accountTxReader, awaitAccountTx } from './accountWallet';
+import { AccountWithoutCode, accountTxReader, awaitAccountTx, requireAccountCode } from './accountWallet';
 import { useCopy } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
 import { cleanUpAfterEffect, cleanUpAfterNoEffect } from './cleanUp';
@@ -222,7 +222,9 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
         apply,
         save: (f) => store.update(key, (e) => ({ ...e, frozen: f, note: null })),
         send: opts.send,
-        failure: (e) => (e instanceof WalletMoved ? text('flow.walletMoved') : refusalFromError(e).reason),
+        precheck: () => requireAccountCode(config, opts.chainId, opts.account),
+        failure: (e) =>
+          e instanceof WalletMoved ? text('flow.walletMoved') : e instanceof AccountWithoutCode ? text('flow.accountNoCode') : refusalFromError(e).reason,
       });
       if (hash === null) return;
       const ctx: Submission = {
@@ -251,9 +253,15 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
     // second resume or a reset during it is refused by the transition rule.
     const ctx = current.submission;
     if (current.phase.kind !== 'receipt-unknown' || ctx === null) throw new IllegalTransition(current.phase.kind, 'resume');
+    // #1691 on resume (#3770): follow only for the wallet and network the
+    // step was reviewed and sent from; otherwise say so and show nothing new.
+    if (current.frozen !== null && liveIdentity(config) !== current.frozen.identity.toLowerCase()) {
+      store.update(key, (e) => ({ ...e, note: text('flow.resumeWalletMoved') }));
+      return;
+    }
     apply({ type: 'resume', hash: current.phase.hash });
     await track(current.phase.hash, ctx, current.phase.viaAccount === true);
-  }, [apply, store, key, track]);
+  }, [apply, store, key, track, config, text]);
 
   return { key, phase: entry.phase, frozen: entry.frozen, note: entry.note, held: entry.submission?.held ?? null, review, run, resume, reset };
 }

@@ -13,7 +13,7 @@
  * so nothing is read from a third party the wallet does not already use.
  */
 import type { Config } from 'wagmi';
-import { getAccount } from 'wagmi/actions';
+import { getAccount, getPublicClient } from 'wagmi/actions';
 
 type Hex = `0x${string}`;
 
@@ -73,6 +73,47 @@ export async function accountTxReader(config: Config): Promise<AccountTxReader |
   return { status: async (id) => safeStatus(await sdk.txs.getBySafeTxHash(id)) };
 }
 
+/**
+ * What an address is on one network, from its code there. `key`: no code,
+ * a plain key wallet. `delegated-key`: an EIP-7702 delegation (code
+ * `0xef0100` + the delegate), still a key wallet: it signs with its key and
+ * gets no contract-wallet handling. `contract`: any other code.
+ */
+export type WalletKind = 'key' | 'delegated-key' | 'contract';
+
+export function walletKindFromCode(code: Hex | undefined): WalletKind {
+  if (code === undefined || code === '0x') return 'key';
+  if (code.toLowerCase().startsWith('0xef0100') && code.length === 2 + 2 * 23) return 'delegated-key';
+  return 'contract';
+}
+
+/** Refused before a signed step: the account wallet has no contract on the
+ *  network the step is for, so nothing it signs there can be checked or
+ *  executed. */
+export class AccountWithoutCode extends Error {
+  readonly chainId: number;
+  constructor(chainId: number) {
+    super(`The account wallet has no contract on this network (chain ${chainId}), so nothing was signed or sent.`);
+    this.name = 'AccountWithoutCode';
+    this.chainId = chainId;
+  }
+}
+
+/**
+ * #3770 — before any signed step through a Safe opened as a Safe App:
+ * confirms the wallet has contract code on the network in use, from that
+ * network's own read, and throws `AccountWithoutCode` when it does not.
+ * Any other wallet passes untouched (a key wallet, with or without a
+ * delegation, is handled as a key wallet).
+ */
+export async function requireAccountCode(config: Config, chainId: number, account: Hex): Promise<void> {
+  const { connector } = getAccount(config);
+  if (!connector || connector.id !== 'safe') return;
+  const client = getPublicClient(config, { chainId });
+  if (!client) throw new AccountWithoutCode(chainId);
+  if (walletKindFromCode(await client.getCode({ address: account })) !== 'contract') throw new AccountWithoutCode(chainId);
+}
+
 /** How long between two reads of the approvals. */
 export const ACCOUNT_POLL_MS = 15_000;
 
@@ -102,4 +143,43 @@ export async function awaitAccountTx(
     onAwaiting(s);
     await pause();
   }
+}
+
+/** The Safe client gateway, the service Safe{Wallet} itself reads its queue
+ *  from. The one off-chain source of the pending list; nothing it says is
+ *  taken as done (completion is only ever a receipt on chain). */
+export const SAFE_GATEWAY = 'https://safe-client.safe.global';
+
+/** One transaction in the wallet's queue that calls `to`. */
+export interface QueuedToTarget {
+  id: string;
+  confirmed: number | null;
+  required: number | null;
+}
+
+/** The queue entries addressed to `to`, from the gateway's queued page.
+ *  Throws on a shape it does not recognise rather than reading it as empty. */
+export function queuedTo(page: unknown, to: Hex): QueuedToTarget[] {
+  const results = (page as { results?: unknown })?.results;
+  if (!Array.isArray(results)) throw new Error('unrecognised queue');
+  const out: QueuedToTarget[] = [];
+  for (const r of results as { type?: string; transaction?: Record<string, unknown> }[]) {
+    if (r?.type !== 'TRANSACTION' || !r.transaction) continue;
+    const t = r.transaction as { id?: unknown; txInfo?: { to?: { value?: unknown } }; executionInfo?: { confirmationsSubmitted?: unknown; confirmationsRequired?: unknown } };
+    const target = t.txInfo?.to?.value;
+    if (typeof target !== 'string' || target.toLowerCase() !== to.toLowerCase()) continue;
+    out.push({
+      id: typeof t.id === 'string' ? t.id : '',
+      confirmed: typeof t.executionInfo?.confirmationsSubmitted === 'number' ? t.executionInfo.confirmationsSubmitted : null,
+      required: typeof t.executionInfo?.confirmationsRequired === 'number' ? t.executionInfo.confirmationsRequired : null,
+    });
+  }
+  return out;
+}
+
+/** Reads the wallet's queue on `chainId` and keeps what calls `to`. */
+export async function readQueuedTo(chainId: number, safe: Hex, to: Hex, fetcher: typeof fetch = fetch): Promise<QueuedToTarget[]> {
+  const res = await fetcher(`${SAFE_GATEWAY}/v1/chains/${chainId}/safes/${safe}/transactions/queued`);
+  if (!res.ok) throw new Error(`queue read ${res.status}`);
+  return queuedTo(await res.json(), to);
 }
