@@ -10,6 +10,7 @@ import { autoLendState, readMyAutoLend, shareLentByAsset, sortMyAutoLend, type M
 import { AutoLendManage, useManageOpen, useOpenManages, type OpenManage } from './AutoLendManage';
 import { manageOffers, type ManageKind } from './manage';
 import { AutoLendChange, useChangeOpen } from './AutoLendChange';
+import { InstantSlotCard } from './InstantSlotCard';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import type { TokenMetaMap } from '../reads/tokens';
@@ -94,6 +95,7 @@ export function AutoLendSection() {
               {i.acceptsProRata && <p className="tier-b">{text('autoLend.cardProRata')}</p>}
               {state === 'ended' && <p className="tier-a">{text('autoLend.cardEndedNote')}</p>}
               {state === 'stopped' && <p className="tier-a">{text('autoLend.cardStoppedNote')}</p>}
+              {chain !== null && own !== null && <InstantSlotCard intent={i} active={state === 'active'} chain={chain} own={own} meta={meta ?? null} />}
               {chain !== null && own !== null && <ManageRow row={r} state={state} chain={chain} own={own} meta={meta ?? null} onDone={read.refetch} />}
             </li>
           );

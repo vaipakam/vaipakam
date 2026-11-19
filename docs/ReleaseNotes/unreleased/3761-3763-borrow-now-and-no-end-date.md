@@ -8,4 +8,6 @@ Where the lenders ready cover only part, the borrower can borrow that part and t
 
 On the Lend side, Auto-lend now has no end date unless the lender asks for one ("Lend for a set period"). Re-lending a repayment is pre-selected only where the platform's keeper reports that step running on the network, and the form says when it is not running or cannot be read. Renewal is shown as not available yet. The review says what no end date means and how funds in a loan come back, without promising a date.
 
+An Auto-lend that already exists gains no instant-market choice by itself. Where the market can take its pair, its card now offers one line, "This Auto-lend can also fill instant borrows", which opens a review of just those choices (each pre-selected and able to be switched off, renewal not available yet), checked by the protocol before and right before signing. It moves no money and changes no limit.
+
 Advances #3761 and #3763.

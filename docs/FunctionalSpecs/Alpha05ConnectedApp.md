@@ -245,6 +245,10 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   rest; where they cover none, or the market is off on the network, the
   review says nothing is borrowed now and offers a request. Every loan ends
   on its due date; it does not renew.
+- An Auto-lend that already exists gains no instant-market consent until
+  its owner signs for it. Where the market can take its pair, its card
+  offers one line that opens a review of those consents alone, each
+  pre-selected and switchable; it moves no money and changes no limit.
 - A newly posted or edited offer waits the protocol's minimum terms age
   before fill. The review shows the configured wait and remaining chain time,
   offers no signing step while blocked, and refreshes each block. An unread
