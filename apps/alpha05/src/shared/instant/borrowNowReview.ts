@@ -87,7 +87,7 @@ export async function askPlan(
   blockNumber?: bigint,
 ): Promise<BorrowNowState> {
   const asked = await askThrough(own, async (c) => {
-    const req = instantRequest(t, 0n, await chainValidUntil(c));
+    const req = instantRequest(t, 0n, await chainValidUntil(c, 'borrowInstant'));
     return c.simulateContract({ address: diamond, ...borrowNowCall(req, sources), account: own.account, stateOverride: override, blockNumber });
   });
   if (asked.kind === 'answered') {

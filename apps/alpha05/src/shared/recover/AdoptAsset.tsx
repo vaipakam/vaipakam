@@ -13,6 +13,7 @@ import { parseAmount } from '../post/postModel';
 import { answerOrNull } from '../reads/answer';
 import { exactTokenAmount, tokenAmount, useTokenMeta, type TokenMetaMap } from '../reads/tokens';
 import { chainValidUntil } from '../tx/deadline';
+import { ApprovalWindowChoice, useApprovalWindow } from '../tx/ApprovalWindow';
 import type { LegOutcome } from '../tx/outcome';
 import { sendWrite } from '../tx/send';
 import { askThrough } from '../tx/simulate';
@@ -220,6 +221,10 @@ function AdoptFlow({ chain, own, draft, onChange, onClose }: AdoptProps & { draf
   const amountText = (v: bigint) => (nft ? v.toString() : tokenAmount(v, draft.subject.asset, meta, format));
   const read = (d: AdoptDraft, who: string) => readAdoptReview(own, diamond, d, who);
 
+  const approvalWindow = useApprovalWindow('adoptAsset', chain);
+  // #3770: the protocol checks the adoption signature as a key wallet's
+  // only, so a contract wallet cannot adopt yet; say so rather than fail.
+  const contractWallet = approvalWindow.wallet.kind === 'contract';
   const tx = useTrackedTx({
     key: ADOPT_KEY,
     chainId: chain.chainId,
@@ -227,6 +232,7 @@ function AdoptFlow({ chain, own, draft, onChange, onClose }: AdoptProps & { draf
     sources: own.sources,
     send: async () => {
       if (!review) throw new Error('no adoption under review');
+      if (contractWallet) throw new StatedRefusal({ code: 'AdoptNeedsKeyWallet', reason: text('recover.contractWalletNotYet'), reopensAt: null, remedy: null });
       const d = review.draft;
       const stop = (reason: string): never => {
         throw new StatedRefusal({ code: 'AdoptStopped', reason, reopensAt: null, remedy: null });
@@ -249,7 +255,7 @@ function AdoptFlow({ chain, own, draft, onChange, onClose }: AdoptProps & { draf
           nonce: await answerOrNull(
             c.readContract({ address: diamond, abi: VaultDepositoryFacetABI as Abi, functionName: 'adoptionNonce', args: [account] }) as Promise<bigint>,
           ),
-          deadline: await chainValidUntil(c),
+          deadline: await chainValidUntil(c, 'adoptAsset', approvalWindow.choice),
         }))
         .then((x) => x.value);
       if (nonce === null) return stop(text('recover.nonceUnread'));
@@ -401,6 +407,11 @@ function AdoptFlow({ chain, own, draft, onChange, onClose }: AdoptProps & { draf
               </>
             )}
             <WhyLink summaryKey="recover.whyAdoptSummary" detailKey="recover.whyAdopt" />
+            {contractWallet ? (
+              <p className="tier-a" data-testid="adopt-contract-wallet">{text('recover.contractWalletNotYet')}</p>
+            ) : (
+              <ApprovalWindowChoice step="adoptAsset" chain={chain} state={approvalWindow} />
+            )}
             <button type="button" className="btn btn-link" onClick={change} data-testid="recover-adopt-change">
               {text('recover.adoptChange')}
             </button>

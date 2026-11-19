@@ -349,7 +349,7 @@ export async function readPostReview(own: OwnStateClient, diamond: Hex, draft: P
   const transfer = await probePledge(own, { holding, draft, diamond, account, vault: vault as Hex });
   // The post exactly as it is sent: with a guard, the batch that arms it
   // (guardPost), so the protocol's verdict covers the guard too.
-  const dry = await askThrough(own, async (c) => c.simulateContract({ address: diamond, ...postCall(CREATE_ABI, params, parsed.guardBps, await chainValidUntil(c)), account }));
+  const dry = await askThrough(own, async (c) => c.simulateContract({ address: diamond, ...postCall(CREATE_ABI, params, parsed.guardBps, await chainValidUntil(c, 'postOffer')), account }));
   const verdict = judgeDryRun(dry, allowanceCovers);
   // A token is never priced, so only a liquid ERC-20 pair has a risk figure.
   const priced = leg.kind === 'erc20' && lendingClass === 'liquid' && collateralClass === 'liquid';
@@ -377,7 +377,7 @@ export async function readPostReview(own: OwnStateClient, diamond: Hex, draft: P
             address: diamond,
             abi: CREATE_ABI,
             functionName: 'createOffer',
-            args: [{ ...params, amountMax: parsed.amount, collateralAmountMax: parsed.collateralFloor, fillMode: 0 }, await chainValidUntil(c)],
+            args: [{ ...params, amountMax: parsed.amount, collateralAmountMax: parsed.collateralFloor, fillMode: 0 }, await chainValidUntil(c, 'postOffer')],
             account,
           }),
         )

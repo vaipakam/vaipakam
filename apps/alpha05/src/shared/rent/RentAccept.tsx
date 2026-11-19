@@ -11,7 +11,7 @@ import { useCopy } from '../copy/useCopy';
 import { refusalFromError, StatedRefusal } from '../eligibility/refusal';
 import { WhyLink } from '../help/WhyLink';
 import { GUIDE_ORIGIN, guideUrl } from '../help/guide';
-import { ACCEPT_DEADLINE_SECONDS, ACCEPT_TERMS_DOMAIN_NAME, ACCEPT_TERMS_DOMAIN_VERSION, ACCEPT_TERMS_TYPES, buildAcceptTerms, freshNonce } from '../offers/acceptTerms';
+import { ACCEPT_TERMS_DOMAIN_NAME, ACCEPT_TERMS_DOMAIN_VERSION, ACCEPT_TERMS_TYPES, buildAcceptTerms, freshNonce } from '../offers/acceptTerms';
 import { legVerdict, moved, openedLoan } from '../offers/acceptOutcome';
 import { offerAmount } from '../offers/offerLine';
 import { readVault } from '../offers/reads';
@@ -28,6 +28,8 @@ import { askAfter } from '../tx/simulate';
 import { useStoredValue, useTxNote } from '../tx/txStore';
 import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
 import { useTrackedTx } from '../tx/useTrackedTx';
+import { stepWindow } from '../tx/deadline';
+import { ApprovalWindowChoice, useApprovalWindow } from '../tx/ApprovalWindow';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { formatUtc, shortAddress } from '../ui/format';
 import { Notice } from '../ui/Notice';
@@ -88,6 +90,8 @@ export function RentAccept({ offerId, chain, own, meta, terms, onClose }: RentAc
   const exact = (asset: Hex, v: bigint) => exactTokenAmount(v, asset, meta, format);
   const { readAllowance, allowanceIo, approveExactly, putBack } = approvalFlow({ own, config, chainId: chain.chainId, diamond, copy, exactAmount: exact, setStep });
 
+  // #3770: a contract wallet chooses how long its owners have to approve.
+  const approvalWindow = useApprovalWindow('acceptRental', chain);
   const tx = useTrackedTx({
     key: flowKey,
     chainId: chain.chainId,
@@ -118,7 +122,7 @@ export function RentAccept({ offerId, chain, own, meta, terms, onClose }: RentAc
         linkedLoanId: r.linkedLoanId,
         riskTermsHash: r.riskTermsHash,
         nonce: freshNonce(),
-        deadline: block.value.timestamp + BigInt(ACCEPT_DEADLINE_SECONDS),
+        deadline: block.value.timestamp + BigInt(stepWindow('acceptRental', approvalWindow.choice)),
         illiquidLending: r.nftClass === 'illiquid',
         illiquidCollateral: false,
       });
@@ -310,6 +314,7 @@ export function RentAccept({ offerId, chain, own, meta, terms, onClose }: RentAc
               <RiskGate chain={chain} own={own} need={riskNeed} source={{ kind: 'offer', offerId }} pairLabel={pairLabel} onOpen={() => setRiskOpen(riskNeed)} />
             )}
             <WhyLink summaryKey="accept.signSummary" detailKey="rent.signWhy" />
+            <ApprovalWindowChoice step="acceptRental" chain={chain} state={approvalWindow} />
             {blockers.length === 0 && (
               <p className="consent tier-a">
                 <label>

@@ -20,6 +20,7 @@ import { allowanceMoved, approvalFlow } from '../tx/approvalFlow';
 import type { LegOutcome } from '../tx/outcome';
 import { askAfter } from '../tx/simulate';
 import { readValidUntil } from '../tx/deadline';
+import { ApprovalWindowChoice, useApprovalWindow } from '../tx/ApprovalWindow';
 import { cleanUpLeg } from '../tx/cleanUp';
 import { useStoredValue, useTxNote } from '../tx/txStore';
 import { useMounted, useReviewRefresh } from '../tx/useReviewRefresh';
@@ -151,6 +152,8 @@ export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onC
   /** The flow's numbered prompts, kept across the tracker's release step. */
   const counter = useRef<{ n: number; total: number }>({ n: 0, total: 0 });
 
+  // #3770: a contract wallet chooses how long its owners have to approve.
+  const approvalWindow = useApprovalWindow('postOffer', chain);
   const tx = useTrackedTx({
     key: flowKey,
     chainId: chain.chainId,
@@ -233,7 +236,7 @@ export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onC
       //    With a guard, the post is the batch that arms it (guardPost).
       //    The deadline (#3412) is read from the chain's clock now, so the
       //    dry run and the write carry the same one.
-      const call = postCall(CREATE_ABI, r.params, r.draft.parsed.guardBps, await readValidUntil(own));
+      const call = postCall(CREATE_ABI, r.params, r.draft.parsed.guardBps, await readValidUntil(own, 'postOffer', approvalWindow.choice));
       const dry = await askAfter(own, approvedAt, (c, blockNumber) => c.simulateContract({ address: diamond, ...call, account, blockNumber }));
       if (dry.kind === 'reverted') return stop(format(k.dryRunRefused, { reason: refusalFromError(dry.error).reason }));
       if (dry.kind === 'unreadable') return stop(format('flow.unreadable', { reason: dry.reason }));
@@ -478,6 +481,7 @@ export function PostOffer({ flowKey, draft, chain, own, meta, terms, onEdit, onC
             )}
             <WhyLink summaryKey={k.feeSummary} detailKey={k.feeWhy} />
             <WhyLink summaryKey={k.postSummary} detailKey={k.postWhy} />
+            <ApprovalWindowChoice step="postOffer" chain={chain} state={approvalWindow} />
             {blockers.length === 0 && (
               <p className="consent tier-a">
                 <label>

@@ -2279,6 +2279,7 @@ export const copy = {
     later: B('Replacing your main wallet comes in a later update.'),
   },
   recover: {
+    contractWalletNotYet: A('A multi-signature wallet cannot adopt an asset yet: the protocol accepts this signature only from a key wallet. Nothing is signed or sent here.'),
     title: B('Recover an asset'),
     lead: B('An asset sent straight to your vault is not counted as yours. Adopt it, or disown it.'),
     connectPrompt: B('Connect a wallet to look for assets sent straight to its vault.'),
@@ -4895,9 +4896,18 @@ export const copy = {
     restGo: B('Post a request for the rest'),
     openPositions: B('See your loans'),
   },
+  approvalWindow: {
+    label: B('Time to gather approvals'),
+    ends: A('Valid until {{when}}.'),
+    endsUnread: A('The end time could not be read from the chain yet.'),
+    anyone: A('Once enough owners have approved, anyone can submit this at any time before then. The terms cannot change, but the market can. To withdraw it sooner, your wallet must reject the pending transaction.'),
+    livePrice: A('This step uses a live price. All approvals must arrive within 30 minutes, so gather your approvers first.'),
+    twoRounds: A('Your wallet approves twice: first the signed terms, then the transaction that uses them. This time covers both rounds.'),
+    capped: A('At most 24 hours here: if the source is flagged before this lands, the step bars your vault.'),
+  },
   framing: {
     title: B('This page is shown inside another site'),
-    body: A('The app works only on its own address, or inside the official Safe wallet app. Here it acts on nothing and connects no wallet.'),
+    body: A('The app works only on its own address, or inside your multi-signature wallet’s own site. Here it acts on nothing and connects no wallet.'),
     open: B('Open the app on its own address'),
   },
   kit: {

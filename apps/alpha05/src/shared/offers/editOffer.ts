@@ -324,7 +324,7 @@ export function editBlockers(r: Pick<EditReview, 'facts' | 'terms' | 'move' | 'b
 
 /** The call's arguments, with a deadline read from the chain now. */
 export async function modifyArgs(c: PublicClient, offerId: bigint, t: EditTerms) {
-  return [offerId, t, await chainValidUntil(c)] as const;
+  return [offerId, t, await chainValidUntil(c, 'editOffer')] as const;
 }
 
 export async function readEditReview(own: OwnStateClient, diamond: Hex, offerId: bigint, terms: EditTerms, identity: string, copy: Copy): Promise<EditReview> {

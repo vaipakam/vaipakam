@@ -195,7 +195,7 @@ async function readHandover(own: OwnStateClient, diamond: Hex, loan: CashLoan): 
       );
     if (!consent) continue;
     const asked = await askThrough(own, async (c) =>
-      c.simulateContract({ address: diamond, ...takeoverCall(loan.loanId, i.owner, i.slot, await chainValidUntil(c)), account: own.account }),
+      c.simulateContract({ address: diamond, ...takeoverCall(loan.loanId, i.owner, i.slot, await chainValidUntil(c, 'slotTakeover')), account: own.account }),
     );
     if (asked.kind === 'answered') return { kind: 'ready', owner: i.owner, slot: i.slot, receives: loan.principal };
     if (asked.kind === 'unreadable') unread = asked.reason;
@@ -230,7 +230,7 @@ async function readDirectSale(own: OwnStateClient, diamond: Hex, loan: CashLoan)
     }
     if (!buyOfferCandidate(x.o, loan, own.account)) continue;
     const asked = await askThrough(own, async (c) =>
-      c.simulateContract({ address: diamond, ...directSaleCall(loan.loanId, x.id, MAX, MAX, await chainValidUntil(c)), account: own.account }),
+      c.simulateContract({ address: diamond, ...directSaleCall(loan.loanId, x.id, MAX, MAX, await chainValidUntil(c, 'directSale')), account: own.account }),
     );
     if (asked.kind === 'unreadable') unread = asked.reason;
     if (asked.kind !== 'reverted') continue;
@@ -242,7 +242,7 @@ async function readDirectSale(own: OwnStateClient, diamond: Hex, loan: CashLoan)
   quoted.sort((a, b) => (a.net === b.net ? 0 : a.net > b.net ? -1 : 1));
   for (const q of quoted) {
     const asked = await askThrough(own, async (c) =>
-      c.simulateContract({ address: diamond, ...directSaleCall(loan.loanId, q.offerId, q.net, MAX, await chainValidUntil(c)), account: own.account }),
+      c.simulateContract({ address: diamond, ...directSaleCall(loan.loanId, q.offerId, q.net, MAX, await chainValidUntil(c, 'directSale')), account: own.account }),
     );
     if (asked.kind === 'answered') return { kind: 'ready', ...q };
     if (asked.kind === 'unreadable') unread = asked.reason;

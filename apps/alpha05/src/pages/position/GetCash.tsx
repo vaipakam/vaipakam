@@ -421,7 +421,7 @@ function CashFlow(props: GetCashProps & { route: Route; read: GetCashRead | null
     sources: own.sources,
     send: async () => {
       if (!plan) throw new Error('nothing under review');
-      const validUntil = await readValidUntil(own);
+      const validUntil = await readValidUntil(own, 'getCashPlan');
       const call = callOf(plan, validUntil);
       const asked = await askThrough(own, (c) => c.simulateContract({ address: diamond, ...call, account }));
       if (asked.kind === 'reverted')
@@ -495,7 +495,7 @@ function CashFlow(props: GetCashProps & { route: Route; read: GetCashRead | null
       return { kind: 'changed', what: text('getCash.changed') };
     }
     // The reviewed figures are the ones sent, so they are the ones asked.
-    const asked = await askThrough(own, async (c) => c.simulateContract({ address: diamond, ...callOf(plan, await chainValidUntil(c)), account }));
+    const asked = await askThrough(own, async (c) => c.simulateContract({ address: diamond, ...callOf(plan, await chainValidUntil(c, 'getCashPlan')), account }));
     if (asked.kind === 'reverted') return { kind: 'refused', refusal: refusalFromError(asked.error) };
     if (asked.kind === 'unreadable') return { kind: 'unreadable', reason: asked.reason };
     return { kind: 'ok' };

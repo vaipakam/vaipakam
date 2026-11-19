@@ -140,7 +140,7 @@ export function BorrowNowFlow({ terms, chain, own, meta, termsState, onEdit, onR
       let call: ReturnType<typeof borrowNowCall>;
       let dry: Awaited<ReturnType<typeof askAfter>>;
       try {
-        const deadline = await readValidUntil(own);
+        const deadline = await readValidUntil(own, 'borrowInstant');
         call = borrowNowCall(instantRequest(t, plan.total, deadline), r.sources);
         dry = await askAfter(own, approvedAt, (c, blockNumber) => c.simulateContract({ address: diamond, ...call, account, blockNumber }));
       } catch (e) {
