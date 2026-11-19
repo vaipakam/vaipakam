@@ -35,6 +35,7 @@
  *       GET  /offers/by-creator/:address     GET /loans/:loanId
  *       GET  /loans/by-lender/:address   GET /loans/by-borrower/:address
  *       GET  /loans/rate-candles  GET  /loans/by-participant
+ *       GET  /loans/slot-history
  *       GET  /activity            GET  /claimables/:address
  *       GET  /rewards/claimed
  *       GET  /claim-candidates/:address   GET /config/:chainId
@@ -66,6 +67,7 @@
  * signing Worker reads (#1722). The GET surface stays public-read.
  */
 
+import { handleSlotHistory } from './slotHistoryRoute';
 import {
   hasD1Binding,
   maintenanceRefusal,
@@ -669,6 +671,10 @@ export default {
         }
         if (url.pathname === '/loans/timeseries') {
           return handleLoansTimeseries(req, resolved);
+        }
+        if (url.pathname === '/loans/slot-history') {
+          // One Auto-lend slot's history card (slotHistoryRoute.ts).
+          return handleSlotHistory(req, resolved);
         }
         if (url.pathname === '/loans/rate-candles') {
           // Rate Desk phase 2 (#1130) — per-market executed-rate OHLC series.

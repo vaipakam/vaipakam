@@ -1,0 +1,9 @@
+## Thread — Auto-lend slot history, served by the indexer
+
+The indexer now serves one Auto-lend slot's history at `/loans/slot-history`, so the slot's card can show it without working anything out itself. Every figure describes past loans and is labelled "past loans, not a forecast"; nothing in it suggests a rate to the slot's owner.
+
+The answer has three parts. The slot's terms are read from its own set and cancel events, with the time the terms in force were first set: a re-set with the same terms keeps that time, and a change to any term, or a set after a cancel, starts it again. The rate comparison covers loans opened on the same pair over the last 30 days that the slot could have made. It gives the lowest rate, the highest, and the rate below which half the amount opened, with the loan count, and states the slot's own minimum beside them. A loan counts only when its agreed terms and amount are confirmed, both sides are ordinary tokens, it is not a sale's bookkeeping loan, its term is one the slot accepts, it is at least the slot's smallest fill, and its lender and borrower were different wallets when it opened. With fewer than five such loans, or fewer than three borrowers, the answer says there are not enough loans to compare and gives no figure.
+
+The share of time lent is the slot's principal out on loan divided by the money behind it, weighted by time, over the last 30 days or since the terms in force were set, whichever is later. The money behind the slot is its live principal plus its unlent capital, capped at its largest exposure, and time with nothing behind it counts for nothing. It reads the slot ledger event the contracts gain separately. Until a chain runs that build, or when a slot's record does not reach the start of the period, the share is stated as unavailable with its reason, never estimated.
+
+A migration adds two indexes so each read is one lookup. The app's card is built separately.

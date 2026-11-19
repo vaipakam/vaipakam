@@ -45,6 +45,7 @@ const API_INDEX = {
     { method: 'GET', path: '/loans/recent', description: 'Recently initiated loans.' },
     { method: 'GET', path: '/loans/timeseries', description: 'Historical loan-activity series.' },
     { method: 'GET', path: '/loans/rate-candles', description: 'Executed-rate OHLC series per market.' },
+    { method: 'GET', path: '/loans/slot-history', description: 'One Auto-lend slot: its terms, the share of time it had principal out on loan, and the rates of comparable past loans. Past loans, not a forecast.' },
     { method: 'GET', path: '/loans/by-lender/{address}', description: 'Loans where a wallet holds the lender position.' },
     { method: 'GET', path: '/loans/by-borrower/{address}', description: 'Loans where a wallet holds the borrower position.' },
     { method: 'GET', path: '/loans/by-current-holder/{address}', description: 'Loans where a wallet currently holds either position.' },
