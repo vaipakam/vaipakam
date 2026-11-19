@@ -31,7 +31,7 @@ So a borrower with eight loans funds eight payment reserves, sets eight plans, a
 
 1. **A borrowing is a record, never a loan.** It holds an owner, a pair, a list of loans, the settings and the reserve. It holds no debt, no collateral, no lien and no health factor. Its totals are read from its loans.
 2. **Each loan stays whole.** One lender, one borrower, its own collateral under its own lien, its own health factor, its own liquidation, its own position tokens. Nothing cross-defaults. One shared loan and one shared collateral holding stay rejected (owner, 2026-11-19).
-3. **The borrowing follows the wallet.** A loan counts as in a borrowing only while the holder of its borrower token is the borrowing's owner. This is the fence the instructions already use.
+3. **The borrowing follows the wallet.** A loan counts as in a borrowing only while its borrower token has not moved since the loan was added, so its holder is still the borrowing's owner. This is the fence the instructions already use, and the transfer-count rule every position-bound flow follows (#3205).
 4. **A step that anyone may run names the borrowing, never a loan of the caller's choosing**, wherever it spends the shared reserve. The order among the loans is the contract's.
 5. **An action over several loans equals the same single-loan actions made one by one.** The shared work (one movement of funds, one price read) is done once. The settlement of each loan is the one the single-loan entry uses.
 6. **No close-out depends on the borrowing.** No repayment, default, liquidation or claim writes to the borrowing's record, so nothing in it can hold a close-out back.
@@ -57,11 +57,11 @@ A loan in no borrowing has no reserve and no settings. Nothing is lost by that: 
 
 **A gather is a change of settings for the loan gathered, and is checked as one.** The loan comes under the destination's settings, so every check that writing those settings on that loan would meet applies to the gather: the bounds, the refusals (a setting the loan cannot carry refuses the gather, named), the sanctions rule, and the protected account's delay. On a protected account, a gather that would switch on or loosen for that loan anything a direct change would have to wait for (a collateral sale, a sale sooner or at a worse price, a higher highest rate, a floating rate) waits the account's delay before the loan counts as in the borrowing, and may be cancelled meanwhile. Until then the loan keeps the settings it had. A gather that only lessens these is immediate. Without this a protected owner's loan could be put under a live sale instruction at once, which the delay exists to prevent (`ExitBeforeLiquidationDesign.md` 4.1). Moving a loan out to a borrowing of its own leaves it with no instruction, which can only lessen them, and is immediate. A loan that a refinance opens in place of one of the borrowing's loans is added the same way; whether that happens in the refinance itself is an open item (section 16).
 
-**A loan that moves to another wallet** (an obligation handover, a transfer of the borrower token) stays on the old borrowing's list but no longer counts: every step skips it, with the reason "the holder is not the borrowing's owner". The new holder may open their own borrowing for it, which rewrites `borrowingOf` for that loan.
+**A loan that moves to another wallet** (an obligation handover, a transfer of the borrower token) leaves the borrowing at that moment and for good. The borrowing records, for each loan, the borrower token and its transfer count when the loan was added; a loan counts only while both still match. Every step skips a loan that no longer matches, with the reason "the borrower token moved". A round trip (away and back) does not restore it: the holder gathers it again, and the gather's checks apply. The new holder may open their own borrowing for it, which rewrites `borrowingOf` for that loan.
 
-**The list is pruned lazily.** A loan that has closed, or that another holder has taken into their own borrowing, is dropped from the list by the next action on the borrowing, by the next add, or by a prune that anyone may run. A loan that is Active or in the liquidation fallback counts as open. No close-out path touches the list (rule 6).
+**The list is pruned lazily, and what leaves is dropped whether or not it went anywhere.** A loan that has closed, or whose borrower token has moved, is dropped from the list by the next action on the borrowing, by the next add or gather, or by a prune that anyone may run. It does not wait for the new holder to open a borrowing: another holder's choice must not keep an entry on this list. A loan that is Active or in the liquidation fallback counts as open. No close-out path touches the list (rule 6).
 
-**A cap on open loans per borrowing.** A governed setting. Its value is set from a measurement (section 16, item 1): the largest count at which a run over the whole borrowing fits comfortably in one transaction. An add that would pass the cap is refused before anything moves.
+**A cap on the list, not only on the loans that count.** A governed setting. Its value is set from a measurement (section 16, item 1): the largest count at which a run over the whole borrowing fits comfortably in one transaction. Opening, adding and gathering each prune first and then check the cap against the stored list, and refuse before anything moves if it would pass. Nothing else adds an entry, so the stored list never holds more than the cap, and every walk, which reads the stored list and drops what it finds closed or moved, is bounded by the cap whatever other holders do.
 
 **Protected accounts.** A lock or a replacement freezes the borrowing's reserve and settings with the rest of the account. What a replacement does with the record is an open item (section 16).
 
@@ -129,7 +129,7 @@ The holder's own actions may name loans, because the holder may choose. A step t
 - Only the borrowing's owner may name it, and only for the same pair. The loans opened must carry interest by time, as every instant borrow's do.
 - **The call states the settings version it read.** If the settings changed since, the call is refused, so a borrower never adds loans under settings they did not see.
 - **A source above the borrowing's own limit is skipped and reported**: the highest rate for a fixed loan, the highest margin for a floating one. A loan must never enter a borrowing already outside the limit that borrowing renews under.
-- **The cap on open loans** is checked first, counting only loans still open after a prune.
+- **The cap** is checked first, against the stored list after a prune (section 4).
 - Each new loan is an ordinary new loan: its own term from its own opening, its own collateral, its own fee. Fees stay as decided on 2026-11-17 for every loan, with no fee by kind or by route.
 - **"Borrowed X of Y"** is an app figure. Y is what the borrower said they wanted; the contracts hold no target and promise none.
 
@@ -219,7 +219,7 @@ Decided by the owner on 2026-11-19 with these changes:
 
 | Where | Change |
 | --- | --- |
-| Storage | The borrowing record, `borrowingOf[loanId]`, the governed cap. The group label's two fields go. Reserve rows, instruction records, borrower renewal limits, the due-date plan and the exit level are keyed by borrowing. Run the storage-layout guard's `write`. |
+| Storage | The borrowing record (with each loan's borrower token and transfer count at the add), `borrowingOf[loanId]`, the governed cap. The group label's two fields go. Reserve rows, instruction records, borrower renewal limits, the due-date plan and the exit level are keyed by borrowing. Run the storage-layout guard's `write`. |
 | Reserve library | Lien and release by borrowing and depositor. One writer, as now. |
 | Standing instructions facet | Fund, withdraw, set and clear by borrowing (opening one for a loan that has none). The top-up executor takes a borrowing and walks it. The interest and due-repayment executors become one payment step with one walk (section 5). Views by borrowing. Split along a seam if it nears the size limit. |
 | New facet for borrowings | Open, gather, separate, prune, the views (a borrowing's loans, totals and settings version), and the actions of section 7. |
@@ -236,12 +236,12 @@ Decided by the owner on 2026-11-19 with these changes:
 ## 15. Tests
 
 1. Opening: by an instant borrow, by an auction's settle, by a request filled by a slot, and by the holder for a single loan; the pair is fixed; a loan on another pair or held by another wallet is refused.
-2. Membership: a loan whose borrower token moved is skipped by every step with the reason; the new holder opens their own borrowing for it; the old borrowing's list drops it at the next prune; a closed loan is pruned; a loan in the fallback counts as open.
+2. Membership: a loan whose borrower token moved is skipped by every step with the reason; a round trip does not restore it; the new holder opens their own borrowing for it; the old borrowing's list drops it at the next prune whether or not the new holder opened one; a closed loan is pruned; a loan in the fallback counts as open. The stored list never passes the cap: move loans out to a wallet that opens no borrowing, add new ones up to the cap, repeat, and the list's length and each walk's gas stay bounded.
 3. No close-out path writes to a borrowing: repay, default, liquidate and claim each loan of a full borrowing, with the list never pruned, and each behaves as for a loan in no borrowing.
 4. Reserve: funded once, drawn by any loan of the borrowing; the payment step pays in the order each payment fell due, interest and repayments in one walk, and top-ups go to the lowest health first, whatever the caller does; with a repayment due on one loan, interest due on another and a reserve that covers only one, the outcome is the same on every call; a short reserve pays what it can in that order and skips a repayment it cannot make whole; the depositor withdraws the rest at any time; encumbrance holds against an offer, an intent, a claim and a payout.
 5. Settings: set once and read by every loan; the version rises on each change; a setting one loan cannot carry is refused with the loan named; a loan added later takes them.
 6. Actions: each equals the same single-loan calls one by one, in both modes; a loan that cannot complete is reported and the rest complete; funds for it stay with the holder; an over-long list is refused.
-7. Add: only the owner; same pair; refused on a stale settings version; a source above the borrowing's limit is skipped and reported; the cap is checked after a prune.
+7. Add: only the owner; same pair; refused on a stale settings version; a source above the borrowing's limit is skipped and reported; the cap is checked against the stored list after a prune.
 8. The ceiling: at the window's opening only a lender at the loan's own rate can be taken; halfway, only lenders up to halfway; one day before the due date and after, any lender up to the limit; a caller may take a dearer lender under the ceiling while a cheaper one stands ready, and the contract allows it (the stated limit of section 10); a limit at or below the loan's rate; a window shorter than a day; the margin for a floating loan; the starting rate for a fixed loan continuing as floating.
 9. A fixed loan that continues as floating stays in its borrowing and reads the highest margin from then on.
 10. Gather and separate: only the holder; the loan uses the new borrowing's reserve and settings from that moment; no fund moves; a gather is refused where the destination carries a setting the loan cannot; on a protected account a gather into a borrowing with a live collateral-sale instruction, a higher highest rate or a floating rate waits the delay, the loan keeps its old settings meanwhile, no instruction of the destination runs on it before the delay ends, and a gather that only lessens is immediate.
@@ -250,7 +250,7 @@ Decided by the owner on 2026-11-19 with these changes:
 
 ## 16. Open items for the builder to raise, not decide silently
 
-1. **The gas of an eight-loan instant borrow, a repay-all, and a whole-borrowing top-up and payment run**, measured. The cap on open loans per borrowing and the per-transaction limit of section 7 are set from it.
+1. **The gas of an eight-loan instant borrow, a repay-all, and a whole-borrowing top-up and payment run**, measured. The cap per borrowing and the per-transaction limit of section 7 are set from it.
 2. **The renewal entry's draw order** (section 5). Settled by the security review on 2026-11-19: the two limits written there. The builder confirms the walk fits the entry's size and gas, and that the set-aside calls the payment step's own sizing read.
 3. **A refinance's replacement loan:** added to the borrowing inside the refinance, or by the holder afterwards with the app prompting. The refinance facet is near the size limit, so the second is the default unless the first is cheap.
 4. **A protected account's replacement:** whether the borrowing record moves to the replacement owner with the tokens, or is opened again there.
