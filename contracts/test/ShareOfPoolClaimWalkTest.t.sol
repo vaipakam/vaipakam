@@ -134,7 +134,7 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
     ///      paying. A one-chunk side still pays in the claim itself. Drives whichever
     ///      applies and returns everything alice was paid.
     function _claimDriven() internal returns (uint256 paid) {
-        uint256 before = vpfi.balanceOf(alice);
+        uint256 before = _vaultFree(alice, address(vpfi));
         for (uint256 i; i < 8; ++i) {
             (uint8 phase, uint64 prepared, uint64 lastDay) = _domainState();
             if (phase == uint8(LibVaipakam.DomainPhase.Staging) && prepared >= lastDay) break;
@@ -150,21 +150,21 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
             n = 0;
             while (!_domain().resolveDomainPage(_dk())) { if (++n > 128) fail(); }
         }
-        paid = vpfi.balanceOf(alice) - before;
+        paid = _vaultFree(alice, address(vpfi)) - before;
     }
 
     /// @dev Nothing left: a further claim pays NOTHING — it either refuses (the
     ///      next pending day is the unfinalized one past the window, or no entry
     ///      remains) or returns zero; either way alice's balance does not move.
     function _assertNothingLeft() internal {
-        uint256 before = vpfi.balanceOf(alice);
+        uint256 before = _vaultFree(alice, address(vpfi));
         vm.prank(alice);
         (bool ok, bytes memory ret) = address(diamond).call(abi.encodeWithSelector(RewardClaimFacet.claimInteractionRewards.selector));
         if (ok) {
             (uint256 paid, , ) = abi.decode(ret, (uint256, uint256, uint256));
             assertEq(paid, 0, "a further claim pays nothing");
         }
-        assertEq(vpfi.balanceOf(alice), before, "nothing paid twice");
+        assertEq(_vaultFree(alice, address(vpfi)), before, "nothing paid twice");
     }
 
     // ── The D1 ceiling binds THROUGH the claim ───────────────────────────────
@@ -371,9 +371,9 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
         uint256 headroom = 0.5e18;
         _mut().setInteractionPoolPaidOut(cap - headroom);
 
-        uint256 balBefore = vpfi.balanceOf(alice);
+        uint256 balBefore = _vaultFree(alice, address(vpfi));
         uint256 paid = _claim();
-        uint256 delivered = vpfi.balanceOf(alice) - balBefore;
+        uint256 delivered = _vaultFree(alice, address(vpfi)) - balBefore;
 
         assertEq(paid, delivered, "reported payout equals tokens actually moved");
         assertLe(delivered, headroom, "never transfers more than the pool held");

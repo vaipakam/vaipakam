@@ -443,13 +443,13 @@ contract RewardTransportD8Test is SetupTest, IVaipakamErrors {
         _scene(NEED);
         bytes32 h = _d8(10e18, 1, 16, keccak256("d8-e"), 0, 0);
         uint256 rowBefore = _row(LibVaipakam.RewardCustodyRow.Unclassified);
-        uint256 aliceBefore = vpfi.balanceOf(alice);
+        uint256 aliceBefore = _vaultFree(alice, address(vpfi));
 
         vm.expectEmit(true, true, false, true, address(diamond));
         emit TransportDrawn(h, 1, NEED, 0);
         assertEq(_claim(), NEED, "paid in full from the epoch");
 
-        assertEq(vpfi.balanceOf(alice) - aliceBefore, NEED, "delivered to the wallet");
+        assertEq(_vaultFree(alice, address(vpfi)) - aliceBefore, NEED, "delivered to the vault");
         (uint256 lf, uint256 lr) = _legs(h);
         assertEq(lf, NEED, "the fresh leg is recorded on the epoch");
         assertEq(lr, 0);

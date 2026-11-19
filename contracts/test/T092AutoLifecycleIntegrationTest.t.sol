@@ -2058,4 +2058,69 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
     function _freeOf(address who) internal view returns (uint256) {
         return VaultDepositoryFacet(address(diamond)).getDepositoryHolding(who, mockERC20, 0);
     }
+
+    // ─── The extension's direct interest payment to the lender holder ───
+    //
+    // The extension pays the lender share straight into the lender-token
+    // holder's vault, creating it if needed (every other open-loan lender
+    // payment is held in the stored lender's vault). That is sound only
+    // while the entry checks the holder is unflagged, on the Terms, and
+    // the one who set the lender caps (design ruling 2026-11-19).
+
+    function _moveLenderToken(uint256 loanId, address to) internal {
+        uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(loanId).lenderTokenId;
+        LibTestPositionNFT.waitOutCooldown(address(diamond), tokenId);
+        vm.prank(lender);
+        LibTestPositionNFT.core(address(diamond)).transferFrom(lender, to, tokenId);
+    }
+
+    /// @notice A lender token moved to a vault-less address that is then
+    ///         flagged: the extension is refused and creates no vault.
+    function test_extend_flaggedVaultlessLenderHolder_refusedNoVault() public {
+        uint256 loanId = _setupExtendableLoan();
+        address holder = makeAddr("flaggedNewLenderHolder");
+        _moveLenderToken(loanId, holder);
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(holder, true);
+
+        vm.prank(borrower);
+        vm.expectRevert(abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, holder));
+        _f().extendLoanInPlace(loanId, 500, 45);
+        assertEq(VaultFactoryFacet(address(diamond)).getUserVaultAddress(holder), address(0), "no vault created");
+    }
+
+    /// @notice A lender token moved to a clean holder that set no caps of its
+    ///         own: the previous holder's caps do not carry, so it is refused.
+    function test_extend_newLenderHolderWithoutOwnCaps_refused() public {
+        uint256 loanId = _setupExtendableLoan();
+        address holder = makeAddr("capslessNewLenderHolder");
+        _moveLenderToken(loanId, holder);
+
+        vm.prank(borrower);
+        vm.expectRevert(AutoLifecycleFacet.BothSideAutoExtendRequired.selector);
+        _f().extendLoanInPlace(loanId, 500, 45);
+        assertEq(VaultFactoryFacet(address(diamond)).getUserVaultAddress(holder), address(0), "no vault created");
+    }
+
+    /// @notice Once the new holder sets its own caps the extension runs, the
+    ///         holder's vault is created, and the lender share arrives there
+    ///         as free balance.
+    function test_extend_newLenderHolderSetsCaps_paidAsFreeBalance() public {
+        uint256 loanId = _setupExtendableLoan();
+        address holder = makeAddr("consentingNewLenderHolder");
+        _moveLenderToken(loanId, holder);
+        vm.prank(holder);
+        _s().setAutoExtendLenderCaps(loanId, true, 0, 1000, uint64(block.timestamp + 400 days));
+
+        vm.prank(borrower);
+        _f().extendLoanInPlace(loanId, 500, 45);
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(loanId).durationDays, 45, "extended");
+        assertTrue(VaultFactoryFacet(address(diamond)).getUserVaultAddress(holder) != address(0), "vault created");
+        assertGt(
+            VaultDepositoryFacet(address(diamond)).getDepositoryHolding(holder, mockERC20, 0),
+            0,
+            "the lender share is the holder's free balance"
+        );
+    }
 }

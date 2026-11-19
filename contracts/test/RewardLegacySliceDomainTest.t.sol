@@ -164,17 +164,17 @@ contract RewardLegacySliceDomainTest is SetupTest, IVaipakamErrors {
         uint256 total = _legacyTotal();
         bytes32 h = _epochOn(1, EPOCH, 7);
         _liveFresh(total + 1e18); // the slice prices by the SCHEDULE (~1e22 a day): the live sources must bear the whole
-        uint256 before = vpfi.balanceOf(alice);
+        uint256 before = _vaultFree(alice, address(vpfi));
         uint256 ledgerBefore = _mut().getArmedFreshPaidRaw();
         assertEq(_claim(), 0, "the first claim prepares the slice and defers");
-        assertEq(vpfi.balanceOf(alice), before, "and nothing moved");
+        assertEq(_vaultFree(alice, address(vpfi)), before, "and nothing moved");
         (uint8 phase, uint64 prepared, uint32 live, uint256 ef) = _dom(id);
         assertEq(phase, uint8(LibVaipakam.DomainPhase.Staging), "preparing");
         assertEq(prepared, 2, "the window prepared");
         assertEq(live, 1, "the listed day's record");
         assertEq(ef, 0);
         assertEq(_claim(), total, "the second claim consumes and pays the whole slice");
-        assertEq(vpfi.balanceOf(alice) - before, total, "delivered whole: the epoch's part and the live part in one payout");
+        assertEq(_vaultFree(alice, address(vpfi)) - before, total, "delivered whole: the epoch's part and the live part in one payout");
         (uint256 lf, ) = _legs(h);
         assertEq(lf, EPOCH, "the epoch paid its fresh leg");
         assertEq(_mut().getArmedFreshPaidRaw() - ledgerBefore, total - EPOCH, "the live ledger charged for the rest only");
@@ -272,7 +272,7 @@ contract RewardLegacySliceDomainTest is SetupTest, IVaipakamErrors {
         }
         _liveFresh(total + 1e18);
         bytes32 key = LibRewardCustody.legacyRecordKey(LibRewardCustody.legacyDomainKey(id), 1);
-        uint256 before = vpfi.balanceOf(alice);
+        uint256 before = _vaultFree(alice, address(vpfi));
         bool overflowSeen;
         uint256 paid;
         for (uint256 k; k < 8 && paid == 0; ++k) {
@@ -281,7 +281,7 @@ contract RewardLegacySliceDomainTest is SetupTest, IVaipakamErrors {
         }
         assertTrue(overflowSeen, "fixture-live: the slice's record passed more pending epochs than it tracks");
         assertEq(paid, total, "the claim still settles the whole slice");
-        assertEq(vpfi.balanceOf(alice) - before, total, "delivered whole");
+        assertEq(_vaultFree(alice, address(vpfi)) - before, total, "delivered whole");
         (uint256 lf, ) = _legs(h);
         assertEq(lf, EPOCH, "the epoch the record held paid its fresh leg");
         (uint8 phase, , , ) = _dom(id);
