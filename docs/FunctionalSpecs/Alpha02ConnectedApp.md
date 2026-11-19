@@ -1487,18 +1487,6 @@ The app uses chain reads and indexed reads for different jobs.
   record does not state, never presents an NFT leg as a token amount, and where
   an amount exists but cannot be stated it says so rather than showing nothing.
   (Stated in full under the Activity surface below — #2383.)
-- Tokens that arrive in a vault by any route, including ones the protocol did
-  not send, can be listed. The indexer reads the token contracts' own
-  transfer records into the vault from the block the vault was created, and
-  reports each distinct token (asset, standard, token id) with the first and
-  last block it arrived in. It never stores or repeats anything a token
-  supplies about itself (name, symbol, image, metadata), nor the sender or
-  the amount, because a hostile token can say anything. The answer states
-  how far the read has reached and whether it is complete; until it is, a
-  reader must not treat the list as everything that arrived. A vault is read
-  the first time it is asked about and kept current for 30 days after it was
-  last asked about. Only an owner whose vault the protocol reports can be
-  asked about. (#3435)
 - Realtime push refreshes matching indexed views when available. Polling remains
   the fallback.
 - The push signal covers every class of change a holder-keyed view depends on —
