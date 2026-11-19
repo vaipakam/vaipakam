@@ -37,6 +37,9 @@
 //  - the indexer's `GET /offers/:id/nearest?chainId&limit` (#3623): the
 //    other side's open token offers on the offer's pair, ranked as the
 //    indexer ranks them. Refused while the posture is `down`;
+//  - the indexer's `GET /intents/nearest` (#3660): the open borrow requests
+//    closest to an Auto-lend slot's terms, ranked as the indexer ranks them.
+//    Refused while the posture is `down`;
 //  - the indexer's `GET /offers/markets?chainId`, the rate desk's market
 //    list: the open token-against-token offers above, unexpired and without
 //    the sale and early-close vehicles, grouped by both tokens and the term,
@@ -256,6 +259,33 @@ async function nearestOffers(id, url) {
   }
   all.sort((a, b) => a.rateGapBps - b.rateGapBps || Math.abs(a.durationDays - me.durationDays) - Math.abs(b.durationDays - me.durationDays) || b.offerId - a.offerId);
   return { status: 200, body: { chainId: CHAIN_ID, offerId: Number(id), eligible: true, candidates: all.slice(0, limit), oppositeOpen: all.length } };
+}
+
+/** `/intents/nearest` (#3660): the open borrow requests on an Auto-lend
+ *  slot's pair, unexpired, without the vehicles and the slot owner's own,
+ *  closest rate first (how far a request's ceiling sits below the slot's
+ *  lowest rate), then by how far its term runs past the slot's longest,
+ *  newest on a tie, as the indexer ranks them. */
+async function nearestForIntent(url) {
+  const p = url.searchParams;
+  const owner = (p.get('owner') ?? '').toLowerCase();
+  const lending = (p.get('lending') ?? '').toLowerCase();
+  const collateral = (p.get('collateral') ?? '').toLowerCase();
+  const minRate = Number(p.get('minRateBps'));
+  const maxDays = Number(p.get('maxDurationDays'));
+  const limit = Math.min(10, Math.max(1, Number(p.get('limit') ?? 5)));
+  const all = [];
+  for (const oid of await offerIds()) {
+    const row = await offerRow(oid);
+    if (row === null || !unexpired(row) || row.offerType !== 1) continue;
+    if (row.lendingAsset !== lending || row.collateralAsset !== collateral) continue;
+    if (row.assetType !== 0 || row.collateralAssetType !== 0 || row.isSaleVehicle || row.isOffsetVehicle || row.creator === owner) continue;
+    const rateGapBps = Math.max(0, minRate - Math.max(row.interestRateBps, row.interestRateBpsMax));
+    all.push({ ...row, rateGapBps });
+  }
+  const over = (r) => Math.max(0, r.durationDays - maxDays);
+  all.sort((a, b) => a.rateGapBps - b.rateGapBps || over(a) - over(b) || b.offerId - a.offerId);
+  return { chainId: CHAIN_ID, candidates: all.slice(0, limit), oppositeOpen: all.length };
 }
 
 /** `/offers/markets`: the open token-against-token offers grouped into
@@ -933,6 +963,7 @@ const server = http.createServer(async (req, res) => {
           '/offers/active',
           '/offers/markets',
           '/offers/:id/nearest',
+          '/intents/nearest',
           '/loans/recent',
           '/loans/rate-candles',
           '/loans/by-participant',
@@ -1317,6 +1348,14 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       json(res, 200, await offerMarkets());
+      return;
+    }
+    if (url.pathname === '/intents/nearest' && req.method === 'GET') {
+      if (posture === 'down') {
+        json(res, 503, { error: 'e2e stand-in: index posture is down' });
+        return;
+      }
+      json(res, 200, await nearestForIntent(url));
       return;
     }
     const nearestPath = url.pathname.match(/^\/offers\/(\d+)\/nearest$/);

@@ -256,6 +256,13 @@ keeper activation. Unsupported contract capabilities are stated as unavailable.
   the pause off; a paused Auto-lend never reads as "no matches". The owner
   may switch it off or back on for one Auto-lend through a review that moves
   no money, and the setup review says the pause starts on and what off means.
+- An active Auto-lend with money waiting can say why it is not lending.
+  The app asks the index for the open borrow requests on its pair closest
+  to its terms, then asks the protocol whether it would fill each from this
+  Auto-lend now, and states the closest one's first refusal in the
+  protocol's terms, a fill it would take, or that no request stands. It
+  never promises a fill, and an index that does not answer is said as
+  unknown, never as an empty pair.
 - A live loan's page says what the loan is to the side the reader holds:
   a fixed-rate loan for its term that does not renew (until renewal is
   built), that lent funds cannot be withdrawn, and, for the borrower,
