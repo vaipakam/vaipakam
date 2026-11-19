@@ -235,19 +235,20 @@ function SafetyState({ mode: m, now, openRows, wallet, busy, choosing, recoveryR
   );
 }
 
-/** Turning the mode on: in Basic, the shortest delay the protocol allows
- *  and NFT protection off, both said; in Advanced, the reader chooses the
- *  delay in whole days inside the protocol's bounds, and NFT protection. */
+/** Turning the mode on: in Basic, the shortest delay the protocol allows,
+ *  said; in Advanced, the reader chooses the delay in whole days inside the
+ *  protocol's bounds. In both, locking the position tokens is chosen
+ *  already, with a box to untick (#3721, owner decision 2026-11-19). */
 function TurnOnForm({ bounds, onCancel, onChosen }: { bounds: { min: number; max: number } | null; onCancel: () => void; onChosen: (d: SafetyDraft) => void }) {
   const { text, format } = useCopy();
   const { isAdvanced } = useMode();
   const min = bounds?.min ?? null;
   const days = bounds === null ? [] : Array.from({ length: Math.floor(bounds.max / DAY) - Math.ceil(bounds.min / DAY) + 1 }, (_, i) => (Math.ceil(bounds.min / DAY) + i) * DAY);
   const [delay, setDelay] = useState<number | null>(min);
-  const [nfts, setNfts] = useState(false);
+  const [nfts, setNfts] = useState(true);
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (delay !== null) onChosen({ delaySeconds: isAdvanced ? delay : min!, protectNfts: isAdvanced ? nfts : false });
+    if (delay !== null) onChosen({ delaySeconds: isAdvanced ? delay : min!, protectNfts: nfts });
   };
   if (bounds === null)
     return (
@@ -270,17 +271,17 @@ function TurnOnForm({ bounds, onCancel, onChosen }: { bounds: { min: number; max
               </select>
             )}
           </FormField>
-          <label className="choice">
-            <input type="checkbox" checked={nfts} onChange={(e) => setNfts(e.target.checked)} data-testid="vault-safety-nfts" />
-            <span>{text('safety.nftsLabel')}</span>
-          </label>
-          <p className="tier-b">{text('safety.nftsHint')}</p>
         </>
       ) : (
         <p className="tier-b" data-testid="vault-safety-basic-choice">
           {format('safety.basicChoice', { delay: formatSpan(bounds.min), max: formatSpan(bounds.max) })}
         </p>
       )}
+      <label className="choice">
+        <input type="checkbox" checked={nfts} onChange={(e) => setNfts(e.target.checked)} data-testid="vault-safety-nfts-choice" />
+        <span>{text('safety.nftsLabel')}</span>
+      </label>
+      <p className="tier-b">{text(nfts ? 'safety.nftsHint' : 'safety.nftsHintOff')}</p>
       <div className="row-actions">
         <button type="submit" className="btn btn-primary" data-testid="vault-safety-review">
           {text('safety.reviewTurnOn')}

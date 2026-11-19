@@ -1777,8 +1777,11 @@ export const copy = {
     applyDue: B('Apply due changes'),
     boundsUnreadForm: A('The protocol’s delay limits could not be read, so protected mode cannot be turned on from here yet.'),
     delayLabel: B('Delay before a payout reaches your wallet'),
-    nftsLabel: B('Also protect my position NFTs'),
-    nftsHint: A('With this on, your position NFTs are locked to this wallet and a lender position cannot be sold; unlocking them waits your delay.'),
+    nftsLabel: B('Lock my position tokens'),
+    nftsHint: A(
+      'Chosen for you: your position tokens stay with this wallet and a lender position cannot be sold; unlocking them waits your delay. It is a second wallet prompt. Untick it to leave them unlocked.',
+    ),
+    nftsHintOff: A('Your position tokens stay unlocked: they can be moved or sold as now.'),
     basicChoice: B('The delay is {{delay}}, the shortest allowed. Advanced mode lets you choose up to {{max}}.'),
     reviewTurnOn: B('Review'),
     titleEnable: B('Turn on protected mode'),

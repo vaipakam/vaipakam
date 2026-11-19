@@ -106,6 +106,11 @@ test('a recovery address another wallet proves comes first; then protected mode 
 
   await card.getByTestId('vault-safety-turn-on').click({ timeout: 60_000 });
   await expect(card.getByTestId('vault-safety-basic-choice')).toContainText('The delay is 2 days, the shortest allowed');
+  // Locking the position tokens is chosen already (#3721); this test unticks it.
+  const lockChoice = card.getByTestId('vault-safety-nfts-choice');
+  await expect(lockChoice).toBeChecked();
+  await lockChoice.uncheck();
+  await expect(card).toContainText('Your position tokens stay unlocked');
   await fitsWidth(page);
   await card.getByTestId('vault-safety-review').click();
 
@@ -128,7 +133,7 @@ test('a recovery address another wallet proves comes first; then protected mode 
   const mode = await protectionMode(sc, me);
   expect(mode.enabled).toBe(true);
   expect(Number(mode.delaySeconds)).toBe(2 * DAY);
-  // Basic mode leaves position NFT protection off: no holder lock at the
+  // Unticked, position NFT protection stays off: no holder lock at the
   // standalone PositionNFT (#3205), and the card says so.
   const core = await sc.read<Hex>('positionNFT', []);
   expect(await sc.pub.readContract({ address: core, abi: HOLDER_LOCK, functionName: 'isLocked', args: [me] })).toBe(false);
