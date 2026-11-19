@@ -52,6 +52,7 @@ describe('public data feed', () => {
       '/loans/stats',
       '/loans/rate-candles',
       '/loans/{id}',
+      '/repayment-record/{address}',
     ]);
     for (const r of FEED_ROUTES) {
       expect(r.about.source.length).toBeGreaterThan(0);
