@@ -133,7 +133,7 @@ For the length of the call a lending vault holds less of the asset than the plat
 A flash loan is not a payout. Nothing is owed to anyone and the vault ends whole. It is therefore outside the payout gate and outside the "one door to a wallet" rule of `PayoutDestinationRuleDesign.md`, and is listed there as the one outflow that is neither the owner's Withdraw nor a position settlement.
 
 - A locked, replaced or flagged owner's slot is not live and is never drawn (the existing liveness rule).
-- The consent is the owner's own, per slot, and off by default in every preset.
+- The consent is the owner's own, per slot, and stored only as the owner set it. Amended 2026-11-19 (#3761, `DefaultPathsDesign.md`): the Lend form pre-selects it where flash lending is on, shown on the review screen with its own switch and set in the transaction the owner signs. It was off in every preset before. No contract default gives it.
 - The consent needs no protected-mode delay: it cannot cause a balance to leave. The secured-vault builder may raise this (11).
 
 ### 4.9 Switches and limits
@@ -197,7 +197,7 @@ Turning the master switch off stops new flash loans at once. There is nothing to
 
 ## 8. Recommendation
 
-Build it as designed: one consent on a slot, one borrower entry, one outcome-checked vault call, nested, with the fee split through the existing fee host. Keep it off until the instant market is live on a chain.
+Build it as designed: one consent on a slot, one borrower entry, one outcome-checked vault call, nested, with the fee split through the existing fee host. Keep it off until the instant market is live on a chain. Since #3761 the launch configuration switches the instant market on from the first deploy, so this condition is met at launch once this build has passed its audit phase (`DefaultPathsDesign.md` section 5).
 
 ## 9. Build notes
 

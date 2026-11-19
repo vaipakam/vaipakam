@@ -26,6 +26,8 @@ What does **not** change: no funds are held together; each loan has one lender a
 
 A master switch, off by default, governs the whole feature. It is limited to top-tier pairs by rule; widening it to the next tier is a separate owner decision.
 
+Amended 2026-11-19 (#3761, `DefaultPathsDesign.md`): the coded default stays off, and the launch configuration switches the feature on for top-tier pairs from the first deploy, so it is available from the first loan. The Lend form pre-selects the slot consents of section 3 on its review screen, and the Borrow form opens on the instant borrow. A consent is still stored only as its owner set it.
+
 ## 3. The lender's setting
 
 An Auto-lend slot gains one setting, `instantMarket`, which requires `acceptsProRata` (interest by time) and states three standing consents, each shown and signed when the slot is set:
