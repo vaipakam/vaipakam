@@ -1,82 +1,6 @@
 [
   {
     "type": "function",
-    "name": "holderWalletAttempt",
-    "inputs": [
-      {
-        "name": "proxy",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "o",
-        "type": "tuple",
-        "internalType": "struct VaultOutflowTypes.Outflow",
-        "components": [
-          {
-            "name": "kind",
-            "type": "uint8",
-            "internalType": "enum VaultOutflowTypes.AssetKind"
-          },
-          {
-            "name": "asset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "tokenId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "amount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "to",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "class_",
-            "type": "uint8",
-            "internalType": "enum VaultOutflowTypes.OutflowClass"
-          },
-          {
-            "name": "ref",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "positionToken",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "reason",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "counterRef",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      }
-    ],
-    "outputs": [
-      {
-        "name": "delivered",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "vaultCloseGrant",
     "inputs": [
       {
@@ -371,55 +295,6 @@
       }
     ],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "event",
-    "name": "HolderWalletPaymentToVault",
-    "inputs": [
-      {
-        "name": "payer",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "holder",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "asset",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "delivered",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "positionToken",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
   },
   {
     "type": "event",
@@ -1751,22 +1626,6 @@
     "type": "error",
     "name": "HealthFactorTooLow",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "HolderWalletShort",
-    "inputs": [
-      {
-        "name": "sent",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "delivered",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
   },
   {
     "type": "error",
@@ -4149,17 +4008,6 @@
     "type": "error",
     "name": "SaleOfferAlreadyExists",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SanctionedAddress",
-    "inputs": [
-      {
-        "name": "who",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",

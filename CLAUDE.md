@@ -533,8 +533,11 @@ runs half of it on old code:
   place a mark by hand on a route.
   The holder's own move (the caller of the guarded action, recorded in
   transient storage by `LibReentrancyGuard`, holds the paid token) takes the
-  long wait. A collateral withdrawal pays through the `HolderWallet` outflow
-  class: the policy reads the payee from the token. The core, the vault
+  long wait. A collateral withdrawal releases into the borrower token
+  holder's vault through the `PositionHolder` class: the policy reads the
+  payee from the token. Nothing a loan or an open offer owes a party is paid
+  to a wallet (owner decision 2026-11-19); only the owner's own withdrawal
+  reaches one. The core, the vault
   implementation, `VaultOutflowFacet`, `VaipakamNFTFacet` and every facet
   inlining those libraries change together, so it reaches a chain by fresh
   deploy. `check-raw-payouts.mjs` (step 1d3) refuses a token or native
