@@ -55,7 +55,14 @@ Held in the vault's own protected record, beside the recovery address.
 
 Switching the claim on gives a holder of the owner key nothing new: the owner can already trigger a clawback at once. The delay on switching it on is kept so one rule covers every loosening change.
 
-**An owner who learns the recovery key is no longer safe requests a change of address, and from that moment the old key can never complete a claim.** A claim already open is dropped, because the change request is the owner's own write (4.4). While the change is pending, a request and a run are both refused (4.2, 4.5). When the change is in force, the old address is no longer the one that may ask. This holds whatever the wait is; the floor of 30 days is chosen to match the wait of a change of address, so the shortest claim is no quicker than the slowest other way of redirecting a clawback.
+**What an owner does when the recovery key is no longer safe.** Two steps, which the app offers as one action:
+
+1. **Switch the claim off.** It is immediate, it drops any open claim, and from then on the old key can ask for nothing. Only the owner can switch the claim on again, and that waits the delay. This step alone is the guarantee, and no signer can undo it.
+2. **Request a change of recovery address.** While the change is pending, a request and a run are both refused (4.2, 4.5). Once it is in force the old address is no longer the one that may ask.
+
+The second step without the first is not a guarantee, and the design does not claim it is: a signer may cancel a pending change of address, as the clawback design allows, and the old address then stays in force and may ask again. So an owner who wants the claim back with the new address switches it on only after the change is in force.
+
+The floor of 30 days matches the wait of a change of address, so the shortest claim is no quicker than the slowest other way of redirecting a clawback.
 
 ### 4.2 Asking
 
@@ -75,7 +82,8 @@ Nothing is frozen, held or delayed because a claim is open. The owner lends, bor
 
 - **Cancel:** `cancelRecoveryClaim(auth)`, by the owner or any signer, by a direct call or a signature, on the cancel lane the other pending changes use. It works while the account is locked and at any time up to the run, including after the wait has passed.
 - **A cancel always works.** The cancel, and every owner write that drops a claim, must be accepted while the platform is paused and during an escape window. A pause called for an incident must never let a claim mature while the owner is unable to answer it.
-- **Dropped by a lock, a replacement or a clawback.** Each advances the vault's epoch, and a claim counts only while its epoch is the vault's current one. The person who locks, replaces or claws back is someone who may cancel.
+- **Dropped by a lock, a replacement or a clawback.** Each advances the vault's epoch, and a claim counts only while its epoch is the vault's current one. The person who locks, replaces or claws back is someone who may cancel. The epoch alone records no time and announces nothing, so the one shared step that advances the epoch also ends an open claim through the same helper a cancellation uses: it starts the pause below and emits the drop event.
+- **One helper ends a claim.** A cancellation, an owner write and an epoch advance all end a claim through it, so each of them clears the claim, starts the pause and emits the event, and none can forget one of the three.
 - **Dropped by the owner's own writes.** Every write to the protected record that the vault authorizes with the owner's key drops an open claim, whether the step is the owner's alone or one a signer may also take (in the code read, `_asOwner`, and `_asOwnerOrSigner` when the key is the owner's): a settings change, an allowlist or signer request, a change of recovery address, switching the claim off. An owner who signs any of these holds the owner key and is acting on the account, which is what the claim asserts is no longer true. A signer's writes other than a lock and a cancellation of the claim itself drop nothing: they say nothing about the owner. Two limits keep this from being used against a claim. Only a step authorized with the owner's key **at that call** drops one: a step anyone may call that brings an earlier pending change into force (settling an address, finalizing a signer) drops nothing, or a stranger could end a claim by finalizing something old. And an old or replayed owner signature is refused by its nonce, as today, so it cannot be kept back and used later to drop a claim.
 - **The linked-chat hold drops nothing**, as today: it is a lapsing hold that cancels nothing.
 - **Using the platform does not drop a claim.** Lending, borrowing, repaying and withdrawing are not writes to the protected record, and the vault does not treat them as an answer to a claim. The alerts and the app's prompt (4.6) are how an active owner learns of one. Section 7 lists counting any activity as an alternative.
@@ -101,9 +109,10 @@ Each cancellation and each drop emits an event naming the account, who acted (or
 
 ### 4.6 Alerts and app
 
-- **Alerts.** A request is announced on every channel the account has, to the owner and to every signer: at the request, at the half-way point, seven days before and one day before the claim may be run. A cancellation, a drop, a run and a lapse are announced too. The keeper's protected-account alert pass carries them, under its existing arming flag.
+- **Alerts.** A request is announced on every channel the account has, to the owner and to every signer: at the request, at the half-way point, seven days before and one day before the claim may be run. A cancellation, a drop, a run and a lapse are announced too. The keeper's protected-account alert pass carries them, under its existing arming flags, which ship unset.
+- **Whether alerts are being sent is stated, never assumed.** The alerts are an operator's service and can be off on a deployment. The app reads the deployment's alert status from the service that sends them and shows one of three answers wherever the claim setting appears: alerts are being sent; alerts are not being sent on this network; or the status could not be read. It never shows the reminder schedule as something the owner will receive unless the first answer was read.
 - **The owner's and the signers' app.** While a claim is open, every page shows a prompt that cannot be dismissed without an answer: the recovery address has asked for this account, the date it may be run, and one action, "Cancel the claim". The owner's prompt also offers "Cancel and switch the claim off".
-- **Switching it on.** The setup shows the wait, proposes 90 days, and states section 8 before the owner confirms. Where the account has no alert channel linked, it says that the app's prompt will then be the only notice, offers to link one, and does not continue until the owner has ticked a separate acknowledgement that they will hear of a claim only by opening the app.
+- **Switching it on.** The setup shows the wait, proposes 90 days, and states section 8 before the owner confirms. Where the account has no alert channel linked, or alerts are not being sent on this network, or that could not be read, it says that the app's prompt will then be the only notice, offers to link a channel where that would help, and does not continue until the owner has ticked a separate acknowledgement that they will hear of a claim only by opening the app. An account with the claim on shows the same warning for as long as any of the three is true, so an owner learns when alerts stop after setup.
 - **The recovery address's app.** A wallet that is the recovery address of an account sees that account, whether a claim is allowed and the wait, and "Ask for this account". With a claim open it shows the dates and, once the wait has passed, "Run the claim" with the same confirmation a clawback asks for.
 - **Indexer.** The setting and claim events, and a lookup from a recovery address to the accounts that name it.
 - **Views.** One read returns: whether a claim is allowed, the wait, a pending change of either with its time, and for an open claim who asked, when, when it may be run and when it lapses, plus the end of a pause.
@@ -114,8 +123,8 @@ Each cancellation and each drop emits an event naming the account, who acted (or
 | --- | --- |
 | Protected record (vault storage) | The claim setting, the wait, a pending change of them, the open claim (requester, times, epoch) and the end of the pause, appended to the record. |
 | Vault recovery code | Set the claim setting, ask, cancel, run, and the read of 4.6. The run reaches the existing clawback with the new trigger value; what the clawback moves and records is not copied. |
-| The owner's authorization step | Drops an open claim (4.4). One place, so no setting forgets it. |
-| Lock, replacement, clawback | No new code: the claim is tied to the epoch they already advance. |
+| The owner's authorization step | Ends an open claim through the shared helper (4.4). One place, so no setting forgets it. |
+| The step that advances the epoch (lock, replacement, clawback) | Ends an open claim through the same helper, so the pause starts and the drop event is emitted. The claim is also tied to the epoch, as a second check at the run. |
 | The identity rules of the recovery address | Unchanged. |
 | Pre-deploy checks | The storage-layout golden file rewritten; the code-split test of the clawback design (its test 13) extended to the new endpoints; sizes of both vault code contracts measured, and a further code contract split off along the claim's seam if either has no room. |
 
@@ -128,10 +137,10 @@ Nothing here is a step any caller may take, so no keeper pass submits a transact
 3. Only the recovery address in force may ask: the owner, a signer, a stranger, a pending first setting and a pending change of address are each refused.
 4. A claim cannot be run before the wait has passed, and cannot be run after it lapses; the dates in the event match.
 5. The owner cancels; a signer cancels; each works on a locked account and after the wait has passed. A stranger and the recovery address cannot cancel.
-6. A lock, a replacement and a clawback each drop an open claim. The linked-chat hold does not.
+6. A lock, a replacement and a clawback each drop an open claim, each emits the drop event and each starts the 30-day pause, including a lock placed by a signer. The linked-chat hold does not.
 7. Each kind of owner write to the protected record drops an open claim. A withdrawal, a loan and a repayment do not.
 8. After a cancellation or a drop, a new request is refused for 30 days and accepted after. After a lapse it is accepted at once.
-9. The owner requests a change of recovery address while a claim is open: the claim is dropped, the old address cannot ask during the pause, and once the new address is in force the old one is refused for good. No sequence of the old key's actions completes a claim.
+9. The owner switches the claim off while a claim is open: the claim is dropped and no action of the recovery key, of a signer or of a stranger opens or runs one until the owner switches it on again and the delay has passed. Separately, the owner requests a change of address with the claim left on: the claim is dropped, a request is refused while the change is pending, and after the change is in force only the new address may ask; and where a signer cancels that pending change, the old address may ask again after the pause, as section 4.1 states.
 10. A run by anyone other than the recovery address is refused, matured or not.
 11. A run moves exactly what the owner's clawback of the same account would move, pays only the recovery address in force, leaves the account locked and recovered, and records the "recovery claim" trigger.
 12. A claim asked on a locked account, with no signer and no owner action, runs after the wait.
@@ -160,7 +169,8 @@ Nothing here is a step any caller may take, so no keeper pass submits a transact
 
 - **It is no defence against a stolen owner key.** Whoever holds the owner key can cancel every claim, for ever. Signers and the clawback are the defence there, as before.
 - **A stolen recovery key can take the account if nobody cancels in time.** With the claim off, a recovery key alone can do nothing. With it on, the wait and the alerts are the protection. Choose a wait longer than the longest time you go without looking.
-- **Alerts can fail.** A channel can be unlinked, muted or missed. The app's prompt appears only when the owner or a signer opens the app.
+- **Alerts can fail, or be off.** A channel can be unlinked, muted or missed, and the alert service can be switched off on a network. The app says which is the case when it can tell. The app's prompt appears only when the owner or a signer opens the app.
+- **Changing the recovery address does not by itself stop the old key.** A signer can cancel a pending change. Switching the claim off is what stops it (4.1).
 - **Using the platform is not an answer to a claim.** Only cancelling it, or changing a protected setting, stops it.
 - **Any signer can cancel every claim.** An account whose signer cancels each time stays as it was before this setting existed. That signer can trigger the clawback directly.
 - **The platform does not judge who should receive an account.** It does not know why an owner is silent. The claim goes to whoever controls the recovery address, and to nobody else.
