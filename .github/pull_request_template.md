@@ -57,6 +57,12 @@ Closes #<N>
 If this PR addresses a project Issue, use `Closes #N` so the
 @vaipakam-labs project card auto-moves to Done on merge. For
 multi-issue PRs use multiple `Closes` lines.
+
+A batch PR that carries several finished issues lists one `Closes #N`
+line for every issue it completes, never "n/a". An issue the PR only
+partly delivers gets "Advances #N" and a comment on the issue naming
+what is left and which area owns it (2026-11-19: batch #3743 said
+"n/a" and left about 30 finished cards open).
 -->
 
 ---
