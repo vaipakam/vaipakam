@@ -7,6 +7,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
@@ -395,6 +396,44 @@ contract PeriodicInterestSettleTest is SetupTest {
         _friendPays(100 ether);
         l = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs + 60 days), "second period closed");
+    }
+
+    function _pauseFor(uint256 secs) internal {
+        AdminFacet(address(diamond)).pause();
+        vm.warp(block.timestamp + secs);
+        AdminFacet(address(diamond)).unpause();
+    }
+
+    /// @dev #3779 — a pause inside the current period moves its end but not
+    ///      its opening: the preview shows the whole period's interest and
+    ///      every payment made toward it.
+    function testPreview_PauseInsideThePeriodKeepsItsOpening() public {
+        vm.warp(startTs + 10 days);
+        uint256 first = _friendPays(100 ether);
+        vm.warp(startTs + 15 days);
+        _pauseFor(5 days);
+        (, uint256 end_,,,,,) = RepayPeriodicFacet(address(diamond)).previewPeriodicSettle(loanId);
+        assertEq(end_, startTs + 35 days, "the end moves by the pause");
+        (uint256 expected, uint256 paid, uint256 shortfall) = _preview();
+        assertEq(expected, _interest(1000 ether, 35 days), "the period accrues for its real length");
+        assertEq(paid, first, "the whole payment counts toward it");
+        assertEq(shortfall, expected - paid);
+    }
+
+    /// @dev #3779 — a pause in an earlier period moves the current period's
+    ///      opening with it, so the earlier period's days are not read as
+    ///      this period's.
+    function testPreview_PauseInAnEarlierPeriodMovesTheOpening() public {
+        vm.warp(startTs + 10 days);
+        _pauseFor(5 days);
+        vm.warp(startTs + 35 days);
+        _friendPays(100 ether); // closes the first period (ends at 35 days)
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(l.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs + 30 days), "first period closed");
+        (uint256 expected, uint256 paid, uint256 shortfall) = _preview();
+        assertEq(expected, _interest(1000 ether, 65 days) - _interest(1000 ether, 35 days), "30 days, from 35 to 65");
+        assertEq(paid, 0, "nothing paid toward the second period yet");
+        assertEq(shortfall, expected);
     }
 
     /// @dev #3779 — one payment covering two whole periods closes both.

@@ -459,7 +459,7 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         graceEndsAt = LibPeriodicInterest.settleAllowedFromAt(loan);
         (expected, paidByBorrower, shortfall) = LibPeriodicInterest.periodFigures(
             loan,
-            periodEndAt - LibVaipakam.intervalDays(loan.periodicInterestCadence) * LibVaipakam.ONE_DAY,
+            LibPeriodicInterest.periodStartAt(loan),
             periodEndAt
         );
         canSettleNow =

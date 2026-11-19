@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibLoanClock} from "./LibLoanClock.sol";
 import {LibEntitlement} from "./LibEntitlement.sol";
+import {LibPausable} from "./LibPausable.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
@@ -117,7 +118,7 @@ library LibPeriodicInterest {
     ///         {periodOwed} and the settled credit are cumulative over the
     ///         segment. The period's own interest is the segment's accrual
     ///         through `boundary` less its accrual through the previous
-    ///         boundary (`prevBoundary`, zero before the segment began). What
+    ///         boundary (`prevBoundary`, {periodStartAt}; zero before the segment began). What
     ///         was paid toward it is the settled credit beyond what the
     ///         earlier periods of the segment accrued, at most `expected`.
     ///         `shortfall` is {periodShortfall}: normally `expected - paid`,
@@ -134,6 +135,27 @@ library LibPeriodicInterest {
         paid = settled > owedBefore ? settled - owedBefore : 0;
         if (paid > expected) paid = expected;
         shortfall = periodShortfall(loan, boundary);
+    }
+
+    /// @notice #3779 — where the current period opened: the previous
+    ///         boundary, moved only by the paused time BEFORE it.
+    /// @dev    {periodEndAt} moves the current boundary by every pause since
+    ///         the loan began, including one inside the current period; the
+    ///         opening boundary must not move with a pause that came after
+    ///         it, or the period's opening days read as an earlier period's.
+    ///         The paused time before the opening depends on where the
+    ///         opening lands, so it is found by stepping from the stamped
+    ///         checkpoint until it stops moving (a few steps at most: each
+    ///         step only adds pauses it newly reaches).
+    function periodStartAt(LibVaipakam.Loan storage loan) internal view returns (uint256 at) {
+        uint256 last = uint256(loan.lastPeriodicInterestSettledAt);
+        uint256 start = uint256(loan.startTime);
+        at = last;
+        for (uint256 i = 0; i < 8; ++i) {
+            uint256 next = last + LibPausable.pausedSecondsBetween(start, at);
+            if (next == at) break;
+            at = next;
+        }
     }
 
     /// @dev Period boundary timestamp — `lastPeriodicInterestSettledAt +
