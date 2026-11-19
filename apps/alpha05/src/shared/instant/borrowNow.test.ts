@@ -60,8 +60,15 @@ const offer = (p: Partial<StoredOffer> = {}): StoredOffer =>
     interestRateBps: 600n,
     useFullTermInterest: false,
     accepted: false,
+    durationDays: 30n,
+    allowsPartialRepay: true,
+    allowsPrepayListing: false,
+    periodicInterestCadence: 0,
+    lifecycleFlex: 0,
     ...p,
   }) as StoredOffer;
+
+const WANT = { termDays: 30, allowsPartialRepay: true };
 
 const terms: BorrowNowTerms = { lending: USDC, collateral: WETH, amount: 1000n, collateralOffered: 5n, termDays: 30, maxRateBps: 800n, allowsPartialRepay: true };
 
@@ -86,21 +93,30 @@ describe('slotCandidates', () => {
 
 describe('offerCandidate', () => {
   it('takes an open lender offer that charges by time, at or under the limit', () => {
-    expect(offerCandidate(7n, offer(), USDC, WETH, ME, 800n)).toEqual({
+    expect(offerCandidate(7n, offer(), USDC, WETH, ME, 800n, WANT)).toEqual({
       source: { kind: 1, owner: '0x0000000000000000000000000000000000000000', slot: 0, offerId: 7n },
       rateBps: 600n,
       room: 300n,
     });
   });
   it('refuses a full-term, accepted, own, dearer or borrower offer', () => {
-    expect(offerCandidate(7n, offer({ useFullTermInterest: true }), USDC, WETH, ME, 800n)).toBeNull();
-    expect(offerCandidate(7n, offer({ accepted: true }), USDC, WETH, ME, 800n)).toBeNull();
-    expect(offerCandidate(7n, offer({ creator: ME }), USDC, WETH, ME, 800n)).toBeNull();
-    expect(offerCandidate(7n, offer({ interestRateBps: 900n }), USDC, WETH, ME, 800n)).toBeNull();
-    expect(offerCandidate(7n, offer({ offerType: 1 }), USDC, WETH, ME, 800n)).toBeNull();
+    expect(offerCandidate(7n, offer({ useFullTermInterest: true }), USDC, WETH, ME, 800n, WANT)).toBeNull();
+    expect(offerCandidate(7n, offer({ accepted: true }), USDC, WETH, ME, 800n, WANT)).toBeNull();
+    expect(offerCandidate(7n, offer({ creator: ME }), USDC, WETH, ME, 800n, WANT)).toBeNull();
+    expect(offerCandidate(7n, offer({ interestRateBps: 900n }), USDC, WETH, ME, 800n, WANT)).toBeNull();
+    expect(offerCandidate(7n, offer({ offerType: 1 }), USDC, WETH, ME, 800n, WANT)).toBeNull();
+  });
+  it('leaves out an offer the match rule would refuse for this request, before the cut', () => {
+    expect(offerCandidate(7n, offer({ durationDays: 7n }), USDC, WETH, ME, 800n, WANT)).toBeNull();
+    expect(offerCandidate(7n, offer({ durationDays: 60n }), USDC, WETH, ME, 800n, WANT)).not.toBeNull();
+    expect(offerCandidate(7n, offer({ allowsPartialRepay: false }), USDC, WETH, ME, 800n, WANT)).toBeNull();
+    expect(offerCandidate(7n, offer({ allowsPartialRepay: false, lifecycleFlex: 1 }), USDC, WETH, ME, 800n, WANT)).not.toBeNull();
+    expect(offerCandidate(7n, offer({ allowsPrepayListing: true }), USDC, WETH, ME, 800n, WANT)).toBeNull();
+    expect(offerCandidate(7n, offer({ allowsPrepayListing: true, lifecycleFlex: 2 }), USDC, WETH, ME, 800n, WANT)).not.toBeNull();
+    expect(offerCandidate(7n, offer({ periodicInterestCadence: 1 }), USDC, WETH, ME, 800n, WANT)).toBeNull();
   });
   it('counts a range’s room from its ceiling less what is filled', () => {
-    expect(offerCandidate(7n, offer({ amountMax: 500n, amountFilled: 200n }), USDC, WETH, ME, 800n)?.room).toBe(300n);
+    expect(offerCandidate(7n, offer({ amountMax: 500n, amountFilled: 200n }), USDC, WETH, ME, 800n, WANT)?.room).toBe(300n);
   });
 });
 

@@ -82,8 +82,10 @@ export type RelendState =
   | { kind: 'full' }
   /** The changes the batch would carry. `regain` lists every keeper approval
    *  that switching keeper access back on would bring back (empty when access
-   *  is on or nothing is approved); a non-empty list must be confirmed. */
-  | { kind: 'grant'; changes: KeeperChange[]; regain: KeeperGrant[] };
+   *  is on or nothing is approved); a non-empty list must be confirmed.
+   *  `kept` is every other action the platform's keeper already holds: the
+   *  batch adds the roll beside them and removes none. */
+  | { kind: 'grant'; changes: KeeperChange[]; regain: KeeperGrant[]; kept: number };
 
 /** The re-lend line's state from the wallet's keeper settings. */
 export function relendState(settings: KeeperSettings | null, keeper: Hex | null, vpfi: boolean | null): RelendState {
@@ -101,7 +103,8 @@ export function relendState(settings: KeeperSettings | null, keeper: Hex | null,
     changes.push({ kind: 'actions', keeper, actions: grant.actions | AUTO_ROLL });
   }
   if (!settings.access) changes.push({ kind: 'access', on: true });
-  return { kind: 'grant', changes, regain: settings.access ? [] : settings.keepers };
+  const kept = grant !== null ? grant.actions & ~AUTO_ROLL : 0;
+  return { kind: 'grant', changes, regain: settings.access ? [] : settings.keepers, kept };
 }
 
 /** A key for the keeper list a lender confirmed: a list that moved after the

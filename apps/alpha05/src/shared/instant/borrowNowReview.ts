@@ -51,7 +51,7 @@ export async function readSources(c: PublicClient, diamond: Hex, t: BorrowNowTer
   const fromOffers = await Promise.all(
     offers.ids.map((id) =>
       readOffer(c, diamond, id).then(
-        (o) => offerCandidate(id, o, t.lending, t.collateral, borrower, t.maxRateBps),
+        (o) => offerCandidate(id, o, t.lending, t.collateral, borrower, t.maxRateBps, t),
         () => null,
       ),
     ),

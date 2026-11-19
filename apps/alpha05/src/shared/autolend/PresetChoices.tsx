@@ -1,5 +1,6 @@
 import { useCopy } from '../copy/useCopy';
 import { actionsIn } from '../keepers/keepers';
+import { actionsLine } from '../keepers/keeperReceipt';
 import { instantOff, regainKey, RENEWAL_BUILT, type InstantOff, type LendPreset, type PresetFacts } from './preset';
 
 interface PresetChoicesProps {
@@ -22,7 +23,8 @@ interface PresetChoicesProps {
  * to lend that stay off unless chosen on purpose.
  */
 export function PresetChoices({ preset, facts, failed, confirmed, onPreset, onConfirm }: PresetChoicesProps) {
-  const { text, format } = useCopy();
+  const copy = useCopy();
+  const { text, format } = copy;
   const set = (patch: Partial<LendPreset>) => onPreset({ ...preset, ...patch });
   const relend = facts?.relend ?? null;
   const off: InstantOff | 'reading' | null = facts === null ? (failed ? 'unknown' : 'reading') : instantOff(preset.proRata, facts.instant);
@@ -52,7 +54,9 @@ export function PresetChoices({ preset, facts, failed, confirmed, onPreset, onCo
   else if (relend.kind === 'unknown') relendHint = text('autoLend.relendHintUnknown');
   else if (relend.kind === 'no-keeper') relendHint = text('autoLend.relendHintNoKeeper');
   else if (!preset.relend) relendHint = text('autoLend.relendHintOff');
-  else relendHint = relend.regain.length > 0 ? text('autoLend.relendRegainLead') : format('autoLend.relendHint', { keeper: facts?.keeper ?? '' });
+  else if (relend.regain.length > 0) relendHint = text('autoLend.relendRegainLead');
+  else if (relend.kept !== 0) relendHint = format('autoLend.relendHintAdd', { keeper: facts?.keeper ?? '', actions: actionsLine(relend.kept, copy) });
+  else relendHint = format('autoLend.relendHint', { keeper: facts?.keeper ?? '' });
   // #3763 rule 7: the permission is not the run. Where the platform's keeper
   // is not running the roll step, the line says who must submit it.
   const runnerLine =

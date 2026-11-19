@@ -41,6 +41,7 @@ describe('relendState (#3761 §3.2)', () => {
         { kind: 'access', on: true },
       ],
       regain: [],
+      kept: 0,
     });
     expect(relendPreselected(s, 'running')).toBe(true);
     // #3763 rule 7: the permission is not the run.
@@ -50,7 +51,7 @@ describe('relendState (#3761 §3.2)', () => {
 
   it('adds the roll to what the keeper holds, removing nothing, and leaves access as it is when on', () => {
     const s = relendState(settings(true, [{ keeper: KEEPER, actions: 1 << 6 }]), KEEPER, false);
-    expect(s).toEqual({ kind: 'grant', changes: [{ kind: 'actions', keeper: KEEPER, actions: (1 << 6) | AUTO_ROLL }], regain: [] });
+    expect(s).toEqual({ kind: 'grant', changes: [{ kind: 'actions', keeper: KEEPER, actions: (1 << 6) | AUTO_ROLL }], regain: [], kept: 1 << 6 });
     expect(relendPreselected(s, 'running')).toBe(true);
   });
 

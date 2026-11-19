@@ -7,6 +7,7 @@
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { CopyAccess, CopyKey } from '../copy/useCopy';
 import { actionsIn, type KeeperGrant } from '../keepers/keepers';
+import { actionsLine } from '../keepers/keeperReceipt';
 import { judgeDryRun, type CreateVerdict } from '../post/postReview';
 import { tokenAcceptsApproval } from '../offers/reads';
 import { bpsPercent } from '../offers/priceGuard';
@@ -413,7 +414,9 @@ export function presetRows(r: AutoLendReview, copy: Copy): ReceiptRow[] {
       case 'granted': {
         const s = r.preset.relend;
         const regain = s.kind === 'grant' && s.regain.length > 0;
-        return regain ? text('autoLend.relendGrantedRegain') : format('autoLend.relendGranted', { keeper: r.preset.keeper ?? '' });
+        if (regain) return text('autoLend.relendGrantedRegain');
+        if (s.kind === 'grant' && s.kept !== 0) return format('autoLend.relendGrantedAdd', { keeper: r.preset.keeper ?? '', actions: actionsLine(s.kept, copy) });
+        return format('autoLend.relendGranted', { keeper: r.preset.keeper ?? '' });
       }
       case 'off':
         return text('autoLend.relendOff');

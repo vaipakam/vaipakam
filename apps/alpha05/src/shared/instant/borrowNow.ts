@@ -79,13 +79,35 @@ export function slotCandidates(intents: readonly IntentSummary[], lending: Hex, 
   return out;
 }
 
-/** A lender offer as a source: an open ERC-20 lender offer on the pair that
- *  charges interest by time, not the borrower's own, at or under the limit. */
-export function offerCandidate(offerId: bigint, o: StoredOffer, lending: Hex, collateral: Hex, borrower: Hex, maxRateBps: bigint): Candidate | null {
+/** The protocol's lifecycle "either" bits on a lender offer (#3621). */
+const FLEX_PARTIAL_REPAY = 1;
+const FLEX_PREPAY_LISTING = 2;
+
+/** What the instant borrow's own request asks of a lender offer's terms. */
+export interface RequestedTerms {
+  termDays: number;
+  allowsPartialRepay: boolean;
+}
+
+/**
+ * A lender offer as a source: an open ERC-20 lender offer on the pair that
+ * charges interest by time, not the borrower's own, at or under the limit,
+ * and whose terms the protocol's match rule accepts for this request: a term
+ * at least as long, the same partial-repayment choice (or "either"), no
+ * collateral-sale listing (or "either") and no interest schedule, since the
+ * instant request carries neither. An offer the match would refuse is left
+ * out before the list is cut to the protocol's limit, so it cannot crowd
+ * out one that can fill.
+ */
+export function offerCandidate(offerId: bigint, o: StoredOffer, lending: Hex, collateral: Hex, borrower: Hex, maxRateBps: bigint, want: RequestedTerms): Candidate | null {
   if (o.accepted || o.offerType !== 0 || o.assetType !== 0) return null;
   if (!same(o.lendingAsset as Hex, lending) || !same(o.collateralAsset as Hex, collateral)) return null;
   if (same(o.creator, borrower) || o.useFullTermInterest) return null;
   if (o.interestRateBps > maxRateBps) return null;
+  if (BigInt(want.termDays) > o.durationDays) return null;
+  if (o.allowsPartialRepay !== want.allowsPartialRepay && (o.lifecycleFlex & FLEX_PARTIAL_REPAY) === 0) return null;
+  if (o.allowsPrepayListing && (o.lifecycleFlex & FLEX_PREPAY_LISTING) === 0) return null;
+  if (o.periodicInterestCadence !== 0) return null;
   const cap = o.amountMax === 0n ? o.amount : o.amountMax;
   const room = cap > o.amountFilled ? cap - o.amountFilled : 0n;
   if (room === 0n) return null;
