@@ -2008,3 +2008,11 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 
 **Gap.** No Anvil spec announces a change yet. It needs the admin to publish v1 and announce v2 on the fork; the spec should assert the notice, accept v2 from it, and see the notice go quiet.
 
+## Keeper page after K1 (#3810)
+<a id="cov-keeper-page-k1-3810"></a>
+
+**Journey.** The keeper permissions card lists three actions: extend in place, list a position for sale and finish a position sale. Early close and offset completion are gone because the contracts no longer let a keeper take them. A keeper entry that still holds those bits shows no "advanced permissions" note for them, and saving it writes the mask without them (revoking the keeper if nothing else is left).
+
+**Tier.** Unit: `src/data/keepers.test.ts`.
+
+**Gap.** None beyond the post-deploy check; the save path is the existing `setKeeperActions` / `revokeKeeper` write.

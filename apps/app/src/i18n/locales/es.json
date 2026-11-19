@@ -1251,21 +1251,11 @@
     },
     "keepers": {
       "title": "Permisos de keepers",
-      "blurb": "Los keepers son servicios de terceros (o tu propio bot) a los que puedes permitir ejecutar acciones específicas de préstamo POR ti — iniciar un cierre anticipado, extender un préstamo, listar una posición para venta. Todo aquí está apagado hasta que lo actives, y tres interruptores deben coincidir antes de que un keeper pueda actuar: el interruptor maestro, la acción en ese keeper y un interruptor por préstamo en la página de cada préstamo.",
+      "blurb": "Los keepers son servicios de terceros (o tu propio bot) a los que puedes permitir ejecutar acciones específicas de préstamo POR ti — extender un préstamo, listar una posición para venta. Todo aquí está apagado hasta que lo actives, y tres interruptores deben coincidir antes de que un keeper pueda actuar: el interruptor maestro, la acción en ese keeper y un interruptor por préstamo en la página de cada préstamo.",
       "safetyNote": "Un keeper nunca puede recibir tu dinero — los pagos siempre van a quien posee la posición. Puedes revocar cualquier keeper (o apagar el interruptor maestro) en cualquier momento y el protocolo puede pausar todos los keepers a la vez. Si una posición cambia de manos, estos permisos aplican a la configuración del nuevo titular, no a la tuya.",
       "masterLabel": "Permitir que mis keepers aprobados actúen (interruptor maestro — nada se ejecuta mientras esté apagado)",
       "addressPlaceholder": "0x… dirección del keeper",
       "actions": {
-        "initPreclose": {
-          "label": "Iniciar el cierre anticipado de un préstamo por mí",
-          "side": "actúa en préstamos que pediste",
-          "blurb": "Inicia cualquier ruta de cierre anticipado en un préstamo donde eres el prestatario. El pago de salida sigue saliendo de tu billetera bajo tus aprobaciones permanentes."
-        },
-        "completeOffset": {
-          "label": "Finalizar un cierre por compensación por mí",
-          "side": "actúa en préstamos que pediste",
-          "blurb": "Completa un cierre anticipado por compensación una vez que su oferta fue aceptada."
-        },
         "extend": {
           "label": "Extender un préstamo en el lugar por mí",
           "side": "actúa en préstamos que pediste",

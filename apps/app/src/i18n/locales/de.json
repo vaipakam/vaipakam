@@ -1251,21 +1251,11 @@
     },
     "keepers": {
       "title": "Keeper-Berechtigungen",
-      "blurb": "Keeper sind Drittanbieter-Dienste (oder Ihr eigener Bot), denen Sie erlauben können, bestimmte Kreditaktionen FÜR Sie auszuführen — ein vorzeitiges Schließen starten, einen Kredit verlängern, eine Position zum Verkauf inserieren. Alles hier ist aus, bis Sie es einschalten, und drei Schalter müssen gemeinsam an sein, bevor ein Keeper handeln darf: der Hauptschalter, die Aktion beim jeweiligen Keeper und ein Schalter pro Kredit auf dessen Seite.",
+      "blurb": "Keeper sind Drittanbieter-Dienste (oder Ihr eigener Bot), denen Sie erlauben können, bestimmte Kreditaktionen FÜR Sie auszuführen — einen Kredit verlängern, eine Position zum Verkauf inserieren. Alles hier ist aus, bis Sie es einschalten, und drei Schalter müssen gemeinsam an sein, bevor ein Keeper handeln darf: der Hauptschalter, die Aktion beim jeweiligen Keeper und ein Schalter pro Kredit auf dessen Seite.",
       "safetyNote": "Ein Keeper kann nie Ihr Geld erhalten — Auszahlungen gehen immer an den Halter der Position. Sie können jeden Keeper jederzeit widerrufen (oder den Hauptschalter ausschalten), und das Protokoll kann alle Keeper auf einmal pausieren. Wechselt eine Position den Besitzer, gelten diese Berechtigungen nach den Einstellungen des neuen Halters, nicht nach Ihren.",
       "masterLabel": "Meinen freigegebenen Keepern das Handeln erlauben (Hauptschalter — solange er aus ist, läuft nichts)",
       "addressPlaceholder": "0x… keeper Adresse",
       "actions": {
-        "initPreclose": {
-          "label": "Für mich das vorzeitige Schließen eines Kredits starten",
-          "side": "wirkt auf Kredite, bei denen Sie Kreditnehmer sind",
-          "blurb": "Startet jeden Weg zum vorzeitigen Schließen bei einem Kredit, bei dem Sie Kreditnehmer sind. Die Ablösesumme kommt weiterhin aus Ihrer Wallet im Rahmen Ihrer bestehenden Freigaben."
-        },
-        "completeOffset": {
-          "label": "Einen Offset-Abschluss für mich fertigstellen",
-          "side": "wirkt auf Kredite, bei denen Sie Kreditnehmer sind",
-          "blurb": "Schließt ein vorzeitiges Schließen per Verrechnung ab, sobald dessen Angebot angenommen wurde."
-        },
         "extend": {
           "label": "Für mich einen Kredit direkt verlängern",
           "side": "wirkt auf Kredite, bei denen Sie Kreditnehmer sind",

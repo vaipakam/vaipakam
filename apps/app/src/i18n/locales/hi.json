@@ -1251,21 +1251,11 @@
     },
     "keepers": {
       "title": "Keeper अनुमतियाँ",
-      "blurb": "Keepers third-party services (या आपका अपना bot) हैं जिन्हें आप specific loan actions आपके लिए चलाने की अनुमति दे सकते हैं — early close शुरू करना, loan extend करना, position sale list करना। यहाँ सब off रहता है जब तक आप on न करें, और keeper act करे उससे पहले three switches agree करने चाहिए: master switch, उस keeper पर action, और हर loan page पर per-loan switch।",
+      "blurb": "Keepers third-party services (या आपका अपना bot) हैं जिन्हें आप specific loan actions आपके लिए चलाने की अनुमति दे सकते हैं — loan extend करना, position sale list करना। यहाँ सब off रहता है जब तक आप on न करें, और keeper act करे उससे पहले three switches agree करने चाहिए: master switch, उस keeper पर action, और हर loan page पर per-loan switch।",
       "safetyNote": "Keeper कभी आपका पैसा receive नहीं कर सकता — payouts हमेशा position holder को जाते हैं। आप कभी भी keeper revoke कर सकते हैं (या master switch off कर सकते हैं), और protocol सभी keepers एक साथ pause कर सकता है। Position हाथ बदलती है तो ये permissions new holder की settings पर apply होती हैं, आपकी पर नहीं।",
       "masterLabel": "मेरे approved keepers को act करने दें (master switch — यह off है तो कुछ नहीं चलता)",
       "addressPlaceholder": "0x… keeper पता",
       "actions": {
-        "initPreclose": {
-          "label": "मेरे लिए loan early close शुरू करें",
-          "side": "आपके borrowed loans पर act करता है",
-          "blurb": "उस loan पर any early-close path शुरू करें जहाँ आप borrower हैं। Payoff फिर भी आपके wallet से standing approvals के तहत आता है।"
-        },
-        "completeOffset": {
-          "label": "मेरे लिए offset close finish करें",
-          "side": "आपके borrowed loans पर act करता है",
-          "blurb": "Offer accepted होने के बाद preclose-by-offset complete करें।"
-        },
         "extend": {
           "label": "मेरे लिए loan in place extend करें",
           "side": "आपके borrowed loans पर act करता है",

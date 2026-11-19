@@ -3322,7 +3322,7 @@ const copySource = {
   keepers: {
     title: 'Keeper permissions',
     blurb:
-      'Keepers are third-party services (or your own bot) you can allow to run specific loan actions FOR you — start an early close, extend a loan, list a position for sale. Everything here is off until you turn it on, and three switches must all agree before a keeper can act: the master switch, the action on that keeper, and a per-loan switch on each loan’s page.',
+      'Keepers are third-party services (or your own bot) you can allow to run specific loan actions FOR you — extend a loan, list a position for sale. Everything here is off until you turn it on, and three switches must all agree before a keeper can act: the master switch, the action on that keeper, and a per-loan switch on each loan’s page.',
     safetyNote:
       'A keeper can never receive your money — payouts always go to whoever holds the position. You can revoke any keeper (or flip the master switch off) at any time, and the protocol can pause all keepers at once. If a position changes hands, these permissions apply to the new holder’s settings, not yours.',
     masterLabel:
@@ -3331,17 +3331,6 @@ const copySource = {
     // One entry per grantable action, keyed by name so the bit table
     // in data/keepers.ts can never drift by reordering.
     actions: {
-      initPreclose: {
-        label: 'Start closing a loan early for me',
-        side: 'acts on loans you borrowed',
-        blurb:
-          'Begin any early-close path on a loan where you are the borrower. The payoff still comes from your wallet under your standing approvals.',
-      },
-      completeOffset: {
-        label: 'Finish an offset close for me',
-        side: 'acts on loans you borrowed',
-        blurb: 'Complete a preclose-by-offset once its offer has been accepted.',
-      },
       extend: {
         label: 'Extend a loan in place for me',
         side: 'acts on loans you borrowed',

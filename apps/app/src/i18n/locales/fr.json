@@ -1251,21 +1251,11 @@
     },
     "keepers": {
       "title": "Permissions de keepers",
-      "blurb": "Les keepers sont des services tiers (ou votre propre bot) que vous pouvez autoriser à exécuter certaines actions de prêt POUR vous — démarrer une clôture anticipée, prolonger un prêt, lister une position à vendre. Tout est désactivé tant que vous ne l'activez pas, et trois interrupteurs doivent être d'accord avant qu'un keeper puisse agir : l'interrupteur principal, l'action sur ce keeper et un interrupteur par prêt sur chaque page de prêt.",
+      "blurb": "Les keepers sont des services tiers (ou votre propre bot) que vous pouvez autoriser à exécuter certaines actions de prêt POUR vous — prolonger un prêt, lister une position à vendre. Tout est désactivé tant que vous ne l'activez pas, et trois interrupteurs doivent être d'accord avant qu'un keeper puisse agir : l'interrupteur principal, l'action sur ce keeper et un interrupteur par prêt sur chaque page de prêt.",
       "safetyNote": "Un keeper ne peut jamais recevoir votre argent — les paiements vont toujours au détenteur de la position. Vous pouvez révoquer n'importe quel keeper (ou couper l'interrupteur principal) à tout moment, et le protocole peut mettre tous les keepers en pause d'un coup. Si une position change de mains, ces permissions s'appliquent aux paramètres du nouveau détenteur, pas aux vôtres.",
       "masterLabel": "Autoriser mes keepers approuvés à agir (interrupteur principal — rien ne s'exécute lorsqu'il est désactivé)",
       "addressPlaceholder": "0x… adresse du keeper",
       "actions": {
-        "initPreclose": {
-          "label": "Démarrer une clôture anticipée de prêt pour moi",
-          "side": "agit sur les prêts que vous avez empruntés",
-          "blurb": "Démarre tout chemin de clôture anticipée sur un prêt dont vous êtes l'emprunteur. Le payoff vient toujours de votre portefeuille selon vos approbations permanentes."
-        },
-        "completeOffset": {
-          "label": "Terminer une clôture par offset pour moi",
-          "side": "agit sur les prêts que vous avez empruntés",
-          "blurb": "Termine une clôture anticipée par offset une fois son offre acceptée."
-        },
         "extend": {
           "label": "Prolonger un prêt en place pour moi",
           "side": "agit sur les prêts que vous avez empruntés",

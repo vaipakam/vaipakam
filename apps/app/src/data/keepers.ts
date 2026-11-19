@@ -6,10 +6,14 @@
  * strictly OPT-IN (defaults off); a keeper can never receive funds —
  * proceeds always route to the position-NFT holder.
  *
- * app v1 exposes the five loan-lifecycle bits only (bit 0x10, the
- * old REFINANCE delegation, was retired in #3042: a refinance completes
- * when a lender accepts the borrower's own request, so there is nothing
- * left for a keeper to finish). The two
+ * The app exposes the three loan-lifecycle bits a keeper can still use.
+ * Bit 0x10, the old REFINANCE delegation, was retired in #3042 (a
+ * refinance completes when a lender accepts the borrower's own request).
+ * Bits 0x08 (start an early close) and 0x02 (complete an offset) were
+ * retired by K1 (#3810): early close, obligation handover and the offset
+ * request are the borrower-position holder's own steps, and the offset
+ * completes inside the accept of its offer. The setter still accepts those
+ * two bits, but they grant nothing (see RETIRED_ACTIONS_MASK). The two
  * capital-deployment bits (SIGNED_FILL 0x40 / AUTO_ROLL 0x80) gate
  * the lender-intent surface app doesn't have, and the reference
  * app deliberately never default-grants them — excluded here
@@ -38,8 +42,6 @@ export interface KeeperActionDef {
  *  module scope would freeze the import-time language (Codex #1309
  *  r3) — calling per render re-reads through the i18n-aware proxy. */
 export const KEEPER_ACTIONS = (): KeeperActionDef[] => [
-  { bit: 0x08, ...copy.keepers.actions.initPreclose },
-  { bit: 0x02, ...copy.keepers.actions.completeOffset },
   { bit: 0x20, ...copy.keepers.actions.extend },
   { bit: 0x04, ...copy.keepers.actions.initEarlyWithdraw },
   { bit: 0x01, ...copy.keepers.actions.completeLoanSale },
@@ -51,6 +53,20 @@ export const EXPOSED_ACTIONS_MASK = KEEPER_ACTIONS().reduce(
   (m, a) => m | a.bit,
   0,
 );
+
+/** Bits the contract still accepts but which grant nothing (K1, #3810:
+ *  0x08 init preclose, 0x02 complete offset). A save drops them rather
+ *  than carrying them forward, and they are not counted as "advanced
+ *  permissions not shown here", because there is no permission behind
+ *  them. */
+export const RETIRED_ACTIONS_MASK = 0x08 | 0x02;
+
+/** The bits of `mask` a save must carry forward unchanged: live
+ *  permissions this page does not render. Retired bits are not among
+ *  them. */
+export function preservedOutsideBits(mask: number): number {
+  return mask & ~EXPOSED_ACTIONS_MASK & ~RETIRED_ACTIONS_MASK;
+}
 
 /** Contract cap on whitelist size (LibVaipakam.MAX_APPROVED_KEEPERS). */
 export const MAX_APPROVED_KEEPERS = 5;

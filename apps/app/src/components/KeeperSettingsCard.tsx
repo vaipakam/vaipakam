@@ -25,6 +25,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
 import {
   EXPOSED_ACTIONS_MASK,
+  preservedOutsideBits,
   KEEPER_ACTIONS,
   MAX_APPROVED_KEEPERS,
   useKeeperConfig,
@@ -207,7 +208,7 @@ export function KeeperSettingsCard() {
                       disabled={busy || !walletReady}
                       onToggle={(bit) => toggleDraft(key, bit, base)}
                     />
-                    {(base & ~EXPOSED_ACTIONS_MASK) !== 0 ? (
+                    {preservedOutsideBits(base) !== 0 ? (
                       <p className="muted">{copy.keepers.extraBitsNote}</p>
                     ) : null}
                     {dirty ? (
@@ -217,10 +218,11 @@ export function KeeperSettingsCard() {
                         disabled={busy || !walletReady}
                         onClick={() =>
                           void run(async () => {
-                            // Preserve any bits outside the exposed
+                            // Preserve any live bits outside the exposed
                             // set — REPLACE semantics must not strip
-                            // permissions this UI doesn't render.
-                            const outside = base & ~EXPOSED_ACTIONS_MASK;
+                            // permissions this UI doesn't render. Retired
+                            // bits (K1) grant nothing and are dropped.
+                            const outside = preservedOutsideBits(base);
                             const next = (bits & EXPOSED_ACTIONS_MASK) | outside;
                             if (next === 0) {
                               await write('revokeKeeper', [entry.keeper]);
