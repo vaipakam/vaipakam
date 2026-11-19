@@ -56,6 +56,25 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "takeoverPositionRefusal",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
     "type": "event",
     "name": "InstantTakenOver",
     "inputs": [
@@ -320,11 +339,6 @@
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "InstantMarketDisabled",
-    "inputs": []
   },
   {
     "type": "error",

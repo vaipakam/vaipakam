@@ -187,13 +187,18 @@ contract LenderCashOutFacet is DiamondReentrancyGuard, DiamondPausable {
             SaleExitVerdictFacet(address(this)).saleExitVerdict(loanId, caller);
         // A keeper acting under the holder's early-withdrawal mandate sells
         // through a takeover slot only, and the takeover judges the sale as
-        // the holder: so is "sell now" here.
+        // the holder: so is "sell now" here, with the takeover's own
+        // position-level rule added (the instant market on, an instant-market
+        // loan with interest by time, nothing held), read from the one copy
+        // the takeover itself reverts with.
         bool keeperFor = o.holder != address(0) && caller != o.holder
             && LibAuth.keeperMayActFor(caller, LibVaipakam.KEEPER_ACTION_INIT_EARLY_WITHDRAW, loanId, o.holder);
         if (keeperFor) {
             (direct,) = SaleExitVerdictFacet(address(this)).saleExitVerdict(loanId, o.holder);
-            if (!s.instantCfg.enabled) {
+            bytes memory takeover = InstantTakeoverFacet(address(this)).takeoverPositionRefusal(loanId);
+            if (takeover.length != 0) {
                 direct = _append(direct, abi.encodeWithSelector(SourceNeedsHolder.selector, SourceKind.BuyOffer));
+                direct = _append(direct, takeover);
             }
         }
         if (amount != 0 && amount != loan.principal) {

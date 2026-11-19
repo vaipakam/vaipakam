@@ -1079,9 +1079,10 @@ contract HelperTest {
 
     /// @dev #3656 §7 — mirrors `DeployDiamond._getInstantTakeoverSelectors`.
     function getInstantTakeoverFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](3);
         selectors[0] = InstantTakeoverFacet.takeoverInstant.selector;
         selectors[1] = InstantTakeoverFacet.takeoverInstantFor.selector;
+        selectors[2] = InstantTakeoverFacet.takeoverPositionRefusal.selector;
     }
 
     function getLoanClockFacetSelectors() public pure returns (bytes4[] memory selectors) {

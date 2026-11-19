@@ -2774,10 +2774,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev Selectors for `InstantTakeoverFacet` — a lender's takeover at
     ///      face value into another lender's slot.
     function _getInstantTakeoverSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         s[0] = InstantTakeoverFacet.takeoverInstant.selector;
         // #3760 — the cash-out door's Diamond-internal takeover fill.
         s[1] = InstantTakeoverFacet.takeoverInstantFor.selector;
+        // #3760 — the position-level takeover rule, read by cashOptions.
+        s[2] = InstantTakeoverFacet.takeoverPositionRefusal.selector;
     }
 
     function _getLenderIntentFacetSelectors() internal pure returns (bytes4[] memory s) {

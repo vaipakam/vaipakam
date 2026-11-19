@@ -668,7 +668,26 @@ contract LenderAdvanceTest is InstantMarketBase {
         LenderCashOutFacet.CashOptions memory h =
             LenderCashOutFacet(address(diamond)).cashOptions(tokenId, lender, 0);
         assertEq(o.sellNow.open, h.sellNow.open, "judged as the holder");
+        assertEq(InstantTakeoverFacet(address(diamond)).takeoverPositionRefusal(loanId).length, 0, "takeover open");
         assertEq(o.sourceKinds.length, 1, "one kind");
         assertEq(uint8(o.sourceKinds[0]), uint8(LenderCashOutFacet.SourceKind.TakeoverSlot), "the takeover slot");
+
+        // Something held for the position closes every takeover, and the
+        // keeper's only source is a takeover slot: the read says so with the
+        // takeover's own refusal (Codex r4).
+        vm.warp(vm.getBlockTimestamp() + 20 days);
+        _harness();
+        LenderSideHarnessFacet(address(diamond)).harnessAllowPartial(loanId);
+        vm.prank(taker);
+        RepayFacet(address(diamond)).repayPartial(loanId, 10 ether);
+        bytes memory refusal = InstantTakeoverFacet(address(diamond)).takeoverPositionRefusal(loanId);
+        assertEq(bytes4(refusal), InstantTakeoverFacet.InstantTakeoverHeld.selector, "held closes the takeover");
+        o = LenderCashOutFacet(address(diamond)).cashOptions(tokenId, keeper, 0);
+        assertFalse(o.sellNow.open, "a keeper cannot sell while something is held");
+        bool named;
+        for (uint256 k; k < o.sellNow.refusals.length; ++k) {
+            if (keccak256(o.sellNow.refusals[k].reason) == keccak256(refusal)) named = true;
+        }
+        assertTrue(named, "names the takeover's own refusal");
     }
 }
