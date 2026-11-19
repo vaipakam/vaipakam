@@ -146,6 +146,10 @@ The wallet's `user_thresholds` row, which the keeper's watchers and the pre-noti
 
 A wallet may watch a loan it does not hold and get Telegram alerts about it. `src/watchedLoanRoutes.ts` serves `POST /watch/loans/{add,remove,list}`, each signed over the messages in `@vaipakam/lib/watchedLoans` and claimed once like every signed alert request. The watches live in the Telegram state object (schema version 2, `src/telegramState/watches.ts`), keyed per deployment, with the per-wallet limits `WATCH_MAX_LOANS_PER_WALLET` (10) and `WATCH_MAX_CHANGES_PER_DAY` (20), both plain vars. `src/watchedLoanAlerts.ts` is the alert pass: minute 2 of each five-minute window, so it never shares an invocation with the main tick; it reads the `loans` projection and one Multicall3 read of the health level and due dates per chain, within a 40-subrequest allowance. Every message says the wallet holds no position.
 
+### Goals (#3771)
+
+A wallet's goals are private notes kept for it: `src/goalRoutes.ts` serves `POST /goals/{save,delete,list}`, each signed over the messages in `@vaipakam/lib/goals` (a save names every value it stores) and claimed once. They live in the Telegram state object (schema version 3, `src/telegramState/goals.ts`), per deployment, with the limits `GOALS_MAX_PER_WALLET` (20) and `GOALS_MAX_CHANGES_PER_DAY` (50). Nothing here reads or writes the chain.
+
 ## Related
 
 - `apps/keeper` — sibling signing Worker; this one defers all on-chain submissions to it.

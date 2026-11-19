@@ -179,6 +179,7 @@ import {
   viemWatchReader,
   type WatchLaneDeps,
 } from './watchedLoanAlerts';
+import { goalLimitsOf, handleGoalRoute, isGoalPath, type GoalPath } from './goalRoutes';
 import { d1LoanOf, handleWatchRoute, isWatchPath, watchLimitsOf, type WatchPath } from './watchedLoanRoutes';
 import { chainProtectionReader, d1LocaleReader } from './alertChannelChange';
 import {
@@ -523,6 +524,10 @@ export default {
     // #3769 — watching loans the wallet does not hold (signed, limited).
     if (isWatchPath(url.pathname) && req.method === 'POST') {
       return handleWatch(req, url.pathname, resolved);
+    }
+    // #3771 — a wallet's goals: private notes, every write and read signed.
+    if (isGoalPath(url.pathname) && req.method === 'POST') {
+      return handleGoals(req, url.pathname, resolved);
     }
     // #1040 phase 1 — support-ticket capture from the connected app support
     // widget (rate limit + validation inside the handler).
@@ -885,6 +890,23 @@ function channelDeps(env: Env): ChannelDeps {
     read: chainProtectionReader(env),
     now: Math.floor(Date.now() / 1000),
   };
+}
+
+/** #3771 — one goal route, with this agent's state and limits. */
+async function handleGoals(req: Request, path: GoalPath, env: Env): Promise<Response> {
+  const corsOrigin = resolveAllowedOrigin(req, env);
+  const read = await readJsonBody(req, MAX_SIGNED_REQUEST_BODY_BYTES);
+  if (!read.ok) return json({ error: read.error }, read.status, corsOrigin);
+  const answer = await handleGoalRoute(path, read.value, {
+    state: stateStub(env),
+    authorise: (parsed, auth) => authoriseAlertRequest(req, env, parsed, auth),
+    // Every deployment in the bundle: a goal needs no RPC, only the Diamond
+    // its ids belong to.
+    deployments: () => Object.entries(DEPLOYMENTS).map(([chainId, d]) => ({ chainId: Number(chainId), diamond: d.diamond })),
+    limits: goalLimitsOf(env),
+    now: () => Math.floor(Date.now() / 1000),
+  });
+  return json(answer.body, answer.status, corsOrigin);
 }
 
 /** #3769 — what the watched-loan alert pass needs. */

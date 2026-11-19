@@ -220,6 +220,11 @@ interface BaseEnv {
   // `watchLimitsOf` (defaults 10 and 20, the owner's figures of 2026-11-19).
   WATCH_MAX_LOANS_PER_WALLET?: string;
   WATCH_MAX_CHANGES_PER_DAY?: string;
+  // #3771 — the limits on a wallet's goals: how many it may keep and how
+  // many saves and deletes a day (defaults 20 and 50), read through
+  // `goalLimitsOf`.
+  GOALS_MAX_PER_WALLET?: string;
+  GOALS_MAX_CHANGES_PER_DAY?: string;
   // T-086 Round-6 / Block D (#345) — per-IP rate-limit on the new
   // GET /opensea/signed-offer/{chainId}/{contract}/{tokenId}/{orderHash}
   // endpoint. One RTT to OpenSea per inbound (no pagination), so

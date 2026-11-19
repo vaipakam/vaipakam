@@ -60,6 +60,12 @@ import {
   buildUnwatchLoanMessage,
   buildWatchLoanMessage,
 } from '@vaipakam/lib/watchedLoans';
+import {
+  buildDeleteGoalMessage,
+  buildListGoalsMessage,
+  buildSaveGoalMessage,
+  type GoalInput,
+} from '@vaipakam/lib/goals';
 import { claimSignedRequest, SignedRequestLedgerUnavailableError } from './signedRequestUse';
 import {
   chainVerifyGate,
@@ -90,7 +96,7 @@ const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
 /** The alert actions whose message names nothing but the wallet, the
  *  chain and the time. */
-export type AlertAuthAction = 'link' | 'unlink' | 'test-alert' | 'list-watched';
+export type AlertAuthAction = 'link' | 'unlink' | 'test-alert' | 'list-watched' | 'list-goals';
 
 /** What a signed alert request authorises: one of the fixed actions,
  *  or a settings save, whose message also names the values it saves. */
@@ -98,7 +104,10 @@ export type AlertAuthorisation =
   | AlertAuthAction
   | { action: 'save-settings'; settings: AlertSettingsChange }
   /** #3769 — watch or stop watching one loan; the message names it. */
-  | { action: 'watch-loan' | 'unwatch-loan'; loanId: number };
+  | { action: 'watch-loan' | 'unwatch-loan'; loanId: number }
+  /** #3771 — save (new when `goalId` is null) or delete one goal. */
+  | { action: 'save-goal'; goalId: number | null; goal: GoalInput }
+  | { action: 'delete-goal'; goalId: number };
 
 const MESSAGE_BUILDERS: Record<
   AlertAuthAction,
@@ -108,6 +117,7 @@ const MESSAGE_BUILDERS: Record<
   unlink: buildTelegramUnlinkMessage,
   'test-alert': buildTelegramTestMessage,
   'list-watched': buildListWatchedLoansMessage,
+  'list-goals': buildListGoalsMessage,
 };
 
 /** The exact message the wallet must have signed for `auth`. */
@@ -123,6 +133,10 @@ export function alertRequestMessage(
       return buildWatchLoanMessage(req.wallet, req.chain_id, auth.loanId, req.issuedAt);
     case 'unwatch-loan':
       return buildUnwatchLoanMessage(req.wallet, req.chain_id, auth.loanId, req.issuedAt);
+    case 'save-goal':
+      return buildSaveGoalMessage(req.wallet, req.chain_id, auth.goalId, auth.goal, req.issuedAt);
+    case 'delete-goal':
+      return buildDeleteGoalMessage(req.wallet, req.chain_id, auth.goalId, req.issuedAt);
   }
 }
 

@@ -20,7 +20,7 @@ describe('telegram state store (#1722)', () => {
     new TelegramStateStore(h.sql, h.tx);
     new TelegramStateStore(h.sql, h.tx);
     const v = h.db.prepare('SELECT version FROM schema_version').all();
-    expect(v).toEqual([{ version: 2 }]);
+    expect(v).toEqual([{ version: 3 }]);
   });
 
   it('a handshake code is good once and not after it expires', () => {

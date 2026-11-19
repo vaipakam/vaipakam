@@ -39,6 +39,8 @@ import {
   type WatchRow,
   type WatchUpdate,
 } from './watches';
+import { GoalStore, type Goal, type GoalDeleteOutcome, type GoalLimits, type GoalSaveOutcome } from './goals';
+import type { GoalInput } from '@vaipakam/lib/goals';
 
 /** The binding name in `wrangler.jsonc`. */
 export interface TelegramStateBinding {
@@ -53,6 +55,7 @@ export function stateStub(env: TelegramStateBinding): DurableObjectStub<Telegram
 export class TelegramState extends DurableObject {
   private readonly store: TelegramStateStore;
   private readonly watches: WatchStore;
+  private readonly goals: GoalStore;
 
   constructor(ctx: DurableObjectState, env: unknown) {
     super(ctx, env as never);
@@ -62,6 +65,7 @@ export class TelegramState extends DurableObject {
     // The state store runs the schema (watches included) before anything else.
     this.store = new TelegramStateStore(sql, tx);
     this.watches = new WatchStore(sql, tx);
+    this.goals = new GoalStore(sql, tx);
   }
 
   // ─── Handshake codes ──────────────────────────────────────────────────
@@ -153,5 +157,16 @@ export class TelegramState extends DurableObject {
   }
   recordWatches(dep: ChainDeployment, updates: WatchUpdate[], now: number): void {
     this.watches.record(dep, updates, now);
+  }
+
+  // ─── Goals (#3771) ────────────────────────────────────────────────────
+  saveGoal(dep: ChainDeployment, wallet: string, id: number | null, goal: GoalInput, now: number, limits: GoalLimits): GoalSaveOutcome {
+    return this.goals.save(dep, wallet, id, goal, now, limits);
+  }
+  deleteGoal(dep: ChainDeployment, wallet: string, id: number, now: number, limits: GoalLimits): GoalDeleteOutcome {
+    return this.goals.delete(dep, wallet, id, now, limits);
+  }
+  listGoals(wallet: string, deps: ChainDeployment[]): Goal[] {
+    return this.goals.list(wallet, deps);
   }
 }

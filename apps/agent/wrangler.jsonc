@@ -524,6 +524,9 @@
     // #3769 — limits on watching loans a wallet does not hold (see env.ts).
     "WATCH_MAX_LOANS_PER_WALLET": "10",
     "WATCH_MAX_CHANGES_PER_DAY": "20",
+    // #3771 — limits on a wallet's goals (see env.ts).
+    "GOALS_MAX_PER_WALLET": "20",
+    "GOALS_MAX_CHANGES_PER_DAY": "50",
     // ORDER IS LOAD-BEARING: frames.ts derives its link host from
     // `FRONTEND_ORIGIN.split(',')[0]`, and periodicPreNotify.ts builds
     // notification deep links the same way, so the FIRST entry must be a

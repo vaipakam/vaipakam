@@ -41,10 +41,10 @@ function store() {
 }
 
 describe('watch store', () => {
-  it('upgrades a version-1 state object to version 2', () => {
+  it('runs the state object’s schema to the current version', () => {
     const h = sqliteDo();
     new TelegramStateStore(h.sql, h.tx);
-    expect(h.db.prepare('SELECT version FROM schema_version').all()).toEqual([{ version: 2 }]);
+    expect(h.db.prepare('SELECT version FROM schema_version').all()).toEqual([{ version: 3 }]);
   });
 
   it('adds once, counts the loan limit across chains, and spends nothing on a repeat', () => {
