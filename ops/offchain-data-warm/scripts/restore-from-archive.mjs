@@ -35,7 +35,12 @@
  *
  * Usage:
  *   node scripts/restore-from-archive.mjs <decrypted-archive.json> \
- *     [--outdir restore] [--upload] [--remote|--local] [--lz-db <name>]
+ *     [--outdir restore] [--upload] [--remote|--local] [--lz-db <name>] \
+ *     [--replay-through <chainId>=<block> ...]
+ *
+ * `--replay-through` raises (or, for a chain the archive has no cursor for,
+ * supplies) the height a restored signed order stays off the book until the
+ * §6 replay reaches (#3544; see RESTORE_REPLAY_PENDING). Repeat it per chain.
  */
 
 import { chmodSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -306,6 +311,26 @@ export const RESTORE_PROJECTIONS = {
   signed_offers: (row) => ({ ...row, status: 'active', filled_amount: '0' }),
 };
 
+/**
+ * The column, per hybrid table, that keeps a restored row off the live book
+ * until the §6 replay has re-read its lifecycle (#3544). It is the same
+ * column a reorg rebuild stamps (`apps/indexer/src/reorgRebuildKeep.json`,
+ * `pendingThrough`; `check-table-classification.mjs` holds the two equal),
+ * and the indexer clears it the same way: when the chain's scan cursor
+ * reaches the stamped height (`releaseReplayedRows`).
+ *
+ * The stamp is the height the chain had been indexed to when the archive was
+ * written: its `indexer_cursor` row of kind `diamond`, or a higher height the
+ * operator names with `--replay-through`. Until the replay passes it, an
+ * order the archive knew as filled or cancelled is not listed as live. A row
+ * that already carries a higher stamp (an archive written while a rebuild was
+ * catching up) keeps it, as a second rebuild does. Every imported row gets a
+ * stamp; a chain with no known height is refused rather than listed early.
+ */
+export const RESTORE_REPLAY_PENDING = {
+  signed_offers: 'replay_pending_through',
+};
+
 // Whole-row checks the writer's own invariants allow, run before any SQL is
 // emitted (#2636 r6). A `loan_orphans` entry is only worth restoring if its
 // payloads can put the withdrawal back: `row_json` is the `loans` row as it
@@ -453,20 +478,70 @@ export function applyOrder(tables) {
 }
 
 /** Convert one TableExport into a replace-not-merge SQL batch. */
-export function tableToSql(table) {
-  return tableToBatch(table).sql;
+export function tableToSql(table, context) {
+  return tableToBatch(table, context).sql;
+}
+
+const isBlockHeight = (v) => Number.isSafeInteger(v) && v >= 0;
+
+/**
+ * The height each chain had been indexed to when the archive was written:
+ * its archived `indexer_cursor` row of kind `diamond` (#3544), raised to any
+ * height the operator names for that chain (`--replay-through`). A Map from
+ * chain id to block. An archive without the table, or without a chain, simply
+ * has no entry; the row that needs one is refused where it is converted.
+ */
+export function replayHeights(archiveTables, named = new Map()) {
+  const heights = new Map();
+  const cursor = (archiveTables ?? []).find((t) => t?.name === 'indexer_cursor');
+  if (cursor !== undefined) {
+    if (!Array.isArray(cursor.rows)) fail('table indexer_cursor: rows is not an array');
+    const seen = new Set();
+    for (const [i, row] of cursor.rows.entries()) {
+      if (row?.kind !== 'diamond') continue;
+      if (!Number.isSafeInteger(row.chain_id) || row.chain_id <= 0 || !isBlockHeight(row.last_block)) {
+        fail(`table indexer_cursor row ${i}: chain_id and last_block are not the integers the scan writes — refusing to stamp from it`);
+      }
+      if (seen.has(row.chain_id)) {
+        fail(`table indexer_cursor row ${i}: a second diamond cursor for chain ${row.chain_id} — a SELECT cannot produce one, so the archive was tampered with`);
+      }
+      seen.add(row.chain_id);
+      heights.set(row.chain_id, row.last_block);
+    }
+  }
+  for (const [chainId, block] of named) {
+    heights.set(chainId, Math.max(heights.get(chainId) ?? 0, block));
+  }
+  return heights;
+}
+
+/** Parse one `--replay-through <chainId>=<block>` value into the map. */
+export function addReplayThrough(map, value) {
+  const m = /^([1-9][0-9]*)=(0|[1-9][0-9]*)$/.exec(value ?? '');
+  const chainId = m ? Number(m[1]) : NaN;
+  const block = m ? Number(m[2]) : NaN;
+  if (!Number.isSafeInteger(chainId) || !Number.isSafeInteger(block)) {
+    fail(`--replay-through needs <chainId>=<block>, got ${JSON.stringify(value)}`);
+  }
+  if (map.has(chainId)) fail(`--replay-through names chain ${chainId} twice`);
+  map.set(chainId, block);
+  return map;
 }
 
 /** The batch for one TableExport, with how many archived rows it imports
  *  (`imported`, the figure the post-import COUNT(*) must equal). Every
  *  archived row is validated before a hybrid table's projection (see
  *  RESTORE_PROJECTIONS) resets the part the §6 replay rebuilds. */
-export function tableToBatch(table) {
+export function tableToBatch(table, { replayThrough = new Map() } = {}) {
   const name = assertIdentifier(table.name, 'table');
   if (!Array.isArray(table.schema) || table.schema.length === 0) {
     fail(`table ${name}: archive carries no schema — cannot order columns`);
   }
   const columns = table.schema.map((c) => assertIdentifier(c.name, `table ${name} column`));
+  // The replay-pending stamp (#3544) is written on every row, so it is
+  // inserted even from an archive written before its column existed.
+  const pendingCol = Object.hasOwn(RESTORE_REPLAY_PENDING, name) ? RESTORE_REPLAY_PENDING[name] : null;
+  const insertColumns = pendingCol && !columns.includes(pendingCol) ? [...columns, pendingCol] : columns;
   const rows = Array.isArray(table.rows) ? table.rows : fail(`table ${name}: rows is not an array`);
   if (typeof table.rowCount === 'number' && table.rowCount !== rows.length) {
     fail(
@@ -479,7 +554,7 @@ export function tableToBatch(table) {
     `-- selective restores into a live database (OffChainRestore.md §4).`,
     `DELETE FROM "${name}";`,
   ];
-  const colList = columns.map((c) => `"${c}"`).join(', ');
+  const colList = insertColumns.map((c) => `"${c}"`).join(', ');
   // Duplicate primary keys cannot come out of a SELECT — only a
   // tampered archive carries them — and emitting them anyway produces
   // a batch that fails its UNIQUE constraint MID-file at D1, leaving
@@ -534,11 +609,32 @@ export function tableToBatch(table) {
     if (problem) fail(`table ${name} row ${i}: ${problem} — refusing to restore it`);
     const projection = Object.hasOwn(RESTORE_PROJECTIONS, name) ? RESTORE_PROJECTIONS[name] : null;
     const restored = projection ? projection(row) : row;
-    const values = columns.map((c) => sqlLiteral(restored[c], `table ${name} row ${i} column ${c}`));
+    if (pendingCol) restored[pendingCol] = replayStamp(name, i, row, pendingCol, replayThrough);
+    const values = insertColumns.map((c) => sqlLiteral(restored[c], `table ${name} row ${i} column ${c}`));
     lines.push(`INSERT INTO "${name}" (${colList}) VALUES (${values.join(', ')});`);
     imported++;
   }
   return { sql: lines.join('\n') + '\n', imported };
+}
+
+/** The replay-pending stamp for one restored row (#3544): its chain's indexed
+ *  height, or the row's own stamp when that is higher. */
+function replayStamp(name, i, row, pendingCol, replayThrough) {
+  const height = Number.isSafeInteger(row.chain_id) ? replayThrough.get(row.chain_id) : undefined;
+  if (height === undefined) {
+    fail(
+      `table ${name} row ${i}: the archive records no indexed height for chain ${JSON.stringify(row.chain_id)} ` +
+        `(no indexer_cursor row of kind 'diamond'), so the converter cannot tell how far the §6 replay must ` +
+        `reach before this order may be listed again. Pass --replay-through <chainId>=<block> with the ` +
+        `chain's head block at the time of the archive (a higher block is safe; a lower one lists filled ` +
+        `orders as live for a while)`,
+    );
+  }
+  const own = Object.hasOwn(row, pendingCol) ? row[pendingCol] : null;
+  if (own !== null && !isBlockHeight(own)) {
+    fail(`table ${name} row ${i}: column ${pendingCol} is not a block height — refusing to restore it`);
+  }
+  return Math.max(height, own ?? 0);
 }
 
 /** Write every archived table's SQL file; returns apply-ordered
@@ -586,7 +682,7 @@ function dropRetiredTables(tables) {
   return kept;
 }
 
-export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db' } = {}) {
+export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db', replayThrough = new Map() } = {}) {
   assertVersion(archive);
   // A version-1 archive ALWAYS carries d1.archive — backup.ts emits it
   // unconditionally. Treating its absence like the genuinely optional
@@ -756,8 +852,11 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
     // level by level from the outdir down.
     secureStagingDir(path.resolve(outDir));
     secureStagingDir(dir);
+    // Each chain's indexed height, for the replay-pending stamp (#3544). The
+    // cursor is in the main section; the legacy section has no hybrid table.
+    const context = { replayThrough: database === ARCHIVE_DATABASE ? replayHeights(importable, replayThrough) : new Map() };
     for (const table of applyOrder(importable)) {
-      const { sql, imported } = tableToBatch(table);
+      const { sql, imported } = tableToBatch(table, context);
       const file = path.join(dir, `${table.name}.sql`);
       // Fresh inode, never write-through: a reused predictable file
       // could already be held open by another local account, and
@@ -1298,6 +1397,7 @@ export function main(argv) {
   let upload = false;
   let remote = true;
   let lzDatabase = 'vaipakam-lz-alerts-db';
+  const replayThrough = new Map();
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--outdir') outDir = args[++i] ?? fail('--outdir needs a value');
@@ -1305,19 +1405,21 @@ export function main(argv) {
     else if (a === '--local') remote = false;
     else if (a === '--remote') remote = true; // explicit form of the default
     else if (a === '--lz-db') lzDatabase = args[++i] ?? fail('--lz-db needs a value');
+    else if (a === '--replay-through') addReplayThrough(replayThrough, args[++i]);
     else if (a.startsWith('--')) fail(`unknown flag ${a}`);
     else positional.push(a);
   }
   if (positional.length !== 1) {
     console.error(
       'Usage: node scripts/restore-from-archive.mjs <decrypted-archive.json> ' +
-        '[--outdir restore] [--upload] [--remote|--local] [--lz-db <name>]',
+        '[--outdir restore] [--upload] [--remote|--local] [--lz-db <name>] ' +
+        '[--replay-through <chainId>=<block> ...]',
     );
     return 2;
   }
 
   const archive = JSON.parse(readFileSync(positional[0], 'utf8'));
-  const d1 = convertD1(archive, outDir, { lzDatabase });
+  const d1 = convertD1(archive, outDir, { lzDatabase, replayThrough });
   const r2 = materializeR2(archive, outDir);
 
   // Per-row writer invariants on the legal tables first — a malformed

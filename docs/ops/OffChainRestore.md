@@ -1415,7 +1415,9 @@ For each table:
    `restore/d1-lz-alerts/` for a pre-#1440 archive's `lzAlerts`
    section — pass `--lz-db <name>` if you created that legacy
    database above under a custom name, so the printed commands
-   target the database you actually made), prints the
+   target the database you actually made; and pass
+   `--replay-through <chainId>=<block>` when it asks for a chain's
+   indexed height, see the `signed_offers` note below), prints the
    `wrangler d1 execute` commands **in FK apply
    order**, and covers §5's R2 materialization in the same run. Its
    test suite (`scripts/restore-from-archive.test.mjs`, run in CI)
@@ -1496,6 +1498,24 @@ For each table:
    >   because the Diamond checks the signature at fill, but it would be
    >   listed in the book until it expires (#2899 tracks re-verifying at
    >   restore).
+   >
+   >   **Each imported order stays off the book until the replay has re-read
+   >   it** (#3544). The converter stamps every order with the height its
+   >   chain had been indexed to when the archive was written (the archive's
+   >   `indexer_cursor` row of kind `diamond`), in the same
+   >   `replay_pending_through` column a reorg rebuild uses. Until §6's replay
+   >   passes that block, the order is left out of `/signed-offers` and the
+   >   market summary, and `/signed-offers` reports how many are waiting
+   >   (`awaitingReplay`). So an order the archive knew as filled or
+   >   cancelled is never shown as live while the replay catches up; the
+   >   scan lists each one again by itself once it gets there. A row the
+   >   archive already carried with a higher stamp keeps it. If the archive
+   >   has no cursor for a chain that has orders (the cursor is an optional
+   >   table in the nightly), the converter stops and names the chain: pass
+   >   `--replay-through <chainId>=<block>` with that chain's head block at
+   >   the time of the archive, once per chain. The flag can also raise a
+   >   chain's height above the archived cursor, never lower it. A higher
+   >   block is always safe; it only keeps the orders hidden a little longer.
    >
    > The converter prints the imported count, which is the figure step 4
    > checks. An archive written before #1481 carries no `signed_offers`; the

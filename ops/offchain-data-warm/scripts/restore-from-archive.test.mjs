@@ -21,6 +21,7 @@ import path from 'node:path';
 
 import {
   RestoreError,
+  addReplayThrough,
   applyOrder,
   convertD1,
   materializeR2,
@@ -29,6 +30,7 @@ import {
   reconcileLegalHolds,
   shQuote,
   sqlLiteral,
+  replayHeights,
   tableToBatch,
   tableToSql,
   uploadR2,
@@ -481,6 +483,8 @@ function signedOrder(over = {}) {
     ...over,
   };
 }
+/** The chain's indexed height the replay-pending stamp is read from (#3544). */
+const AT = { replayThrough: new Map([[84532, 500]]) };
 function signedOfferRow(over = {}, order = signedOrder()) {
   return {
     chain_id: 84532, order_hash: `0x${'b'.repeat(64)}`,
@@ -494,23 +498,23 @@ test('signed_offers: the signed order is restored, its lifecycle is reset for th
   const batch = tableToBatch(tableFixture('signed_offers', SIGNED_OFFER_COLUMNS, [
     signedOfferRow(),
     signedOfferRow({ order_hash: `0x${'a'.repeat(64)}`, status: 'cancelled', filled_amount: '400' }),
-  ]));
+  ]), AT);
   assert.equal(batch.imported, 2);
   // Every row goes in as an unfilled live offer; the order and signature verbatim.
-  assert.equal((batch.sql.match(/'active', '0', 10, 20, NULL\);/g) ?? []).length, 2);
+  assert.equal((batch.sql.match(/'active', '0', 10, 20, NULL, 500\);/g) ?? []).length, 2);
   assert.doesNotMatch(batch.sql, /'filled'|'cancelled'|'1000', 10|'400'/);
   assert.match(batch.sql, new RegExp(`'0x${'D'.repeat(130)}'`));
   // Shapes the route writes, and nothing else.
   const bad = (over, re) =>
-    assert.throws(() => tableToSql(tableFixture('signed_offers', SIGNED_OFFER_COLUMNS, [signedOfferRow(over)])), re);
+    assert.throws(() => tableToSql(tableFixture('signed_offers', SIGNED_OFFER_COLUMNS, [signedOfferRow(over)]), AT), re);
   bad({ order_hash: `0x${'B'.repeat(64)}` }, /order_hash is not the shape/);
   bad({ signer: "x' OR 1=1 --" }, /signer is not the shape/);
   bad({ signature: `0x${'d'.repeat(131)}` }, /signature is not the shape/);
-  assert.match(tableToSql(tableFixture('signed_offers', SIGNED_OFFER_COLUMNS, [signedOfferRow({ signature: `0x${'d'.repeat(128)}` })])), /VALUES/);
+  assert.match(tableToSql(tableFixture('signed_offers', SIGNED_OFFER_COLUMNS, [signedOfferRow({ signature: `0x${'d'.repeat(128)}` })]), AT), /VALUES/);
 });
 
 test('signed_offers: only an order a taker can replay, in the form the route stores it, is restored (#1481)', () => {
-  const restore = (row) => tableToSql(tableFixture('signed_offers', SIGNED_OFFER_COLUMNS, [row]));
+  const restore = (row) => tableToSql(tableFixture('signed_offers', SIGNED_OFFER_COLUMNS, [row]), AT);
   const order = signedOrder();
   const json = canonicalOrderJson(order);
   // Codex #2900 r1: malformed JSON would make the book's json_extract throw.
@@ -563,6 +567,7 @@ test('convertD1 counts what it imports, and an archive without the hybrid table 
       d1: {
         archive: [
           ...baselineArchive(),
+          cursorTable([{ chain_id: 84532, kind: 'diamond', last_block: 500, updated_at: 1 }]),
           tableFixture('signed_offers', SIGNED_OFFER_COLUMNS, [signedOfferRow()]),
         ],
       },
@@ -578,6 +583,95 @@ test('convertD1 counts what it imports, and an archive without the hybrid table 
   const cleared = older.find((e) => e.name === 'signed_offers');
   assert.equal(cleared.eraLoss, true);
   assert.match(readFileSync(cleared.file, 'utf8'), /DELETE FROM "signed_offers";/);
+});
+
+// #3544 — a restored order stays off the book until the replay re-reads it.
+const CURSOR_COLUMNS = ['chain_id', 'kind', 'last_block', 'updated_at'];
+function cursorTable(rows) {
+  return tableFixture('indexer_cursor', CURSOR_COLUMNS, rows, { chain_id: 1, kind: 2 });
+}
+const ARB = 421614;
+function restoreWith(tables, opts) {
+  const entries = convertD1({ version: 1, d1: { archive: [...baselineArchive(), ...tables] } }, outDir(), opts);
+  return readFileSync(entries.find((e) => e.name === 'signed_offers').file, 'utf8');
+}
+
+test('signed_offers: each order is stamped with its chain\'s archived indexed height (#3544)', () => {
+  const sql = restoreWith([
+    cursorTable([
+      { chain_id: 84532, kind: 'diamond', last_block: 500, updated_at: 1 },
+      { chain_id: ARB, kind: 'diamond', last_block: 9000, updated_at: 1 },
+      // Another scan kind is not the height the release path compares with.
+      { chain_id: 84532, kind: 'summary', last_block: 99999, updated_at: 1 },
+    ]),
+    tableFixture('signed_offers', SIGNED_OFFER_COLUMNS, [
+      signedOfferRow(),
+      signedOfferRow({ chain_id: ARB, order_hash: `0x${'a'.repeat(64)}` }),
+    ]),
+  ]);
+  // The column goes in even though this archive predates it (migration 0089).
+  assert.match(sql, /"offer_set", "replay_pending_through"\) VALUES/);
+  assert.match(sql, new RegExp(`'0x${'b'.repeat(64)}'[^\\n]*NULL, 500\\);`));
+  assert.match(sql, new RegExp(`'0x${'a'.repeat(64)}'[^\\n]*NULL, 9000\\);`));
+});
+
+test('signed_offers: the stamp never drops below an archived one or a named height (#3544)', () => {
+  const cols = [...SIGNED_OFFER_COLUMNS, 'replay_pending_through'];
+  const cursor = cursorTable([{ chain_id: 84532, kind: 'diamond', last_block: 500, updated_at: 1 }]);
+  // An archive taken while a rebuild was catching up keeps the higher stamp.
+  const kept = restoreWith([cursor, tableFixture('signed_offers', cols, [signedOfferRow({ replay_pending_through: 700 })])]);
+  assert.match(kept, /NULL, 700\);/);
+  const raised = restoreWith([cursor, tableFixture('signed_offers', cols, [signedOfferRow({ replay_pending_through: 100 })])]);
+  assert.match(raised, /NULL, 500\);/);
+  // The operator may raise a chain's height, never lower it.
+  const named = (block) => addReplayThrough(new Map(), `84532=${block}`);
+  assert.match(
+    restoreWith([cursor, tableFixture('signed_offers', SIGNED_OFFER_COLUMNS, [signedOfferRow()])], { replayThrough: named(800) }),
+    /NULL, 800\);/,
+  );
+  assert.match(
+    restoreWith([cursor, tableFixture('signed_offers', SIGNED_OFFER_COLUMNS, [signedOfferRow()])], { replayThrough: named(10) }),
+    /NULL, 500\);/,
+  );
+  assert.throws(
+    () => restoreWith([cursor, tableFixture('signed_offers', cols, [signedOfferRow({ replay_pending_through: 'x' })])]),
+    /replay_pending_through is not a block height/,
+  );
+});
+
+test('signed_offers: a chain with no known indexed height is refused, not listed early (#3544)', () => {
+  const orders = tableFixture('signed_offers', SIGNED_OFFER_COLUMNS, [signedOfferRow({ chain_id: ARB })]);
+  // No cursor table at all, and a cursor for another chain only.
+  assert.throws(() => restoreWith([orders]), /no indexed height for chain 421614[\s\S]*--replay-through/);
+  assert.throws(
+    () => restoreWith([cursorTable([{ chain_id: 84532, kind: 'diamond', last_block: 500, updated_at: 1 }]), orders]),
+    /no indexed height for chain 421614/,
+  );
+  // Named by the operator, it converts.
+  assert.match(restoreWith([orders], { replayThrough: addReplayThrough(new Map(), `${ARB}=42`) }), /NULL, 42\);/);
+  // An archive with no orders needs no height.
+  assert.doesNotThrow(() => restoreWith([tableFixture('signed_offers', SIGNED_OFFER_COLUMNS, [])]));
+});
+
+test('replay heights: a malformed cursor or flag is refused (#3544)', () => {
+  assert.throws(
+    () => replayHeights([cursorTable([{ chain_id: 84532, kind: 'diamond', last_block: '500', updated_at: 1 }])]),
+    /not the integers the scan writes/,
+  );
+  assert.throws(
+    () =>
+      replayHeights([
+        cursorTable([
+          { chain_id: 84532, kind: 'diamond', last_block: 5, updated_at: 1 },
+          { chain_id: 84532, kind: 'diamond', last_block: 6, updated_at: 1 },
+        ]),
+      ]),
+    /a second diamond cursor for chain 84532/,
+  );
+  for (const bad of [undefined, '84532', '84532=', '0=5', '84532=-1', '84532=1.5', '84532=05', 'x=1', `84532=${'9'.repeat(20)}`]) {
+    assert.throws(() => addReplayThrough(new Map(), bad), /--replay-through needs/);
+  }
+  assert.throws(() => addReplayThrough(addReplayThrough(new Map(), '84532=1'), '84532=2'), /names chain 84532 twice/);
 });
 
 test('prepay_listing_match_breadcrumbs is not archived: the replay writes every row from its event (#2757)', () => {

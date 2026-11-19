@@ -68,6 +68,7 @@ import { PRIVATE_DATABASES, privateTables } from './lib/d1-workers.mjs';
 import {
   BORN_OFF_CHAIN_TABLES as CONVERTER_IMPORTS,
   RESTORE_PROJECTIONS,
+  RESTORE_REPLAY_PENDING,
 } from '../../../ops/offchain-data-warm/scripts/restore-from-archive.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -477,6 +478,15 @@ const rebuildKeep = JSON.parse(readFileSync(REBUILD_KEEP_PATH, 'utf8'));
       else if (!restore || JSON.stringify(Object.entries(set).sort()) !== JSON.stringify(Object.entries(restore).sort())) {
         problems.push(`project.${t}: set must equal the restore converter's RESTORE_PROJECTIONS.${t}`);
       }
+      // #3544: a restore keeps an imported row off the book through the same
+      // column a rebuild stamps, and the indexer releases both the same way.
+      const restorePending = Object.hasOwn(RESTORE_REPLAY_PENDING, t) ? RESTORE_REPLAY_PENDING[t] : null;
+      if (!p || restorePending !== p.pendingThrough) {
+        problems.push(`project.${t}: pendingThrough must equal the restore converter's RESTORE_REPLAY_PENDING.${t}`);
+      }
+    }
+    for (const t of Object.keys(RESTORE_REPLAY_PENDING)) {
+      if (!Object.hasOwn(projEntries, t)) problems.push(`RESTORE_REPLAY_PENDING.${t}: no project entry stamps that table on a rebuild`);
     }
   }
   if (problems.length > 0) {
