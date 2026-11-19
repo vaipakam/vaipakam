@@ -143,6 +143,8 @@ const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<string, ActorRead
   // #3681 — each run of a standing instruction draws the holder's reserve:
   // filed under that holder, not under whoever ran it (the caller is a party).
   ['InterestPaidFromReserve', arg('holder')],
+  // #3779 — a wallet payment is filed under whoever paid it.
+  ['InterestPaidFromWallet', arg('payer')],
   ['DueRepaymentRun', arg('holder')],
   ['CollateralTopUpRun', arg('holder')],
   ['ExtendChargeDrawn', arg('holder')],

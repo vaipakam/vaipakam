@@ -1215,12 +1215,13 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](6);
         selectors[0] = RepayPeriodicFacet.autoDeductDaily.selector;
         selectors[1] = RepayPeriodicFacet.previewPeriodicSettle.selector;
         selectors[2] = RepayPeriodicFacet.nextPeriodCheckpoint.selector;
         selectors[3] = RepayPeriodicFacet.settlePeriodicInterest.selector;
         selectors[4] = RepayPeriodicFacet.bookInterestPayment.selector;
+        selectors[5] = RepayPeriodicFacet.payInterest.selector;
     }
 
     /// T-090 — Borrower-initiated swap-to-repay facet selectors.
@@ -1948,11 +1949,10 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](2);
         selectors[0] = PrecloseOffsetFacet.offsetWithNewOffer.selector;
-        selectors[1] = PrecloseOffsetFacet.completeOffset.selector;
         // Cross-facet entry consumed by OfferFacet._acceptOffer's auto-link.
-        selectors[2] = PrecloseOffsetFacet.completeOffsetInternal.selector;
+        selectors[1] = PrecloseOffsetFacet.completeOffsetInternal.selector;
         return selectors;
     }
 

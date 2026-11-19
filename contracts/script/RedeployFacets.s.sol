@@ -415,10 +415,13 @@ contract RedeployFacets is Script {
         // selector changed: the new one is partitioned with the Add set above
         // (an Add on a pre-#2696 Diamond, a Replace after), and the old one is
         // Removed wherever it is still routed (empty on a fresh or migrated
-        // Diamond, so the step is idempotent).
-        bytes4[] memory retiredRiskSetter = new bytes4[](1);
-        retiredRiskSetter[0] = FacetSelectors.retiredUpdateRiskParamsSelector();
-        (, bytes4[] memory riskToRemove) = _partitionByRouting(diamond, retiredRiskSetter);
+        // Diamond, so the step is idempotent). K1 retired the external
+        // `completeOffset` recovery entry the same way: removed wherever it
+        // is still routed, so it never stays on the old offset bytecode.
+        bytes4[] memory retiredSelectors = new bytes4[](2);
+        retiredSelectors[0] = FacetSelectors.retiredUpdateRiskParamsSelector();
+        retiredSelectors[1] = FacetSelectors.retiredCompleteOffsetSelector();
+        (, bytes4[] memory retiredToRemove) = _partitionByRouting(diamond, retiredSelectors);
         // #658 — same Add/Replace-by-routing split for the ConsolidationFacet
         // selector set: on a current-version diamond the two #594 standalone
         // entries are already routed (Replace) and the three #658 entries are
@@ -585,7 +588,7 @@ contract RedeployFacets is Script {
 
         uint256 nExtra = sellCuts.length + verdictCuts.length +
             (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0) +
-            (riskToRemove.length > 0 ? 1 : 0) +
+            (retiredToRemove.length > 0 ? 1 : 0) +
             (consToAdd.length > 0 ? 1 : 0) + (consToReplace.length > 0 ? 1 : 0) +
             (ewToAdd.length > 0 ? 1 : 0) +
             (ewdToAdd.length > 0 ? 1 : 0) +
@@ -655,8 +658,8 @@ contract RedeployFacets is Script {
         for (uint256 i = 0; i < verdictCuts.length; i++) {
             cuts[idx++] = verdictCuts[i];
         }
-        if (riskToRemove.length > 0) {
-            cuts[idx++] = _remove(riskToRemove);
+        if (retiredToRemove.length > 0) {
+            cuts[idx++] = _remove(retiredToRemove);
         }
         if (hfToReplace.length > 0) {
             cuts[idx++] = _replace(address(riskFacet), hfToReplace);
@@ -863,7 +866,7 @@ contract RedeployFacets is Script {
         console.log("  RiskPreview selectors added: ", rpToAdd.length);
         console.log("  RiskPreview selectors repl.: ", rpToReplace.length);
         console.log("  Retired previewIntent removed:", rpToRemove.length);
-        console.log("  Retired 4-arg updateRiskParams removed:", riskToRemove.length);
+        console.log("  Retired updateRiskParams/completeOffset removed:", retiredToRemove.length);
         console.log("  RepayPeriodic selectors repl.:", rpsToReplace.length);
         console.log("  EncumbranceMutate repl.:      ", encToReplace.length);
         console.log("  EncumbranceMutate added:      ", encToAdd.length);
@@ -1471,10 +1474,9 @@ contract RedeployFacets is Script {
     ///      `address(this)`-gated `completeOffsetInternal` the accept path
     ///      reaches, so no offset selector stays on the pre-split bytecode.
     function _precloseOffsetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](2);
         s[0] = PrecloseOffsetFacet.offsetWithNewOffer.selector;
-        s[1] = PrecloseOffsetFacet.completeOffset.selector;
-        s[2] = PrecloseOffsetFacet.completeOffsetInternal.selector;
+        s[1] = PrecloseOffsetFacet.completeOffsetInternal.selector;
     }
 
     function _earlyWithdrawalSelectors() internal pure returns (bytes4[] memory s) {

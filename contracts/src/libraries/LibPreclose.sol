@@ -4,7 +4,6 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {LibAuth} from "./LibAuth.sol";
-import {LibServiceCapacity} from "./LibServiceCapacity.sol";
 import {LibVPFIDiscount} from "./LibVPFIDiscount.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
@@ -25,12 +24,15 @@ import {VPFIDiscountFacet} from "../facets/VPFIDiscountFacet.sol";
  *         its own copy — the library is a single SOURCE, not a shared host.
  */
 library LibPreclose {
-    /// @dev The borrower-side authority check every preclose entry runs: the
-    ///      position's holder (or, once a protected-account replacement
-    ///      retired it, its controller) or a keeper it granted `action`; a
-    ///      keeper's action is charged against its service capacity (#1219).
-    function authorizeBorrowerSide(uint16 action, LibVaipakam.Loan storage loan) internal {
-        if (LibAuth.requireKeeperFor(action, loan, /* lenderSide */ false)) LibServiceCapacity.chargeKeeper();
+    /// @dev The authority check every preclose entry runs: only the borrower
+    ///      position's holder (or, once a protected-account replacement retired
+    ///      it, its controller). No keeper may start a direct close, a handover
+    ///      or an offset (K1, KeeperApprovalsReviewDesign section 4): the
+    ///      handover and the offset choose terms the borrower is bound to, and
+    ///      someone else who wants a loan paid off uses the ordinary repayment,
+    ///      which takes any payer (#3779).
+    function requireHolder(LibVaipakam.Loan storage loan) internal view {
+        LibAuth.requireBorrowerNftOwner(loan);
     }
 
     /// @dev The ERC-20 a loan is paid in: the principal asset for an ERC-20

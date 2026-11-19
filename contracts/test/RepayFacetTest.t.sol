@@ -51,6 +51,7 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
@@ -905,12 +906,183 @@ contract RepayFacetTest is Test {
         RepayFacet(address(diamond)).repayPartial(1, 500);
     }
 
-    /// @dev Tests repayPartial reverts if not borrower.
-    function testRepayPartialRevertsIfNotBorrower() public {
+    /// @dev #3779 — an ERC-20 part repayment is open to anyone not on the
+    ///      lender's side, so the lender is refused by that rule.
+    function testRepayPartialRevertsFromLenderSide() public {
         helperOfferLoan();
         vm.prank(lender);
-        vm.expectRevert(IVaipakamErrors.NotBorrower.selector);
+        vm.expectRevert(IVaipakamErrors.LenderCannotRepayOwnLoan.selector);
         RepayFacet(address(diamond)).repayPartial(1, 500);
+    }
+
+    // ─── #3779 — wallet repayments by others, and the interest so far ───
+
+    function _payer(string memory name, uint256 amount) internal returns (address who) {
+        who = makeAddr(name);
+        ERC20Mock(mockERC20).mint(who, amount);
+        vm.prank(who);
+        ERC20Mock(mockERC20).approve(address(diamond), amount);
+    }
+
+    function _flag(address who) internal {
+        MockSanctionsList m = new MockSanctionsList();
+        m.setFlagged(who, true);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+    }
+
+    /// A part repayment by someone who is not the holder: the same principal
+    /// figure as the holder's own, the collateral untouched, the payer named.
+    function test_3779_partByAnotherAddress() public {
+        helperOfferLoan();
+        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        uint256 collBefore = ERC20(mockCollateralERC20).balanceOf(borrowerVault);
+        address friend = _payer("friend", 1000);
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit RepayFacet.PartialRepaid(1, friend, 500, 500, 0);
+        vm.prank(friend);
+        RepayFacet(address(diamond)).repayPartial(1, 500);
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(1).principal, 500, "principal");
+        assertEq(ERC20(mockCollateralERC20).balanceOf(borrowerVault), collBefore, "collateral stays");
+        assertEq(LoanFacet(address(diamond)).getLoanDetails(1).borrower, borrower, "position stays the borrower's");
+    }
+
+    /// #3778 — the full repayment states the due date its late fee was
+    /// measured from: the maturity, on a loan no pause or outage moved.
+    function test_3778_loanRepaidStatesTheDueDate() public {
+        helperOfferLoan();
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(1);
+        uint256 maturity = l.startTime + l.durationDays * 1 days;
+        vm.warp(maturity + 2 hours);
+        address friend = _payer("friend", 10_000);
+        vm.expectEmit(true, true, false, false, address(diamond));
+        emit RepayFacet.LoanRepaid(1, friend, 0, 0, 0, 0, LibVaipakam.LoanStatus.Repaid, 0);
+        vm.recordLogs();
+        vm.prank(friend);
+        RepayFacet(address(diamond)).repayLoan(1);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bool seen;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics[0] != RepayFacet.LoanRepaid.selector) continue;
+            (,,,,, uint256 lateFeeFrom) =
+                abi.decode(logs[i].data, (uint256, uint256, uint256, uint256, LibVaipakam.LoanStatus, uint256));
+            assertEq(lateFeeFrom, maturity, "due date");
+            seen = true;
+        }
+        assertTrue(seen, "LoanRepaid emitted");
+    }
+
+    /// A rental's part payment stays the renter's alone.
+    function test_3779_rentalPartFromAnotherAddressRefused() public {
+        helperOfferLoan();
+        address friend = _payer("friend", 1000);
+        vm.prank(friend);
+        vm.expectRevert(IVaipakamErrors.NotBorrower.selector);
+        RepayFacet(address(diamond)).repayPartial(2, 1);
+    }
+
+    /// A flagged payer who is not the holder is refused on all three
+    /// entries; the flagged holder is never refused.
+    function test_3779_flaggedOutsiderRefusedHolderNot() public {
+        helperOfferLoan();
+        address friend = _payer("friend", 10_000);
+        _flag(friend);
+        vm.warp(block.timestamp + 20 days);
+        vm.startPrank(friend);
+        vm.expectRevert(abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, friend));
+        RepayFacet(address(diamond)).repayLoan(1);
+        vm.expectRevert(abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, friend));
+        RepayFacet(address(diamond)).repayPartial(1, 500);
+        vm.expectRevert(abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, friend));
+        RepayPeriodicFacet(address(diamond)).payInterest(1, type(uint256).max);
+        vm.stopPrank();
+
+        _flag(borrower);
+        vm.startPrank(borrower);
+        ERC20Mock(mockERC20).approve(address(diamond), type(uint256).max);
+        RepayPeriodicFacet(address(diamond)).payInterest(1, type(uint256).max);
+        RepayFacet(address(diamond)).repayPartial(1, 500);
+        vm.stopPrank();
+    }
+
+    function _owed(uint256 loanId) internal view returns (uint256) {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        uint256 gross = (l.principal * l.interestRateBps * (block.timestamp - l.interestAccrualStart))
+            / (LibVaipakam.BASIS_POINTS * 365 days);
+        return gross - l.interestSettled;
+    }
+
+    /// The interest so far from another address, on a loan with no periods:
+    /// a ceiling above it pays exactly it, principal and term unchanged, and
+    /// a later full repayment charges it once.
+    function test_3779_payInterestCeilingPaysExactlyAccrued() public {
+        helperOfferLoan();
+        vm.warp(block.timestamp + 20 days);
+        uint256 owed = _owed(1);
+        assertGt(owed, 0, "precondition: interest accrued");
+        LibVaipakam.Loan memory before = LoanFacet(address(diamond)).getLoanDetails(1);
+        uint256 dueBefore = RepayFacet(address(diamond)).calculateRepaymentAmount(1);
+        address friend = _payer("friend", 1000);
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit RepayPeriodicFacet.InterestPaidFromWallet(1, friend, owed, owed, false);
+        vm.prank(friend);
+        uint256 paid = RepayPeriodicFacet(address(diamond)).payInterest(1, 1000);
+        assertEq(paid, owed, "paid exactly the interest so far");
+        assertEq(ERC20(mockERC20).balanceOf(friend), 1000 - owed, "drew only that");
+        LibVaipakam.Loan memory after_ = LoanFacet(address(diamond)).getLoanDetails(1);
+        assertEq(after_.principal, before.principal, "principal");
+        assertEq(after_.durationDays, before.durationDays, "term");
+        assertEq(after_.interestSettled, before.interestSettled + owed, "settled");
+        assertEq(
+            RepayFacet(address(diamond)).calculateRepaymentAmount(1), dueBefore - owed, "charged once at repayment"
+        );
+        vm.prank(friend);
+        vm.expectRevert(abi.encodeWithSelector(RepayPeriodicFacet.NothingOwed.selector, uint256(1)));
+        RepayPeriodicFacet(address(diamond)).payInterest(1, 1000);
+    }
+
+    /// A ceiling below the interest so far pays the ceiling, at least the
+    /// floor; a zero ceiling, or one under the floor, is refused.
+    function test_3779_payInterestFloorBindsOnlyBelowAccrued() public {
+        helperOfferLoan();
+        vm.warp(block.timestamp + 29 days);
+        uint256 owed = _owed(1);
+        assertGt(owed, 1, "precondition");
+        vm.startPrank(borrower);
+        ERC20Mock(mockERC20).approve(address(diamond), type(uint256).max);
+        vm.expectRevert(abi.encodeWithSelector(RepayPeriodicFacet.InterestPaymentBelowFloor.selector, 0, 0));
+        RepayPeriodicFacet(address(diamond)).payInterest(1, 0);
+        assertEq(RepayPeriodicFacet(address(diamond)).payInterest(1, 1), 1, "a part above a zero floor");
+        vm.stopPrank();
+    }
+
+    /// Refused from the lender's side, on a rental, and with nothing owed.
+    function test_3779_payInterestRefusals() public {
+        helperOfferLoan();
+        vm.prank(borrower);
+        vm.expectRevert(abi.encodeWithSelector(RepayPeriodicFacet.NothingOwed.selector, uint256(1)));
+        RepayPeriodicFacet(address(diamond)).payInterest(1, 1000);
+        vm.warp(block.timestamp + 10 days);
+        vm.prank(lender);
+        vm.expectRevert(IVaipakamErrors.LenderCannotRepayOwnLoan.selector);
+        RepayPeriodicFacet(address(diamond)).payInterest(1, 1000);
+        vm.prank(borrower);
+        vm.expectRevert(RepayPeriodicFacet.InterestPaymentNotErc20Loan.selector);
+        RepayPeriodicFacet(address(diamond)).payInterest(2, 1000);
+    }
+
+    /// No agreement to part repayment is needed for interest.
+    function test_3779_payInterestOnALoanWithoutPartRepayment() public {
+        helperOfferLoan();
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(1);
+        l.allowsPartialRepay = false;
+        TestMutatorFacet(address(diamond)).setLoan(1, l);
+        vm.warp(block.timestamp + 20 days);
+        vm.startPrank(borrower);
+        ERC20Mock(mockERC20).approve(address(diamond), type(uint256).max);
+        vm.expectRevert(RepayFacet.PartialRepayNotAllowed.selector);
+        RepayFacet(address(diamond)).repayPartial(1, 500);
+        assertGt(RepayPeriodicFacet(address(diamond)).payInterest(1, 1000), 0);
+        vm.stopPrank();
     }
 
     /// @dev Lender-offer with `allowsPartialRepay = false` → borrower

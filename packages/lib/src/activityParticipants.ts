@@ -109,6 +109,9 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   // keeper) is a party, as is whoever set or cleared the instructions for
   // the position holder they name.
   ['InterestPaidFromReserve', ['caller']],
+  // #3779 — whoever paid toward a loan from their wallet is a party.
+  ['InterestPaidFromWallet', ['payer']],
+  ['PartialRepaid', ['payer']],
   ['DueRepaymentRun', ['caller']],
   ['CollateralTopUpRun', ['caller']],
   ['StandingInstructionSkipped', ['caller']],

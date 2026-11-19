@@ -327,7 +327,6 @@ contract StandingInstructionTest is SetupTest {
 
         LibVaipakam.Loan memory l = _loan();
         assertEq(l.lastPeriodicInterestSettledAt, checkpoint0 + 30 days, "the period closed, once");
-        assertEq(l.interestPaidSinceLastPeriod, 0);
         assertEq(l.interestSettled, shortfall, "the gross counts as settled");
         assertEq(_lenderHeld(), shortfall - cut, "the lender's net, held");
         assertEq(IERC20(mockERC20).balanceOf(address(diamond)) - treasury0, cut, "the treasury share");

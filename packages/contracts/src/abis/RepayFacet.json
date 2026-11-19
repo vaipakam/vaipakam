@@ -205,6 +205,12 @@
         "type": "uint8",
         "indexed": false,
         "internalType": "enum LibVaipakam.LoanStatus"
+      },
+      {
+        "name": "lateFeeFrom",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -261,6 +267,12 @@
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
+      },
+      {
+        "name": "payer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
         "name": "amountRepaid",

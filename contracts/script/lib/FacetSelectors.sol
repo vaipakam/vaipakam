@@ -253,13 +253,15 @@ library FacetSelectors {
     ///         Its selectors are UNCHANGED by that work; only its bytecode
     ///         moved. It is a plain Replace of the whole surface.
     function repayPeriodic() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](6);
         s[0] = RepayPeriodicFacet.autoDeductDaily.selector;
         s[1] = RepayPeriodicFacet.nextPeriodCheckpoint.selector;
         s[2] = RepayPeriodicFacet.previewPeriodicSettle.selector;
         s[3] = RepayPeriodicFacet.settlePeriodicInterest.selector;
         // #3681 — the one interest booking.
         s[4] = RepayPeriodicFacet.bookInterestPayment.selector;
+        // #3779 — the interest so far, from a wallet.
+        s[5] = RepayPeriodicFacet.payInterest.selector;
     }
 
     /// @notice Full external selector surface of {EncumbranceMutateFacet} (21).
@@ -337,6 +339,14 @@ library FacetSelectors {
     /// @dev    Computed from the signature: the overload no longer exists in source.
     function retiredUpdateRiskParamsSelector() internal pure returns (bytes4) {
         return bytes4(keccak256("updateRiskParams(address,uint256,uint256,uint256)"));
+    }
+
+    /// @notice K1 (KeeperApprovalsReviewDesign section 4) retired
+    ///         `PrecloseOffsetFacet.completeOffset`, the external recovery
+    ///         entry: an accept completes the offset in the same transaction.
+    ///         The curated refresh removes it wherever it is still routed.
+    function retiredCompleteOffsetSelector() internal pure returns (bytes4) {
+        return bytes4(keccak256("completeOffset(uint256)"));
     }
 
     /// @notice The forced-sale entry points whose signatures #2796 changed.

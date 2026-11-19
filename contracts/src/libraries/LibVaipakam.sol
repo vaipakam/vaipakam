@@ -2395,25 +2395,15 @@ library LibVaipakam {
         address principalAsset;
         // Slot 8
         uint256 interestRateBps;
-        // Slot 9: startTime(8) + interestPaidSinceLastPeriod(16)
-        //        = 24 bytes packed; 8 free
-        // T-034 downsized startTime from uint256 to uint64 to free 24
-        // bytes for `interestPaidSinceLastPeriod` and future expansion.
-        // uint64 holds Unix-seconds through year 2554 — well past any
-        // plausible loan horizon. Every reader implicitly widens to
-        // uint256 via Solidity arithmetic; only the three write sites
-        // (`LoanFacet.initiateLoan`, `RepayFacet`, `PrecloseFacet`) need
-        // explicit `uint64(block.timestamp)` casts.
+        // Slot 9: startTime(8); 24 bytes free.
+        // T-034 downsized startTime from uint256 to uint64. uint64 holds
+        // Unix-seconds through year 2554 — well past any plausible loan
+        // horizon. Every reader implicitly widens to uint256 via Solidity
+        // arithmetic. #3779 removed the per-period interest counter that
+        // shared this slot: a period's standing is read from the loan's
+        // settled interest against its accrual
+        // ({LibPeriodicInterest.periodShortfall}).
         uint64 startTime; // Timestamp of initiation
-        // T-034 — interest paid by the borrower since the most recent
-        // periodic checkpoint (or since `startTime` for the first
-        // period). Reset to zero on each settlement. Only the interest
-        // portion of `repayPartial` payments accumulates here — under
-        // T-034's interest-first allocation, that's the same value as
-        // `min(payment, accruedThisPeriod)`. uint128 is plenty: it
-        // overflows at ~3.4 × 10^38 wei, far above any conceivable
-        // single-period interest amount in any asset.
-        uint128 interestPaidSinceLastPeriod;
         // Slot 10
         uint256 durationDays;
         // Slot 11
@@ -10776,9 +10766,9 @@ library LibVaipakam {
     // storage migration (mapping values are one-per-slot, right-aligned, so a
     // value written as `uint8` reads back identically as `uint16`).
     uint16 internal constant KEEPER_ACTION_COMPLETE_LOAN_SALE = 1 << 0; // 0x01
-    uint16 internal constant KEEPER_ACTION_COMPLETE_OFFSET = 1 << 1; // 0x02
+    uint16 internal constant KEEPER_ACTION_COMPLETE_OFFSET = 1 << 1; // 0x02 — grants nothing since K1 (the external completeOffset is gone)
     uint16 internal constant KEEPER_ACTION_INIT_EARLY_WITHDRAW = 1 << 2; // 0x04
-    uint16 internal constant KEEPER_ACTION_INIT_PRECLOSE = 1 << 3; // 0x08
+    uint16 internal constant KEEPER_ACTION_INIT_PRECLOSE = 1 << 3; // 0x08 — grants nothing since K1 (early close is the holder's own)
     // Bit 4 (0x10) was `KEEPER_ACTION_REFINANCE`, the delegation a keeper
     // needed to complete a refinance after the fact. #3042 retired that
     // completion: every refinance now completes inside the accept of its
@@ -11955,18 +11945,6 @@ library LibVaipakam {
         return loan.interestAccrualStart != 0
             ? uint256(loan.interestAccrualStart)
             : uint256(loan.startTime);
-    }
-
-    /// @notice #641 — seed the interest clock from the term for a loan that
-    ///         predates the fields, BEFORE the first partial re-stamps it. A
-    ///         no-op for loans originated with the clock set. Called at the head
-    ///         of every interest-clock re-stamp (partial liquidation, partial
-    ///         repay, swap-to-repay) so a legacy loan's first partial doesn't
-    ///         compute elapsed from timestamp 0 and zero out the remaining term.
-    function seedInterestClockIfUnset(Loan storage loan) internal {
-        if (loan.interestAccrualStart == 0) {
-            loan.interestAccrualStart = loan.startTime;
-        }
     }
 
     /// @notice T-034 — interval-in-days lookup for a cadence enum value.

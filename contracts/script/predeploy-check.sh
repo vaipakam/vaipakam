@@ -243,6 +243,24 @@ else
   FAIL=1
 fi
 
+# ── 1d6. Loan accrual writer guard ────────────────────────────────────
+# Whether an interest period is short is read from the loan's settled
+# interest against its accrual, so the accrual restarts only through
+# LibInterestLedger.restartAccrual and the settled interest is written only
+# there and by LibInterestPayment.book (#3779). Same AST artifacts as 1d.
+echo
+echo "[predeploy 1d6/4] loan accrual writer guard (#3779)"
+if [ "$BUILD_OK" -ne 1 ] || [ ! -d "$SCRIPT_DIR/../out-measured-delivery" ]; then
+  echo "  ✗ skipped — no AST artifacts to read (step 1 or 1c failed)" >&2
+  FAIL=1
+elif node "$SCRIPT_DIR/check-loan-accrual-writer.mjs"; then
+  : # the script prints its own lines
+else
+  echo "  ✗ loan accrual writer guard failed — restart the accrual through" >&2
+  echo "    LibInterestLedger.restartAccrual (see above)" >&2
+  FAIL=1
+fi
+
 # ── 1d3. Raw payout guard ─────────────────────────────────────────────
 # The Diamond pays users only through the outflow policy or LibDelivery, the
 # two places protected mode's delay is applied (#3710 §3.8, #3568). Any other

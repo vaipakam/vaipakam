@@ -357,22 +357,6 @@
       "class": "user",
       "why": "an ERC-721 transfer by the holder or one it approved; refused out of a locked holder and shown to the transfer check"
     },
-    "PrecloseFacet.precloseDirect(uint256)": {
-      "class": "user",
-      "why": "the borrower closes its own loan early"
-    },
-    "PrecloseFacet.transferObligationViaOffer(uint256,uint256,uint64)": {
-      "class": "user",
-      "why": "the borrower hands over its own loan"
-    },
-    "PrecloseOffsetFacet.completeOffset(uint256)": {
-      "class": "user",
-      "why": "completes the borrower's own offset; an accepted offset offer completes it automatically"
-    },
-    "PrecloseOffsetFacet.offsetWithNewOffer(uint256,uint256,uint256,address,uint256,bool,address,uint64)": {
-      "class": "user",
-      "why": "the borrower offsets its own loan"
-    },
     "PrepayListingFacet.executorCloseListingGrant(uint256,uint96)": {
       "class": "gated",
       "gate": "the collateral-listing executor or the offer's pinned executor (`_listingGrantSubject` refuses any other msg.sender)"
@@ -491,6 +475,14 @@
     "RepayFacet.repayLoan(uint256)": {
       "class": "user",
       "why": "the borrower (or anyone paying for it) repays; the borrower is the party it serves"
+    },
+    "RepayFacet.repayPartial(uint256,uint256)": {
+      "class": "user",
+      "why": "#3779 — the borrower, or anyone not on the lender side, pays part of a loan; the borrower is the party it serves"
+    },
+    "RepayPeriodicFacet.payInterest(uint256,uint256)": {
+      "class": "user",
+      "why": "#3779 — the borrower, or anyone not on the lender side, pays the interest so far; the borrower is the party it serves"
     },
     "RepayPeriodicFacet.autoDeductDaily(uint256)": {
       "class": "keeper",

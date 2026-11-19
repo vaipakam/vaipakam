@@ -117,7 +117,6 @@ export const NOT_AFFECTING = Object.freeze({
   // loan's start time for EVERY loan (loan 22 carries it), and the payoff,
   // the refinance's settle-first guard and settlementInterestNet consult
   // these only through a non-zero cadence — which SUPPORTED excludes.
-  interestPaidSinceLastPeriod: 'periodic bookkeeping, read only under a periodic cadence (excluded above)',
   lastPeriodicInterestSettledAt: 'periodic checkpoint, stamped at origination for every loan; read only under a periodic cadence (excluded above)',
   minHealthFactorAtInit: 'an HF gate parameter, not read for an illiquid refinance',
   initLtvCapBpsAtInit: 'an LTV gate parameter, not read for an illiquid refinance',

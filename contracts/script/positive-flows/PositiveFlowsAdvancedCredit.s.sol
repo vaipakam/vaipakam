@@ -874,7 +874,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsStaged {
         internal
     {
         // charlie accepts. The auto-link inside `_acceptOffer` fires
-        // `PrecloseOffsetFacet.completeOffset(l1)` which closes l1 and
+        // `PrecloseOffsetFacet.completeOffsetInternal(l1)` which closes l1 and
         // releases alice's collateral.
         LibAcceptTerms.AcceptTerms memory _t8 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(charlieKey), offsetOfferId, true, loanL1);
         bytes memory _sig8 = LibAcceptTestSigner.sign(diamond, _t8, charlieKey);
@@ -888,7 +888,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsStaged {
         LibVaipakam.Loan memory l1Settled = LoanFacet(diamond).getLoanDetails(loanL1);
         require(
             l1Settled.status != LibVaipakam.LoanStatus.Active,
-            "PF-212: L1 should be settled by completeOffset auto-fire"
+            "PF-212: L1 should be settled by the accept's offset completion"
         );
         console.log("L1 status post-offset:", uint8(l1Settled.status));
 

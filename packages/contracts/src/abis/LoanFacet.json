@@ -150,11 +150,6 @@
             "internalType": "uint64"
           },
           {
-            "name": "interestPaidSinceLastPeriod",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
             "name": "durationDays",
             "type": "uint256",
             "internalType": "uint256"

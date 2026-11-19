@@ -436,7 +436,13 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         // full-term minimum when the loan carries it. It priced the full-term
         // case at the minimum alone, which past maturity (the window runs to
         // the grace end) undercharged the time actually elapsed.
-        accruedInterest = LibEntitlement.settlementInterest(loan, at);
+        // #3779 — net of the interest already settled on the segment (a
+        // periodic sale, the reserve instruction or a wallet payment), the
+        // charge every other restart makes ({LibInterestLedger.restartAccrual}):
+        // the gross alone charged that interest a second time.
+        accruedInterest = LibEntitlement.creditSettledInterest(
+            loan, LibEntitlement.settlementInterest(loan, at)
+        );
         lateFee = LibVaipakam.calculateLateFeeAt(loanId, at);
     }
 
@@ -744,12 +750,16 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         // #1808 — the new rate goes through the ledger's single writer, which
         // checkpoints the old segment first, and BEFORE the new start time is
         // written: a ledger still unopened would otherwise open at the new start.
+        // #3779 — the accrual restarts with the new term through the one
+        // restart writer, BEFORE the rate and the start change: the closing
+        // segment's gross is the settlement interest on the old terms, the
+        // figure the charge above was netted from, and the settled interest
+        // beyond it is carried into the new segment, so old credit never
+        // covers the new segment's first period twice.
+        LibInterestLedger.restartAccrual(loan, LibEntitlement.settlementInterest(loan, block.timestamp));
         LibInterestLedger.setRate(LibVaipakam.storageSlot(), loan, newRateBps);
         loan.startTime = uint64(block.timestamp);
         loan.durationDays = newDurationDays;
-        // #641 — auto-refinance commits a NEW term; restart the interest-accrual
-        // clock with it.
-        loan.interestAccrualStart = uint64(block.timestamp);
         // Codex round-8 P2 — only re-register when the extension is
         // in-term. After `oldEndTime`, the borrower side is forfeited
         // and `loanBorrowerEntryId[loanId]` must stay pointed at the

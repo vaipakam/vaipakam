@@ -1016,11 +1016,12 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // Safe through year 2554; every reader implicitly widens.
         loan.startTime = uint64(block.timestamp);
         loan.durationDays = offer.durationDays;
-        // #641 — seed the interest-accrual clock at origination. A later
-        // partial liquidation / repay re-stamps THIS field (not
+        // #641 / #3779 — start the interest accrual at origination, through
+        // the one restart writer (nothing has accrued, so nothing is due).
+        // A later partial liquidation / repay restarts THIS clock (not
         // startTime/durationDays), keeping maturity + grace intact; the
         // full-term minimum is derived from the term (#3169).
-        loan.interestAccrualStart = uint64(block.timestamp);
+        LibInterestLedger.restartAccrual(loan, 0);
         // Range Orders Phase 1 — when matchOffers (PR3-B) is in flight,
         // the per-tx `matchOverride` slot carries the midpoint match
         // terms (amount / rate / collateral) and the matcher address.
@@ -1141,10 +1142,6 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // `intervalDays(cadence)` later.
         loan.periodicInterestCadence = offer.periodicInterestCadence;
         loan.lastPeriodicInterestSettledAt = uint64(block.timestamp);
-        // `interestPaidSinceLastPeriod` defaults to zero — Solidity
-        // zero-initialises the field at struct-write time. Spelled out
-        // here as a readable invariant.
-        loan.interestPaidSinceLastPeriod = 0;
         // Snapshot the effective fallback-path split right now so any future
         // governance change via `ConfigFacet.setFallbackSplit` applies
         // prospectively — dual-consent at offer creation guarantees both

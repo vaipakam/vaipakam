@@ -140,9 +140,10 @@ contract PauseGatingTest is SetupTest {
         );
     }
 
-    function test_pause_completeOffset() public {
+    function test_pause_completeOffsetInternal() public {
+        vm.prank(address(diamond));
         vm.expectRevert(LibPausable.EnforcedPause.selector);
-        PrecloseOffsetFacet(address(diamond)).completeOffset(0);
+        PrecloseOffsetFacet(address(diamond)).completeOffsetInternal(0);
     }
 
     // ── RefinanceFacet ──────────────────────────────────────────────────────

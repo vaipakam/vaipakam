@@ -72,6 +72,30 @@
   },
   {
     "type": "function",
+    "name": "payInterest",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "paid",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "previewPeriodicSettle",
     "inputs": [
       {
@@ -169,6 +193,43 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "InterestPaidFromWallet",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "payer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "owedBefore",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "periodClosed",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
       }
     ],
     "anonymous": false
@@ -400,6 +461,74 @@
       },
       {
         "name": "settler",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PeriodicInterestSettled",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "periodEndAt",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "expected",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "paidByBorrower",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "settler",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RepayPartialPeriodAdvanced",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "periodEndAt",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "expected",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "advancedBy",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -1840,6 +1969,27 @@
   },
   {
     "type": "error",
+    "name": "InterestPaymentBelowFloor",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "floor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InterestPaymentNotErc20Loan",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InterestRecoveredAboveGross",
     "inputs": [
       {
@@ -2230,6 +2380,17 @@
   },
   {
     "type": "error",
+    "name": "NothingOwed",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "OfferAcceptFailed",
     "inputs": []
   },
@@ -2442,6 +2603,11 @@
   {
     "type": "error",
     "name": "PositionTokenNotAccepted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PriceReadOutOfGas",
     "inputs": []
   },
   {
@@ -3273,6 +3439,11 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "RepaymentPastGracePeriod",
+    "inputs": []
   },
   {
     "type": "error",

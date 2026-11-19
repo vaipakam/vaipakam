@@ -100,6 +100,10 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
     ///        Always 0 on full repay (no remaining principal to accrue).
     /// @param newStatus Post-repay `LoanStatus` — `Repaid` for the
     ///        deferred-claim path, otherwise per the lifecycle library.
+    /// @param lateFeeFrom #3778 — the due date the late fee was measured
+    ///        from: the loan's maturity moved by pauses and by any sequencer
+    ///        outage ({LibLoanClock.lateFeeStart}) at the repayment. The
+    ///        repayment was on time iff its block time is not after it.
     /// @custom:event-category state-change/loan-mutation
     event LoanRepaid(
         uint256 indexed loanId,
@@ -108,7 +112,8 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
         uint256 lateFeePaid,
         uint256 outstandingPrincipal,
         uint256 accruedInterest,
-        LibVaipakam.LoanStatus newStatus
+        LibVaipakam.LoanStatus newStatus,
+        uint256 lateFeeFrom
     );
 
     /// @notice Full settlement breakdown for an ERC-20 loan being closed
@@ -129,6 +134,8 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
 
     /// @notice Emitted when a partial repayment is made.
     /// @param loanId The ID of the loan.
+    /// @param payer Who paid (#3779): the renter on a rental; on an ERC-20
+    ///        loan, anyone not on the lender's side.
     /// @param amountRepaid The partial amount repaid (principal or days' fees).
     /// @param newPrincipal The updated principal (for ERC20) or duration (for NFT).
     /// @param accruedInterest Interest accrued at emit time against the
@@ -140,6 +147,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
     /// @custom:event-category state-change/loan-mutation
     event PartialRepaid(
         uint256 indexed loanId,
+        address indexed payer,
         uint256 amountRepaid,
         uint256 newPrincipal,
         uint256 accruedInterest
@@ -274,8 +282,10 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
         // settle the rental period — the lender-side check has no meaning
         // there since rental fees are deducted from a borrower-funded
         // prepay vault regardless of caller.
+        // #3779 — and a payer who is not the borrower position's holder is
+        // screened like a new deposit; the holder is never refused.
         if (loan.assetType == LibVaipakam.AssetType.ERC20) {
-            LibAuth.requireNotLenderSide(loan, payer);
+            LibAuth.requireRepaymentPayer(loan, payer);
         }
 
         uint256 graceEnd = LibLoanClock.graceEnd(loan);
@@ -650,7 +660,8 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             lateFee,
             /* outstandingPrincipal */ 0,
             /* accruedInterest */ 0,
-            loan.status
+            loan.status,
+            LibLoanClock.lateFeeStart(loan, block.timestamp)
         );
     }
 
@@ -661,7 +672,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
      *      Distributes accrued fees. No late fees in partial (handled on full).
      *      Checks post-HF >= min. Reverts if insufficient or past grace.
      *      Emits PartialRepaid.
-     *      Callable only by borrower.
+     *      ERC20: callable by anyone not on the lender side (#3779); NFT rental: the renter only.
      *      Open during a global pause (#668 / #935, owner decision D2):
      *      a borrower can always lower their risk, so this route carries no
      *      `whenNotPaused`. Per-asset pause rules, the reentrancy guard and
@@ -688,7 +699,12 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
         // sees the consolidated holder. Skip-not-block.
         LibConsolidation.consolidateToHolder(loanId, false, LibConsolidation.Ctx.Tier2CloseOut);
         LibConsolidation.consolidateToHolder(loanId, true, LibConsolidation.Ctx.Tier2CloseOut);
-        LibAuth.requireBorrower(loan);
+        // #3779 — an ERC-20 part repayment is open to the same payers as a
+        // full one: anyone not on the lender's side, a payer other than the
+        // borrower position's holder screened. A rental's fees come from the
+        // renter's own prepaid amount, so only the renter settles it.
+        if (loan.assetType == LibVaipakam.AssetType.ERC20) LibAuth.requireRepaymentPayer(loan, msg.sender);
+        else LibAuth.requireBorrower(loan);
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert InvalidLoanStatus();
         // Lender-opt-in gate. The flag was snapshotted onto the loan
@@ -753,10 +769,11 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // days (the audit's M1). `creditSettledInterest` nets it out; the
             // stale `interestSettled` is then zeroed at the clock reset below
             // (mirrors PrecloseFacet / RiskFacet's #915 credit+zero).
-            uint256 settledCarried;
-            (accrued, settledCarried) = LibEntitlement.splitSettledInterest(
-                loan, LibEntitlement.accruedInterestToTime(loan, block.timestamp)
-            );
+            // #3779 — the segment's gross, kept for the one restart writer
+            // below ({LibInterestLedger.restartAccrual}), which nets it the
+            // same way.
+            uint256 segmentGross = LibEntitlement.accruedInterestToTime(loan, block.timestamp);
+            (accrued, ) = LibEntitlement.splitSettledInterest(loan, segmentGross);
             (uint256 treasuryShare, uint256 lenderShare) = LibEntitlement.splitTreasury(
                 loan,
                 accrued
@@ -819,75 +836,26 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // #1808 — through the ledger's single writer (checkpoint first).
             // `partialAmount < loan.principal` is pinned above.
             LibInterestLedger.reducePrincipal(s, loan, partialAmount, partialAmount);
-            // #408 / #410 / #413 (2026-06-12) — Option A: track
-            // remaining committed term. The accrual clock reset
-            // below (`interestAccrualStart = now`) measures elapsed seconds
-            // from the most recent partial, and the floor in
-            // `LibEntitlement.settlementInterest` runs from that reset to
-            // the term's end ({LibLoanClock.minimumInterestSeconds}), so it
-            // reflects the borrower's REMAINING commitment (not the
-            // original) with no counter to keep in step (#3169).
+            // #408 / #641 / #3169 — the accrual restarts at now on the reduced
+            // principal; the full-term minimum runs from that restart to the
+            // term's end ({LibLoanClock.minimumInterestSeconds}), and the term
+            // tuple (maturity, grace) is left untouched.
             //
-            // #641 — the re-stamp now lands on the dedicated INTEREST clock
-            // (`interestAccrualStart`); the term
-            // tuple (`startTime` + `durationDays`) is LEFT UNTOUCHED so the
-            // loan's maturity + grace window are preserved. (Pre-#641 this
-            // reset `startTime` and shrank `durationDays`, which silently
-            // pulled the default deadline earlier and — fatally — let a tiny
-            // post-maturity partial reset the grace clock and roll the
-            // lender's recovery deadline.)
-            //
-            // Codex round-1 P1 (PR #559): DO NOT ACCUMULATE into
-            // `loan.interestSettled` here. The combined state reset
-            // (`principal -=`, `interestAccrualStart =`) makes the next
-            // settlement FUTURE-ONLY: its gross runs from the reset on the
-            // remaining principal.
-            // Adding the partial's paid interest to the accumulator AND
-            // subtracting it from a future-only gross would double-count.
-            //
-            // Pass-2 A3 (#1191): but a PRE-EXISTING `interestSettled` (credited
-            // by a periodic auto-liquidation BEFORE this partial) is now stale
-            // — it was already netted from the partial's charge via
-            // `creditSettledInterest` above, and leaving it non-zero would let
-            // `settlementInterestNet`/`currentBorrowBalance` subtract it a
-            // SECOND time from the future-only window (understating HF, delaying
-            // liquidation, underpaying the lender at final settle). So ZERO it
-            // at the reset below — the #915 credit+zero pattern
-            // (PrecloseFacet:886 / RiskFacet).
-            //
-            // #641 — seed the interest clock from the term for any loan that
-            // predates the fields, so the elapsed math below doesn't compute
-            // from timestamp 0 and zero out the remaining term.
-            LibVaipakam.seedInterestClockIfUnset(loan);
-            // #3169 — only the clock's start moves. The full-term minimum of the
-            // new segment is derived from the term to the second
-            // ({LibLoanClock.minimumInterestSeconds}); there is no remaining-day
-            // counter to decrement, so no part day is lost here.
-            // T-034 — interestAccrualStart downsized to uint64; explicit cast.
-            loan.interestAccrualStart = uint64(block.timestamp); // Reset accrual start
-            // Pass-2 A3 (#1191) — consume ONLY the portion of the settled credit
-            // that this partial's charge just netted (the gross accrual), and
-            // PRESERVE any excess. A periodic auto-liquidation can OVERDELIVER
-            // (it credits actual slippage-buffered `lenderProceeds`, which may
-            // exceed the interest accrued by the time this partial runs), so a
-            // partial before enough future interest accrues would otherwise
-            // forfeit the borrower's already-paid excess and later OVERSTATE the
-            // debt (Codex #1229). The clock is reset above, so the surviving
-            // excess ({LibEntitlement.splitSettledInterest}) credits future accrual.
-            loan.interestSettled = settledCarried;
+            // #3779 — the one accrual restart: the new segment starts now on
+            // the reduced principal (the term tuple is untouched, #641), and
+            // the settled interest beyond this segment's gross (a forced sale
+            // or a payment ahead of the accrual) is carried into it, never
+            // forfeited and never netted twice (#1191, #1229).
+            LibInterestLedger.restartAccrual(loan, segmentGross);
 
             // §3.10 — accrual clock reset right above (loan.interestAccrualStart
             // = block.timestamp), so accruedInterest at emit is 0.
-            emit PartialRepaid(loanId, partialAmount, loan.principal, /* accruedInterest */ 0);
+            emit PartialRepaid(loanId, msg.sender, partialAmount, loan.principal, /* accruedInterest */ 0);
 
-            // T-034 §4.5 / #2731 — the interest this partial charged counts
-            // toward the current period, and the checkpoint advances inline
-            // when the period is over and now covered. The NETTED `accrued`
-            // is credited, never the gross accrual, which can span periods the
-            // periodic settlement already closed (Pass-2 A3, #1191 / Codex
-            // #1229). One rule for every mid-period payment
-            // ({LibPeriodicInterest.creditInterestPaid}).
-            LibPeriodicInterest.creditInterestPaid(loan, loanId, accrued);
+            // T-034 §4.5 / #3779 — every period that is over and now has
+            // nothing short closes inline (the one close rule,
+            // {LibPeriodicInterest.closeCoveredPeriods}).
+            LibPeriodicInterest.closeCoveredPeriods(loan, loanId, true);
         } else {
             // NFT: Deduct for partialDays (partialAmount = days)
             // Pass-2 D1 (#1188) — bound by REMAINING days, not the (now
@@ -988,6 +956,7 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // duration; the immutable term would mislead them).
             emit PartialRepaid(
                 loanId,
+                msg.sender,
                 partialAmount,
                 LibVaipakam.remainingRentalDays(loan),
                 /* accruedInterest */ 0

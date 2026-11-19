@@ -175,8 +175,10 @@ export async function run() {
         });
     }
 
-    const late = await simulate(DIAMOND, ABIS.precloseOffset, 'completeOffset', [loanId], borrower.address);
-    expectRefusal('A7.4', 'calling completeOffset afterwards is refused — the auto-link already ran', late, 'LoanNotActive');
+    // K1 retired the external completeOffset: only the accept's own
+    // self-call completes an offset, and anyone else is refused.
+    const late = await simulate(DIAMOND, ABIS.precloseOffset, 'completeOffsetInternal', [loanId], borrower.address);
+    expectRefusal('A7.4', 'only the accept completes an offset — a later direct completion is refused', late, 'UnauthorizedCrossFacetCall');
 
     // The original collateral stayed put through the offset, released to the
     // borrower's claim. Exercised, not just stated: a completion that settled

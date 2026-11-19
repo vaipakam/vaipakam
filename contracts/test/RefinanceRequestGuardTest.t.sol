@@ -11,6 +11,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {PrecloseOffsetFacet} from "../src/facets/PrecloseOffsetFacet.sol";
 import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
@@ -164,6 +165,19 @@ contract RefinanceRequestGuardTest is SetupTest {
     }
 
     // ─── the index ───────────────────────────────────────────────────
+
+    /// #3779 — paying the interest so far is not refused by a standing
+    /// refinance request: the refinance sizes its payoff when it settles.
+    function test_payingInterestIsOpenWhileARequestStands() public {
+        uint256 loanId = _activeLoan();
+        _request(loanId, uint64(block.timestamp + 20 days));
+        assertTrue(_live(loanId) != 0, "precondition: a request stands");
+        vm.warp(block.timestamp + 10 days);
+        vm.startPrank(borrower);
+        ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        assertGt(RepayPeriodicFacet(address(diamond)).payInterest(loanId, type(uint256).max), 0, "paid");
+        vm.stopPrank();
+    }
 
     function test_aRequestIsIndexedAndReported() public {
         uint256 loanId = _activeLoan();

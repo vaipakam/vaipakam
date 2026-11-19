@@ -693,7 +693,6 @@
     "L|vaipakam@20[uint256]|7|0|address|loans[].principalAsset",
     "L|vaipakam@20[uint256]|8|0|uint256|loans[].interestRateBps",
     "L|vaipakam@20[uint256]|9|0|uint64|loans[].startTime",
-    "L|vaipakam@20[uint256]|9|8|uint128|loans[].interestPaidSinceLastPeriod",
     "L|vaipakam@210[bytes32]|0|0|uint256|activeStakerRegistry._inner._positions[]",
     "L|vaipakam@211[address]|0|0|uint8|userTierCache[].effectiveTier",
     "L|vaipakam@211[address]|0|14|uint40|userTierCache[].tierExpirySec",

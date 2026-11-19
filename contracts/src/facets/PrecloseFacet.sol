@@ -196,10 +196,9 @@ contract PrecloseFacet is
         LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        // Phase 6: borrower-entitled strategic flow. Authority follows the
-        // current borrower-NFT owner OR a keeper with the InitPreclose
-        // action bit.
-        LibPreclose.authorizeBorrowerSide(LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE, loan); // #1219 — a keeper action is charged
+        // K1 — the borrower position's holder only; a payoff by anyone else
+        // goes through the ordinary repayment.
+        LibPreclose.requireHolder(loan);
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
 
@@ -213,8 +212,8 @@ contract PrecloseFacet is
         // markers for BOTH sides up front (branch-independent): precloseDirect is
         // a Tier-2-style close-out for the counterparties — it writes a lender
         // payoff claim AND returns the borrower's collateral/refund, each claimed
-        // later via ClaimFacet. A keeper-initiated (or outage-window) close can
-        // complete while a current position holder is sanctioned, so freeze either
+        // later via ClaimFacet. An outage-window close can complete while a
+        // current position holder is sanctioned, so freeze either
         // side fail-closed when its holder is confirmed flagged.
         // #1132 (S10 central enforcement) — both holders' fail-closed markers are
         // recorded centrally at the `Repaid` transition (terminalize) in each asset
@@ -469,11 +468,11 @@ contract PrecloseFacet is
             // Deduct from the borrower's prepay vault: treasury fee.
             // #574 — source from `loan.borrower` (who deposited the rental
             // prepay at loan init), NOT `msg.sender`. `precloseDirect` can be
-            // triggered by a keeper or a transferred borrower-position holder
-            // (it gates on keeper/holder authorisation, not borrower identity),
+            // triggered by a transferred borrower-position holder (it gates on
+            // holder authorisation, not borrower identity),
             // and the prepay always sits in the original borrower's vault.
             // Keying the source on `msg.sender` pulled from the caller's vault
-            // instead — reverting for a keeper/transferee with no prepay, or
+            // instead — reverting for a transferee with no prepay, or
             // (worse) letting a transferred-away borrower redirect the prepay
             // out of someone else's vault. The fee belongs to the prepay, so
             // it must come from where the prepay lives.
@@ -614,18 +613,16 @@ contract PrecloseFacet is
         // be cancelled (or completed) first.
         if (s.loanToOffsetOfferId[loanId] != 0) revert OffsetAlreadyActive();
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        // Phase 6: borrower-entitled strategic flow (Preclose Option 2).
-        // Authority binds to the current borrower-NFT owner OR a keeper
-        // with the InitPreclose action bit.
-        LibPreclose.authorizeBorrowerSide(LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE, loan); // #1219 — a keeper action is charged
+        // K1 — the borrower position's holder only (Preclose Option 2).
+        LibPreclose.requireHolder(loan);
         // #819 Tier-1 sanctions on the EXITING borrower-position holder.
-        // `requireKeeperFor` authorises against the borrower NFT owner, but a
-        // keeper caller leaves that holder unscreened — and the exiting
+        // A controller acting for a retired holder leaves that holder
+        // unscreened — and the exiting
         // collateral is withdrawn INLINE to that holder later in this function.
         // Screen it here at entry: the replacement offer is required to be
         // un-accepted (below), so no counterparty is committed and an atomic
         // revert strands nothing. Resolve the holder via the same
-        // `IERC721(address(this)).ownerOf` authority source `requireKeeperFor`
+        // `IERC721(address(this)).ownerOf` authority source `requireHolder`
         // uses (the current owner, not the latched `loan.borrower`).
         LibVaipakam._assertNotSanctioned(
             LibPositionNFT.ownerOf(loan.borrowerTokenId)
@@ -1038,10 +1035,9 @@ contract PrecloseFacet is
         // from the STORED `loan.borrower`'s vault (where the pledged
         // collateral sits and where the lien just released was keyed),
         // delivering it to the CURRENT borrower-position NFT holder — NOT
-        // `msg.sender`. `transferObligationViaOffer` is keeper-authorizable
-        // (`requireKeeperFor` above), so `msg.sender` may be a keeper;
-        // paying the exiting collateral to `msg.sender` would hand it to an
-        // approved/compromised keeper. `migrateBorrowerPosition` (which
+        // `msg.sender`. `msg.sender` may be the holder's controller
+        // (protected account), and the exiting collateral belongs to the
+        // holder. `migrateBorrowerPosition` (which
         // re-keys the borrower NFT to the new borrower) runs later, so
         // `ownerOf(loan.borrowerTokenId)` here is still the EXITING
         // borrower — the rightful recipient. Common case (the holder calls
@@ -1104,19 +1100,24 @@ contract PrecloseFacet is
         // #1808 — the new rate goes through the ledger's single writer, which
         // checkpoints the old segment first, and BEFORE the new start time is
         // written: a ledger still unopened would otherwise open at the new start.
+        //
+        // #3779 — the accrual restarts with the new term, through the one
+        // restart writer, BEFORE the rate changes: the closing segment's gross
+        // is what accrued on the old principal and rate (the figure the exiting
+        // borrower's step-2 payment was netted from; zero for a rental, whose
+        // rent is settled separately, #1194). The settled interest beyond it
+        // was paid ahead of the accrual and is carried into the new segment
+        // rather than cleared; netting it from the closed segment only, as
+        // before, keeps it from counting twice (#915).
+        LibInterestLedger.restartAccrual(
+            loan,
+            loan.assetType == LibVaipakam.AssetType.ERC20
+                ? LibEntitlement.accruedInterestToTime(loan, block.timestamp)
+                : 0
+        );
         LibInterestLedger.setRate(LibVaipakam.storageSlot(), loan, offer.interestRateBps);
         // T-034 — startTime downsized to uint64; explicit cast.
         loan.startTime = uint64(block.timestamp);
-        // #641 — offset re-originates the obligation under a new term; restart
-        // the interest-accrual clock with it.
-        loan.interestAccrualStart = uint64(block.timestamp);
-        // #915 (Codex #1087 r1 P2) — the re-originated obligation restarts its
-        // accrual clock above, so any periodic-settled interest credited to the
-        // EXITING borrower (already netted from their step-2 payment) belongs to
-        // the closed accrual window. Clear it so the shared `interestSettled`
-        // credit is not subtracted a SECOND time from the NEW borrower's future
-        // repayment / default settlement (which would underpay the lender).
-        loan.interestSettled = 0;
 
         // #969 / S5 (#998 Tranche 2) — Option 2 is a CONTINUING transfer, not a
         // terminal close: the loan stays Active under the incoming borrower and a
