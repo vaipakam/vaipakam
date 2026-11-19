@@ -998,6 +998,22 @@
   },
   {
     "type": "error",
+    "name": "ExitReductionTooFine",
+    "inputs": [
+      {
+        "name": "checks",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxChecks",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ExitTargetOutOfBounds",
     "inputs": [
       {

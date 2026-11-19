@@ -1585,6 +1585,7 @@
 {"type":"error","name":"ExitLevelAboveHealth","inputs":[{"name":"healthFactor","type":"uint256","internalType":"uint256"},{"name":"levelHf","type":"uint64","internalType":"uint64"}]},
 {"type":"error","name":"ExitLevelOutOfBounds","inputs":[{"name":"levelHf","type":"uint64","internalType":"uint64"},{"name":"minHf","type":"uint64","internalType":"uint64"},{"name":"maxHf","type":"uint64","internalType":"uint64"}]},
 {"type":"error","name":"ExitReduceTooSoon","inputs":[{"name":"loanId","type":"uint256","internalType":"uint256"},{"name":"nextAt","type":"uint256","internalType":"uint256"}]},
+{"type":"error","name":"ExitReductionTooFine","inputs":[{"name":"checks","type":"uint256","internalType":"uint256"},{"name":"maxChecks","type":"uint256","internalType":"uint256"}]},
 {"type":"error","name":"ExitTargetOutOfBounds","inputs":[{"name":"targetHf","type":"uint64","internalType":"uint64"},{"name":"minHf","type":"uint64","internalType":"uint64"},{"name":"maxHf","type":"uint64","internalType":"uint64"}]},
 {"type":"error","name":"ExitToleranceOutOfBounds","inputs":[{"name":"toleranceBps","type":"uint16","internalType":"uint16"},{"name":"minBps","type":"uint16","internalType":"uint16"},{"name":"maxBps","type":"uint16","internalType":"uint16"}]},
 {"type":"error","name":"ExitWindowClosed","inputs":[{"name":"loanId","type":"uint256","internalType":"uint256"}]},
