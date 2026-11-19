@@ -11,15 +11,16 @@
  *      terms confirmed by the ledger (the one placement rule,
  *      marketPlacement.ts), lender and borrower different addresses (the
  *      self-trade rule), started inside the point's look-back, at least the
- *      minimum age old, and at the as-of time either still open (active)
- *      or closed by repayment. An open loan weighs by the interest it has
- *      paid so far, which the design's rule names ("the interest paid on it
- *      so far"); it could not count before #3755, when no event stated
- *      that figure for every route. A loan closed by default or
- *      liquidation by the as-of time is out, and so is one waiting in the
- *      liquidation fallback: its interest may never be recovered. A loan
- *      that was open at an earlier as-of time counts on those days whatever
- *      became of it later. A loan whose rate came from a
+ *      minimum age old, WHATEVER its status (design ruling 2026-11-19).
+ *      Every loan weighs by the interest it has paid so far, open or
+ *      closed: one that paid interest and then defaulted or was liquidated
+ *      keeps that weight, and interest its close-out delivered counts once
+ *      delivered; interest a payment left undelivered is taken back by its
+ *      own statement. A status filter would move the band on a liquidation
+ *      for a reason that is not a rate, and lean it toward loans that ended
+ *      well. (Before #3755 no event stated the figure for every route, so
+ *      only repaid loans counted.) A loan whose agreed terms the ledger has
+ *      not confirmed is out because its rate is not known. A loan whose rate came from a
  *      link is out too; no such loan exists on any deployment yet, so the
  *      rule has nothing to remove until the link kind is built.
  *   2. Weight: the interest PAID on the loan up to the as-of time, so
@@ -68,7 +69,7 @@ export const OWN_LOANS_RULE = Object.freeze({
   walletShareCapBps: 2_000,
   minLenders: 5,
   minBorrowers: 5,
-  loans: 'open-or-closed-by-repayment',
+  loans: 'any-status',
   weight: 'interest-paid',
   figure: 'weighted-quartiles',
 });
@@ -156,10 +157,6 @@ export function loanWeight(
   if (lender === borrower) return null;
   if (row.start_at > asOf - OWN_LOANS_RULE.minAgeDays * 86_400) return null;
   if (row.start_at < asOf - lookbackDays(term) * 86_400) return null;
-  // Open at `asOf`, or closed by repayment by then.
-  const closedBy = row.terminal_at != null && row.terminal_at <= asOf;
-  const openAt = row.terminal_at != null ? row.terminal_at > asOf : row.status === 'active';
-  if (closedBy ? row.status !== 'repaid' : !openAt) return null;
   if (paid === undefined || paid <= 0n) return null;
   // Only the RATIO between loans of one asset matters, so a float is
   // precise enough for the weight.

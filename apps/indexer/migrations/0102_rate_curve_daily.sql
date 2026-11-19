@@ -5,8 +5,8 @@
 --
 --   own_*  the platform's own loans, under the standing rule for figures
 --          built from them (TermAverageAndLinkGuardsDesign.md §8): each loan
---          weighted by interest PAID (loan_interest_events, 0103), open or
---          repaid loans, one wallet's share capped, a minimum number
+--          weighted by interest PAID (loan_interest_events, 0103), any
+--          status, one wallet's share capped, a minimum number
 --          of distinct lenders and borrowers, shown as a quartile band.
 --          `own_state` is 'shown' or 'withheld'; a withheld row carries the
 --          reason and no figures.

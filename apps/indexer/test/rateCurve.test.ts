@@ -85,38 +85,37 @@ describe('rate curve: which loans count', () => {
     expect(OWN_LOANS_RULE.minBorrowers).toBe(5);
   });
 
-  it('counts an open loan by what it has paid so far', () => {
+  it('counts every loan by what it has paid so far, whatever its status', () => {
     const { rows, pay } = market(5, () => 500);
-    const open = loan({ status: 'active', terminal_at: null });
-    pay.set(open.loan_id, 10n);
-    expect(point(ownLoansCurve([...rows, open], pay, NOW), 30).loans).toBe(6);
+    const others = [
+      loan({ status: 'active', terminal_at: null }),
+      loan({ status: 'fallback_pending', terminal_at: null }),
+      loan({ status: 'defaulted' }),
+      loan({ status: 'liquidated' }),
+    ];
+    for (const o of others) pay.set(o.loan_id, 10n);
+    expect(point(ownLoansCurve([...rows, ...others], pay, NOW), 30).loans).toBe(9);
   });
 
-  it('leaves out defaulted, fallback, self-trade, unconfirmed, too-young and unpaid loans', () => {
+  it('leaves out self-trade, unconfirmed, too-young and unpaid loans', () => {
     const { rows, pay } = market(5, () => 500);
     const extra = [
-      loan({ status: 'fallback_pending', terminal_at: null, init_rate_bps: 9_000 }),
-      loan({ status: 'defaulted', init_rate_bps: 9_000 }),
       loan({ lender: addr(77), borrower: addr(77), init_rate_bps: 9_000 }),
       loan({ init_terms_unbacked: 1, init_rate_bps: 9_000 }),
       loan({ start_at: NOW - 2 * DAY, terminal_at: NOW - DAY, init_rate_bps: 9_000 }),
       loan({ init_rate_bps: 9_000 }), // repaid, but no interest recorded
     ];
-    for (const e of extra.slice(0, 5)) pay.set(e.loan_id, 10_000n);
+    for (const e of extra.slice(0, 3)) pay.set(e.loan_id, 10_000n);
     const f = point(ownLoansCurve([...rows, ...extra], pay, NOW), 30);
     expect(f.loans).toBe(5);
     expect(f.p75Bps).toBe(500);
   });
 
-  it('judges a loan by what it was at the as-of time', () => {
+  it('a loan that defaulted keeps the weight it paid', () => {
     const { rows, pay } = market(5, () => 500);
-    const asOf = NOW - 20 * DAY; // before every terminal_at (NOW - 10d)
-    // Repaid later: open on that day, so it counts.
-    expect(point(ownLoansCurve(rows, pay, asOf), 30).loans).toBe(5);
-    // Defaulted later: also open on that day; defaulted by then: out.
     const later = rows.map((r) => ({ ...r, status: 'defaulted' }));
-    expect(point(ownLoansCurve(later, pay, asOf), 30).loans).toBe(5);
-    expect(point(ownLoansCurve(later, pay, NOW), 30).loans).toBe(0);
+    expect(point(ownLoansCurve(later, pay, NOW), 30).loans).toBe(5);
+    expect(point(ownLoansCurve(later, pay, NOW - 20 * DAY), 30).loans).toBe(5);
   });
 
   it('respects each point\'s own look-back', () => {

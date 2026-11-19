@@ -13,7 +13,7 @@
  *              half says `not-published` and carries no figure. When the view
  *              exists the pass reads it here; the response shape does not
  *              change.
- *   ownLoans   the platform's own loans (open, or closed by repayment) under the §8 rule
+ *   ownLoans   the platform's own loans, whatever their status, under the §8 rule
  *              (`rateCurve.ts`), with every setting it was built under.
  *
  * Every figure is an observed average of what happened, never advice, a

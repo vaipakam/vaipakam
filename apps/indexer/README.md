@@ -71,7 +71,7 @@ The platform lets a loan's status move only along the diagram in [`ProjectDetail
 one point's daily rows. Both carry two halves, never blended:
 `reference` (the outside-source term average, `not-published` until the
 rate reference's `termAverage` view is deployed) and `ownLoans` (the
-platform's open and repaid loans under TermAverageAndLinkGuardsDesign.md §8,
+platform's loans, whatever their status, under TermAverageAndLinkGuardsDesign.md §8,
 weighted by the per-loan interest statements in `loan_interest_events` (0103), with
 every setting in `ownLoans.rule`). The figures are written once an hour by
 the cron's rate-curve pass into `rate_curve_daily` (0102), so a read costs
