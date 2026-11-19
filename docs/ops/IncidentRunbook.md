@@ -652,7 +652,8 @@ gate, oracle-fallback) and external liquidators must be stopped
 too.
 
 Post-handover this needs a Timelock-scheduled tx with the
-48h delay — **not an emergency lever once handover lands**.
+standard wait (7 days, or 48h as an urgent fix the Pauser Safe approves by
+its id) — **not an emergency lever once handover lands**.
 Tier 3 is the "we have time to schedule a permanent fix" path.
 
 **Correction (#1924 r16): `AdminFacet.pauseAsset` is NOT an
@@ -720,7 +721,8 @@ logic, the lifecycle transition, the per-leg incentive math)
 and every operator's matcher must be stopped.
 
 Post-handover this needs a Timelock-scheduled tx with the
-48h delay — **not an emergency lever once handover lands.**
+standard wait (7 days, or 48h as an urgent fix the Pauser Safe approves by
+its id) — **not an emergency lever once handover lands.**
 Tier 2 is for "we want to permanently disable the match path
 while we triage."
 
@@ -1673,7 +1675,8 @@ Per the Governance Runbook §6.2:
 
 1. Schedule `ZeroExAggregatorAdapter.addSwapTarget(<newSettler>)`
    via the chain's Timelock (proposed by `GOVERNANCE_SAFE`).
-2. Wait the 48h delay, then execute.
+2. Wait the standard wait (or 48h, if the Pauser Safe approved the
+   operation as urgent first), then execute.
 3. Verify `swapTargetAllowed(<newSettler>) == true` and
    `swapTargetCount` incremented by exactly 1.
 4. (Later, after 0x deprecates the old Settler and the keeper-bot
@@ -1698,7 +1701,8 @@ triage instead.
 
 ### Guard rails
 
-- The 48h Timelock delay applies to every rotation. If a Settler
+- The Timelock's standard wait applies to every rotation (48h only as an
+  urgent fix the Pauser Safe approves). If a Settler
   rotation is hitting the protocol so fast that the delay is a
   problem, the response is NOT to bypass the Timelock; it's to
   ensure the seed allowlist at deploy time is broad enough to
@@ -2097,8 +2101,9 @@ place (see Detect), and the deploy approval is built and waits for mainnet
 
 ### Why this needs its own procedure
 
-The repository is public, every Diamond upgrade waits the Timelock's 48h delay
-(a permanent floor, see `GovernanceRunbook.md`), and new vault code reaches
+The repository is public, every Diamond upgrade waits the Timelock's 7-day standard wait
+(a permanent floor, see `GovernanceRunbook.md`; 48h only as an urgent fix
+the Pauser Safe approves by its id), and new vault code reaches
 vaults only through a VaultBeacon proposal that waits the beacon's minimum
 code delay from the moment it is proposed (`VaultBeacon.MIN_CODE_DELAY`:
 7 days, #3421). An ordinary fix PR, a queued
@@ -2143,7 +2148,9 @@ still use.
 4. **Ship through the normal delays, with the path still closed.**
    - Facet fix: deploy the new facet, then the Governance Safe schedules the
      diamond-cut on the Timelock. `diamondCut` is callable while paused, so
-     the Diamond stays paused for the whole 48h. The new facet's bytecode is
+     the Diamond stays paused for the whole wait: 7 days, or 48h when the
+     Pauser Safe approves the cut's operation id as urgent before it is
+     queued (the expected route for a disclosed vulnerability). The new facet's bytecode is
      public from the moment it is deployed; that is acceptable only because
      step 2 closed the path.
    - Vault-code fix, as the beacon works today: `registerVersion(patch)`

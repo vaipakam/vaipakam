@@ -26,7 +26,7 @@ Scope: a Base Sepolia fresh deployment wipes the old `BASE_SEPOLIA_DIAMOND_ADDRE
 
 All commands run from `contracts/`.
 
-> **Admin handover ordering.** Steps 1–11 run from the `PRIVATE_KEY` EOA because it needs `ADMIN_ROLE` / `ORACLE_ADMIN_ROLE` / `VAULT_ADMIN_ROLE` to land every `Configure*.s.sol`. Step 11.5 (*Hand over admin to timelock*) is **one-way** — after it runs, every `Configure*` invocation must be scheduled through the `TimelockController` (48h delay). Always land the full config sweep and run smoke tests under the EOA first; hand over last.
+> **Admin handover ordering.** Steps 1–11 run from the `PRIVATE_KEY` EOA because it needs `ADMIN_ROLE` / `ORACLE_ADMIN_ROLE` / `VAULT_ADMIN_ROLE` to land every `Configure*.s.sol`. Step 11.5 (*Hand over admin to timelock*) is **one-way** — after it runs, every `Configure*` invocation must be scheduled through the `TimelockController` (the standard wait, 7 days on a production chain). Always land the full config sweep and run smoke tests under the EOA first; hand over last.
 
 > **Address propagation.** As of the Track-B refactor, every `Deploy*.s.sol`
 > writes its outputs to `deployments/base-sepolia/addresses.json` and every
@@ -612,7 +612,7 @@ cast send $BASE_SEPOLIA_DIAMOND_ADDRESS "closeDay()" \
 
 ## 11.5. Hand over admin to timelock (one-way)
 
-Only run after smoke tests (§11) pass. After this step, every admin setter — `OracleAdminFacet.*`, `VaultAdminFacet.*`, role grants, `OwnershipFacet.transferOwnership` — must be scheduled through the `TimelockController` with a minimum 48h delay. (There is no `AdminFacet.setTreasury` since #3569: the treasury moves only by new vault code on the `VaultBeacon`, see [UpgradeSafety.md](UpgradeSafety.md), "Moving the treasury".)
+Only run after smoke tests (§11) pass. After this step, every admin setter — `OracleAdminFacet.*`, `VaultAdminFacet.*`, role grants, `OwnershipFacet.transferOwnership` — must be scheduled through the `TimelockController` with at least the delay `timelock.requiredDelay(...)` reports: the standard wait, since only the Diamond's unpause calls are on the restart list. (There is no `AdminFacet.setTreasury` since #3569: the treasury moves only by new vault code on the `VaultBeacon`, see [UpgradeSafety.md](UpgradeSafety.md), "Moving the treasury".)
 
 Populate `.env`: `TIMELOCK_PROPOSER` (governance multi-sig address), `PAUSER_ADDRESS` (the Pauser multi-sig; it becomes the Timelock's independent canceller), `EMERGENCY_REVOKER_ADDRESS` (the governance multi-sig), `TIMELOCK_EXECUTOR=0x0000000000000000000000000000000000000000` (open execution after delay), `TIMELOCK_MIN_DELAY=172800` (48h, restarts and approved urgent fixes), `TIMELOCK_STANDARD_DELAY=604800` (7 days, everything else).
 
@@ -651,7 +651,7 @@ cast call $BASE_SEPOLIA_DIAMOND_ADDRESS "owner()(address)" \
 
 ### Post-handover: scheduling a config change
 
-To run any `Configure*.s.sol` after handover, wrap the setter call in a `timelock.schedule` → wait 48h → `timelock.execute` sequence. Example for rotating the ETH/USD feed:
+To run any `Configure*.s.sol` after handover, wrap the setter call in a `timelock.schedule` → wait the standard wait → `timelock.execute` sequence. Example for rotating the ETH/USD feed:
 ```bash
 # 1) Encode the setter call:
 DATA=$(cast calldata "setEthUsdFeed(address)" $NEW_FEED)
@@ -659,15 +659,15 @@ DATA=$(cast calldata "setEthUsdFeed(address)" $NEW_FEED)
 # 2) Schedule from the proposer multi-sig (via Safe):
 cast send $BASE_SEPOLIA_TIMELOCK_ADDRESS \
   "schedule(address,uint256,bytes,bytes32,bytes32,uint256)" \
-  $BASE_SEPOLIA_DIAMOND_ADDRESS 0 $DATA 0x00 0x00 172800
+  $BASE_SEPOLIA_DIAMOND_ADDRESS 0 $DATA 0x00 0x00 604800   # the standard wait
 
-# 3) After 48h, execute (open executor — anyone can land it):
+# 3) After the wait, execute (open executor — anyone can land it):
 cast send $BASE_SEPOLIA_TIMELOCK_ADDRESS \
   "execute(address,uint256,bytes,bytes32,bytes32)" \
   $BASE_SEPOLIA_DIAMOND_ADDRESS 0 $DATA 0x00 0x00
 ```
 
-Emergency actions that **cannot wait 48h** bypass the timelock by design: `AdminFacet.pause` and `pauseAsset` on `PAUSER_ROLE` (the Pauser multi-sig), and removing a role from a compromised hot key with `emergencyRevokeRole` on `EMERGENCY_REVOKER_ROLE` (the governance multi-sig). Unpausing is deliberately NOT one of them: `unpause` needs `UNPAUSER_ROLE`, which sits on the timelock. `pauseAsset` accepts `ADMIN_ROLE` or `PAUSER_ROLE`, so once ADMIN sits behind the timelock the Pauser multi-sig is the practical responder; `unpauseAsset` accepts `ADMIN_ROLE` or `UNPAUSER_ROLE`, both on the timelock.
+Emergency actions that **cannot wait** bypass the timelock by design: `AdminFacet.pause` and `pauseAsset` on `PAUSER_ROLE` (the Pauser multi-sig), and removing a role from a compromised hot key with `emergencyRevokeRole` on `EMERGENCY_REVOKER_ROLE` (the governance multi-sig). Unpausing is deliberately NOT one of them: `unpause` needs `UNPAUSER_ROLE`, which sits on the timelock. `pauseAsset` accepts `ADMIN_ROLE` or `PAUSER_ROLE`, so once ADMIN sits behind the timelock the Pauser multi-sig is the practical responder; `unpauseAsset` accepts `ADMIN_ROLE` or `UNPAUSER_ROLE`, both on the timelock.
 
 ---
 

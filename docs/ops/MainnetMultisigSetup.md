@@ -58,11 +58,12 @@ The fix is two layers:
 
 1. **Multisig** (Safe) — N-of-M threshold so no single key can act
 2. **Timelock** (OZ TimelockController) — every admin op is observable
-   for 48h before it lands; users can exit, signers can cancel
+   for 7 days before it lands (48h for a restart or an urgent fix both
+   Safes approved); users can exit, signers can cancel
 
 Combined: a leaked single signer key alone can't propose anything
 (needs threshold), and even a fully captured Safe can't insta-rug
-(needs 48h delay during which the protocol watcher / users / other
+(needs the 7-day delay, during which the protocol watcher / users / other
 signers can cancel).
 
 ---
@@ -75,7 +76,7 @@ You will run **two** Safes, each on each mainnet chain:
 
 Holds the Timelock's `PROPOSER_ROLE` (and, through OpenZeppelin,
 `CANCELLER_ROLE`), so it queues every parameter change, every grant and
-every upgrade, each of which waits out the 48h delay. On the Diamond it
+every upgrade, each of which waits out the 7-day standard wait. On the Diamond it
 holds exactly one role, `EMERGENCY_REVOKER_ROLE` (owner decision D1,
 #934): it can strip a role from a compromised hot key immediately, and
 nothing else. It cannot grant a role, cannot touch the role root
@@ -99,7 +100,7 @@ single-key proposer that can schedule any op.
 
 Holds `PAUSER_ROLE` directly on the Diamond (and is the guardian of
 every `GuardianPausable` cross-chain contract), bypassing the Timelock
-because pausing during an incident cannot wait 48h. It is also the
+because pausing during an incident cannot wait. It is also the
 Timelock's **independent canceller** (#938): it can cancel any queued
 operation, but it cannot propose one, and it cannot cancel a single-call
 operation that removes it as canceller (a proposer or another canceller
@@ -325,7 +326,7 @@ If it does NOT revert, the handover did not complete — do not proceed.
 Every cross-chain contract now lists the Timelock as its pending owner.
 The governance Safe schedules `acceptOwnership()` on each (and
 `acceptAdminRole` on the CCIP token admin registry) through the Timelock,
-waits 48h and executes. [GovernanceRunbook.md §5](GovernanceRunbook.md)
+waits the standard wait and executes. [GovernanceRunbook.md §5](GovernanceRunbook.md)
 has the exact calls.
 
 ### F.2 Verify final role distribution
@@ -380,7 +381,7 @@ the chain, holder by holder, and fails on any key it does not name (#944).
 ### F.3 Optional: gate execution behind the gov Safe
 
 Default deploy uses `TIMELOCK_EXECUTOR=address(0)`, meaning **anyone**
-can call `execute()` once the 48h elapses. This protects against a
+can call `execute()` once the operation's wait elapses. This protects against a
 malicious-but-still-threshold-controlled gov Safe blocking benign ops
 by simply not executing them — anyone (including a bot or a friendly
 community member) can step in.
@@ -425,16 +426,17 @@ Every signer needs to know how to:
    or use the Tenderly transaction simulator to confirm it's not a
    role grant to an attacker address
 3. **Cancel a pending op** — `TimelockController.cancel(bytes32 id)`
-   is a fast path either Safe can take during the 48h window: the
+   is a fast path either Safe can take during the wait: the
    governance Safe (the proposer) and the Pauser Safe (the independent
    canceller, #938). Walk every signer of both Safes through this drill
    at least once on a testnet.
 
 If signers don't know step 3, the timelock is effectively no
-protection — a captured governance Safe can schedule, wait 48h,
+protection — a captured governance Safe can schedule, wait 7 days,
 execute. The Pauser Safe exists so that a veto survives the capture of
 the governance Safe; its signers MUST know to cancel, and MUST be
-reachable on a 48h timer.
+reachable within 48h (the restart wait, the shortest any queued
+operation can have).
 
 ---
 
@@ -452,4 +454,4 @@ reachable on a 48h timer.
   timelock is live (schedule/execute lifecycle, common ops)
 - [IncidentRunbook.md](IncidentRunbook.md) — pause flow during an
   incident, including the Pauser Safe → `pause()` direct path that
-  bypasses the 48h delay
+  bypasses the Timelock's delay
