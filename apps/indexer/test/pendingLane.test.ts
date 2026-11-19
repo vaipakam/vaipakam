@@ -158,6 +158,15 @@ function chainDb() {
   h.db
     .prepare('INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at) VALUES (?, ?, ?, ?)')
     .run(BASE, 'diamond', CURSOR, 1);
+  // #3453 — a chain already reading its price guard, as every chain is after
+  // its first pass. The pass that first records the watch spends one more D1
+  // statement, which this fixture's allowance (sized to the steady pass) has
+  // no room for; that one-time cost is pinned in priceGuardWatch.test.ts.
+  if (bundle!.priceGuard) {
+    h.db
+      .prepare('INSERT INTO price_guard_watch (chain_id, guard, registry, from_block) VALUES (?, ?, ?, ?)')
+      .run(BASE, bundle!.priceGuard.toLowerCase(), bundle!.protocolRegistry?.toLowerCase() ?? null, CURSOR);
+  }
   return h;
 }
 

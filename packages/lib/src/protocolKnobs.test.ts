@@ -56,15 +56,12 @@ describe('PROTOCOL_KNOB_GETTERS', () => {
   });
 
   it('marks exactly the settings that can change without an event (Codex #2683 r3, #2685, #2815 r1)', () => {
-    // #3272 part 2 — the price guard the registry names, and every one of
-    // the guard's settings: each changes in a transaction the guard or the
-    // registry announces, from an address the snapshot does not hear. A
-    // setting added later that has a silent setter must be marked here, by
-    // name. #3569 — the treasury too: it is the vault code's, and moves with
-    // the vault beacon's current version.
-    expect([...EVENTLESS_PROTOCOL_KNOBS].sort()).toEqual(
-      ['priceGuard', 'treasury', ...PRICE_GUARD_KNOB_GETTERS.map((k) => k.key)].sort(),
-    );
+    // #3569 — the treasury: it is the vault code's, and moves with the vault
+    // beacon's current version. A setting added later that has a silent
+    // setter must be marked here, by name. #3453 — the price guard the
+    // registry names and the guard's own settings are no longer here: the
+    // indexer reads the guard's and the registry's logs too.
+    expect([...EVENTLESS_PROTOCOL_KNOBS].sort()).toEqual(['treasury']);
   });
 
   it('names a setter event for every setting that is not eventless, each one an event the Diamond declares (Codex #2815 r1)', () => {

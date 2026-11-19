@@ -1697,6 +1697,8 @@ DELETE FROM alert_channel_changes; \
 DELETE FROM asset_ranking; \
 DELETE FROM asset_ranking_run; \
 DELETE FROM indexer_deployment; \
+DELETE FROM price_guard_pending_changes; \
+DELETE FROM price_guard_watch; \
 DELETE FROM indexer_chain_anchor; \
 DELETE FROM pending_activity_events; \
 DELETE FROM pending_activity_window; \
@@ -1714,6 +1716,12 @@ pending until it went stale.
 scan cursor last advanced to and that block's hash. It goes with the cursor:
 left behind, it would name a block the replay has not reached, and the replay
 anchors again each time it advances.
+
+`price_guard_pending_changes` and `price_guard_watch` (#3453) are the price
+guard's changes still waiting out its delay, recorded from the guard's own
+logs, and the block the scan began reading that guard at. The replay reads the
+guard's logs from the deploy block again, so both come back complete, and the
+console then lists every change proposed since the deployment.
 
 `indexer_deployment` (#1566, Codex #2545 r1) records, per chain, the Diamond
 the rows were indexed from; the replay's first pass re-adopts the bundle's

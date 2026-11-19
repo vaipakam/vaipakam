@@ -76,6 +76,8 @@ import {
   type GraceScheduleRow,
 } from '../data/protocolConsoleRows';
 import { EVENTLESS_PROTOCOL_KNOBS } from '@vaipakam/lib/protocolKnobs';
+import type { PendingPriceGuardChange } from '@vaipakam/lib/priceGuardChanges';
+import { sourceName, wordAsSetting } from '../data/priceGuardPending';
 import { useActiveChain } from '../chain/useActiveChain';
 import { exactAmountString, formatExactSpan, localeDecimalString, localeNumber } from '../lib/format';
 import { VPFI_DECIMALS } from '../data/vpfi';
@@ -228,7 +230,55 @@ function makeFormatters(locale: string | undefined) {
     }
   }
 
-  return { bps, exactDecimal, rowValue, seconds };
+  /** #3453 — one waiting price guard change, as a label and a value. The
+   *  value of a change to a setting the page shows is written the way that
+   *  setting's row writes it; anything else is shown as the raw word. */
+  function pendingChange(
+    c: PendingPriceGuardChange,
+    values: ProtocolKnobValues,
+    nowSec: number,
+  ): { label: string; value: string; row?: ConsoleRow } {
+    const when = dateTime(c.executableAt);
+    const due = c.executableAt <= nowSec;
+    const row = c.knobKey === undefined ? undefined : CONSOLE_ROWS_BY_KEY.get(c.knobKey);
+    if (c.kindName === 'SecondaryRemoval') {
+      return {
+        label: copy.protocolConsole.pendingRemoval(sourceName(c.subject)),
+        value: due ? copy.protocolConsole.pendingAtDue(when) : copy.protocolConsole.pendingAt(when),
+      };
+    }
+    const shown = row
+      ? rowValue(row, { ...values, [row.key]: wordAsSetting(c.value, row.format) } as ProtocolKnobValues, nowSec)
+      : c.value;
+    const value = due ? copy.protocolConsole.pendingDue(shown, when) : copy.protocolConsole.pendingWhen(shown, when);
+    if (row) return { label: copy.protocolConsole[row.label], value, row };
+    if (c.kindName === null) return { label: copy.protocolConsole.pendingUnknownKind(String(c.kind)), value };
+    if (ZERO_WORD.test(c.subject)) return { label: copy.protocolConsole.pendingKind(c.kindName), value };
+    return { label: copy.protocolConsole.pendingKindFor(c.kindName, subjectText(c.kindName, c.subject)), value };
+  }
+
+  return { bps, exactDecimal, pendingChange, rowValue, seconds };
+}
+
+/** #3453 — every value row by its key, for the waiting changes. */
+const CONSOLE_ROWS_BY_KEY: ReadonlyMap<string, ConsoleRow> = new Map(
+  CONSOLE_SECTIONS.flatMap((s) => s.rows.map((r) => [r.key as string, r] as const)),
+);
+
+/** A keyed change's subject in readable form: the source's name, a stable
+ *  reference's symbol, or the address it is keyed by. */
+function subjectText(kind: string, subject: `0x${string}`): string {
+  if (kind === 'SecondarySource' || kind === 'SecondaryEnabled') return sourceName(subject);
+  if (kind === 'StableRef') {
+    const bytes = subject.slice(2).match(/../g) ?? [];
+    const text = bytes
+      .map((b) => parseInt(b, 16))
+      .filter((n) => n !== 0)
+      .map((n) => (n >= 0x20 && n < 0x7f ? String.fromCharCode(n) : '?'))
+      .join('');
+    return text.length > 0 ? text : subject;
+  }
+  return `0x${subject.slice(-40)}`;
 }
 
 /** Why the page read the chain instead of the snapshot, in the reader's words. */
@@ -304,7 +354,7 @@ export function ProtocolConsole() {
   // device's. `LanguageRemount` re-keys the tree on a change, so these
   // formatters are rebuilt with it.
   const { i18n } = useTranslation();
-  const { bps, exactDecimal, rowValue, seconds } = makeFormatters(i18n.resolvedLanguage);
+  const { bps, exactDecimal, pendingChange, rowValue, seconds } = makeFormatters(i18n.resolvedLanguage);
   // Ticks, so the snapshot age below advances instead of freezing at
   // whenever React last rendered.
   const nowSec = useNowSec();
@@ -518,11 +568,48 @@ export function ProtocolConsole() {
                     ...(reading?.source === 'snapshot' && EVENTLESS_PROTOCOL_KNOBS.has(row.key)
                       ? [copy.protocolConsole.eventlessSnapshotNote]
                       : []),
+                    // #3453 — a change to this setting waiting out the
+                    // price guard's delay.
+                    ...(snap?.priceGuardPending?.changes ?? [])
+                      .filter((c) => c.knobKey === row.key)
+                      .map((c) => copy.protocolConsole.pendingRowNote(pendingChange(c, v, nowSec).value)),
                   ]}
                 />
               ))}
             </section>
           ))}
+
+          {/* #3453 — the price guard's changes still waiting out its delay.
+              The list comes from the index alone, so the section says how
+              far back it reaches, and says so when it has no list. */}
+          <section className="pc-section" aria-labelledby="pc-guard-pending">
+            <h2 id="pc-guard-pending">{copy.protocolConsole.pendingHeading}</h2>
+            <p className="pc-row-hint">{copy.protocolConsole.pendingIntro}</p>
+            {(() => {
+              if (reading?.source !== 'snapshot') {
+                return <p className="pc-row-hint">{copy.protocolConsole.pendingChainRead}</p>;
+              }
+              const pending = snap?.priceGuardPending;
+              if (!pending) return <p className="pc-row-hint">{copy.protocolConsole.pendingUnknown}</p>;
+              return (
+                <>
+                  <p className="pc-row-hint">
+                    {pending.sinceDeploy
+                      ? copy.protocolConsole.pendingSinceDeploy
+                      : copy.protocolConsole.pendingSinceBlock(localeNumber(pending.listedFromBlock, i18n.resolvedLanguage))}
+                  </p>
+                  {pending.changes.length === 0 ? (
+                    <Row label={copy.protocolConsole.pendingHeading} value={copy.protocolConsole.pendingNone} />
+                  ) : (
+                    pending.changes.map((c) => {
+                      const shown = pendingChange(c, v, nowSec);
+                      return <Row key={`${c.kind}-${c.subject}`} label={shown.label} value={shown.value} />;
+                    })
+                  )}
+                </>
+              );
+            })()}
+          </section>
 
           <section className="pc-section" aria-labelledby="pc-tiers">
             <h2 id="pc-tiers">{copy.protocolConsole.tiersHeading}</h2>

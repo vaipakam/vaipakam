@@ -170,6 +170,14 @@ import {
 } from './walletActivity';
 import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
 import { POSITION_NFT_EVENTS, positionNftForDiamond, readPositionHolder, scannedAddresses } from './positionNft';
+import {
+  governanceAddresses,
+  governanceChangesConfig,
+  governanceStatements,
+  governanceWatchFrom,
+  splitGovernanceLogs,
+  type GovernanceLog,
+} from './priceGuardWatch';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -2329,15 +2337,33 @@ async function runChainPass(
   // CPU budget. Subsequent ticks make progress on the backfill until
   // they catch up to `head`.
   // #3411 — the reorg guard's anchor is read in the same query, so the guard
-  // costs no D1 query of its own on a steady pass.
+  // costs no D1 query of its own on a steady pass. #3453 — so are the price
+  // guard and registry the last config snapshot named, which the scan
+  // reads (see priceGuardWatch.ts). `json_valid` first: a stored
+  // snapshot this query cannot parse names nothing, and never fails the read.
   const cursorRow = await env.DB.prepare(
-    `SELECT c.last_block, a.block_number AS anchor_block, a.block_hash AS anchor_hash
+    `SELECT c.last_block, a.block_number AS anchor_block, a.block_hash AS anchor_hash,
+            CASE WHEN json_valid(p.knob_values_json)
+              THEN json_extract(p.knob_values_json, '$.values.priceGuard') END AS snapshot_guard,
+            CASE WHEN json_valid(p.knob_values_json)
+              THEN json_extract(p.knob_values_json, '$.values.protocolRegistry') END AS snapshot_registry,
+            w.guard AS watched_guard, w.registry AS watched_registry
        FROM indexer_cursor c
        LEFT JOIN indexer_chain_anchor a ON a.chain_id = c.chain_id
+       LEFT JOIN protocol_config p ON p.chain_id = c.chain_id
+       LEFT JOIN price_guard_watch w ON w.chain_id = c.chain_id
       WHERE c.chain_id = ? AND c.kind = ?`,
   )
     .bind(chainId, CURSOR_KIND)
-    .first<{ last_block: number; anchor_block: number | null; anchor_hash: string | null }>();
+    .first<{
+      last_block: number;
+      anchor_block: number | null;
+      anchor_hash: string | null;
+      snapshot_guard: unknown;
+      snapshot_registry: unknown;
+      watched_guard: string | null;
+      watched_registry: string | null;
+    }>();
   const lastBlock = cursorRow ? BigInt(cursorRow.last_block) : deployBlock - 1n;
   const anchor =
     cursorRow && cursorRow.anchor_block !== null && cursorRow.anchor_hash !== null
@@ -2670,6 +2696,13 @@ async function runChainPass(
   // (Alchemy free tier, publicnode) reject ranges > 10k blocks, so we
   // page through MAX_RANGE_PER_CALL at a time.
   const allLogs: DecodedLog[] = [];
+  // #3453 — the price guard's and the protocol registry's logs, read in the
+  // same request as the Diamond's and split off before its decode (see
+  // priceGuardWatch.ts). They change only what the config snapshot shows.
+  const governanceWatch = governanceWatchFrom(chainId, cursorRow);
+  const diamondAddresses = scannedAddresses(diamond);
+  const readAddresses = [...diamondAddresses, ...governanceAddresses(governanceWatch, diamondAddresses)];
+  const governanceLogs: GovernanceLog[] = [];
   let cursor = scanFrom;
   while (cursor <= windowTo) {
     const chunkEnd =
@@ -2691,12 +2724,15 @@ async function runChainPass(
       // and are skipped.
       const rawLogs = await client.getLogs({
         // #3205: plus the chain's PositionNFT, whose `Transfer` events
-        // keep the holder columns current.
-        address: scannedAddresses(diamond),
+        // keep the holder columns current. #3453: plus the price guard and
+        // the protocol registry.
+        address: readAddresses,
         fromBlock: cursor,
         toBlock: chunkEnd,
       });
-      allLogs.push(...decodeScannedLogs(rawLogs));
+      const { rest, governance } = splitGovernanceLogs(rawLogs, governanceWatch);
+      governanceLogs.push(...governance);
+      allLogs.push(...decodeScannedLogs(rest));
     } catch (err) {
       console.error(
         `[chainIndexer] getLogs ${cursor}-${chunkEnd} failed`,
@@ -2937,6 +2973,9 @@ async function runChainPass(
   // between the last finished one and it, since those carry no logs of ours.
   const scannedThrough = stoppedAt === null ? windowTo : stoppedAt - 1n;
   const scanTo = scannedThrough;
+  // #3453 — only the guard and registry logs of the finished blocks count;
+  // the rest are read again by the next pass.
+  const finishedGovernanceLogs = governanceLogs.filter((l) => l.blockNumber <= scanTo);
   if (stoppedAt !== null && !stoppedForBlockTime) {
     const finished = blocks.findIndex((b) => b.blockNumber === stoppedAt);
     console.warn(
@@ -2979,6 +3018,11 @@ async function runChainPass(
         ? [anchorUpsert(env.DB, { chainId, block: nextAnchor.block, hash: nextAnchor.hash, nowSec: now })]
         : []),
       ...(scanTo >= scanFrom ? releaseReplayedRows(env.DB, { chainId, through: scanTo, nowSec: now }) : []),
+      // #3453 — the guard's pending changes move with the cursor, in its
+      // transaction.
+      ...(scanTo >= scanFrom
+        ? governanceStatements(env.DB, { chainId, watch: governanceWatch, logs: finishedGovernanceLogs, scanFrom })
+        : []),
     ]);
   }
 
@@ -3048,6 +3092,7 @@ async function runChainPass(
     client,
     diamond,
     scannedEventNames: scannedLogs.map((l) => l.eventName),
+    sawGovernanceEvent: governanceChangesConfig(finishedGovernanceLogs),
     blockNumber: scanTo,
     headBlock: head,
   });

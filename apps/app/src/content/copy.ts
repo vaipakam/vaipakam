@@ -8164,6 +8164,29 @@ const copySource = {
     /* Codex #2683 r3 — a setting whose change emits no event (#2685). */
     eventlessSnapshotNote:
       'Changing this setting announces nothing on chain, so this snapshot picks up a change only at its next scheduled refresh and can show the previous value until then.',
+    /* #3453 — the price guard's changes still waiting out its delay. */
+    pendingHeading: 'Price guard changes waiting out the delay',
+    pendingIntro:
+      'A change to a price setting is proposed first, and can be carried out only once the price guard’s delay has passed. Every change still waiting is listed here, so it can be seen before it takes effect.',
+    pendingNone: 'No change is waiting.',
+    pendingSinceDeploy: 'This list covers every change proposed to this price guard since this deployment.',
+    pendingSinceBlock: tmpl(
+      'This list covers changes proposed from block {{block}} on. A change proposed before that block and still waiting is not shown.',
+      ['block'],
+    ),
+    pendingUnknown:
+      'The index has not reported the waiting changes for this price guard, so none are listed. That does not mean none is waiting.',
+    pendingChainRead:
+      'The waiting changes come from the index, which is not current right now, so none are listed. That does not mean none is waiting.',
+    pendingWhen: tmpl('{{value}}, can be carried out from {{when}}', ['value', 'when']),
+    pendingDue: tmpl('{{value}}, can be carried out now (due since {{when}})', ['value', 'when']),
+    pendingAt: tmpl('can be carried out from {{when}}', ['when']),
+    pendingAtDue: tmpl('can be carried out now (due since {{when}})', ['when']),
+    pendingRowNote: tmpl('A change to this setting is waiting: {{change}}.', ['change']),
+    pendingKind: tmpl('Price guard setting {{kind}}', ['kind']),
+    pendingKindFor: tmpl('Price guard setting {{kind}}, for {{subject}}', ['kind', 'subject']),
+    pendingRemoval: tmpl('Removing the secondary price source {{source}}', ['source']),
+    pendingUnknownKind: tmpl('A change this app does not recognise (kind {{kind}})', ['kind']),
     numeraireUnits: tmpl('{{amount}} (reference-currency units)', ['amount']),
     /* Codex #2683 r1 — the contracts read an empty numeraire symbol as
        their USD default, so the page names it and says it is the default

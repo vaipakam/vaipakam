@@ -43,6 +43,7 @@ import { pauseLogToJson, readPauseLog } from '@vaipakam/lib/loanClock';
 import type { Env } from './env';
 import { jsonResponse } from './offerRoutes';
 import { chainNotServed } from './servedChain';
+import { readPendingGuardChanges, reconcilePendingGuardChanges } from './priceGuardWatch';
 
 /** Explicit allowlist of GLOBAL governance config events (Codex #1231
  *  r1: a suffix rule also matched per-loan lifecycle names like
@@ -371,6 +372,9 @@ export async function maybeRefreshProtocolConfig(opts: {
   client: PublicClient;
   diamond: Address;
   scannedEventNames: Iterable<string>;
+  /** #3453 — the scan read a price guard or protocol registry event that
+   *  changes what the snapshot shows (see priceGuardWatch.ts). */
+  sawGovernanceEvent?: boolean;
   /** Block to pin the reads to — the scan's upper bound, so the row
    *  can never be AHEAD of what the ingest pass processed. */
   blockNumber: bigint;
@@ -378,7 +382,7 @@ export async function maybeRefreshProtocolConfig(opts: {
    *  while the cursor is still far behind it (see NEAR_HEAD_BLOCKS). */
   headBlock: bigint;
 }): Promise<void> {
-  let saw = false;
+  let saw = opts.sawGovernanceEvent === true;
   // Tracked separately (Codex #1298 r5): when THIS scan carries
   // `GraceBucketsUpdated`, any previously-snapshotted bucket set is
   // known-obsolete — a failed grace read must not preserve it.
@@ -628,6 +632,18 @@ export async function maybeRefreshProtocolConfig(opts: {
         bundle.kind === 'unreadable' ? bundle.reason : null,
       )
       .run();
+    // #3453 — the guard's pending changes, checked against the guard this
+    // refresh read, at the same block. Fail-open inside.
+    const guard = knobs?.values.priceGuard;
+    if (typeof guard === 'string' && /^0x[0-9a-fA-F]{40}$/.test(guard) && BigInt(guard) !== 0n) {
+      await reconcilePendingGuardChanges({
+        env: opts.env,
+        chainId: opts.chainId,
+        client: opts.client,
+        guard: guard as Address,
+        blockNumber: opts.blockNumber,
+      });
+    }
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(
@@ -752,6 +768,11 @@ export async function handleConfigSnapshot(
     const bundleValues = bundle === null ? null : labelTuple(bundle, storedNames(row.bundle_names_json));
     const knobs = bundleValues ? storedKnobs(row.knob_values_json) : null;
     const values = bundleValues ? { ...bundleValues, ...(knobs?.values ?? {}) } : null;
+    // #3453 — the changes waiting out the price guard's delay, for the guard
+    // this snapshot names. Omitted (never an empty list) when that cannot be
+    // stated: see readPendingGuardChanges.
+    const storedGuardKnobs = storedKnobs(row.knob_values_json);
+    const priceGuardPending = await readPendingGuardChanges(env, chainId, storedGuardKnobs?.values.priceGuard);
     return jsonResponse({
       chainId,
       available: true,
@@ -761,6 +782,7 @@ export async function handleConfigSnapshot(
       // "this snapshot has no fields", which is false.
       ...(values ? { values } : {}),
       ...(knobs ? { unreported: knobs.unreported } : {}),
+      ...(priceGuardPending ? { priceGuardPending } : {}),
       sourceBlock: row.source_block,
       updatedAt: row.updated_at,
       // `markStaleBelow` zeroes `updated_at` when a catch-up scan saw a

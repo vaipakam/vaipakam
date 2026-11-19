@@ -2004,3 +2004,8 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 
 **Gap.** No Anvil spec announces a change yet. It needs the admin to publish v1 and announce v2 on the fork; the spec should assert the notice, accept v2 from it, and see the notice go quiet.
 
+<a id="cov-3453-price-guard-pending"></a>
+## Protocol Console: the price guard's waiting changes (#3453)
+
+The indexer now reads the price guard's and the protocol registry's logs in the same request as the Diamond's, refreshes the config snapshot on every settings event, and keeps each change the guard announced as proposed until the event that carries it out or cancels it, re-checking each against the guard at every refresh. `/config/:chainId` serves that list with the first block whose guard logs were read. The console shows the list, says whether it reaches back to the deployment or only to a block, and puts a note on the matching setting's row. When the page shows a chain read rather than the snapshot, or the index gave no list, the section says the list is unknown rather than empty. The unit tests hold the parsing, the indexer's list and the kind names against the contract source; the rendered page is checked in the live review after deploy, since the list needs a proposal on the testnet guard to show a row.
+

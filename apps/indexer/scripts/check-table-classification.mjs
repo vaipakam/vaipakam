@@ -117,6 +117,14 @@ const CLASSIFICATION = {
     class: 'replay-derived',
     reason: 'what the pending lane\'s last read covered (#3411 part 2); rewritten with the lane every caught-up pass',
   },
+  price_guard_pending_changes: {
+    class: 'replay-derived',
+    reason: 'the price guard\'s pending changes (#3453), recorded from the guard\'s own logs; the replay reads them again',
+  },
+  price_guard_watch: {
+    class: 'replay-derived',
+    reason: 'which guard the scan reads and the block it began at (#3453); a replay begins again at the deploy block',
+  },
   indexer_deployment: {
     class: 'replay-derived',
     reason:

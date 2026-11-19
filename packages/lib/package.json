@@ -158,6 +158,10 @@
       "types": "./src/vaultProtectionAuth.ts",
       "default": "./src/vaultProtectionAuth.ts"
     },
+    "./priceGuardChanges": {
+      "types": "./src/priceGuardChanges.ts",
+      "default": "./src/priceGuardChanges.ts"
+    },
     "./protocolKnobs": {
       "types": "./src/protocolKnobs.ts",
       "default": "./src/protocolKnobs.ts"

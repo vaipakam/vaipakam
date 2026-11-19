@@ -93,10 +93,12 @@ export const PROTOCOL_KNOB_GETTERS = [
   // the registry that names it. The Diamond records the registry once, with
   // the guard's numeraire. Which guard the registry names is the registry's
   // own delayed entry, announced by the registry contract rather than the
-  // Diamond, so the snapshot cannot hear it change. The guard's settings are
-  // read from the guard itself: see PRICE_GUARD_KNOB_GETTERS.
+  // Diamond. Since #3453 the indexer reads the registry's logs beside the
+  // Diamond's and refreshes on every one of them, so a repointing is heard
+  // when it lands. The guard's settings are read from the guard itself: see
+  // PRICE_GUARD_KNOB_GETTERS.
   { key: 'protocolRegistry', getter: 'getProtocolRegistry', setterEvents: ['ProtocolRegistrySet'] },
-  { key: 'priceGuard', getter: 'getPriceGuard', setterEvents: ['ProtocolRegistrySet'], eventless: true },
+  { key: 'priceGuard', getter: 'getPriceGuard', setterEvents: ['ProtocolRegistrySet'] },
   // Cross-chain reward reporting
   { key: 'rewardGraceSeconds', getter: 'getRewardGraceSeconds', setterEvents: ['RewardReporterConfigUpdated'] },
   // Periodic interest and the numeraire. The numeraire is the price guard's,
@@ -149,12 +151,13 @@ export const PROTOCOL_KNOB_GETTERS = [
  * getter's whole answer (the guard is not a Diamond, and there is no facet
  * to bind a part name to).
  *
- * The guard announces each change with its own `ConfigSet` event, from its
- * own address. The snapshot hears only the Diamond's events, so every entry
- * here is eventless from its point of view: refreshed on the indexer's
- * schedule, and the console says so on each row. A change to one of them
- * waits the guard's delay after it is proposed (zero on a test network), so
- * the pending window is longer than that schedule on a production chain.
+ * The guard announces each change with its own events, from its own address.
+ * Since #3453 the indexer reads the guard's logs beside the Diamond's and
+ * refreshes the snapshot on every settings event (`PRICE_GUARD_CONFIG_EVENTS`
+ * in `./priceGuardChanges`), so these are no longer eventless. A change to
+ * one of them waits the guard's delay after it is proposed (zero on a test
+ * network); the indexer records each proposal, and `/config` lists the
+ * changes still waiting.
  *
  * Where a setting kept its meaning when it moved off the Diamond, it keeps
  * the key the console and `/config` published it under.
@@ -186,11 +189,10 @@ export const PRICE_GUARD_KNOB_GETTERS = [
 ] as const satisfies readonly { readonly key: string; readonly getter: string }[];
 
 /** The settings that can change without announcing it on chain where the
- *  snapshot listens (see {@link ProtocolKnobGetter}), the price guard's
- *  included. */
+ *  snapshot listens (see {@link ProtocolKnobGetter}). The price guard's
+ *  settings left this set with #3453: the snapshot hears the guard now. */
 export const EVENTLESS_PROTOCOL_KNOBS: ReadonlySet<string> = new Set([
   ...PROTOCOL_KNOB_GETTERS.filter((k): boolean => 'eventless' in k && k.eventless === true).map((k) => k.key),
-  ...PRICE_GUARD_KNOB_GETTERS.map((k) => k.key),
 ]);
 
 /**

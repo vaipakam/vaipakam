@@ -8,6 +8,7 @@
  * field shapes in sync with the worker.
  */
 
+import { parsePriceGuardPending, type PriceGuardPendingView } from './priceGuardPending';
 import type { ProtocolKnobKey } from '@vaipakam/lib/protocolKnobs';
 import type { SignedOrderWire } from '../lib/signedOffer';
 import type { SignedOfferPlacement } from '@vaipakam/lib/signedOfferWire';
@@ -1269,6 +1270,11 @@ export interface ProtocolKnobSnapshot {
    *  so it is no fresher than the snapshot. `undefined` when the row was
    *  marked stale before the indexer recorded the boundary. */
   staleAtBlock?: number;
+  /** #3453 — the price guard's changes still waiting out its delay, with how
+   *  far back the list reaches. `undefined` when the indexer reported none it
+   *  could stand behind (an older indexer, a guard it has not read yet):
+   *  then it is NOT known whether a change is waiting. */
+  priceGuardPending?: PriceGuardPendingView;
 }
 
 export async function fetchProtocolKnobs(
@@ -1283,6 +1289,7 @@ export async function fetchProtocolKnobs(
     updatedAt?: number;
     stale?: boolean;
     staleAtBlock?: unknown;
+    priceGuardPending?: unknown;
   }>(`/config/${chainId}`);
   if (!res || res.available !== true) return null;
   return {
@@ -1317,6 +1324,7 @@ export async function fetchProtocolKnobs(
       res.staleAtBlock >= 0
         ? res.staleAtBlock
         : undefined,
+    priceGuardPending: parsePriceGuardPending(res.priceGuardPending),
   };
 }
 
