@@ -7076,7 +7076,7 @@ contract EarlyWithdrawalFacetTest is Test {
         uint256 saleOfferId = _listSaleOffer();
         vm.warp(block.timestamp + 7 days); // expire the listing
         vm.expectEmit(true, true, false, false, address(diamond));
-        emit OfferCancelFacet.OfferCanceled(saleOfferId, lender);
+        emit OfferCancelFacet.OfferCanceled(saleOfferId, lender, lender);
         vm.prank(makeAddr("canonicalEventCleaner"));
         OfferCancelFacet(address(diamond)).teardownStaleSaleListing(activeLoanId);
     }

@@ -1282,17 +1282,6 @@
   },
   {
     "type": "error",
-    "name": "CrossFacetCallFailed",
-    "inputs": [
-      {
-        "name": "reason",
-        "type": "string",
-        "internalType": "string"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "CustodyEraAlreadyFinalized",
     "inputs": [
       {
@@ -3084,6 +3073,22 @@
   {
     "type": "error",
     "name": "RefinanceRequestOpen",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RefinanceRequestTokenMoved",
     "inputs": [
       {
         "name": "loanId",

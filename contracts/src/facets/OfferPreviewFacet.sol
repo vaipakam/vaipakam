@@ -191,7 +191,9 @@ contract OfferPreviewFacet {
         // origination). Mirror that carve-out so the preview doesn't quote a
         // phantom fee; `lifEstimate` stays 0.
         if (_isErc20 && _saleLoanId == 0) {
-            address _borrower = _isLender ? acceptor : offer.creator;
+            // #3744 — a stored borrower offer's borrower is its token's holder
+            // (what the accept charges); an unstored signed offer's, its signer.
+            address _borrower = _isLender ? acceptor : _holderOf(offer);
             // Quote exactly what the accept will charge: the hold discount
             // (#1352, §F3, consent-gated, capped 50%, liquid only) and the
             // borrower's referral cut (#3722), by the one rule the charge
@@ -413,7 +415,9 @@ contract OfferPreviewFacet {
         //
         // Positioned exactly where the accept raises it: after KYC, before the
         // vault floor and the stale comparison.
-        if (acceptor == offer.creator) {
+        // #3744 — the accept also refuses the holder of the offer's token
+        // taking its own offer, so the preview does too.
+        if (acceptor == offer.creator || acceptor == _holderOf(offer)) {
             preview.errorCode = OfferAcceptFacet.AcceptError.SelfTrade;
             return preview;
         }
@@ -723,6 +727,13 @@ contract OfferPreviewFacet {
     ///      applies, read through the same `NumeraireValueFacet` view. A
     ///      signed order is never a lender-sale vehicle, so the collateral is
     ///      the offer's own and the vehicle substitution there does not arise.
+    /// @dev The holder of `offer`'s position token, or its creator when it
+    ///      has none (an unstored signed offer).
+    function _holderOf(LibVaipakam.Offer memory offer) private view returns (address h) {
+        if (offer.positionTokenId != 0) h = LibPositionNFT.core().holderOf(offer.positionTokenId);
+        if (h == address(0)) h = offer.creator;
+    }
+
     function _unstoredTransactionValue(LibVaipakam.Offer memory offer, uint256 principal)
         private
         view

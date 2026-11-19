@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibLoanClock} from "./LibLoanClock.sol";
 import {LibPositionNFT} from "./LibPositionNFT.sol";
+import {LibRefinanceRequest} from "./LibRefinanceRequest.sol";
 import {LibPeriodicInterest} from "./LibPeriodicInterest.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 
@@ -171,12 +172,16 @@ library LibAutoRefinanceCheck {
         if (offer.offerType != LibVaipakam.OfferType.Borrower) return false;
         // #2407 — only the loan's recorded request completes a refinance, and
         // not while an offset is open on the loan (`RefinanceFacet` reverts
-        // otherwise).
-        if (s.refinanceRequestOfLoan[oldLoanId] != offer.id) return false;
+        // otherwise). #3205 / #3744 — and only while neither the loan's
+        // borrower token nor the request's own token has moved since it was
+        // recorded: the one standing rule, read through the Diamond so the
+        // match hosts carry only the call.
+        if (LibRefinanceRequest.live(oldLoanId) != offer.id) return false;
         if (s.loanToOffsetOfferId[oldLoanId] != 0) return false;
 
+        // (The standing rule above already requires the loan Active and its
+        // borrower token with the request's creator.)
         LibVaipakam.Loan storage oldLoan = s.loans[oldLoanId];
-        if (oldLoan.status != LibVaipakam.LoanStatus.Active) return false;
         // Pass-2 A1/D5 (#1189) — mirror RefinanceFacet's post-grace block: an
         // overdue (Active-but-past-grace) target is unfillable, so drop it from
         // the match-admissible set instead of previewing an unfillable match.
@@ -200,9 +205,6 @@ library LibAutoRefinanceCheck {
                 LibPeriodicInterest.settleAllowedFromAt(oldLoan)
             ) return false;
         }
-        // Creator must still be the current borrower-position-NFT holder.
-        address currentOwner = LibPositionNFT.ownerOf(oldLoan.borrowerTokenId);
-        if (offer.creator != currentOwner) return false;
         // AON single-value: amount == amountMax == target outstanding principal.
         uint256 effMax = offer.amountMax == 0 ? offer.amount : offer.amountMax;
         if (offer.amount != effMax) return false;
@@ -222,7 +224,7 @@ library LibAutoRefinanceCheck {
             s.autoRefinanceCaps[oldLoanId];
         if (
             !caps.enabled ||
-            !(caps.setter == address(0) || caps.setter == currentOwner)
+            !(caps.setter == address(0) || caps.setter == offer.creator)
         ) return false;
         uint256 offerMaxRate = offer.interestRateBpsMax == 0
             ? offer.interestRateBps
@@ -262,7 +264,7 @@ library LibAutoRefinanceCheck {
         ) return false;
         // STRICT same-key retag must be possible — mirror
         // `rekeyCollateralLienOnRefinance`'s success key against the replacement
-        // loan (borrower = currentOwner, collateral = the offer's). The lien's
+        // loan (borrower = the creator, collateral = the offer's). The lien's
         // `amount` is ENCODED by collateral type exactly as `LibEncumbrance`
         // stores it: 1 for ERC721, `collateralQuantity` for ERC1155, else the
         // ERC20 `collateralAmount` (which is structurally 0 for NFT collateral),
@@ -280,7 +282,7 @@ library LibAutoRefinanceCheck {
         LibVaipakam.Encumbrance storage lien = s.loanCollateralLien[oldLoanId];
         if (
             lien.released ||
-            lien.user != currentOwner ||
+            lien.user != offer.creator ||
             lien.asset != offer.collateralAsset ||
             lien.tokenId != offer.collateralTokenId ||
             lien.amount != expectedLienAmount ||

@@ -33,7 +33,10 @@ import {LibPeriodicInterest} from "./LibPeriodicInterest.sol";
  *           - the loan is still Active;
  *           - its creator still holds the loan's borrower position (accept
  *             re-checks this, so a request orphaned by a position transfer
- *             cannot fill — and must not block the new holder).
+ *             cannot fill — and must not block the new holder);
+ *           - its creator still holds the request's own position token, and
+ *             that token has never moved (#3744): a request's token carries
+ *             no right to the request away from its creator.
  *         Whether a lender could fill it at this moment is DELIBERATELY not
  *         part of the rule: the holder's refinance caps, the payoff approval
  *         and balance, an overdue period, a collateral top-up and the market
@@ -130,15 +133,46 @@ library LibRefinanceRequest {
     ///         rule every position-bound flow follows). False for a request
     ///         that is not the recorded one.
     function unmoved(LibVaipakam.Storage storage s, uint256 loanId, uint256 offerId) internal view returns (bool) {
+        return _borrowerTokenUnmoved(s, loanId, offerId) && offerTokenUnmoved(s.offers[offerId]);
+    }
+
+    /// @dev The loan's borrower token is the one recorded with `offerId`, and
+    ///      has not moved since (#3205, #3339).
+    function _borrowerTokenUnmoved(LibVaipakam.Storage storage s, uint256 loanId, uint256 offerId)
+        private
+        view
+        returns (bool)
+    {
         uint256 tokenId = s.loans[loanId].borrowerTokenId;
         return s.refinanceRequestOfLoan[loanId] == offerId
             && tokenId == s.refinanceRequestTokenId[loanId]
             && LibPositionNFT.transferCountOf(tokenId) == s.refinanceRequestTransferCount[loanId];
     }
 
-    /// @dev Revert `PositionMovedSinceRouteOpened` unless {unmoved}.
+    /// @notice #3744 — whether the request's OWN position token is still with
+    ///         its creator and has never moved. A request stands only while
+    ///         its creator holds both the loan's borrower token and this one:
+    ///         the payoff permit is the creator's signature and the carried
+    ///         collateral is in the creator's vault, so a request whose token
+    ///         went elsewhere can be neither the holder's nor the creator's to
+    ///         fill. The request is recorded in the transaction that mints its
+    ///         token, and a mint counts no move, so "unmoved since recorded" is
+    ///         a transfer count of zero: no snapshot is stored. A round trip
+    ///         (away and back) still ends it.
+    function offerTokenUnmoved(LibVaipakam.Offer storage o) internal view returns (bool) {
+        uint256 token = o.positionTokenId;
+        return token != 0 && LibPositionNFT.transferCountOf(token) == 0
+            && LibPositionNFT.holderOrZero(token) == o.creator;
+    }
+
+    /// @dev Revert unless {unmoved}: `RefinanceRequestTokenMoved` when the
+    ///      request's own token moved, else `PositionMovedSinceRouteOpened`
+    ///      for the loan's borrower token.
     function _requireUnmoved(LibVaipakam.Storage storage s, uint256 loanId, uint256 offerId) private view {
-        if (unmoved(s, loanId, offerId)) return;
+        if (!offerTokenUnmoved(s.offers[offerId])) {
+            revert IVaipakamErrors.RefinanceRequestTokenMoved(loanId, offerId);
+        }
+        if (_borrowerTokenUnmoved(s, loanId, offerId)) return;
         revert LibPositionNFT.PositionMovedSinceRouteOpened(
             s.loans[loanId].borrowerTokenId,
             s.refinanceRequestTransferCount[loanId],
@@ -182,6 +216,7 @@ library LibRefinanceRequest {
             o.refinanceTargetLoanId != loanId ||
             LibVaipakam.isOfferExpired(o)
         ) revert IVaipakamErrors.RefinanceRequestNotLive(loanId, offerId);
+        if (!offerTokenUnmoved(o)) revert IVaipakamErrors.RefinanceRequestTokenMoved(loanId, offerId);
         if (s.refinanceRequestOfLoan[loanId] == offerId) _requireUnmoved(s, loanId, offerId);
         LibAutoRefinanceCheck.validate(
             s,

@@ -345,6 +345,18 @@ vault. Every ownership check reads the holder and refuses by name; nothing
 falls back to the creator. An offer with no token of its own keeps its
 creator.
 
+A refinance request is the one exception (design ruling 2026-11-19). It stands
+only while its creator holds both the loan's borrower token and the request's
+own token, each unmoved since the request was posted: the payoff permit is the
+creator's signature and any carried collateral sits in the creator's vault, so
+neither half can belong to anyone else. The test lives in the one standing rule
+(`LibRefinanceRequest`), so accept, match, both previews, the loan-holding guard
+and the views all follow it; a moved request token is refused by name
+(`RefinanceRequestTokenMoved`). The request's rights and escrow stay with the
+creator, so its token's holder gains nothing: the creator cancels it (anyone
+may clear it), a fresh pledge stays in the creator's vault, the cancel drops
+its payoff permit, and the loan's holder may post a new request in its place.
+
 ## 4. What a user is told
 
 - **On any marketplace, in the token's own details.** Most marketplaces do

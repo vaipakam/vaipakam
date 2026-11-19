@@ -20,6 +20,7 @@ import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
+import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
@@ -384,5 +385,60 @@ contract OfferFillHolderTest is SetupTest {
         );
         vm.expectRevert(abi.encodeWithSelector(OfferAcceptFacet.SelfTradeForbidden.selector, lender));
         OfferMatchFacet(address(diamond)).matchOffers(lo, bo);
+    }
+    // ─── Codex round 1 on #3805: the holder in every place the fill reads ─
+
+    /// @dev The borrower side's holder is the one recorded as having borrowed,
+    ///      so it can no longer bind an inviter; the creator who sold the
+    ///      offer has borrowed nothing and still can.
+    function test_fillAfterTransfer_holderIsTheOneWhoBorrowed() public {
+        uint256 id = _borrowerOffer();
+        _soldTo(id, buyer);
+        _signAndAcceptOffer(lender, lenderPk, id);
+        address inviter = makeAddr("someInviter");
+        vm.prank(buyer);
+        vm.expectRevert(ReferralFacet.ReferralAfterFirstBorrow.selector);
+        ReferralFacet(address(diamond)).bindInviter(inviter);
+        vm.prank(borrower);
+        ReferralFacet(address(diamond)).bindInviter(inviter);
+    }
+
+    /// @dev The keepers the holder enabled on the offer, from its own
+    ///      approved list, carry onto the loan.
+    function test_fillAfterTransfer_holdersKeepersLatchOntoTheLoan() public {
+        address keeper = makeAddr("holdersKeeper");
+        uint256 id = _borrowerOffer();
+        _soldTo(id, buyer);
+        vm.prank(buyer);
+        ProfileFacet(address(diamond)).approveKeeper(keeper, LibVaipakam.KEEPER_ACTION_COMPLETE_OFFSET);
+        vm.prank(buyer);
+        ProfileFacet(address(diamond)).setOfferKeeperEnabled(id, keeper, true);
+        uint256 loanId = _signAndAcceptOffer(lender, lenderPk, id);
+        assertTrue(ProfileFacet(address(diamond)).isLoanKeeperEnabled(loanId, keeper), "latched from the holder's list");
+    }
+
+    /// @dev The accept preview quotes the fee the holder pays, not the
+    ///      creator's.
+    function test_preview_quotesTheHoldersFee() public {
+        VPFITokenFacet(address(diamond)).setCanonicalVPFIChain(true);
+        _discount(buyer, 2000);
+        uint256 id = _borrowerOffer();
+        uint256 creatorQuote = OfferPreviewFacet(address(diamond)).previewAccept(id, lender).lifEstimate;
+        _soldTo(id, buyer);
+        uint256 holderQuote = OfferPreviewFacet(address(diamond)).previewAccept(id, lender).lifEstimate;
+        assertLt(holderQuote, creatorQuote, "the holder's discount is in the quote");
+        uint256 before = _free(buyer, mockERC20);
+        _signAndAcceptOffer(lender, lenderPk, id);
+        assertEq(_free(buyer, mockERC20) - before, PRINCIPAL - holderQuote, "the quote is what the fill charged");
+    }
+    /// @dev The holder previewing its own offer's accept is told it is a self
+    ///      trade, as the accept refuses it.
+    function test_preview_holderAcceptingItsOwnOffer_isSelfTrade() public {
+        uint256 id = _borrowerOffer();
+        _soldTo(id, buyer);
+        assertEq(
+            uint8(OfferPreviewFacet(address(diamond)).previewAccept(id, buyer).errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SelfTrade)
+        );
     }
 }

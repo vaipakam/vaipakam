@@ -10,6 +10,7 @@ import {LibOfferCreate} from "../libraries/LibOfferCreate.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
 import {LibReadyBalance} from "../libraries/LibReadyBalance.sol";
+import {LibOfferRefund} from "../libraries/LibOfferRefund.sol";
 import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -305,11 +306,14 @@ contract OfferMaterializeFacet is DiamondPausable, IVaipakamErrors {
         o.creatorFull = true;
         o.creatorMaxCStar = full.maxCStar;
         o.creatorAllowFullDowngrade = full.allowDowngrade;
-        // #3744 — recorded with the maker who gave it, so it counts only while
-        // the maker holds the offer's token.
-        LibVaipakam.storageSlot().offerFullTariffBy[offerId] = o.creator;
+        // #3744 — recorded with the wallet that gave it, so it counts only
+        // while that wallet holds the offer's token. For a signed offer that is
+        // its maker; for a collection slice it is the parent's holder, who gave
+        // the parent's consent and receives the slice's token.
+        address by = LibOfferRefund.sliceTokenTo(o.creator);
+        LibVaipakam.storageSlot().offerFullTariffBy[offerId] = by;
         emit OfferCreatorFullTariffSet(offerId, true, full.maxCStar, full.allowDowngrade);
-        emit OfferFullTariffConsentBy(offerId, o.creator);
+        emit OfferFullTariffConsentBy(offerId, by);
     }
 
     /// @dev #3328 — a collection slice is a Lender offer of an ERC-20

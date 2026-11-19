@@ -1813,6 +1813,13 @@ interface IVaipakamErrors {
     ///         unacceptable — cancel it (and post a new one if still wanted).
     error RefinanceRequestNotRecorded(uint256 loanId, uint256 offerId);
 
+    /// @notice #3744 — refinance request `offerId`'s own position token has
+    ///         moved since the request was posted (away, or away and back),
+    ///         so the request no longer stands and can never be taken. Its
+    ///         creator cancels it to release a fresh pledge; the loan's
+    ///         holder may post a new request in its place.
+    error RefinanceRequestTokenMoved(uint256 loanId, uint256 offerId);
+
     /// @notice #2407 — `loanId` has a live offset (`offsetOfferId`, the
     ///         borrower's early-close offset offer), so a refinance request for
     ///         it is refused: completing the offset closes the loan and would

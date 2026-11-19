@@ -48,8 +48,13 @@ library LibOfferRefund {
     }
 
     /// @notice The holder of offer `offer`'s position token now, or its
-    ///         creator for an offer that carries none.
+    ///         creator for an offer that carries none, and always the creator
+    ///         for a refinance request: a request stands only while its creator
+    ///         holds its token unmoved (`LibRefinanceRequest.offerTokenUnmoved`),
+    ///         so its token, once moved, carries nothing; the creator cancels
+    ///         it, and its fresh pledge returns to the creator's own vault.
     function holder(LibVaipakam.Offer storage offer) internal view returns (address h) {
+        if (offer.refinanceTargetLoanId != 0) return offer.creator;
         uint256 token = offer.positionTokenId;
         if (token != 0) h = LibPositionNFT.core().holderOf(token);
         if (h == address(0)) h = offer.creator;
@@ -83,6 +88,17 @@ library LibOfferRefund {
         assembly ("memory-safe") {
             tstore(key, to)
         }
+    }
+
+    /// @notice Who WILL receive the offer token about to be minted for
+    ///         `creator` (the bound slice recipient, else the creator),
+    ///         without consuming the binding.
+    function sliceTokenTo(address creator) internal view returns (address to) {
+        bytes32 key = SLICE_TOKEN_TO;
+        assembly ("memory-safe") {
+            to := tload(key)
+        }
+        if (to == address(0)) to = creator;
     }
 
     /// @notice Who receives the offer token being minted for `creator`: the

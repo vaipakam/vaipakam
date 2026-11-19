@@ -433,16 +433,20 @@ contract CollectionOfferFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
         _decrementReserve(offerId, perLoan);
         // #3744 — the loan this slice opens belongs to whoever holds the
         // parent offer's token, so the slice's own token is minted to it.
-        LibOfferRefund.bindSliceTokenTo(LibOfferRefund.holder(p));
+        address parentHolder = LibOfferRefund.holder(p);
+        LibOfferRefund.bindSliceTokenTo(parentHolder);
         bytes memory res = LibFacet.crossFacetCallReturn(
             abi.encodeWithSelector(
                 OfferMaterializeFacet.createCollectionSlice.selector,
                 p.creator,
                 _sliceParams(p, perLoan, tokenId),
                 // #3744 — the parent's consent carries to the slice only while
-                // the creator who gave it still holds the parent's token.
+                // the wallet that gave it holds the parent's token; the slice
+                // records that holder as its consenter.
                 LibSignedOffer.MakerFull(
-                    LibFeeEntitlement.offerFullConsented(offerId, p.creator), p.creatorMaxCStar, p.creatorAllowFullDowngrade
+                    LibFeeEntitlement.offerFullConsented(offerId, parentHolder),
+                    p.creatorMaxCStar,
+                    p.creatorAllowFullDowngrade
                 )
             ),
             bytes4(0)

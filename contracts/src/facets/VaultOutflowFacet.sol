@@ -271,8 +271,11 @@ contract VaultOutflowFacet is IVaipakamErrors {
         } else if (o.class_ == VaultOutflowTypes.OutflowClass.OfferHolder) {
             // #3744 — an offer refund takes value out of the offer's own
             // token: its state number goes up and it waits (the long wait
-            // when the caller holds it), before a cancel retires it.
-            LibPositionNFT.markOfferValueOut(o.ref);
+            // when the caller holds it). The token is marked by its id, not
+            // through the offer record, so a held refund collected after the
+            // offer is gone (retired token, deleted record) is marked too.
+            LibPositionNFT.markTokenValueOut(o.positionToken);
+            LibPositionNFT.markHolderMove(o.positionToken);
         }
         address payeeOwner = _resolveRecipient(user, o);
         // A listing's lot moving into the vault's own escrow stays under its

@@ -17,6 +17,7 @@ import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibSaleListing} from "../libraries/LibSaleListing.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
+import {LibRefinancePayoff} from "../libraries/LibRefinancePayoff.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -55,8 +56,11 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     ///      filter by signature, so this stays compatible with
     ///      whatever was indexing OfferFacet.OfferCanceled before
     ///      the split.
+    ///      `by` (#3744) is the caller: the holder of the offer's token, its
+    ///      manager, or anyone clearing an expired or dead offer; `creator`
+    ///      stays the offer's identity (#195).
     /// @custom:event-category state-change/offer-mutation
-    event OfferCanceled(uint256 indexed offerId, address indexed creator);
+    event OfferCanceled(uint256 indexed offerId, address indexed creator, address by);
 
     /// @dev Re-declared from OfferFacet for the same reason. Frontend
     ///      "Your Offers / Cancelled" surfaces hydrate cancelled rows
@@ -170,9 +174,11 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         uint256 token = offer.positionTokenId;
         address holder = LibOfferRefund.holder(offer);
         bool held;
-        if (token == 0) {
-            // No position token (none is minted for every offer shape): the
-            // creator is the holder, and the escrow is already in its vault.
+        if (token == 0 || offer.refinanceTargetLoanId != 0) {
+            // No position token (none is minted for every offer shape), or a
+            // refinance request, which is always its creator's (its token,
+            // once moved, carries nothing to its holder): the escrow is
+            // already in the creator's vault and only becomes free there.
             LibVaultOutflow.releaseOwn(creator, kind, asset, tokenId, amount, offerId, OutflowReason.OFFER_REFUND);
         } else if (holder == creator || byHolder) {
             LibVaultOutflow.toOfferHolder(creator, kind, asset, tokenId, amount, offerId, token);
@@ -614,6 +620,8 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // stays around (the holder keeps it as a historical artifact
         // or burns it via the existing burn path).
         delete s.offerIdByPositionTokenId[offer.positionTokenId];
+        // #3744 — a cancelled refinance request's payoff permit goes with it.
+        if (offer.refinanceTargetLoanId != 0) LibRefinancePayoff.discard(offerId);
         if (offer.amountFilled > 0) {
             offer.accepted = true;
         } else {
@@ -624,7 +632,7 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // not `msg.sender`. Same rationale as `OfferCanceledDetails`
         // above; both events must keep the creator as their indexed
         // address so historical filters continue to work.
-        emit OfferCanceled(offerId, creator);
+        emit OfferCanceled(offerId, creator, msg.sender);
         emit OfferClosed(offerId, OfferCloseReason.Cancelled);
     }
 
@@ -745,7 +753,7 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // #195 rationale as cancelOffer. Emitted here (not in LibSaleListing)
         // so the event isn't double-declared in this facet's exported ABI;
         // both teardown paths flow through this entry.
-        emit OfferCanceled(saleOfferId, s.offers[saleOfferId].creator);
+        emit OfferCanceled(saleOfferId, s.offers[saleOfferId].creator, msg.sender);
     }
 
     /// @notice Open offer IDs whose creator's country is trade-compatible

@@ -10,6 +10,7 @@ import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultPayoutFacet} from "../src/facets/VaultPayoutFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {MulticallFacet} from "../src/facets/MulticallFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {VaultOutflowTypes, OutflowReason} from "../src/vault/VaultOutflowTypes.sol";
@@ -189,9 +190,15 @@ contract PayoutDestinationRuleTest is SetupTest {
         vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
         OfferCancelFacet(address(diamond)).collectOfferRefund(token, 0, mockERC20, 0);
 
+        (uint256 stateBefore,,) = VaipakamNFTFacet(address(diamond)).positionState(token);
         vm.prank(newHolder);
         OfferCancelFacet(address(diamond)).collectOfferRefund(token, 0, mockERC20, 0);
         assertEq(_free(newHolder), PRINCIPAL, "collected into the holder's free balance");
+        // The collection takes value out of the token, offer gone or not: its
+        // state number moves, so a price agreed for the old state fails.
+        (uint256 stateAfter,, uint64 readyAt) = VaipakamNFTFacet(address(diamond)).positionState(token);
+        assertEq(stateAfter, stateBefore + 1, "the collection marks the token");
+        assertGt(readyAt, block.timestamp, "and starts its wait");
         assertEq(OfferCancelFacet(address(diamond)).getOfferRefundHeld(token, mockERC20, 0), 0, "nothing left held");
 
         vm.prank(newHolder);

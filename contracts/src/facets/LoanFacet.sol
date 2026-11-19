@@ -950,9 +950,19 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         bool isSaleVehicle = LibVaipakam.storageSlot().saleOfferToLoanId[offerId] != 0;
         _snapshotFeeBps(loan, isSaleVehicle);
         // #3722 — the borrower has now opened a loan, so it can no longer
-        // bind an inviter. A sale vehicle's "borrower" opens nothing.
-        if (!isSaleVehicle) LibVaipakam.storageSlot().hasBorrowed[loan.borrower] = true;
-        _latchOfferKeepersToLoan(loan.id, offerId, offer.creator);
+        // bind an inviter. A sale vehicle's "borrower" opens nothing. #3744 —
+        // the borrower is whoever holds the borrower side as the loan opens
+        // (the borrower offer's token holder, or the acceptor's side owner),
+        // not the vault that funds the collateral.
+        if (!isSaleVehicle) {
+            address borrowerSide = offer.offerType == LibVaipakam.OfferType.Borrower
+                ? LibOfferRefund.holder(offer)
+                : LibOfferRefund.acceptorSideOwner(acceptor);
+            LibVaipakam.storageSlot().hasBorrowed[borrowerSide] = true;
+        }
+        // #3744 — the offer's keepers were chosen by its token's holder, from
+        // that holder's own approved list.
+        _latchOfferKeepersToLoan(loan.id, offerId, LibOfferRefund.holder(offer));
     }
 
     /// @dev #957 (#921 item 6) — freeze the treasury-fee + LIF BPS the loan is
@@ -1001,10 +1011,10 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     function _latchOfferKeepersToLoan(
         uint256 loanId,
         uint256 offerId,
-        address creator
+        address offerHolder
     ) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address[] storage keepers = s.approvedKeepersList[creator];
+        address[] storage keepers = s.approvedKeepersList[offerHolder];
         uint256 len = keepers.length;
         for (uint256 i; i < len; ) {
             address k = keepers[i];

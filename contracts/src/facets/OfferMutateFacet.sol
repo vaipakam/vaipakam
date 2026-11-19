@@ -100,7 +100,10 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         uint256 collateralAmountMax,
         // #3719 — the integrator named at creation (address(0) = none),
         // restated so a modified offer still names its door.
-        address integrator
+        address integrator,
+        // #3744 — who changed it: the holder of the offer's token (or its
+        // manager); `creator` stays the offer's identity.
+        address by
     );
 
     /// @notice #2737 — re-declared byte-identical from `BackstopFacet`, so
@@ -945,7 +948,8 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             offer.interestRateBpsMax,
             offer.collateralAmount,
             offer.collateralAmountMax,
-            offer.integrator
+            offer.integrator,
+            msg.sender
         );
     }
 }

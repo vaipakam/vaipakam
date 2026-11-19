@@ -1065,7 +1065,7 @@ contract OfferFacetTest is Test {
             0
         );
         vm.expectEmit(true, true, false, false, address(diamond));
-        emit OfferCancelFacet.OfferCanceled(offerId, user1);
+        emit OfferCancelFacet.OfferCanceled(offerId, user1, user1);
 
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
@@ -2103,7 +2103,7 @@ contract OfferFacetTest is Test {
 
         vm.prank(user1);
         vm.expectEmit(true, true, false, false);
-        emit OfferCancelFacet.OfferCanceled(offerId, user1);
+        emit OfferCancelFacet.OfferCanceled(offerId, user1, user1);
         // #664 — the cancel cooldown applies to every fresh offer.
         vm.warp(block.timestamp + LibVaipakam.MIN_OFFER_CANCEL_DELAY);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);

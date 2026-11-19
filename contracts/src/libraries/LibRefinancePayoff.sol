@@ -213,6 +213,17 @@ library LibRefinancePayoff {
         emit RefinancePayoffPermitCleared(offerId, signer);
     }
 
+    /// @notice #3744 — drop request `offerId`'s payoff permit, if any, when
+    ///         the request itself is cancelled: a cancelled request can never
+    ///         be taken, so its permit has nothing left to authorise.
+    function discard(uint256 offerId) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address signer = s.refinancePayoffPermit[offerId].signer;
+        if (signer == address(0)) return;
+        delete s.refinancePayoffPermit[offerId];
+        emit RefinancePayoffPermitCleared(offerId, signer);
+    }
+
     /// @notice Pull the wallet's share of `loanId`'s payoff through request
     ///         `offerId`'s permit: `amount` of `asset` from `holder`'s wallet
     ///         into the Diamond, in full. Spends the permit.
