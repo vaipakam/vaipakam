@@ -2008,3 +2008,12 @@ NOT covered live: the banned-adoption outcome (a sanctions-listed source), the u
 
 **Gap.** No Anvil spec announces a change yet. It needs the admin to publish v1 and announce v2 on the fork; the spec should assert the notice, accept v2 from it, and see the notice go quiet.
 
+## NFT verifier: a retired token's history (#3021)
+<a id="cov-nft-verifier-retired-history-3021"></a>
+
+**Journey.** A visitor opens the verifier for a token the chain reports as retired. Under the retired verdict, the page asks the public indexer (`GET /positions/:tokenId`) what the token stood for: the loan or offer, the side, the final status, the agreed principal, rate and duration where the index confirms them ("Not confirmed by the index" otherwise), the last recorded collateral, the retirement's date, block and transaction, and the reason where the record shows one (a side handed to a new token, a closed loan, a cancelled offer). With no indexer, no record, or a malformed answer the panel is absent and the verdict stands alone.
+
+**Tier.** Unit: `src/data/positionHistory.test.ts` (accepted shapes, null terms kept null, refusal of another chain or token or a malformed body, no reason without a retirement). Indexer: `apps/indexer/test/positionHistory.test.ts` runs the real migrations, so the 0115 triggers are exercised (offer token becoming a loan token, a sold token kept on its loan, an offer heal).
+
+**Gap.** No Anvil spec renders the panel: the fixture retires no position token before the verifier spec runs, and the Anvil job has no indexer. Live drive owed after the next fresh deploy: cancel an offer with a test wallet, open `/nft/<its token>` and expect the offer row with "Cancelled" and the cancel reason; then repay a loan and check its tokens the same way.
+

@@ -33,6 +33,7 @@ import { readNftAbsence, type NftAbsence } from '../data/nftAbsence';
 import { AssetType } from '../lib/types';
 import { shortAddress } from '../lib/format';
 import { EmptyState } from '../components/EmptyState';
+import { RetiredTokenHistory } from '../components/RetiredTokenHistory';
 
 /** `LibPositionNFT.RouteReason` display labels (None omitted): a route does
  *  not block a transfer, and a transfer stops the route completing (#3205).
@@ -388,6 +389,7 @@ export function NftVerifier() {
             </h3>
           </div>
           <p className="muted">{copy.nftVerifier.retiredBody}</p>
+          <RetiredTokenHistory tokenId={tokenIdParam!} />
           {explorerCheck}
         </section>
       ) : result.data.absence === 'never-minted' ? (

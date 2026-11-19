@@ -1666,6 +1666,7 @@ DELETE FROM loan_lifecycle_violation; \
 DELETE FROM notifications; \
 DELETE FROM swap_to_repay_intents; \
 DELETE FROM position_side_moves; \
+DELETE FROM position_tokens; \
 DELETE FROM loan_reconcile_quarantine; \
 DELETE FROM loans; \
 DELETE FROM offers; \

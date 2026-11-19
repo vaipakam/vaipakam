@@ -155,6 +155,10 @@ const CLASSIFICATION = {
   },
   swap_to_repay_intents: { class: 'replay-derived', reason: 'chainIndexer-only writes (#1450 r32)' },
   position_side_moves: { class: 'replay-derived', reason: 'chainIndexer-only writes from position-NFT Transfer logs (#3205)' },
+  position_tokens: {
+    class: 'replay-derived',
+    reason: 'written only by the 0115 triggers on loans and offers, which the replay rewrites (#3021)',
+  },
   loan_orphans: {
     class: 'born-off-chain',
     reason:
@@ -713,7 +717,12 @@ function docsCite(num) {
 // Empty since #2937 retired `recycle_day_backfill`, whose operator pass
 // (#1523) never shipped. The mechanism stays: a future table whose writer is
 // legitimately not a Worker is declared here, with a script or a cited tracker.
-const EXTERNAL_WRITERS = {};
+const EXTERNAL_WRITERS = {
+  // #3021 — the position-token ledger is filled by SQL triggers on `loans` and
+  // `offers`, so every Worker write that sets a token id records it; no Worker
+  // names the table in a write of its own.
+  position_tokens: { script: 'apps/indexer/migrations/0115_position_token_ledger.sql' },
+};
 
 const dead = Object.keys(CLASSIFICATION)
   .filter((t) => !writers.has(t) && !(t in EXTERNAL_WRITERS))

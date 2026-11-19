@@ -20,6 +20,7 @@ import { handleSignedOffersGet } from '../src/signedOfferRoutes';
 import { handleConfigSnapshot } from '../src/configSnapshot';
 import { handleLoopClosure } from '../src/rewardRoutes';
 import { handleRecyclingSeries } from '../src/recycleRoutes';
+import { handlePositionHistory } from '../src/positionHistoryRoute';
 import { chainNotConfigured, chainNotServed, chainServed, requestedChainId } from '../src/servedChain';
 import { createSqliteD1 } from './helpers/sqliteD1';
 
@@ -77,6 +78,8 @@ describe('an unserved chain is refused on every chain-keyed route (#1140)', () =
     ['/offers/recent', () => offerRoutes.handleOffersRecent(new Request(`https://x/offers/recent?${q}`), env())],
     ['/signed-offers', () => handleSignedOffersGet(new Request(`https://x/signed-offers?${q}`), env())],
     ['/config/:chainId', () => handleConfigSnapshot(SERVED, env())],
+    // #3021 — the verifier's position-token history.
+    ['/positions/:tokenId', () => handlePositionHistory(new Request(`https://x/positions/1?${q}`), env(), '1')],
     // #2654 — the reward metrics.
     ['/metrics/loop-closure', () => handleLoopClosure(new Request(`https://x/metrics/loop-closure?${q}`), env())],
     ['/metrics/recycling', () => handleRecyclingSeries(new Request(`https://x/metrics/recycling?${q}`), env())],
@@ -133,6 +136,7 @@ describe('every handler that reads a chain id asks whether it is served', () => 
     ['signedOfferRoutes.ts', 'chainNotServed(env, chainId)'],
     ['rewardRoutes.ts', 'chainNotServed(env, chainId)'],
     ['recycleRoutes.ts', 'chainNotConfigured(env, chainId)'],
+    ['positionHistoryRoute.ts', 'chainNotServed(env, chainId)'],
   ];
   for (const [file, guard] of MODULES) {
     const src = readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8');

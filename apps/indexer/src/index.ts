@@ -39,6 +39,7 @@
  *       GET  /activity            GET  /claimables/:address
  *       GET  /rewards/claimed
  *       GET  /claim-candidates/:address   GET /config/:chainId
+ *       GET  /positions/:tokenId
  *
  * T-078 — both entry points call `resolveEnv()` first. `RPC_*` are
  * now Cloudflare Secrets Store bindings (read asynchronously);
@@ -163,6 +164,7 @@ import {
   handleNotifications,
   handleLoansPreflight,
 } from './loanRoutes';
+import { handlePositionHistory, handlePositionsPreflight } from './positionHistoryRoute';
 
 export default {
   async scheduled(
@@ -713,6 +715,18 @@ export default {
         }
         const byId = url.pathname.match(/^\/loans\/(\d+)$/);
         if (byId) return handleLoanById(req, resolved, byId[1]);
+      }
+      return new Response('Not found', { status: 404 });
+    }
+
+    // ─── /positions/:tokenId ────────────────────────────────────
+    // #3021 — what a position token stood for (the NFT verifier's history
+    // panel for a retired token).
+    if (url.pathname.startsWith('/positions/')) {
+      if (req.method === 'OPTIONS') return handlePositionsPreflight();
+      const byToken = url.pathname.match(/^\/positions\/(\d+)$/);
+      if (req.method === 'GET' && byToken) {
+        return handlePositionHistory(req, resolved, byToken[1]);
       }
       return new Response('Not found', { status: 404 });
     }

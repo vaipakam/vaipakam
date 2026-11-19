@@ -2514,7 +2514,8 @@ const copySource = {
       'An independent view of the same contract, run by the block explorer rather than by Vaipakam. It can lag a few blocks behind this page.',
     // #2529 — the three-way verdict. "Retired by the protocol" stays
     // generic on purpose: a position token stops existing for more than
-    // one reason, and without a history lookup the page must not name one.
+    // one reason. The history panel below (#3021) names the reason only
+    // where the index's record shows it.
     retiredTitle: tmpl(`Token #{{id}} was retired on this network`, ['id']),
     retiredBody:
       'This token existed here and has since been retired by the protocol, so it no longer carries any claim or role. Treat any offer to sell or transfer it as worthless.',
@@ -2529,6 +2530,62 @@ const copySource = {
       'Either it was retired by the protocol, or it was never minted here at all — this network’s contracts don’t record which. Treat any offer to sell or transfer this token id as worthless on this network.',
     goneBodyUnchecked:
       'Either it was retired by the protocol, or it was never minted here at all — we couldn’t check which just now; reloading retries. Treat any offer to sell or transfer this token id as worthless on this network.',
+    // #3021 — a retired token's history, from the public indexer. Shown
+    // only when the index has a record; every term it cannot confirm says
+    // so rather than showing a figure.
+    history: {
+      title: 'What the public index recorded for this token',
+      source:
+        'From Vaipakam’s public indexer, not read from the chain. The verdict above comes from the chain and stands on its own.',
+      loanLabel: 'Loan',
+      offerLabel: 'Offer',
+      sideLabel: 'Side',
+      sideLender: 'Lender side',
+      sideBorrower: 'Borrower side',
+      statusLabel: 'Final status',
+      loanStatus: {
+        active: 'Open',
+        repaid: 'Repaid',
+        defaulted: 'Defaulted',
+        liquidated: 'Liquidated',
+        settled: 'Settled',
+        fallback_pending: 'Settling after a failed sale',
+        internal_matched: 'Closed by internal matching',
+      } as Record<string, string>,
+      offerStatus: {
+        active: 'Open',
+        accepted: 'Accepted',
+        filled: 'Filled',
+        cancelled: 'Cancelled',
+        expired: 'Expired',
+        consumed_by_sale: 'Used to complete a loan sale',
+      } as Record<string, string>,
+      statusOther: 'A status this app has no name for',
+      principalLabel: 'Amount lent at the start',
+      rentedLabel: 'NFT rented',
+      rateLabel: 'Interest rate agreed',
+      durationLabel: 'Duration agreed',
+      notConfirmed: 'Not confirmed by the index',
+      collateralLabel: 'Collateral (last recorded)',
+      offerAmountLabel: 'Amount offered',
+      offerRateLabel: 'Interest rate offered',
+      offerDurationLabel: 'Duration offered',
+      offerCollateralLabel: 'Collateral',
+      range: tmpl(`{{min}} to {{max}}`, ['min', 'max']),
+      nftItem: tmpl(`Token #{{id}} of NFT collection {{collection}}`, ['id', 'collection']),
+      nftQuantity: tmpl(`{{quantity}} of NFT {{collection}} #{{id}}`, ['quantity', 'collection', 'id']),
+      nftCollection: tmpl(`An NFT from collection {{collection}}`, ['collection']),
+      tokenUnits: tmpl(`{{amount}} smallest units of {{token}}`, ['amount', 'token']),
+      closedLabel: 'Loan closed',
+      retiredLabel: 'Retired',
+      retiredValue: tmpl(`{{date}}, in block {{block}}`, ['date', 'block']),
+      retiredTx: 'See the transaction',
+      reasonLabel: 'Why it was retired',
+      reasonPositionMoved:
+        'This side of the loan passed to a new holder, who received a new token, and this one was retired at the handover. The loan itself went on.',
+      reasonLoanClosed: 'The loan closed, so the position this token stood for ended.',
+      reasonOfferCancelled: 'The offer was cancelled before it became a loan.',
+    },
   },
 
   // T-054 stuck-token recovery — deliberately UNLISTED (no nav or
