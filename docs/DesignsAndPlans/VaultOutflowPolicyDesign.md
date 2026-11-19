@@ -294,7 +294,8 @@ beyond what its owner signed.
    - a loan's two reserves and its standing instructions (#3681): how much is reserved, and which draws may spend it
      (a top-up into this loan's own collateral lien, an interest payment or a repayment to the lender side's holder);
    - the due-date plan on a loan ([DueDatePlanDesign.md](DueDatePlanDesign.md)): that the loan may continue with
-     another lender. The borrower's highest rate is a loan term, which the vault does not check (§3.7.8);
+     another lender, and the borrower's highest rate. The vault uses that rate for the continued loan's ceiling
+     (below). It does not check the rate the Diamond then records (§3.7.8);
    - a refinance request: that this loan's collateral lien may be carried to the loan opened from the request, once
      the old loan is paid;
    - an order for an asset the vault holds under a lien (a collateral listing, a sale beside an open offer, a limit
@@ -309,12 +310,17 @@ beyond what its owner signed.
    token, the other side's position token and the class budgets. A collateral lien also records four figures from the
    terms its owner signed: the principal still owed, the loan-to-value limit it opened under, **the most the loan can
    ever owe** (the principal plus the most interest and fees those terms allow, called the ceiling below), and **the
-   earliest time the collateral may be taken for a missed due date**. A lien opens in exactly two ways: under the
-   owner's own authorization in that transaction (a post, an accept), or as a draw on a mandate, a plan or a request.
-   It never opens on the Diamond's word alone.
-4. **Receipts.** A vault is paid by another vault through a call that names the `ref`. The receiving vault checks that
-   the caller is a genuine vault (§3.4), measures what arrived, and records "received X of this asset for `ref` from
-   this vault". A receipt is the only proof of payment another vault accepts.
+   earliest time the collateral may be taken for a missed due date**. The principal still owed falls only by the
+   principal part of a receipt (item 4), read in the transaction that made it and counted once. A lien opens in exactly
+   two ways: under the owner's own authorization in that transaction (a post, an accept), or as a draw on a mandate, a
+   plan or a request. Either way the vault names its own side's token and checks who holds it (§3.7.3). A lien never
+   opens on the Diamond's word alone.
+4. **Receipts.** A vault is paid by another vault through a call that names the `ref` and says how much of the payment
+   is principal. The receiving vault checks that the caller is a genuine vault (§3.4), measures what arrived, and
+   records "received X of this asset for `ref` from this vault, of which this much principal", under a number, so that
+   a receipt can be counted once. The principal part can never exceed what arrived. A receipt is the only proof of
+   payment another vault accepts. Because a receipt is counted when it is made, a lender side that changes hands
+   later changes nothing in what the borrower's lien has already counted.
 
 **One record, not two.** These records live in the vault and nowhere else, as protected mode's record does since B2.
 `LibEncumbrance` stays the one writer, and becomes the one caller of the vault's lien entries. The Diamond keeps the
@@ -325,20 +331,41 @@ that call. One that moves no tokens costs one more call, and the build PR measur
 
 #### 3.7.3 A loan opens as an exchange between two vaults
 
-A loan exists for a vault only as an exchange it took part in. Neither side takes the Diamond's word for the other.
+A loan exists for a vault only as an exchange it took part in. Neither side takes the Diamond's word for the other, and
+one rule holds on both sides: **a vault checks its own side's position token against its own owner's commitment, and
+learns the other side's token only from the other vault's own record.**
 
-- **The paying side.** The vault that funds the principal pays within its offer lien or its mandate. It names its own
-  side's position token and checks on the position-NFT contract that the token is held by the one entitled to that
-  side: its owner, or whoever holds the offer's token the lien was opened under (#3744). It pays only when a genuine
-  vault holds an owner-authorized collateral lien for the same `ref`, on the terms its own commitment states, and it
-  pays the vault of whoever holds the borrower side's token. For a mandate fill it also reads the price guard: the
-  collateral's value must cover the principal at the slot's own loan-to-value limit.
-- **The locking side.** A collateral lien binds only once the principal's receipt exists for the same `ref`, at the
-  vault of whoever holds the borrower side's token. It records as its other side the position token the paying vault
-  named. A collateral lien with no receipt binds nothing, and its owner can release it.
+- **Each side's token.** A vault records a lien only with its own side's position token named, and only after checking
+  on the position-NFT contract that the token is held by the one entitled to that side under the commitment the lien
+  draws on: the vault's owner, or whoever holds the offer's token the commitment was made under (#3744). This holds for
+  the borrower's side exactly as for the lender's. A token the Diamond minted to anyone else opens no lien in that
+  vault, so it can neither bind collateral nor be paid principal.
+- **The paying side.** The vault that funds the principal pays within its offer lien or its mandate. It pays only when
+  a genuine vault holds an owner-authorized collateral lien for the same `ref`, on the terms its own commitment states.
+  It reads the borrower side's token from that lien, never from the Diamond, and pays the vault of that token's holder
+  the principal less the opening fee the terms allow. The fee leaves under the fee budget (§3.7.4). For a mandate fill
+  the vault also reads the price guard: the collateral's value must cover the principal at the slot's own
+  loan-to-value limit.
+- **The locking side.** A collateral lien is bound from the moment the receipt for that payment exists for the same
+  `ref`, at the vault of whoever holds its own side's token, whether or not the Diamond says so. It records as its
+  other side the token the paying vault's own record names. Until then it binds nothing, and its owner can release it.
+- **A loan that pays off another** (a refinance request, or a continuation with another lender under a due-date
+  plan). The borrower's commitment names the old loan. The paying vault reads that commitment and the old loan's
+  collateral lien in the borrower's vault, and pays the new principal to the vault of the old loan's lender-side
+  holder, as that lien names it. The receipt is recorded there for the old loan's `ref` and names the new loan. That
+  receipt is the opening proof: the old lien is carried to the new loan and bound to the new lender side once the old
+  loan's principal still owed is nil (§3.7.7). The new loan's borrower-side token must be held by whoever holds the old
+  loan's, so a payoff can never hand the collateral to another party. The borrower's own vault pays any rest of what
+  the old loan is owed, and any part of the new principal beyond it goes to the borrower side's holder as above.
+  Nothing is paid to the borrower for the part that pays the old loan.
+- **An NFT rental.** Nothing is paid at opening. The lender's vault itself records the renter's right on the token,
+  for the holder of the borrower side's token as the renter's prepayment lien names it, and that lien is bound on the
+  lender vault's record of the right, in place of a receipt.
 
-So a faulty Diamond cannot name itself or anyone else the lender of a loan without the principal really being paid, and
-cannot lock a borrower's collateral without the borrower really being paid.
+So a faulty Diamond cannot name itself or anyone else the lender of a loan without the principal really being paid. It
+cannot lock a borrower's collateral unless the entitled borrower was really paid, or the borrower's old loan was really
+paid off under the borrower's own commitment. And it cannot make itself or anyone else the borrower of a loan that
+another party's collateral backs.
 
 #### 3.7.4 What each outflow is checked against
 
@@ -348,7 +375,7 @@ This table restates layer 2 of §3.3 for Stage B3. Where the two differ, this on
 | --- | --- |
 | The owner's withdrawal | The balance record (§3.7.2). Own wallet, or an allowlisted address after its delay (B2). On a protected account the withdrawal is a row the vault queues itself (§3.7.9). |
 | Principal to a borrower | §3.7.3. |
-| A lien released into free balance | A collateral lien, in full: only when receipts at the other side's holder vault cover the principal the lien records. In part: only as far as what stays still covers the principal owed at the lien's own loan-to-value limit, by the vault's own price read. An asset with no price returns only in full. An offer lien, a mandate or a reserve: the owner's own call, for what is not drawn. |
+| A lien released into free balance | A collateral lien, in full: only when the lien's own figure for the principal still owed is nil, which only the principal part of receipts brings down (§3.7.2). In part: only as far as what stays still covers the principal owed at the lien's own loan-to-value limit, by the vault's own price read. An asset with no price returns only in full. An offer lien, a mandate or a reserve: the owner's own call, for what is not drawn. |
 | A payment to the other side's holder (repayment, interest, the proceeds of a forced sale, collateral on a default) | Against the lien for that `ref`, to the vault of whoever holds the other side's position token now (§3.7.5), and no more than the lien. What leaves a collateral lien to the lender side without its owner's own authorization never passes the ceiling: sale proceeds are counted as measured, and priced collateral handed over in kind is valued by the vault's own price read. Collateral with no price is handed over only whole, and only at or after the lien's own date. |
 | What is left of a lien, to this side's holder | To the vault of whoever holds this side's position token now, under the release rule above. An open offer's escrow goes the same way to the holder of the offer's token (#3744). |
 | A swap or a forced sale | Only through `swapOut` (B1): the vault makes the swap, takes no more than the lien from itself, and measures what arrived at this vault or at the other side's holder vault. B3 adds the vault's own outer floor: the price guard's value of what was sold, less the widest slippage the settings allow, fixed in the vault code. The Diamond's tighter floor (#3359) stays layer 1. |
@@ -389,7 +416,8 @@ become the payee of every lien. So:
   owner present, under a standing consent in its mandate (a takeover, a continuation), once it holds a receipt for at
   least the principal it lent on that loan and has not yet received back. A lender's vault never gives up a position
   for less than its principal unless its owner signs.
-- A seller's claim exists only from signed sale terms, as before.
+- A seller's claim exists only from sale terms the seller authorized: signed for that sale, or the standing consent
+  the replacement was declared under. Its amount is interest the Diamond computes (§3.7.8).
 
 #### 3.7.6 Release
 
@@ -407,15 +435,17 @@ A fill under the lending mandate can: move principal within the amount set aside
 mandate's asset, for a loan whose collateral is locked in a genuine vault, in the slot's collateral asset, worth enough
 at the slot's loan-to-value limit, before the slot's end date. It cannot: touch free balance outside the amount set
 aside, pay any other destination, or lend against collateral the vault itself does not price as sufficient. On the
-borrower's side a continuation or a refinance can carry the collateral lien, whole, to the continued or the new loan,
-and only once the old lender side's holder vault has a receipt for the principal.
+borrower's side a continuation or a refinance can carry the collateral lien, whole, to the continued or the new loan.
+It does so only once the old loan's principal still owed is nil by receipts at the old lender side's holder vault, and
+only to a loan whose borrower-side token is held by whoever holds the old loan's (§3.7.3).
 
 #### 3.7.8 What the vault does not check (stated)
 
 - **The rate and the term of a fill, and the interest due.** They are loan-record terms. A faulty Diamond could record
-  a fill at a worse rate than the slot allows, or a continuation above the borrower's highest rate. The principal is
-  still locked against sufficient collateral and returns only against a receipt, so the loss is bounded to interest for
-  the time it takes to pause.
+  a fill at a worse rate than the slot allows, or a continuation above the borrower's highest rate, or misstate the
+  interest a payment carries or a seller has earned. The principal is still locked against sufficient collateral and
+  returns only against receipts for principal, and a borrower's collateral never pays past the ceiling, so the loss is
+  bounded to interest for the time it takes to pause.
 - **Whether a priced loan may be liquidated now, and what it owes on the day.** A faulty Diamond could sell a healthy
   loan's collateral early, or overstate the debt. The sale is made by the vault at no worse than its outer floor, the
   lender side receives no more than the ceiling and the rest stays with the real borrower. The loss is bounded to
@@ -477,6 +507,14 @@ reaches a chain by fresh deploy, as every stage has.
   worth too little at the slot's limit, is refused by the lender's vault.
 - With the Diamond's checks stubbed out, a loan cannot be opened whose lender token is held by anyone but the paying
   side's entitled holder, and a collateral lien with no receipt for its principal is released by its owner.
+- With the Diamond's checks stubbed out, a borrower-side token minted to anyone but the holder entitled under the
+  collateral commitment opens no lien and is paid no principal, on an accept, on a keeper's match of two posted offers
+  and on a mandate fill.
+- A refinance and a continuation open on the receipt at the old lender side's holder vault. The carried lien is bound
+  to the new lender side, nothing is paid to the borrower for the part that pays the old loan, and neither route can
+  carry a lien to a loan whose borrower-side token another party holds.
+- Interest paid over a loan's life, however much, never brings the lien's principal still owed down, and a receipt is
+  never counted twice. A lender side that changes hands between two repayments does not hold up the release.
 - A lien's other side changes only by the position-NFT contract's replacement record. A minted token that no holder
   declared is never paid. A vault declares a replacement without its owner only against a receipt for the principal
   still out.
@@ -520,6 +558,8 @@ reaches a chain by fresh deploy, as every stage has.
   protected mode already runs as fixed code the vault delegates to. The lien code likely needs the same form.
 - Whether a borrowing's shared collateral record ([BorrowingDesign.md](BorrowingDesign.md)) is one lien or one per
   loan.
+- The NFT rental mapped onto these records: the renter's right, the prepayment and its buffer, the daily deduction and
+  the close-out. A rental's prepayment carries no lien today.
 - How a buyer's payment for a registered order is recorded as held for the loan when it arrives. A marketplace pays
   the price leg by a plain transfer, so the fill callback is where the vault can measure and record it. Today the
   price leg pays the Diamond, which splits it.
