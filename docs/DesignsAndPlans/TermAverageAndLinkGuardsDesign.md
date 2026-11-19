@@ -100,6 +100,8 @@ This is a prompt, not a price rule. A manipulated average can at most ask a user
 
 ## 7. Depth is counted from reserved capital
 
+Amended 2026-11-19 (#3811, `LendingBalanceDesign.md` 3.7): capital is reserved per lender and lending asset, not per slot. Read "a slot's reserved capital" below as the lender's lending balance, counted once per lender: available is the sum, over lenders, of the lesser of the balance and the room left on that lender's open slots. Declared is retired in favour of set aside, the per-pair available figure is no longer kept on-chain, and the three stated limits stand with one more, given there.
+
 A slot's **declared** exposure is a limit its owner typed. It is not money. A slot lends only from the capital reserved for it, which is held under the intent's own lien, per slot, and changes only through the intent's own steps (funding, a fill, a repayment returned to the slot, an exit). That figure is exact on-chain, so depth is counted from it and nothing needs marking.
 
 `InstantMarketDesign.md` section 8 is amended:

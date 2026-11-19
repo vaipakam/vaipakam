@@ -63,7 +63,7 @@ The switches follow the conditions the contracts already set, so the form can ne
 - **The instant market's consents need interest by time.** Switching "Interest by time" off switches the three instant-market choices off with it, greyed, with the line "needs interest by time". Switching it back on restores each to what the lender had.
 - **The three instant-market choices are separate switches**, as they are separate consents. A lender may keep renewal and switch takeover off. Switching renewal off is shown with its meaning: the slot's instant-market loans stop renewing and fall due on their current due dates.
 - **The instant market's consents need a slot that any caller may fill.** A slot limited to authorized solvers shows them off for the same reason.
-- **Lending for a single transaction depends on neither.** It needs only a flash-eligible lending asset and the feature being on, so it stays as the lender set it when interest by time is off or the pair is outside the top tier.
+- **Lending for a single transaction depends on neither.** It needs only a flash-eligible lending asset and the feature being on, so it stays as the lender set it when interest by time is off or the pair is outside the top tier. Amended 2026-11-19 (#3811): the consent belongs to the lender's lending balance for the asset, so the form pre-selects it there, once per lending asset.
 - **All slot consents need the slot.** Choosing the one-time offer removes them from the review screen. An offer that takes interest by time is still a source for the instant market by that market's own rule, and the review screen says so.
 
 ### 3.2 Re-lending needs a permission, and the form says so
