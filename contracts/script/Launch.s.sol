@@ -16,9 +16,17 @@ interface IRoleTable {
     function hasRole(bytes32 role, address account) external view returns (bool);
 }
 
-/// @dev The reads this script needs of the OpenZeppelin `TimelockController`.
+/// @dev The reads this script needs of the `VaipakamTimelock` (an
+///      OpenZeppelin `TimelockController` with two waits, #3828).
 interface ILaunchTimelock {
-    function getMinDelay() external view returns (uint256);
+    /// @dev The wait THIS operation needs: the launch batch is not on the
+    ///      restart list, so it is the standard delay, never `getMinDelay`.
+    function requiredDelay(
+        bytes32 id,
+        address[] calldata targets,
+        uint256[] calldata values,
+        bytes[] calldata payloads
+    ) external view returns (uint256);
     function hashOperationBatch(
         address[] calldata targets,
         uint256[] calldata values,
@@ -545,6 +553,23 @@ contract Launch is Script {
         return ILaunchTimelock(timelock).hashOperationBatch(targets, values, payloads, bytes32(0), launchSalt(diamond));
     }
 
+    /// @notice The delay the launch proposal must be scheduled with: what
+    ///         the Timelock itself says this operation needs (#3828). The
+    ///         launch is not a restart, so this is the standard delay; a
+    ///         proposal scheduled at the restart delay would be refused.
+    function launchScheduleDelay(
+        address diamond,
+        LibLaunchReadiness.Declared memory declared,
+        ILaunchGate.Handover memory handover,
+        uint64 epoch,
+        address timelock
+    ) public view returns (uint256) {
+        (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
+            launchBatch(diamond, declared, handover, epoch);
+        bytes32 id = launchOperationId(diamond, declared, handover, epoch, timelock);
+        return ILaunchTimelock(timelock).requiredDelay(id, targets, values, payloads);
+    }
+
     /// @notice The salt every launch proposal for `diamond` on this chain
     ///         uses, so a re-run finds the operation it printed before.
     function launchSalt(address diamond) public view returns (bytes32) {
@@ -744,8 +769,8 @@ contract Launch is Script {
         (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
             launchBatch(diamond, declared, d.handover, d.epoch);
         bytes32 salt = launchSalt(diamond);
-        uint256 delay = tl.getMinDelay();
         bytes32 id = launchOperationId(diamond, declared, d.handover, d.epoch, timelock);
+        uint256 delay = launchScheduleDelay(diamond, declared, d.handover, d.epoch, timelock);
 
         string memory state = tl.isOperationDone(id)
             ? "DONE"

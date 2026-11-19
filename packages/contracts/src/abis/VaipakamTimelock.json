@@ -98,6 +98,19 @@
   },
   {
     "type": "function",
+    "name": "MAX_STANDARD_DELAY",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MIN_DELAY_FLOOR",
     "inputs": [],
     "outputs": [
@@ -138,6 +151,19 @@
   {
     "type": "function",
     "name": "STANDARD_DELAY_FLOOR",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "URGENT_APPROVAL_WINDOW",
     "inputs": [],
     "outputs": [
       {
@@ -984,6 +1010,30 @@
   },
   {
     "type": "function",
+    "name": "urgentApproval",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "approver",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "approvedAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "withdrawUrgentApproval",
     "inputs": [
       {
@@ -1394,6 +1444,22 @@
       },
       {
         "name": "standard",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "StandardDelayAboveMax",
+    "inputs": [
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "max",
         "type": "uint256",
         "internalType": "uint256"
       }

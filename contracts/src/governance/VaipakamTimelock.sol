@@ -138,9 +138,29 @@ contract VaipakamTimelock is TimelockController {
     ///      and never below {getMinDelay}.
     uint256 private _standardDelay;
 
+    /// @notice The highest {standardDelay} may ever be. A cap keeps
+    ///         `block.timestamp + delay` from overflowing, which would make
+    ///         every operation but a restart impossible to schedule.
+    uint256 public constant MAX_STANDARD_DELAY = 30 days;
+
+    /// @notice How long an urgent approval stays usable after it is given.
+    ///         An urgent fix is scheduled promptly; an approval left unused
+    ///         past this window lapses, so no approval waits in the dark to
+    ///         be used long after the situation it was given for.
+    uint256 public constant URGENT_APPROVAL_WINDOW = 3 days;
+
+    /// @dev One unspent urgent approval: who gave it and when.
+    struct UrgentApproval {
+        address approver;
+        uint64 approvedAt;
+    }
+
     /// @dev Operation ids an urgent approver approved and nobody has
-    ///      scheduled yet.
-    mapping(bytes32 => bool) private _urgentApproved;
+    ///      scheduled yet. An approval counts only while its approver still
+    ///      holds {URGENT_APPROVER_ROLE} and for {URGENT_APPROVAL_WINDOW}
+    ///      after it was given ({isUrgentApproved}), so revoking a rotated or
+    ///      compromised approver voids every approval it left behind.
+    mapping(bytes32 => UrgentApproval) private _urgentApproved;
 
     /// @notice The standard delay changed.
     event StandardDelayChange(uint256 oldDuration, uint256 newDuration);
@@ -162,6 +182,9 @@ contract VaipakamTimelock is TimelockController {
     /// @dev {updateStandardDelay} asked for less than
     ///      {STANDARD_DELAY_FLOOR} or less than {getMinDelay}.
     error StandardDelayOutOfRange(uint256 requested, uint256 floor);
+
+    /// @dev A standard delay above {MAX_STANDARD_DELAY}.
+    error StandardDelayAboveMax(uint256 requested, uint256 max);
 
     /// @dev {updateDelay} asked for more than {standardDelay}: the restart
     ///      delay is never the longer one.
@@ -255,6 +278,7 @@ contract VaipakamTimelock is TimelockController {
         address[] memory urgentApprovers
     ) TimelockController(minDelay, proposers, executors, address(0)) {
         if (standardDelay_ < minDelay) revert StandardDelayOutOfRange(standardDelay_, minDelay);
+        if (standardDelay_ > MAX_STANDARD_DELAY) revert StandardDelayAboveMax(standardDelay_, MAX_STANDARD_DELAY);
         MIN_DELAY_FLOOR = minDelay;
         STANDARD_DELAY_FLOOR = standardDelay_;
         RESTART_TARGET = restartTarget_;
@@ -282,12 +306,14 @@ contract VaipakamTimelock is TimelockController {
 
     /// @notice Change the standard delay. Only the timelock itself, so the
     ///         change is its own queued operation (and waits the standard
-    ///         delay). Never below {STANDARD_DELAY_FLOOR} or {getMinDelay}.
+    ///         delay). Never below {STANDARD_DELAY_FLOOR} or {getMinDelay},
+    ///         never above {MAX_STANDARD_DELAY}.
     function updateStandardDelay(uint256 newDelay) external {
         address sender = _msgSender();
         if (sender != address(this)) revert TimelockUnauthorizedCaller(sender);
         uint256 floor = STANDARD_DELAY_FLOOR > getMinDelay() ? STANDARD_DELAY_FLOOR : getMinDelay();
         if (newDelay < floor) revert StandardDelayOutOfRange(newDelay, floor);
+        if (newDelay > MAX_STANDARD_DELAY) revert StandardDelayAboveMax(newDelay, MAX_STANDARD_DELAY);
         emit StandardDelayChange(_standardDelay, newDelay);
         _standardDelay = newDelay;
     }
@@ -297,22 +323,40 @@ contract VaipakamTimelock is TimelockController {
     ///         and only before the operation is scheduled; scheduling spends
     ///         the approval. `id` is {hashOperation} or {hashOperationBatch}
     ///         of the operation, salt included, so it names one change.
+    ///         The approval is bound to its approver and lapses after
+    ///         {URGENT_APPROVAL_WINDOW}; approving again restarts the window.
     function approveUrgent(bytes32 id) external onlyRole(URGENT_APPROVER_ROLE) {
         if (isOperation(id)) revert UrgentApprovalForScheduledOperation(id);
-        _urgentApproved[id] = true;
-        emit UrgentApproved(id, _msgSender());
+        address approver = _msgSender();
+        _urgentApproved[id] = UrgentApproval({approver: approver, approvedAt: uint64(block.timestamp)});
+        emit UrgentApproved(id, approver);
     }
 
-    /// @notice Withdraw an urgent approval nobody has used yet.
+    /// @notice Withdraw an urgent approval nobody has used yet, lapsed or
+    ///         not. Any urgent approver may withdraw one.
     function withdrawUrgentApproval(bytes32 id) external onlyRole(URGENT_APPROVER_ROLE) {
-        if (!_urgentApproved[id]) revert UrgentApprovalNotPending(id);
+        if (_urgentApproved[id].approver == address(0)) revert UrgentApprovalNotPending(id);
         delete _urgentApproved[id];
         emit UrgentApprovalWithdrawn(id, _msgSender());
     }
 
-    /// @notice Whether operation `id` holds an unspent urgent approval.
-    function isUrgentApproved(bytes32 id) external view returns (bool) {
-        return _urgentApproved[id];
+    /// @notice Whether operation `id` holds an urgent approval that would let
+    ///         it be scheduled now: unspent, given by an account that still
+    ///         holds {URGENT_APPROVER_ROLE}, and within
+    ///         {URGENT_APPROVAL_WINDOW} of when it was given.
+    function isUrgentApproved(bytes32 id) public view returns (bool) {
+        UrgentApproval memory a = _urgentApproved[id];
+        if (a.approver == address(0)) return false;
+        if (!hasRole(URGENT_APPROVER_ROLE, a.approver)) return false;
+        return block.timestamp <= uint256(a.approvedAt) + URGENT_APPROVAL_WINDOW;
+    }
+
+    /// @notice Who gave operation `id`'s unspent approval and when; zero
+    ///         when none is recorded. Read {isUrgentApproved} for whether it
+    ///         still counts.
+    function urgentApproval(bytes32 id) external view returns (address approver, uint64 approvedAt) {
+        UrgentApproval memory a = _urgentApproved[id];
+        return (a.approver, a.approvedAt);
     }
 
     /// @notice The selectors on the restart list, each called on
@@ -350,7 +394,7 @@ contract VaipakamTimelock is TimelockController {
         uint256[] calldata values,
         bytes[] calldata payloads
     ) public view returns (uint256) {
-        if (_urgentApproved[id]) return getMinDelay();
+        if (isUrgentApproved(id)) return getMinDelay();
         uint256 n = targets.length;
         if (n == 0 || n != values.length || n != payloads.length) return _standardDelay;
         for (uint256 i = 0; i < n; ++i) {
@@ -363,13 +407,15 @@ contract VaipakamTimelock is TimelockController {
     bytes4 private constant SEL_UNPAUSE_ASSET = bytes4(keccak256("unpauseAsset(address)"));
     bytes4 private constant SEL_UNPAUSE_IF_EPOCH = bytes4(keccak256("unpauseIfPauseEpoch(uint64)"));
 
-    /// @dev Refuses `delay` below what `id` needs, and spends an urgent
-    ///      approval that let it through below the standard delay.
+    /// @dev Refuses `delay` below what `id` needs, and spends any urgent
+    ///      approval recorded for `id` (a lapsed one is cleared too: the
+    ///      operation is now scheduled, so it could never apply again).
     function _requireDelay(bytes32 id, uint256 delay, uint256 required) private {
         if (delay < required) revert DelayBelowRequired(id, delay, required);
-        if (_urgentApproved[id]) {
+        if (_urgentApproved[id].approver != address(0)) {
+            bool live = isUrgentApproved(id);
             delete _urgentApproved[id];
-            emit UrgentApprovalSpent(id);
+            if (live) emit UrgentApprovalSpent(id);
         }
     }
 
@@ -412,7 +458,7 @@ contract VaipakamTimelock is TimelockController {
         _requireDelay(
             id,
             delay,
-            _urgentApproved[id] || isRestartCall(target, value, data) ? getMinDelay() : _standardDelay
+            isUrgentApproved(id) || isRestartCall(target, value, data) ? getMinDelay() : _standardDelay
         );
         super.schedule(target, value, data, predecessor, salt, delay);
         _addActive(id);

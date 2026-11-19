@@ -47,7 +47,7 @@ interface Salt {
   tx: Hex;
 }
 
-function fakeChain(opts: { pending: { id: Hex; eta: bigint; ready: boolean }[]; scheduled: Scheduled[]; salts?: Salt[]; minDelay?: bigint; done?: Hex[] }) {
+function fakeChain(opts: { pending: { id: Hex; eta: bigint; ready: boolean }[]; scheduled: Scheduled[]; salts?: Salt[]; minDelay?: bigint; done?: Hex[]; standard?: { current: bigint; floor: bigint } }) {
   const calls = { getLogs: 0, getBlock: 0, ranges: [] as [bigint, bigint][] };
   const client = {
     async getBlock(args: { blockNumber?: bigint; blockTag?: string }) {
@@ -59,6 +59,9 @@ function fakeChain(opts: { pending: { id: Hex; eta: bigint; ready: boolean }[]; 
       if (args.functionName === 'getPendingProposalsCount') return BigInt(opts.pending.length);
       if (args.functionName === 'getMinDelay') return opts.minDelay ?? MIN_DELAY;
       if (args.functionName === 'MIN_DELAY_FLOOR') return FLOOR;
+      // A timelock without the standard wait (#3828) answers neither read.
+      if (opts.standard && args.functionName === 'standardDelay') return opts.standard.current;
+      if (opts.standard && args.functionName === 'STANDARD_DELAY_FLOOR') return opts.standard.floor;
       if (args.functionName === 'isOperationDone') return (opts.done ?? []).includes((args.args as [Hex])[0]);
       if (args.functionName === 'getPendingProposals') {
         const [offset, limit] = args.args as [number, number];
@@ -94,7 +97,15 @@ const tx = (n: number) => `0x${n.toString(16).padStart(64, '0')}` as Hex;
 
 describe('the read ABI', () => {
   it('matches the committed VaipakamTimelock ABI', () => {
-    for (const name of ['getPendingProposalsCount', 'getPendingProposals', 'getMinDelay', 'MIN_DELAY_FLOOR', 'isOperationDone'] as const) {
+    for (const name of [
+      'getPendingProposalsCount',
+      'getPendingProposals',
+      'getMinDelay',
+      'MIN_DELAY_FLOOR',
+      'standardDelay',
+      'STANDARD_DELAY_FLOOR',
+      'isOperationDone',
+    ] as const) {
       const ours = getAbiItem({ abi: GOVERNANCE_TIMELOCK_READ_ABI, name });
       const theirs = getAbiItem({ abi: VaipakamTimelockABI as Abi, name });
       expect(toFunctionSelector(ours as never)).toBe(toFunctionSelector(theirs as never));
@@ -188,6 +199,70 @@ describe('readGovernanceQueue', () => {
     });
     const q = await readGovernanceQueue(client, TIMELOCK, { maxLogRange: 2000, fromBlock: 0n, maxWindowsPerOperation: 1 });
     expect(q.operations[0].details.kind === 'proved' && q.operations[0].details.scheduledBlock).toBe(block);
+  });
+
+  // The two waits (#3828): every change but a restart waits the standard
+  // delay, so its schedule block sits a week before its eta, not 48h.
+  const WEEK = 604_800n;
+  const TWO_WAITS = { current: WEEK, floor: WEEK };
+
+  it('proves a change scheduled with the standard delay from one window', async () => {
+    const block = 40_000n;
+    const id = hashOperation(pauseCall, ZERO32, ZERO32);
+    const { client, calls } = fakeChain({
+      standard: TWO_WAITS,
+      pending: [{ id, eta: tsOf(block) + WEEK, ready: false }],
+      scheduled: [{ id, index: 0n, call: pauseCall, predecessor: ZERO32, delay: WEEK, block, tx: tx(7), logIndex: 0 }],
+    });
+    const q = await readGovernanceQueue(client, TIMELOCK, { maxLogRange: 2000, fromBlock: 0n, maxWindowsPerOperation: 1 });
+    expect(q.standardDelay).toBe(WEEK);
+    expect(q.operations[0].details.kind === 'proved' && q.operations[0].details.scheduledBlock).toBe(block);
+    expect(calls.getLogs).toBe(2); // the standard candidate's window, first try
+  });
+
+  it('finds a change queued before the standard delay was raised', async () => {
+    const block = 30_000n;
+    const id = hashOperation(pauseCall, ZERO32, ZERO32);
+    const { client } = fakeChain({
+      standard: { current: WEEK + 86_400n, floor: WEEK },
+      pending: [{ id, eta: tsOf(block) + WEEK, ready: false }],
+      scheduled: [{ id, index: 0n, call: pauseCall, predecessor: ZERO32, delay: WEEK, block, tx: tx(8), logIndex: 0 }],
+    });
+    const q = await readGovernanceQueue(client, TIMELOCK, { maxLogRange: 2000, fromBlock: 0n, maxWindowsPerOperation: 1 });
+    expect(q.operations[0].details.kind === 'proved' && q.operations[0].details.scheduledBlock).toBe(block);
+  });
+
+  it('walks back from the standard floor to a change scheduled longer than a week', async () => {
+    const block = 20_000n;
+    const delay = WEEK + 3_600n * 2n; // 3_600 blocks before the week candidate
+    const id = hashOperation(pauseCall, ZERO32, ZERO32);
+    const { client } = fakeChain({
+      standard: TWO_WAITS,
+      pending: [{ id, eta: tsOf(block) + delay, ready: false }],
+      scheduled: [{ id, index: 0n, call: pauseCall, predecessor: ZERO32, delay, block, tx: tx(9), logIndex: 0 }],
+    });
+    // Three windows per wait: the restart floor's walk alone (48h back from
+    // the eta) never reaches a block a week and two hours back.
+    const q = await readGovernanceQueue(client, TIMELOCK, { maxLogRange: 2000, fromBlock: 0n, maxWindowsPerOperation: 3 });
+    expect(q.operations[0].details.kind === 'proved' && q.operations[0].details.scheduledBlock).toBe(block);
+  });
+
+  it('still proves a restart scheduled with the restart delay on a two-wait timelock', async () => {
+    const block = 50_000n;
+    const id = hashOperation(pauseCall, ZERO32, ZERO32);
+    const { client } = fakeChain({
+      standard: TWO_WAITS,
+      pending: [{ id, eta: tsOf(block) + MIN_DELAY, ready: false }],
+      scheduled: [{ id, index: 0n, call: pauseCall, predecessor: ZERO32, delay: MIN_DELAY, block, tx: tx(10), logIndex: 0 }],
+    });
+    const q = await readGovernanceQueue(client, TIMELOCK, { maxLogRange: 2000, fromBlock: 0n, maxWindowsPerOperation: 1 });
+    expect(q.operations[0].details.kind === 'proved' && q.operations[0].details.scheduledBlock).toBe(block);
+  });
+
+  it('states no standard delay for a timelock with one wait', async () => {
+    const { client } = fakeChain({ pending: [], scheduled: [] });
+    const q = await readGovernanceQueue(client, TIMELOCK, { maxLogRange: 2000, fromBlock: 0n });
+    expect(q.standardDelay).toBeNull();
   });
 
   it('does not take a cancelled earlier scheduling of the same calls for the live one', async () => {

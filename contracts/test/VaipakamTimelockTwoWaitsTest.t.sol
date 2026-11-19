@@ -322,4 +322,97 @@ contract VaipakamTimelockTwoWaitsTest is Test {
         assertFalse(bare.isRestartCall(address(0), 0, _unpause()));
         assertFalse(bare.isRestartCall(address(target), 0, _unpause()));
     }
+
+    // ─── an approval is bound to its approver and to a window ────────────
+
+    function testApprovalRecordsItsApproverAndTime() public {
+        bytes32 id = _id(_setFee());
+        vm.prank(pauser);
+        tl.approveUrgent(id);
+        (address approver, uint64 at) = tl.urgentApproval(id);
+        assertEq(approver, pauser);
+        assertEq(at, uint64(block.timestamp));
+    }
+
+    /// @dev Revoking a rotated or compromised approver voids every approval
+    ///      it left behind: the operation waits the standard delay again.
+    function testRevokingTheApproverVoidsItsApprovals() public {
+        bytes memory data = _setFee();
+        bytes32 id = _id(data);
+        vm.prank(pauser);
+        tl.approveUrgent(id);
+        bytes32 role = tl.URGENT_APPROVER_ROLE();
+        vm.prank(address(tl));
+        tl.revokeRole(role, pauser);
+        assertFalse(tl.isUrgentApproved(id));
+
+        vm.prank(proposer);
+        vm.expectRevert(abi.encodeWithSelector(VaipakamTimelock.DelayBelowRequired.selector, id, RESTART, STANDARD));
+        tl.schedule(address(target), 0, data, bytes32(0), bytes32(0), RESTART);
+    }
+
+    /// @dev An approval lapses after the window; until then it holds.
+    function testApprovalLapsesAfterItsWindow() public {
+        bytes memory data = _setFee();
+        bytes32 id = _id(data);
+        vm.prank(pauser);
+        tl.approveUrgent(id);
+        uint256 window = tl.URGENT_APPROVAL_WINDOW();
+
+        uint256 t0 = block.timestamp;
+        vm.warp(t0 + window);
+        assertTrue(tl.isUrgentApproved(id), "still inside the window");
+        vm.warp(t0 + window + 1);
+        assertFalse(tl.isUrgentApproved(id), "lapsed");
+
+        vm.prank(proposer);
+        vm.expectRevert(abi.encodeWithSelector(VaipakamTimelock.DelayBelowRequired.selector, id, RESTART, STANDARD));
+        tl.schedule(address(target), 0, data, bytes32(0), bytes32(0), RESTART);
+
+        // Approving again opens a fresh window.
+        vm.prank(pauser);
+        tl.approveUrgent(id);
+        _schedule(data, RESTART);
+    }
+
+    /// @dev A lapsed approval does not block an ordinary schedule, and is
+    ///      cleared by it.
+    function testLapsedApprovalIsClearedByAStandardSchedule() public {
+        bytes memory data = _setFee();
+        bytes32 id = _id(data);
+        vm.prank(pauser);
+        tl.approveUrgent(id);
+        vm.warp(block.timestamp + tl.URGENT_APPROVAL_WINDOW() + 1);
+        _schedule(data, STANDARD);
+        (address approver,) = tl.urgentApproval(id);
+        assertEq(approver, address(0));
+    }
+
+    // ─── the standard delay is capped ────────────────────────────────────
+
+    function testStandardDelayCannotRiseAboveTheCap() public {
+        uint256 cap = tl.MAX_STANDARD_DELAY();
+        uint256 t0 = block.timestamp;
+        bytes memory tooHigh = abi.encodeCall(VaipakamTimelock.updateStandardDelay, (cap + 1));
+        vm.prank(proposer);
+        tl.schedule(address(tl), 0, tooHigh, bytes32(0), bytes32(0), STANDARD);
+        vm.warp(t0 + STANDARD);
+        vm.expectRevert(abi.encodeWithSelector(VaipakamTimelock.StandardDelayAboveMax.selector, cap + 1, cap));
+        tl.execute(address(tl), 0, tooHigh, bytes32(0), bytes32(0));
+
+        bytes memory atCap = abi.encodeCall(VaipakamTimelock.updateStandardDelay, (cap));
+        vm.prank(proposer);
+        tl.schedule(address(tl), 0, atCap, bytes32(0), bytes32("cap"), STANDARD);
+        vm.warp(t0 + 2 * STANDARD);
+        tl.execute(address(tl), 0, atCap, bytes32(0), bytes32("cap"));
+        assertEq(tl.standardDelay(), cap);
+    }
+
+    function testConstructorRefusesAStandardAboveTheCap() public {
+        uint256 cap = 30 days;
+        vm.expectRevert(abi.encodeWithSelector(VaipakamTimelock.StandardDelayAboveMax.selector, cap + 1, cap));
+        new VaipakamTimelock(
+            RESTART, cap + 1, address(0), new address[](0), new address[](0), new address[](0), new address[](0)
+        );
+    }
 }

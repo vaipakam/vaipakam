@@ -152,6 +152,7 @@ contract DeployTimelock is Script {
         );
         require(minDelay >= 1 hours, "DeployTimelock: min delay < 1h");
         require(c.standardDelay >= minDelay, "DeployTimelock: standard delay < restart delay");
+        require(c.standardDelay <= 30 days, "DeployTimelock: standard delay > 30 days (MAX_STANDARD_DELAY)");
         // #1195 F4 (Pass-2 hardening) — on a Phase-1 MAINNET the Timelock must
         // enforce the ratified 48h minimum delay; the `TIMELOCK_MIN_DELAY` env
         // must not be able to floor governance to the 1h dev minimum with no

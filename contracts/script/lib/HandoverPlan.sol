@@ -342,12 +342,17 @@ library HandoverPlan {
 
     // ── The timelock's restart list ────────────────────────────────────────
 
+    /// @dev `pause()`: the facet that routes it is the pause facet.
+    bytes4 private constant PAUSE_SELECTOR = bytes4(keccak256("pause()"));
+
     /// @notice Why `timelock`'s restart list does not fit `diamond`, or ""
     ///         when it does. The list is (target, selector) pairs: the target
     ///         must be this Diamond, and the Diamond must route every
-    ///         selector, so the 48-hour route can only ever reach a call that
-    ///         exists on the contract the handover gives the timelock (design
-    ///         ruling on #3828). One statement, read by `DeployTimelock`,
+    ///         selector to the facet behind `pause()`, so the 48-hour route
+    ///         can only ever reach the pause facet's unpause entries on the
+    ///         contract the handover gives the timelock (design ruling on
+    ///         #3828). A later diamond cut (itself a 7-day change) could move
+    ///         them, so the scheduled launch-list check re-runs this (#3824). One statement, read by `DeployTimelock`,
     ///         `Handover` and `HandoverGate`.
     function restartListProblem(address timelock, address diamond) internal view returns (string memory) {
         if (diamond == address(0)) return "no Diamond to check the timelock's restart list against";
@@ -357,17 +362,30 @@ library HandoverPlan {
                 "timelock RESTART_TARGET ", CHEATS.toString(target), " is not the Diamond ", CHEATS.toString(diamond)
             );
         }
+        // The restart route is only as narrow as the code behind it, so every
+        // restart selector must reach the facet that hosts `pause()`: the
+        // pause facet, whose unpause entries only lift a pause. A selector
+        // routed anywhere else would put other code on the 48-hour route.
+        address pauseFacet;
+        try IRestartLoupe(diamond).facetAddress(PAUSE_SELECTOR) returns (address f) {
+            pauseFacet = f;
+        } catch {
+            return "the Diamond's loupe (facetAddress) cannot be read";
+        }
+        if (pauseFacet == address(0)) return "the Diamond does not route pause()";
         bytes4[] memory sels = IRestartList(timelock).restartSelectors();
         for (uint256 i = 0; i < sels.length; ++i) {
-            address facet;
-            try IRestartLoupe(diamond).facetAddress(sels[i]) returns (address f) {
-                facet = f;
-            } catch {
-                return "the Diamond's loupe (facetAddress) cannot be read";
-            }
+            address facet = IRestartLoupe(diamond).facetAddress(sels[i]);
             if (facet == address(0)) {
                 return string.concat(
                     "the Diamond does not route restart selector ", CHEATS.toString(abi.encodePacked(sels[i]))
+                );
+            }
+            if (facet != pauseFacet) {
+                return string.concat(
+                    "restart selector ",
+                    CHEATS.toString(abi.encodePacked(sels[i])),
+                    " is not routed to the pause facet (the facet behind pause())"
                 );
             }
         }

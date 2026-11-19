@@ -185,6 +185,17 @@ contract HandoverGateTest is Test {
         assertTrue(
             _has(HandoverPlan.restartListProblem(address(timelock), address(diamond)), "does not route restart selector")
         );
+        // A restart selector routed to other code than the pause facet.
+        cut[0] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(AdminFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: gone
+        });
+        vm.prank(owner_);
+        IDiamondCut(address(diamond)).diamondCut(cut, address(0), "");
+        assertTrue(
+            _has(HandoverPlan.restartListProblem(address(timelock), address(diamond)), "is not routed to the pause facet")
+        );
     }
 
     /// @notice The case `hasRole` on known addresses cannot see: a third key
@@ -771,10 +782,11 @@ contract HandoverGateTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: h.getDiamondLoupeFacetSelectors()
         });
-        bytes4[] memory restart = new bytes4[](3);
+        bytes4[] memory restart = new bytes4[](4);
         restart[0] = AdminFacet.unpause.selector;
         restart[1] = AdminFacet.unpauseAsset.selector;
         restart[2] = AdminFacet.unpauseIfPauseEpoch.selector;
+        restart[3] = AdminFacet.pause.selector;
         cuts[3] = IDiamondCut.FacetCut({
             facetAddress: ArtifactDeploy.deploy(type(AdminFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
