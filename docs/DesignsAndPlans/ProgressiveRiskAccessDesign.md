@@ -491,7 +491,7 @@ this design.
 For actions that **create new risk or mutate the position**, the gate is
 checked against the **current position-NFT owner** — a transferee does
 **not** inherit the creator's future-action consents. The canonical owner
-resolver is [`LibERC721.ownerOf(uint256):261`](../../contracts/src/libraries/LibERC721.sol#L261),
+resolver is `LibERC721.ownerOf(uint256):261`,
 and keeper auth already resolves against the current owner via
 [`LibAuth.requireKeeperFor(uint8, Loan storage, bool):94`](../../contracts/src/libraries/LibAuth.sol#L94)
 (resolves `ownerOf(tokenId)` at
