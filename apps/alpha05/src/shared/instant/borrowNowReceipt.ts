@@ -84,7 +84,10 @@ export function borrowNowReceipt(r: BorrowNowReview, diamond: Hex, meta: TokenMe
       });
       rows.push({ label: text('borrowNow.rowNet'), value: { kind: 'amount', asset: t.lending, amount: plan.total - fee }, binding: false });
     }
-    rows.push({ label: text('borrowNow.rowLocked'), value: { kind: 'amount', asset: t.collateral, amount: plan.collateralLocked }, binding: true });
+    // What this block's fills lock; more may be ready when it confirms, and
+    // the call can then lock up to all the collateral offered.
+    rows.push({ label: text('borrowNow.rowLocked'), value: { kind: 'amount', asset: t.collateral, amount: plan.collateralLocked }, binding: false });
+    rows.push({ label: text('borrowNow.rowLockedMost'), value: { kind: 'amount', asset: t.collateral, amount: t.collateralOffered }, binding: true });
     if (coverage(plan, t.amount) === 'part') {
       const rest = restOf(t, plan);
       rows.push({
