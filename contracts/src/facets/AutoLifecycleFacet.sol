@@ -331,7 +331,10 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         no extension can run and the bound is 0.
     /// @dev    Both charges read 0 for a loan that cannot be extended (not
     ///         Active, not an ERC-20 loan, or on a periodic cadence), and
-    ///         `otherFree` reads 0 for a loan whose principal is not an ERC-20. An
+    ///         `otherFree` reads 0 for a loan whose principal is not an ERC-20.
+    ///         For a holder in protected mode `otherFree` is capped at its
+    ///         effective Ready balance, the most an extension may draw beyond
+    ///         the reserve (#3344). An
     ///         extension draws only on the CURRENT borrower-position holder's
     ///         vault, so a reserve held by anyone else pays nothing until they
     ///         withdraw it. The charge is what leaves the holder's vault; the
@@ -359,6 +362,11 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             uint256 raw = IERC20(asset).balanceOf(vault);
             uint256 tracked = LibVaipakam.trackedHolding(holder, asset, 0);
             otherFree = LibEncumbrance.freeBalance(holder, asset, 0, tracked < raw ? tracked : raw);
+            // A protected holder may spend only its Ready balance on an
+            // extension ({_drawFromHolder}), so that is all of the free
+            // balance that can fund one (#3344).
+            uint256 usable = LibReadyBalance.spendableViaHost(holder, asset);
+            if (usable < otherFree) otherFree = usable;
         }
         if (
             loan.startTime != 0 &&

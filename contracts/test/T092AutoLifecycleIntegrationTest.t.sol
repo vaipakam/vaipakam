@@ -3,6 +3,8 @@ pragma solidity ^0.8.29;
 
 import {LibTestPositionNFT} from "./helpers/LibTestPositionNFT.sol";
 import {SetupTest} from "./SetupTest.t.sol";
+import {LibTestProtection} from "./helpers/LibTestProtection.sol";
+import {VaultDepositoryFacet} from "../src/facets/VaultDepositoryFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {StandingInstructionFacet} from "../src/facets/StandingInstructionFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
@@ -1823,6 +1825,25 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         _s().setAutoExtendBorrowerCaps(loanId, true, b.minRateBps, b.maxRateBps, b.maxNewExpiry, 1);
         (, , , uint256 capped, ) = _f().getExtendFunding(loanId, borrower);
         assertEq(withFee - capped, bound - 1, "the bound is held to the borrower's fee cap");
+    }
+
+    /// @notice #3344 — a protected holder may spend only its Ready balance on
+    ///         an extension, so the funding view counts no more of its free
+    ///         balance than that: free funds outside Ready do not read as
+    ///         extension cover the execution would then refuse.
+    function test_3344_fundingQuote_countsOnlyReadyForAProtectedHolder() public {
+        uint256 loanId = _buildActiveLoan();
+        ERC20Mock(mockERC20).mint(borrower, 5 ether);
+        vm.startPrank(borrower);
+        ERC20(mockERC20).approve(address(diamond), 5 ether);
+        VaultDepositoryFacet(address(diamond)).depositToVault(uint8(LibVaipakam.AssetType.ERC20), mockERC20, 0, 5 ether);
+        vm.stopPrank();
+        (, , uint256 freeBefore, , ) = _f().getExtendFunding(loanId, borrower);
+        assertGe(freeBefore, 5 ether, "fixture: free balance counts while unprotected");
+
+        LibTestProtection.enable(address(diamond), borrower, 2 days);
+        (, , uint256 freeAfter, , ) = _f().getExtendFunding(loanId, borrower);
+        assertEq(freeAfter, 0, "no Ready balance, so nothing beyond the reserve can fund it");
     }
 
     /// @notice #2814 — unused reserve goes back to the depositor's wallet, and
