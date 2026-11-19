@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import type { Log } from 'viem';
 import { useConfig } from 'wagmi';
-import { signTypedData } from 'wagmi/actions';
+import { signTypedDataFor } from '../tx/walletGuard';
 import type { OwnStateClient } from '../../chain/ownRail';
 import type { SupportedChain } from '../../chain/chains';
 import { useCopy } from '../copy/useCopy';
@@ -255,7 +255,7 @@ function AdoptFlow({ chain, own, draft, onChange, onClose }: AdoptProps & { draf
       if (nonce === null) return stop(text('recover.nonceUnread'));
       await screened();
       setStep(format('accept.stepOf', { n: '1', total: '2', what: text('recover.stepSign') }));
-      const signature = await signTypedData(config, {
+      const signature = await signTypedDataFor(config, chain.chainId, {
         account,
         domain: adoptionDomain(chain.chainId, diamond),
         types: ADOPTION_TYPES,

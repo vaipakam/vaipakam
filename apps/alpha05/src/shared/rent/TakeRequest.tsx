@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Abi, Log } from 'viem';
 import { useConfig } from 'wagmi';
-import { signTypedData } from 'wagmi/actions';
+import { signTypedDataFor } from '../tx/walletGuard';
 import { sendWrite } from '../tx/send';
 import { OfferAcceptFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
@@ -145,7 +145,7 @@ export function TakeRequest({ offerId, chain, own, meta, terms, onClose }: TakeR
         illiquidCollateral: false,
       });
       say(text('accept.stepSign'));
-      const signature = await signTypedData(config, {
+      const signature = await signTypedDataFor(config, chain.chainId, {
         account,
         domain: { name: ACCEPT_TERMS_DOMAIN_NAME, version: ACCEPT_TERMS_DOMAIN_VERSION, chainId: chain.chainId, verifyingContract: diamond },
         types: ACCEPT_TERMS_TYPES,

@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { useConfig } from 'wagmi';
-import { signMessage } from 'wagmi/actions';
+import { signMessageFor } from '../tx/walletGuard';
 import { AGENT, AgentUnavailable, type AgentClient } from './agentClient';
 import { isUserRejection, nextIssuedAt } from './useAlertAction';
 
@@ -37,7 +37,7 @@ export function useSignedRequest<Action, Answer>(route: SignedRoute<Action, Answ
       const issuedAt = nextIssuedAt();
       let signature: Hex;
       try {
-        signature = await signMessage(config, { account: wallet, message: route.message(action, wallet, chainId, issuedAt) });
+        signature = await signMessageFor(config, chainId, { account: wallet, message: route.message(action, wallet, chainId, issuedAt) });
       } catch (e) {
         setRun(isUserRejection(e) ? { phase: 'declined' } : { phase: 'unreachable', message: (e as Error).message });
         return null;

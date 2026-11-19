@@ -28,6 +28,7 @@ import { useCopy } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
 import { cleanUpAfterEffect, cleanUpAfterNoEffect } from './cleanUp';
 import { summarize, type LegOutcome } from './outcome';
+import { liveIdentity, sendReviewed, WalletMoved } from './walletGuard';
 import { readRevertCause, revertSentence, type RevertReader } from './revertCause';
 import { IllegalTransition, transition, type TxEvent } from './track';
 import { useTxEntry, useTxStore, type Frozen, type Submission } from './txStore';
@@ -188,15 +189,15 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
 
   const run = useCallback(
     async (frozen: Frozen) => {
-      apply({ type: 'sign' });
-      store.update(key, (e) => ({ ...e, frozen, note: null }));
-      let hash: `0x${string}`;
-      try {
-        hash = await opts.send();
-      } catch (e) {
-        apply({ type: 'failed', message: refusalFromError(e).reason });
-        return;
-      }
+      const hash = await sendReviewed({
+        frozen,
+        liveIdentity: () => liveIdentity(config),
+        apply,
+        save: (f) => store.update(key, (e) => ({ ...e, frozen: f, note: null })),
+        send: opts.send,
+        failure: (e) => (e instanceof WalletMoved ? text('flow.walletMoved') : refusalFromError(e).reason),
+      });
+      if (hash === null) return;
       const ctx: Submission = {
         chainId: opts.chainId,
         account: opts.account,
@@ -212,7 +213,7 @@ export function useTrackedTx(opts: TrackedTxOptions): TrackedTx {
       apply({ type: 'submitted', hash, at: Date.now() });
       await track(hash, ctx);
     },
-    [apply, opts, store, key, track],
+    [apply, opts, store, key, track, config, text],
   );
 
   const resume = useCallback(async () => {

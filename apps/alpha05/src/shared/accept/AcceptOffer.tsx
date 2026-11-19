@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Abi, Log } from 'viem';
 import { Link } from 'react-router-dom';
 import { useConfig } from 'wagmi';
-import { signTypedData } from 'wagmi/actions';
+import { signTypedDataFor } from '../tx/walletGuard';
 import { sendWrite } from '../tx/send';
 import { OfferAcceptFacetABI } from '@vaipakam/contracts/abis';
 import type { OwnStateClient } from '../../chain/ownRail';
@@ -165,7 +165,7 @@ export function AcceptOffer({ flowKey, source, chain, own, meta, terms, onClose 
         ...(r.source.kind === 'signed' ? { offerKey: r.source.order.orderHash } : {}),
       });
       say(text('accept.stepSign'));
-      const signature = await signTypedData(config, {
+      const signature = await signTypedDataFor(config, chain.chainId, {
         account,
         domain: {
           name: ACCEPT_TERMS_DOMAIN_NAME,
