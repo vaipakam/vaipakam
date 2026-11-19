@@ -10,6 +10,8 @@ import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessCont
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {LibOfferMatchExecute} from "../libraries/LibOfferMatchExecute.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibReadyBalance} from "../libraries/LibReadyBalance.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {InstantFillFacet} from "./InstantFillFacet.sol";
 
@@ -160,6 +162,12 @@ contract InstantMarketFacet is DiamondReentrancyGuard, DiamondPausable, DiamondA
     error InstantRequestInvalid();
     /// @notice More sources than one instant borrow may walk.
     error InstantTooManySources(uint256 count, uint256 max);
+    /// @notice #3761 — a request named the same source twice (the same slot
+    ///         of the same owner, or the same offer). A fill takes all the
+    ///         room its source has, so a repeat could never add to the borrow,
+    ///         and refusing it keeps the preview from sizing one source's
+    ///         capital twice.
+    error InstantSourceRepeated(uint256 index);
     /// @notice The loans opened came to less than the stated least.
     error InstantBelowLeast(uint256 received, uint256 least);
     /// @notice The slot is not active.
@@ -282,20 +290,7 @@ contract InstantMarketFacet is DiamondReentrancyGuard, DiamondPausable, DiamondA
     {
         LibTiming.requireDeadline(req.validUntil);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (!s.instantCfg.enabled) revert InstantMarketDisabled();
-        if (!req.riskAndTermsConsent) revert IVaipakamErrors.RiskAndTermsConsentRequired();
-        LibVaipakam._assertNotSanctioned(msg.sender);
-        LibProtectedAccount.requireCanOpen(msg.sender);
-        // The fill path's own pre-requisites, named here rather than as a
-        // skip of every source.
-        if (!s.protocolCfg.partialFillEnabled) revert LibOfferMatchExecute.FunctionDisabled(3);
-        if (req.kind != KIND_FIXED) revert InstantKindUnavailable(req.kind);
-        if (
-            req.amountWanted == 0 || req.collateralOffered == 0 || req.termDays == 0
-                || sources.length == 0
-        ) revert InstantRequestInvalid();
-        if (sources.length > MAX_MAX_FILLS) revert InstantTooManySources(sources.length, MAX_MAX_FILLS);
-        _requireEligiblePair(req.lendingAsset, req.collateralAsset);
+        _requireRequest(s, req, sources, msg.sender);
 
         groupId = ++s.lastInstantGroupId;
         uint256 maxFills = _maxFills(s.instantCfg);
@@ -303,7 +298,7 @@ contract InstantMarketFacet is DiamondReentrancyGuard, DiamondPausable, DiamondA
         InstantSkip[] memory skipped = new InstantSkip[](sources.length);
         uint256 nFills;
         uint256 nSkips;
-        InstantFillFacet.FillRequest memory fr = _fillRequest(req);
+        InstantFillFacet.FillRequest memory fr = _fillRequest(req, msg.sender);
         uint256 fromWallet;
         for (uint256 i; i < sources.length && fr.remaining > 0 && nFills < maxFills; ++i) {
             fr.source = sources[i];
@@ -352,14 +347,130 @@ contract InstantMarketFacet is DiamondReentrancyGuard, DiamondPausable, DiamondA
         return LibVaipakam.storageSlot().instantGroupOf[loanId];
     }
 
+    /// @notice #3761 — what {borrowInstant} would take from `sources` for
+    ///         `borrower` now, source by source, and how much of the
+    ///         collateral would come from the vault and how much from the
+    ///         wallet. Needs no token approval, so an app can show the borrow
+    ///         before asking for one.
+    /// @dev    Reverts with the request-level refusal {borrowInstant} raises
+    ///         (the market switch, consent, the borrower's screens, the
+    ///         request's shape, the pair). Each source is sized by the rule
+    ///         the fill sizes by (`InstantFillFacet.quoteFill`); a source it
+    ///         refuses is reported as skipped with the fill's own error. What
+    ///         it does NOT cover, so the borrow may still differ: the loan
+    ///         checks the match core runs when a fill opens its loan (health
+    ///         factor, loan-to-value, risk access, the counterparty's screens,
+    ///         the ageing and price-move rules); a fill they refuse is skipped
+    ///         by the borrow and the rest proceed. Nor the deadline and the
+    ///         pause. The borrow refuses a total below `req.minTotal`
+    ///         ({InstantBelowLeast}); `received` is the total to compare.
+    /// @return fills      The sources that would fill, in order, with the
+    ///                    principal, price and collateral each would take
+    ///                    (`loanId` is zero: no loan exists yet).
+    /// @return skipped    The sources refused, with the error each raised.
+    /// @return received   The principal the fills would lend in total.
+    /// @return fromVault  Collateral drawn from what the borrower may spend at
+    ///                    once in the vault (all free balance, or a protected
+    ///                    account's Ready balance).
+    /// @return fromWallet Collateral the borrow would deposit from the wallet,
+    ///                    which the borrower approves the Diamond for.
+    function previewBorrowInstant(
+        InstantBorrowRequest calldata req,
+        InstantFillFacet.InstantSource[] calldata sources,
+        address borrower
+    )
+        external
+        view
+        returns (
+            InstantFill[] memory fills,
+            InstantSkip[] memory skipped,
+            uint256 received,
+            uint256 fromVault,
+            uint256 fromWallet
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        _requireRequest(s, req, sources, borrower);
+        uint256 maxFills = _maxFills(s.instantCfg);
+        fills = new InstantFill[](sources.length);
+        skipped = new InstantSkip[](sources.length);
+        uint256 nFills;
+        uint256 nSkips;
+        InstantFillFacet.FillRequest memory fr = _fillRequest(req, borrower);
+        for (uint256 i; i < sources.length && fr.remaining > 0 && nFills < maxFills; ++i) {
+            fr.source = sources[i];
+            try InstantFillFacet(address(this)).quoteFill(fr) returns (
+                uint256 amount, uint256 rateBps, uint256 collateral
+            ) {
+                fills[nFills++] =
+                    InstantFill({sourceIndex: i, loanId: 0, amount: amount, rateBps: rateBps, collateral: collateral});
+                fr.remaining -= amount;
+                fr.collRemaining -= collateral;
+            } catch (bytes memory reason) {
+                skipped[nSkips++] = InstantSkip({sourceIndex: i, reason: reason});
+            }
+        }
+        assembly ("memory-safe") {
+            mstore(fills, nFills)
+            mstore(skipped, nSkips)
+        }
+        received = req.amountWanted - fr.remaining;
+        (fromVault, fromWallet) =
+            _collateralSplit(borrower, req.collateralAsset, req.collateralOffered - fr.collRemaining);
+    }
+
     // ─── Internals ────────────────────────────────────────────────────────
 
-    function _fillRequest(InstantBorrowRequest calldata req)
+    /// @dev Each source at most once: a slot source is its owner and slot, an
+    ///      offer source its offer id (the fields a source of the other kind
+    ///      carries are not read). Bounded by {MAX_MAX_FILLS}.
+    function _requireDistinctSources(InstantFillFacet.InstantSource[] calldata sources) private pure {
+        for (uint256 i = 1; i < sources.length; ++i) {
+            bytes32 key = _sourceKey(sources[i]);
+            for (uint256 j; j < i; ++j) {
+                if (_sourceKey(sources[j]) == key) revert InstantSourceRepeated(i);
+            }
+        }
+    }
+
+    function _sourceKey(InstantFillFacet.InstantSource calldata src) private pure returns (bytes32) {
+        return src.kind == 0
+            ? keccak256(abi.encode(uint8(0), src.owner, src.slot))
+            : keccak256(abi.encode(uint8(1), src.offerId));
+    }
+
+    /// @dev The request-level admission {borrowInstant} runs before any
+    ///      source, for `borrower`; {previewBorrowInstant} runs it too.
+    function _requireRequest(
+        LibVaipakam.Storage storage s,
+        InstantBorrowRequest calldata req,
+        InstantFillFacet.InstantSource[] calldata sources,
+        address borrower
+    ) private view {
+        uint256 nSources = sources.length;
+        if (!s.instantCfg.enabled) revert InstantMarketDisabled();
+        if (!req.riskAndTermsConsent) revert IVaipakamErrors.RiskAndTermsConsentRequired();
+        LibVaipakam._assertNotSanctioned(borrower);
+        LibProtectedAccount.requireCanOpen(borrower);
+        // The fill path's own pre-requisites, named here rather than as a
+        // skip of every source.
+        if (!s.protocolCfg.partialFillEnabled) revert LibOfferMatchExecute.FunctionDisabled(3);
+        if (req.kind != KIND_FIXED) revert InstantKindUnavailable(req.kind);
+        if (
+            req.amountWanted == 0 || req.collateralOffered == 0 || req.termDays == 0
+                || nSources == 0
+        ) revert InstantRequestInvalid();
+        if (nSources > MAX_MAX_FILLS) revert InstantTooManySources(nSources, MAX_MAX_FILLS);
+        _requireDistinctSources(sources);
+        _requireEligiblePair(req.lendingAsset, req.collateralAsset);
+    }
+
+    function _fillRequest(InstantBorrowRequest calldata req, address borrower)
         private
-        view
+        pure
         returns (InstantFillFacet.FillRequest memory fr)
     {
-        fr.borrower = msg.sender;
+        fr.borrower = borrower;
         fr.lendingAsset = req.lendingAsset;
         fr.collateralAsset = req.collateralAsset;
         fr.termDays = req.termDays;
@@ -387,6 +498,23 @@ contract InstantMarketFacet is DiamondReentrancyGuard, DiamondPausable, DiamondA
         returns (bool enabled, bool eligible)
     {
         return (LibVaipakam.storageSlot().instantCfg.enabled, _pairEligible(lendingAsset, collateralAsset));
+    }
+
+    /// @dev The fills draw collateral from what the borrower may spend at
+    ///      once in the vault first, then deposit the rest from the wallet
+    ///      (`InstantFillFacet`'s funding rule), so `need` splits the same way.
+    function _collateralSplit(address borrower, address asset, uint256 need)
+        private
+        view
+        returns (uint256 fromVault, uint256 fromWallet)
+    {
+        uint256 usable = LibEncumbrance.freeBalance(
+            borrower, asset, 0, LibVaipakam.trackedHolding(borrower, asset, 0)
+        );
+        uint256 ready = LibReadyBalance.spendableViaHost(borrower, asset);
+        if (ready < usable) usable = ready;
+        fromVault = usable >= need ? need : usable;
+        fromWallet = need - fromVault;
     }
 
     function _maxFills(LibVaipakam.InstantMarketConfig storage c) private view returns (uint8) {
