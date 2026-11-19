@@ -74,6 +74,7 @@ import {
   resolveD1Binding,
 } from '@vaipakam/lib/d1Maintenance';
 import { handleApiIndex } from './apiIndex';
+import { handleStandingCandidates } from './standingCandidates';
 import { handleIngestHealth } from './healthRoutes';
 import { handleAssetRankings } from './assetRankings';
 import { handleConfigSnapshot } from './configSnapshot';
@@ -632,6 +633,11 @@ export default {
         }
         if (url.pathname === '/offers/recent') {
           return handleOffersRecent(req, resolved);
+        }
+        if (url.pathname === '/offers/standing-candidates') {
+          // #3720 — the standing lender offers a borrow preview can be
+          // pointed at; the chain's own check decides.
+          return handleStandingCandidates(req, resolved);
         }
         const byCreator = url.pathname.match(
           /^\/offers\/by-creator\/(0x[0-9a-fA-F]{40})$/,

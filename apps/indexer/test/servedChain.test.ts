@@ -20,6 +20,7 @@ import { handleSignedOffersGet } from '../src/signedOfferRoutes';
 import { handleConfigSnapshot } from '../src/configSnapshot';
 import { handleLoopClosure } from '../src/rewardRoutes';
 import { handleRecyclingSeries } from '../src/recycleRoutes';
+import { handleStandingCandidates } from '../src/standingCandidates';
 import { chainNotConfigured, chainNotServed, chainServed, requestedChainId } from '../src/servedChain';
 import { createSqliteD1 } from './helpers/sqliteD1';
 
@@ -80,6 +81,9 @@ describe('an unserved chain is refused on every chain-keyed route (#1140)', () =
     // #2654 — the reward metrics.
     ['/metrics/loop-closure', () => handleLoopClosure(new Request(`https://x/metrics/loop-closure?${q}`), env())],
     ['/metrics/recycling', () => handleRecyclingSeries(new Request(`https://x/metrics/recycling?${q}`), env())],
+    // #3720 — standing-offer candidates.
+    ['/offers/standing-candidates', () =>
+      handleStandingCandidates(new Request(`https://x/o?${q}&lendingAsset=${ADDR}&collateralAsset=${ADDR}&durationDays=30`), env())],
   ];
   for (const [name, call] of cases) {
     it(name, async () => {
@@ -133,6 +137,7 @@ describe('every handler that reads a chain id asks whether it is served', () => 
     ['signedOfferRoutes.ts', 'chainNotServed(env, chainId)'],
     ['rewardRoutes.ts', 'chainNotServed(env, chainId)'],
     ['recycleRoutes.ts', 'chainNotConfigured(env, chainId)'],
+    ['standingCandidates.ts', 'chainNotServed(env, chainId)'],
   ];
   for (const [file, guard] of MODULES) {
     const src = readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8');

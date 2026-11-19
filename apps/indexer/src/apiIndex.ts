@@ -36,6 +36,12 @@ const API_INDEX = {
     { method: 'GET', path: '/offers/active', description: 'The live offer book (paginated).' },
     { method: 'GET', path: '/offers/markets', description: 'Quotable (lending asset, collateral asset, tenor) markets with per-market aggregates.' },
     { method: 'GET', path: '/offers/recent', description: 'Recently created offers.' },
+    {
+      method: 'GET',
+      path: '/offers/standing-candidates',
+      description:
+        "#3720 — open lender offers on exactly one pair and term (?lendingAsset=&collateralAsset=&durationDays=, optional amount= for an exact open amount, borrower= to leave out their own, limit= up to 20), lowest rate first, to point the platform's standing-offer check at. A candidate list, never a verdict and never 'the best on the book': the chain's check decides.",
+    },
     { method: 'GET', path: '/offers/by-creator/{address}', description: 'Offers created by a wallet.' },
     { method: 'GET', path: '/offers/by-current-holder/{address}', description: 'Open offers whose position NFT a wallet currently holds.' },
     { method: 'GET', path: '/offers/{id}', description: 'One offer by id.' },
