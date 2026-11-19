@@ -16,6 +16,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {LibTestCalmPair} from "./helpers/LibTestCalmPair.sol";
 import {OfferPriceGuardFacet} from "../src/facets/OfferPriceGuardFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 import {LibProtectedAccount} from "../src/libraries/LibProtectedAccount.sol";
 
@@ -246,6 +247,25 @@ contract InstantTakeoverTest is InstantMarketBase {
         InstantMarketFacet(address(diamond)).setInstantMarketEnabled(false);
         vm.expectRevert(InstantMarketFacet.InstantMarketDisabled.selector);
         _takeover(lender, loanId, lender2);
+    }
+
+    /// @dev A keeper holding the holder's early-withdrawal mandate for the
+    ///      loan starts it; the proceeds still reach the holder's vault.
+    function test_aMandatedKeeperStartsItForTheHolder() public {
+        uint256 loanId = _openAndOffer(500, TERM, true);
+        vm.warp(vm.getBlockTimestamp() + 5 days);
+        LibTestCalmPair.checkpoint(address(diamond), mockERC20, mockCollateralERC20);
+        address keeper = makeAddr("takeover-keeper");
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setKeeperAccess(true);
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).approveKeeper(keeper, LibVaipakam.KEEPER_ACTION_INIT_EARLY_WITHDRAW);
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setLoanKeeperEnabled(loanId, keeper, true);
+        uint256 holderVaultBefore = _vaultBal(lender, mockERC20);
+        _takeover(keeper, loanId, lender2);
+        assertEq(_vaultBal(lender, mockERC20) - holderVaultBefore, PRINCIPAL, "holder paid face value");
+        assertEq(_loan(loanId).lender, lender2, "position moved");
     }
 
     /// @dev Only the position's holder (or its direct-sale keeper) starts it.

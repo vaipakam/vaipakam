@@ -314,10 +314,21 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     ///                          asset; an extension draws it after the reserve.
     /// @return chargeNow        What an extension now would charge: the
     ///                          interest since the accrual start plus any late
-    ///                          fee.
+    ///                          fee, plus the most added initiation fee the
+    ///                          caps admit (see below).
     /// @return chargeAtGraceEnd What it would charge at the end of the
     ///                          extension window, the most an extension of
-    ///                          the loan's current term can charge.
+    ///                          the loan's current term can charge, with the
+    ///                          same added-fee bound.
+    /// @dev    #3649 — an extension also charges the initiation fee for the
+    ///         days it adds, which depends on the new end the extension picks.
+    ///         Both charges include the largest such fee the two sides' caps
+    ///         admit: the fee for an extension to the latest end both caps
+    ///         (and an intent's lend-until time) allow, at the holder's
+    ///         discount, never above the borrower's fee cap (a larger fee is
+    ///         refused). So funding that covers a charge covers every
+    ///         extension the caps allow. With either side's caps not set,
+    ///         no extension can run and the bound is 0.
     /// @dev    Both charges read 0 for a loan that cannot be extended (not
     ///         Active, not an ERC-20 loan, or on a periodic cadence), and
     ///         `otherFree` reads 0 for a loan whose principal is not an ERC-20. An
@@ -355,13 +366,39 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             erc20 &&
             loan.periodicInterestCadence == LibVaipakam.PeriodicInterestCadence.None
         ) {
+            uint256 feeBound = _extensionFeeBound(s, loanId, loan, holder);
             (uint256 i, uint256 f) = _extendChargeAt(loanId, loan, block.timestamp);
-            chargeNow = i + f;
+            chargeNow = i + f + feeBound;
             (, uint256 closesAt) = _extendWindow(loan);
             uint256 at = closesAt > block.timestamp ? closesAt : block.timestamp;
             (i, f) = _extendChargeAt(loanId, loan, at);
-            chargeAtGraceEnd = i + f;
+            chargeAtGraceEnd = i + f + feeBound;
         }
+    }
+
+    /// @dev The largest added initiation fee an extension the caps admit can
+    ///      charge `holder` (see {getExtendFunding}): the fee grows with the
+    ///      new end, so it is the fee at the latest end both sides' caps and
+    ///      an intent's lend-until time allow, capped at the borrower's fee
+    ///      limit. 0 while either side's cap carries no latest end.
+    function _extensionFeeBound(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        LibVaipakam.Loan storage loan,
+        address holder
+    ) private view returns (uint256) {
+        LibVaipakam.AutoExtendCaps storage b = s.autoExtendBorrowerCaps[loanId];
+        uint64 lenderCap = s.autoExtendLenderCaps[loanId].maxNewExpiry;
+        uint256 end = lenderCap < b.maxNewExpiry ? lenderCap : b.maxNewExpiry;
+        uint64 lendUntil = LibIntentTerms.extensionBound(loan);
+        if (lendUntil != 0 && lendUntil < end) end = lendUntil;
+        if (end == 0) return 0;
+        (uint256 gross,,) = LibInitiationFee.extensionFee(loan, end);
+        if (gross == 0) return 0;
+        uint256 fee = LibVPFIDiscount.borrowerLifDiscounted(
+            holder, gross, loan.principalLiquidity == LibVaipakam.LiquidityStatus.Liquid, false
+        );
+        return fee < b.maxExtensionFee ? fee : b.maxExtensionFee;
     }
 
     /// @dev The one statement of what an extension charges at `at` (#2814):
