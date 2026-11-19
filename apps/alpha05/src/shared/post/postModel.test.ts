@@ -219,6 +219,16 @@ describe('a range and a fill mode (OFF-10 / OFF-11)', () => {
     expect(isRanged({ ...ranged, amountMax: 10n, collateralFloor: 100n })).toBe(false);
     expect(isRanged({ ...ranged, amountMax: 10n })).toBe(true);
   });
+  it('#2525: a rate range keeps the direct-take rate where the protocol reads it, and widens the other end for a match', () => {
+    const pair = { lending, collateral, leg: { kind: 'erc20' as const } };
+    const borrower = createParams({ ...ranged, rateOtherBps: 600n }, pair, 99n, 'borrower');
+    // A direct take of a request is at its ceiling, the rate the borrower typed.
+    expect([borrower.interestRateBps, borrower.interestRateBpsMax]).toEqual([600n, 850n]);
+    const lenderP = createParams({ ...ranged, rateOtherBps: 1_200n }, pair, 99n, 'lender');
+    // A direct take of an offer is at its floor, the rate the lender typed.
+    expect([lenderP.interestRateBps, lenderP.interestRateBpsMax]).toEqual([850n, 1_200n]);
+    expect(createParams({ ...ranged, rateOtherBps: null }, pair, 99n, 'lender').interestRateBpsMax).toBe(850n);
+  });
   it('never sends a floor for an NFT leg', () => {
     const p = createParams({ ...ranged, collateral: 1n, collateralFloor: 1n }, { lending, collateral, leg: { kind: 'erc721', tokenId: 7n } }, 99n, 'borrower');
     expect([p.collateralAmount, p.collateralAmountMax]).toEqual([0n, 0n]);

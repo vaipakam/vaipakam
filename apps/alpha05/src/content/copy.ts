@@ -6252,6 +6252,14 @@ export const copy = {
     blockShortfall: A('Your wallet holds {{have}}, which is {{missing}} short of the {{need}} this request locks.'),
     blockNoToken: A('No NFT #{{id}} exists in this collection, so there is nothing to lock. Change the number.'),
     blockNotHeld: A('NFT #{{id}} is held by another wallet, so this wallet cannot lock it.'),
+    /** #2525 — a rate range, for a match. */
+    rateMaxLabel: B('Highest rate in a match (optional, % a year)'),
+    rateMaxHint: B('A borrower taking this offer directly pays your rate. A match may settle up to this one.'),
+    rateMinLabel: B('Lowest rate in a match (optional, % a year)'),
+    rateMinHint: B('A lender taking this request directly lends at your rate. A match may settle down to this one.'),
+    errRateMaxBelow: B('The highest rate cannot be below your rate.'),
+    errRateMinAbove: B('The lowest rate cannot be above your rate.'),
+    rateRange: A('{{low}} to {{high}} a year in a match, at the middle of where both ranges overlap. A direct take is at {{rate}}.'),
     /** #3433 — the test transfer of a pledged NFT. */
     blockTransferProtocol: A('A test move of NFT #{{id}} by the protocol to your vault failed at block {{block}} ({{reason}}). The protocol could not hold it, so this request is not built.'),
     blockTransferHolder: A('A test move of NFT #{{id}} from your wallet failed at block {{block}} ({{reason}}). It cannot be held as collateral, so this request is not built.'),
