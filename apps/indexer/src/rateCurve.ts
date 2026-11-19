@@ -11,18 +11,25 @@
  *      terms confirmed by the ledger (the one placement rule,
  *      marketPlacement.ts), lender and borrower different addresses (the
  *      self-trade rule), started inside the point's look-back, at least the
- *      minimum age old, and CLOSED BY REPAYMENT by the as-of time. Open
- *      loans are out for now: an open loan would weigh only by interest it
- *      has already paid mid-loan, and the indexer does not yet keep that
- *      figure for every route. Defaults and liquidations are out: their
- *      interest may never have been paid. A loan whose rate came from a
+ *      minimum age old, and at the as-of time either still open (active)
+ *      or closed by repayment. An open loan weighs by the interest it has
+ *      paid so far, which the design's rule names ("the interest paid on it
+ *      so far"); it could not count before #3755, when no event stated
+ *      that figure for every route. A loan closed by default or
+ *      liquidation by the as-of time is out, and so is one waiting in the
+ *      liquidation fallback: its interest may never be recovered. A loan
+ *      that was open at an earlier as-of time counts on those days whatever
+ *      became of it later. A loan whose rate came from a
  *      link is out too; no such loan exists on any deployment yet, so the
  *      rule has nothing to remove until the link kind is built.
- *   2. Weight: the interest PAID on the loan, so every unit of weight has
- *      paid the yield fee. Read from the settlement events the indexer
- *      already records (see `paidInterestOf`). A loan whose closing route
- *      reports no interest figure (refinance, swap-to-repay) weighs nothing
- *      and drops out, which the rule states.
+ *   2. Weight: the interest PAID on the loan up to the as-of time, so
+ *      every unit of weight has paid the yield fee. Read from the per-loan
+ *      statements every interest payment emits (`LoanInterestPaid` less
+ *      `LoanInterestUndelivered`, #3755, kept by the indexer in
+ *      `loan_interest_events`; see `loanInterest.ts`), so every route counts
+ *      the same way. A loan that has paid no interest weighs nothing and
+ *      drops out. A deployment older than #3755 states nothing, so its
+ *      loans weigh nothing and its points read "not enough loans".
  *   3. Cap: no one wallet carries more than `walletShareCapBps` of the
  *      weight, counted separately on the lender side and the borrower side.
  *   4. Minimum: a point with fewer than `minLenders` distinct lenders or
@@ -61,7 +68,7 @@ export const OWN_LOANS_RULE = Object.freeze({
   walletShareCapBps: 2_000,
   minLenders: 5,
   minBorrowers: 5,
-  loans: 'closed-by-repayment',
+  loans: 'open-or-closed-by-repayment',
   weight: 'interest-paid',
   figure: 'weighted-quartiles',
 });
@@ -87,51 +94,9 @@ export interface CurveLoanRow {
   init_terms_unbacked: number | null;
 }
 
-/** One interest payment the indexer recorded for a loan. */
-export interface PaidInterestEvent {
-  loan_id: number;
-  kind: string;
-  args_json: string;
-  block_at: number | null;
-}
-
-/**
- * The events that report interest paid, and the field that carries it.
- * Each payment is reported by exactly ONE of them, so summing cannot count
- * one twice:
- *   - `LoanSettlementBreakdown.interest` — the interest settled when a loan
- *     is repaid in full or preclosed (RepayFacet, PrecloseFacet);
- *   - `InterestPaymentBooked.settled` — interest paid mid-loan without
- *     touching principal, by the periodic sale or the payment reserve
- *     (`LibInterestPayment`, the one booking of both).
- * `PeriodicInterestSettled` is NOT read: it marks a period closing and
- * restates interest already booked above.
- */
-export const PAID_INTEREST_FIELDS: Readonly<Record<string, string>> = Object.freeze(
-  Object.assign(Object.create(null) as Record<string, string>, {
-    LoanSettlementBreakdown: 'interest',
-    InterestPaymentBooked: 'settled',
-  }),
-);
-
-/** Interest paid per loan up to `asOf`, from the recorded events. */
-export function paidInterestOf(events: PaidInterestEvent[], asOf: number): Map<number, bigint> {
-  const out = new Map<number, bigint>();
-  for (const e of events) {
-    if (!Object.hasOwn(PAID_INTEREST_FIELDS, e.kind)) continue;
-    if (e.block_at == null || e.block_at > asOf) continue;
-    let v: bigint;
-    try {
-      const raw = (JSON.parse(e.args_json) as Record<string, unknown>)[PAID_INTEREST_FIELDS[e.kind]];
-      v = BigInt(raw as string);
-    } catch {
-      continue;
-    }
-    if (v <= 0n) continue;
-    out.set(e.loan_id, (out.get(e.loan_id) ?? 0n) + v);
-  }
-  return out;
-}
+/** The kinds of `loan_interest_events` row the weight reads, and the
+ *  events they come from; stated on every response. */
+export const PAID_INTEREST_SOURCES = Object.freeze(['LoanInterestPaid', 'less LoanInterestUndelivered'] as const);
 
 /** Why a point is not shown: too few distinct lenders or borrowers, or the
  *  pass could not read the point's whole look-back (its loan scan hit the
@@ -175,7 +140,7 @@ interface Weighted {
 /**
  * The loan's weighted rate as of `asOf` (unix seconds), or null when the
  * loan is not counted. Rule steps 1 and 2. `paid` is the interest paid on
- * it up to `asOf`.
+ * it up to `asOf` (`interestPaidByLoan`).
  */
 export function loanWeight(
   row: CurveLoanRow,
@@ -191,8 +156,10 @@ export function loanWeight(
   if (lender === borrower) return null;
   if (row.start_at > asOf - OWN_LOANS_RULE.minAgeDays * 86_400) return null;
   if (row.start_at < asOf - lookbackDays(term) * 86_400) return null;
-  // Closed by repayment by `asOf`.
-  if (row.status !== 'repaid' || row.terminal_at == null || row.terminal_at > asOf) return null;
+  // Open at `asOf`, or closed by repayment by then.
+  const closedBy = row.terminal_at != null && row.terminal_at <= asOf;
+  const openAt = row.terminal_at != null ? row.terminal_at > asOf : row.status === 'active';
+  if (closedBy ? row.status !== 'repaid' : !openAt) return null;
   if (paid === undefined || paid <= 0n) return null;
   // Only the RATIO between loans of one asset matters, so a float is
   // precise enough for the weight.

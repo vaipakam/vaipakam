@@ -4022,8 +4022,8 @@ The platform publishes, for each lending asset, a rate curve at five points (7, 
 - **Observed averages, never advice.** Every figure on the curve is an observed average of what happened. It is never presented as advice, a forecast, a quote or an offer, and the page says so beside the curve.
 - **What is not known is stated.** Until the rate reference publishes its term average on a deployment, that half says it is not published there and shows no figure. A point the platform's own loans cannot support says "not enough loans yet" rather than showing a thin figure. A point whose history could not be read in full is withheld and says so.
 - **The rule for figures built from the platform's own loans** (also governs any later ranking or recent-rates band built from them):
-  - only loans closed by repayment count; open loans, defaults and liquidations do not;
-  - each loan is weighted by the interest actually paid on it, never by principal, so weight is only gained by paying interest (and the yield fee on it);
+  - a loan counts on a day if it was still open then, or had been closed by repayment by then; a loan closed by default or liquidation by that day, or waiting in the liquidation fallback, does not;
+  - each loan is weighted by the interest actually paid on it up to that day, never by principal, so weight is only gained by paying interest (and the yield fee on it); every route that pays interest counts the same way, and a loan that has paid none weighs nothing;
   - left out: loans whose rate came from a link, loans between addresses the self-trade rule would refuse, loans whose agreed terms are not confirmed, and loans younger than a minimum age (3 days);
   - each point counts loans of a stated range of durations (up to 14 days, 15 to 60, 61 to 135, 136 to 270, over 270), and is labelled by that range, not as one exact term;
   - each point looks back over the larger of 90 days and twice its term;

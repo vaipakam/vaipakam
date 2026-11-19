@@ -6,12 +6,11 @@ import {
   curveTermFor,
   lookbackDays,
   ownLoansCurve,
-  paidInterestOf,
   weightedQuantile,
   type CurveLoanRow,
-  type PaidInterestEvent,
 } from '../src/rateCurve';
 import { daysToCompute, BACKFILL_DAYS_PER_RUN, ruleStatement } from '../src/rateCurveRoutes';
+import { interestPaidByLoan, type LoanInterestRow } from '../src/loanInterest';
 
 const DAY = 86_400;
 const NOW = 1_800_000_000;
@@ -86,10 +85,17 @@ describe('rate curve: which loans count', () => {
     expect(OWN_LOANS_RULE.minBorrowers).toBe(5);
   });
 
-  it('leaves out open, defaulted, self-trade, unconfirmed, too-young and unpaid loans', () => {
+  it('counts an open loan by what it has paid so far', () => {
+    const { rows, pay } = market(5, () => 500);
+    const open = loan({ status: 'active', terminal_at: null });
+    pay.set(open.loan_id, 10n);
+    expect(point(ownLoansCurve([...rows, open], pay, NOW), 30).loans).toBe(6);
+  });
+
+  it('leaves out defaulted, fallback, self-trade, unconfirmed, too-young and unpaid loans', () => {
     const { rows, pay } = market(5, () => 500);
     const extra = [
-      loan({ status: 'active', terminal_at: null, init_rate_bps: 9_000 }),
+      loan({ status: 'fallback_pending', terminal_at: null, init_rate_bps: 9_000 }),
       loan({ status: 'defaulted', init_rate_bps: 9_000 }),
       loan({ lender: addr(77), borrower: addr(77), init_rate_bps: 9_000 }),
       loan({ init_terms_unbacked: 1, init_rate_bps: 9_000 }),
@@ -102,10 +108,15 @@ describe('rate curve: which loans count', () => {
     expect(f.p75Bps).toBe(500);
   });
 
-  it('counts a loan repaid AFTER the as-of time as not yet closed on that day', () => {
+  it('judges a loan by what it was at the as-of time', () => {
     const { rows, pay } = market(5, () => 500);
     const asOf = NOW - 20 * DAY; // before every terminal_at (NOW - 10d)
-    expect(point(ownLoansCurve(rows, pay, asOf), 30).loans).toBe(0);
+    // Repaid later: open on that day, so it counts.
+    expect(point(ownLoansCurve(rows, pay, asOf), 30).loans).toBe(5);
+    // Defaulted later: also open on that day; defaulted by then: out.
+    const later = rows.map((r) => ({ ...r, status: 'defaulted' }));
+    expect(point(ownLoansCurve(later, pay, asOf), 30).loans).toBe(5);
+    expect(point(ownLoansCurve(later, pay, NOW), 30).loans).toBe(0);
   });
 
   it('respects each point\'s own look-back', () => {
@@ -136,24 +147,36 @@ describe('rate curve: weight is interest paid', () => {
     expect(f.medianBps).toBeGreaterThan(600);
   });
 
-  it('sums the two payment events and ignores others and later ones', () => {
-    const ev = (loan_id: number, kind: string, args: object, block_at: number): PaidInterestEvent => ({
+  it('sums payments less take-backs up to the as-of time', () => {
+    const ev = (loan_id: number, kind: string, gross: string, block_at: number): LoanInterestRow => ({
       loan_id,
       kind,
-      args_json: JSON.stringify(args),
+      gross,
       block_at,
     });
-    const events = [
-      ev(1, 'LoanSettlementBreakdown', { interest: '70' }, 100),
-      ev(1, 'InterestPaymentBooked', { settled: '30' }, 50),
-      ev(1, 'PeriodicInterestSettled', { paidByBorrower: '30' }, 50),
-      ev(2, 'LoanSettlementBreakdown', { interest: '5' }, 500),
-      ev(3, 'toString', { interest: '9' }, 10),
-    ];
-    const m = paidInterestOf(events, 200);
+    const m = interestPaidByLoan(
+      [
+        ev(1, 'paid', '70', 100),
+        ev(1, 'paid', '30', 50),
+        ev(1, 'undelivered', '20', 60),
+        ev(1, 'paid', '20', 150), // the take-back settled again
+        ev(1, 'paid', '999', 300), // after the as-of time
+        ev(2, 'paid', '5', 500),
+        ev(3, 'undelivered', '9', 10), // a partial history never reads negative
+        ev(4, 'other', '9', 10),
+        ev(5, 'paid', 'x', 10),
+        // An amount past 2^64, summed exactly.
+        ev(6, 'paid', '18446744073709551616', 10),
+        ev(6, 'paid', '18446744073709551616', 10),
+      ],
+      200,
+    );
     expect(m.get(1)).toBe(100n);
     expect(m.has(2)).toBe(false);
-    expect(m.has(3)).toBe(false);
+    expect(m.get(3)).toBe(0n);
+    expect(m.has(4)).toBe(false);
+    expect(m.has(5)).toBe(false);
+    expect(m.get(6)).toBe(36893488147419103232n);
   });
 });
 
@@ -196,8 +219,7 @@ describe('rate curve: the pass and the stated rule', () => {
 
 // ─── Against the REAL migrated schema ──────────────────────────────────
 // The pass's three reads and its one json_each upsert, and both public
-// reads, executed on every migration in order (the sqlSchemaGuard floor
-// counts the pass's dynamic `kind IN (…)` read as executed here).
+// reads, executed on every migration in order.
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { createSqliteD1 } from './helpers/sqliteD1';
@@ -235,10 +257,10 @@ describe('rate curve against the migrated schema', () => {
         .run(BASE, id, id, addr(10 + i), addr(500 + i), USDC, addr(99), now - 40 * DAY, now - 10 * DAY, now, 400 + i * 100);
       h.db
         .prepare(
-          `INSERT INTO activity_events (chain_id, block_number, log_index, tx_hash, kind, loan_id, actor, args_json, block_at)
-           VALUES (?, ?, 0, ?, 'LoanSettlementBreakdown', ?, NULL, ?, ?)`,
+          `INSERT INTO loan_interest_events (chain_id, block_number, log_index, loan_id, kind, asset, gross, block_at)
+           VALUES (?, ?, 0, ?, 'paid', ?, '50', ?)`,
         )
-        .run(BASE, id, `0x${id}`, id, JSON.stringify({ loanId: String(id), interest: '50' }), now - 10 * DAY);
+        .run(BASE, id, id, USDC, now - 10 * DAY);
     }
     return h;
   }
@@ -256,7 +278,7 @@ describe('rate curve against the migrated schema', () => {
     expect(body.computed).toBe(true);
     expect(body.reference.source).toBe('outside-rate-reference');
     expect(body.reference.terms.every((t: any) => t.state === 'not-published' && t.valueBps === null)).toBe(true);
-    expect(body.ownLoans.source).toBe('platform-repaid-loans');
+    expect(body.ownLoans.source).toBe('platform-loans');
     const p30 = body.ownLoans.terms.find((t: any) => t.days === 30);
     expect(p30).toMatchObject({ state: 'shown', loans: 6, lenders: 6, borrowers: 6, p25Bps: 500, medianBps: 600 });
     expect(body.ownLoans.terms.find((t: any) => t.days === 7).state).toBe('withheld');

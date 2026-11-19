@@ -213,12 +213,7 @@ describe('SQL-vs-schema guard (#1149)', () => {
     // `(?, ?, ?, ?)` group per row, so a page costs a few statements; every
     // value is bound. Executed against the REAL migrated schema by
     // `test/walletActivity.test.ts` (the backfill and its row budget).
-    // Raised 32 → 33 for #3751: the rate-curve pass reads its interest
-    // events with `kind IN (…)`, one bound placeholder per event in
-    // `PAID_INTEREST_FIELDS`, so the list and the read cannot drift; every
-    // value is bound. Executed against the REAL migrated schema by
-    // `test/rateCurve.test.ts` (the pass, its upsert and both reads).
-    expect(skipped.length).toBeLessThanOrEqual(33);
+    expect(skipped.length).toBeLessThanOrEqual(32);
   });
 
   it('every static SQL statement prepares against the migrated schema', () => {

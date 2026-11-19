@@ -5,7 +5,8 @@
 --
 --   own_*  the platform's own loans, under the standing rule for figures
 --          built from them (TermAverageAndLinkGuardsDesign.md §8): each loan
---          weighted by interest PAID, repaid loans only, one wallet's share capped, a minimum number
+--          weighted by interest PAID (loan_interest_events, 0103), open or
+--          repaid loans, one wallet's share capped, a minimum number
 --          of distinct lenders and borrowers, shown as a quartile band.
 --          `own_state` is 'shown' or 'withheld'; a withheld row carries the
 --          reason and no figures.
@@ -14,7 +15,8 @@
 --          ref_state = 'not-published' until that view exists on the
 --          deployment.
 --
--- Every row is a pure function of the `loans` table (and, later, a chain
+-- Every row is a pure function of the `loans` and `loan_interest_events`
+-- tables (and, later, a chain
 -- read), recomputed by the indexer's rate-curve pass, so the table is
 -- replay-derived: a restore clears it and the pass rebuilds the days it
 -- covers. Additive: a new table only.

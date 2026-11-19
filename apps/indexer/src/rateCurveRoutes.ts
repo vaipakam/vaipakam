@@ -13,7 +13,7 @@
  *              half says `not-published` and carries no figure. When the view
  *              exists the pass reads it here; the response shape does not
  *              change.
- *   ownLoans   the platform's own repaid loans under the §8 rule
+ *   ownLoans   the platform's own loans (open, or closed by repayment) under the §8 rule
  *              (`rateCurve.ts`), with every setting it was built under.
  *
  * Every figure is an observed average of what happened, never advice, a
@@ -32,16 +32,15 @@ import {
   CURVE_TERMS,
   MAX_LOOKBACK_DAYS,
   OWN_LOANS_RULE,
-  PAID_INTEREST_FIELDS,
+  PAID_INTEREST_SOURCES,
   TERM_RANGES,
   lookbackDays,
   ownLoansCurve,
-  paidInterestOf,
   type CurveLoanRow,
   type CurveTerm,
   type OwnTermFigure,
-  type PaidInterestEvent,
 } from './rateCurve';
+import { interestPaidByLoan, type LoanInterestRow } from './loanInterest';
 
 const DAY = 86_400;
 
@@ -151,18 +150,16 @@ export async function refreshRateCurveForChain(
     coveredFrom = loans[loans.length - 1].start_at;
   }
 
-  const kinds = Object.keys(PAID_INTEREST_FIELDS);
   const eventRes = await db
     .prepare(
-      `SELECT loan_id, kind, args_json, block_at
-         FROM activity_events
-        WHERE chain_id = ? AND kind IN (${kinds.map(() => '?').join(', ')})
-          AND block_at >= ? AND loan_id IS NOT NULL
+      `SELECT loan_id, kind, gross, block_at
+         FROM loan_interest_events
+        WHERE chain_id = ? AND block_at >= ?
         ORDER BY block_number DESC, log_index DESC
         LIMIT ?`,
     )
-    .bind(chainId, ...kinds, since, EVENT_SCAN_CAP + 1)
-    .all<PaidInterestEvent>();
+    .bind(chainId, since, EVENT_SCAN_CAP + 1)
+    .all<LoanInterestRow>();
   let events = eventRes.results ?? [];
   if (events.length > EVENT_SCAN_CAP) {
     events = events.slice(0, EVENT_SCAN_CAP);
@@ -182,7 +179,7 @@ export async function refreshRateCurveForChain(
 
   const rows: unknown[] = [];
   for (const { day, asOf } of days) {
-    const paid = paidInterestOf(events, asOf);
+    const paid = interestPaidByLoan(events, asOf);
     for (const [asset, assetLoans] of byAsset) {
       for (const f of ownLoansCurve(assetLoans, paid, asOf, coveredFrom)) {
         rows.push(curveRowJson(chainId, asset, day, f, now));
@@ -294,7 +291,7 @@ export function ruleStatement() {
       'nft-legs',
       'loans-younger-than-min-age',
     ],
-    interestSources: Object.keys(PAID_INTEREST_FIELDS),
+    interestSources: PAID_INTEREST_SOURCES,
     interestNotYetCounted: ['refinance-payoff', 'swap-to-repay', 'partial-repayment'],
     points: CURVE_TERMS.map((days) => ({
       days,
@@ -381,7 +378,7 @@ export async function handleRateCurve(req: Request, env: Env): Promise<Response>
         }),
       },
       ownLoans: {
-        source: 'platform-repaid-loans',
+        source: 'platform-loans',
         rule: ruleStatement(),
         terms: CURVE_TERMS.map((days: CurveTerm) => {
           const r = byTerm.get(days);

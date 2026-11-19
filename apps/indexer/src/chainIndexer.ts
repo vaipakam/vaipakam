@@ -6591,6 +6591,31 @@ export async function processLoanLogs(
         blockTimestamps.get(log.blockNumber) ?? null,
       );
       if (settled) statusUpdates++;
+    } else if (log.eventName === 'LoanInterestPaid' || log.eventName === 'LoanInterestUndelivered') {
+      // #3755 / #3768 — the interest a settlement paid on a loan, or took
+      // back when a payment parked for the lender side arrived short. One row
+      // per statement, keyed by the log (INSERT OR IGNORE: a re-read range
+      // never counts it twice); the loan's interest paid up to a moment is
+      // its 'paid' rows less its 'undelivered' rows up to then
+      // (`loanInterest.ts`). The loan's timeline already carries the payment's
+      // own event, so nothing else on the row changes.
+      const gross = a.gross as bigint;
+      await env.DB.prepare(
+        `INSERT OR IGNORE INTO loan_interest_events
+           (chain_id, block_number, log_index, loan_id, kind, asset, gross, block_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+        .bind(
+          chainId,
+          Number(log.blockNumber),
+          log.logIndex,
+          Number(a.loanId as bigint),
+          log.eventName === 'LoanInterestPaid' ? 'paid' : 'undelivered',
+          (a.asset as string).toLowerCase(),
+          gross.toString(),
+          chainTimeOf(blockTimestamps, log.blockNumber),
+        )
+        .run();
     } else if (
       log.eventName === 'PeriodicInterestSettled' ||
       log.eventName === 'PeriodicInterestAutoLiquidated' ||

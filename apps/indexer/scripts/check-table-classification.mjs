@@ -133,7 +133,8 @@ const CLASSIFICATION = {
   loan_participants: { class: 'replay-derived', reason: 'append-only chain history (#1450 r31)' },
   activity_participants: { class: 'replay-derived', reason: 'per-event participants, derived from activity_events (#3677)' },
   activity_participants_state: { class: 'replay-derived', reason: 'backfill watermark over activity_events (#3677)' },
-  rate_curve_daily: { class: 'replay-derived', reason: 'daily rate-curve figures, a pure function of loans (#3751)' },
+  rate_curve_daily: { class: 'replay-derived', reason: 'daily rate-curve figures, a pure function of loans and loan_interest_events (#3751)' },
+  loan_interest_events: { class: 'replay-derived', reason: 'per-loan interest statements read off LoanInterestPaid / LoanInterestUndelivered (#3755)' },
   loan_lifecycle_state: {
     class: 'replay-derived',
     reason: 'the status each loan last announced, read off LoanInitiated / LoanStatusChanged (#2337)',
