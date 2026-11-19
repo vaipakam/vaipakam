@@ -75,6 +75,13 @@ import {
 import { handleApiIndex } from './apiIndex';
 import { handleIngestHealth } from './healthRoutes';
 import { handleAssetRankings } from './assetRankings';
+import {
+  RATE_CURVE_D1_PER_CHAIN,
+  handleRateCurve,
+  handleRateCurveHistory,
+  handleRateCurvePreflight,
+  refreshRateCurve,
+} from './rateCurveRoutes';
 import { handleConfigSnapshot } from './configSnapshot';
 import {
   resolveEnv,
@@ -368,6 +375,32 @@ export default {
           console.error(`[indexer] backing snapshot failed for ${target.id}:`, redactedError(err));
         });
       });
+    }
+
+    // #3751 — the public rate curve's daily rows, once an hour (the first
+    // executed tick of each hour; a manual invocation with no scheduled time
+    // runs it, like every gate here fails open). D1 only, four statements a
+    // chain, queued behind ingest and asked of the live budget first, so a
+    // heavy scan pushes it to the next hour instead of crowding the tick.
+    {
+      const t = controller.scheduledTime;
+      const tickMinutes = doIngestEnabled(env) ? DO_PATH_CADENCE_MINUTES : 1;
+      const minuteOfHour = Number.isFinite(t) ? Math.floor((t as number) / 60_000) % 60 : 0;
+      const curveChains = getChainConfigs(resolved).map((c) => c.id);
+      if (minuteOfHour < tickMinutes && curveChains.length > 0) {
+        afterIngestPass(() => {
+          const cost = { external: 0, d1Queries: RATE_CURVE_D1_PER_CHAIN * curveChains.length };
+          if (!affords(budget, cost)) {
+            // eslint-disable-next-line no-console
+            console.warn('[indexer] rate curve skipped this hour: ingest left too little of the allowance.');
+            return;
+          }
+          return refreshRateCurve(resolved.DB, curveChains, Math.floor(Date.now() / 1000)).catch((err) => {
+            // eslint-disable-next-line no-console
+            console.error('[indexer] rate curve pass failed:', redactedError(err));
+          });
+        });
+      }
     }
 
     runPass(
@@ -704,6 +737,18 @@ export default {
         }
         const byId = url.pathname.match(/^\/loans\/(\d+)$/);
         if (byId) return handleLoanById(req, resolved, byId[1]);
+      }
+      return new Response('Not found', { status: 404 });
+    }
+
+    // ─── /rates/curve* ──────────────────────────────────────────
+    // #3751 — the public rate curve and its daily history (rateCurveRoutes.ts).
+    if (url.pathname === '/rates/curve' || url.pathname === '/rates/curve/history') {
+      if (req.method === 'OPTIONS') return handleRateCurvePreflight();
+      if (req.method === 'GET') {
+        return url.pathname === '/rates/curve'
+          ? handleRateCurve(req, resolved)
+          : handleRateCurveHistory(req, resolved);
       }
       return new Response('Not found', { status: 404 });
     }

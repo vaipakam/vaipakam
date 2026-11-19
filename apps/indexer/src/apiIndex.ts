@@ -45,6 +45,8 @@ const API_INDEX = {
     { method: 'GET', path: '/loans/recent', description: 'Recently initiated loans.' },
     { method: 'GET', path: '/loans/timeseries', description: 'Historical loan-activity series.' },
     { method: 'GET', path: '/loans/rate-candles', description: 'Executed-rate OHLC series per market.' },
+    { method: 'GET', path: '/rates/curve', description: "One lending asset's rate curve at 7, 30, 90, 180 and 365 days (?asset=0x…): the outside-source term average and the platform's own repaid loans as a weighted quartile band, side by side and labelled apart, with every setting the own figures were built under. Observed averages only, never advice, a forecast or an offer. Rate-limited per IP." },
+    { method: 'GET', path: '/rates/curve/history', description: "One curve point's daily history (?asset=0x…&days=30&range=90d), both halves. Rate-limited per IP." },
     { method: 'GET', path: '/loans/by-lender/{address}', description: 'Loans where a wallet holds the lender position.' },
     { method: 'GET', path: '/loans/by-borrower/{address}', description: 'Loans where a wallet holds the borrower position.' },
     { method: 'GET', path: '/loans/by-current-holder/{address}', description: 'Loans where a wallet currently holds either position.' },

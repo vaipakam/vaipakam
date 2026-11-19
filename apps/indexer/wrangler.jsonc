@@ -217,7 +217,8 @@
     "CHAIN_INGEST_VIA_DO": "true",
   },
 
-  // Per-IP rate-limits for the POST surfaces this Worker exposes. The
+  // Per-IP rate-limits for the POST surfaces this Worker exposes, the
+  // WebSocket subscribe and the public rate-curve reads (#3751). The
   // rest of the Worker stays public-read. 60 req/min/IP matches the
   // inbound-cap pattern apps/agent's POST proxies use; the agent uses
   // namespace ids 1xxx. (2001 was #335's prepay match-source limit, retired
@@ -244,6 +245,17 @@
         "type": "ratelimit",
         "namespace_id": "2003",
         "simple": { "limit": 30, "period": 60 },
+      },
+      // #3751 — per-IP cap on the public rate-curve reads (`GET /rates/curve`
+      // and `/rates/curve/history`). They read only stored daily rows and
+      // are cached for five minutes, so 120 a minute covers a page that
+      // loads the curve and several histories. Fails closed like every
+      // limiter here.
+      {
+        "name": "RATE_CURVE_RATELIMIT",
+        "type": "ratelimit",
+        "namespace_id": "2004",
+        "simple": { "limit": 120, "period": 60 },
       },
     ],
   },
