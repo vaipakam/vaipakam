@@ -43,7 +43,7 @@ It is a convenience, not a promise. Section 8 says what it cannot do.
 1. **It is the borrower's own repayment, made on a standing instruction.** The sale, the amounts, the split and the events are those of the manual "repay with collateral" routes. Only the authority differs: the manual route needs the holder's transaction, this one needs the holder's instruction to be live and its condition to be true. There is no second settlement path to keep in step.
 2. **The condition is read on-chain at the block it runs in.** The loan's health factor, from the loan's stamped settings (#3437), is below the holder's level.
 3. **The amount is computed on-chain.** The caller supplies no amount.
-4. **The price is bounded by the holder's tolerance.** The sale must deliver at least the oracle value of what was sold, less the tolerance. The tolerance is never looser than the manual route's cap.
+4. **The price is bounded by the holder's tolerance, and the market must be calm.** The sale must deliver at least the oracle value of what was sold, less the tolerance. The tolerance is never looser than the manual route's cap. A run by someone other than the holder is refused unless the pair is calm against the last two hourly price checkpoints, the same test the forced-sale floor uses, so a run cannot be timed into a moment when the oracle and the market disagree.
 5. **Anyone may run it, and the caller receives nothing.** No bonus, no fee, no share of the sale.
 6. **No handling fee and no keeper bonus.** The platform takes what it takes on any repayment (its share of the interest) and nothing more.
 7. **Everything the borrower is left with is held for the borrower position and collected by its holder**, exactly as the manual full route leaves it: the unsold collateral on the borrower's claim, and any proceeds above the debt on the position's surplus. This is the payout rule's case of a step someone else triggered (`PayoutDestinationRuleDesign.md` 4.2, table rows 2 and 6): the amount travels with the position, and one Collect brings it into the holder's vault as free balance. Nothing reaches a wallet.
@@ -59,21 +59,21 @@ Written by the current borrower-position holder, or that holder's account manage
 | Form | close the loan, or reduce it | reduce only where the loan allows partial repayment |
 | Level | the health factor below which it runs | 1.03 to 1.40 |
 | Target (reduce only) | the health factor a reduction restores | above the level by the top-up's margin, at most 2.0. A reduction always restores at least the health factor at the loan's opening loan-to-value limit (4.3), so a lower target has no effect, and the app shows the figure that will apply |
-| Tolerance | how far below the oracle price the sale may fill | 0.5% up to the manual route's cap (3%); the app suggests 1.5% |
+| Tolerance | how far below the oracle price the sale may fill | 0.5% up to the manual route's cap (3%); the default is 1% |
 
 - Setting it is refused where the matching manual route could not run on that loan: collateral or lending asset not an ERC-20, either not liquid and priced, the holder on the lender side of the same loan.
 - **Setting it is refused while the health factor is already below the level.** It would run at once. The app sends the user to the manual route, where they see the figures before they sign.
 - **With "keep my loan healthy".** Both may be set. The level must then sit below the top-up's trigger by the same margin, so the top-up acts first. The sale is skipped while a top-up could run now and would lift the health factor to the level or above.
 - **With the due-date plans** (repay at the due date, automatic extension, automatic refinance): both may be set. Those act on the date, this acts on health. A refinance request that is live on the loan pauses this instruction like any other step in flight (4.4).
 - **The instruction follows the wallet, not the position**, as the others do. It runs only while the position's holder is the wallet that set it.
-- **Protected accounts.** Setting the instruction, raising the level or loosening the tolerance waits the account's delay, because each can cause collateral to be sold at a loss up to the tolerance. Lowering the level, tightening the tolerance and clearing are immediate. A lock or a replacement freezes it with the others.
+- **Protected accounts.** One rule: a change that can cause more collateral to be sold, or sold at a worse price, waits the account's delay; a change that can only lessen either is immediate. So setting the instruction, raising the level, raising a reduction's target, loosening the tolerance and changing the form each wait the delay, on a new instruction and on one already live. Lowering the level, lowering the target, tightening the tolerance and clearing are immediate. While a change waits, the instruction runs on its old settings. A lock or a replacement freezes it with the others.
 - **Sanctions.** A flagged wallet cannot set it. One already set still runs, because it pays the lender what the lender is owed; what is left for a flagged holder is held, as the manual route holds it.
 
 ### 4.2 Running it: close the loan
 
 `runExit(loanId, adapterCalls, validUntil)`, callable by anyone.
 
-- Runs only when the loan is Active, inside its repayment window (not past the end of grace), the instruction is live for the current holder, and the health factor is below the level.
+- Runs only when the loan is Active, inside its repayment window (not past the end of grace), the instruction is live for the current holder, the health factor is below the level, and the pair is calm (rule 4). "Calm" is the shared rule of `LibPairCalm` with the forced-sale floor's bound (2% to start): the pair's rate now is within the bound of its rate at both of the last two hourly checkpoints. A missing checkpoint reads as not calm.
 - The debt is what a manual repayment owes at that moment: principal, interest by the loan's own terms (full-term interest where the loan carries it), and a late fee after the due date.
 - It sells the least collateral whose value, less the tolerance, covers the debt. This is the manual route's sizing with the holder's tolerance in place of the cap. If the whole collateral cannot cover the debt at that floor, it does not run.
 - The caller supplies the swap routes to try, as a liquidator does. Each route must deliver the floor or it is undone and the next is tried. If every route fails the call reverts and nothing has moved.
@@ -92,7 +92,7 @@ Written by the current borrower-position holder, or that holder's account manage
 
 ### 4.4 When it does not run
 
-Skipped, with the existing skip event naming the reason, when: the holder is no longer the wallet that set it; a top-up should act first (4.1); the price is missing or distrusted; the asset or the platform is paused; the collateral cannot cover the debt at the floor (4.2); or the loan is busy. "Busy" is the one rule the three existing instructions already use: a preclose offset offer, a collateral listing, a swap-to-repay order or a refinance request is live on the loan. The holder is alerted when a busy state begins on a loan that carries this instruction, because the instruction is paused until it ends.
+Skipped, with the existing skip event naming the reason, when: the holder is no longer the wallet that set it; a top-up should act first (4.1); the price is missing or distrusted; the pair is not calm, or an hourly checkpoint is missing; the asset or the platform is paused; the collateral cannot cover the debt at the floor (4.2); or the loan is busy. "Busy" is the one rule the three existing instructions already use: a preclose offset offer, a collateral listing, a swap-to-repay order or a refinance request is live on the loan. The holder is alerted when a busy state begins on a loan that carries this instruction, because the instruction is paused until it ends.
 
 A sale whose routes all fail reverts, so it leaves no event. The preview below reports that the instruction is due, and the keeper's alert tells the holder when a due instruction has not run.
 
@@ -100,13 +100,15 @@ A sale whose routes all fail reverts, so it leaves no event. The preview below r
 
 ### 4.5 What the caller can and cannot do
 
-The caller chooses the route, and nothing else. A caller who brings a poor route can leave the holder with as little as the floor. The holder's loss from a hostile caller is therefore bounded by the tolerance they chose, and the app says so beside the setting. The platform's keeper asks for the best quote, as it does for a liquidation.
+The caller chooses the route, and nothing else. A caller who brings a poor route can leave the holder with as little as the floor, and the holder should expect exactly that: anyone may run it, so a caller who routes the sale through a market of its own and keeps the difference will often arrive before the platform's keeper does. **The tolerance is therefore the price the holder accepts, not a worst case.** The app says so beside the setting, and shows the cost at the chosen tolerance against the cost of a liquidation. The platform's keeper asks for the best quote, as it does for a liquidation.
+
+The calm test (rule 4) closes the other way a caller could gain: running at a moment when the oracle price is away from the market, where a floor measured from the oracle bounds nothing real. It also keeps a brief dip in the reported price from closing a loan for good.
 
 A caller cannot run it early, change the amount, redirect a payment or take any of the proceeds.
 
 ### 4.6 Keeper and app
 
-- **Keeper:** one more step in the standing-instruction pass, with its own arming flag, shipped unset. It reads `previewExit`, builds the swap quote with the liquidation pass's quote builder, and submits. A row in `contracts/permissionless-steps.json` for each executor. An ops alert when a due instruction has failed more than a set number of times.
+- **Keeper:** one more step in the standing-instruction pass, with its own arming flag, shipped unset. The step depends on the hourly price checkpoint pass being armed on that network; where it is not, every run is refused for a missing checkpoint, and the app's card says the instruction is not available there. It reads `previewExit`, builds the swap quote with the liquidation pass's quote builder, and submits. A row in `contracts/permissionless-steps.json` for each executor. An ops alert when a due instruction has failed more than a set number of times.
 - **App:** in "Reserve and instructions", a card "Sell and repay before liquidation": the form, the level on the same scale as the health bar, the tolerance, and a plain estimate of what a sale at the level would leave the user against what a liquidation would. The statements of section 8 are shown before the user confirms.
 - **Alerts to the holder:** when the health factor nears the level, when the instruction runs (with every figure of the event), and when it was due and could not run.
 - **Indexer:** handles the run event and the existing repayment events; the loan's page shows the closing as "repaid by your instruction", not as a liquidation.
@@ -126,18 +128,19 @@ A caller cannot run it early, change the amount, redirect a payment or take any 
 1. Exit: at a health factor just below the level the loan closes Repaid; the lender receives what a manual repayment pays; the treasury receives its share of the interest and no handling fee; the caller receives nothing; the unsold collateral and the amount above the debt are held for the borrower position, and the holder's Collect brings both into the vault as free balance.
 2. The same loan and price run by the manual full route gives identical lender, treasury and borrower figures at the same tolerance.
 3. Health factor at or above the level: refused.
-4. Tolerance: a route delivering below the floor is undone and the next tried; all failing reverts with nothing moved; a tolerance outside the bounds is refused at setting.
-5. Collateral that cannot cover the debt at the floor: skipped with its reason; the liquidation routes still work.
-6. Reduce: the sale is the least that reaches the higher of the holder's target and the opening loan-to-value limit, and the preview names which; a target below that limit still runs and does not revert; the smallest-partial rule; the whole-principal case closes the loan; the interval; refused at setting on a loan that does not allow partial repayment.
-7. With a top-up set: the level above the trigger is refused; the sale is skipped while a top-up could run and would suffice; it runs when the reserve is empty.
-8. Setting while the health factor is below the level is refused.
-9. Position transfer: the old holder's instruction is skipped; the new holder's works.
-10. Protected account: setting, raising the level and loosening the tolerance wait the delay; lowering, tightening and clearing do not; a lock freezes it.
-11. A flagged holder: cannot set; a set one runs, the lender is paid and the holder's part is held.
-12. Past the end of grace: refused, and the time-based default proceeds as today.
-13. A hostile caller's route that delivers exactly the floor succeeds, and the holder's loss equals the tolerance and no more.
-14. Every skip reason of 4.4 emits and changes nothing, including each of the four busy states.
-15. An invariant over random prices and sequences: a run never pays the lender less than a manual repayment would, never pays the caller, and never sells more than the amount `previewExit` reported plus the manual route's margin.
+4. Tolerance: a route delivering below the floor is undone and the next tried; all failing reverts with nothing moved; a tolerance outside the bounds is refused at setting; the default is 1%.
+5. Calm: a run is skipped while the pair has moved past the bound against either of the last two hourly checkpoints, and when a checkpoint is missing; it runs once both are within the bound; the liquidation routes are not affected by the test.
+6. Collateral that cannot cover the debt at the floor: skipped with its reason; the liquidation routes still work.
+7. Reduce: the sale is the least that reaches the higher of the holder's target and the opening loan-to-value limit, and the preview names which; a target below that limit still runs and does not revert; the smallest-partial rule; the whole-principal case closes the loan; the interval; refused at setting on a loan that does not allow partial repayment.
+8. With a top-up set: the level above the trigger is refused; the sale is skipped while a top-up could run and would suffice; it runs when the reserve is empty.
+9. Setting while the health factor is below the level is refused.
+10. Position transfer: the old holder's instruction is skipped; the new holder's works.
+11. Protected account: setting, raising the level, raising the reduction target, loosening the tolerance and changing the form each wait the delay, on a new instruction and on a live one, and the old settings apply until the wait ends; lowering the level or the target, tightening and clearing do not wait; a lock freezes it.
+12. A flagged holder: cannot set; a set one runs, the lender is paid and the holder's part is held.
+13. Past the end of grace: refused, and the time-based default proceeds as today.
+14. A hostile caller's route that delivers exactly the floor succeeds, and the holder's loss equals the tolerance and no more.
+15. Every skip reason of 4.4 emits and changes nothing, including each of the four busy states.
+16. An invariant over random prices and sequences: a run never pays the lender less than a manual repayment would, never pays the caller, and never sells more than the amount `previewExit` reported plus the manual route's margin.
 
 ## 7. Alternatives considered
 
@@ -145,15 +148,20 @@ A caller cannot run it early, change the amount, redirect a payment or take any 
 2. **A keeper permission the borrower grants (#1206 as first written).** Adds a grant to manage and a dependence on one keeper. Rejected for the reason the other instructions rejected it.
 3. **Only the platform's keeper may run it**, so no outsider can bring a poor route. Rejected: a step only one party can run fails when that party is down, and the cost of that failure here is a liquidation. The tolerance bounds a poor route instead.
 4. **Sell through the forced-sale host as a new kind of forced sale.** Rejected: that host ends a loan as a default does, with claims for both sides and the default's charges. This is a repayment, and uses the repayment's settlement.
-5. **Pay the caller a small reward.** Makes outside callers likely, but it is a cost on the borrower and a reason to push a price to the level. Not now; see 9.
+5. **Pay the caller a small reward.** Makes outside callers likely, but it is a cost on the borrower and a reason to push a price to the level. Not built.
 6. **Use the liquidation's price floor.** Rejected: it is looser than the manual route's cap, and the point of the instruction is a better price than a liquidation.
-7. **Wait a few minutes below the level before acting**, against a brief dip. Rejected for the first version: the wait is the time the instruction exists to save, and a liquidation acts on one reading too. See 9.
-8. **Exit only, no reduce.** Simpler. Kept as the build order (exit first), because a borrower who wants to stay in the loan is better served by a reduction.
+7. **Wait a few minutes below the level before acting**, against a brief dip. Not needed: the calm test of rule 4 does this work with a rule the platform already has.
+8. **No calm test.** The first draft. Rejected on the security review of 2026-11-19: a floor measured from the oracle bounds nothing when the oracle is away from the market, and anyone may choose the moment.
+9. **Let the holder switch the calm test off** ("act even in a fast market"), accepting the worse price for a better chance of acting before a liquidation. An owner decision, asked on 2026-11-19; not built unless chosen.
+10. **A tolerance that starts tight and widens with time** since the level was crossed, so competing callers bid the holder's cost down. A better price for the holder, at the cost of one more recorded step. Kept for after the first version has run on a testnet.
+11. **Exit only, no reduce.** Simpler. Kept as the build order (exit first), because a borrower who wants to stay in the loan is better served by a reduction.
 
 ## 8. What this does not do, stated to the user
 
 - **It may not run in time.** A price that falls past the level and the liquidation level in one step leaves nothing to act on. Whichever of this and a liquidation is included first wins.
-- **It may not run at all.** A market moving faster than the tolerance, a paused asset, a distrusted price or a keeper outage each leave the loan as it was.
+- **It does not act in a fast market.** While the price has moved more than the calm bound (2% to start) against either of the last two hourly marks, it waits. A sharp fall can therefore reach liquidation before it may run. It protects best against a slow decline.
+- **It costs about the tolerance.** Expect the sale to fill near the floor (4.5).
+- **It may not run at all.** A market moving faster than the tolerance, a paused asset, a distrusted price, a missing hourly mark or a keeper outage each leave the loan as it was.
 - **It cannot be undone.** A closed loan is closed at that moment's price, and a later recovery in the price is not the borrower's.
 - **A reduction can repeat.** In a long fall each reduction costs its slippage, and the loan can still be liquidated between two of them.
 - **It pauses while another step is live on the loan**: an offset offer, a listing, a swap-to-repay order or a refinance request. The app says so when the instruction is set and when the pause begins.
@@ -162,7 +170,7 @@ A caller cannot run it early, change the amount, redirect a payment or take any 
 
 ## 9. Recommendation
 
-Build it as designed: the two manual routes gain one more authority, two executors anyone may call, the holder's own tolerance as the price bound, and no payment to the caller. Build the exit first and the reduction second. Ship the keeper step disarmed.
+Build it as designed: the two manual routes gain one more authority, two executors anyone may call, the holder's own tolerance as the price bound, a calm market as the condition, and no payment to the caller. Build the exit first and the reduction second. Ship the keeper step disarmed.
 
 ## 10. Settled with the builder (2026-11-19)
 
@@ -170,9 +178,9 @@ Build it as designed: the two manual routes gain one more authority, two executo
 2. **The borrower's leftovers:** the manual full route's settlement is kept, so they are held for the position and collected (rule 7).
 3. **Reduce sizing:** the higher of the holder's target and the opening loan-to-value limit (4.3).
 4. **Gas:** the caller is not repaid.
-5. **The optional wait below the level** (alternative 7): deferred until the first version has run on a testnet.
+5. **The optional wait below the level:** replaced by the calm test (rule 4), required by the security review of 2026-11-19 together with the 1% default tolerance.
 6. **The level's lower bound (1.03):** measured on each testnet once the keeper step runs there.
-7. **Protected accounts:** the delay on setting, raising the level and loosening the tolerance is built as designed (4.1).
+7. **Protected accounts:** the delay is built as 4.1 states it, for every change that can cause more collateral to be sold or a worse price.
 8. **Where the code goes:** the executors and the preview in their own facet if the instruction facet has no room.
 
 One thing found on the way is outside this design: the manual full route leaves a live preclose offset offer or refinance request on the books when it closes the loan. Whether that route should cancel them is a separate card.
