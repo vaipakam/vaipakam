@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
 import type { OwnStateClient } from '../../chain/ownRail';
 import { getSupportedChain } from '../../chain/chains';
@@ -8,6 +8,7 @@ import { useTxStore } from '../tx/txStore';
 import { useCopy } from '../copy/useCopy';
 import type { Refusal } from '../eligibility/types';
 import type { FinishCard as FinishCardModel, Receipt as ReceiptModel } from '../receipt/types';
+import { useReceiptAddendum, withAddendum } from '../receipt/addendum';
 import type { TrackedTx } from '../tx/useTrackedTx';
 import { FinishCard } from './FinishCard';
 import { Icon } from './Icon';
@@ -99,7 +100,7 @@ export function ActionFlow({
   tx,
   identity,
   reviewedFor,
-  receipt,
+  receipt: flowReceipt,
   recheck,
   describeAsset,
   explorer,
@@ -113,6 +114,10 @@ export function ActionFlow({
 }: ActionFlowProps) {
   const { text, format } = useCopy();
   const nowMs = useNow();
+  // A page's own statement for this context (#3769), shown and frozen with
+  // the flow's receipt.
+  const addendum = useReceiptAddendum();
+  const receipt = useMemo(() => withAddendum(flowReceipt, addendum), [flowReceipt, addendum]);
   const [checking, setChecking] = useState(false);
   const [found, setFound] = useState<Exclude<Recheck, { kind: 'ok' }> | null>(null);
   /** The consent was cleared while the re-check ran (by the reader, or by a

@@ -33,6 +33,8 @@ import { useWorldRail } from '../../shared/reads/world/WorldRailContext';
 import { BorrowNowForm, BORROW_NOW_KEY } from '../../shared/instant/BorrowNowForm';
 import { BorrowNowFlow, type BorrowNowRest } from '../../shared/instant/BorrowNowFlow';
 import { restRequestInput, type BorrowNowTerms } from '../../shared/instant/borrowNow';
+import { ReceiptAddendum } from '../../shared/receipt/addendum';
+import { BorrowFor } from './BorrowFor';
 
 type Hex = `0x${string}`;
 
@@ -93,6 +95,8 @@ export function BorrowPage() {
   /** OFF-22: the Full tariff step for a request just posted, kept apart from
    *  the request's review so it outlives that card. */
   const [armContext, setArmContext] = useStoredValue<ArmContext>(TARIFF_CONTEXT_KEY);
+  /** #3769: the person a borrow is made for, the app's own note only. */
+  const [forWhom, setForWhom] = useStoredValue<Hex>('borrow.forSomeone');
 
   const suggested = chain ? suggestedAssets(chain) : [];
   const [pairByChain, setPairByChain] = useState<Record<number, { lending: Hex | null; collateral: Hex | null }>>({});
@@ -189,6 +193,11 @@ export function BorrowPage() {
       ? { lending: pair.lending!, collateral: pair.collateral!, standard: collateralStandard }
       : null;
 
+  // #3769: what a review made for someone else states, on every way to
+  // borrow an ERC-20 from this page (a rental is the renter's own).
+  const forLines =
+    forWhom !== null && lendingStandard === 'erc20' ? [format('borrowFor.reviewSecures', { address: forWhom }), format('borrowFor.reviewFunds', { address: forWhom })] : [];
+
   return (
     <main className="page borrow" aria-labelledby="borrow-title">
       <h1 id="borrow-title">{text('borrow.title')}</h1>
@@ -210,6 +219,16 @@ export function BorrowPage() {
       )}
       {chain && connected && walletChain !== null && !flowOpen && (
         <PairPicker key={chain.chainId} role="borrower" chain={chain} meta={meta} lending={pair.lending} collateral={pair.collateral} onChange={setPair} />
+      )}
+      {chain && ready && !flowOpen && connected && walletChain !== null && lendingStandard === 'erc20' && (
+        <BorrowFor account={address ?? null} value={forWhom} onChange={setForWhom} />
+      )}
+      {forLines.length > 0 && (taking !== null || nowTerms !== null || draft !== null) && (
+        <div data-testid="borrow-for-notice">
+          <Notice tone="warn" tier="A">
+            {forLines[0]}
+          </Notice>
+        </div>
       )}
       {chain && ready && !flowOpen && connected && walletChain !== null && (
         <section className="borrow-section borrow-ways" aria-labelledby="borrow-ways">
@@ -322,7 +341,9 @@ export function BorrowPage() {
           <h2 id="borrow-review" className="sr-only">
             {text('borrow.stepSign')}
           </h2>
-          <AcceptOffer flowKey={ACCEPT_KEY} source={storedSource(taking)} chain={walletChain} own={own} meta={meta} terms={terms.data} onClose={() => setTaking(null)} />
+          <ReceiptAddendum lines={forLines}>
+            <AcceptOffer flowKey={ACCEPT_KEY} source={storedSource(taking)} chain={walletChain} own={own} meta={meta} terms={terms.data} onClose={() => setTaking(null)} />
+          </ReceiptAddendum>
         </section>
       )}
       {nowTerms !== null && walletChain && own && (
@@ -330,19 +351,21 @@ export function BorrowPage() {
           <h2 id="borrow-now-review" className="sr-only">
             {text('borrow.stepSign')}
           </h2>
-          <BorrowNowFlow
-            terms={nowTerms}
-            chain={walletChain}
-            own={own}
-            meta={meta}
-            termsState={terms.data}
-            onEdit={() => setNowTerms(null)}
-            onRequest={requestRest}
-            onClose={(done) => {
-              setNowTerms(null);
-              if (done) setNowTyped(null);
-            }}
-          />
+          <ReceiptAddendum lines={forLines}>
+            <BorrowNowFlow
+              terms={nowTerms}
+              chain={walletChain}
+              own={own}
+              meta={meta}
+              termsState={terms.data}
+              onEdit={() => setNowTerms(null)}
+              onRequest={requestRest}
+              onClose={(done) => {
+                setNowTerms(null);
+                if (done) setNowTyped(null);
+              }}
+            />
+          </ReceiptAddendum>
         </section>
       )}
       {draft !== null && walletChain && own && (
@@ -350,20 +373,22 @@ export function BorrowPage() {
           <h2 id="borrow-request-review" className="sr-only">
             {text('borrow.stepSign')}
           </h2>
-          <PostOffer
-            flowKey={REQUEST_KEY}
-            draft={draft}
-            chain={walletChain}
-            own={own}
-            meta={meta}
-            terms={terms.data}
-            onEdit={() => setDraft(null)}
-            onClose={(posted) => {
-              setDraft(null);
-              setComposing(null);
-              if (posted) setTyped(null);
-            }}
-          />
+          <ReceiptAddendum lines={forLines}>
+            <PostOffer
+              flowKey={REQUEST_KEY}
+              draft={draft}
+              chain={walletChain}
+              own={own}
+              meta={meta}
+              terms={terms.data}
+              onEdit={() => setDraft(null)}
+              onClose={(posted) => {
+                setDraft(null);
+                setComposing(null);
+                if (posted) setTyped(null);
+              }}
+            />
+          </ReceiptAddendum>
         </section>
       )}
       {armContext !== null && own && (

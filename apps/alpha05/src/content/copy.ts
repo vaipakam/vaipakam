@@ -4623,6 +4623,17 @@ export const copy = {
     restGo: B('Post a request for the rest'),
     openPositions: B('See your loans'),
   },
+  borrowFor: {
+    title: B('Who uses the money'),
+    option: B('Borrow for someone'),
+    lead: A('You borrow as usual: your collateral secures the loan and the loan is yours. Enter the address of the person who will use the money and repay it. Nothing on chain records it.'),
+    addressLabel: B('Their address'),
+    invalid: A('That is not an address.'),
+    zero: A('That address cannot hold funds.'),
+    self: A('That is your own address.'),
+    reviewSecures: A('Your collateral secures this loan. If it is not repaid, your collateral is sold or passes to the lender. {{address}} is not bound to repay by anything on chain.'),
+    reviewFunds: A('The amount borrowed reaches your vault, not {{address}}. Once the loan opens, its page gives you a link to send them and the steps to pass the funds on: withdraw, then send.'),
+  },
   borrow: {
     title: B('Borrow'),
     intro: A(
