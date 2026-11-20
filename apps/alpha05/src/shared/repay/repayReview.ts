@@ -224,6 +224,21 @@ export function reviewBlockers(r: RepayReview, shortText: (short: bigint) => str
   return [];
 }
 
+/**
+ * #3769 — a payer who does not hold the borrower position repays only for
+ * the holder the loan page named to them (and they confirmed, where the
+ * position had moved). `named` is that holder; `undefined` when the page
+ * named none because the reader is no such payer. A review whose holder,
+ * read from the chain, is not the one named stops the payment until the
+ * page names the new holder.
+ */
+export function payerHolderBlocker(r: RepayReview, account: Hex, named: Hex | null | undefined): 'unconfirmed' | 'changed' | null {
+  if (named === undefined || paysAsBorrower(r, account)) return null;
+  if (named === null) return 'unconfirmed';
+  if (r.borrowerHolder === null || r.borrowerHolder.toLowerCase() !== named.toLowerCase()) return 'changed';
+  return null;
+}
+
 /** The wallet prompts the repayment takes: the approval's steps, then the
  *  repayment. */
 export function promptCount(r: RepayReview): number {

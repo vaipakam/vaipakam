@@ -293,7 +293,7 @@ export async function readInstantAvailability(c: PublicClient, diamond: Hex, acc
       address: diamond,
       abi: INSTANT,
       functionName: 'setInstantSlot',
-      args: [lending, collateral, slot, true, false, false, true, await chainValidUntil(c)],
+      args: [lending, collateral, slot, true, false, false, true, await chainValidUntil(c, 'autoLendPreset')],
       account,
     });
     return availabilityFromProbe({ kind: 'ok' });

@@ -112,11 +112,13 @@ export function alertRoute(action: AlertAction): { method: 'POST' | 'PUT'; path:
 export function alertBody(action: AlertAction, wallet: Hex, chainId: number, issuedAt: number, signature: Hex): Record<string, unknown> {
   const signed = { wallet, chain_id: chainId, issuedAt, signature };
   if (typeof action === 'string') return signed;
-  const { bands, dueDateReminders, pushAlerts } = action.save;
+  const { bands, dueDateReminders, pushAlerts, vaultOutflowAlerts } = action.save;
   return {
     ...signed,
     ...(bands ? { warn_hf: bands.warnHf, alert_hf: bands.alertHf, critical_hf: bands.criticalHf } : {}),
     ...(dueDateReminders !== undefined ? { notify_maturity_approaching: dueDateReminders } : {}),
+    // #3434 — the service reads `null` as "back to the default".
+    ...(vaultOutflowAlerts !== undefined ? { notify_vault_outflow: vaultOutflowAlerts === 'default' ? null : vaultOutflowAlerts === 'on' } : {}),
     ...(pushAlerts ? { push_channel: 'subscribed' } : {}),
   };
 }

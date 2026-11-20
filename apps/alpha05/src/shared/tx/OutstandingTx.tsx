@@ -24,7 +24,8 @@ export function OutstandingTx() {
         const frozen = e.frozen!;
         const chain = getSupportedChain(frozen.chainId)?.name ?? String(frozen.chainId);
         const title = frozen.receipt?.title ?? key;
-        const hash = 'hash' in e.phase ? e.phase.hash : null;
+        // A contract wallet's own id is not a chain hash: no explorer link (#3770).
+        const hash = 'hash' in e.phase && !('viaAccount' in e.phase && e.phase.viaAccount) ? e.phase.hash : null;
         return (
           <Notice key={key} tone="warn" tier="A">
             {format(e.phase.kind === 'receipt-unknown' ? 'shell.txUnknown' : 'shell.txOut', { title, chain, account: shortAddress(frozen.identity.split(':')[1] as `0x${string}`) })}{' '}

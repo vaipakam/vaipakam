@@ -1,6 +1,6 @@
 import { useCallback, useSyncExternalStore } from 'react';
 import { useConfig } from 'wagmi';
-import { signMessage } from 'wagmi/actions';
+import { signMessageFor } from '../tx/walletGuard';
 import { AGENT, AgentUnavailable, type AgentClient } from './agentClient';
 import { alertBody, alertMessage, alertRoute, readAlertAnswer, type AlertAction, type AlertAnswer } from './alerts';
 import { CODE_LIFETIME_S, recordAnswer } from './known';
@@ -64,7 +64,7 @@ export function nextIssuedAt(nowMs: number = Date.now(), store: IssuedStore = br
 }
 
 /** A wallet refusal, by the EIP-1193 code wallets use or by its words. */
-function isUserRejection(e: unknown): boolean {
+export function isUserRejection(e: unknown): boolean {
   let cur: unknown = e;
   for (let i = 0; i < 5 && cur && typeof cur === 'object'; i++) {
     const c = cur as { code?: unknown; name?: unknown; cause?: unknown };
@@ -136,7 +136,7 @@ export function useAlertAction(chainId: number, wallet: Hex, client: AgentClient
       const issuedAt = nextIssuedAt();
       let signature: Hex;
       try {
-        signature = await signMessage(config, { account: wallet, message: alertMessage(action, wallet, chainId, issuedAt) });
+        signature = await signMessageFor(config, chainId, { account: wallet, message: alertMessage(action, wallet, chainId, issuedAt) });
       } catch (e) {
         setRun(identity, { run: isUserRejection(e) ? { phase: 'declined', action } : { phase: 'unreachable', action, message: (e as Error).message } });
         return null;

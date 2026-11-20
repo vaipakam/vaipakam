@@ -78,7 +78,7 @@ import {
 import { EVENTLESS_PROTOCOL_KNOBS } from '@vaipakam/lib/protocolKnobs';
 import { useActiveChain } from '../chain/useActiveChain';
 import { exactAmountString, formatExactSpan, localeDecimalString, localeNumber } from '../lib/format';
-import { VPFI_DECIMALS } from '../data/vpfi';
+import { VPFI_DECIMALS, useVpfi } from '../data/vpfi';
 import { useNowSec } from '../hooks/useNowSec';
 import { numeraireOf } from '../data/numeraire';
 import { idleAware } from '../lib/idle';
@@ -363,6 +363,14 @@ export function ProtocolConsole() {
   });
 
   const reading: ConsoleReading | null = knobs.data ?? null;
+  // Whether this network has the platform token installed. A failed or
+  // pending read says nothing, so the note appears only on a positive
+  // "not installed" answer.
+  const vpfi = useVpfi();
+  const tokenNotInstalled = vpfi.data !== undefined && !vpfi.data.registered;
+  // A failed read is an unknown, and the page says so rather than showing
+  // the tiers as if they were known to apply.
+  const tokenInstallUnknown = vpfi.data === undefined && vpfi.isError;
   const unavailable = knobs.isError;
 
   if (!isProtocolConsolePublic()) {
@@ -526,6 +534,11 @@ export function ProtocolConsole() {
 
           <section className="pc-section" aria-labelledby="pc-tiers">
             <h2 id="pc-tiers">{copy.protocolConsole.tiersHeading}</h2>
+            {/* Only on the chain's positive "no token" answer: the tiers
+                are configured settings, but no discount applies until the
+                platform token is installed with the rewards phase. */}
+            {tokenNotInstalled ? <p className="muted">{copy.protocolConsole.tiersNotInstalled}</p> : null}
+            {tokenInstallUnknown ? <p className="muted">{copy.protocolConsole.tiersInstallUnknown}</p> : null}
             {/*
               Thresholds are 18-decimal amounts far beyond
               Number.MAX_SAFE_INTEGER, so they are rendered as the strings

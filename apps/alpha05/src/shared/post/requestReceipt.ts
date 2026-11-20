@@ -90,7 +90,13 @@ export function requestReceipt(r: PostReview, meta: TokenMetaMap | null, copy: P
     ...(ranged
       ? [textRow('request.rowMatching', text(r.risk.partialFill === null ? 'request.matchingUnread' : r.risk.partialFill ? 'request.matchingOn' : 'request.matchingOff'), false)]
       : []),
-    textRow('accept.rowRate', format('accept.rate', { rate: formatBps(parsed.rateBps) }), true),
+    textRow(
+      'accept.rowRate',
+      parsed.rateOtherBps != null && parsed.rateOtherBps !== parsed.rateBps
+        ? format('request.rateRange', { low: formatBps(parsed.rateOtherBps), high: formatBps(parsed.rateBps), rate: formatBps(parsed.rateBps) })
+        : format('accept.rate', { rate: formatBps(parsed.rateBps) }),
+      true,
+    ),
     textRow('accept.rowDue', format('request.due', { days: String(parsed.durationDays) }), true),
     // Not bound by the request or the loan: the grace period is read from the
     // live configuration when it is applied, so it is today's figure.

@@ -109,6 +109,17 @@ describe('the offer book', () => {
     expect(ids({ tab: 'loans', side: 'borrower', hide: null })).toEqual([2n]);
     expect(ids({ tab: 'loans', side: 'all', hide: LENDER.toUpperCase().replace('0X', '0x') as `0x${string}` })).toEqual([2n]);
   });
+  it('narrows the rentals to one token for a kit link, matching the collection in any letter case', () => {
+    const lend = bookRowFrom(json());
+    const nft = ('0x' + 'aa'.repeat(20)) as `0x${string}`;
+    const mine: BookRow = { ...lend, id: 3n, assetType: 1, lendingAsset: nft, tokenId: 7n };
+    const sibling: BookRow = { ...mine, id: 4n, tokenId: 8n };
+    const other: BookRow = { ...mine, id: 5n, lendingAsset: ('0x' + 'bb'.repeat(20)) as `0x${string}` };
+    const ids = (token: { asset: `0x${string}`; tokenId: bigint } | null) =>
+      [mine, sibling, other].filter((r) => inBook(r, { tab: 'rentals', side: 'all', hide: null, token })).map((r) => r.id);
+    expect(ids({ asset: nft.toUpperCase().replace('0X', '0x') as `0x${string}`, tokenId: 7n })).toEqual([3n]);
+    expect(ids(null)).toEqual([3n, 4n, 5n]);
+  });
   it('calls an offer lapsed once its expiry has passed, and never one with none', () => {
     expect(lapsed({ expiresAt: 0n }, 2_000_000_000)).toBe(false);
     expect(lapsed({ expiresAt: 100n }, 100)).toBe(true);

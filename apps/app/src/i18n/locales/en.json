@@ -114,7 +114,7 @@
       },
       "vpfi": {
         "title": "VPFI fee discounts — Vaipakam",
-        "description": "Optional: hold VPFI in your vault to reduce protocol fees. Never required to lend, borrow, or rent."
+        "description": "Fee discounts for holding VPFI start with the rewards phase. Until the platform token is installed, every fee is charged at its full rate. Never required to lend, borrow, or rent."
       },
       "nftVerifier": {
         "title": "Position NFT verifier — Vaipakam",
@@ -600,7 +600,7 @@
         },
         "vpfi": {
           "q": "Do I need VPFI?",
-          "a": "No. VPFI is optional — holding it in your vault can reduce protocol fees on eligible loans. It never reduces network gas, and you never need it to borrow, lend, or rent."
+          "a": "No. You never need VPFI to borrow, lend, or rent. The platform token arrives with the rewards phase. Until it is installed on a network, no fee discount applies there and every fee is charged at its full rate. Once it is installed, holding it in your vault can reduce protocol fees on eligible loans. It never reduces network gas."
         },
         "modes": {
           "q": "What’s the difference between Basic and Advanced mode?",
@@ -2993,7 +2993,7 @@
       "withdrawWarning": "Withdrawing VPFI can lower future fee discounts.",
       "belowMinNote": "Holding under {{floor}} VPFI earns no fee discount.",
       "tierTableUnknown": "The discount tiers can’t be read from this network right now, so none are shown here.",
-      "notOnThisChain": "VPFI deposits aren’t available on {{chain}} yet. Everything else on Vaipakam works without VPFI.",
+      "notInstalled": "The platform token is not installed on {{chain}}. It arrives with the rewards phase, on every network together. Until then no fee discount applies to anyone, and every fee is charged at its full rate. Everything on Vaipakam works without it.",
       "tokenChanged": "The VPFI token configuration changed since you reviewed. Nothing was approved — please check the updated numbers and try again.",
       "tokenCheckRetry": "We couldn’t confirm the VPFI token just now — nothing was approved. Please try again in a moment.",
       "addToWallet": "Add VPFI to MetaMask",
@@ -3743,7 +3743,7 @@
         "claimsSub": "Collect repayments, collateral, and rewards",
         "offersSub": "Browse every open offer on this network",
         "vaultSub": "Where your assets sit — totals, locked, and free",
-        "vpfiSub": "Optional — reduce protocol fees by holding VPFI",
+        "vpfiSub": "Optional fee discounts, which start with the rewards phase",
         "activitySub": "Everything your wallet has done on Vaipakam",
         "riskAccessSub": "Choose how risky the assets in your deals may be",
         "helpSub": "Plain-language answers and build info",
@@ -4151,6 +4151,8 @@
       "numeraireUnits": "{{amount}} (reference-currency units)",
       "numeraireDefault": "{{symbol}} (never changed, so the protocol’s default)",
       "tiersHeading": "VPFI discount tiers",
+      "tiersNotInstalled": "The platform token is not installed on this network, so none of these tiers applies: every fee is charged at its full rate.",
+      "tiersInstallUnknown": "We couldn’t check whether the platform token is installed on this network, so we can’t say whether any of these tiers applies.",
       "tiers": "Tiers",
       "tierThreshold": "Tier {{n}} threshold",
       "tierValue": "{{amount}} VPFI → {{discount}} discount",
@@ -4181,6 +4183,8 @@
     }
   },
   "contractError": {
+    "InstantSourceRepeated": "This borrow names the same source more than once. Each source can fill only once, so nothing was sent. Review the borrow and send it again.",
+    "IntentCapitalInsufficient": "The Auto-lend taking over this loan does not hold enough unlent funds to pay its principal. Nothing was sent.",
     "MaxLendingAboveCeiling": "Your collateral is too low for the amount you want to borrow. Lower the borrow amount or lock more collateral, then try again.",
     "MinCollateralBelowFloor": "The collateral for this loan is below the minimum its size needs. Increase the required collateral or reduce the loan amount, then try again.",
     "FunctionDisabled": "This feature is currently turned off by protocol governance. Please try again later.",

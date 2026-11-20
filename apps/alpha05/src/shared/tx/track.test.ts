@@ -70,6 +70,19 @@ describe('transition', () => {
     const p = transition(submitted, { type: 'superseded', submittedHash: HASH, minedHash: OTHER, reason: 'cancelled', blockNumber: 4n, unwound });
     expect(p).toMatchObject({ kind: 'superseded', unwound });
   });
+  it('ends an account wallet step that never ran as superseded, with no mined hash, only for an account flow', () => {
+    const via = transition({ kind: 'signing' }, { type: 'submitted', hash: HASH, at: 1, viaAccount: true });
+    const unwound = [{ status: 'done' as const, label: 'Approval put back' }];
+    for (const reason of ['account-cancelled', 'account-failed'] as const) {
+      const p = transition(via, { type: 'superseded', submittedHash: HASH, minedHash: null, reason, blockNumber: null, unwound });
+      expect(p).toEqual({ kind: 'superseded', submittedHash: HASH, minedHash: null, reason, blockNumber: null, unwound, landed: [] });
+    }
+    const plain = transition({ kind: 'signing' }, { type: 'submitted', hash: HASH, at: 1 });
+    expect(() => transition(plain, { type: 'superseded', submittedHash: HASH, minedHash: null, reason: 'account-cancelled', blockNumber: null })).toThrow(IllegalTransition);
+    // A wallet cancel or replacement always names the transaction that mined.
+    expect(() => transition(via, { type: 'superseded', submittedHash: HASH, minedHash: null, reason: 'cancelled', blockNumber: null })).toThrow(IllegalTransition);
+    expect(() => transition(via, { type: 'superseded', submittedHash: HASH, minedHash: OTHER, reason: 'account-failed', blockNumber: 3n })).toThrow(IllegalTransition);
+  });
   it('refuses a different mined hash that is not a reprice', () => {
     const submitted = transition({ kind: 'signing' }, { type: 'submitted', hash: HASH, at: 1 });
     expect(() => transition(submitted, { type: 'mined', submittedHash: HASH, hash: OTHER, repriced: false, blockNumber: 1n, reverted: false })).toThrow(IllegalTransition);
@@ -90,5 +103,22 @@ describe('transition', () => {
     expect(transition({ kind: 'failed', message: 'x' }, { type: 'reset' })).toEqual({ kind: 'idle' });
     expect(() => transition({ kind: 'submitted', hash: HASH, at: 1 }, { type: 'reset' })).toThrow(IllegalTransition);
     expect(() => transition({ kind: 'mined', hash: HASH, submittedHash: HASH, blockNumber: 1n, reverted: false }, { type: 'reset' })).toThrow(IllegalTransition);
+  });
+});
+
+describe('a contract wallet as sender (#3770)', () => {
+  it("follows the wallet's id to the chain hash it runs under, through an unknown receipt and a resume", () => {
+    let p = transition(transition(transition({ kind: 'idle' }, { type: 'review' }), { type: 'sign' }), { type: 'submitted', hash: HASH, at: 1, viaAccount: true });
+    expect(p).toEqual({ kind: 'submitted', hash: HASH, at: 1, viaAccount: true });
+    p = transition(p, { type: 'receipt-unknown', hash: HASH, message: 'approvals unread' });
+    expect(p).toEqual({ kind: 'receipt-unknown', hash: HASH, at: 1, message: 'approvals unread', viaAccount: true });
+    p = transition(p, { type: 'resume', hash: HASH });
+    expect(p).toEqual({ kind: 'submitted', hash: HASH, at: 1, viaAccount: true });
+    expect(transition(p, { type: 'mined', submittedHash: HASH, hash: OTHER, repriced: false, blockNumber: 3n, reverted: false })).toMatchObject({ kind: 'mined', hash: OTHER, submittedHash: HASH });
+  });
+  it('still refuses another hash for an ordinary wallet', () => {
+    const p = transition(transition(transition({ kind: 'idle' }, { type: 'review' }), { type: 'sign' }), { type: 'submitted', hash: HASH, at: 1, viaAccount: false });
+    expect(p).toEqual({ kind: 'submitted', hash: HASH, at: 1 });
+    expect(() => transition(p, { type: 'mined', submittedHash: HASH, hash: OTHER, repriced: false, blockNumber: 3n, reverted: false })).toThrow(IllegalTransition);
   });
 });

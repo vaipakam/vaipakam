@@ -8,7 +8,7 @@
  */
 import { useState } from 'react';
 import { useAccount, useConfig } from 'wagmi';
-import { signTypedData } from 'wagmi/actions';
+import { signTypedDataFor } from '../tx/walletGuard';
 import { getSupportedChain } from '../../chain/chains';
 import { useCopy } from '../copy/useCopy';
 import { refusalFromError } from '../eligibility/refusal';
@@ -55,7 +55,7 @@ export function ProveControl({ code }: { code: string }) {
       setSigning(true);
       setRefused(null);
       try {
-        const signature = await signTypedData(config, { account: address, ...controlTypedData(c) });
+        const signature = await signTypedDataFor(config, c.chainId, { account: address, ...controlTypedData(c) });
         setAnswer(encodeProof({ challenge: c, signature }));
       } catch (e) {
         setRefused(format('prove.refused', { reason: refusalFromError(e).reason }));

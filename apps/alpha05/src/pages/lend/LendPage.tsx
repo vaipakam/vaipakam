@@ -24,6 +24,9 @@ import { TakeNowChoice } from '../../shared/post/TakeNowChoice';
 import { takeNowPicks } from '../../shared/post/takeNow';
 import { LEND_OFFER_KEY, OfferForm } from '../../shared/post/OfferForm';
 import { PostOffer } from '../../shared/post/PostOffer';
+import { KitNotice, useIntegratorLines, useKitUse } from '../../shared/kit/KitNotice';
+import { kitSeed } from '../../shared/kit/kit';
+import { ReceiptAddendum } from '../../shared/receipt/addendum';
 import { ArmTariff, tariffStoreKeys, type ArmContext } from '../../shared/post/ArmTariff';
 import type { PostAssets } from '../../shared/post/postModel';
 import type { PostDraft } from '../../shared/post/postReview';
@@ -71,7 +74,7 @@ function initialPair(chainId: number, suggested: readonly { address: Hex }[]): {
  */
 export function LendPage() {
   const { text, format } = useCopy();
-  const { status, chainId } = useAccount();
+  const { status, chainId, address } = useAccount();
   const connected = status === 'connected';
   const walletChain = getSupportedChain(chainId);
   const screenChain = useScreenChain();
@@ -118,7 +121,15 @@ export function LendPage() {
 
   const suggested = chain ? suggestedAssets(chain) : [];
   const [pairByChain, setPairByChain] = useState<Record<number, { lending: Hex | null; collateral: Hex | null }>>({});
-  const pair = chain ? (pairByChain[chain.chainId] ?? initialPair(chain.chainId, suggested)) : { lending: null, collateral: null };
+  // #3773 — a kit link's "lend this" opens on its asset, on the link's own
+  // network only.
+  const kit = useKitUse('lend', walletChain, address ?? null);
+  // A posting review states the integrator its own draft signs in, not the
+  // current hand-off's, which another link may have replaced since.
+  const draftKitLines = useIntegratorLines('lend', walletChain, draft?.integrator ?? null, address ?? null);
+  const kitSeeded = kit.handoff ? kitSeed(kit.handoff.request, null) : null;
+  const kitPair = (base: { lending: Hex | null; collateral: Hex | null }) => (kitSeeded?.action === 'lend' ? kitSeeded.pair(base) : base);
+  const pair = chain ? (pairByChain[chain.chainId] ?? kitPair(initialPair(chain.chainId, suggested))) : { lending: null, collateral: null };
   const setPair = (next: { lending: Hex | null; collateral: Hex | null }) => {
     if (!chain) return;
     setPairByChain((p) => ({ ...p, [chain.chainId]: next }));
@@ -172,7 +183,10 @@ export function LendPage() {
 
   // OFF-35 holds for an offer too: it is new exposure, so an unaccepted
   // Terms version is accepted before its review opens.
-  const reviewOffer = (next: PostDraft) => {
+  const reviewOffer = (typed: PostDraft) => {
+    // #3773 — the integrator a kit link named and the reader kept is
+    // recorded on the offer (attribution only on a lending offer).
+    const next: PostDraft = kit.integrator !== null ? { ...typed, integrator: kit.integrator } : typed;
     if (terms.data?.kind === 'needed') {
       setPendingDraft(next);
       termsGate.start(terms.data);
@@ -219,6 +233,7 @@ export function LendPage() {
           </button>
         </Notice>
       )}
+      {!flowOpen && <KitNotice action="lend" chain={walletChain} />}
       {chain && connected && walletChain !== null && !flowOpen && (
         <PairPicker key={chain.chainId} role="lender" chain={chain} meta={meta} lending={pair.lending} collateral={pair.collateral} onChange={setPair} />
       )}
@@ -356,20 +371,22 @@ export function LendPage() {
           <h2 id="lend-offer-review" className="sr-only">
             {text('lend.stepSign')}
           </h2>
-          <PostOffer
-            flowKey={LEND_OFFER_KEY}
-            draft={draft}
-            chain={walletChain}
-            own={own}
-            meta={meta}
-            terms={terms.data}
-            onEdit={() => setDraft(null)}
-            onClose={(posted) => {
-              setDraft(null);
-              setComposing(null);
-              if (posted) setTyped(null);
-            }}
-          />
+          <ReceiptAddendum lines={draftKitLines}>
+            <PostOffer
+              flowKey={LEND_OFFER_KEY}
+              draft={draft}
+              chain={walletChain}
+              own={own}
+              meta={meta}
+              terms={terms.data}
+              onEdit={() => setDraft(null)}
+              onClose={(posted) => {
+                setDraft(null);
+                setComposing(null);
+                if (posted) setTyped(null);
+              }}
+            />
+          </ReceiptAddendum>
         </section>
       )}
       {armContext !== null && own && (

@@ -59,6 +59,7 @@ function review(over: Partial<PostReview> = {}): PostReview {
     protocolShareBps: null,
     vault: ZERO,
     holding: { kind: 'erc20', funds: { balance: 10_000n, allowance: 0n }, approvalSteps: 1 },
+    transfer: { kind: 'not-asked' },
     readAt: 1,
     ...over,
   };
@@ -194,6 +195,13 @@ describe('an ERC-721 collateral (NFT-13)', () => {
     expect(postBlockers(nftReview({ owner: other }, refused), null, copy)).toEqual(['request.blockNotHeld']);
     expect(postBlockers(nftReview({ owner: account }, refused), null, copy)).toEqual(['request.blockRefused']);
     expect(postBlockers(nftReview({ owner: account }), null, copy)).toEqual([]);
+  });
+  it('#3433: refuses a token whose test move failed, saying who moved it, and builds nothing', () => {
+    const by = (who: 'protocol' | 'holder') => ({ transfer: { kind: 'refused' as const, by: who, reason: 'blocked', blockNumber: 1n } });
+    expect(postBlockers(nftReview({ owner: account }, by('holder')), null, copy)).toEqual(['request.blockTransferHolder']);
+    expect(postBlockers(nftReview({ owner: account, approved: diamond }, by('protocol')), null, copy)).toEqual(['request.blockTransferProtocol']);
+    expect(postBlockers(nftReview({ owner: account }, { transfer: { kind: 'moves', by: 'holder', blockNumber: 1n } }), null, copy)).toEqual([]);
+    expect(postBlockers(nftReview({ owner: account }, { transfer: { kind: 'unread', reason: 'down' } }), null, copy)).toEqual([]);
   });
   it('names a move of the token or its approval between reads', () => {
     expect(changedBetween(nftReview({ owner: account }), nftReview({ owner: account }), copy)).toBeNull();
