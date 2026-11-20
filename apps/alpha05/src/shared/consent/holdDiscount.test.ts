@@ -4,17 +4,18 @@ import { holdDiscountFrom } from './holdDiscount';
 
 describe('holdDiscountFrom', () => {
   it('reads no platform token as full-rate fees', () => {
-    expect(holdDiscountFrom({ state: 'ready', data: '0x0000000000000000000000000000000000000000' })).toBe('none');
+    expect(holdDiscountFrom({ state: 'ready', data: '0x0000000000000000000000000000000000000000', error: null })).toBe('none');
   });
   it('reads an installed token as a discount that can apply', () => {
-    expect(holdDiscountFrom({ state: 'ready', data: '0x00000000000000000000000000000000000000Aa' })).toBe('installed');
+    expect(holdDiscountFrom({ state: 'ready', data: '0x00000000000000000000000000000000000000Aa', error: null })).toBe('installed');
   });
   it('never claims either answer from a failed or pending read', () => {
-    expect(holdDiscountFrom({ state: 'failed', data: null })).toBe('unread');
-    expect(holdDiscountFrom({ state: 'reading', data: null })).toBe('reading');
+    expect(holdDiscountFrom({ state: 'failed', data: null, error: 'down' })).toBe('unread');
+    expect(holdDiscountFrom({ state: 'reading', data: null, error: null })).toBe('reading');
   });
-  it('keeps the last answer through a failed re-read', () => {
-    expect(holdDiscountFrom({ state: 'failed', data: '0x0000000000000000000000000000000000000000' })).toBe('none');
+  it('states an answer whose last refresh failed as unread, never as full rate', () => {
+    expect(holdDiscountFrom({ state: 'ready', data: '0x0000000000000000000000000000000000000000', error: 'timed out' })).toBe('unread');
+    expect(holdDiscountFrom({ state: 'ready', data: '0x00000000000000000000000000000000000000Aa', error: 'timed out' })).toBe('unread');
   });
 });
 

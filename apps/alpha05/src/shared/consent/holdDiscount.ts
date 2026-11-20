@@ -17,14 +17,18 @@ const ZERO = '0x0000000000000000000000000000000000000000';
  *
  * - `none`: the network reports no platform token: full-rate fees.
  * - `installed`: a token is installed; the tier and setting apply.
- * - `unread`: the read failed; the screen must not claim either.
+ * - `unread`: the read failed, or its last refresh did; the screen must not
+ *   claim either.
  * - `reading`: no answer yet.
  */
 export type HoldDiscount = 'reading' | 'none' | 'installed' | 'unread';
 
 /** The state from the token read, kept pure so it can be tested. */
-export function holdDiscountFrom(read: Pick<ChainRead<Hex>, 'state' | 'data'>): HoldDiscount {
-  if (read.data !== null) return read.data.toLowerCase() === ZERO ? 'none' : 'installed';
+export function holdDiscountFrom(read: Pick<ChainRead<Hex>, 'state' | 'data' | 'error'>): HoldDiscount {
+  // A refresh that failed leaves the last answer in place with an error. That
+  // answer is no longer a confirmed current one (the token may have been
+  // installed meanwhile), so it is stated unread, never as full rate.
+  if (read.data !== null) return read.error !== null ? 'unread' : read.data.toLowerCase() === ZERO ? 'none' : 'installed';
   return read.state === 'failed' ? 'unread' : 'reading';
 }
 
