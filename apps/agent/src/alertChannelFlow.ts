@@ -117,12 +117,19 @@ const DECIDE_ATTEMPTS = 3;
  * nothing and the request reads and decides again. Returns 'unknown' when any row's protection could not be
  * read, or the rows kept moving: then nothing is changed at all, so neither a
  * failed read nor a race ever silences a protected account.
+ *
+ * `issuedAt` is when the wallet signed the request (#3836). The commit
+ * applies it only when no later-signed link or unlink request was applied
+ * to its scope, and raises the scope's mark in the same step: an unlink for
+ * every chain raises the mark on every chain. 'superseded' means nothing
+ * was changed.
  */
 export async function requestUnlink(
   deps: ChannelDeps,
   wallet: string,
   chainId: number | null,
-): Promise<{ kind: 'done'; pending: PendingReport[] } | { kind: 'unknown' }> {
+  issuedAt: number,
+): Promise<{ kind: 'done'; pending: PendingReport[] } | { kind: 'unknown' } | { kind: 'superseded' }> {
   const w = wallet.toLowerCase();
   for (let attempt = 0; attempt < DECIDE_ATTEMPTS; attempt++) {
     const { observed, rows } = await linkedRows(deps.state, deps.locales, w, chainId);
@@ -148,7 +155,9 @@ export async function requestUnlink(
       ),
       { op: 'revokeCodes', chainId },
     ];
-    const result = await deps.state.commit(w, chainId, observed, ops, deps.now);
+    const result = await deps.state.commit(w, chainId, observed, ops, deps.now, { issuedAt, scope: chainId });
+    // A later-signed request was already applied: nothing was written.
+    if (!result.ok && result.superseded) return { kind: 'superseded' };
     // The rows moved after the read: nothing was written; decide again.
     if (!result.ok) continue;
     // One id per waiting row, in order.

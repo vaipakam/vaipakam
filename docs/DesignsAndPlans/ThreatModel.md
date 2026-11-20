@@ -192,6 +192,14 @@ lands.
   copy with a tier. The two lists are matched by contract address and a
   disagreement shows the token as unverified; the tier is display only, so
   the protocol's own price and liquidity checks still decide every loan.
+- **A pending alert request's key in browser storage** (accepted, #3836).
+  A signed alert request names a key held by the requesting browser, and a
+  request a wallet has not answered yet keeps that key in the app's browser
+  storage for up to seven days. Any script running on the app's origin (an
+  injected script, a hostile browser extension) can read it there. That is
+  the same trust the rest of the browser session already carries; the
+  data-rights export leaves the key out, and finishing, discarding or
+  expiring the request removes it.
 
 ## 6. Keeping this current
 

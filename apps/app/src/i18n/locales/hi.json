@@ -396,7 +396,22 @@
       "paidAgreed": "सहेजा गया: आपने {{chain}} पर प्रति लोन पक्ष अधिकतम {{fee}} VPFI देने की सहमति दी है।",
       "paidWithdrawn": "वापस लिया गया: {{chain}} पर सशुल्क Push अलर्ट का शुल्क आपसे नहीं लिया जा सकता।",
       "signatureCheckUnavailable": "आपकी settings save नहीं हुईं — alert service अभी आपका signature check नहीं कर सकी। कृपया थोड़ी देर बाद फिर कोशिश करें।",
-      "requestAlreadyUsed": "आपकी settings save नहीं हुईं — वह signature पहले ही इस्तेमाल हो चुका है। नया request sign करने के लिए फिर से save करें।"
+      "requestAlreadyUsed": "आपकी settings save नहीं हुईं — वह signature पहले ही इस्तेमाल हो चुका है। नया request sign करने के लिए फिर से save करें।",
+      "requestUsedAgain": "कुछ नहीं बदला: वह signed request पहले ही इस्तेमाल हो चुका है। नया sign करने के लिए फिर से शुरू करें।",
+      "requestSuperseded": "कुछ नहीं बदला: इस बदलाव का बाद में sign किया गया request पहले ही लागू हो चुका है। अगर आप अब भी यह चाहते हैं तो फिर से शुरू करें।",
+      "requestCheckUnavailable": "अभी कुछ नहीं बदला: alert service अभी signature जाँच नहीं सकी। थोड़ी देर बाद request फिर से पूरा करें।",
+      "serviceUpgrading": "कुछ save नहीं हुआ: alert service अपग्रेड हो रही है। थोड़ी देर बाद फिर कोशिश करें।",
+      "multisigNote": "हर request में एक key का नाम होता है जो सिर्फ़ इसी browser के पास है, इसलिए सिर्फ़ यही browser उसे पूरा कर सकता है। जिस wallet को कई owners की मंज़ूरी चाहिए, उसके पास {{days}} दिन तक हैं; उसके बाद request expire हो जाता है और आप फिर से शुरू करते हैं।",
+      "pendingTitle": "एक request आपके wallet का इंतज़ार कर रहा है",
+      "pendingBody": "{{action}}: इस browser में {{started}} को शुरू हुआ। सिर्फ़ यही browser इसे {{expires}} तक पूरा कर सकता है। पूरा करने पर आपके wallet से वही मंज़ूरी फिर माँगी जाती है, फिर इसे भेजा जाता है।",
+      "pendingFinish": "पूरा करें",
+      "pendingDiscard": "हटा दें",
+      "pendingKindLink": "Telegram जोड़ें",
+      "pendingKindUnlink": "Telegram हटाएँ",
+      "pendingKindTest": "test alert भेजें",
+      "pendingKindSave": "alert settings save करें",
+      "awaitingOwners": "इस wallet के दूसरे owners के request approve करने का इंतज़ार है। आप यह page खुला रख सकते हैं, या इसे बंद करके बाद में यहीं request पूरा कर सकते हैं।",
+      "walletMovedWhileAwaiting": "कुछ नहीं भेजा गया: approval के इंतज़ार के दौरान जुड़ा हुआ wallet या network बदल गया। Request रखा गया है; इसे पूरा करने के लिए उसी network पर वही wallet फिर से जोड़ें।"
     },
     "notifications": {
       "bellLabel": "Notifications",

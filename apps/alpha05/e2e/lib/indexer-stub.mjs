@@ -1297,7 +1297,9 @@ const server = http.createServer(async (req, res) => {
         }
         const now = Math.floor(Date.now() / 1000);
         if ((agent.lastTest.get(w) ?? 0) > now - 60) {
-          json(res, 429, { error: 'rate-limited' });
+          // The agent names this limit apart from `rate-limited` (#3836):
+          // it applies after the request was recorded as used.
+          json(res, 429, { error: 'test-alert-cooldown' });
           return;
         }
         agent.lastTest.set(w, now);

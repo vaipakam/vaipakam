@@ -9,8 +9,10 @@ import {
   buildTelegramUnlinkMessage,
   parseSignedLinkRequest,
   verifySignedLinkRequest,
+  LINK_SIGNATURE_CHAIN_MAX_AGE_SECONDS,
   LINK_SIGNATURE_MAX_AGE_SECONDS,
 } from '../src/linkAuth';
+import { requestKeyHash } from '@vaipakam/lib/alertsMessage';
 
 // Anvil's first two well-known dev keys — fine in a test, never a
 // real key.
@@ -23,6 +25,10 @@ const ACCOUNT_B: PrivateKeyAccount = privateKeyToAccount(
 
 const CHAIN_ID = 84532;
 const NOW = 1_750_000_000;
+/** #3836 — the request key the "browser" drew, and the hash the signed
+ *  text names. */
+const KEY = `0x${'ab'.repeat(32)}` as const;
+const KEY_HASH = requestKeyHash(KEY);
 
 /** Fast-path cases need no chains; a checker that throws proves the
  *  chain is never consulted for a valid plain-ECDSA signature. */
@@ -48,9 +54,9 @@ async function signedBody(
   issuedAt: number,
 ): Promise<Record<string, unknown>> {
   const signature = await account.signMessage({
-    message: buildTelegramLinkMessage(wallet, CHAIN_ID, issuedAt),
+    message: buildTelegramLinkMessage(wallet, CHAIN_ID, issuedAt, KEY_HASH),
   });
-  return { wallet, chain_id: CHAIN_ID, issuedAt, signature };
+  return { wallet, chain_id: CHAIN_ID, issuedAt, signature, requestKey: KEY };
 }
 
 describe('parseSignedLinkRequest', () => {
@@ -119,13 +125,14 @@ describe('verifySignedLinkRequest', () => {
 
   it('accepts the owner signature for the unlink action', async () => {
     const signature = await ACCOUNT_A.signMessage({
-      message: buildTelegramUnlinkMessage(ACCOUNT_A.address, CHAIN_ID, NOW),
+      message: buildTelegramUnlinkMessage(ACCOUNT_A.address, CHAIN_ID, NOW, KEY_HASH),
     });
     const parsed = parseSignedLinkRequest({
       wallet: ACCOUNT_A.address,
       chain_id: CHAIN_ID,
       issuedAt: NOW,
       signature,
+      requestKey: KEY,
     });
     if (!parsed.ok) throw new Error('parse failed');
     const v = await verifySignedLinkRequest(parsed.req, NOW, EMPTY_ENV, 'unlink', NEVER);
@@ -134,13 +141,14 @@ describe('verifySignedLinkRequest', () => {
 
   it('accepts the owner signature for a settings save it names', async () => {
     const signature = await ACCOUNT_A.signMessage({
-      message: buildAlertSettingsMessage(ACCOUNT_A.address, CHAIN_ID, SETTINGS, NOW),
+      message: buildAlertSettingsMessage(ACCOUNT_A.address, CHAIN_ID, SETTINGS, NOW, KEY_HASH),
     });
     const parsed = parseSignedLinkRequest({
       wallet: ACCOUNT_A.address,
       chain_id: CHAIN_ID,
       issuedAt: NOW,
       signature,
+      requestKey: KEY,
     });
     if (!parsed.ok) throw new Error('parse failed');
     const v = await verifySignedLinkRequest(parsed.req, NOW, EMPTY_ENV, SAVE_SETTINGS, NEVER);
@@ -151,13 +159,14 @@ describe('verifySignedLinkRequest', () => {
     // The signature covers what the save changes, so a captured one
     // cannot carry other bands, another due-date choice or a Push opt-in.
     const signature = await ACCOUNT_A.signMessage({
-      message: buildAlertSettingsMessage(ACCOUNT_A.address, CHAIN_ID, SETTINGS, NOW),
+      message: buildAlertSettingsMessage(ACCOUNT_A.address, CHAIN_ID, SETTINGS, NOW, KEY_HASH),
     });
     const parsed = parseSignedLinkRequest({
       wallet: ACCOUNT_A.address,
       chain_id: CHAIN_ID,
       issuedAt: NOW,
       signature,
+      requestKey: KEY,
     });
     if (!parsed.ok) throw new Error('parse failed');
     for (const settings of [
@@ -179,13 +188,14 @@ describe('verifySignedLinkRequest', () => {
 
   it('accepts the owner signature for the test-alert action', async () => {
     const signature = await ACCOUNT_A.signMessage({
-      message: buildTelegramTestMessage(ACCOUNT_A.address, CHAIN_ID, NOW),
+      message: buildTelegramTestMessage(ACCOUNT_A.address, CHAIN_ID, NOW, KEY_HASH),
     });
     const parsed = parseSignedLinkRequest({
       wallet: ACCOUNT_A.address,
       chain_id: CHAIN_ID,
       issuedAt: NOW,
       signature,
+      requestKey: KEY,
     });
     if (!parsed.ok) throw new Error('parse failed');
     const v = await verifySignedLinkRequest(parsed.req, NOW, EMPTY_ENV, 'test-alert', NEVER);
@@ -196,16 +206,16 @@ describe('verifySignedLinkRequest', () => {
     // The messages differ on purpose: a captured signature for one
     // action must never authorise another.
     const linkSig = await ACCOUNT_A.signMessage({
-      message: buildTelegramLinkMessage(ACCOUNT_A.address, CHAIN_ID, NOW),
+      message: buildTelegramLinkMessage(ACCOUNT_A.address, CHAIN_ID, NOW, KEY_HASH),
     });
     const unlinkSig = await ACCOUNT_A.signMessage({
-      message: buildTelegramUnlinkMessage(ACCOUNT_A.address, CHAIN_ID, NOW),
+      message: buildTelegramUnlinkMessage(ACCOUNT_A.address, CHAIN_ID, NOW, KEY_HASH),
     });
     const saveSig = await ACCOUNT_A.signMessage({
-      message: buildAlertSettingsMessage(ACCOUNT_A.address, CHAIN_ID, SETTINGS, NOW),
+      message: buildAlertSettingsMessage(ACCOUNT_A.address, CHAIN_ID, SETTINGS, NOW, KEY_HASH),
     });
     const testSig = await ACCOUNT_A.signMessage({
-      message: buildTelegramTestMessage(ACCOUNT_A.address, CHAIN_ID, NOW),
+      message: buildTelegramTestMessage(ACCOUNT_A.address, CHAIN_ID, NOW, KEY_HASH),
     });
     for (const [signature, action] of [
       [linkSig, 'unlink'],
@@ -221,6 +231,7 @@ describe('verifySignedLinkRequest', () => {
         chain_id: CHAIN_ID,
         issuedAt: NOW,
         signature,
+        requestKey: KEY,
       });
       if (!parsed.ok) throw new Error('parse failed');
       const v = await verifySignedLinkRequest(parsed.req, NOW, CHAIN_ENV, action, DENY);
@@ -232,13 +243,14 @@ describe('verifySignedLinkRequest', () => {
     // Binding chain_id into the message means a signature captured
     // for one chain cannot be replayed to link another chain's row.
     const signature = await ACCOUNT_A.signMessage({
-      message: buildTelegramLinkMessage(ACCOUNT_A.address, 1, NOW),
+      message: buildTelegramLinkMessage(ACCOUNT_A.address, 1, NOW, KEY_HASH),
     });
     const parsed = parseSignedLinkRequest({
       wallet: ACCOUNT_A.address,
       chain_id: CHAIN_ID,
       issuedAt: NOW,
       signature,
+      requestKey: KEY,
     });
     if (!parsed.ok) throw new Error('parse failed');
     const v = await verifySignedLinkRequest(parsed.req, NOW, CHAIN_ENV, 'link', DENY);
@@ -250,13 +262,14 @@ describe('verifySignedLinkRequest', () => {
     // owned by B) — recovery mismatches, ERC-1271 on the SIGNED
     // chain_id confirms.
     const signature = await ACCOUNT_B.signMessage({
-      message: buildTelegramLinkMessage(ACCOUNT_A.address, CHAIN_ID, NOW),
+      message: buildTelegramLinkMessage(ACCOUNT_A.address, CHAIN_ID, NOW, KEY_HASH),
     });
     const parsed = parseSignedLinkRequest({
       wallet: ACCOUNT_A.address,
       chain_id: CHAIN_ID,
       issuedAt: NOW,
       signature,
+      requestKey: KEY,
     });
     if (!parsed.ok) throw new Error('parse failed');
     const v = await verifySignedLinkRequest(parsed.req, NOW, CHAIN_ENV, 'link', CONFIRM);
@@ -281,13 +294,14 @@ describe('verifySignedLinkRequest', () => {
     // The signed chain has no configured RPC here — the Worker
     // cannot check, and must not call the signature invalid.
     const signature = await ACCOUNT_B.signMessage({
-      message: buildTelegramLinkMessage(ACCOUNT_A.address, CHAIN_ID, NOW),
+      message: buildTelegramLinkMessage(ACCOUNT_A.address, CHAIN_ID, NOW, KEY_HASH),
     });
     const parsed = parseSignedLinkRequest({
       wallet: ACCOUNT_A.address,
       chain_id: CHAIN_ID,
       issuedAt: NOW,
       signature,
+      requestKey: KEY,
     });
     if (!parsed.ok) throw new Error('parse failed');
     const v = await verifySignedLinkRequest(parsed.req, NOW, EMPTY_ENV);
@@ -295,6 +309,75 @@ describe('verifySignedLinkRequest', () => {
     if (!v.ok) {
       expect(v.status).toBe(503);
       expect(v.reason).toContain('unavailable');
+    }
+  });
+});
+
+describe('#3836 — a contract-approved request', () => {
+  /** A stand-in Safe at ACCOUNT_A: it approves exactly the messages its
+   *  owners approved, as ERC-1271 does, whatever the signature bytes. */
+  function safeApproving(...approved: string[]): ChainSigChecker {
+    return async (_rpc, _chain, _wallet, message) => approved.includes(message);
+  }
+  const OTHER_KEY = `0x${'cd'.repeat(32)}` as const;
+
+  async function safeBody(issuedAt: number, requestKey: `0x${string}` = KEY) {
+    // The bytes are an owner's signature, not the wallet's: recovery
+    // mismatches and the chain decides.
+    const signature = await ACCOUNT_B.signMessage({ message: 'owner approval' });
+    const parsed = parseSignedLinkRequest({
+      wallet: ACCOUNT_A.address,
+      chain_id: CHAIN_ID,
+      issuedAt,
+      signature,
+      requestKey,
+    });
+    if (!parsed.ok) throw new Error('parse failed');
+    return parsed.req;
+  }
+
+  it('is accepted up to seven days after it was made', async () => {
+    const issuedAt = NOW - LINK_SIGNATURE_CHAIN_MAX_AGE_SECONDS;
+    const safe = safeApproving(buildTelegramLinkMessage(ACCOUNT_A.address, CHAIN_ID, issuedAt, KEY_HASH));
+    const v = await verifySignedLinkRequest(await safeBody(issuedAt), NOW, CHAIN_ENV, 'link', safe);
+    expect(v).toEqual({ ok: true, via: 'chain' });
+  });
+
+  it('is stale a second later, and never reaches the chain', async () => {
+    const issuedAt = NOW - LINK_SIGNATURE_CHAIN_MAX_AGE_SECONDS - 1;
+    const v = await verifySignedLinkRequest(await safeBody(issuedAt), NOW, CHAIN_ENV, 'link', NEVER);
+    expect(v).toMatchObject({ ok: false, status: 400 });
+  });
+
+  it('may not be dated more than ten minutes ahead (the window is one-sided)', async () => {
+    const issuedAt = NOW + LINK_SIGNATURE_MAX_AGE_SECONDS + 1;
+    const v = await verifySignedLinkRequest(await safeBody(issuedAt), NOW, CHAIN_ENV, 'link', NEVER);
+    expect(v).toMatchObject({ ok: false, status: 400 });
+  });
+
+  it("is refused without the requesting browser's key, though the approval is public", async () => {
+    // Anyone can read a Safe's approval; only the browser that drew the
+    // key can present it. A different key names a different message,
+    // which the Safe never approved.
+    const safe = safeApproving(buildTelegramLinkMessage(ACCOUNT_A.address, CHAIN_ID, NOW, KEY_HASH));
+    expect((await verifySignedLinkRequest(await safeBody(NOW), NOW, CHAIN_ENV, 'link', safe)).ok).toBe(true);
+    const v = await verifySignedLinkRequest(await safeBody(NOW, OTHER_KEY), NOW, CHAIN_ENV, 'link', safe);
+    expect(v).toMatchObject({ ok: false, status: 401 });
+  });
+
+  it("keeps ten minutes for a signature that recovers to the wallet's own key", async () => {
+    // Whatever code sits at the address: recovery to the wallet decides.
+    const issuedAt = NOW - LINK_SIGNATURE_MAX_AGE_SECONDS - 1;
+    const parsed = parseSignedLinkRequest(await signedBody(ACCOUNT_A, ACCOUNT_A.address, issuedAt));
+    if (!parsed.ok) throw new Error('parse failed');
+    const v = await verifySignedLinkRequest(parsed.req, NOW, CHAIN_ENV, 'link', CONFIRM);
+    expect(v).toMatchObject({ ok: false, status: 400 });
+  });
+
+  it('refuses a body without a well-shaped request key', async () => {
+    const body = await signedBody(ACCOUNT_A, ACCOUNT_A.address, NOW);
+    for (const requestKey of [undefined, '0x1234', KEY.toUpperCase().replace('0X', '0x')]) {
+      expect(parseSignedLinkRequest({ ...body, requestKey }).ok).toBe(false);
     }
   });
 });
