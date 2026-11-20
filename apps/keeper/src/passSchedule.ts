@@ -59,6 +59,7 @@ import { PASS_CADENCE_SEC as REWARD_STAGING_UPKEEP_CADENCE_SEC, runRewardStaging
 import { PASS_CADENCE_SEC as EXPIRED_TEARDOWN_CADENCE_SEC, runExpiredTeardown } from './expiredTeardown';
 import { PASS_CADENCE_SEC as VAULT_BEACON_UPKEEP_CADENCE_SEC, runVaultBeaconUpkeep } from './vaultBeaconUpkeep';
 import { runKeeperFeeBalance } from './keeperFeeBalance';
+import { runTermsNotice } from './termsNotice';
 import { PASS_CADENCE_SEC as PRICE_CHECKPOINT_CADENCE_SEC, runPriceCheckpoint } from './priceCheckpoint';
 import { PASS_CADENCE_SEC as ASSET_RANKINGS_CADENCE_SEC, runAssetRankings } from './assetRankings';
 
@@ -129,6 +130,15 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     cadenceMinutes: 1,
     why: 'warns ops when the keeper wallet cannot pay for its liquidations; fees jump in the same crash that makes liquidations due, so every tick (#3365)',
     run: runKeeperFeeBalance,
+  },
+  {
+    name: 'termsNotice',
+    // EVERY TICK because every staggered minute is taken; with no Terms
+    // announcement pending a run is one chain read, and while one is pending
+    // the pass scans at most every 15 minutes on its own cursor (#3734).
+    cadenceMinutes: 1,
+    why: 'alerts committed wallets to an announced Terms change; one read a tick, a throttled scan while one is pending (#3734)',
+    run: runTermsNotice,
   },
   {
     name: 'matcher',

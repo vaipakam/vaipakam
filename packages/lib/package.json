@@ -245,6 +245,10 @@
     "./telegramAlerts/standingCopy": {
       "types": "./src/telegramAlerts/standingCopy.ts",
       "default": "./src/telegramAlerts/standingCopy.ts"
+    },
+    "./telegramAlerts/termsCopy": {
+      "types": "./src/telegramAlerts/termsCopy.ts",
+      "default": "./src/telegramAlerts/termsCopy.ts"
     }
   },
   "scripts": {

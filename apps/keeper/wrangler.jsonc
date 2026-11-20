@@ -485,6 +485,12 @@
   //     two hours' checkpoints; without them every forced sale uses the full
   //     slippage cap. Simulated first. Permissionless; moves no value and
   //     pays only gas. Ships unset.
+  //   - TERMS_NOTICE_ENABLED — 'true' arms the #3734 Terms announcement
+  //     alert: while a material Terms change is announced and pending, the
+  //     wallets with open offers, Auto-lend or standing instructions that
+  //     will not be current when it comes into force are alerted once each,
+  //     through the agent and Push. Off-chain only; sends no transaction.
+  //     Ships unset.
   //   - ASSET_RANKINGS_ENABLED — 'true' arms the #3446 asset rankings pass,
   //     hourly at :56: once a UTC day per source and mainnet chain, the top
   //     500 tokens by market-cap rank from two public market-data sources,

@@ -28,6 +28,7 @@ import {
   type StandingInstruction,
   type StandingSkipReason,
 } from './standingCopy';
+import { TERMS_HOLDS, termsAnnouncedText, type TermsHold } from './termsCopy';
 
 /** The LOCK outcomes the keeper reports (`protectedTelegram.ts`). */
 export const LOCK_OUTCOMES = ['locked', 'locked-again', 'already-locked', 'not-protected', 'not-allowed', 'expired', 'refused'] as const;
@@ -57,7 +58,12 @@ export type TelegramAlert =
   /** #3681 — an instruction landed and changed nothing
    *  (`StandingInstructionSkipped`). `missing` is the reserve's shortfall when
    *  the reason is a short reserve and the keeper could write it out. */
-  | { kind: 'standingSkipped'; loanId: number; instruction: StandingInstruction; reason: StandingSkipReason; missing: string | null };
+  | { kind: 'standingSkipped'; loanId: number; instruction: StandingInstruction; reason: StandingSkipReason; missing: string | null }
+  /** #3734 — a material change to the Terms was announced and this wallet,
+   *  which has not accepted `version`, holds commitments that stop filling
+   *  from `effectiveAt` (unix seconds) until it does. `holds` names them, in
+   *  {@link TERMS_HOLDS} order, at least one. */
+  | { kind: 'termsAnnounced'; version: number; effectiveAt: number; holds: TermsHold[] };
 
 /** A message with where it goes. */
 export interface AddressedAlert {
@@ -165,6 +171,14 @@ function parseAlert(raw: unknown): TelegramAlert | null {
       if (missing !== null && a.reason !== 'reserveShort') return null;
       return { kind: 'standingSkipped', loanId: a.loanId, instruction: a.instruction, reason: a.reason as StandingSkipReason, missing };
     }
+    case 'termsAnnounced': {
+      if (!isInt(a.version, 1, 2 ** 32 - 1) || !isInt(a.effectiveAt, 1, 2 ** 40)) return null;
+      if (!Array.isArray(a.holds) || a.holds.length === 0) return null;
+      // Every hold known, none twice, in catalogue order.
+      const holds = TERMS_HOLDS.filter((h) => (a.holds as unknown[]).includes(h));
+      if (holds.length !== a.holds.length) return null;
+      return { kind: 'termsAnnounced', version: a.version, effectiveAt: a.effectiveAt, holds };
+    }
     default:
       return null;
   }
@@ -263,6 +277,8 @@ export function renderTelegramAlert(m: AddressedAlert, ctx: RenderContext): { te
         title: s.pushTitle,
       };
     }
+    case 'termsAnnounced':
+      return termsAnnouncedText(ctx.locale, ctx.chainName, a.version, utcMinute(a.effectiveAt), a.holds, `${ctx.appOrigin}/`);
   }
 }
 

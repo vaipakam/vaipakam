@@ -338,6 +338,11 @@ interface BaseEnv {
    *  trust tiers. Off-chain only: reads two public APIs, sends no
    *  transaction. */
   ASSET_RANKINGS_ENABLED?: string;
+  /** #3734 — arms the Terms announcement alert (`termsNotice.ts`): owner
+   *  alerts to wallets with open offers, Auto-lend or standing instructions
+   *  that have not accepted an announced material change. Off-chain only,
+   *  sends no transaction. */
+  TERMS_NOTICE_ENABLED?: string;
 
   // Protocol upkeep pass (#2984). `secret_text` like the flags above.
   /** 'true' arms the protocol upkeep pass (in addition to KEEPER_ENABLED):
@@ -666,6 +671,7 @@ export const PLAIN_VAR_KEYS = [
   'KEEPER_FEE_RESERVE_LIQUIDATION_GAS',
   'PRICE_CHECKPOINT_ENABLED',
   'ASSET_RANKINGS_ENABLED',
+  'TERMS_NOTICE_ENABLED',
   'TIER_LTV_REFRESH_AFTER_SEC',
   'REWARD_ZEROED_DAY_ENABLED',
   'REWARD_ZEROED_DAY_WINDOW_DAYS',
@@ -882,6 +888,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     KEEPER_FEE_RESERVE_LIQUIDATION_GAS: raw.KEEPER_FEE_RESERVE_LIQUIDATION_GAS,
     PRICE_CHECKPOINT_ENABLED: raw.PRICE_CHECKPOINT_ENABLED,
     ASSET_RANKINGS_ENABLED: raw.ASSET_RANKINGS_ENABLED,
+    TERMS_NOTICE_ENABLED: raw.TERMS_NOTICE_ENABLED,
     TIER_LTV_REFRESH_AFTER_SEC: raw.TIER_LTV_REFRESH_AFTER_SEC,
     REWARD_ZEROED_DAY_ENABLED: raw.REWARD_ZEROED_DAY_ENABLED,
     REWARD_ZEROED_DAY_WINDOW_DAYS: raw.REWARD_ZEROED_DAY_WINDOW_DAYS,
