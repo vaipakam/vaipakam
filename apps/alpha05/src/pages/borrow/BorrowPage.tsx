@@ -35,6 +35,7 @@ import { BorrowNowFlow, type BorrowNowRest } from '../../shared/instant/BorrowNo
 import { restRequestInput, type BorrowNowTerms } from '../../shared/instant/borrowNow';
 import { ReceiptAddendum } from '../../shared/receipt/addendum';
 import { KitNotice, useIntegratorLines, useKitUse } from '../../shared/kit/KitNotice';
+import { kitSeed } from '../../shared/kit/kit';
 import { BorrowFor } from './BorrowFor';
 
 type Hex = `0x${string}`;
@@ -107,8 +108,8 @@ export function BorrowPage() {
   // A posting review states the integrator its own draft signs in, not the
   // current hand-off's, which another link may have replaced since.
   const draftKitLines = useIntegratorLines('borrow', walletChain, draft?.integrator ?? null, address ?? null);
-  const kitPair = (base: { lending: Hex | null; collateral: Hex | null }) =>
-    kit.handoff?.request.action === 'borrow' ? { lending: kit.handoff.request.lendingAsset ?? base.lending, collateral: kit.handoff.request.asset } : base;
+  const kitSeeded = kit.handoff ? kitSeed(kit.handoff.request, null) : null;
+  const kitPair = (base: { lending: Hex | null; collateral: Hex | null }) => (kitSeeded?.action === 'borrow' ? kitSeeded.pair(base) : base);
   const pair = chain ? (pairByChain[chain.chainId] ?? kitPair(initialPair(chain.chainId, suggested))) : { lending: null, collateral: null };
   const setPair = (next: { lending: Hex | null; collateral: Hex | null }) => {
     if (!chain) return;

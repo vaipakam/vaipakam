@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import { getSupportedChain } from '../../chain/chains';
 import { useCopy } from '../../shared/copy/useCopy';
-import { KIT_HANDOFF_KEY, kitLendInputs, kitRequestInput, kitRoute, readKitLink, type KitHandoff } from '../../shared/kit/kit';
+import { KIT_HANDOFF_KEY, kitRoute, kitSeed, readKitLink, type KitHandoff } from '../../shared/kit/kit';
 import { LEND_OFFER_KEY, REQUEST_KEY } from '../../shared/post/OfferForm';
 import { AUTOLEND_KEY } from '../../shared/autolend/AutoLendForm';
 import type { AutoLendInput } from '../../shared/autolend/autoLend';
@@ -71,14 +71,14 @@ export function KitPage() {
   const otherNetwork = connected && chainId !== r.chainId;
   const entryText = integrator !== null ? entryLine(entry, format) : null;
   const decimals = r.action === 'lend' ? (meta.data?.[r.asset.toLowerCase()]?.decimals ?? null) : null;
-  const lendInputs = kitLendInputs(r, decimals);
+  const seed = kitSeed(r, decimals);
+  const lendInputs = seed.action === 'lend' ? seed : null;
   const go = () => {
     setHandoff({ request: r, integrator: keep ? integrator : null });
-    const seeded = kitRequestInput(r);
-    if (seeded !== null) setRequestInput(seeded);
-    if (lendInputs !== null) {
-      setLendOfferInput(lendInputs.offer);
-      setAutoLendInput(lendInputs.autoLend);
+    if (seed.action === 'borrow') setRequestInput(seed.request);
+    if (seed.action === 'lend') {
+      setLendOfferInput(seed.offer);
+      setAutoLendInput(seed.autoLend);
     }
     navigate(kitRoute(r));
   };

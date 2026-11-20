@@ -25,6 +25,7 @@ import { takeNowPicks } from '../../shared/post/takeNow';
 import { LEND_OFFER_KEY, OfferForm } from '../../shared/post/OfferForm';
 import { PostOffer } from '../../shared/post/PostOffer';
 import { KitNotice, useIntegratorLines, useKitUse } from '../../shared/kit/KitNotice';
+import { kitSeed } from '../../shared/kit/kit';
 import { ReceiptAddendum } from '../../shared/receipt/addendum';
 import { ArmTariff, tariffStoreKeys, type ArmContext } from '../../shared/post/ArmTariff';
 import type { PostAssets } from '../../shared/post/postModel';
@@ -126,7 +127,8 @@ export function LendPage() {
   // A posting review states the integrator its own draft signs in, not the
   // current hand-off's, which another link may have replaced since.
   const draftKitLines = useIntegratorLines('lend', walletChain, draft?.integrator ?? null, address ?? null);
-  const kitPair = (base: { lending: Hex | null; collateral: Hex | null }) => (kit.handoff?.request.action === 'lend' ? { ...base, lending: kit.handoff.request.asset } : base);
+  const kitSeeded = kit.handoff ? kitSeed(kit.handoff.request, null) : null;
+  const kitPair = (base: { lending: Hex | null; collateral: Hex | null }) => (kitSeeded?.action === 'lend' ? kitSeeded.pair(base) : base);
   const pair = chain ? (pairByChain[chain.chainId] ?? kitPair(initialPair(chain.chainId, suggested))) : { lending: null, collateral: null };
   const setPair = (next: { lending: Hex | null; collateral: Hex | null }) => {
     if (!chain) return;

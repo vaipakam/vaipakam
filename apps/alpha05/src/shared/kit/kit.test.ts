@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { kitLink } from '@vaipakam/lend-kit';
+import { kitLink, type BorrowRequest, type KitRequest, type LendRequest, type RentRequest } from '@vaipakam/lend-kit';
 import { buildAcceptTerms } from '../offers/acceptTerms';
-import { kitLendInputs, kitRequestInput, kitRoute, readIntegratorEntry, readIntegratorShare, readKitLink, shareApplies } from './kit';
+import { kitRoute, kitSeed, type KitSeed, readIntegratorEntry, readIntegratorShare, readKitLink, shareApplies } from './kit';
 
 const A = '0x1111111111111111111111111111111111111111' as const;
 const I = '0x2222222222222222222222222222222222222222' as const;
@@ -95,30 +95,66 @@ describe('the integrator in the signed terms', () => {
   });
 });
 
-describe('kitRequestInput (#3773)', () => {
-  it('carries an NFT link’s token id and quantity into a fresh borrow form', () => {
-    expect(kitRequestInput({ action: 'borrow', chainId: 1, asset: A, tokenId: 42n, quantity: 3n })).toMatchObject({ tokenId: '42', collateral: '3' });
-    const plain = kitRequestInput({ action: 'borrow', chainId: 1, asset: A });
-    expect(plain).toMatchObject({ tokenId: '', collateral: '' });
+describe('kitSeed (#3773)', () => {
+  const B = '0x4444444444444444444444444444444444444444' as const;
+  const base = { lending: B, collateral: B };
+  it('carries an NFT link’s token id and quantity into a fresh borrow form, on its pair', () => {
+    const s = kitSeed({ action: 'borrow', chainId: 1, asset: A, tokenId: 42n, quantity: 3n, lendingAsset: D }, null);
+    if (s.action !== 'borrow') throw new Error('borrow seed');
+    expect(s.request).toMatchObject({ tokenId: '42', collateral: '3' });
+    expect(s.pair(base)).toEqual({ lending: D, collateral: A });
+    const plain = kitSeed({ action: 'borrow', chainId: 1, asset: A }, null);
+    if (plain.action !== 'borrow') throw new Error('borrow seed');
+    expect(plain.request).toMatchObject({ tokenId: '', collateral: '' });
+    expect(plain.pair(base)).toEqual({ lending: B, collateral: A });
   });
-  it('leaves other actions’ forms alone', () => {
-    expect(kitRequestInput({ action: 'rent', chainId: 1, asset: A, tokenId: 1n })).toBeNull();
+  it('types a lend link’s amount into both lending forms in the token’s own units', () => {
+    const s = kitSeed({ action: 'lend', chainId: 1, asset: A, amount: 5_250_000n }, 6);
+    if (s.action !== 'lend') throw new Error('lend seed');
+    expect(s.amountFilled).toBe(true);
+    expect(s.offer.amount).toBe('5.25');
+    expect(s.autoLend.amount).toBe('5.25');
+    expect(s.pair(base)).toEqual({ lending: A, collateral: B });
+  });
+  it('leaves the amount blank, and says so, while the decimals are unread', () => {
+    const s = kitSeed({ action: 'lend', chainId: 1, asset: A, amount: 1n }, null);
+    if (s.action !== 'lend') throw new Error('lend seed');
+    expect(s.amountFilled).toBe(false);
+    expect(s.offer.amount).toBe('');
+  });
+  it('opens a rent link on its token', () => {
+    expect(kitSeed({ action: 'rent', chainId: 1, asset: A, tokenId: 7n }, null)).toEqual({ action: 'rent', token: { asset: A, tokenId: 7n } });
   });
 });
 
-describe('kitLendInputs (#3773)', () => {
-  it('types a lend link’s amount into both lending forms in the token’s own units', () => {
-    const r = kitLendInputs({ action: 'lend', chainId: 1, asset: A, amount: 5_250_000n }, 6);
-    expect(r?.amountFilled).toBe(true);
-    expect(r?.offer.amount).toBe('5.25');
-    expect(r?.autoLend.amount).toBe('5.25');
-  });
-  it('leaves the amount blank, and says so, while the decimals are unread', () => {
-    const r = kitLendInputs({ action: 'lend', chainId: 1, asset: A, amount: 1n }, null);
-    expect(r?.amountFilled).toBe(false);
-    expect(r?.offer.amount).toBe('');
-  });
-  it('opens no lending form for any other action', () => {
-    expect(kitLendInputs({ action: 'borrow', chainId: 1, asset: A }, 6)).toBeNull();
-  });
+/**
+ * The class guard: every field a kit link carries reaches what the app fills
+ * in. Each sample is `Required<…>`, so a field added to the kit's request
+ * types fails to compile here until it is listed, and the loop then requires
+ * kitSeed to read it. The chain and the integrator are carried by the hand-off
+ * itself (`useKitUse` applies the link on its own chain only, and the
+ * integrator is the reader's choice), so they are named as such.
+ */
+describe('kitSeed reads every field a kit link carries', () => {
+  const ALT = '0x5555555555555555555555555555555555555555' as const;
+  const HANDOFF_FIELDS = new Set(['action', 'chainId', 'integrator']);
+  const view = (s: KitSeed) => {
+    const probe = { lending: null, collateral: null };
+    return JSON.stringify(
+      s.action === 'rent' ? s.token : { ...s, pair: s.pair(probe) },
+      (_k, v: unknown) => (typeof v === 'bigint' ? v.toString() : v),
+    );
+  };
+  const borrow: Required<BorrowRequest> = { action: 'borrow', chainId: 1, asset: A, tokenId: 1n, quantity: 2n, lendingAsset: D, integrator: I };
+  const lend: Required<LendRequest> = { action: 'lend', chainId: 1, asset: A, amount: 1_000_000n, integrator: I };
+  const rent: Required<RentRequest> = { action: 'rent', chainId: 1, asset: A, tokenId: 1n, integrator: I };
+  const changed = (v: unknown): unknown => (typeof v === 'bigint' ? v + 1n : typeof v === 'string' ? ALT : v);
+  for (const sample of [borrow, lend, rent] as KitRequest[]) {
+    for (const key of Object.keys(sample).filter((k) => !HANDOFF_FIELDS.has(k))) {
+      it(`${sample.action}: ${key}`, () => {
+        const other = { ...sample, [key]: changed((sample as unknown as Record<string, unknown>)[key]) } as KitRequest;
+        expect(view(kitSeed(other, 6))).not.toBe(view(kitSeed(sample, 6)));
+      });
+    }
+  }
 });

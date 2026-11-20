@@ -25,29 +25,58 @@ type Hex = `0x${string}`;
 
 const INTEGRATOR = IntegratorFacetABI as Abi;
 
-/** #3773 — the borrow form a "borrow against this" link opens on. A link
- *  naming an NFT carries its token id (and an ERC-1155 quantity) into the
- *  form; continuing a new link starts the form fresh, so nothing typed for
- *  an earlier collateral (another token, another amount) stays beside it.
- *  Null for any other action. */
-export function kitRequestInput(r: KitRequest): PostInput | null {
-  if (r.action !== 'borrow') return null;
-  return {
-    ...DEFAULT_INPUT,
-    tokenId: r.tokenId !== undefined ? r.tokenId.toString() : '',
-    collateral: r.quantity !== undefined ? r.quantity.toString() : '',
-  };
-}
+type Pair = { lending: Hex | null; collateral: Hex | null };
 
-/** #3773 — the two lending forms a "lend this" link opens on (a lender's
- *  offer and an Auto-lend slot), each started fresh with the link's amount,
- *  so nothing typed for an earlier link stays. The amount is written in the
- *  token's own units, which needs its decimals: while they are unread the
- *  amount is left blank and the page says so. Null for any other action. */
-export function kitLendInputs(r: KitRequest, decimals: number | null): { offer: PostInput; autoLend: AutoLendInput; amountFilled: boolean } | null {
-  if (r.action !== 'lend') return null;
-  const amount = decimals === null ? '' : formatUnits(r.amount, decimals);
-  return { offer: { ...DEFAULT_INPUT, amount }, autoLend: { ...DEFAULT_AUTOLEND_INPUT, amount }, amountFilled: decimals !== null };
+/**
+ * #3773 — everything a kit link fills in, in one place. Every field a link
+ * carries is read here and nowhere else (the integrator excepted: it is the
+ * reader's choice to keep, so `useKitUse` carries it), and the field-coverage
+ * test changes each field of each request kind and requires the seed to
+ * change. A field added to the kit's request types without a home here fails
+ * that test instead of being dropped silently on one page, which is how three
+ * separate findings on #3806 arose (the rent token, the NFT identity, the
+ * lend amount). Each form starts fresh, so nothing typed for an earlier link
+ * stays beside a new one.
+ *
+ * - borrow: the pair (its collateral, and the suggested lending asset over
+ *   the page's own default) and the request form (an NFT's token id, and an
+ *   ERC-1155 quantity as its collateral amount).
+ * - lend: the pair's lending asset and both lending forms (a lender's offer
+ *   and an Auto-lend slot) with the amount, written in the token's own units,
+ *   which needs its decimals: while they are unread the amount is left blank
+ *   and `amountFilled` says so.
+ * - rent: the token whose rentals the book opens on.
+ */
+export type KitSeed =
+  | { action: 'borrow'; pair: (base: Pair) => Pair; request: PostInput }
+  | { action: 'lend'; pair: (base: Pair) => Pair; offer: PostInput; autoLend: AutoLendInput; amountFilled: boolean }
+  | { action: 'rent'; token: { asset: Hex; tokenId: bigint } };
+
+export function kitSeed(r: KitRequest, decimals: number | null): KitSeed {
+  switch (r.action) {
+    case 'borrow':
+      return {
+        action: 'borrow',
+        pair: (base) => ({ lending: r.lendingAsset ?? base.lending, collateral: r.asset }),
+        request: {
+          ...DEFAULT_INPUT,
+          tokenId: r.tokenId !== undefined ? r.tokenId.toString() : '',
+          collateral: r.quantity !== undefined ? r.quantity.toString() : '',
+        },
+      };
+    case 'lend': {
+      const amount = decimals === null ? '' : formatUnits(r.amount, decimals);
+      return {
+        action: 'lend',
+        pair: (base) => ({ ...base, lending: r.asset }),
+        offer: { ...DEFAULT_INPUT, amount },
+        autoLend: { ...DEFAULT_AUTOLEND_INPUT, amount },
+        amountFilled: decimals !== null,
+      };
+    }
+    case 'rent':
+      return { action: 'rent', token: { asset: r.asset, tokenId: r.tokenId } };
+  }
 }
 
 /** Where the hand-off is kept while the user moves to the filled-in page. */

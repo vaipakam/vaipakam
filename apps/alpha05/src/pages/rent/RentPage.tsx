@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import { KitNotice, useKitUse } from '../../shared/kit/KitNotice';
+import { kitSeed } from '../../shared/kit/kit';
 import { getSupportedChain } from '../../chain/chains';
 import { useOwnStateClient } from '../../chain/ownRail';
 import { useCopy } from '../../shared/copy/useCopy';
@@ -38,8 +39,8 @@ export function RentPage() {
   // (FeaturesOverExistingPartsDesign.md §7), until the reader shows all.
   const kit = useKitUse('rent', connected ? chain : null, served?.own.account ?? null);
   const [allTokens, setAllTokens] = useState(false);
-  const kitRequest = kit.handoff?.request;
-  const token = !allTokens && kitRequest?.action === 'rent' ? { asset: kitRequest.asset, tokenId: kitRequest.tokenId } : null;
+  const kitSeeded = kit.handoff ? kitSeed(kit.handoff.request, null) : null;
+  const token = !allTokens && kitSeeded?.action === 'rent' ? kitSeeded.token : null;
   const listing = useRentPostOpen('list');
   const requesting = useRentPostOpen('request');
 
