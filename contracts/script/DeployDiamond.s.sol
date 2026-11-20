@@ -2947,7 +2947,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](18);
+        s = new bytes4[](20);
         s[0] = BackstopFacet.initializeBackstopVaultImplementation.selector;
         s[1] = BackstopFacet.provisionBackstopVault.selector;
         s[2] = BackstopFacet.upgradeBackstopVault.selector;
@@ -2967,6 +2967,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #638 — backstop-only min-secondary-oracle-coverage knob.
         s[16] = BackstopFacet.setBackstopMinSecondaryOracleCoverage.selector;
         s[17] = BackstopFacet.getBackstopMinSecondaryOracleCoverage.selector;
+        // #3849 — the backstop's daily lending limit.
+        s[18] = BackstopFacet.setBackstopDailyLimitBps.selector;
+        s[19] = BackstopFacet.getBackstopDailyLimit.selector;
         // #3843 — the Role B (absorb) governance moved to BackstopAbsorbFacet;
         // see `_getBackstopAbsorbSelectors`.
     }

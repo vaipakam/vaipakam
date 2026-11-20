@@ -15,6 +15,7 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibBackstopOracleGate} from "../libraries/LibBackstopOracleGate.sol";
+import {LibBackstopDailyLimit} from "../libraries/LibBackstopDailyLimit.sol";
 import {BackstopVaultImplementation} from "../BackstopVaultImplementation.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
@@ -109,6 +110,11 @@ contract BackstopFacet is
     ///         eligibility may fire changed (0 = the protocol default).
     /// @custom:event-category informational/config
     event MinBackstopDelaySet(uint64 delaySeconds);
+    /// @notice #3849 — the backstop's daily lending limit changed: the share,
+    ///         in basis points, of its lending capital in each asset that it
+    ///         may lend in one UTC day.
+    /// @custom:event-category informational/config
+    event BackstopDailyLimitBpsSet(uint16 limitBps);
 
     error BackstopTemplateNotSet();
     error BackstopAlreadyInitialized();
@@ -130,6 +136,10 @@ contract BackstopFacet is
     /// @dev #638 — `setBackstopMinSecondaryOracleCoverage` given a value above
     ///      the three available secondaries.
     error BackstopOracleCoverageOutOfRange(uint8 minCoverage);
+    /// @dev #3849 — `setBackstopDailyLimitBps` given a share outside
+    ///      [`LibBackstopDailyLimit.MIN_BPS`, `MAX_BPS`] (0 included: there is
+    ///      no "no limit" value).
+    error BackstopDailyLimitOutOfRange(uint16 limitBps);
 
     // ─── Provisioning + impl (VAULT_ADMIN / timelock) ───────────────────────
 
@@ -388,6 +398,15 @@ contract BackstopFacet is
         if (!s.lenderIntent[bv][o.lendingAsset][o.collateralAsset][LibVaipakam.PROTOCOL_INTENT_SLOT].active) {
             revert BackstopIntentInactive();
         }
+        // #3849 — the backstop fills whole offers only and lends at most its
+        // daily limit in the asset per UTC day, so an offer larger than the
+        // whole limit could not be filled today: refuse it here and say why.
+        // The limit moves with the backstop's capital, so the fill checks
+        // again (`MarketLedgerFacet.onSlotFilled`).
+        uint256 dayLimit = LibBackstopDailyLimit.limitOf(s, o.lendingAsset);
+        if (o.amountMax > dayLimit) {
+            revert LibBackstopDailyLimit.BackstopOfferAboveDailyLimit(o.lendingAsset, o.amountMax, dayLimit);
+        }
         // Future deadline past the mandatory floor, strictly before expiry
         // (so a fill has a real window before the offer dies; expiresAt must
         // be set). And intent-fillable (matchIntent rejects otherwise).
@@ -413,6 +432,11 @@ contract BackstopFacet is
     ///      own `nonReentrant` `matchIntent` (the real guard) — the shared lock
     ///      would otherwise collide. This wrapper writes no facet state; a
     ///      re-entry would itself hit `matchIntent`'s held lock and revert.
+    ///      #3849 — the fill counts against the backstop's daily limit in the
+    ///      lending asset, checked where every loan the backstop's capital
+    ///      opens is recorded (`MarketLedgerFacet.onSlotFilled`), which raises
+    ///      `LibBackstopDailyLimit.BackstopDailyLimitExceeded`. The caller
+    ///      chooses which eligible offer uses the day's room.
     function backstopFill(uint256 offerId)
         external
         whenNotPaused
@@ -637,6 +661,62 @@ contract BackstopFacet is
             .storageSlot()
             .backstopMinSecondaryOracleCoverage = minCoverage;
         emit BackstopMinSecondaryOracleCoverageSet(minCoverage);
+    }
+
+    /// @notice #3849 — set the backstop's daily lending limit: the share, in
+    ///         basis points, of its lending capital in each asset (the funded
+    ///         capital waiting across the asset's pairs plus the principal out
+    ///         on its open loans) that it may lend in one UTC day.
+    /// @dev    VAULT_ADMIN, which the handover gives to the governance
+    ///         timelock, so a change waits out the governance delay. The fast
+    ///         stop is the fill switch ({setBackstopFillEnabled}) and the
+    ///         Diamond pause. Bounded [500, 5000]; 0 is refused, and a
+    ///         Diamond that never set it reads the default (2000).
+    function setBackstopDailyLimitBps(uint16 limitBps)
+        external
+        onlyRole(LibAccessControl.VAULT_ADMIN_ROLE)
+    {
+        if (limitBps < LibBackstopDailyLimit.MIN_BPS || limitBps > LibBackstopDailyLimit.MAX_BPS) {
+            revert BackstopDailyLimitOutOfRange(limitBps);
+        }
+        LibVaipakam.storageSlot().backstopDailyLimitBps = limitBps;
+        emit BackstopDailyLimitBpsSet(limitBps);
+    }
+
+    /// @notice #3849 — the backstop's daily lending limit in `lendingAsset`
+    ///         today, as facts. Nothing here promises a fill: a fill also
+    ///         needs an eligible offer, the pair's capital and exposure room
+    ///         and every gate of {backstopFill}, and the day's room is first
+    ///         come, first served.
+    /// @return limit     The most the backstop may lend in the asset today:
+    ///                   `capital * limitBps / 10000`, rounded down.
+    /// @return usedToday What it has lent in the asset since the day began.
+    /// @return roomLeft  `limit - usedToday`, or 0 when the limit has fallen
+    ///                   below what was used (a withdrawal or a repayment
+    ///                   lowered the capital during the day).
+    /// @return dayEnd    When the day ends and the total resets (UTC seconds).
+    /// @return capital   The backstop's lending capital in the asset: funded
+    ///                   capital waiting across its pairs plus principal out.
+    /// @return limitBps  The share in force (the default when none was set).
+    function getBackstopDailyLimit(address lendingAsset)
+        external
+        view
+        returns (
+            uint256 limit,
+            uint256 usedToday,
+            uint256 roomLeft,
+            uint64 dayEnd,
+            uint256 capital,
+            uint16 limitBps
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        limit = LibBackstopDailyLimit.limitOf(s, lendingAsset);
+        usedToday = LibBackstopDailyLimit.usedToday(s, lendingAsset);
+        roomLeft = limit > usedToday ? limit - usedToday : 0;
+        (, dayEnd) = LibBackstopDailyLimit.today();
+        capital = s.backstopCapital[lendingAsset];
+        limitBps = LibBackstopDailyLimit.bps(s);
     }
 
     /// @notice #638 — the current backstop min-secondary-oracle-coverage knob.

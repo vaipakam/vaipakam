@@ -53,7 +53,9 @@
       "class": "keeper",
       "pass": "positionUpkeep",
       "flag": "BACKSTOP_FILL_ENABLED",
-      "evidence": "apps/keeper/src/positionUpkeep.ts"
+      "evidence": "apps/keeper/src/positionUpkeep.ts",
+      "callerChooses": "which eligible borrower offer the backstop fills, and so which offer uses the day's room in its lending asset (first come, first served; the keeper's own order is oldest eligible first)",
+      "boundedBy": "the backstop's daily limit per lending asset per UTC day, a governed share of its lending capital in the asset (LibBackstopDailyLimit.consume, checked in MarketLedgerFacet.onSlotFilled, #3849); the borrower's own opt-in and its deadline, the offer's whole amount and terms, the pair's funded capital and exposure cap, and the liquidity, oracle-coverage, calm-price and sanctions gates (BackstopFacet.backstopFill, LibIntentFill.admitFill)"
     },
     "BackstopVaultImplementation.initialize(address)": {
       "class": "init",

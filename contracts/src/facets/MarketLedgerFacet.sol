@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibMarketLedger} from "../libraries/LibMarketLedger.sol";
+import {LibBackstopDailyLimit} from "../libraries/LibBackstopDailyLimit.sol";
 
 /**
  * @title  MarketLedgerFacet
@@ -29,7 +30,10 @@ import {LibMarketLedger} from "../libraries/LibMarketLedger.sol";
  *           facet that moves a loan's principal or its place in the active
  *           set (a held loan's outstanding principal moved).
  *         So a slot's live principal is always exactly the outstanding
- *         principal of the loans it holds. Refreshed together with all of
+ *         principal of the loans it holds. The same two seams keep the
+ *         backstop's daily lending limit (#3849, `LibBackstopDailyLimit`):
+ *         the sync keeps its per-asset capital and {onSlotFilled} counts and
+ *         checks each loan its capital opens. Refreshed together with all of
  *         those callers: one refreshed onto a Diamond that does not route
  *         these entries reverts (a hard revert, never a stale figure).
  *
@@ -72,6 +76,14 @@ contract MarketLedgerFacet {
         uint256 amount = LibMarketLedger.markFromSlot(s, s.loans[loanId]);
         s.lenderIntentLivePrincipal[io.owner][io.lendingAsset][io.collateralAsset][io.slot] += amount;
         _sync(s, io.owner, io.lendingAsset, io.collateralAsset, io.slot);
+        // #3849 — the backstop's daily limit. Every loan its capital opens
+        // (an intent match, an instant fill, a takeover into its slot) passes
+        // here, so this is the one place the day's total is counted and
+        // checked. Checked after the sync: the fill moved capital from waiting
+        // to out, which leaves the capital, and so the limit, unchanged.
+        if (io.owner == s.backstopVault && io.slot == LibVaipakam.PROTOCOL_INTENT_SLOT) {
+            LibBackstopDailyLimit.consume(s, io.lendingAsset, s.loans[loanId].principal);
+        }
     }
 
     /// @notice `loanId` is leaving the slot its origin names (its exposure is
@@ -240,14 +252,20 @@ contract MarketLedgerFacet {
         address collateralAsset,
         uint8 slot
     ) private {
+        uint256 capital = s.lenderIntentCapital[owner][lendingAsset][collateralAsset][slot];
+        uint256 live = s.lenderIntentLivePrincipal[owner][lendingAsset][collateralAsset][slot];
         LibMarketLedger.syncIntent(
             s,
             s.lenderIntent[owner][lendingAsset][collateralAsset][slot],
             lendingAsset,
             collateralAsset,
             LibVaipakam.intentKeyHash(owner, lendingAsset, collateralAsset, slot),
-            s.lenderIntentCapital[owner][lendingAsset][collateralAsset][slot],
-            s.lenderIntentLivePrincipal[owner][lendingAsset][collateralAsset][slot]
+            capital,
+            live
         );
+        // #3849 — every writer of a slot's capital or live principal reaches
+        // this sync, so the backstop's per-asset lending capital (waiting plus
+        // out, the base of its daily limit) is kept here, for its slot only.
+        LibBackstopDailyLimit.syncPair(s, owner, lendingAsset, collateralAsset, slot, capital + live);
     }
 }

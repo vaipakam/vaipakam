@@ -393,6 +393,23 @@ contract BackstopAbsorbTest is SetupTest {
         );
     }
 
+    /// @notice #3849 item 8 — Role B (the buyout and absorb) keeps its own cap
+    ///         and is not counted in the backstop's daily lending limit.
+    function test_absorb_isNotCountedInTheDailyLimit() public {
+        address lender_ = makeAddr("lender3849");
+        address borrower_ = makeAddr("borrower3849");
+        _fallbackOptedIn(lender_, borrower_);
+        (, uint256 usedBefore, , , uint256 capitalBefore, ) =
+            BackstopFacet(address(diamond)).getBackstopDailyLimit(mockERC20);
+        vm.prank(owner);
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _failedRetry());
+        (, uint256 usedAfter, , , uint256 capitalAfter, ) =
+            BackstopFacet(address(diamond)).getBackstopDailyLimit(mockERC20);
+        assertEq(usedAfter, usedBefore, "the absorb uses none of the day's room");
+        assertEq(usedAfter, 0);
+        assertEq(capitalAfter, capitalBefore, "nor does it move the Role A capital");
+    }
+
     /// @notice Codex #3387 r1 — a backstop buyout whose loan carries a prior
     ///         seller's claim (the seller is neither the stored lender nor the
     ///         borrower) settles: the split authorizes the seller's exact share

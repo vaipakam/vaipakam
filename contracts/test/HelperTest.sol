@@ -1581,7 +1581,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](18);
+        selectors = new bytes4[](20);
         selectors[0] = BackstopFacet.initializeBackstopVaultImplementation.selector;
         selectors[1] = BackstopFacet.provisionBackstopVault.selector;
         selectors[2] = BackstopFacet.upgradeBackstopVault.selector;
@@ -1601,6 +1601,9 @@ contract HelperTest {
         // #638 — backstop-only min-secondary-oracle-coverage knob.
         selectors[16] = BackstopFacet.setBackstopMinSecondaryOracleCoverage.selector;
         selectors[17] = BackstopFacet.getBackstopMinSecondaryOracleCoverage.selector;
+        // #3849 — the backstop's daily lending limit.
+        selectors[18] = BackstopFacet.setBackstopDailyLimitBps.selector;
+        selectors[19] = BackstopFacet.getBackstopDailyLimit.selector;
     }
 
     /// @dev #3843 — #399 backstop v0 Role B (absorb) governance, split off
