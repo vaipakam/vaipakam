@@ -25,7 +25,9 @@ type Hex = `0x${string}`;
 
 /** The sign-ups the Terms gate holds: linking Telegram and switching push on.
  *  Switching anything off is never gated (ACC-15). */
-type GatedAction = 'link' | 'push';
+/** What the Terms prompt was opened for: a new link, a Push opt-in, or
+ *  finishing a kept request that enrols (a link or a Push opt-in). */
+type GatedAction = 'link' | 'push' | 'finish';
 
 /**
  * Alerts › Channels and preferences (#3180 Alerts slice 2, ACC-50 / ACC-52;
@@ -88,7 +90,24 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
       termsGate.start(terms.data);
       return;
     }
-    void run(g === 'link' ? 'link' : { save: { pushAlerts: true } });
+    runGated(g);
+  };
+  // Runs the gated action once the Terms allow it.
+  const runGated = (g: GatedAction) => {
+    if (g === 'finish') void action.finish();
+    else void run(g === 'link' ? 'link' : { save: { pushAlerts: true } });
+  };
+  // #3836 — finishing a kept request is held by the Terms exactly when
+  // starting it would be: a link or a Push opt-in enrols; an unlink, a
+  // test alert or any other save goes through whatever the Terms say.
+  const pendingEnrols = (() => {
+    const a = action.pending?.action;
+    if (a === 'link') return true;
+    return typeof a === 'object' && a.save.pushAlerts === true;
+  })();
+  const finishPending = () => {
+    if (pendingEnrols) gated('finish');
+    else void action.finish();
   };
   const termsUnknown = terms.state === 'failed';
   const signUpBlocked = action.busy || terms.state !== 'ready' || termsGate.session !== null;
@@ -123,7 +142,7 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
             termsGate.end();
             const f = follow;
             setFollow(null);
-            if (f) void run(f === 'link' ? 'link' : { save: { pushAlerts: true } });
+            if (f) runGated(f);
           }}
           onClose={() => {
             termsGate.end();
@@ -132,7 +151,7 @@ function ChannelsBody({ chain, account }: { chain: SupportedChain; account: Hex 
         />
       )}
       <RunLine run={action.run} chain={chain} copy={copy} />
-      {action.pending && !action.busy && <PendingRequest pending={action.pending} nowS={nowS} busy={action.busy} onFinish={() => void action.finish()} onDiscard={action.discard} copy={copy} />}
+      {action.pending && !action.busy && <PendingRequest pending={action.pending} nowS={nowS} busy={action.busy} finishBlocked={pendingEnrols && signUpBlocked} onFinish={finishPending} onDiscard={action.discard} copy={copy} />}
 
       <div className="card alert-channel" data-testid="alert-telegram">
         <h3>{text('alertChannels.telegramTitle')}</h3>
@@ -389,7 +408,7 @@ function pendingActionKey(a: AlertAction): CopyKey {
  *  answered: what it is, when it started, until when only this browser can
  *  finish it, and Finish or Discard. One past its limit offers Discard
  *  only. */
-function PendingRequest({ pending, nowS, busy, onFinish, onDiscard, copy }: { pending: PendingAlert; nowS: number; busy: boolean; onFinish: () => void; onDiscard: () => void; copy: CopyAccess }) {
+function PendingRequest({ pending, nowS, busy, finishBlocked, onFinish, onDiscard, copy }: { pending: PendingAlert; nowS: number; busy: boolean; finishBlocked: boolean; onFinish: () => void; onDiscard: () => void; copy: CopyAccess }) {
   const { text, format } = copy;
   const expiresAt = pendingExpiresAt(pending);
   const expired = expiresAt < nowS;
@@ -411,7 +430,7 @@ function PendingRequest({ pending, nowS, busy, onFinish, onDiscard, copy }: { pe
       )}
       <div className="form-actions">
         {!expired && (
-          <button type="button" className="btn btn-primary" disabled={busy} onClick={onFinish} data-testid="alert-pending-finish">
+          <button type="button" className="btn btn-primary" disabled={busy || finishBlocked} onClick={onFinish} data-testid="alert-pending-finish">
             {text('alertChannels.pendingFinish')}
           </button>
         )}

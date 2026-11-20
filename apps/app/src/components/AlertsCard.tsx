@@ -31,13 +31,14 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { BellRing } from 'lucide-react';
-import { useAccount, useSignMessage } from 'wagmi';
+import { useAccount, useConfig } from 'wagmi';
 import { useMode } from '../app/ModeContext';
 import { chainDisplayName } from '../chain/chains';
 import { useActiveChain } from '../chain/useActiveChain';
 import { copy } from '../content/copy';
 import { useTermsBlockNonExitWrites } from '../contracts/diamond';
 import { PaidPushConsent } from './PaidPushConsent';
+import { WalletMovedWhileWaiting, signAccountMessage } from '../lib/accountMessageSigner';
 import {
   addsAlertOptIn,
   alertsConfigured,
@@ -62,7 +63,7 @@ import {
 
 export function AlertsCard() {
   const { address } = useAccount();
-  const { signMessageAsync } = useSignMessage();
+  const wagmiConfig = useConfig();
   const termsVerdict = useTermsBlockNonExitWrites();
   const { readChain } = useActiveChain();
   const { isAdvanced } = useMode();
@@ -131,6 +132,19 @@ export function AlertsCard() {
       : copy.errors.termsNotAccepted;
   }
 
+  // #3836 — every alert request is signed through this: a Safe App's
+  // proposal is waited on until its owners approve, the request kept in
+  // this browser meanwhile, so the page can also be closed and the request
+  // finished later.
+  async function signForRequest(message: string): Promise<string> {
+    try {
+      return await signAccountMessage(wagmiConfig, message, () => setNotice(copy.alerts.awaitingOwners));
+    } catch (e) {
+      if (e instanceof WalletMovedWhileWaiting) throw new Error(copy.alerts.walletMovedWhileAwaiting);
+      throw e;
+    }
+  }
+
   async function persist(
     next: AlertPrefs,
     opts?: { dueDateChanged?: boolean; bandsChanged?: boolean },
@@ -170,7 +184,7 @@ export function AlertsCard() {
       const push = await saveAlertPrefs(address, chainId, next, {
         dueDateChanged: opts?.dueDateChanged,
         bandsChanged: opts?.bandsChanged,
-        signMessage: (message) => signMessageAsync({ message }),
+        signMessage: signForRequest,
         resume,
       });
       // #2251 — the agent stores a NEW Push opt-in only where it can send,
@@ -220,7 +234,7 @@ export function AlertsCard() {
         await issueTelegramLink(
           address,
           chainId,
-          (message) => signMessageAsync({ message }),
+          signForRequest,
           resume,
         ),
       );
@@ -247,7 +261,7 @@ export function AlertsCard() {
       const result = await sendTestTelegramAlert(
         address,
         chainId,
-        (message) => signMessageAsync({ message }),
+        signForRequest,
         resume,
       );
       if (result === 'sent') {
@@ -294,7 +308,7 @@ export function AlertsCard() {
       const outcome = await unlinkTelegram(
         address,
         forChain,
-        (message) => signMessageAsync({ message }),
+        signForRequest,
         resume,
       );
       if (outcome.protectionUnknown) {

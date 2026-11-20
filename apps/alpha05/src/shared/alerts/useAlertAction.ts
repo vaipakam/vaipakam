@@ -156,7 +156,7 @@ export function useAlertAction(chainId: number, wallet: Hex, client: AgentClient
       keepPending(chainId, wallet, p);
       setRun(identity, { run: { phase: 'signing', action }, pending: p });
       const drop = () => {
-        clearPending(chainId, wallet);
+        clearPending(chainId, wallet, undefined, p.requestKey);
         // A newer request started meanwhile in this tab is not dropped.
         if (runs.get(identity)?.pending === p) setRun(identity, { pending: null });
       };

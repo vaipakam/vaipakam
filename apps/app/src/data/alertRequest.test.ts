@@ -130,6 +130,39 @@ describe('loadPendingAlertRequest', () => {
   });
 });
 
+describe('a request that finishes drops only itself (#3836)', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('keeps a newer request another tab started meanwhile', async () => {
+    const older = linkRequest();
+    const newer = linkRequest(NOW + 60);
+    let release: (sig: string) => void = () => {};
+    const signed = new Promise<string>((r) => (release = r));
+    const run = signAndSendAlertRequest(older, () => signed, async () => answer(200));
+    // Another tab starts a new request for the same wallet and chain.
+    await signAndSendAlertRequest(newer, async () => Promise.reject(new Error('waiting')), async () => answer(200)).catch(
+      () => {},
+    );
+    release('0xsig');
+    await run;
+    expect(loadPendingAlertRequest(CHAIN, WALLET, NOW + 60)?.requestKey).toBe(newer.requestKey);
+  });
+
+  it('a rejection does not drop a newer request either', async () => {
+    const older = linkRequest();
+    const newer = linkRequest(NOW + 60);
+    let reject: (e: unknown) => void = () => {};
+    const signed = new Promise<string>((_, r) => (reject = r));
+    const run = signAndSendAlertRequest(older, () => signed, async () => answer(200)).catch(() => {});
+    await signAndSendAlertRequest(newer, async () => Promise.reject(new Error('waiting')), async () => answer(200)).catch(
+      () => {},
+    );
+    reject(new UserRejectedRequestError(new Error('no')));
+    await run;
+    expect(loadPendingAlertRequest(CHAIN, WALLET, NOW + 60)?.requestKey).toBe(newer.requestKey);
+  });
+});
+
 describe('the data-rights export (#3836)', () => {
   it('shows a pending request but withholds its key, saying so', async () => {
     const { inspectMyData, WITHHELD_REQUEST_KEY } = await import('../lib/dataRights');

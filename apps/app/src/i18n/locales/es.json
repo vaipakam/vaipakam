@@ -409,7 +409,9 @@
       "pendingKindLink": "Vincular Telegram",
       "pendingKindUnlink": "Desvincular Telegram",
       "pendingKindTest": "Enviar una alerta de prueba",
-      "pendingKindSave": "Guardar la configuración de alertas"
+      "pendingKindSave": "Guardar la configuración de alertas",
+      "awaitingOwners": "Esperando a que los demás propietarios de esta billetera aprueben la solicitud. Puedes dejar esta página abierta, o cerrarla y terminar la solicitud aquí más tarde.",
+      "walletMovedWhileAwaiting": "No se envió nada: la billetera conectada o la red cambió mientras se esperaba la aprobación. La solicitud se conserva; vuelve a conectar la misma billetera en la misma red para terminarla."
     },
     "notifications": {
       "bellLabel": "Notificaciones",

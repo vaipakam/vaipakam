@@ -110,10 +110,24 @@ export function loadPendingAlertRequest(
   return parsed;
 }
 
-/** Forget the pending request for (`chainId`, `wallet`). */
-export function clearPendingAlertRequest(chainId: number, wallet: string): void {
+/** Forget the pending request for (`chainId`, `wallet`). With `requestKey`,
+ *  only when the stored request is that one: a request that finishes must not
+ *  drop a newer one another tab started for the same wallet meanwhile. */
+export function clearPendingAlertRequest(chainId: number, wallet: string, requestKey?: string): void {
   try {
-    localStorage.removeItem(storageKey(chainId, wallet));
+    const key = storageKey(chainId, wallet);
+    if (requestKey !== undefined) {
+      const raw = localStorage.getItem(key);
+      if (!raw) return;
+      let stored: unknown;
+      try {
+        stored = JSON.parse(raw);
+      } catch {
+        stored = null;
+      }
+      if (!stored || typeof stored !== 'object' || (stored as { requestKey?: unknown }).requestKey !== requestKey) return;
+    }
+    localStorage.removeItem(key);
   } catch {
     // Storage unavailable: nothing was kept.
   }
@@ -181,7 +195,7 @@ export async function signAndSendAlertRequest(
   try {
     signature = await signMessage(req.message);
   } catch (err) {
-    if (isUserRejection(err)) clearPendingAlertRequest(req.chainId, req.wallet);
+    if (isUserRejection(err)) clearPendingAlertRequest(req.chainId, req.wallet, req.requestKey);
     throw err;
   }
   const res = await send(req.path, {
@@ -191,7 +205,7 @@ export async function signAndSendAlertRequest(
     requestKey: req.requestKey,
   });
   if (!(res.status === 503 && res.data?.error === 'verification-unavailable')) {
-    clearPendingAlertRequest(req.chainId, req.wallet);
+    clearPendingAlertRequest(req.chainId, req.wallet, req.requestKey);
   }
   return res;
 }

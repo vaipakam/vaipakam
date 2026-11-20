@@ -845,6 +845,10 @@ const copySource = {
     pendingKindUnlink: 'Unlink Telegram',
     pendingKindTest: 'Send a test alert',
     pendingKindSave: 'Save alert settings',
+    awaitingOwners:
+      'Waiting for the other owners of this wallet to approve the request. You can keep this page open, or close it and finish the request here later.',
+    walletMovedWhileAwaiting:
+      'Nothing was sent: the connected wallet or network changed while the approval was awaited. The request is kept; reconnect the same wallet on the same network to finish it.',
     pushTitle: 'Prefer app push instead?',
     pushBody:
       'The same alerts are published to Vaipakam’s Push Protocol channel — subscribe there with your wallet and any Push-compatible app delivers them.',

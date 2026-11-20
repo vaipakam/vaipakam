@@ -52,4 +52,13 @@ describe('a pending alert request (#3836)', () => {
     expect(() => keepPending(84532, W, p, null)).not.toThrow();
     expect(loadPending(84532, W, 2_000, null)).toBeNull();
   });
+
+  it('drops only the named request when a key is given', () => {
+    const s = memory();
+    keepPending(84532, W, p, s);
+    clearPending(84532, W, s, `0x${'cd'.repeat(32)}`);
+    expect(loadPending(84532, W, 2_000, s)).toEqual(p);
+    clearPending(84532, W, s, KEY);
+    expect(loadPending(84532, W, 2_000, s)).toBeNull();
+  });
 });

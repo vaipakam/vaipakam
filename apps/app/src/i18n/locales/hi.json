@@ -409,7 +409,9 @@
       "pendingKindLink": "Telegram जोड़ें",
       "pendingKindUnlink": "Telegram हटाएँ",
       "pendingKindTest": "test alert भेजें",
-      "pendingKindSave": "alert settings save करें"
+      "pendingKindSave": "alert settings save करें",
+      "awaitingOwners": "इस wallet के दूसरे owners के request approve करने का इंतज़ार है। आप यह page खुला रख सकते हैं, या इसे बंद करके बाद में यहीं request पूरा कर सकते हैं।",
+      "walletMovedWhileAwaiting": "कुछ नहीं भेजा गया: approval के इंतज़ार के दौरान जुड़ा हुआ wallet या network बदल गया। Request रखा गया है; इसे पूरा करने के लिए उसी network पर वही wallet फिर से जोड़ें।"
     },
     "notifications": {
       "bellLabel": "Notifications",
