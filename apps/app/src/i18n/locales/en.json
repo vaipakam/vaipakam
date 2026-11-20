@@ -3413,6 +3413,7 @@
         "OfferSaleProceedsCredited": "Sale proceeds credited to the vault",
         "OfferEscrowReturned": "Offer escrow returned to the vault",
         "OfferRefundCollected": "Held offer refund collected",
+        "OfferRefundHeld": "Offer refund held for the token holder",
         "OfferFullTariffConsentBy": "Full-tariff consent given on an offer",
         "CollateralSaleProceedsSplit": "Sale proceeds split",
         "ParallelSaleLockReleased": "Collateral sale listing released",

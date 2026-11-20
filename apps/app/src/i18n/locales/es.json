@@ -2789,6 +2789,7 @@
         "OfferSaleProceedsCredited": "Ingresos de la venta abonados en la bóveda",
         "OfferEscrowReturned": "Depósito de la oferta devuelto a la bóveda",
         "OfferRefundCollected": "Reembolso retenido de la oferta cobrado",
+        "OfferRefundHeld": "Reembolso de la oferta retenido para el titular del token",
         "OfferFullTariffConsentBy": "Consentimiento a la tarifa completa dado en una oferta",
         "CollateralSaleProceedsSplit": "Ingresos de la venta repartidos",
         "ParallelSaleLockReleased": "Anuncio de venta de la garantía liberado",

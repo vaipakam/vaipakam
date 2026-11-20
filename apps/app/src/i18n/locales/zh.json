@@ -2789,6 +2789,7 @@
         "OfferSaleProceedsCredited": "出售所得已计入金库",
         "OfferEscrowReturned": "报价托管资金已退回金库",
         "OfferRefundCollected": "已领取暂存的报价退款",
+        "OfferRefundHeld": "报价退款已为代币持有人暂存",
         "OfferFullTariffConsentBy": "已在报价上同意全额费率",
         "CollateralSaleProceedsSplit": "出售所得已分配",
         "ParallelSaleLockReleased": "抵押品出售挂单已解除",

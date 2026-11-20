@@ -2789,6 +2789,7 @@
         "OfferSaleProceedsCredited": "أُضيفت عائدات البيع إلى الخزنة",
         "OfferEscrowReturned": "أُعيد ضمان العرض إلى الخزنة",
         "OfferRefundCollected": "استُلم استرداد العرض المحتجز",
+        "OfferRefundHeld": "احتُجز استرداد العرض لحامل الرمز",
         "OfferFullTariffConsentBy": "أُعطيت الموافقة على التعرفة الكاملة لعرض",
         "CollateralSaleProceedsSplit": "تم تقسيم عائدات البيع",
         "ParallelSaleLockReleased": "تم تحرير إدراج بيع الضمان",
