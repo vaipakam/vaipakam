@@ -28,8 +28,45 @@ type Hex = `0x${string}`;
 /** How many of the closest requests are asked for and read. */
 export const INTENT_NEAREST_ASKED = 5;
 
+/** `LibOfferMatch.IntentError`, every member in declaration order (a test
+ *  reads the enum from the contract source and holds this list to it). The
+ *  contract appends members, so a code this list does not reach is newer
+ *  than this build and is stated by its number. */
+export const INTENT_ERRORS = [
+  'Ok',
+  'Paused',
+  'Sanctioned',
+  'MatcherDisabled',
+  'IntentDisabled',
+  'AggregatorPaused',
+  'Inactive',
+  'RetiredVpfiLending',
+  'KeeperUnauthorized',
+  'BelowMinFill',
+  'ExposureExceeded',
+  'DurationTooLong',
+  'FullTermRequired',
+  'PartialRepayNotAllowed',
+  'CollateralUnresolvable',
+  'CapitalInsufficient',
+  'SliceDurationAboveCap',
+  'SlicePausedAsset',
+  'SliceCollateralBelowFloor',
+  'SliceMultiYearTerm',
+  'AcceptGateBlocked',
+  'SaleVehicleTagged',
+  'CapacityExhausted',
+  'SliceBelowMinOfferValue',
+  'TermsTooFresh',
+  'PastLendUntil',
+  'PairNoCheckpoint',
+  'PairNotCalm',
+  'PairUnpriced',
+] as const;
+export type IntentErrorName = (typeof INTENT_ERRORS)[number];
+
 /** `LibOfferMatch.IntentError` ordinals this module names a figure for. */
-export const INTENT_CODE = { ok: 0, durationTooLong: 11 } as const;
+export const INTENT_CODE = { ok: INTENT_ERRORS.indexOf('Ok'), durationTooLong: INTENT_ERRORS.indexOf('DurationTooLong') } as const;
 /** `LibOfferMatch.MatchError` ordinals this module names a figure for. */
 export const INTENT_MATCH_CODE = { ok: 0, rate: 5 } as const;
 
@@ -216,43 +253,46 @@ export function whyIntentOf(slot: Pick<IntentSummary, 'minRateBps' | 'maxDuratio
   return { kind: 'gap', with: first, gap: intentGapOf(slot, first.offer, first.verdict!), closerUnknown };
 }
 
-/** `LibOfferMatch.IntentError`, by ordinal, in words (0 = Ok, 7 retired). */
-const INTENT_REFUSAL: readonly (CopyKey | null)[] = [
-  null,
-  'whyIntent.intentPaused',
-  'whyIntent.intentScreened',
-  'whyIntent.intentMatchOff',
-  'whyIntent.intentAutoLendOff',
-  'whyIntent.intentHeld',
-  'whyIntent.intentStopped',
-  null,
-  'whyIntent.intentKeeperOnly',
-  'whyIntent.intentBelowMin',
-  'whyIntent.intentExposure',
-  null, // DurationTooLong: stated with its figures
-  'whyIntent.intentFullTerm',
-  'whyIntent.intentPartial',
-  'whyIntent.intentCollateral',
-  'whyIntent.intentCapital',
-  'whyIntent.intentTermCap',
-  'whyIntent.intentAssetPaused',
-  'whyIntent.intentCollFloor',
-  'whyIntent.intentMultiYear',
-  'whyIntent.intentBorrowerBlocked',
-  'whyIntent.intentSale',
-  'whyIntent.intentCapacity',
-  'whyIntent.intentBelowValue',
-  'whyIntent.intentFresh',
-  'whyIntent.intentPastUntil',
-  'whyIntent.intentNoCheckpoint',
-  'whyIntent.intentNotCalm',
-  'whyIntent.intentUnpriced',
-];
+
+/** Each refusal's words, by name. `Ok` has none; `RetiredVpfiLending` is
+ *  never returned; `DurationTooLong` is stated with its figures. */
+const INTENT_REFUSAL: Record<IntentErrorName, CopyKey | null> = {
+  Ok: null,
+  Paused: 'whyIntent.intentPaused',
+  Sanctioned: 'whyIntent.intentScreened',
+  MatcherDisabled: 'whyIntent.intentMatchOff',
+  IntentDisabled: 'whyIntent.intentAutoLendOff',
+  AggregatorPaused: 'whyIntent.intentHeld',
+  Inactive: 'whyIntent.intentStopped',
+  RetiredVpfiLending: null,
+  KeeperUnauthorized: 'whyIntent.intentKeeperOnly',
+  BelowMinFill: 'whyIntent.intentBelowMin',
+  ExposureExceeded: 'whyIntent.intentExposure',
+  DurationTooLong: null,
+  FullTermRequired: 'whyIntent.intentFullTerm',
+  PartialRepayNotAllowed: 'whyIntent.intentPartial',
+  CollateralUnresolvable: 'whyIntent.intentCollateral',
+  CapitalInsufficient: 'whyIntent.intentCapital',
+  SliceDurationAboveCap: 'whyIntent.intentTermCap',
+  SlicePausedAsset: 'whyIntent.intentAssetPaused',
+  SliceCollateralBelowFloor: 'whyIntent.intentCollFloor',
+  SliceMultiYearTerm: 'whyIntent.intentMultiYear',
+  AcceptGateBlocked: 'whyIntent.intentBorrowerBlocked',
+  SaleVehicleTagged: 'whyIntent.intentSale',
+  CapacityExhausted: 'whyIntent.intentCapacity',
+  SliceBelowMinOfferValue: 'whyIntent.intentBelowValue',
+  TermsTooFresh: 'whyIntent.intentFresh',
+  PastLendUntil: 'whyIntent.intentPastUntil',
+  PairNoCheckpoint: 'whyIntent.intentNoCheckpoint',
+  PairNotCalm: 'whyIntent.intentNotCalm',
+  PairUnpriced: 'whyIntent.intentUnpriced',
+};
 
 /** A slot-level refusal in words; an ordinal this build cannot name is
  *  stated by its number. */
 export function intentRefusalText(code: number, copy: Pick<CopyAccess, 'text' | 'format'>): string {
-  const key = INTENT_REFUSAL[code] ?? null;
+  const name = INTENT_ERRORS[code];
+  const key = name === undefined ? null : INTENT_REFUSAL[name];
   return key !== null ? copy.text(key) : copy.format('whyIntent.intentOther', { code: String(code) });
 }
 

@@ -1,6 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { StoredOffer } from '../offers/acceptTerms';
-import { fillFor, intentGapOf, intentRefusalText, riskBlockText, whyIntentOf, type IntentVerdict, type SlotRequest, type WhyIntentRead } from './whyIntent';
+import { fillFor, INTENT_ERRORS, intentGapOf, intentRefusalText, riskBlockText, whyIntentOf, type IntentVerdict, type SlotRequest, type WhyIntentRead } from './whyIntent';
 
 const copy = { text: (k: string) => k, format: (k: string, v: Record<string, string>) => `${k}#${v.code ?? ''}` } as never;
 const slot = { minRateBps: 500n, maxDurationDays: 30, availableCapital: 1000n, maxExposure: 5000n, livePrincipal: 0n };
@@ -64,5 +65,26 @@ describe('refusal words', () => {
   it('names the risk-access blocks', () => {
     expect([1, 2, 3, 4].map((c) => riskBlockText(c, copy))).toEqual(['whyIntent.riskTier', 'whyIntent.riskConsent', 'whyIntent.riskAck', 'whyIntent.riskConsent']);
     expect(riskBlockText(9, copy)).toBe('whyIntent.riskOther#9');
+  });
+
+  it('names every IntentError the contract declares, in order', () => {
+    const sol = readFileSync(new URL('../../../../../contracts/src/libraries/LibOfferMatch.sol', import.meta.url), 'utf8');
+    const open = sol.indexOf('enum IntentError {');
+    const body = sol.slice(open + 'enum IntentError {'.length, sol.indexOf('}', open));
+    const names = body
+      .split('\n')
+      .map((l) => l.replace(/\/\/.*$/, '').trim())
+      .join('')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    expect([...INTENT_ERRORS]).toEqual(names);
+  });
+
+  it('words a refusal by its name', () => {
+    const at = (name: (typeof INTENT_ERRORS)[number]) => intentRefusalText(INTENT_ERRORS.indexOf(name), copy);
+    expect(at('CapitalInsufficient')).toBe('whyIntent.intentCapital');
+    expect(at('PairNotCalm')).toBe('whyIntent.intentNotCalm');
+    expect(at('RetiredVpfiLending')).toBe(`whyIntent.intentOther#${INTENT_ERRORS.indexOf('RetiredVpfiLending')}`);
   });
 });

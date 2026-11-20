@@ -88,9 +88,9 @@ describe('the offer book', () => {
     expect(page.rows.map((r) => r.id)).toEqual([12n, 9n]);
     expect(page.unread).toBe(1);
     expect(page.nextBefore).toBe('9');
-    expect(ix.paths[0]).toBe('/offers/active?chainId=84532&limit=3');
+    expect(ix.paths[0]).toBe('/offers/active?chainId=84532&limit=3&excludeTakeoverOffers=1');
     await readBookPage(ix, 84532, '9', 3);
-    expect(ix.paths[1]).toBe('/offers/active?chainId=84532&limit=3&before=9');
+    expect(ix.paths[1]).toBe('/offers/active?chainId=84532&limit=3&excludeTakeoverOffers=1&before=9');
   });
   it('throws on a failed read or an answer without a list, never returning an empty book', async () => {
     await expect(readBookPage(indexer(new IndexerUnavailable('network', 'down')), 1, null)).rejects.toBeInstanceOf(IndexerUnavailable);

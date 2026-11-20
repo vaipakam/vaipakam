@@ -27,6 +27,7 @@ import { DeskActivity } from './DeskActivity';
 import { DeskMatchBand } from './DeskMatchBand';
 import { DeskHistory, MarketLoans } from './DeskPositions';
 import { MySignedOrders } from './MySignedOrders';
+import { useBookLinks } from '../../shared/offers/bookLinks';
 import { DeskSignedBook } from './DeskSignedBook';
 import { OrderTicket } from './OrderTicket';
 
@@ -37,6 +38,7 @@ const LEFT_OUT: readonly [keyof DeskLadder['leftOut'], CopyKey][] = [
   ['expired', 'desk.leftExpired'],
   ['moved', 'desk.leftMoved'],
   ['vehicle', 'desk.leftVehicle'],
+  ['takeover', 'desk.leftTakeover'],
   ['filled', 'desk.leftFilled'],
   ['notThisMarket', 'desk.leftOther'],
 ];
@@ -108,7 +110,10 @@ export function DeskPage() {
     retry: 1,
   });
   const nowSec = useNow() / 1000;
-  const ladder = book.data && selected ? deskLadder(book.data.rows, selected, nowSec) : null;
+  // The chain's own records keep a loan-bound offer or a takeover request
+  // off the ladder, whatever the index says (#3844).
+  const links = useBookLinks(chain, book.data?.rows ?? []);
+  const ladder = book.data && selected ? deskLadder(book.data.rows, selected, nowSec, links.data) : null;
   const meta = useTokenMeta(list.flatMap((m) => [m.lending, m.collateral]).concat(selected ? [selected.lending, selected.collateral] : [])).data;
 
   const marketsFailed = noIndex || markets.status === 'error';

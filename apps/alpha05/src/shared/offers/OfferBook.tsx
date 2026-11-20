@@ -11,6 +11,7 @@ import { IndexerUnavailable } from '../reads/world/indexerClient';
 import { useWorldRail } from '../reads/world/WorldRailContext';
 import { formatUtc, shortAddress } from '../ui/format';
 import { useNow } from '../ui/useNow';
+import { listedInBook, useBookLinks } from './bookLinks';
 import { BOOK_SIDES, BOOK_TABS, inBook, lapsed, readBookPage, type BookKind, type BookRow, type BookSide, type BookTab } from './book';
 import { collateralWords } from './collateralWords';
 import { offerLine } from './offerLine';
@@ -77,10 +78,15 @@ export function OfferBook({ viewer, rentals = false, empty }: { viewer: Hex; ren
   const pages = book.data?.pages ?? [];
   const all = pages.flatMap((p) => p.rows);
   const unread = pages.reduce((n, p) => n + p.unread, 0);
-  const rows = all.filter((r) => inBook(r, { tab, side, hide: hideMine ? viewer : null }));
+  // The chain's own records keep a loan-bound offer or a takeover request
+  // (#3844) out of the book, whatever the index returned.
+  const links = useBookLinks(chain, all);
+  const listed = all.filter((r) => listedInBook(links.data?.get(r.id.toString())));
+  const hidden = all.length - listed.length;
+  const rows = listed.filter((r) => inBook(r, { tab, side, hide: hideMine ? viewer : null }));
   /** What this tab holds before the side and hide-mine filters: the book is
    *  empty only when this is, otherwise the filters hide what there is. */
-  const inTab = all.filter((r) => inBook(r, { tab, side: 'all', hide: null })).length;
+  const inTab = listed.filter((r) => inBook(r, { tab, side: 'all', hide: null })).length;
   const meta = useTokenMeta(all.flatMap((r) => [r.lendingAsset, r.collateralAsset, r.prepayAsset])).data;
   const failed = world.indexer.origin === null || book.status === 'error';
   const reason = world.indexer.origin === null ? text('offerBook.noIndex') : indexReason(book.error, text);
@@ -122,6 +128,11 @@ export function OfferBook({ viewer, rentals = false, empty }: { viewer: Hex; ren
           <p className="tier-b" data-testid="offer-book-count">
             {format(book.hasNextPage ? 'offerBook.countMore' : 'offerBook.countAll', { shown: String(rows.length), read: String(all.length) })}
           </p>
+          {hidden > 0 && (
+            <p className="tier-b" data-testid="offer-book-held-back">
+              {format('offerBook.heldBack', { count: String(hidden) })}
+            </p>
+          )}
           {/* "Nothing listed" only from a complete, current read with every
               record understood; otherwise the failure or unread notice stands. */}
           {rows.length === 0 && !book.hasNextPage && !failed && unread === 0 && inTab === 0 && empty}
