@@ -87,8 +87,16 @@ test('the faucet mints a test token, a test NFT and a multi-token, measures each
   await expect(faucet.locator('[data-asset="liquidToken"]')).toBeVisible();
 });
 
+/** The fee-discount setting exists only where a platform token is installed
+ *  (otherwise the section says every fee is at its full rate), so the toggle
+ *  tests install one: a mintable test token stands in for it. */
+async function installPlatformToken(sc: ReturnType<typeof scenario>): Promise<void> {
+  await sc.diamondWrite('admin', 'setVPFIToken', [(sc.fixture.artifact.testnetMocks as Record<string, Hex>).illiquidToken!]);
+}
+
 test('the fee discount turns on and off with a measured outcome; with no Terms in force nothing else is asked', async ({ launchWallet }) => {
   const sc = scenario();
+  await installPlatformToken(sc);
   await sc.diamondWrite('lender', 'setVPFIDiscountConsent', [false]);
   const { page, flags } = await launchWallet('lender');
   await page.goto('/');
@@ -122,6 +130,7 @@ test('the fee discount turns on and off with a measured outcome; with no Terms i
 
 test('with Terms in force, turning the discount on asks for them first; turning it off never does', async ({ launchWallet }) => {
   const sc = scenario();
+  await installPlatformToken(sc);
   // A Terms version can only move up; the suite reverts the chain after
   // every test, so later specs and the other project start with none.
   await sc.diamondWrite('borrower', 'setVPFIDiscountConsent', [false]);
@@ -172,6 +181,7 @@ test('with Terms in force, turning the discount on asks for them first; turning 
 
 test('a paused protocol closes the toggle in both directions and names the pause', async ({ launchWallet }) => {
   const sc = scenario();
+  await installPlatformToken(sc);
   await sc.diamondWrite('admin', 'pause');
   try {
     const { page, flags } = await launchWallet('lender');

@@ -249,7 +249,7 @@ export function RewardsWidget({ onRewards = false }: { /** On the Rewards page i
       {heldReady && tokenGate}
       <RewardClaim kind="held" ready={heldReady} token={token} meta={meta} />
       <LifetimeClaimed chainId={chain.chainId} chainName={chain.name} account={account} amount={amount} />
-      <p className="tier-b">{tier.data !== null ? format('rewards.tier', { tier: String(tier.data) }) : tier.state === 'failed' ? text('rewards.tierFailed') : null}</p>
+      <p className="tier-b">{vpfi.data !== null && token === null ? text('consent.fullRate') : tier.data !== null ? format('rewards.tier', { tier: String(tier.data) }) : tier.state === 'failed' ? text('rewards.tierFailed') : null}</p>
       {stale && <p className="tier-b">{text('rewards.stale')}</p>}
       <OwnStamp reads={shown} />
       {!onRewards && (

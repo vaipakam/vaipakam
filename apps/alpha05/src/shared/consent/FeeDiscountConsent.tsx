@@ -20,6 +20,7 @@ import { holdsFlow } from '../tx/txStore';
 import { useTrackedTx } from '../tx/useTrackedTx';
 import { ActionFlow, reviewIdentity, type Recheck } from '../ui/ActionFlow';
 import { Notice } from '../ui/Notice';
+import { useHoldDiscount } from './holdDiscount';
 import { SET_CONSENT_SIGNATURE, VPFI_DISCOUNT_ABI, consentReceipt, readDeliveryMode, readFeeDiscountConsent, type Reviewed } from './feeDiscount';
 
 type Hex = `0x${string}`;
@@ -30,7 +31,9 @@ type Hex = `0x${string}`;
  * vault page). Turning it on is new enablement, so the Terms gate applies
  * (ACC-15); turning it off never is. The protocol's global pause closes the
  * call in BOTH directions, so a pause is named as the refusal, with what
- * stays open, rather than a button that would fail.
+ * stays open, rather than a button that would fail. Where the network has no
+ * platform token installed, no holding discount exists, so the section says
+ * fees are charged in full and offers no setting.
  */
 export function FeeDiscountConsent() {
   const { text, format } = useCopy();
@@ -39,7 +42,10 @@ export function FeeDiscountConsent() {
   const chain = getSupportedChain(own?.chainId);
   const diamond = (chain?.diamondAddress ?? '0x') as Hex;
   const account = (own?.account ?? '0x') as Hex;
-  const enabled = chain !== null;
+  const hold = useHoldDiscount(chain);
+  // No platform token on this network: no wallet has a discount tier, so the
+  // setting changes nothing and every fee is charged in full (launch rule).
+  const enabled = chain !== null && hold !== 'none';
   const consent = useOwnRead(['feeDiscountConsent', diamond], (c) => readFeeDiscountConsent(c, diamond, account), { enabled });
   const mode = useChainRead(['feeDiscountMode', diamond], (c) => readDeliveryMode(c, diamond), { enabled });
   const posture = usePosture(diamond);
@@ -71,6 +77,16 @@ export function FeeDiscountConsent() {
   });
 
   if (!own || !chain) return null;
+  if (hold === 'none') {
+    return (
+      <section className="home-section consent" aria-labelledby="consent-title" data-consent="full-rate">
+        <h2 id="consent-title">{text('consent.title')}</h2>
+        <p className="tier-b" data-testid="consent-full-rate">
+          {text('consent.fullRate')}
+        </p>
+      </section>
+    );
+  }
   const chainName = chain.name;
   const identity = reviewIdentity(own);
 

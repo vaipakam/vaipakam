@@ -1,5 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useMode } from '../../app/ModeContext';
+import type { SupportedChain } from '../../chain/chains';
+import { useHoldDiscount } from '../../shared/consent/holdDiscount';
 import { useCopy } from '../../shared/copy/useCopy';
 import { WhyLink } from '../../shared/help/WhyLink';
 import { holdStanding, readLenderDiscount, type LenderDiscountRead } from '../../shared/positions/lenderDiscount';
@@ -25,14 +27,28 @@ type Hex = `0x${string}`;
  * The fee-discount setting gates the holding discount, so its state is stated
  * here too. Advanced adds the two figures the discount is taken from, how the
  * deployment delivers it, and whether a Full fee tariff adds to it.
+ *
+ * Where the network has no platform token installed (every network until
+ * the rewards phase), no wallet holds a discount tier, so the section says
+ * the fee is charged at its full rate and reads nothing else.
  */
-export function LenderDiscount({ loanId, diamond, lender }: { loanId: bigint; diamond: Hex; lender: Hex }) {
-  const read = useOwnRead(['lender-discount', diamond, loanId.toString(), lender], (c) => readLenderDiscount(c, diamond, loanId, lender));
+export function LenderDiscount({ loanId, chain, lender }: { loanId: bigint; chain: SupportedChain; lender: Hex }) {
+  const diamond = chain.diamondAddress as Hex;
+  const hold = useHoldDiscount(chain);
+  const read = useOwnRead(['lender-discount', diamond, loanId.toString(), lender], (c) => readLenderDiscount(c, diamond, loanId, lender), {
+    enabled: hold !== 'none',
+  });
   const { text } = useCopy();
   return (
-    <section className="home-section position-facts" aria-labelledby="position-discount" data-testid="position-discount">
+    <section className="home-section position-facts" aria-labelledby="position-discount" data-testid="position-discount" data-hold={hold}>
       <h2 id="position-discount">{text('position.discountTitle')}</h2>
-      <ReadState read={read}>{(r) => <DiscountFacts r={r} lender={lender} />}</ReadState>
+      {hold === 'none' ? (
+        <p className="tier-b" data-testid="position-discount-full-rate">
+          {text('consent.fullRate')}
+        </p>
+      ) : (
+        <ReadState read={read}>{(r) => <DiscountFacts r={r} lender={lender} />}</ReadState>
+      )}
     </section>
   );
 }

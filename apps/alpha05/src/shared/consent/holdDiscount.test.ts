@@ -1,0 +1,25 @@
+import { describe, expect, it } from 'vitest';
+import { copyEntry } from '../copy/useCopy';
+import { holdDiscountFrom } from './holdDiscount';
+
+describe('holdDiscountFrom', () => {
+  it('reads no platform token as full-rate fees', () => {
+    expect(holdDiscountFrom({ state: 'ready', data: '0x0000000000000000000000000000000000000000' })).toBe('none');
+  });
+  it('reads an installed token as a discount that can apply', () => {
+    expect(holdDiscountFrom({ state: 'ready', data: '0x00000000000000000000000000000000000000Aa' })).toBe('installed');
+  });
+  it('never claims either answer from a failed or pending read', () => {
+    expect(holdDiscountFrom({ state: 'failed', data: null })).toBe('unread');
+    expect(holdDiscountFrom({ state: 'reading', data: null })).toBe('reading');
+  });
+  it('keeps the last answer through a failed re-read', () => {
+    expect(holdDiscountFrom({ state: 'failed', data: '0x0000000000000000000000000000000000000000' })).toBe('none');
+  });
+});
+
+describe('the full-rate line', () => {
+  it('says plainly that fees are charged in full', () => {
+    expect(copyEntry('consent.fullRate').text).toBe('No platform token is installed on this network yet, so every fee is charged at its full rate.');
+  });
+});
