@@ -3296,6 +3296,7 @@
       "partialFill": "注文マッチング（部分約定）",
       "tiersHeading": "VPFI 割引ティア",
       "tiersNotInstalled": "このネットワークにはプラットフォームトークンが導入されていないため、これらのティアはどれも適用されません。すべての手数料は満額で請求されます。",
+      "tiersInstallUnknown": "このネットワークにプラットフォームトークンが導入されているか確認できなかったため、これらのティアが適用されるかどうかは分かりません。",
       "tiers": "ティア",
       "tierThreshold": "ティア {{n}} のしきい値",
       "tierValue": "{{amount}} VPFI → {{discount}} 割引",

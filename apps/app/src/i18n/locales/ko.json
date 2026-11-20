@@ -3296,6 +3296,7 @@
       "partialFill": "주문 매칭(부분 체결)",
       "tiersHeading": "VPFI 할인 등급",
       "tiersNotInstalled": "이 네트워크에는 플랫폼 토큰이 설치되어 있지 않으므로 이 등급들은 적용되지 않습니다: 모든 수수료는 전체 요율로 부과됩니다.",
+      "tiersInstallUnknown": "이 네트워크에 플랫폼 토큰이 설치되어 있는지 확인하지 못해, 이 등급 중 어느 것이 적용되는지 알 수 없습니다.",
       "tiers": "등급",
       "tierThreshold": "{{n}}등급 임계값",
       "tierValue": "{{amount}} VPFI → {{discount}} 할인",

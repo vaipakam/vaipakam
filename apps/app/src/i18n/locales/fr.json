@@ -3296,6 +3296,7 @@
       "partialFill": "Appariement des ordres (exécution partielle)",
       "tiersHeading": "Paliers de remise VPFI",
       "tiersNotInstalled": "Le jeton de la plateforme n’est pas installé sur ce réseau, donc aucun de ces paliers ne s’applique : chaque frais est facturé à son taux plein.",
+      "tiersInstallUnknown": "Nous n’avons pas pu vérifier si le jeton de la plateforme est installé sur ce réseau, donc nous ne pouvons pas dire si l’un de ces paliers s’applique.",
       "tiers": "Paliers",
       "tierThreshold": "Seuil du palier {{n}}",
       "tierValue": "{{amount}} VPFI → {{discount}} de réduction",

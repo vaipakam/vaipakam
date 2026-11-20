@@ -3296,6 +3296,7 @@
       "partialFill": "Order-Matching (Teilausführung)",
       "tiersHeading": "VPFI-Rabattstufen",
       "tiersNotInstalled": "Der Plattform-Token ist auf diesem Netzwerk nicht installiert, daher gilt keine dieser Stufen: Jede Gebühr wird zum vollen Satz berechnet.",
+      "tiersInstallUnknown": "Wir konnten nicht prüfen, ob der Plattform-Token auf diesem Netzwerk installiert ist, daher können wir nicht sagen, ob eine dieser Stufen gilt.",
       "tiers": "Stufen",
       "tierThreshold": "Schwelle für Stufe {{n}}",
       "tierValue": "{{amount}} VPFI → {{discount}} Rabatt",

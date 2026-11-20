@@ -368,6 +368,9 @@ export function ProtocolConsole() {
   // "not installed" answer.
   const vpfi = useVpfi();
   const tokenNotInstalled = vpfi.data !== undefined && !vpfi.data.registered;
+  // A failed read is an unknown, and the page says so rather than showing
+  // the tiers as if they were known to apply.
+  const tokenInstallUnknown = vpfi.data === undefined && vpfi.isError;
   const unavailable = knobs.isError;
 
   if (!isProtocolConsolePublic()) {
@@ -535,6 +538,7 @@ export function ProtocolConsole() {
                 are configured settings, but no discount applies until the
                 platform token is installed with the rewards phase. */}
             {tokenNotInstalled ? <p className="muted">{copy.protocolConsole.tiersNotInstalled}</p> : null}
+            {tokenInstallUnknown ? <p className="muted">{copy.protocolConsole.tiersInstallUnknown}</p> : null}
             {/*
               Thresholds are 18-decimal amounts far beyond
               Number.MAX_SAFE_INTEGER, so they are rendered as the strings

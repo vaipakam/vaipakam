@@ -4139,6 +4139,7 @@
       "numeraireDefault": "{{symbol}} (never changed, so the protocol’s default)",
       "tiersHeading": "VPFI discount tiers",
       "tiersNotInstalled": "The platform token is not installed on this network, so none of these tiers applies: every fee is charged at its full rate.",
+      "tiersInstallUnknown": "We couldn’t check whether the platform token is installed on this network, so we can’t say whether any of these tiers applies.",
       "tiers": "Tiers",
       "tierThreshold": "Tier {{n}} threshold",
       "tierValue": "{{amount}} VPFI → {{discount}} discount",

@@ -3296,6 +3296,7 @@
       "partialFill": "订单撮合（部分成交）",
       "tiersHeading": "VPFI 折扣等级",
       "tiersNotInstalled": "该网络尚未安装平台代币，因此这些等级均不适用：所有费用均按全额收取。",
+      "tiersInstallUnknown": "我们无法确认该网络是否已安装平台代币，因此无法判断这些等级是否适用。",
       "tiers": "等级",
       "tierThreshold": "等级 {{n}} 门槛",
       "tierValue": "{{amount}} VPFI → 折扣 {{discount}}",

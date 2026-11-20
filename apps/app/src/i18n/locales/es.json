@@ -3296,6 +3296,7 @@
       "partialFill": "Emparejamiento de órdenes (ejecución parcial)",
       "tiersHeading": "Niveles de descuento VPFI",
       "tiersNotInstalled": "El token de la plataforma no está instalado en esta red, así que no se aplica ninguno de estos niveles: cada comisión se cobra a su tarifa completa.",
+      "tiersInstallUnknown": "No pudimos comprobar si el token de la plataforma está instalado en esta red, así que no podemos decir si se aplica alguno de estos niveles.",
       "tiers": "Niveles",
       "tierThreshold": "Umbral del nivel {{n}}",
       "tierValue": "{{amount}} VPFI → {{discount}} de descuento",

@@ -8200,6 +8200,9 @@ const copySource = {
     // tiers exist as settings, but the fee path applies none of them.
     tiersNotInstalled:
       'The platform token is not installed on this network, so none of these tiers applies: every fee is charged at its full rate.',
+    // The token read failed: whether any tier applies is not known.
+    tiersInstallUnknown:
+      'We couldn’t check whether the platform token is installed on this network, so we can’t say whether any of these tiers applies.',
     tiers: 'Tiers',
     tierThreshold: tmpl('Tier {{n}} threshold', ['n']),
     // `{{amount}}` arrives in VPFI TOKEN units — `exactAmountString`
