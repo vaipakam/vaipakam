@@ -88,9 +88,10 @@ Terms part alone.
 
 **What Closing refuses.** Posting an offer of any kind. Accepting or matching
 one. Setting or funding an Auto-lend slot. An instant borrow. A step that
-brings a new party into a loan, which covers a lender's sale and a takeover. An extension of a loan in place, a refinance, and a
-continuation with another lender. A flash loan, and a rate auction's opening
-and its bids, when those are built. The backstop vault's lending is refused
+brings a new party into a loan, which covers a lender's sale and a takeover.
+An extension of a loan in place, a refinance, and a continuation with another
+lender. A flash loan, and a rate auction's opening and its bids, when those
+are built. The backstop vault's lending is refused
 like any wallet's: the Terms rule exempts that vault, and the closing rule
 does not.
 
