@@ -160,7 +160,9 @@ contract InstantTakeoverFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         (address holder, , bool byKeeper) = _requireAdmissible(s, loan, loanId, caller, incoming, slot);
-        if (byKeeper) LibServiceCapacity.chargeKeeper(); // one keeper action (#1219)
+        // One keeper action (#1219), charged to the keeper that started it,
+        // also when the cash-out door runs it through a self-call.
+        if (byKeeper) LibServiceCapacity.chargeKeeperFor(caller);
         // The position-move gate's own call also clears a stale sanctions
         // registry entry on a clean read, which the shared view only reads.
         LibFacet.crossFacetCall(

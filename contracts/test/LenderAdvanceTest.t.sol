@@ -29,6 +29,13 @@ import {LibLenderSide} from "../src/libraries/LibLenderSide.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {SellerClaimFacet} from "../src/facets/SellerClaimFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {RateLinkFacet} from "../src/facets/RateLinkFacet.sol";
+import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
+import {RegistryKeys} from "../src/governance/RegistryKeys.sol";
+import {MockProtocolRegistry} from "./mocks/MockProtocolRegistry.sol";
+import {MockRateReferenceLink} from "./mocks/MockRateReferenceLink.sol";
+import {LibReadyBalance} from "../src/libraries/LibReadyBalance.sol";
+import {LibTestProtection} from "./helpers/LibTestProtection.sol";
 
 /// @dev Test-only: drives the fallback's two final-claim steps through the one
 ///      writer library, as ClaimFacet does before and after the one retry.
@@ -722,5 +729,47 @@ contract LenderAdvanceTest is InstantMarketBase {
             if (keccak256(o.sellNow.refusals[k].reason) == keccak256(refusal)) named = true;
         }
         assertTrue(named, "names the takeover's own refusal");
+    }
+
+    /// @dev A slot with a market link advances at its effective floor (the
+    ///      higher of its typed floor and the linked rate), as a loan from it
+    ///      would be priced, and refuses by name while the link cannot be used.
+    function test_linkedSlotFloorPricesTheAdvance() public {
+        _open();
+        MockRateReferenceLink ref = new MockRateReferenceLink();
+        MockProtocolRegistry(OracleAdminFacet(address(diamond)).getProtocolRegistry()).setPointer(
+            RegistryKeys.RATE_REFERENCE, address(ref)
+        );
+        ref.setTermAverage(5e16);
+        ref.setLinked(9e16, 0); // 9% + 1 point margin -> effective floor 10%
+        vm.prank(lender2);
+        LenderIntentFacet(address(diamond)).setLenderIntent(
+            mockERC20, mockCollateralERC20, 0, PRINCIPAL, ADVANCE_RATE, MAX_INIT_LTV_BPS,
+            TERM, MIN_FILL, false, 0, true, true, LibVaipakam.IntentRateTerms(1, 100, false), type(uint64).max
+        );
+        vm.prank(lender2);
+        LenderAdvanceFacet(address(diamond)).setAdvanceSlot(mockERC20, mockCollateralERC20, 0, true, 0);
+        _age();
+
+        vm.expectRevert(abi.encodeWithSelector(LenderAdvanceFacet.AdvanceRateAboveMax.selector, 1000, ADVANCE_RATE));
+        _take(300 ether);
+
+        ref.setLinked(0, 1); // the reference is unavailable: fail closed
+        vm.expectRevert(abi.encodeWithSelector(RateLinkFacet.RateLinkUnavailable.selector, uint8(1)));
+        _take(300 ether);
+    }
+
+    /// @dev A protected holder's own repayment of an advance is an
+    ///      owner-directed spend of existing vault balance: it draws only the
+    ///      Ready balance (#3344).
+    function test_protectedHolderRepaysFromReadyOnly() public {
+        _open();
+        _take(300 ether);
+        LibTestProtection.enable(address(diamond), lender, 2 days);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibReadyBalance.ReadyBalanceShort.selector, lender, mockERC20, 0, 10 ether)
+        );
+        vm.prank(lender);
+        LenderSideFacet(address(diamond)).repayAdvance(loanId, 10 ether);
     }
 }

@@ -12,6 +12,7 @@ import {LibAdvancePayAuth} from "../libraries/LibAdvancePayAuth.sol";
 import {LibAdvance} from "../libraries/LibAdvance.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibDepositoryLedger} from "../libraries/LibDepositoryLedger.sol";
+import {LibReadyBalance} from "../libraries/LibReadyBalance.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {OutflowReason} from "../vault/VaultOutflowTypes.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -310,6 +311,10 @@ contract LenderSideFacet is DiamondReentrancyGuard, DiamondPausable, ILenderSide
         // The holder spent free vault balance: it leaves their depository
         // holding first, as every other spend of free balance does.
         LibDepositoryLedger.spend(msg.sender, asset, 0, amount);
+        // An owner-directed spend of existing vault balance: a protected
+        // holder may spend only its Ready balance on it (#3344), on either
+        // branch below.
+        LibReadyBalance.spendViaHost(msg.sender, asset, amount);
         if (LibSanctionedLock.mustFreezeParty(s, a.slotOwner)) {
             // Held for the flagged slot owner, as any flagged lender's are:
             // set aside in the paying holder's own vault, where it is, and

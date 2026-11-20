@@ -431,10 +431,11 @@ runs half of it on old code:
   deploy or `RefreshAllFacetsInPlace`.
 
 - **ReadyBalanceFacet + OfferMaterializeFacet + InstantFillFacet +
-  AutoLifecycleFacet + VaultDepositoryFacet + the vault template — the
-  protected Ready balance (#3344).** The three spend sites (a vault-backed
-  signed offer, the instant-market borrower's vault collateral, the
-  auto-extension charge beyond the reserve) self-call `spendReady`, and the
+  AutoLifecycleFacet + LenderSideFacet + VaultDepositoryFacet + the vault
+  template — the protected Ready balance (#3344).** The four spend sites (a
+  vault-backed signed offer, the instant-market borrower's vault collateral,
+  the auto-extension charge beyond the reserve, a holder's own repayment of an
+  advance, #3760) self-call `spendReady`, and the
   depository withdraw reads `readySpendable` to keep Ready out of a wallet. A
   spend site refreshed without the host reverts `FunctionDoesNotExist` for
   every account (a hard revert, never an unchecked spend). Intent and instant

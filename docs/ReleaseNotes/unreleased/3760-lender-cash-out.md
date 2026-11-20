@@ -13,9 +13,12 @@ agree to the unit.
 
 "Borrow against it" is a new advance from an Auto-lend slot whose owner has
 consented to it. The slot pays the holder part of the loan's outstanding
-principal at its own fixed rate; everything the loan then pays its lender side
+principal at a fixed rate set as a loan from that slot would be (its minimum,
+or the higher linked rate where the slot follows the market, refused while the
+link cannot be read); everything the loan then pays its lender side
 goes first to the advance's interest, then the advance, then the holder. The
-holder may repay it from their vault at any time. Interest stops on each amount
+holder may repay it from their vault at any time (a protected account from its
+Ready balance only, as for any spend of its own vault balance). Interest stops on each amount
 when the money arrives, and the advance's part is set aside in the same step,
 so nobody needs to act afterwards. Booking never makes a borrower's step fail.
 While an advance is open the position is locked: no transfer, sale, listing,

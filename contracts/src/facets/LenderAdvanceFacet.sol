@@ -28,6 +28,7 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {OfferPriceGuardFacet} from "./OfferPriceGuardFacet.sol";
 import {MarketLedgerFacet} from "./MarketLedgerFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
+import {RateLinkFacet} from "./RateLinkFacet.sol";
 
 /**
  * @title  LenderAdvanceFacet
@@ -506,7 +507,25 @@ contract LenderAdvanceFacet is DiamondReentrancyGuard, DiamondPausable, DiamondA
                 _add(r, abi.encodeWithSelector(AdvancePastLendUntil.selector, graceEnd, uint256(intent.lendUntil)));
                 if (_full(r)) return p;
             }
+            // The slot's rate settings apply as they do to a loan (§6.1): its
+            // typed floor, or with a market link the higher of that and the
+            // linked rate for the term to the grace end, refused by name while
+            // the link cannot be used (the rule of `LibIntentFill.slotFloor`).
             p.rateBps = intent.minRateBps;
+            if (intent.linkKind != 0) {
+                uint256 left = graceEnd > block.timestamp ? graceEnd - block.timestamp : 0;
+                (bool ok, bytes memory ret) = address(this).staticcall(
+                    abi.encodeCall(
+                        RateLinkFacet.linkedFloor,
+                        (lend, (left + 1 days - 1) / 1 days, intent.linkKind, intent.linkMarginBps, p.rateBps)
+                    )
+                );
+                if (!ok) {
+                    _add(r, ret);
+                    return p;
+                }
+                p.rateBps = abi.decode(ret, (uint256));
+            }
             if (p.rateBps > type(uint16).max) {
                 _add(r, abi.encodeWithSelector(AdvanceRateOutOfRange.selector, p.rateBps));
                 if (_full(r)) return p;
