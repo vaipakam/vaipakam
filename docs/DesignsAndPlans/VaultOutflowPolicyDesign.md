@@ -2,7 +2,7 @@
 
 Status: **design for owner review**. The owner's decisions of 2026-11-05/06
 are recorded on #3205 and repeated where they apply. Choices they did not
-settle are marked **Default**. Six questions in §8: Q1, Q5 and Q6 were decided by the owner. Q2 to Q4 are built on their recommended defaults (the coordinator, 2026-11-07). The build notes for part 1 sit at the end of §8. §3.7 was refreshed on 2026-11-19 for Stage B3, which is not built yet, and its one user-facing question (sign, then send) is with the owner. This builds on [#3204's central vault code
+settle are marked **Default**. Six questions in §8: Q1, Q5 and Q6 were decided by the owner. Q2 to Q4 are built on their recommended defaults (the coordinator, 2026-11-07). The build notes for part 1 sit at the end of §8. §3.7 was refreshed on 2026-11-19 for Stage B3, which is not built yet. Its one user-facing question was decided by the owner on 2026-11-20: sign, then send. This builds on [#3204's central vault code
 design](VaultCentralImplementationDesign.md) and ships after it.
 
 ## 1. The problem, measured
@@ -529,6 +529,14 @@ only to a loan whose borrower-side token is held by whoever holds the old loan's
 - **When a payment is delivered and when it is held.** A faulty Diamond could hold a payment that could have been
   delivered, or leave an amount held. It cannot send the amount anywhere but to the position's holder, so the loss is
   delay.
+- **A signature given to a fake site (added 2026-11-20).** After B3 a wallet approves the one shared permit contract
+  once for a token and then signs for each action. A fake site can ask for a signature that names a spender of its own,
+  and no vault check sees it, because those tokens never reach a vault. Any platform that uses signed permits has this
+  limit. B3 makes signing the ordinary step here, so the habit is what an attacker leans on. Three app rules bound it:
+  the app asks for a signature only as the step directly before its own send, never on connect or on page load; the
+  sign screen names the user's own vault, with its address, as the only party that may take the tokens; and the app
+  offers an approval for the exact amount beside the standing one. A user who signs somewhere else is protected by none
+  of these, and the threat model lists that as a residual.
 - A bad price through a legitimate route stays covered by the price guard's own rules (§7).
 
 #### 3.7.9 The owner record and protected mode
@@ -665,14 +673,15 @@ reaches a chain by fresh deploy, as every stage has.
   the price leg by a plain transfer, so the fill callback is where the vault can measure and record it. Today the
   price leg pays the Diamond, which splits it.
 
-#### For the owner (open)
+#### Decided by the owner: sign, then send (2026-11-20)
 
 One user-facing change. On a plain wallet a funded action becomes sign, then send. Today an action funded from the
 wallet is a first approval of the token and then one send, and an action funded from the vault is one send. A wallet
 that sends several calls as one keeps one prompt, and no wallet gives the Diamond a standing approval any more. An NFT
 is sent to the vault by its owner where today it is approved to the platform: two prompts before and after.
 Alternative 4 would keep one prompt on every wallet, at the cost named there. Alternative 5 would keep one prompt for
-payments only, at the cost named there. Recommended: accept sign, then send.
+payments only, at the cost named there. The recommendation was to accept sign, then send, and the owner chose it on
+2026-11-20 (relayed by the coordinator). Alternatives 4 and 5 stay rejected.
 
 ### 3.8 What stays as it is
 
