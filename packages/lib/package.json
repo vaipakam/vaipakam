@@ -253,6 +253,10 @@
     "./telegramAlerts/termsCopy": {
       "types": "./src/telegramAlerts/termsCopy.ts",
       "default": "./src/telegramAlerts/termsCopy.ts"
+    },
+    "./telegramAlerts/recoveryClaimCopy": {
+      "types": "./src/telegramAlerts/recoveryClaimCopy.ts",
+      "default": "./src/telegramAlerts/recoveryClaimCopy.ts"
     }
   },
   "scripts": {

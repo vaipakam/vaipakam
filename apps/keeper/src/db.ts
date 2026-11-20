@@ -1266,6 +1266,27 @@ export async function listLoanPartiesAfter(
   return (rows.results ?? []).map((r) => r.addr);
 }
 
+/**
+ * #3756 — the accounts the Diamond ever reported a protected-mode change for
+ * (`ProtectionApplied`) on `chainId`, lowercased, in address order after
+ * `after`, at most `limit`. Only nominates: the recovery claim alerts read
+ * each account's vault for whether a claim is open.
+ */
+export async function listProtectedAccountsAfter(db: D1Database, chainId: number, after: string, limit: number): Promise<string[]> {
+  const rows = await db
+    .prepare(
+      `SELECT DISTINCT lower(json_extract(args_json, '$.account')) AS addr
+         FROM activity_events
+        WHERE chain_id = ?1 AND block_number >= ?2 AND kind = 'ProtectionApplied'
+          AND lower(json_extract(args_json, '$.account')) > ?3
+        ORDER BY addr
+        LIMIT ?4`,
+    )
+    .bind(chainId, deploymentFloor(chainId), after.toLowerCase(), limit)
+    .all<{ addr: string | null }>();
+  return (rows.results ?? []).flatMap((r) => (typeof r.addr === 'string' && /^0x[0-9a-f]{40}$/.test(r.addr) ? [r.addr] : []));
+}
+
 /** How many loan parties {@link listLoanPartiesAfter} rotates through. */
 export async function countLoanParties(db: D1Database, chainId: number): Promise<number> {
   const row = await db.prepare(`SELECT COUNT(*) AS n FROM (${LOAN_PARTIES_SQL})`).bind(chainId).first<{ n: number }>();

@@ -79,6 +79,8 @@ import { AlertDelivery, pushRailConfigOf, type Alert, type DeliveryOutcome } fro
 import { stepPublisher } from './stepStatus';
 import { pushRailStatus } from '@vaipakam/push';
 import { agentClientOf, agentUnconfiguredReason } from './agentClient';
+import { listProtectedAccountsAfter } from './db';
+import { chainClaimReads, describeClaimReport, recoveryClaimAlerts, type ClaimAlertReport } from './protectedRecoveryClaim';
 import { alertOwners, protectedStoreOf, LOCK_REQUEST_TTL_SEC, lockFromTelegram, type AlertReport, type LockResult, type ProtectedStore } from './protectedTelegram';
 import type { PassTick } from './passSchedule';
 import { deadlineClient, PastRunDeadline } from './batchRead';
@@ -107,6 +109,9 @@ const PICK: ReadonlySet<string> = new Set([
   'protect',
   'protectionState',
   'vaultOwner',
+  // #3756: the recovery claim's alerts read the claim and the recovery.
+  'protectionRecoveryClaim',
+  'protectionRecovery',
   'allowEntry',
   'signerEntry',
   'replacementProposal',
@@ -314,6 +319,10 @@ export interface ProtectedDeps {
     notify: (alert: Alert) => Promise<DeliveryOutcome>;
     appOrigin: string;
     nowSec?: () => number;
+    /** #3756: the protected accounts the ledger names, in address order
+     *  after `after`; with it, the owner alerts step also announces recovery
+     *  claims (`protectedRecoveryClaim.ts`). */
+    claimAccounts?: (after: string, limit: number) => Promise<Address[]>;
   };
 }
 
@@ -334,6 +343,8 @@ export interface ProtectedReport {
   locks: LockResult[] | null;
   /** The alert step's figures; null when it is off. */
   alerts: AlertReport | null;
+  /** The recovery claim alerts' figures; null when they are off. */
+  claims?: ClaimAlertReport | null;
   refused: Map<string, string>;
   unread: Map<string, string>;
   /** Steps that used their whole share of sends this run; what they left
@@ -413,6 +424,7 @@ export async function runProtectedAccount(env: Env, tick: PassTick): Promise<voi
             lock,
             alerts: alertsOn,
             store: protectedStoreOf(agent, env.DB, chain.diamond as Address, unconfigured ?? undefined),
+            claimAccounts: async (after, limit) => (await listProtectedAccountsAfter(env.DB, chain.id, after, limit)) as Address[],
             notify: (a) => delivery.deliver(a),
             appOrigin,
           },
@@ -442,6 +454,7 @@ export function describeReport(r: ProtectedReport): string {
       : [
           `owner-alerts=sent ${r.alerts.sent}, retrying ${r.alerts.retrying}, undelivered ${r.alerts.undelivered}, stale ${r.alerts.stale}, unsubscribed ${r.alerts.unsubscribed}`,
         ]),
+    ...(r.claims ? [describeClaimReport(r.claims)] : []),
     ...(r.waiting.size > 0 ? [`waiting=${[...r.waiting].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
     ...(r.refused.size > 0 ? [`refused=${[...r.refused].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
     ...(r.unread.size > 0 ? [`unread=${[...r.unread].map(([k, v]) => `${k}(${v})`).join(',')}`] : []),
@@ -539,6 +552,28 @@ export async function protectedOnce(chainId: number, diamond: Address, deps: Pro
     if (tgDeps && tg!.alerts) {
       const stage = r.withCutoff(leadStageCutoffMs(Date.now(), r.cutoff, ALERT_STAGE_SHARE));
       report.alerts = await alertOwners({ ...tgDeps, r: stage }, r.cutoff);
+      if (tg!.claimAccounts) {
+        // #3756 — the recovery claim's alerts, in their own share of what is
+        // left, so a slow channel cannot hold back the LOCK step either.
+        const claimStage = r.withCutoff(leadStageCutoffMs(Date.now(), r.cutoff, ALERT_STAGE_SHARE));
+        try {
+          report.claims = await recoveryClaimAlerts({
+            reads: chainClaimReads(claimStage),
+            cursors: deps.cursors,
+            chainId,
+            diamond,
+            accounts: tg!.claimAccounts,
+            subscriber: (w) => tg!.store.subscriber(chainId, w),
+            notify: tg!.notify,
+            appOrigin: tg!.appOrigin,
+            nowSec: tgDeps.nowSec(),
+            cutoff: claimStage.cutoff,
+          });
+        } catch (err) {
+          if (err instanceof PastRunDeadline) throw err;
+          sender.noteUnread('recovery-claims', shortErr(err));
+        }
+      }
     }
     if (tgDeps && tg!.lock) {
       report.locks = await lockFromTelegram(tgDeps, leadStageCutoffMs(Date.now(), r.cutoff, LOCK_STAGE_SHARE));

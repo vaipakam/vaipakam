@@ -29,6 +29,7 @@ import {
   type StandingSkipReason,
 } from './standingCopy';
 import { TERMS_HOLDS, termsAnnouncedText, type TermsHold } from './termsCopy';
+import { CLAIM_ENDS, CLAIM_STAGES, recoveryClaimEndedText, recoveryClaimOpenText, type ClaimEnd, type ClaimStage } from './recoveryClaimCopy';
 
 /** The LOCK outcomes the keeper reports (`protectedTelegram.ts`). */
 export const LOCK_OUTCOMES = ['locked', 'locked-again', 'already-locked', 'not-protected', 'not-allowed', 'expired', 'refused'] as const;
@@ -63,7 +64,15 @@ export type TelegramAlert =
    *  which has not accepted `version`, holds commitments that stop filling
    *  from `effectiveAt` (unix seconds) until it does. `holds` names them, in
    *  {@link TERMS_HOLDS} order, at least one. */
-  | { kind: 'termsAnnounced'; version: number; effectiveAt: number; holds: TermsHold[] };
+  | { kind: 'termsAnnounced'; version: number; effectiveAt: number; holds: TermsHold[] }
+  /** #3756 — a recovery claim is open on the account (`wallet`): announced
+   *  at `stage`, with the times the vault recorded (unix seconds), which
+   *  never move. Sent to the owner and to every signer (`to`). */
+  | { kind: 'recoveryClaim'; stage: ClaimStage; recovery: string; requestedAt: number; runnableAt: number; lapsesAt: number }
+  /** #3756 — the claim asked at `requestedAt` ended (`end`). `by` names the
+   *  key that cancelled it, when read; `pauseUntil` is when a new claim may
+   *  be asked, null when no pause is in force. */
+  | { kind: 'recoveryClaimEnded'; end: ClaimEnd; requestedAt: number; by: string | null; pauseUntil: number | null };
 
 /** A message with where it goes. */
 export interface AddressedAlert {
@@ -179,6 +188,34 @@ function parseAlert(raw: unknown): TelegramAlert | null {
       if (holds.length !== a.holds.length) return null;
       return { kind: 'termsAnnounced', version: a.version, effectiveAt: a.effectiveAt, holds };
     }
+    case 'recoveryClaim': {
+      if (!(CLAIM_STAGES as readonly unknown[]).includes(a.stage)) return null;
+      if (typeof a.recovery !== 'string' || !ADDRESS.test(a.recovery)) return null;
+      if (!isInt(a.requestedAt, 1, 2 ** 40) || !isInt(a.runnableAt, 1, 2 ** 40) || !isInt(a.lapsesAt, 1, 2 ** 40)) return null;
+      // The vault's own order: asked, then runnable, then the lapse.
+      if (!(a.requestedAt <= a.runnableAt && a.runnableAt <= a.lapsesAt)) return null;
+      return {
+        kind: 'recoveryClaim',
+        stage: a.stage as ClaimStage,
+        recovery: a.recovery.toLowerCase(),
+        requestedAt: a.requestedAt,
+        runnableAt: a.runnableAt,
+        lapsesAt: a.lapsesAt,
+      };
+    }
+    case 'recoveryClaimEnded': {
+      if (!(CLAIM_ENDS as readonly unknown[]).includes(a.end)) return null;
+      if (!isInt(a.requestedAt, 1, 2 ** 40)) return null;
+      if (a.by !== null && (typeof a.by !== 'string' || !ADDRESS.test(a.by))) return null;
+      if (a.pauseUntil !== null && !isInt(a.pauseUntil, 1, 2 ** 40)) return null;
+      return {
+        kind: 'recoveryClaimEnded',
+        end: a.end as ClaimEnd,
+        requestedAt: a.requestedAt,
+        by: a.by === null ? null : (a.by as string).toLowerCase(),
+        pauseUntil: a.pauseUntil as number | null,
+      };
+    }
     default:
       return null;
   }
@@ -277,6 +314,10 @@ export function renderTelegramAlert(m: AddressedAlert, ctx: RenderContext): { te
         title: s.pushTitle,
       };
     }
+    case 'recoveryClaim':
+      return recoveryClaimOpenText(ctx.locale, a.stage, w, c, a.recovery, utcMinute(a.requestedAt), utcMinute(a.runnableAt), utcMinute(a.lapsesAt), `${ctx.appOrigin}/`);
+    case 'recoveryClaimEnded':
+      return recoveryClaimEndedText(ctx.locale, a.end, a.by, w, c, a.pauseUntil === null ? null : utcMinute(a.pauseUntil), `${ctx.appOrigin}/`);
     case 'termsAnnounced':
       return termsAnnouncedText(ctx.locale, ctx.chainName, a.version, utcMinute(a.effectiveAt), a.holds, `${ctx.appOrigin}/`);
   }
