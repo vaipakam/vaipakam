@@ -26,7 +26,7 @@ import { getConnectorClient, writeContract, type WriteContractParameters, type W
 import { gasLimitFromEstimate } from '@vaipakam/lib/gasLimit';
 import { isRevert } from './simulate';
 import { assertLiveWallet } from './walletGuard';
-import { requireAccountCode } from './accountWallet';
+import { recordSentKind, requireAccountCode, sendsAccountTxIds } from './accountWallet';
 
 /** One way of asking for the estimate, tried in order. */
 export type GasEstimator = () => Promise<bigint>;
@@ -79,7 +79,15 @@ export async function sendWrite<
     assertLiveWallet(config, p.chainId, p.account);
     await requireAccountCode(config, p.chainId, p.account);
   }
-  if (p.gas !== undefined) return writeContract(config, parameters);
+  // The kind of id the wallet returns, read before its prompt opens, so the
+  // step is followed by the wallet that sent it whatever happens to the
+  // connection while the prompt is open.
+  const kind = { viaAccount: sendsAccountTxIds(config), account: p.account };
+  const sent = (hash: WriteContractReturnType) => {
+    recordSentKind(hash, kind);
+    return hash;
+  };
+  if (p.gas !== undefined) return writeContract(config, parameters).then(sent);
   type Estimate = Parameters<typeof estimateContractGas>[1];
   const request = { address: p.address, abi: p.abi, functionName: p.functionName, args: p.args, value: p.value };
   const gas = await gasLimitThrough([
@@ -92,5 +100,5 @@ export async function sendWrite<
       return estimateContractGas(config.getClient({ chainId: p.chainId }), { ...request, account: p.account } as Estimate);
     },
   ]);
-  return writeContract(config, { ...parameters, gas } as typeof parameters);
+  return writeContract(config, { ...parameters, gas } as typeof parameters).then(sent);
 }

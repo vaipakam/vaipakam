@@ -19,7 +19,7 @@ vi.mock('wagmi/actions', () => ({
 const SAFE = ('0x' + '5a'.repeat(20)) as `0x${string}`;
 const ID = ('0x' + 'd'.repeat(64)) as `0x${string}`;
 const CHAIN = ('0x' + 'c'.repeat(64)) as `0x${string}`;
-const { AccountTxEnded, SAFE_EXECUTION_FAILURE, SAFE_EXECUTION_SUCCESS, waitForSentReceipt } = await import('./accountWallet');
+const { AccountTxEnded, AccountTxUnfollowed, SAFE_EXECUTION_FAILURE, SAFE_EXECUTION_SUCCESS, recordSentKind, waitForSentReceipt } = await import('./accountWallet');
 const config = {} as Config;
 const safeApp = (details: Record<string, unknown>) => ({ id: 'safe', getProvider: async () => ({ sdk: { txs: { getBySafeTxHash: async () => details } } }) });
 
@@ -51,5 +51,20 @@ describe('waitForSentReceipt (every intermediate step)', () => {
     state.connector = safeApp({ txStatus: 'CANCELLED', txHash: null });
     await expect(waitForSentReceipt(config, ID, 1)).rejects.toBeInstanceOf(AccountTxEnded);
     expect(state.waited).toEqual([]);
+  });
+  it('follows a Safe-sent id by the kind recorded at the send, not the connection now', async () => {
+    const id = ('0x' + 'e'.repeat(64)) as `0x${string}`;
+    recordSentKind(id, { viaAccount: true, account: SAFE });
+    // The connection moved to a key wallet while the step was pending.
+    await expect(waitForSentReceipt(config, id, 1)).rejects.toBeInstanceOf(AccountTxUnfollowed);
+    expect(state.waited).toEqual([]);
+  });
+  it("waits on a key wallet's hash as a chain hash even if a Safe App is connected now", async () => {
+    const hash = ('0x' + 'f'.repeat(64)) as `0x${string}`;
+    recordSentKind(hash, { viaAccount: false, account: SAFE });
+    state.connector = safeApp({ txStatus: 'CANCELLED', txHash: null });
+    const r = await waitForSentReceipt(config, hash, 1);
+    expect(state.waited).toEqual([hash]);
+    expect(r.blockNumber).toBe(7n);
   });
 });

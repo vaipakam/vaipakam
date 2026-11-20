@@ -28,6 +28,9 @@ type Hex = `0x${string}`;
 const CHECKING_POLL_MS = 20_000;
 /** How long after a "too many asks" answer the list is asked again. */
 const BUSY_POLL_MS = 30_000;
+/** How often a finished scan (or a "no vault yet" answer) is asked again,
+ *  so a token that arrives while the page is open joins the list. */
+const SETTLED_POLL_MS = 60_000;
 
 /** The index's arrivals for the wallet's vault, and the chain's check of them. */
 export function useUnrecognised(chain: SupportedChain, account: Hex) {
@@ -40,7 +43,8 @@ export function useUnrecognised(chain: SupportedChain, account: Hex) {
     refetchInterval: (q) => {
       const d = q.state.data;
       if (d?.kind === 'busy') return BUSY_POLL_MS;
-      return d?.kind === 'scan' && !d.scan.complete ? CHECKING_POLL_MS : false;
+      if (d?.kind === 'scan' && !d.scan.complete) return CHECKING_POLL_MS;
+      return d === undefined ? false : SETTLED_POLL_MS;
     },
     retry: 1,
   });

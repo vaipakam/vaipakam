@@ -278,6 +278,44 @@ export class AccountTxEnded extends Error {
   }
 }
 
+/** A step an account wallet sent whose progress this page cannot follow:
+ *  the wallet that returned its id is no longer the connected one. Whether
+ *  it ran is not known here, so callers state it as unverified. */
+export class AccountTxUnfollowed extends Error {
+  constructor() {
+    super('This step was sent through an account wallet, and this page cannot follow it outside that wallet; open the app inside the wallet to follow it.');
+    this.name = 'AccountTxUnfollowed';
+  }
+}
+
+/** How a sent step's hash is to be read, recorded by the send before the
+ *  wallet prompt opens: whether it is an account wallet's own transaction id,
+ *  and the account that sent it. */
+export interface SentKind {
+  viaAccount: boolean;
+  account: Hex | undefined;
+}
+
+const SENT_KINDS_KEPT = 256;
+const sentKinds = new Map<string, SentKind>();
+
+/** Record the kind of a step `sendWrite` sent. Only the latest few hundred
+ *  are kept; a page follows its own recent steps. */
+export function recordSentKind(hash: Hex, kind: SentKind): void {
+  sentKinds.delete(hash.toLowerCase());
+  sentKinds.set(hash.toLowerCase(), kind);
+  while (sentKinds.size > SENT_KINDS_KEPT) {
+    const oldest = sentKinds.keys().next().value;
+    if (oldest === undefined) break;
+    sentKinds.delete(oldest);
+  }
+}
+
+/** The kind recorded for a sent step, if this page sent it. */
+export function sentKindOf(hash: Hex): SentKind | undefined {
+  return sentKinds.get(hash.toLowerCase());
+}
+
 /**
  * #3770 — the receipt of a step this app sent, whatever wallet sent it.
  * Every intermediate write (an approval, a reset, a protection step) waits
@@ -286,15 +324,23 @@ export class AccountTxEnded extends Error {
  * and reads the receipt of the chain hash it ran under. A call the wallet
  * logged as failed inside a mined transaction is returned as `reverted`,
  * since it changed nothing; the callers read the state back either way.
- * Throws `AccountTxEnded` when the wallet ends the step unexecuted.
+ * Throws `AccountTxEnded` when the wallet ends the step unexecuted, and
+ * `AccountTxUnfollowed` when an account wallet sent it but this page can no
+ * longer follow that wallet. The kind is the one `sendWrite` recorded.
  */
 export async function waitForSentReceipt(config: Config, hash: Hex, chainId: number): Promise<TransactionReceipt> {
+  const sent = sentKindOf(hash);
+  // The kind the send itself recorded decides how the hash is followed, not
+  // the connection now: a wallet changed while the step was pending must not
+  // turn a Safe's own id into a chain hash, or the reverse.
+  const viaAccount = sent?.viaAccount ?? sendsAccountTxIds(config);
+  if (!viaAccount) return waitForTransactionReceipt(config, { hash, chainId });
   const reader = await accountTxReader(config).catch(() => null);
-  if (!reader) return waitForTransactionReceipt(config, { hash, chainId });
+  if (!reader) throw new AccountTxUnfollowed();
   const end = await awaitAccountTx(reader, hash, () => {}, () => {});
   if (end.kind === 'ended') throw new AccountTxEnded(end.reason);
   const receipt = await waitForTransactionReceipt(config, { hash: end.hash, chainId });
-  const wallet = getAccount(config).address;
+  const wallet = sent?.account ?? getAccount(config).address;
   if (receipt.status === 'success' && wallet && accountExecution(receipt.logs, wallet, hash) === 'failed') return { ...receipt, status: 'reverted' };
   return receipt;
 }
