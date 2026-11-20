@@ -126,6 +126,7 @@ Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))` — this
 | **ClaimViewFacet** | The claim reads: `getClaimable`, `getClaimableAmount`, `getBorrowerSurplusClaim`, `getFallbackSnapshot`, `getOwedAtDefault` and `getOwedAtInternalMatch`. Split off `ClaimFacet` along its read / write seam when ClaimFacet went over EIP-170. **These reads are NOT on ClaimFacet any more**, so an app or keeper that reads them through `ClaimFacetABI` must use `ClaimViewFacetABI` or the combined Diamond ABI. Selectors and return shapes are unchanged. **Refreshed together with ClaimFacet**; `RedeployFacets` repoints the six selectors. Hand-built test Diamonds add it with `LibTestClaimViewCut.withClaimView` |
 | **LenderIntentViewFacet** | The standing-intent reads: `getLenderIntent`, `getLenderIntentLivePrincipal`, `getLenderIntentCapital`, `getLenderIntentPriority` and the three paginated feeds `getActiveLenderIntents`, `getRollableIntentLoans` and `getLenderIntentsByOwner`. Split off `LenderIntentFacet` along its read / write seam when LenderIntentFacet went over EIP-170. **These reads are NOT on LenderIntentFacet any more**: an app or keeper reading them through `LenderIntentFacetABI` must use `LenderIntentViewFacetABI` or the combined Diamond ABI. The kill-switch and fill-floor getters stay with their setters on LenderIntentFacet. Selectors and return shapes are unchanged. **Refreshed together with LenderIntentFacet** |
 | **SaleAdmissionFacet** | The sale reads: `saleAdmission` (whether a loan may admit a new lender by sale, as a code plus the two figures), `quoteSellerBounds` (the seller bounds a listing made now would record) and `getSaleListingBounds` (the bounds a standing listing did record). Split off `RiskPreviewFacet` in #3843 when that facet reached the EIP-170 ceiling; a pure move, selectors and return shapes unchanged. **These reads are NOT on RiskPreviewFacet any more**: an app or keeper reading them through `RiskPreviewFacetABI` must use `SaleAdmissionFacetABI` or the combined Diamond ABI. `LibSaleSolvency` self-calls `saleAdmission` from every facet that inlines it (`SaleExitVerdictFacet`, which both early-withdrawal entries self-call, `OfferAcceptFacet` and `OfferPreviewFacet`). **Refreshed together with RiskPreviewFacet and those sale hosts**; `RedeployFacets` and `ReplaceStaleFacets` cut it, partitioned by live routing, so on an older Diamond its three selectors move off RiskPreviewFacet by Replace |
+| **IntentPreviewFacet** | The standing-intent fill preview, `previewIntent`: whether a `matchIntent` fill would succeed now and, if not, the first reason it would revert (intent guards, the shared match core, the risk-access gate, the accept-time gates, the origination refusal and the capacity charge, in the live order). Split off `RiskPreviewFacet` in #3843 when that facet reached the EIP-170 ceiling; a pure move, selector `0x51e43cd9`, arguments and result unchanged. **`previewIntent` is NOT on RiskPreviewFacet any more**: an app or keeper reading it through `RiskPreviewFacetABI` must use `IntentPreviewFacetABI` or the combined Diamond ABI. It inlines the shared match core (`LibOfferMatch`), which self-calls `RiskPreviewFacet.initRiskBounds`, and the match-actor rule it shares with RiskPreviewFacet's match gate and match preview is one library function, `LibRiskAccess.resolveMatchActors`. **Refreshed together with RiskPreviewFacet and the match-core hosts**; `RedeployFacets` and `ReplaceStaleFacets` cut it, partitioned by live routing, so on an older Diamond the selector moves off RiskPreviewFacet by Replace |
 | **BackstopAbsorbFacet** | Backstop Role B (liquidator-of-last-resort) governance: `setBackstopAbsorbEnabled`, `setBackstopAbsorbCap`, `seedBackstopAbsorb`, `withdrawBackstopAbsorbToTreasury`, `sweepBackstopAbsorbCollateral`, `releaseBackstopAbsorbExposure` and `getBackstopAbsorbInfo`, with their events and `BackstopAbsorbCollateralInsufficient`. Split off `BackstopFacet` in #3843 (EIP-170 room); a pure move, selectors, events, errors and modifiers unchanged. The errors both facets raise are re-declared byte-identical, and the Diamond-as-treasury check is `LibTreasury.requireDiamond` (same `TreasuryNotDiamond()` selector). **These functions are NOT on BackstopFacet any more.** The absorb itself runs from ClaimFacet, not here. **Refreshed together with BackstopFacet** |
 
 **Refresh-together families (#1566 slices 2–3, #2472, #2440).** Each facet set
@@ -241,7 +242,8 @@ runs half of it on old code:
 
 - **OfferPreviewFacet + the match core's hosts (#3326).** The shared match
   core (`LibOfferMatch`, inlined in OfferMatchFacet, OfferMatchIntentFacet,
-  SignedOfferMatchFacet and RiskPreviewFacet) asks
+  SignedOfferMatchFacet and IntentPreviewFacet — RiskPreviewFacet until #3843
+  moved `previewIntent`, the function that inlines it, off that facet) asks
   `RiskPreviewFacet.initRiskBounds` for the loan-initiation risk bounds: the
   collateral floor for an amount and the largest amount a collateral backs.
   Each host used to inline its own copy, and all four sat near EIP-170. A match
@@ -251,7 +253,10 @@ runs half of it on old code:
   RiskPreviewFacet (OfferPreviewFacet had reached EIP-170).
   **`initRiskBounds` is NOT on OfferPreviewFacet any more.** `RedeployFacets`
   refreshes RiskPreviewFacet with the match hosts, so it carries the host
-  itself and needs no refusal for it.
+  itself and needs no refusal for it. It carries IntentPreviewFacet too
+  (`_intentPreviewCuts`), and so does `ReplaceStaleFacets`, so the selector
+  `previewIntent` moves with the refresh instead of staying on the old
+  RiskPreviewFacet build.
 
 - **SignedOfferFacet + SignedOfferMatchFacet (#3443 follow-up).** The
   keeper match of a signed offer runs its signed-offer half (the fill and
@@ -345,8 +350,9 @@ runs half of it on old code:
   (#2419).** `RiskFacet` (LTV, health factor, the collapse test, the
   partial-liquidation snapshots and the liquidator KYC value) and the facets
   whose code reaches `LibRiskMath` (today `OfferBookFacet`,
-  `OfferMatchFacet`, `OfferMatchIntentFacet`, `OfferMutateFacet` and
-  `RiskPreviewFacet`) value through a self-call to `getNumeraireValue` /
+  `OfferMatchFacet`, `OfferMatchIntentFacet`, `OfferMutateFacet`,
+  `RiskPreviewFacet` and `IntentPreviewFacet`, which took the match core with
+  `previewIntent` in #3843) value through a self-call to `getNumeraireValue` /
   `getAmountForNumeraireValue`, the one 1e18 rule in `LibNumeraireValue`.
   Every KYC comparison values through it too: `getLiquidNumeraireValue` (an
   illiquid asset is worth 0) from `DefaultedFacet` and `OfferAcceptFacet`,
@@ -439,7 +445,7 @@ runs half of it on old code:
   makers' offers in a match), the direct loan sale (the buyer's offer) and
   the obligation handover (the incoming borrower's offer). The offer book records a guard armed before posting,
   and the accept, match and standing-intent previews ask the same entry
-  (the match preview and `RiskPreviewFacet.previewIntent` through
+  (the match preview and `IntentPreviewFacet.previewIntent` through
   `OfferPriceGuardFacet.previewOriginationRefusal`, which #3734 moved off
   OfferPreviewFacet for EIP-170 room and which also reports a Terms refusal). An unguarded fill
   makes no self-call, so a Diamond without the host fills unguarded offers
@@ -970,9 +976,9 @@ so they keep their explicit legs.
 
 **`RiskPreviewFacet` has a FOURTH copy of its surface**, and it is a shell
 array: `contracts/script/rehearse-partial-refresh.sh` hard-codes
-`RISK_PREVIEW_SELECTORS` (and, since #3843, `SALE_ADMISSION_SELECTORS` for
-the sale reads split off it), and `assert_risk_preview_routed` iterates only
-those arrays. Its own comment claims it is "the same set the refresh scripts cut",
+`RISK_PREVIEW_SELECTORS` (and, since #3843, `SALE_ADMISSION_SELECTORS` and
+`INTENT_PREVIEW_SELECTORS` for the sale reads and the standing-intent preview
+split off it), and `assert_risk_preview_routed` iterates only those arrays. Its own comment claims it is "the same set the refresh scripts cut",
 which is true only for as long as somebody keeps it so. Add the new selector
 there too, or the rehearsal reports that *all* selectors share one host while
 never having looked at the one you just added — a passing check that has stopped

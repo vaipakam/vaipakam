@@ -334,6 +334,7 @@ contract PartialRefreshRoutingTest is Test {
         _assertSingleHost(surface.numeraireConfigSelectors(), "NumeraireConfigFacet");
         _assertSingleHost(surface.riskPreviewSelectors(), "RiskPreviewFacet");
         _assertSingleHost(surface.saleAdmissionSelectors(), "SaleAdmissionFacet");
+        _assertSingleHost(surface.intentPreviewSelectors(), "IntentPreviewFacet");
         _assertSingleHost(surface.offerPreviewSelectors(), "OfferPreviewFacet");
     }
 
@@ -776,11 +777,13 @@ contract PartialRefreshRoutingTest is Test {
     ///      no `FunctionDoesNotExist`, but running two different builds of the
     ///      same facet. Checking the common host catches that; checking only
     ///      `saleAdmission != address(0)` would not.
-    ///      Since #3843 the sale reads are their own facet, so both lists
-    ///      are checked, each against its own single host.
+    ///      Since #3843 the sale reads and the standing-intent preview are
+    ///      their own facets, so all three lists are checked, each against
+    ///      its own single host.
     function _assertRiskPreviewFullyRouted() internal view {
         _assertFullyRouted(FacetSelectors.riskPreview(), "RiskPreviewFacet");
         _assertFullyRouted(FacetSelectors.saleAdmission(), "SaleAdmissionFacet");
+        _assertFullyRouted(FacetSelectors.intentPreview(), "IntentPreviewFacet");
     }
 
     function _assertFullyRouted(bytes4[] memory sels, string memory facet) internal view {
@@ -863,6 +866,10 @@ contract SelectorSurfaceHarness is ReplaceStaleFacets {
 
     function saleAdmissionSelectors() external pure returns (bytes4[] memory) {
         return _getSaleAdmissionSelectors();
+    }
+
+    function intentPreviewSelectors() external pure returns (bytes4[] memory) {
+        return _getIntentPreviewSelectors();
     }
 
     function offerPreviewSelectors() external pure returns (bytes4[] memory) {

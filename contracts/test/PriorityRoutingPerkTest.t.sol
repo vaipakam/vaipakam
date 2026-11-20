@@ -26,7 +26,7 @@ import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibPriorityRouting} from "../src/libraries/LibPriorityRouting.sol";
-import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {IntentPreviewFacet} from "../src/facets/IntentPreviewFacet.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -818,19 +818,19 @@ contract PriorityRoutingPerkTest is SetupTest {
     function test_PreviewIntent_AppliesTheCreditRule_LikeTheFill() public {
         _optedInFixture(1);
         uint256 cp = _postBorrower("b-preview");
-        LibOfferMatch.IntentPreviewResult memory r = RiskPreviewFacet(address(diamond)).previewIntent(
+        LibOfferMatch.IntentPreviewResult memory r = IntentPreviewFacet(address(diamond)).previewIntent(
             solver, solver, lender, mockERC20, mockCollateralERC20, 0, cp, PRINCIPAL
         );
         assertTrue(r.ok, "capacity covers: Ok");
         assertFalse(r.spendsPriorityCredit, "covered by capacity: the solver is charged, no credit spent");
         _exhaustSolver();
-        r = RiskPreviewFacet(address(diamond)).previewIntent(
+        r = IntentPreviewFacet(address(diamond)).previewIntent(
             solver, solver, lender, mockERC20, mockCollateralERC20, 0, cp, PRINCIPAL
         );
         assertTrue(r.ok, "exhausted + opted in + credit: the preview is Ok");
         assertTrue(r.spendsPriorityCredit, "and it names the credit as what carries the fill");
         _setPriority(false);
-        r = RiskPreviewFacet(address(diamond)).previewIntent(
+        r = IntentPreviewFacet(address(diamond)).previewIntent(
             solver, solver, lender, mockERC20, mockCollateralERC20, 0, cp, PRINCIPAL
         );
         assertFalse(r.ok, "opted out: refused");
@@ -839,7 +839,7 @@ contract PriorityRoutingPerkTest is SetupTest {
         _expectExhausted();
         _fill(cp);
         _setPriority(true);
-        r = RiskPreviewFacet(address(diamond)).previewIntent(
+        r = IntentPreviewFacet(address(diamond)).previewIntent(
             solver, solver, lender, mockERC20, mockCollateralERC20, 0, cp, PRINCIPAL
         );
         assertTrue(r.ok, "opted back in: Ok again");

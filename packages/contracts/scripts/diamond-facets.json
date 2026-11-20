@@ -140,7 +140,8 @@
     "DiamondCutFacet",
     "RateLinkFacet",
     "SaleAdmissionFacet",
-    "BackstopAbsorbFacet"
+    "BackstopAbsorbFacet",
+    "IntentPreviewFacet"
   ],
   "proxy": [
     "VaipakamDiamond"

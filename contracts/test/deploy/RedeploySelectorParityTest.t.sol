@@ -4,7 +4,7 @@ pragma solidity ^0.8.29;
 import {Test} from "forge-std/Test.sol";
 import {FacetSelectors} from "../../script/lib/FacetSelectors.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
-import {RiskPreviewFacet} from "../../src/facets/RiskPreviewFacet.sol";
+import {IntentPreviewFacet} from "../../src/facets/IntentPreviewFacet.sol";
 
 /**
  * @title  RedeploySelectorParityTest
@@ -44,9 +44,17 @@ contract RedeploySelectorParityTest is Test {
     ///      core asks `initRiskBounds`). Pin the list so a preview selector
     ///      added to the facet cannot be silently left out of the curated
     ///      refresh: the omission would not fail a compile, it would fail a live
-    ///      call. The sale reads moved to `SaleAdmissionFacet` in #3843.
+    ///      call. The sale reads moved to `SaleAdmissionFacet` in #3843, and
+    ///      `previewIntent` to `IntentPreviewFacet`.
     function test_RiskPreviewSelectors_MatchCompiledAbi() public view {
         _assertParity("RiskPreviewFacet", FacetSelectors.riskPreview());
+    }
+
+    /// @dev #3843 — `previewIntent`, split off `RiskPreviewFacet`. It inlines
+    ///      the match core, so the curated scripts carry it with the match
+    ///      hosts and RiskPreviewFacet. Pin the list for the same reason.
+    function test_IntentPreviewSelectors_MatchCompiledAbi() public view {
+        _assertParity("IntentPreviewFacet", FacetSelectors.intentPreview());
     }
 
     /// @dev #1649, split off `RiskPreviewFacet` in #3843 — the sale hosts the
@@ -186,15 +194,16 @@ contract RedeploySelectorParityTest is Test {
 
     /// @dev #2459 r4 — `previewIntent` gained the route's outer initiator, so the
     ///      six-argument selector the curated refreshes Remove must be GONE from
-    ///      the facet's compiled surface and differ from the live one.
+    ///      the facet's compiled surface and differ from the live one. Its
+    ///      host is `IntentPreviewFacet` since #3843.
     function test_RetiredPreviewIntentSelector_IsGone() public view {
         bytes4 retired = FacetSelectors.retiredPreviewIntentSelector();
-        bytes4[] memory live = FacetSelectors.riskPreview();
+        bytes4[] memory live = FacetSelectors.intentPreview();
         for (uint256 i = 0; i < live.length; i++) {
             assertTrue(live[i] != retired, "the 6-arg previewIntent must not be in the live surface");
         }
         assertTrue(
-            retired != RiskPreviewFacet.previewIntent.selector,
+            retired != IntentPreviewFacet.previewIntent.selector,
             "retired and current previewIntent selectors must differ"
         );
     }

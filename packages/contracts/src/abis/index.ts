@@ -105,6 +105,7 @@ import RateLinkFacetABI from './RateLinkFacet.json';
 import SaleAdmissionFacetABI from './SaleAdmissionFacet.json';
 // #3843 — backstop Role B (absorb) governance, split off BackstopFacet.
 import BackstopAbsorbFacetABI from './BackstopAbsorbFacet.json';
+import IntentPreviewFacetABI from './IntentPreviewFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import ClaimViewFacetABI from './ClaimViewFacet.json';
 import LenderIntentViewFacetABI from './LenderIntentViewFacet.json';
@@ -323,6 +324,7 @@ export {
   RateLinkFacetABI,
   SaleAdmissionFacetABI,
   BackstopAbsorbFacetABI,
+  IntentPreviewFacetABI,
   ClaimFacetABI,
   ClaimViewFacetABI,
   LenderIntentViewFacetABI,

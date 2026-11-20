@@ -83,6 +83,7 @@ import {ReferralFacet} from "../src/facets/ReferralFacet.sol";
 import {RateLinkFacet} from "../src/facets/RateLinkFacet.sol";
 import {SaleAdmissionFacet} from "../src/facets/SaleAdmissionFacet.sol";
 import {BackstopAbsorbFacet} from "../src/facets/BackstopAbsorbFacet.sol";
+import {IntentPreviewFacet} from "../src/facets/IntentPreviewFacet.sol";
 import {VaultOutflowFacet} from "../src/facets/VaultOutflowFacet.sol";
 import {VaultOutflowTypes} from "../src/vault/VaultOutflowTypes.sol";
 import {VaultProtection} from "../src/vault/VaultProtection.sol";
@@ -644,6 +645,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #3843 — backstop Role B (absorb) governance, split off BackstopFacet.
         BackstopAbsorbFacet backstopAbsorbFacet =
             BackstopAbsorbFacet(ArtifactDeploy.deploy(type(BackstopAbsorbFacet).name));
+        // #3843 — the standing-intent fill preview, split off RiskPreviewFacet.
+        IntentPreviewFacet intentPreviewFacet =
+            IntentPreviewFacet(ArtifactDeploy.deploy(type(IntentPreviewFacet).name));
         // #1841 - the one sale-exit verdict: the lender exit chooser's view and
         // the guard both sale entries self-call.
         SaleExitVerdictFacet saleExitVerdictFacet = SaleExitVerdictFacet(ArtifactDeploy.deploy(type(SaleExitVerdictFacet).name));
@@ -690,7 +694,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](139);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](140);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -839,6 +843,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // split off its parent facet (EIP-170).
         cuts[137] = _buildCut(address(saleAdmissionFacet), _getSaleAdmissionSelectors());
         cuts[138] = _buildCut(address(backstopAbsorbFacet), _getBackstopAbsorbSelectors());
+        cuts[139] = _buildCut(address(intentPreviewFacet), _getIntentPreviewSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1625,6 +1630,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("rateLinkFacet", address(rateLinkFacet));
         Deployments.writeFacet("saleAdmissionFacet", address(saleAdmissionFacet));
         Deployments.writeFacet("backstopAbsorbFacet", address(backstopAbsorbFacet));
+        Deployments.writeFacet("intentPreviewFacet", address(intentPreviewFacet));
         Deployments.writeFacet("saleExitVerdictFacet", address(saleExitVerdictFacet));
         Deployments.writeFacet("sellerClaimFacet", address(sellerClaimFacet));
         Deployments.writeFacet("refinancePayoffFacet", address(refinancePayoffFacet));
@@ -2860,21 +2866,28 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      asserts, split off `RiskAccessFacet` into its own `RiskPreviewFacet`
     ///      so both facets keep EIP-170 header room. All are `view`.
     function _getRiskPreviewFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](9);
+        s = new bytes4[](8);
         s[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         s[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         s[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
         s[3] = RiskPreviewFacet.assertObligationTransferAllowed.selector;
         s[4] = RiskPreviewFacet.acceptMidTierAckPair.selector; // #735 item 3 sale-aware ack pair
         s[5] = RiskPreviewFacet.previewCreatorBlock.selector; // #735 item 3 creator-side gate
-        s[6] = RiskPreviewFacet.previewIntent.selector; // #625 WI-2b intent-fill preview
         // #3577 — the risk gate a fill of a not-yet-stored signed order faces.
-        s[7] = RiskPreviewFacet.previewSignedOfferRiskBlocks.selector;
+        s[6] = RiskPreviewFacet.previewSignedOfferRiskBlocks.selector;
         // #3326 — the initiation risk bounds the match core reads by self-call
         // (moved here from OfferPreviewFacet in #3328).
-        s[8] = RiskPreviewFacet.initRiskBounds.selector;
+        s[7] = RiskPreviewFacet.initRiskBounds.selector;
         // #3843 — saleAdmission, quoteSellerBounds and getSaleListingBounds
-        // moved to SaleAdmissionFacet; see `_getSaleAdmissionSelectors`.
+        // moved to SaleAdmissionFacet (`_getSaleAdmissionSelectors`), and
+        // previewIntent to IntentPreviewFacet (`_getIntentPreviewSelectors`).
+    }
+
+    /// @dev #3843 — the standing-intent fill preview, split off
+    ///      `RiskPreviewFacet`. `view`.
+    function _getIntentPreviewSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = IntentPreviewFacet.previewIntent.selector; // #625 WI-2b intent-fill preview
     }
 
     /// @dev #3843 — the sale reads, split off `RiskPreviewFacet`. All `view`.
