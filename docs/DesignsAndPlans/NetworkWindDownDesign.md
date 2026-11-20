@@ -52,9 +52,13 @@ leave the set to drift as features are added.
 **The Terms rule** (`LibTerms`, #3734). Every step in which a wallet takes on
 a new position asks one host, `LegalFacet.requireCurrentTerms`: loan creation
 for both parties, posting an offer, setting an Auto-lend slot, a position
-passing to a new holder, the in-place extension, and an aggregator adapter's
-own check. A wallet that only reduces or leaves a position is never asked.
-The previews ask the same host for a reason they can show.
+moving to a new holder through a platform route (a sale or a takeover), the
+in-place extension, and an aggregator adapter's own check. A wallet that only
+reduces or leaves a position is never asked. Receiving a position token by a
+plain transfer is not asked either (`TermsAcceptanceEnforcementDesign.md`
+section 3): that holder can claim and close, and cannot sell through the
+platform into a wallet that is not current. The previews ask the same host
+for a reason they can show.
 
 So the platform already keeps, in one place, the exact list of steps a
 closing network must refuse.
@@ -65,7 +69,7 @@ closing network must refuse.
 |---|---|
 | **Open** | The network as it runs today. |
 | **Closing** | No new position can be taken. Every position that exists runs to its own end on its own terms, and everything a close-out reads keeps running. |
-| **Closed** | No loan is open and no offer is on the book. What remains is each owner's vault balance and any claim not yet collected. Only withdrawing and claiming are left, and they stay available with no end date. |
+| **Closed** | No loan is open. What remains is each owner's own: a vault balance, a claim not yet collected, an offer or Auto-lend capital the owner has not taken back. None of it needs a price, a swap or a keeper. Withdrawing, claiming, cancelling an offer and taking capital out of a slot stay available with no end date. |
 
 A network moves from Open to Closing by one on-chain switch. It moves from
 Closing to Closed by fact, not by a switch: the last loan ends. Closed is read
@@ -73,8 +77,9 @@ from the chain, and nothing is turned off on-chain to reach it.
 
 ## 4. The closing rule
 
-**Rule.** While a network is Closing, no wallet may take on a new position
-there, whatever its Terms standing.
+**Rule.** While a network is Closing, no step may commit a wallet's money or
+its standing consent to a new position there, whatever the wallet's Terms
+standing.
 
 **Where it is asked.** At the sites that ask the Terms rule today, through the
 same host, as one question with two parts: the network is open, and the
@@ -105,14 +110,30 @@ step. The backstop's absorb of a loan in the fallback state, which is how the
 lender on that loan is paid. The builder confirms that the absorb passes no
 site that asks the closing rule, or allows it there by name. Reward claims.
 
-**A lender's sale is refused, and that is a choice.** A sale does not lengthen
-a loan, but it brings a new party and new money onto a network that is
-draining. Keeping one predicate (a wallet that takes on a new position is
+**A lender's sale through the platform is refused, and that is a choice.** A
+sale does not lengthen a loan, but the direct sale and the takeover spend what
+another wallet set before the network began closing (a standing buy offer, an
+Auto-lend slot's capital and consent), and a listing needs a buyer to accept
+an offer, which is an opening step like any other. On a network closed for an
+incident, a sale into standing capital would make that capital the way out
+for whoever acts first. Keeping one
+predicate (a step that commits money or standing consent to a new position is
 refused) is worth more than the exception. The cost is stated to lenders: on a
-closing network a loan is held to its due date. The sale-exit verdict
-reports the closing state for both sale routes, so a listing is refused with
-its reason up front instead of being posted where it can never fill (posting
-a sale listing is exempt from the Terms rule today).
+closing network the platform's sale routes are closed. The sale-exit verdict
+reports the closing state for both routes, so a listing is refused with its
+reason up front instead of being posted where it can never fill (posting a
+sale listing is exempt from the Terms rule today).
+
+**A position token can still be transferred.** A plain transfer of a position
+token passes no Terms site and is not refused in Closing or in Closed. The
+token is its holder's property. The transfer hook's own checks still apply
+(the wait after a payout, sanctions, the protected-account rules). Recovery
+transfers and the tokens of finished loans, which carry claims not yet
+collected, have to keep moving. A plain transfer commits nobody's standing
+consent and moves no money on the platform: the receiver chose it outside the
+platform, and as under the Terms rule can only claim and close. So the closing
+rule stops the platform arranging a new party for a loan. It does not freeze
+who holds a token.
 
 **Who switches it.** On: the Pauser, at once, or governance through its delay.
 Off: governance only. The shape is the per-asset pause's: quick hands may
@@ -134,7 +155,12 @@ it before a wallet is asked to sign.
   and the list changes with every feature.
 - **A new check at every opening step.** It would duplicate the Terms rule's
   list of sites, and the two lists would drift.
-- **Allow a sale during Closing.** It needs a second predicate for one case.
+- **Allow a sale during Closing.** It needs a second predicate for one case,
+  and it would spend standing offers and slot capital on a closing network.
+- **Refuse a plain transfer of a live position token too.** It would freeze a
+  holder's own property during an incident, recovery transfers and the tokens
+  of finished loans would each need an exception, and the receiver takes on
+  nothing the platform arranged.
 
 ### Recommendation
 
@@ -144,7 +170,8 @@ One switch, asked at the Terms rule's sites through the Terms rule's host.
 
 - **Offers on the book** stay cancellable and can no longer fill. A lender's
   money in a slot is withdrawable as it is today. The app asks owners to
-  withdraw, and nothing is moved for them.
+  withdraw, and nothing is moved for them. An offer or slot capital left
+  behind does not hold the network in Closing (section 7).
 - **Loans** run to their due date and grace on their own terms. Nothing is
   called in early.
 - **Due-date plans** (auto-extension, auto-refinance, continuing with another
@@ -154,12 +181,17 @@ One switch, asked at the Terms rule's sites through the Terms rule's host.
   date from the reserve keeps working.
 - **A rate auction in progress** is unwound and every bid is released, when
   that feature is built.
-- **A loan in the fallback state** follows its own steps to the end.
+- **A loan in the fallback state** follows its own steps to the end. It has
+  no date by which it must end (section 7).
 
-The earliest day a network can be Closed is known on the day of the switch:
-the latest grace end among the loans then open. It is published with the
-switch. It moves earlier as loans are repaid and later only if the network is
-globally paused.
+The earliest day a network can be Closed is read from the chain: the latest
+grace end among the loans then open, each read through the loan clock
+(`LoanClockFacet.getLoanDeadlines`), which already adds paused time and the
+window of a sequencer outage. It is published with the switch as the earliest
+day, never as a promise, and the launch check reads it again every day. It
+moves earlier as loans are repaid. It moves later if the network is paused, if
+its sequencer has an outage that reaches a deadline, or if a loan enters the
+fallback state.
 
 ## 6. What must keep running until Closed
 
@@ -187,20 +219,36 @@ A network is Closed when all of these hold, read from the chain:
 
 1. The closing switch is on.
 2. No loan is Active or in the fallback state.
-3. No offer is open and no slot holds capital set aside to lend.
-4. No close-out step is waiting on a price or a swap. The builder confirms,
+3. No close-out step is waiting on a price or a swap. The builder confirms,
    per claim path, that a claim on a finished loan reads neither.
+
+**An offer or slot capital left behind does not block Closed.** Only its
+owner can cancel an offer that has no expiry or take capital out of a slot,
+and nothing is moved for an owner (section 12), so a test that waited for them
+could wait for ever. It does not need to wait. On a closing network an offer
+can never fill and a slot can never lend, so each is only the owner's own
+balance under the owner's own hold. Cancelling and taking capital back stay
+available with no end date, the closed view lists them from chain reads, and
+the builder confirms that neither path reads a price, a swap or the indexer.
+
+**A loan in the fallback state does block Closed, and it has no dated end.**
+It ends when its lender claims, when its borrower cures it, or when the
+backstop takes it at the lender's request, and a cure returns it to an open
+loan, so everything in section 6 keeps running for it. No step on `main`
+ends an unclaimed fallback by a date. One lender who never claims can
+therefore hold a network in Closing. This document does not settle that: it
+is a question for the fallback's own design, carded from section 13.
 
 After that:
 
-- **Withdrawing and claiming stay available with no end date.** The contracts
-  are not removed, governance keeps ownership so a problem found later can
-  still be handled, and no upgrade may take the withdrawal or claim paths
-  away.
-- **The app keeps a closed-network view**: connect, see the vault balance and
-  uncollected claims from chain reads alone, and withdraw. It does not depend
-  on the indexer. The network stays in the deployment bundle for this
-  (section 9).
+- **Withdrawing, claiming, cancelling an offer and taking capital out of a
+  slot stay available with no end date.** The contracts are not removed,
+  governance keeps ownership so a problem found later can still be handled,
+  and no upgrade may take those paths away.
+- **The app keeps a closed-network view**: connect, see the vault balance,
+  uncollected claims and any offer or slot capital still held, from chain
+  reads alone, and withdraw. It does not depend on the indexer. The network
+  stays in the deployment bundle for this (section 9).
 - **The indexer's rows for the network are kept**, not purged, so statements
   for past years can still be produced. The indexer stops reading the chain.
 - **What the platform itself holds there** (treasury balance, the reserve,
@@ -248,12 +296,11 @@ balances there.
   | Indexer | Reads the chain | Reads the chain | Stops reading and keeps its rows |
   | Keeper | Every armed pass | The passes that back a close-out step | None |
   | Alerts | As today | As today, and the notices of section 10 | None |
-  | Launch check | The full check | The full check, the closing switch expected on, and each day the count of open loans and offers and the earliest Closed day | The closed check: the switch is still on, ownership is unchanged, the withdrawal and claim paths are still routed |
+  | Launch check | The full check | The full check, the closing switch expected on, and each day the count of open loans and offers and the earliest Closed day | The closed check: the switch is still on, ownership is unchanged, and the withdrawal, claim, cancel and slot-withdrawal paths are still routed |
 
 - **A closed record the chain contradicts is an alarm.** If the record says
-  closed and the chain shows the switch off, or a loan or an offer open, the
-  launch check fails by name: positions would be open with no keeper behind
-  them.
+  closed and the chain shows the switch off, or a loan open, the launch check
+  fails by name: positions would be open with no keeper behind them.
 - **Reopening runs in the reverse order.** The record is set back to open
   first, so the indexer and the keeper are running again, and only then does
   governance switch closing off.
@@ -267,7 +314,7 @@ that network and every loan and offer on it shows the date new positions
 stop, and every wallet with an open position or a plan gets the notice on
 the channels it has linked. At the switch the screens that open positions
 are replaced by the closing notice, each loan shows its own last day, and
-the network's earliest Closed day is shown.
+the network's earliest Closed day is shown as the earliest day.
 
 **An incident** has no notice. The switch is the notice, sent at once, and a
 borrower whose plan was about to run has the loan's grace period to act.
@@ -315,3 +362,4 @@ Signers, proposal text and readbacks for each step are the runbook's.
 | Closing and closed views, and the notices | App threads |
 | Pass sets for a closing network | Keeper thread |
 | The order for leaving the reward sources | Reward builder |
+| Whether an unclaimed fallback gets a dated end | Design thread, its own card |
