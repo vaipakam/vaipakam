@@ -1,4 +1,4 @@
-## Thread — rate reference, market-linked rate limits and the warning band (PR #<n>)
+## Thread — rate reference, market-linked rate limits and the warning band (PR #3782)
 
 Each chain now has a standalone rate reference, found through the protocol
 registry's new `RATE_REFERENCE` pointer, which carries the same 7-day minimum

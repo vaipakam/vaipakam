@@ -1,4 +1,4 @@
-# Vault code accepts earlier price guards and listing conduits (#3437 step 5)
+## Vault code accepts earlier price guards and listing conduits (#3437 step 5, PR #3743)
 
 A vault's code names the price guard and the listing conduit new loans use. It now also lists up to two earlier price guards and two earlier listing conduits, each conduit with its key, that open loans or their listings may still use. A listing may name any conduit the code lists, and a vault or its listing escrow may approve any of them. So when new vault code moves new listings to another conduit, an open loan's listing is not stranded. Any other guard or conduit is still refused.
 

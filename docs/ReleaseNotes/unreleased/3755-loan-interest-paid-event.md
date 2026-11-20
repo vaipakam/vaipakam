@@ -1,4 +1,4 @@
-## Thread — Interest paid stated per loan (PR #<n>)
+## Thread — Interest paid stated per loan (PR #3768)
 
 Every interest payment on a loan now emits one record naming the loan, the asset and the amount. Before this, the protocol counted interest paid only as a per-asset total, and the amount a payment carried could be read only from the record of the route that made it. Several routes name no interest figure at all: a partial repayment, a refinance payoff, and repayment with collateral (full and partial). So a loan's history could not say how much interest it had paid, and the rate-curve work (#3751) could not weight loans by interest paid.
 
